@@ -64,16 +64,99 @@ export type McpAutoRefreshSchedulerOptions = {
   activeSendTraceId?: () => string | null;
   workspaceProjectDir: () => string;
   refreshMcpServers: () => Promise<void>;
+  autoRefreshDebounceMs?: number;
+  autoRefreshTtlMs?: number;
+  now?: () => number;
 };
+
+export function mcpAutoRefreshTargetKey(input: {
+  workspaceId?: string | null;
+  projectDir: string;
+}): string {
+  return JSON.stringify({
+    workspaceId: input.workspaceId?.trim() ?? "",
+    projectDir: input.projectDir.trim(),
+  });
+}
+
+export function shouldRefreshMcpAutoRefreshTarget(input: {
+  targetKey: string;
+  lastTargetKey: string;
+  lastRefreshAt: number;
+  now: number;
+  ttlMs: number;
+}): boolean {
+  return input.targetKey !== input.lastTargetKey ||
+    input.ttlMs <= 0 ||
+    input.now - input.lastRefreshAt >= input.ttlMs;
+}
 
 export function createMcpAutoRefreshScheduler(options: McpAutoRefreshSchedulerOptions) {
   let deferredRefreshTimer: number | null = null;
+  let autoRefreshTimer: number | null = null;
+  let queuedAutoRefreshProjectDir = "";
+  let lastAutoRefreshKey = "";
+  let lastAutoRefreshAt = 0;
+  const autoRefreshDebounceMs = options.autoRefreshDebounceMs ?? 100;
+  const autoRefreshTtlMs = options.autoRefreshTtlMs ?? 5_000;
+  const now = options.now ?? (() => Date.now());
   onCleanup(() => {
     if (deferredRefreshTimer !== null) {
       window.clearTimeout(deferredRefreshTimer);
       deferredRefreshTimer = null;
     }
+    if (autoRefreshTimer !== null) {
+      window.clearTimeout(autoRefreshTimer);
+      autoRefreshTimer = null;
+    }
   });
+
+  const refreshIfTargetChangedOrStale = (projectDir: string) => {
+    const targetKey = mcpAutoRefreshTargetKey({
+      workspaceId: options.activeWorkspaceId?.() ?? "",
+      projectDir,
+    });
+    const nextNow = now();
+    const elapsedMs = nextNow - lastAutoRefreshAt;
+    if (!shouldRefreshMcpAutoRefreshTarget({
+      targetKey,
+      lastTargetKey: lastAutoRefreshKey,
+      lastRefreshAt: lastAutoRefreshAt,
+      now: nextNow,
+      ttlMs: autoRefreshTtlMs,
+    })) {
+      recordPerfLog(runtimePerfAuditEnabled(), "workspace.mcp", "refresh-skip-recent-target", {
+        activeWorkspaceId: options.activeWorkspaceId?.() ?? null,
+        projectDir,
+        elapsedMs,
+        ttlMs: autoRefreshTtlMs,
+      });
+      return;
+    }
+
+    lastAutoRefreshKey = targetKey;
+    lastAutoRefreshAt = nextNow;
+    void options.refreshMcpServers();
+  };
+
+  const scheduleAutoRefresh = (projectDir: string) => {
+    queuedAutoRefreshProjectDir = projectDir;
+    if (autoRefreshTimer !== null) return;
+    autoRefreshTimer = window.setTimeout(() => {
+      autoRefreshTimer = null;
+      if (!options.isTauriRuntime()) return;
+      if (options.activeWorkspaceRuntimeReady() === false) return;
+      const nextProjectDir = (queuedAutoRefreshProjectDir || options.workspaceProjectDir()).trim();
+      queuedAutoRefreshProjectDir = "";
+      if (!nextProjectDir) return;
+      const nextActiveSendTraceId = options.activeSendTraceId?.()?.trim() ?? "";
+      if (nextActiveSendTraceId) {
+        scheduleDeferredRefresh(nextActiveSendTraceId, nextProjectDir);
+        return;
+      }
+      refreshIfTargetChangedOrStale(nextProjectDir);
+    }, autoRefreshDebounceMs);
+  };
 
   const scheduleDeferredRefresh = (activeSendTraceId: string, projectDir: string) => {
     if (deferredRefreshTimer !== null) return;
@@ -92,7 +175,7 @@ export function createMcpAutoRefreshScheduler(options: McpAutoRefreshSchedulerOp
       if (!options.isTauriRuntime()) return;
       const nextProjectDir = options.workspaceProjectDir().trim();
       if (!nextProjectDir) return;
-      void options.refreshMcpServers();
+      scheduleAutoRefresh(nextProjectDir);
     }, 750);
   };
 
@@ -106,6 +189,6 @@ export function createMcpAutoRefreshScheduler(options: McpAutoRefreshSchedulerOp
       scheduleDeferredRefresh(activeSendTraceId, projectDir);
       return;
     }
-    void options.refreshMcpServers();
+    scheduleAutoRefresh(projectDir);
   });
 }

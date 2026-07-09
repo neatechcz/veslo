@@ -127,5 +127,5 @@ if (dryRun) {
 }
 console.log("");
 console.log("  Next step:");
-console.log(`    pnpm release:ship`);
+console.log(`    pnpm release:prod`);
 console.log("─".repeat(50) + "\n");

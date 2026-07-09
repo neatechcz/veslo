@@ -224,12 +224,12 @@ test("create session preflight records duration for duplicate gates and server c
 });
 
 test("create run and compact do not fall back to legacy OpenCode SDK writes", () => {
-  const compactStart = mutationWorkflowSource.indexOf("  async function compactCurrentSession(");
+  const compactStart = mutationWorkflowSource.indexOf("  async function submitCurrentSessionCompaction(");
   const compactEnd = mutationWorkflowSource.indexOf("  async function replaceUserMessage(", compactStart);
   const createStart = createWorkflowSource.indexOf("const runCreateSessionFlow = async (");
   const createEnd = createWorkflowSource.indexOf("\n  const createSession = (", createStart);
 
-  assert.ok(compactStart >= 0 && compactEnd > compactStart, "compactCurrentSession source should be present");
+  assert.ok(compactStart >= 0 && compactEnd > compactStart, "submitCurrentSessionCompaction source should be present");
   assert.ok(createStart >= 0 && createEnd > createStart, "runCreateSessionFlow source should be present");
 
   const bridgeSource = conversationRunCompatibilityBridgeSource();
@@ -542,8 +542,13 @@ test("MCP auto refresh scheduler keeps UI wiring thin", () => {
   );
   assert.match(
     schedulerSource,
-    /if \(!options\.isTauriRuntime\(\)\) return;[\s\S]*if \(options\.activeWorkspaceRuntimeReady\(\) === false\) return;[\s\S]*const projectDir = options\.workspaceProjectDir\(\)\.trim\(\);[\s\S]*if \(!projectDir\) return;[\s\S]*const activeSendTraceId = options\.activeSendTraceId\?\.\(\)\?\.trim\(\) \?\? "";[\s\S]*if \(activeSendTraceId\) \{[\s\S]*scheduleDeferredRefresh\(activeSendTraceId, projectDir\);[\s\S]*return;[\s\S]*\}[\s\S]*void options\.refreshMcpServers\(\);/,
+    /if \(!options\.isTauriRuntime\(\)\) return;[\s\S]*if \(options\.activeWorkspaceRuntimeReady\(\) === false\) return;[\s\S]*const projectDir = options\.workspaceProjectDir\(\)\.trim\(\);[\s\S]*if \(!projectDir\) return;[\s\S]*const activeSendTraceId = options\.activeSendTraceId\?\.\(\)\?\.trim\(\) \?\? "";[\s\S]*if \(activeSendTraceId\) \{[\s\S]*scheduleDeferredRefresh\(activeSendTraceId, projectDir\);[\s\S]*return;[\s\S]*\}[\s\S]*scheduleAutoRefresh\(projectDir\);/,
     "MCP scheduler should preserve Tauri, engine and project directory gates while deferring during active sends",
+  );
+  assert.match(
+    schedulerSource,
+    /export function mcpAutoRefreshTargetKey[\s\S]*export function shouldRefreshMcpAutoRefreshTarget[\s\S]*"workspace\.mcp", "refresh-skip-recent-target"/,
+    "MCP scheduler should dedupe repeated auto refreshes by stable workspace/project target",
   );
   assert.match(
     schedulerSource,
@@ -564,5 +569,19 @@ test("MCP auto refresh scheduler keeps UI wiring thin", () => {
     source,
     /createEffect\(\(\) => \{\s*if \(!isTauriRuntime\(\)\) return;\s*workspaceStore\.activeWorkspaceId\(\);\s*workspaceProjectDir\(\);\s*void refreshMcpServers\(\);\s*\}\);/,
     "app must not keep a raw MCP auto-refresh effect that bypasses the scheduler active-send guard",
+  );
+});
+
+test("active visible transcript recovery opt-in stays scoped to selected-session reads", () => {
+  assert.match(
+    source,
+    /loadOfflineTranscript: async \(sessionId, limit\) => \{[\s\S]*const snapshot = await getTranscriptFromVesloReadApi\([\s\S]*transcriptWorkspaceId,[\s\S]*sessionId,[\s\S]*limit,[\s\S]*transcriptDirectory \|\| undefined,[\s\S]*\{ activeVisibleSelectedSession: selectedSessionId\(\)\?\.trim\(\) === sessionId\.trim\(\) \},[\s\S]*\);/s,
+    "visible selected-session transcript reads should explicitly opt into bounded recovery",
+  );
+
+  assert.match(
+    source,
+    /hydrateLatestSessionFromDb: async \(workspaceId: string, directory: string\) => \{[\s\S]*const snapshot = await getTranscriptFromVesloReadApi\(workspaceId, latest\.id, 50, directory\);/s,
+    "background latest-session hydration must remain passive and must not opt into server-start recovery",
   );
 });

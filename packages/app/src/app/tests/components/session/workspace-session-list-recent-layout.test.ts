@@ -144,37 +144,37 @@ test("by-project session rows reserve right space and swap time for three-dot me
 test("session hover action uses archive icon instead of three dots", () => {
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveAction\(event, workspace\(\)\.id, session\(\)\.id\)\}/,
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, workspace\(\)\.id, session\(\)\.id, sessionTarget\(\)\)\}/,
     "recent rows should wire hover action to the archive confirmation flow",
   );
 
   assert.match(
     source,
-    /onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.workspace\.id, row\.session\.id\)\}/,
+    /onClick=\{\(event\) => handleSessionArchiveAction\(event, row\.workspace\.id, row\.session\.id, sessionTarget\(\)\)\}/,
     "by-project rows should wire hover action to the archive confirmation flow",
   );
 
   assert.match(
     source,
-    /aria-label=\{archiveConfirmationPending\(\)\s*\?\s*tr\("sidebar\.archive_confirm"\)\s*:\s*isSessionArchived\(workspace\(\)\.id, session\(\)\.id\)\s*\?\s*tr\("sidebar\.unarchive_session"\)\s*:\s*tr\("sidebar\.archive_session"\)\}/,
+    /aria-label=\{archiveConfirmationPending\(\)\s*\?\s*tr\("sidebar\.archive_confirm"\)\s*:\s*isSessionArchived\(workspace\(\)\.id, session\(\)\.id, sessionTarget\(\)\)\s*\?\s*tr\("sidebar\.unarchive_session"\)\s*:\s*tr\("sidebar\.archive_session"\)\}/,
     "recent row action should expose localized confirm/archive/unarchive accessibility labels",
   );
 
   assert.match(
     source,
-    /const archiveActionTestId = \(workspaceId: string, sessionId: string\) =>[\s\S]*"session-sidebar-archive-confirm-button"[\s\S]*"session-sidebar-unarchive-button"[\s\S]*"session-sidebar-archive-button"/,
+    /const archiveActionTestId = \(\s*workspaceId: string,\s*sessionId: string,\s*target\?: SidebarSessionOpenTarget \| null,[\s\S]*"session-sidebar-archive-confirm-button"[\s\S]*"session-sidebar-unarchive-button"[\s\S]*"session-sidebar-archive-button"/,
     "archive action should expose stable test ids for archive, confirm, and unarchive states",
   );
 
   assert.match(
     source,
-    /data-testid=\{archiveActionTestId\(workspace\(\)\.id, session\(\)\.id\)\}[\s\S]*data-session-id=\{session\(\)\.id\}[\s\S]*data-workspace-id=\{workspace\(\)\.id\}/,
+    /data-testid=\{archiveActionTestId\(workspace\(\)\.id, session\(\)\.id, sessionTarget\(\)\)\}[\s\S]*data-session-id=\{session\(\)\.id\}[\s\S]*data-workspace-id=\{workspace\(\)\.id\}/,
     "recent row archive action should expose stable test selectors and scope attributes",
   );
 
   assert.match(
     source,
-    /data-testid=\{archiveActionTestId\(row\.workspace\.id, row\.session\.id\)\}[\s\S]*data-session-id=\{row\.session\.id\}[\s\S]*data-workspace-id=\{row\.workspace\.id\}/,
+    /data-testid=\{archiveActionTestId\(row\.workspace\.id, row\.session\.id, sessionTarget\(\)\)\}[\s\S]*data-session-id=\{row\.session\.id\}[\s\S]*data-workspace-id=\{row\.workspace\.id\}/,
     "by-project row archive action should expose stable test selectors and scope attributes",
   );
 

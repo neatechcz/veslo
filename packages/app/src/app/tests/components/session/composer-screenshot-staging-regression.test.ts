@@ -28,7 +28,7 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 
   assert.match(
     stagingWindow,
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)[\s\S]*const routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(error instanceof Error \? error\.message : deps\.safeStringify\(error\)\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;/s,
+    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)[\s\S]*let routedDraft = deps\.routeStagedAttachmentsForModel\(\{[\s\S]*if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(routedDraft\.error\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\} catch \(error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(error instanceof Error \? error\.message : deps\.safeStringify\(error\)\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;/s,
     "send flow should hard-fail when attachment staging or routing fails",
   );
 
@@ -142,13 +142,13 @@ test("send flow blocks screenshot analysis on non-vision models instead of relyi
 
   assert.match(
     bridgeSource,
-    /const routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
+    /let routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
     "send flow should route staged attachments using the selected model capabilities",
   );
 
   assert.match(
     bridgeSource,
-    /if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*deps\.setError\(routedDraft\.error\);[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\}/s,
+    /if \(routedDraft\.error\) \{[\s\S]*input\.restorePendingDraftAfterSendFailure\(\);[\s\S]*if \(input\.sendTargetStillDisplayed\(\)\) \{\s*deps\.setError\(routedDraft\.error\);\s*\}[\s\S]*input\.stopSendPromptBusy\(\);[\s\S]*return false;[\s\S]*\}/s,
     "non-vision screenshot sends should fail with a visible error before the prompt runs",
   );
 

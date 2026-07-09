@@ -84,31 +84,59 @@ export function createWorkspaceSendTarget<Client = unknown>(options: WorkspaceSe
     traceId?: string | null,
   ): Promise<boolean> => {
     const tracePayload = traceId ? { traceId } : undefined;
-    const transcriptScope = options.resolveSelectedSessionBrowseScope
+    const browseScope = options.resolveSelectedSessionBrowseScope
       ? options.resolveSelectedSessionBrowseScope(sessionId)
+      : null;
+    const sendTargetScope = browseScope
+      ? null
       : options.resolveSessionSendTargetScope(sessionId);
+    const sendTargetWorkspaceId = sendTargetScope?.workspaceId?.trim() ?? "";
+    const activeWorkspaceId = options.activeWorkspaceId().trim();
+    const scopeTracePayload = {
+      ...(tracePayload ?? {}),
+      sessionId,
+      selectedSessionId: sessionId,
+      activeWorkspaceId: activeWorkspaceId || null,
+      browseScopeWorkspaceId: browseScope?.workspaceId?.trim() || null,
+      sendTargetWorkspaceId: sendTargetWorkspaceId || null,
+      hasBrowseScope: Boolean(browseScope?.workspaceId?.trim()),
+      hasSendTargetWorkspace: Boolean(sendTargetWorkspaceId),
+      scopeCandidateCount: Number(Boolean(browseScope?.workspaceId?.trim())) + Number(Boolean(sendTargetWorkspaceId)),
+    };
+    const transcriptScope = browseScope ?? (
+      options.resolveSelectedSessionBrowseScope && sendTargetWorkspaceId === activeWorkspaceId
+        ? null
+        : sendTargetScope
+    );
     if (!transcriptScope) {
-      options.recordSendTrace("sendPrompt:scoped-workspace-skipped-no-scope", tracePayload);
+      if (options.resolveSelectedSessionBrowseScope && !sendTargetWorkspaceId) {
+        options.recordSendTrace("sendPrompt:scoped-workspace-blocked-missing-scope", scopeTracePayload);
+        return false;
+      }
+      options.recordSendTrace("sendPrompt:scoped-workspace-skipped-no-scope", {
+        ...scopeTracePayload,
+        reason: sendTargetWorkspaceId ? "active-fallback-not-authoritative" : "scope-owner-unavailable",
+      });
       return true;
     }
     const targetWorkspaceId = transcriptScope.workspaceId?.trim() ?? "";
     if (!targetWorkspaceId) {
-      options.recordSendTrace("sendPrompt:scoped-workspace-skipped-empty-target", tracePayload);
+      options.recordSendTrace("sendPrompt:scoped-workspace-skipped-empty-target", scopeTracePayload);
       return true;
     }
-    if (targetWorkspaceId === options.activeWorkspaceId().trim()) {
+    if (targetWorkspaceId === activeWorkspaceId) {
       options.recordSendTrace("sendPrompt:scoped-workspace-already-active", {
-        ...(tracePayload ?? {}),
+        ...scopeTracePayload,
         workspaceId: targetWorkspaceId,
       });
       return true;
     }
 
     options.recordSendTrace("sendPrompt:activate-scoped-workspace", {
-      ...(tracePayload ?? {}),
+      ...scopeTracePayload,
       sessionId,
       workspaceId: targetWorkspaceId,
-      activeWorkspaceId: options.activeWorkspaceId().trim(),
+      activeWorkspaceId,
     });
     try {
       const activated = await options.sendTraceStep(

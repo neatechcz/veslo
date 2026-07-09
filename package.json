@@ -58,6 +58,10 @@
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
     "release:ship:watch": "node scripts/release/ship.mjs --watch",
+    "release:prod": "node scripts/release/dispatch-production.mjs --push-tag --yes --watch",
+    "release:prod:dry": "node scripts/release/dispatch-production.mjs --dry-run",
+    "release:production": "node scripts/release/dispatch-production.mjs",
+    "release:production:dry": "node scripts/release/dispatch-production.mjs --dry-run",
     "test:staging-app-build": "node scripts/release/staging-app-build.test.mjs",
     "tauri": "pnpm --filter @neatech/veslo exec tauri"
   },

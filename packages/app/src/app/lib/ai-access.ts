@@ -678,5 +678,6 @@ export function formatManagedAiAccessConfig(
     gatewayAccessToken: input.gatewayAccessToken,
     workspaceId: input.workspaceId,
     models: [input.profile.defaultModel.modelID, ...input.profile.allowedModels],
+    trace: false,
   })}\n`;
 }

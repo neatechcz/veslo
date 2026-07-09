@@ -1,3 +1,5 @@
+import type { ConversationReadDiagnostic } from "./conversation-read-store.js";
+
 export type SessionTranscriptSnapshot = {
   workspaceId: string;
   sessionId: string;
@@ -10,6 +12,7 @@ export type SessionTranscriptSnapshot = {
   fetchedAt: number;
   staleAt: number;
   source?: "sqlite" | "unavailable";
+  diagnostic?: ConversationReadDiagnostic;
 };
 
 export type SessionTranscriptLoadInput = {
@@ -29,6 +32,7 @@ export type SessionTranscriptLoadResult = {
   fetchedAt?: number;
   staleAt?: number;
   source?: "sqlite" | "unavailable";
+  diagnostic?: ConversationReadDiagnostic;
 };
 
 export type SessionTranscriptPrefetchInterest = {
@@ -349,6 +353,7 @@ export function createSessionTranscriptPrefetchStore(options: SessionTranscriptP
         fetchedAt,
         staleAt,
         source: raw.source,
+        ...(raw.diagnostic ? { diagnostic: raw.diagnostic } : {}),
       };
       const invalidatedAt = invalidatedAtBySession.get(dedupeKey) ?? 0;
       if (snapshot.source !== "unavailable" && invalidatedAt <= loadStartedAt) {

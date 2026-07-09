@@ -73,8 +73,8 @@ test("createSessionAndOpen uses the creation flow helpers before selecting the s
   );
   assert.match(
     applyStateSource,
-    /rememberConversationScope\(\{[\s\S]*sessionId: result\.sessionId,[\s\S]*workspaceId: result\.workspaceScope\.workspaceId,[\s\S]*\}\);[\s\S]*buildCreatedSidebarSessionItem\(\{[\s\S]*session: result\.session,[\s\S]*displaySession,[\s\S]*pendingSidebarSession: result\.pendingSession,[\s\S]*\}\)[\s\S]*options\.onMaterializedSessionId\?\.\(result\.handoff\);/s,
-    "app-side state helper should publish scope, materialize the sidebar row, and emit the scoped handoff",
+    /setSessionBrowseScope\(\{[\s\S]*sessionId: result\.sessionId,[\s\S]*workspaceId: result\.workspaceScope\.workspaceId,[\s\S]*\}\);[\s\S]*buildCreatedSidebarSessionItem\(\{[\s\S]*session: result\.session,[\s\S]*displaySession,[\s\S]*pendingSidebarSession: result\.pendingSession,[\s\S]*\}\)[\s\S]*options\.onMaterializedSessionId\?\.\(result\.handoff\);/s,
+    "app-side state helper should publish active scope, materialize the sidebar row, and emit the scoped handoff",
   );
   assert.match(
     applyTransitionSource,

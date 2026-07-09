@@ -173,6 +173,47 @@ test("same-workspace ambiguous session scope does not fall back to active worksp
   });
 });
 
+test("same-workspace duplicate path shapes keep the resolved conversation send target", () => {
+  createRoot((dispose) => {
+    try {
+      const selection = createWorkspaceSessionSelection({
+        activeWorkspaceId: () => "ws-a",
+        activeWorkspaceRoot: () => "c:/repo",
+        workspaces: () => [
+          { id: "ws-a", path: "c:/repo", workspaceType: "local" },
+        ],
+        storage: memoryStorage(),
+      });
+
+      selection.rememberConversationScope({
+        sessionId: "same-session",
+        workspaceId: "ws-a",
+        workspaceRoot: "\\\\?\\C:\\repo",
+        directory: "\\\\?\\C:\\repo",
+        conversationId: "conv-a",
+        opencodeSessionId: "same-session",
+      });
+      selection.rememberConversationScope({
+        sessionId: "same-session",
+        workspaceId: "ws-a",
+        workspaceRoot: "c:/repo",
+        directory: "c:/repo",
+        conversationId: "conv-a",
+        opencodeSessionId: "same-session",
+      });
+
+      assert.equal(selection.resolveSelectedSessionBrowseScope("same-session")?.conversationId, "conv-a");
+      assert.deepEqual(selection.resolveSendTargetWorkspaceScope("same-session"), {
+        workspaceId: "ws-a",
+        workspaceRoot: "c:/repo",
+        directory: "c:/repo",
+      });
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("displayed conversation guard rejects directory drift", () => {
   createRoot((dispose) => {
     try {

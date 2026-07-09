@@ -237,6 +237,7 @@ jobs:
       # Ensure Tauri's beforeBuildCommand (prepare:sidecar) uses our fork.
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+      VESLO_SIDECAR_FORCE_BUILD: "1"
       VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
       VITE_VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
       VESLO_GLITCHTIP_ENVIRONMENT: production
@@ -659,6 +660,7 @@ jobs:
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+      VESLO_SIDECAR_FORCE_BUILD: "1"
       TARGET_TRIPLE: x86_64-pc-windows-msvc
       TAURI_WINDOWS_RELEASE_CONFIG: src-tauri/tauri.windows.release.conf.json
       VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo by Neatech
@@ -923,6 +925,10 @@ jobs:
           Push-Location packages/desktop
           pnpm exec tauri -vvv build --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
           Pop-Location
+
+      - name: Verify bundled sidecars
+        shell: pwsh
+        run: node scripts/release/verify-bundled-versions.mjs "packages/desktop/src-tauri/target/$env:TARGET_TRIPLE/release" "$env:TARGET_TRIPLE"
 
       - name: Resolve Windows bundle paths
         shell: pwsh

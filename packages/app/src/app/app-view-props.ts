@@ -542,7 +542,7 @@ export type AppViewPropsScope = {
   abortSession: (sessionId?: string, target?: ConversationAbortTarget) => Promise<void>;
   undoLastUserMessage: () => Promise<void>;
   redoLastUserMessage: () => Promise<void>;
-  compactCurrentSession: (sessionIdOverride?: string) => Promise<void>;
+  submitCurrentSessionCompaction: (sessionIdOverride?: string) => Promise<void>;
   lastPromptSent: Accessor<string>;
   retryLastPrompt: () => void;
   selectedSessionDisplayTitle: Accessor<string | null>;
@@ -869,7 +869,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     abortSession,
     undoLastUserMessage,
     redoLastUserMessage,
-    compactCurrentSession,
+    submitCurrentSessionCompaction,
     lastPromptSent,
     retryLastPrompt,
     selectedSessionDisplayTitle,
@@ -1518,7 +1518,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     sessionRevertMessageId: selectedSession()?.revert?.messageID ?? null,
     undoLastUserMessage: undoLastUserMessage,
     redoLastUserMessage: redoLastUserMessage,
-    compactSession: compactCurrentSession,
+    compactSession: submitCurrentSessionCompaction,
     lastPromptSent: lastPromptSent(),
     retryLastPrompt: retryLastPrompt,
     newTaskDisabled: newTaskDisabled(),

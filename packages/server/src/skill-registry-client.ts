@@ -191,6 +191,12 @@ type ReplaceWorkspaceSkillSetInput = RegistryClientInput & {
   }>;
 };
 
+type RegistryRequestMetadata = {
+  registryAction: string;
+  registryResource: string;
+  registryScope?: string;
+};
+
 type ReviewDecisionInput = RegistryClientInput & {
   requestId: string;
   reviewerNote?: string;
@@ -249,24 +255,37 @@ function buildUrl(baseUrl: string, path: string, params: Record<string, string |
   return base.toString();
 }
 
-async function parseRegistryJson(response: Response, url: string): Promise<unknown> {
+async function parseRegistryJson(
+  response: Response,
+  url: string,
+  metadata?: RegistryRequestMetadata,
+): Promise<unknown> {
   try {
     return await response.json();
   } catch {
     throw new ApiError(502, "skill_registry_invalid_payload", "Skill registry returned invalid JSON", {
       url,
       status: response.status,
+      ...metadata,
     });
   }
 }
 
-async function buildStatusDetails(response: Response, url: string): Promise<{ url: string; status: number }> {
+async function buildStatusDetails(
+  response: Response,
+  url: string,
+  metadata?: RegistryRequestMetadata,
+): Promise<{ url: string; status: number } & Partial<RegistryRequestMetadata>> {
   await response.body?.cancel().catch(() => undefined);
-  return { url, status: response.status };
+  return { url, status: response.status, ...metadata };
 }
 
-async function throwRegistryStatusError(response: Response, url: string): Promise<never> {
-  const details = await buildStatusDetails(response, url);
+async function throwRegistryStatusError(
+  response: Response,
+  url: string,
+  metadata?: RegistryRequestMetadata,
+): Promise<never> {
+  const details = await buildStatusDetails(response, url, metadata);
   if (response.status === 401) {
     throw new ApiError(401, "skill_registry_unauthorized", "Skill registry authorization failed", details);
   }
@@ -287,7 +306,7 @@ async function throwRegistryStatusError(response: Response, url: string): Promis
 async function fetchRegistryJson(
   input: RegistryClientInput,
   url: string,
-  options: { method?: string; body?: unknown } = {},
+  options: { method?: string; body?: unknown; metadata?: RegistryRequestMetadata } = {},
 ): Promise<unknown> {
   let response: Response;
   const headers = buildHeaders(input);
@@ -309,13 +328,18 @@ async function fetchRegistryJson(
   }
 
   if (!response.ok) {
-    await throwRegistryStatusError(response, url);
+    await throwRegistryStatusError(response, url, options.metadata);
   }
 
-  return parseRegistryJson(response, url);
+  return parseRegistryJson(response, url, options.metadata);
 }
 
-function validatePayload<T>(validator: (value: unknown) => T, payload: unknown, url: string): T {
+function validatePayload<T>(
+  validator: (value: unknown) => T,
+  payload: unknown,
+  url: string,
+  metadata?: RegistryRequestMetadata,
+): T {
   try {
     return validator(payload);
   } catch (error) {
@@ -323,7 +347,7 @@ function validatePayload<T>(validator: (value: unknown) => T, payload: unknown, 
       502,
       "skill_registry_invalid_payload",
       "Skill registry returned an invalid payload",
-      { url },
+      { url, ...metadata },
     );
   }
 }
@@ -364,17 +388,27 @@ export async function searchRegistrySkills(input: SearchInput): Promise<Registry
 export async function downloadSkillPackageFromRegistry(
   input: DownloadPackageInput,
 ): Promise<RegistrySkillPackageResponse> {
+  const metadata = {
+    registryAction: "download",
+    registryResource: "skill-package",
+    registryScope: "skill-version",
+  };
   const url = buildUrl(input.baseUrl, `/v1/skill-versions/${encodeURIComponent(input.versionId)}/package`);
-  const payload = await fetchRegistryJson(input, url);
-  return validatePayload(validateRegistrySkillPackageResponse, payload, url);
+  const payload = await fetchRegistryJson(input, url, { metadata });
+  return validatePayload(validateRegistrySkillPackageResponse, payload, url, metadata);
 }
 
 export async function getWorkspaceSkillSetFromRegistry(
   input: WorkspaceSkillSetInput,
 ): Promise<WorkspaceSkillSetResponse> {
+  const metadata = {
+    registryAction: "read",
+    registryResource: "workspace-skill-set",
+    registryScope: "workspace",
+  };
   const url = buildUrl(input.baseUrl, `/v1/workspaces/${encodeURIComponent(input.workspaceId)}/skill-set`);
-  const payload = await fetchRegistryJson(input, url);
-  return validatePayload(validateWorkspaceSkillSetResponse, payload, url);
+  const payload = await fetchRegistryJson(input, url, { metadata });
+  return validatePayload(validateWorkspaceSkillSetResponse, payload, url, metadata);
 }
 
 export async function replaceRegistryWorkspaceSkillSet(
@@ -395,14 +429,19 @@ export async function replaceRegistryWorkspaceSkillSet(
 export async function listRegistrySkillInstallations(
   input: ListInstallationsInput,
 ): Promise<RegistrySkillInstallationsResponse> {
+  const metadata = {
+    registryAction: "list",
+    registryResource: "skill-installations",
+    registryScope: input.target ?? input.source ?? "all",
+  };
   const url = buildUrl(input.baseUrl, "/v1/skill-installations", {
     cursor: input.cursor,
     limit: input.limit,
     source: input.source,
     target: input.target,
   });
-  const payload = await fetchRegistryJson(input, url);
-  return validatePayload(validateRegistrySkillInstallationsResponse, payload, url);
+  const payload = await fetchRegistryJson(input, url, { metadata });
+  return validatePayload(validateRegistrySkillInstallationsResponse, payload, url, metadata);
 }
 
 export async function listRegistrySkillEvents(input: EventsInput): Promise<RegistrySkillEventsResponse> {
@@ -419,6 +458,11 @@ export async function listRegistrySkillEvents(input: EventsInput): Promise<Regis
 export async function listRegistrySkillRolloutPolicies(
   input: ListRolloutPoliciesInput,
 ): Promise<RegistrySkillRolloutPoliciesResponse> {
+  const metadata = {
+    registryAction: "list",
+    registryResource: "skill-rollout-policies",
+    registryScope: input.target ?? input.catalogScope ?? "all",
+  };
   const url = buildUrl(input.baseUrl, "/v1/skill-rollout-policies", {
     cursor: input.cursor,
     limit: input.limit,
@@ -431,8 +475,8 @@ export async function listRegistrySkillRolloutPolicies(
     catalogScope: input.catalogScope,
     enabled: input.enabled === undefined ? undefined : input.enabled ? "true" : "false",
   });
-  const payload = await fetchRegistryJson(input, url);
-  return validatePayload(validateRegistrySkillRolloutPoliciesResponse, payload, url);
+  const payload = await fetchRegistryJson(input, url, { metadata });
+  return validatePayload(validateRegistrySkillRolloutPoliciesResponse, payload, url, metadata);
 }
 
 export async function createRegistrySkill(input: CreateSkillInput): Promise<RegistrySkillResponse> {

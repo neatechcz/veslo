@@ -75,12 +75,6 @@ const abortSessionSource =
   abortSessionStart >= 0 && abortSessionEnd >= 0
     ? appSource.slice(abortSessionStart, abortSessionEnd)
     : "";
-const compactCurrentSessionStart = appSource.indexOf("  async function compactCurrentSession(");
-const compactCurrentSessionEnd = appSource.indexOf("  const triggerAutoCompaction = async (sessionID: string) => {", compactCurrentSessionStart);
-const compactCurrentSessionSource =
-  compactCurrentSessionStart >= 0 && compactCurrentSessionEnd >= 0
-    ? appSource.slice(compactCurrentSessionStart, compactCurrentSessionEnd)
-    : "";
 const replaceUserMessageStart = appSource.indexOf("  async function replaceUserMessage(");
 const replaceUserMessageEnd = appSource.indexOf("  async function undoLastUserMessage() {", replaceUserMessageStart);
 const replaceUserMessageSource =
@@ -291,7 +285,7 @@ test("app activates selected session workspace at send time, not browse time", (
   );
   assert.match(
     workspaceSendTargetSource,
-    /const transcriptScope = options\.resolveSelectedSessionBrowseScope\s*\? options\.resolveSelectedSessionBrowseScope\(sessionId\)\s*: options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId, \{ origin: "send-target:selected-session-workspace" \}\)/s,
+    /const browseScope = options\.resolveSelectedSessionBrowseScope[\s\S]*options\.resolveSelectedSessionBrowseScope\(sessionId\)[\s\S]*const sendTargetScope = browseScope[\s\S]*options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*const transcriptScope = browseScope \?\?[\s\S]*sendTargetWorkspaceId === activeWorkspaceId[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId, \{ origin: "send-target:selected-session-workspace" \}\)/s,
     "send path should activate the workspace from the selected browse scope, falling back to the send target scope",
   );
   assert.match(
@@ -326,6 +320,19 @@ test("workspace snapshot effect preserves scoped browse session during send-time
     workspaceSessionSnapshotsSource,
     /const selectedBelongsToIncoming = selectedScopeWorkspaceId === activeWorkspaceId;[\s\S]*if \(!selectedBelongsToIncoming\) \{[\s\S]*loadWorkspaceId = activeWorkspaceId;/s,
     "send-time activation must not immediately replace the scoped browsed session with a stale workspace snapshot",
+  );
+});
+
+test("session run-state reset traces use concrete idle reasons", () => {
+  assert.match(
+    sessionPageSource,
+    /if \(props\.sessionStatus === "idle" && \(runHasBegun\(\) \|\| responseStarted\(\)\)\) \{\s*resetRunState\(currentSessionQueueKey\(\), "active-session-idle"\);/s,
+    "active idle reset should be tagged with a concrete reason",
+  );
+  assert.match(
+    sessionPageSource,
+    /!runHasBegun\(\) &&\s*!responseStarted\(\)\s*\) \{\s*resetRunState\(currentSessionQueueKey\(\), "idle-grace-expired"\);/s,
+    "idle grace reset should be tagged with a concrete reason",
   );
 });
 

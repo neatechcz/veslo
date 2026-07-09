@@ -1245,7 +1245,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!key) return;
     setRunStateBySessionKey((current) => updateRunStateRecord(current, key, update));
   };
-  const resetRunState = (sessionKey = currentSessionQueueKey(), reason = "reset") => {
+  const resetRunState = (sessionKey = currentSessionQueueKey(), reason = "unspecified-reset") => {
     const key = sessionKey.trim();
     if (!key) return;
     const previous = untrack(runStateBySessionKey)[key];
@@ -2250,7 +2250,7 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     if (!runStartedAt()) return;
     if (props.sessionStatus === "idle" && (runHasBegun() || responseStarted())) {
-      resetRunState(currentSessionQueueKey());
+      resetRunState(currentSessionQueueKey(), "active-session-idle");
     }
   });
 
@@ -2271,7 +2271,7 @@ export default function SessionView(props: SessionViewProps) {
         !runHasBegun() &&
         !responseStarted()
       ) {
-        resetRunState(currentSessionQueueKey());
+        resetRunState(currentSessionQueueKey(), "idle-grace-expired");
       }
     }, 2_000);
     onCleanup(() => clearTimeout(timer));

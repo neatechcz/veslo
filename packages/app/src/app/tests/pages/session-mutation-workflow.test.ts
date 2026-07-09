@@ -300,7 +300,7 @@ test("session mutation workflow compact submits through server submit when local
       };
     },
   });
-  await harness.workflow.compactCurrentSession("ses_1");
+  await harness.workflow.submitCurrentSessionCompaction("ses_1");
 
   assert.equal(harness.selectedSessionId, "ses_1");
   assert.equal(submitCalls.length, 1);
@@ -337,7 +337,7 @@ test("session mutation workflow compact submits through server submit when local
 test("session mutation workflow compact fails explicitly when server submit is unavailable", async () => {
   const harness = createHarness();
   await assert.rejects(
-    () => harness.workflow.compactCurrentSession("ses_1"),
+    () => harness.workflow.submitCurrentSessionCompaction("ses_1"),
     /Server-owned compact is unavailable/,
   );
 

@@ -118,6 +118,37 @@ describe("session transcript prefetch core", () => {
     expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-e" })?.sessionId).toBe("sess-e");
   });
 
+  test("preserves unavailable read diagnostics through getOrLoad", async () => {
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId }) => ({
+        workspaceId,
+        sessionId,
+        messages: [],
+        partsByMessageId: {},
+        source: "unavailable" as const,
+        diagnostic: {
+          reason: "database_missing" as const,
+          workspaceId,
+          sessionId,
+          dbPath: "/missing/opencode.db",
+          dbPathExists: false,
+        },
+      }),
+      autoPrefetchOnInterest: false,
+    });
+
+    const snapshot = await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140 });
+
+    expect(snapshot.source).toBe("unavailable");
+    expect(snapshot.diagnostic).toEqual({
+      reason: "database_missing",
+      workspaceId: "ws_local",
+      sessionId: "sess-a",
+      dbPath: "/missing/opencode.db",
+      dbPathExists: false,
+    });
+  });
+
   test("drops a failed background load and keeps draining later queue items", async () => {
     const calls: string[] = [];
     const store = createSessionTranscriptPrefetchStore({

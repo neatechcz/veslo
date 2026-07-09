@@ -122,10 +122,19 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
 }
 
 function skillRegistryErrorPayload(error: ApiError) {
+  const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
+    ? error.details as Record<string, unknown>
+    : {};
+  const registryAction = typeof details.registryAction === "string" ? details.registryAction : undefined;
+  const registryResource = typeof details.registryResource === "string" ? details.registryResource : undefined;
+  const registryScope = typeof details.registryScope === "string" ? details.registryScope : undefined;
   return {
     code: error.code,
     message: error.message,
     status: error.status,
+    ...(registryAction ? { registryAction } : {}),
+    ...(registryResource ? { registryResource } : {}),
+    ...(registryScope ? { registryScope } : {}),
   };
 }
 
@@ -183,9 +192,13 @@ async function buildWorkspaceSkillRegistryUnavailableStatus(
 }
 
 function isWorkspaceSkillRegistryNotFound(error: unknown): error is ApiError {
-  return error instanceof ApiError &&
-    error.status === 404 &&
-    error.code === "skill_registry_not_found";
+  if (!(error instanceof ApiError) || error.status !== 404 || error.code !== "skill_registry_not_found") {
+    return false;
+  }
+  const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
+    ? error.details as Record<string, unknown>
+    : {};
+  return details.registryResource === undefined || details.registryResource === "workspace-skill-set";
 }
 
 function isSkillRegistryApiError(error: unknown): error is ApiError {

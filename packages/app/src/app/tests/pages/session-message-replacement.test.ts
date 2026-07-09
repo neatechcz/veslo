@@ -103,7 +103,7 @@ test("replacement send path reverts to the original message before sending the e
   const serverReplacementBranch = mutationWorkflowSource.slice(serverReplacementStart, legacyReplacementStart);
   assert.match(
     serverReplacementBranch,
-    /submitConversation\(workspaceId, submitDirectory, \{[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*origin: sendCorrelation\.origin,[\s\S]*draft: conversationSubmitDraftFromComposerDraft\(draft\),[\s\S]*options: \{[\s\S]*replaceMessageId: messageID,[\s\S]*submitQueuePolicy: "normal",[\s\S]*\}[\s\S]*\}, replacePreflight\)/,
+    /const submitRequest: VesloConversationSubmitRequest = \{[\s\S]*clientMessageId: sendCorrelation\.clientMessageId,[\s\S]*origin: sendCorrelation\.origin,[\s\S]*draft: conversationSubmitDraftFromComposerDraft\(draft\),[\s\S]*options: \{[\s\S]*replaceMessageId: messageID,[\s\S]*submitQueuePolicy: "normal",[\s\S]*\}[\s\S]*\};[\s\S]*let result = await submitConversation\(\s*workspaceId,\s*submitDirectory,\s*submitRequestValidation\.value,\s*replacePreflight,\s*\);/,
     "mutation workflow replacement API should send one server-owned submit with the replacement message id",
   );
   assert.doesNotMatch(

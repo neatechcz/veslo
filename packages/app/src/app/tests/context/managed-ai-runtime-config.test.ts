@@ -585,6 +585,71 @@ test("inactive workspace heal marks unauthorized workspaces for the current toke
   assert.deepEqual(client.patched, []);
 });
 
+test("inactive workspace heal keeps config tracking across managed access metadata refresh", async () => {
+  const patched: Array<{ workspaceId: string; payload: { opencode?: Record<string, unknown> } }> = [];
+  const getConfigCalls: string[] = [];
+  const effects: Array<() => void> = [];
+  let currentProfile: ManagedAiAccessProfile = profile;
+  const client: ManagedAiRuntimeConfigVesloClient = {
+    baseUrl: "http://127.0.0.1:34115",
+    token: "veslo-token",
+    getConfig: async (workspaceId) => {
+      getConfigCalls.push(workspaceId);
+      return { opencode: {} };
+    },
+    patchConfig: async (workspaceId, payload) => {
+      patched.push({ workspaceId, payload });
+      return { ok: true };
+    },
+    listWorkspaces: async () => ({
+      items: [
+        { id: "ws-active", workspaceType: "local" },
+        { id: "ws-inactive", workspaceType: "local" },
+      ],
+    }),
+  };
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      effect: (fn) => {
+        effects.push(fn);
+      },
+      vesloServerClient: () => client,
+      managedAiAccess: () => currentProfile,
+      vesloServerWorkspaceId: () => "ws-active",
+      resolveConversationServerWorkspaceId: () => "ws-active",
+    }),
+  );
+  const runResetEffect = () => {
+    const resetEffect = effects[0];
+    if (!resetEffect) throw new Error("managed AI reset effect was not registered");
+    resetEffect();
+  };
+
+  runResetEffect();
+  await sync.healInactiveManagedAiWorkspaceConfigs();
+
+  currentProfile = {
+    ...currentProfile,
+    updatedAt: "2026-07-01T10:01:00.000Z",
+  };
+  runResetEffect();
+  await sync.healInactiveManagedAiWorkspaceConfigs();
+
+  assert.deepEqual(getConfigCalls, ["ws-inactive"]);
+  assert.equal(patched.length, 1);
+
+  currentProfile = {
+    ...currentProfile,
+    allowedModels: ["gpt-5", "gpt-5.5"],
+    updatedAt: "2026-07-01T10:02:00.000Z",
+  };
+  runResetEffect();
+  await sync.healInactiveManagedAiWorkspaceConfigs();
+
+  assert.deepEqual(getConfigCalls, ["ws-inactive", "ws-inactive"]);
+  assert.equal(patched.length, 2);
+});
+
 test("inactive workspace heal skips server scans while a send or run is active", async () => {
   for (const scenario of [
     { name: "send", anyActiveRuns: false, sendPromptInFlight: true },

@@ -328,7 +328,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
   let outerRef: HTMLDivElement | undefined;
   let innerRef: HTMLDivElement | undefined;
   let frame = 0;
-  let transitionFallback = 0;
+  let transitionSafetyTimer = 0;
   let previousOpen = props.open;
   let hasMounted = false;
   let closeCompletionPending = false;
@@ -339,10 +339,10 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
     frame = 0;
   };
 
-  const clearTransitionFallback = () => {
-    if (!transitionFallback || typeof window === "undefined") return;
-    window.clearTimeout(transitionFallback);
-    transitionFallback = 0;
+  const clearTransitionSafetyTimer = () => {
+    if (!transitionSafetyTimer || typeof window === "undefined") return;
+    window.clearTimeout(transitionSafetyTimer);
+    transitionSafetyTimer = 0;
   };
 
   const measuredHeight = () => innerRef?.scrollHeight ?? 0;
@@ -370,10 +370,10 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
     props.onExitComplete?.();
   };
 
-  const scheduleTransitionFallback = (open: boolean) => {
+  const scheduleTransitionSafetyTimer = (open: boolean) => {
     if (typeof window === "undefined") return;
-    transitionFallback = window.setTimeout(() => {
-      transitionFallback = 0;
+    transitionSafetyTimer = window.setTimeout(() => {
+      transitionSafetyTimer = 0;
       if (props.open !== open) return;
       if (open) {
         finishOpen();
@@ -386,7 +386,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
   createEffect(() => {
     const open = props.open;
     cancelFrame();
-    clearTransitionFallback();
+    clearTransitionSafetyTimer();
 
     if (!hasMounted) {
       hasMounted = true;
@@ -447,7 +447,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
           transform: "translateY(0)",
           transition: transition(),
         }));
-        scheduleTransitionFallback(true);
+        scheduleTransitionSafetyTimer(true);
       });
       return;
     }
@@ -476,18 +476,18 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
         transform: closedTransform(),
         transition: transition(),
       }));
-      scheduleTransitionFallback(false);
+      scheduleTransitionSafetyTimer(false);
     });
   });
 
   onCleanup(() => {
     cancelFrame();
-    clearTransitionFallback();
+    clearTransitionSafetyTimer();
   });
 
   const handleTransitionEnd = (event: TransitionEvent) => {
     if (event.target !== outerRef || event.propertyName !== "height") return;
-    clearTransitionFallback();
+    clearTransitionSafetyTimer();
     if (props.open) {
       finishOpen();
       return;

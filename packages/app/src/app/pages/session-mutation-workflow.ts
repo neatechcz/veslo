@@ -321,7 +321,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     });
   }
 
-  async function compactCurrentSession(sessionIdOverride?: string) {
+  async function submitCurrentSessionCompaction(sessionIdOverride?: string) {
     const sessionID = (sessionIdOverride ?? deps.selectedSessionId() ?? "").trim();
     if (!sessionID) {
       throw new Error("Select a session before compacting.");
@@ -990,7 +990,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
 
   return {
     retryLastPrompt,
-    compactCurrentSession,
+    submitCurrentSessionCompaction,
     replaceUserMessage,
     undoLastUserMessage,
     redoLastUserMessage,

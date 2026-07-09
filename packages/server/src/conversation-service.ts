@@ -1,6 +1,7 @@
 import type { WorkspaceInfo } from "./types.js";
 import { ApiError } from "./errors.js";
 import type {
+  ConversationReadDiagnostic,
   ConversationReadStore,
   ConversationSummary,
 } from "./conversation-read-store.js";
@@ -55,6 +56,7 @@ export type ConversationTranscriptResult = {
   fetchedAt?: number;
   staleAt?: number;
   source?: "sqlite" | "unavailable";
+  diagnostic?: ConversationReadDiagnostic;
 };
 
 export type ConversationService = {
@@ -66,6 +68,7 @@ export type ConversationService = {
     workspaceId: string;
     items: ConversationSummary[];
     source: "sqlite" | "unavailable";
+    diagnostic?: ConversationReadDiagnostic;
   }>;
 
   resolveOpenCodeSessionForRead(input: {
@@ -375,6 +378,7 @@ export function createConversationService(options: {
     } catch (error) {
       warn("[veslo-server] conversation binding list failed", {
         workspaceId,
+        directory: normalizedDirectory,
         error: error instanceof Error ? error.message : String(error),
       });
       return [];
@@ -425,6 +429,9 @@ export function createConversationService(options: {
     } catch (error) {
       warn("[veslo-server] conversation transcript read failed", {
         workspaceId,
+        directory,
+        engineSessionId,
+        limit,
         error: errorMessage(error),
       });
       return null;
@@ -449,6 +456,13 @@ export function createConversationService(options: {
     } catch (error) {
       warn("[veslo-server] conversation transcript persist failed", {
         workspaceId,
+        directory,
+        engineSessionId,
+        messageCount: messages.length,
+        partCount: Object.values(partsByMessageId).reduce(
+          (total, parts) => total + (Array.isArray(parts) ? parts.length : 0),
+          0,
+        ),
         error: errorMessage(error),
       });
     }
@@ -482,6 +496,7 @@ export function createConversationService(options: {
         if (ownedItems.length > 0) {
           warn("[veslo-server] conversation sync read failed; serving host bindings", {
             workspaceId: input.workspace.id,
+            directory: input.directory,
             error: error instanceof Error ? error.message : String(error),
           });
           return { workspaceId: input.workspace.id, items: ownedItems, source: "sqlite" as const };
@@ -552,6 +567,14 @@ export function createConversationService(options: {
         directory: input.directory,
         workspace: input.workspace,
       });
+      if (snapshot.source === "unavailable") {
+        warn("[veslo-server] conversation transcript read unavailable", {
+          workspaceId,
+          directory: input.directory,
+          engineSessionId: opencodeSessionId,
+          diagnostic: snapshot.diagnostic ?? null,
+        });
+      }
       if (snapshot.source === "sqlite") {
         await persistTranscriptSnapshot(
           workspaceId,
@@ -571,6 +594,7 @@ export function createConversationService(options: {
         partsByMessageId: snapshot.partsByMessageId,
         fetchedAt: snapshot.fetchedAt,
         source: snapshot.source,
+        ...(snapshot.diagnostic ? { diagnostic: snapshot.diagnostic } : {}),
       };
     },
 

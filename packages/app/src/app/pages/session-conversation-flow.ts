@@ -590,7 +590,7 @@ export type SessionConversationFlowControllerDeps = {
     setEscapeStopConfirmationPending: (pending: boolean) => void;
   };
   runState: {
-    resetRunState: (sessionKey: string) => void;
+    resetRunState: (sessionKey: string, reason?: string) => void;
     showRunIndicator: () => boolean;
     startRun: (sessionKey: string) => void;
   };
@@ -741,7 +741,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       deps.queue.setQueuePausedForSessionKey(sessionKey, true);
 
       if (deps.runControl.runPhase() === "error" && deps.runControl.hasAbortableBackendRun?.() !== true) {
-        deps.runState.resetRunState(sessionKey);
+        deps.runState.resetRunState(sessionKey, "run-error-clear");
         return;
       }
 
@@ -1185,7 +1185,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         });
         if (showOptimisticSubmit) {
           markMatchingPendingSubmitFailed(aiAccessSubmitBlockedReason);
-          deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
+          deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "ai-access-blocked");
         }
         finishPendingSessionHandoffFailure();
         deps.feedback.setToastMessage(aiAccessSubmitBlockedReason);
@@ -1246,7 +1246,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           if (sessionSubmitNeedsImplicitSkillConfirmation(submitResult)) {
             if (showOptimisticSubmit) {
               clearMatchingPendingSubmit();
-              deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
+              deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "implicit-skill-confirmation");
             }
             finishPendingSessionHandoffFailure();
             return submitResult;
@@ -1257,7 +1257,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               deps.runtime.error() ??
               deps.feedback.tr("session.connect_server_to_attach");
             markMatchingPendingSubmitFailed(errorMessage);
-            deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
+            deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "send-rejected");
           }
           finishPendingSessionHandoffFailure();
           deps.feedback.setToastMessage(
@@ -1329,7 +1329,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               ? error.message
               : deps.feedback.tr("session.connect_server_to_attach"));
           markMatchingPendingSubmitFailed(errorMessage);
-          deps.runState.resetRunState(runStateSessionKeyForHandoffFailure());
+          deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "send-exception");
         }
         finishPendingSessionHandoffFailure();
         deps.trace.reportError(error, "session.sendPrompt");

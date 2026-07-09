@@ -103,6 +103,8 @@ const releaseMacosTauriJob = extractWorkflowJob(releaseWorkflow, "publish-tauri"
 const releaseWindowsTauriJob = extractWorkflowJob(releaseWorkflow, "publish-tauri-windows");
 const releaseVerifyJob = extractWorkflowJob(releaseWorkflow, "verify-release");
 const prereleaseTauriJob = extractWorkflowJob(prereleaseWorkflow, "publish-tauri");
+const buildDesktopWindowsMsiJob = extractWorkflowJob(buildDesktopWorkflow, "build-windows-msi");
+const buildWindowsMsiJob = extractWorkflowJob(buildWindowsMsiWorkflow, "build-windows-msi");
 
 const hasGlitchTipReleaseEnv = (text, options = {}) => {
   const requireStrict = Boolean(options.requireStrict);
@@ -132,6 +134,15 @@ const hasOrderedFragments = (text, fragments) => {
   }
   return true;
 };
+
+const hasForcedSidecarBuild = (text) => /VESLO_SIDECAR_FORCE_BUILD:\s*["']?1["']?/.test(text);
+
+const hasWindowsBundledSidecarHashGate = (text, buildFragment = "Build Windows bundle") =>
+  hasOrderedFragments(text, [
+    buildFragment,
+    "node scripts/release/verify-bundled-versions.mjs",
+    "Verify Windows signatures",
+  ]);
 
 const hasDocumentRuntimeMetadataGate = (text) =>
   /Verify document runtime package metadata/.test(text) &&
@@ -502,6 +513,40 @@ addCheck(
   "Prerelease workflow verifies macOS document runtime before Tauri build",
   hasMacosDocumentRuntimeBundleGate(prereleaseTauriJob),
   ".github/workflows/prerelease.yml#publish-tauri",
+);
+addCheck(
+  "Release desktop jobs force source sidecar rebuilds",
+  hasForcedSidecarBuild(releaseMacosTauriJob) && hasForcedSidecarBuild(releaseWindowsTauriJob),
+  ".github/workflows/release-macos-aarch64.yml#publish-tauri + #publish-tauri-windows",
+);
+addCheck(
+  "Prerelease desktop job forces source sidecar rebuilds",
+  hasForcedSidecarBuild(prereleaseTauriJob),
+  ".github/workflows/prerelease.yml#publish-tauri",
+);
+addCheck(
+  "Manual Windows MSI jobs force source sidecar rebuilds",
+  hasForcedSidecarBuild(buildDesktopWindowsMsiJob) && hasForcedSidecarBuild(buildWindowsMsiJob),
+  ".github/workflows/build-desktop.yml + .github/workflows/build-windows-msi.yml",
+);
+addCheck(
+  "Release Windows workflow verifies bundled sidecar hashes after build",
+  hasWindowsBundledSidecarHashGate(releaseWindowsTauriJob),
+  ".github/workflows/release-macos-aarch64.yml#publish-tauri-windows",
+);
+addCheck(
+  "Prerelease Windows workflow verifies bundled sidecar hashes after build",
+  hasWindowsBundledSidecarHashGate(
+    prereleaseTauriJob,
+    "- name: Build + upload\n        if: matrix.os_type == 'windows'",
+  ),
+  ".github/workflows/prerelease.yml#publish-tauri",
+);
+addCheck(
+  "Manual Windows MSI workflows verify bundled sidecar hashes after build",
+  hasWindowsBundledSidecarHashGate(buildDesktopWindowsMsiJob, "Build Windows MSI") &&
+    hasWindowsBundledSidecarHashGate(buildWindowsMsiJob, "Build Windows MSI"),
+  ".github/workflows/build-desktop.yml + .github/workflows/build-windows-msi.yml",
 );
 const wslInstallerFragmentPath = resolve(
   root,

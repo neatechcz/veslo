@@ -27,9 +27,19 @@ The skill must resolve beta vs production, generate public-safe release notes fr
    - `pnpm --filter @neatech/veslo prepare:sidecar`
    - Windows x64 sidecars must use Bun's `bun-windows-x64-baseline` target so packaged apps run on older supported x64 CPUs.
 4. Commit the version bump.
-5. Tag and push:
-   - `git tag vYYYY.M.P`
-   - `git push origin vYYYY.M.P`
+5. Tag and dispatch the production GitHub Actions release:
+   - `pnpm release:prepare`
+   - `pnpm release:prod`
+
+For a preview without mutating GitHub, use `pnpm release:prod:dry` after the
+release commit is tagged. The lower-level script still accepts an explicit
+`--tag vYYYY.M.P` when rerunning an existing release intentionally.
+
+The production dispatch script runs the manual `Release App`
+`workflow_dispatch` path with `draft=false`, `prerelease=false`,
+`build_tauri=true`, `publish_sidecars=true`, and `publish_npm=true`. This is
+different from relying on a tag push, because tag-push releases are created as
+drafts until assets and updater metadata are ready.
 
 ## Staging/test app release
 
@@ -101,6 +111,8 @@ Use the Apple ID app-specific password path when the Apple Developer account can
 - `gh release view vYYYY.M.P --repo neatechcz/veslo`
 
 Use `pnpm release:review --json` when automating these checks in scripts or agents.
+Use `pnpm release:prod:dry` to preview the exact production workflow dispatch
+before mutating GitHub after the release commit is tagged.
 
 ## npm publishing
 

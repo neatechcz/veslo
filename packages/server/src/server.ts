@@ -3912,6 +3912,7 @@ function createRoutes(
       fetchedAt: snapshot.fetchedAt,
       staleAt: snapshot.staleAt,
       source: snapshot.source,
+      ...(snapshot.diagnostic ? { diagnostic: snapshot.diagnostic } : {}),
     };
   };
 

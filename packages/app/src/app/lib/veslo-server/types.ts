@@ -1284,6 +1284,22 @@ export type VesloSessionLatestRunArtifacts = {
   items: VesloSessionArtifactItem[];
 };
 
+export type VesloConversationReadDiagnostic = {
+  reason: string;
+  workspaceId?: string;
+  directory?: string | null;
+  sessionId?: string | null;
+  missing?: string[];
+  dbPath?: string | null;
+  dbPathExists?: boolean;
+  directoryVariantCount?: number;
+  message?: string;
+  invalidMessageJsonRows?: number;
+  invalidPartJsonRows?: number;
+  messageRowCount?: number;
+  partRowCount?: number;
+};
+
 export type VesloSessionTranscriptSnapshot = {
   workspaceId: string;
   sessionId: string;
@@ -1296,6 +1312,7 @@ export type VesloSessionTranscriptSnapshot = {
   fetchedAt?: number;
   staleAt?: number;
   source?: "sqlite" | "unavailable";
+  diagnostic?: VesloConversationReadDiagnostic;
 };
 
 export type VesloSessionTranscriptPrefetchInput = {
@@ -1337,6 +1354,7 @@ export type VesloConversationList = {
     branchId?: string | null;
   }>;
   source?: "sqlite" | "unavailable";
+  diagnostic?: VesloConversationReadDiagnostic;
 };
 
 export type VesloConversationCreateResult = Session & {

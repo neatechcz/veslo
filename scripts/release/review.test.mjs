@@ -148,3 +148,58 @@ test("release review verifies document runtime metadata preflight and desktop bu
   assert.match(reviewSource, /hasWindowsDocumentRuntimeBundleGate\(releaseWindowsTauriJob\)/);
   assert.match(reviewSource, /hasMacosDocumentRuntimeBundleGate\(prereleaseTauriJob\)/);
 });
+
+test("release review verifies installer workflows force sidecar rebuilds from source", () => {
+  const scriptPath = resolve(import.meta.dirname, "./review.mjs");
+  const output = execFileSync("node", [scriptPath, "--json"], {
+    cwd: resolve(import.meta.dirname, "../.."),
+    encoding: "utf8",
+  });
+
+  const report = JSON.parse(output);
+  for (const label of [
+    "Release desktop jobs force source sidecar rebuilds",
+    "Prerelease desktop job forces source sidecar rebuilds",
+    "Manual Windows MSI jobs force source sidecar rebuilds",
+    "Release Windows workflow verifies bundled sidecar hashes after build",
+    "Prerelease Windows workflow verifies bundled sidecar hashes after build",
+    "Manual Windows MSI workflows verify bundled sidecar hashes after build",
+  ]) {
+    const check = report.checks.find((entry) => entry.label === label);
+    assert.ok(check, `expected release review to report: ${label}`);
+    assert.equal(check.ok, true);
+  }
+
+  const releaseWorkflow = readFileSync(
+    resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml"),
+    "utf8",
+  );
+  const prereleaseWorkflow = readFileSync(
+    resolve(import.meta.dirname, "../../.github/workflows/prerelease.yml"),
+    "utf8",
+  );
+  const buildDesktopWorkflow = readFileSync(
+    resolve(import.meta.dirname, "../../.github/workflows/build-desktop.yml"),
+    "utf8",
+  );
+  const buildWindowsMsiWorkflow = readFileSync(
+    resolve(import.meta.dirname, "../../.github/workflows/build-windows-msi.yml"),
+    "utf8",
+  );
+
+  assert.match(releaseWorkflow, /publish-tauri:[\s\S]*?VESLO_SIDECAR_FORCE_BUILD:\s*"1"[\s\S]*?publish-tauri-windows:[\s\S]*?VESLO_SIDECAR_FORCE_BUILD:\s*"1"/);
+  assert.match(releaseWorkflow, /Build Windows bundle[\s\S]*?verify-bundled-versions\.mjs[\s\S]*?Verify Windows signatures/);
+  assert.match(prereleaseWorkflow, /publish-tauri:[\s\S]*?VESLO_SIDECAR_FORCE_BUILD:\s*"1"/);
+  assert.match(prereleaseWorkflow, /Build \+ upload[\s\S]*?if: matrix\.os_type == 'windows'[\s\S]*?verify-bundled-versions\.mjs[\s\S]*?Verify Windows signatures/);
+  assert.match(buildDesktopWorkflow, /build-windows-msi:[\s\S]*?VESLO_SIDECAR_FORCE_BUILD:\s*"1"/);
+  assert.match(buildDesktopWorkflow, /Build Windows MSI[\s\S]*?verify-bundled-versions\.mjs[\s\S]*?Verify Windows signatures/);
+  assert.match(buildWindowsMsiWorkflow, /build-windows-msi:[\s\S]*?VESLO_SIDECAR_FORCE_BUILD:\s*"1"/);
+  assert.match(buildWindowsMsiWorkflow, /Build Windows MSI[\s\S]*?verify-bundled-versions\.mjs[\s\S]*?Verify Windows signatures/);
+
+  const reviewSource = readFileSync(scriptPath, "utf8");
+  assert.match(reviewSource, /hasForcedSidecarBuild\(releaseMacosTauriJob\)/);
+  assert.match(reviewSource, /hasForcedSidecarBuild\(releaseWindowsTauriJob\)/);
+  assert.match(reviewSource, /hasForcedSidecarBuild\(prereleaseTauriJob\)/);
+  assert.match(reviewSource, /hasWindowsBundledSidecarHashGate\(releaseWindowsTauriJob\)/);
+  assert.match(reviewSource, /hasWindowsBundledSidecarHashGate\(\s*prereleaseTauriJob/);
+});

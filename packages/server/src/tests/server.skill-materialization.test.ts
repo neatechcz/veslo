@@ -1786,7 +1786,13 @@ test("GET workspace materialization status does not require sync when registry h
     registryConfigured: boolean;
     workspaceRegistryConfigured: boolean;
     reloadRequired: boolean;
-    registryError?: { code?: string; status?: number };
+    registryError?: {
+      code?: string;
+      status?: number;
+      registryAction?: string;
+      registryResource?: string;
+      registryScope?: string;
+    };
   };
   expect(payload).toMatchObject({
     status: "not-configured",
@@ -1796,6 +1802,9 @@ test("GET workspace materialization status does not require sync when registry h
     registryError: {
       code: "skill_registry_not_found",
       status: 404,
+      registryAction: "read",
+      registryResource: "workspace-skill-set",
+      registryScope: "workspace",
     },
   });
   expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
@@ -1823,7 +1832,13 @@ test("GET workspace materialization status degrades when registry lookup fails",
     status: string;
     registryConfigured: boolean;
     reloadRequired: boolean;
-    registryError?: { code?: string; status?: number };
+    registryError?: {
+      code?: string;
+      status?: number;
+      registryAction?: string;
+      registryResource?: string;
+      registryScope?: string;
+    };
   };
   expect(payload).toMatchObject({
     status: "degraded",
@@ -1832,6 +1847,9 @@ test("GET workspace materialization status degrades when registry lookup fails",
     registryError: {
       code: "skill_registry_fetch_failed",
       status: 502,
+      registryAction: "read",
+      registryResource: "workspace-skill-set",
+      registryScope: "workspace",
     },
   });
   expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
@@ -1866,7 +1884,13 @@ test("POST workspace materialization sync degrades when configured registry does
     reloadRequired: boolean;
     registryConfigured: boolean;
     workspaceRegistryConfigured: boolean;
-    registryError?: { code?: string; status?: number };
+    registryError?: {
+      code?: string;
+      status?: number;
+      registryAction?: string;
+      registryResource?: string;
+      registryScope?: string;
+    };
   };
   expect(payload).toMatchObject({
     status: "degraded",
@@ -1877,9 +1901,78 @@ test("POST workspace materialization sync degrades when configured registry does
     registryError: {
       code: "skill_registry_not_found",
       status: 404,
+      registryAction: "read",
+      registryResource: "workspace-skill-set",
+      registryScope: "workspace",
     },
   });
   expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
+});
+
+test("POST workspace materialization sync surfaces a missing required registry package", async () => {
+  const registryCalls: string[] = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      registryCalls.push(url.pathname);
+      if (url.pathname === "/v1/workspaces/ws_1/skill-set") {
+        return Response.json({
+          workspaceId: "ws_1",
+          skillSetId: "skill_set_missing_package",
+          revision: "rev_missing_package",
+          skills: [
+            {
+              installationId: "install_missing_package",
+              skillId: "skill_missing_package",
+              versionId: "version_missing_package",
+              enabled: true,
+              source: "workspace",
+              installedAt: "2026-05-26T10:00:00.000Z",
+              workspaceId: "ws_1",
+            },
+          ],
+        });
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const { server } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`, {
+    method: "POST",
+    headers: {
+      "x-veslo-host-token": "host-token",
+      "x-veslo-den-org-id": "org_1",
+      "x-veslo-den-user-id": "user_1",
+    },
+  });
+
+  expect(response.status).toBe(404);
+  const payload = await response.json() as {
+    code?: string;
+    details?: {
+      status?: number;
+      registryAction?: string;
+      registryResource?: string;
+      registryScope?: string;
+    };
+  };
+  expect(payload).toMatchObject({
+    code: "skill_registry_not_found",
+    details: {
+      status: 404,
+      registryAction: "download",
+      registryResource: "skill-package",
+      registryScope: "skill-version",
+    },
+  });
+  expect(registryCalls).toEqual([
+    "/v1/workspaces/ws_1/skill-set",
+    "/v1/skill-versions/version_missing_package/package",
+  ]);
 });
 
 test("POST workspace materialization sync resolves org skill sets, writes lockfile, and blocks personal global shadows", async () => {

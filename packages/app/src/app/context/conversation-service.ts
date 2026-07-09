@@ -6,6 +6,7 @@ import {
   type VesloConversationAbortInput,
   type VesloConversationAbortResult,
   type VesloConversationCreateResult,
+  type VesloConversationReadDiagnostic,
   type VesloConversationRunInput,
   type VesloConversationRunResult,
   type VesloConversationRunStatusResult,
@@ -38,6 +39,7 @@ export type ConversationServiceClient = {
     workspaceId: string;
     items: Array<Session & { conversationId?: string | null; opencodeSessionId?: string | null }>;
     source?: "sqlite" | "unavailable";
+    diagnostic?: VesloConversationReadDiagnostic;
   }>;
   importConversations: (
     workspaceId: string,
@@ -175,7 +177,7 @@ function conversationPreflightContractDiagnostics(preflight: unknown): Record<st
   };
 }
 
-export type ConversationServiceRunOptions<Client extends ConversationServiceClient = ConversationServiceClient> = {
+export type ConversationRunSubmitOptions<Client extends ConversationServiceClient = ConversationServiceClient> = {
   sendTraceId?: string | null;
   preflight?: ConversationSendPreflightContext<Client>;
   targetWorkspace?: SendTargetWorkspaceScope | null;
@@ -193,6 +195,7 @@ export type ConversationPassiveReadPolicy = {
   reason: string;
   workspaceId?: string | null;
   directory?: string | null;
+  serverStartRecoveryKey?: string | null;
 };
 
 type ConversationManagedProfile = {
@@ -208,6 +211,8 @@ type ConversationEngineInfo = {
   opencodeUsername?: string | null;
   opencodePassword?: string | null;
 };
+
+const ACTIVE_LIVE_READ_RECOVERY_START_TTL_MS = 30_000;
 
 export type ConversationServiceDeps<Client extends ConversationServiceClient = ConversationServiceClient> = {
   vesloServerClient: () => Client | null;
@@ -339,7 +344,11 @@ export function createConversationService<Client extends ConversationServiceClie
   };
 
   const passiveReadPolicyAllowsServerStart = (policy: ConversationPassiveReadPolicy | undefined) =>
-    policy?.intent === "write-follow-up" || policy?.intent === "write-control";
+    policy?.intent === "write-follow-up" ||
+    policy?.intent === "write-control" ||
+    Boolean(policy?.serverStartRecoveryKey?.trim());
+
+  const activeLiveReadRecoveryStartedAtByKey = new Map<string, number>();
 
   const recordPassiveServerStartDeclined = (policy: ConversationPassiveReadPolicy | undefined) => {
     deps.recordSendTrace("conversation-read:server-start-declined", {
@@ -369,7 +378,33 @@ export function createConversationService<Client extends ConversationServiceClie
       return null;
     }
 
+    const recoveryKey = policy?.serverStartRecoveryKey?.trim() ?? "";
+    if (recoveryKey) {
+      const previousAttemptAt = activeLiveReadRecoveryStartedAtByKey.get(recoveryKey) ?? 0;
+      const now = Date.now();
+      if (previousAttemptAt > 0 && now - previousAttemptAt < ACTIVE_LIVE_READ_RECOVERY_START_TTL_MS) {
+        deps.recordSendTrace("conversation-read:server-start-recovery-skipped", {
+          reason: "bounded-recovery-window",
+          intent: policy?.intent ?? "unspecified",
+          workspaceId: policy?.workspaceId ?? null,
+          directory: policy?.directory ?? null,
+          vesloServerStatus: deps.vesloServerStatus(),
+        });
+        return null;
+      }
+      activeLiveReadRecoveryStartedAtByKey.set(recoveryKey, now);
+      deps.recordSendTrace("conversation-read:server-start-recovery-attempt", {
+        reason: policy?.reason ?? "unspecified",
+        intent: policy?.intent ?? "unspecified",
+        workspaceId: policy?.workspaceId ?? null,
+        directory: policy?.directory ?? null,
+        vesloServerStatus: deps.vesloServerStatus(),
+      });
+    }
+
+    let attemptedServerStart = false;
     if (deps.isTauriRuntime() && deps.startupPreference() !== "server" && deps.vesloServerStatus() === "disconnected") {
+      attemptedServerStart = true;
       await deps.ensureLocalVesloServerRunning().catch((error) => {
         deps.wsDebug("conversation-read:server-start:failed", {
           error: error instanceof Error ? error.message : safeStringify(error),
@@ -379,7 +414,7 @@ export function createConversationService<Client extends ConversationServiceClie
     }
     if (serverClient) return serverClient;
 
-    if (deps.isTauriRuntime()) {
+    if (deps.isTauriRuntime() && !attemptedServerStart) {
       await deps.ensureLocalVesloServerRunning().catch((error) => {
         deps.wsDebug("conversation-read:server-start:failed", {
           error: error instanceof Error ? error.message : safeStringify(error),
@@ -736,6 +771,15 @@ export function createConversationService<Client extends ConversationServiceClie
     const result = await serverClient.listConversations(serverWorkspaceId, directory, {
       sync: options?.sync === true,
     });
+    if (result.source === "unavailable") {
+      deps.recordSendTrace("listConversationsFromVesloReadApi:unavailable", {
+        workspaceId,
+        serverWorkspaceId,
+        directory: directory ?? null,
+        sync: options?.sync === true,
+        diagnostic: result.diagnostic ?? null,
+      });
+    }
     deps.rememberConversationScopesFromSessions(workspaceId, directory, result.items);
     return { ...result, serverWorkspaceId };
   };
@@ -767,17 +811,32 @@ export function createConversationService<Client extends ConversationServiceClie
     sessionId: string,
     limit: number,
     directory?: string,
+    options?: { activeVisibleSelectedSession?: boolean },
   ) => {
+    const recoveryKey = options?.activeVisibleSelectedSession
+      ? [workspaceId.trim(), directory?.trim() ?? "", sessionId.trim()].join("\0")
+      : "";
     const serverClient = await resolvePassiveConversationReadClient({
       intent: "live-read",
       reason: "getTranscriptFromVesloReadApi",
       workspaceId,
       directory,
+      serverStartRecoveryKey: recoveryKey,
     });
     if (!serverClient) return null;
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
     if (!serverWorkspaceId) return null;
     const snapshot = await serverClient.getSessionTranscript(serverWorkspaceId, sessionId, limit, directory);
+    if (snapshot.source === "unavailable") {
+      deps.recordSendTrace("getTranscriptFromVesloReadApi:unavailable", {
+        workspaceId,
+        serverWorkspaceId,
+        sessionId,
+        directory: directory ?? null,
+        limit,
+        diagnostic: snapshot.diagnostic ?? null,
+      });
+    }
     deps.rememberConversationScopeFromTranscript(workspaceId, directory, snapshot);
     return snapshot;
   };
@@ -934,10 +993,10 @@ export function createConversationService<Client extends ConversationServiceClie
     return result;
   };
 
-  const runConversationFromVesloWriteApi = async (
+  const submitConversationRunViaVesloWriteApi = async (
     sessionId: string,
     input: VesloConversationRunInput,
-    options: ConversationServiceRunOptions<Client> = {},
+    options: ConversationRunSubmitOptions<Client> = {},
   ): Promise<VesloConversationRunResult | null> => {
     const traceId = options.preflight?.traceId || options.sendTraceId?.trim() || deps.activeSendTraceId() || "";
     const tracePayload = traceId ? { traceId } : undefined;
@@ -953,7 +1012,7 @@ export function createConversationService<Client extends ConversationServiceClie
     const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() || "";
     const workspaceId = scopeWorkspaceId || targetWorkspaceId;
     if (!workspaceId) {
-      deps.recordSendTrace("runConversationFromVesloWriteApi:blocked-missing-workspace-scope", {
+      deps.recordSendTrace("submitConversationRunViaVesloWriteApi:blocked-missing-workspace-scope", {
         ...(tracePayload ?? {}),
         ...conversationPreflightContractDiagnostics(options.preflight),
         sessionId: normalizedSessionId,
@@ -965,7 +1024,7 @@ export function createConversationService<Client extends ConversationServiceClie
       throw new Error("Conversation run requires a scoped workspace.");
     }
     if (scopeWorkspaceId && targetWorkspaceId && scopeWorkspaceId !== targetWorkspaceId) {
-      deps.recordSendTrace("runConversationFromVesloWriteApi:blocked-workspace-scope-mismatch", {
+      deps.recordSendTrace("submitConversationRunViaVesloWriteApi:blocked-workspace-scope-mismatch", {
         ...(tracePayload ?? {}),
         ...conversationPreflightContractDiagnostics(options.preflight),
         sessionId: normalizedSessionId,
@@ -985,7 +1044,7 @@ export function createConversationService<Client extends ConversationServiceClie
       "";
     const directory = scopedDirectory || workspaceRoot;
     if (!directory) {
-      deps.recordSendTrace("runConversationFromVesloWriteApi:blocked-missing-directory", {
+      deps.recordSendTrace("submitConversationRunViaVesloWriteApi:blocked-missing-directory", {
         ...(tracePayload ?? {}),
         ...conversationPreflightContractDiagnostics(options.preflight),
         sessionId: normalizedSessionId,
@@ -999,7 +1058,7 @@ export function createConversationService<Client extends ConversationServiceClie
       throw new Error("Conversation directory is required.");
     }
 
-    deps.recordSendTrace("runConversationFromVesloWriteApi:start", {
+    deps.recordSendTrace("submitConversationRunViaVesloWriteApi:start", {
       ...(tracePayload ?? {}),
       ...conversationPreflightContractDiagnostics(options.preflight),
       sessionId: normalizedSessionId,
@@ -1023,16 +1082,16 @@ export function createConversationService<Client extends ConversationServiceClie
       workspaceId,
       directory,
       options.preflight,
-      "runConversationFromVesloWriteApi",
+      "submitConversationRunViaVesloWriteApi",
     );
     if (!resolution) {
-      deps.recordSendTrace("runConversationFromVesloWriteApi:unavailable", tracePayload);
+      deps.recordSendTrace("submitConversationRunViaVesloWriteApi:unavailable", tracePayload);
       return null;
     }
     if (expectAiGatewayStart && deps.ensureManagedAiRuntimeAuthorizationForSend) {
       const targetForRuntimeAuthorization = targetWorkspace ?? options.preflight?.targetWorkspace ?? null;
       const runtimeAuthorizationReady = await deps.sendTraceStep(
-        "runConversationFromVesloWriteApi:managed-ai-runtime-auth-prime",
+        "submitConversationRunViaVesloWriteApi:managed-ai-runtime-auth-prime",
         () => deps.ensureManagedAiRuntimeAuthorizationForSend!(targetForRuntimeAuthorization),
         {
           ...(tracePayload ?? {}),
@@ -1044,7 +1103,7 @@ export function createConversationService<Client extends ConversationServiceClie
       const authPrimeDiagnostic = runtimeAuthorizationReady
         ? null
         : deps.managedAiRuntimeAuthorizationPrimeDiagnostic?.() ?? null;
-      deps.recordSendTrace("runConversationFromVesloWriteApi:managed-ai-runtime-auth-prime:result", {
+      deps.recordSendTrace("submitConversationRunViaVesloWriteApi:managed-ai-runtime-auth-prime:result", {
         ...(tracePayload ?? {}),
         workspaceId,
         serverWorkspaceId: resolution.serverWorkspaceId,
@@ -1058,7 +1117,7 @@ export function createConversationService<Client extends ConversationServiceClie
     }
     const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
     const result = await deps.sendTraceStep(
-      "runConversationFromVesloWriteApi:run",
+      "submitConversationRunViaVesloWriteApi:run",
       () => resolution.serverClient.runConversation(
         resolution.serverWorkspaceId,
         conversationId,
@@ -1371,7 +1430,7 @@ export function createConversationService<Client extends ConversationServiceClie
     getTranscriptFromVesloReadApi,
     createConversationFromVesloWriteApi,
     submitConversationFromVesloWriteApi,
-    runConversationFromVesloWriteApi,
+    submitConversationRunViaVesloWriteApi,
     resolveConversationAbortScope,
     abortConversationFromVesloWriteApi,
     resolveConversationRunForSession,

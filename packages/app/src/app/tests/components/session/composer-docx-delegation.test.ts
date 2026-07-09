@@ -95,7 +95,7 @@ test("all attachment staging happens in session-directory send pipeline, not in 
 
   assert.match(
     conversationRunCompatibilityBridgeSource(),
-    /const routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
+    /let routedDraft = deps\.routeStagedAttachmentsForModel\(\{\s*draft: resolvedDraft,\s*stagedAttachments,\s*model,\s*providers: deps\.providers\(\),\s*\}\);/s,
     "send pipeline should route staged attachments only after it knows the selected model capabilities",
   );
 

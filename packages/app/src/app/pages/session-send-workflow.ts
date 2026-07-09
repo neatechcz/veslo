@@ -202,7 +202,7 @@ export type ConversationRunCompatibilityBridgeOptions = {
   agentForSession: (sessionId: string | null | undefined) => string | null | undefined;
   buildCommandFileParts: (draft: ComposerDraft) => SessionAttachmentFilePartInput[];
   buildPromptParts: (draft: ComposerDraft) => SessionAttachmentPartInput[];
-  compactCurrentSession: (sessionId?: string) => Promise<unknown>;
+  submitCurrentSessionCompaction: (sessionId?: string) => Promise<unknown>;
   developerMode: () => boolean;
   emitLiveTranscriptPolicyEvent: (event: LiveTranscriptReadPolicyEvent) => void;
   finishPerf: (
@@ -253,7 +253,7 @@ export type ConversationRunCompatibilityBridgeOptions = {
     error?: string;
   };
   routedClientForSendTarget: (targetWorkspace?: SendTargetWorkspaceScope | null) => Client | null;
-  runConversationFromVesloWriteApi: (
+  submitConversationRunViaVesloWriteApi: (
     sessionId: string,
     input: VesloConversationRunInput,
     options?: {
@@ -751,7 +751,7 @@ export function createConversationRunCompatibilityBridge(
           clientMessageId: input.sendCorrelation.clientMessageId,
           origin: input.sendCorrelation.origin,
         };
-        const submitConversationRun = async () => deps.runConversationFromVesloWriteApi(
+        const submitConversationRun = async () => deps.submitConversationRunViaVesloWriteApi(
           materializedSessionID,
           inputWithCorrelation,
           {
@@ -840,7 +840,7 @@ export function createConversationRunCompatibilityBridge(
         });
       } else if (resolvedDraft.command || input.compactCommand) {
         if (input.compactCommand) {
-          await deps.compactCurrentSession(sessionID);
+          await deps.submitCurrentSessionCompaction(sessionID);
           deps.finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
             sessionID,
             mode: resolvedDraft.mode,
@@ -1223,16 +1223,16 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       }
     };
     const hasExplicitDraft = Boolean(draft);
-    const fallbackDraft = deps.composerDraft();
-    const fallbackText = fallbackDraft.text.trim();
-    const fallbackResolvedText = (fallbackDraft.resolvedText ?? fallbackDraft.text).trim();
+    const composerDraftSnapshot = deps.composerDraft();
+    const composerText = composerDraftSnapshot.text.trim();
+    const composerResolvedText = (composerDraftSnapshot.resolvedText ?? composerDraftSnapshot.text).trim();
     let resolvedDraft: ComposerDraft = draft ?? {
-      mode: fallbackDraft.mode,
-      parts: fallbackDraft.parts.length ? fallbackDraft.parts : (fallbackText ? [{ type: "text", text: fallbackText } as ComposerPart] : []),
-      attachments: fallbackDraft.attachments,
-      text: fallbackText,
-      resolvedText: fallbackResolvedText || undefined,
-      command: fallbackDraft.command,
+      mode: composerDraftSnapshot.mode,
+      parts: composerDraftSnapshot.parts.length ? composerDraftSnapshot.parts : (composerText ? [{ type: "text", text: composerText } as ComposerPart] : []),
+      attachments: composerDraftSnapshot.attachments,
+      text: composerText,
+      resolvedText: composerResolvedText || undefined,
+      command: composerDraftSnapshot.command,
     };
 
     const preflightContent = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();

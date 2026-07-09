@@ -1003,7 +1003,7 @@ export default function App() {
     getTranscriptFromVesloReadApi,
     createConversationFromVesloWriteApi,
     submitConversationFromVesloWriteApi,
-    runConversationFromVesloWriteApi,
+    submitConversationRunViaVesloWriteApi,
     resolveConversationAbortScope,
     abortConversationFromVesloWriteApi,
     resolveConversationRunForSession,
@@ -1083,6 +1083,7 @@ export default function App() {
         sessionId,
         limit,
         transcriptDirectory || undefined,
+        { activeVisibleSelectedSession: selectedSessionId()?.trim() === sessionId.trim() },
       );
       if (!snapshot) {
         return { status: "unavailable" as const, scope, reason: "veslo-read-api-unavailable" };
@@ -1779,7 +1780,7 @@ export default function App() {
   });
 
   const retryLastPrompt = sessionMutationWorkflow.retryLastPrompt;
-  const compactCurrentSession = sessionMutationWorkflow.compactCurrentSession;
+  const submitCurrentSessionCompaction = sessionMutationWorkflow.submitCurrentSessionCompaction;
   const replaceUserMessage = sessionMutationWorkflow.replaceUserMessage;
   const undoLastUserMessage = sessionMutationWorkflow.undoLastUserMessage;
   const redoLastUserMessage = sessionMutationWorkflow.redoLastUserMessage;
@@ -1794,7 +1795,7 @@ export default function App() {
 
     setAutoCompactingSessionId(sessionID);
     try {
-      await compactCurrentSession(sessionID);
+      await submitCurrentSessionCompaction(sessionID);
     } catch {
       // ignore auto-compaction failures; manual compact remains available
     } finally {
@@ -4149,7 +4150,7 @@ export default function App() {
       registerPendingInitialSessionTitle(result.sessionId, result.initialTitle);
     }
     if (result.workspaceScope.workspaceId) {
-      rememberConversationScope({
+      setSessionBrowseScope({
         sessionId: result.sessionId,
         workspaceId: result.workspaceScope.workspaceId,
         workspaceRoot: result.workspaceScope.workspaceRoot,
@@ -4783,7 +4784,7 @@ export default function App() {
     abortSession,
     undoLastUserMessage,
     redoLastUserMessage,
-    compactCurrentSession,
+    submitCurrentSessionCompaction,
     lastPromptSent,
     retryLastPrompt,
     selectedSessionDisplayTitle,

@@ -385,11 +385,27 @@ export function createConversationReadStore(): ConversationReadStore {
       const workspaceId = normalizeId(input.workspaceId);
       const directory = input.directory?.trim() ?? "";
       if (!workspaceId || !directory) {
-        return { workspaceId, items: [], source: "unavailable" };
+        return {
+          workspaceId,
+          items: [],
+          source: "unavailable",
+          diagnostic: {
+            reason: "missing_scope",
+            workspaceId,
+            directory: directory || null,
+            missing: [
+              ...(!workspaceId ? ["workspaceId" as const] : []),
+              ...(!directory ? ["directory" as const] : []),
+            ],
+          },
+        };
       }
 
-      const db = openReadOnlyDatabase({ workspaceId, workspace: input.workspace });
-      if (!db) return { workspaceId, items: [], source: "unavailable" };
+      const opened = openReadOnlyDatabase({ workspaceId, directory, workspace: input.workspace });
+      if (!opened.db) {
+        return { workspaceId, items: [], source: "unavailable", diagnostic: opened.diagnostic };
+      }
+      const { db, dbPath } = opened;
 
       try {
         const { directories, lowerDirectories } = directoryLookupArgs(directory);
@@ -423,7 +439,19 @@ export function createConversationReadStore(): ConversationReadStore {
         };
       } catch (error) {
         if (isOpenCodeReadSchemaUnavailableError(error)) {
-          return { workspaceId, items: [], source: "unavailable" };
+          return {
+            workspaceId,
+            items: [],
+            source: "unavailable",
+            diagnostic: {
+              reason: "schema_unavailable",
+              workspaceId,
+              directory,
+              dbPath,
+              dbPathExists: true,
+              message: errorMessage(error),
+            },
+          };
         }
         throw error;
       } finally {
@@ -446,11 +474,26 @@ export function createConversationReadStore(): ConversationReadStore {
       };
 
       if (!workspaceId || !sessionId || !directory) {
-        return { ...empty, source: "unavailable" };
+        return {
+          ...empty,
+          source: "unavailable",
+          diagnostic: {
+            reason: "missing_scope",
+            workspaceId,
+            sessionId,
+            directory: directory || null,
+            missing: [
+              ...(!workspaceId ? ["workspaceId" as const] : []),
+              ...(!sessionId ? ["sessionId" as const] : []),
+              ...(!directory ? ["directory" as const] : []),
+            ],
+          },
+        };
       }
 
-      const db = openReadOnlyDatabase({ workspaceId, workspace: input.workspace });
-      if (!db) return { ...empty, source: "unavailable" };
+      const opened = openReadOnlyDatabase({ workspaceId, directory, sessionId, workspace: input.workspace });
+      if (!opened.db) return { ...empty, source: "unavailable", diagnostic: opened.diagnostic };
+      const { db, dbPath } = opened;
 
       try {
         const { directories, lowerDirectories } = directoryLookupArgs(directory);
@@ -468,7 +511,21 @@ export function createConversationReadStore(): ConversationReadStore {
         // directory form differs from the browse path). This is "could not
         // locate", not "empty conversation" — report unavailable so the app
         // does not render a misleading empty transcript as a finished read.
-        if (!session) return { ...empty, source: "unavailable" };
+        if (!session) {
+          return {
+            ...empty,
+            source: "unavailable",
+            diagnostic: {
+              reason: "session_not_found",
+              workspaceId,
+              sessionId,
+              directory,
+              dbPath,
+              dbPathExists: true,
+              directoryVariantCount: directories.length + lowerDirectories.length,
+            },
+          };
+        }
 
         const messageRows = db
           .query<MessageRow, [string, number]>(
@@ -483,8 +540,12 @@ export function createConversationReadStore(): ConversationReadStore {
           )
           .all(sessionId);
 
+        const counters: JsonParseCounters = {
+          invalidMessageJsonRows: 0,
+          invalidPartJsonRows: 0,
+        };
         const messages = messageRows
-          .map(normalizeMessage)
+          .map((row) => normalizeMessage(row, counters))
           .filter((message): message is Record<string, unknown> => Boolean(message));
         const messageIds = new Set(
           messages
@@ -493,7 +554,7 @@ export function createConversationReadStore(): ConversationReadStore {
         );
         const partsByMessageId: Record<string, unknown[]> = {};
         for (const row of partRows) {
-          const part = normalizePart(row);
+          const part = normalizePart(row, counters);
           if (!part) continue;
           const messageId = typeof part.messageID === "string" ? part.messageID.trim() : "";
           if (!messageId || !messageIds.has(messageId)) continue;
@@ -509,10 +570,38 @@ export function createConversationReadStore(): ConversationReadStore {
           partsByMessageId,
           fetchedAt: Date.now(),
           source: "sqlite",
+          ...((counters.invalidMessageJsonRows > 0 || counters.invalidPartJsonRows > 0)
+            ? {
+                diagnostic: {
+                  reason: "malformed_json" as const,
+                  workspaceId,
+                  sessionId,
+                  directory,
+                  dbPath,
+                  dbPathExists: true,
+                  invalidMessageJsonRows: counters.invalidMessageJsonRows,
+                  invalidPartJsonRows: counters.invalidPartJsonRows,
+                  messageRowCount: messageRows.length,
+                  partRowCount: partRows.length,
+                },
+              }
+            : {}),
         };
       } catch (error) {
         if (isOpenCodeReadSchemaUnavailableError(error)) {
-          return { ...empty, source: "unavailable" };
+          return {
+            ...empty,
+            source: "unavailable",
+            diagnostic: {
+              reason: "schema_unavailable",
+              workspaceId,
+              sessionId,
+              directory,
+              dbPath,
+              dbPathExists: true,
+              message: errorMessage(error),
+            },
+          };
         }
         throw error;
       } finally {
