@@ -256,7 +256,7 @@ test("passes per-request Codex auth JSON to the worker runner", async () => {
   assert.equal(response.status, 200)
 })
 
-test("includes worker stderr tail when the Codex CLI exits unsuccessfully", async () => {
+test("keeps Codex authentication failures as worker failures", async () => {
   const transport = new CodexCliWorkerTransport({
     spawnCodex: async () => ({
       exitCode: 1,
@@ -264,7 +264,7 @@ test("includes worker stderr tail when the Codex CLI exits unsuccessfully", asyn
       timedOut: false,
       finalMessage: "",
       stdout: "",
-      stderr: "Error: Please run `codex login`.\nAuthentication required.\n",
+      stderr: "Error running model gpt-5.6-sol: codex login required.\nAuthentication required.\n",
     }),
   })
 
@@ -272,7 +272,7 @@ test("includes worker stderr tail when the Codex CLI exits unsuccessfully", asyn
     () =>
       transport.chatCompletions({
         body: {
-          model: "gpt-5.4",
+          model: "gpt-5.6-sol",
           messages: [{ role: "user", content: "Say ok" }],
         },
       }),
@@ -283,14 +283,14 @@ test("includes worker stderr tail when the Codex CLI exits unsuccessfully", asyn
         error: "codex_worker_failed",
         timedOut: false,
         exitCode: 1,
-        stderrTail: "Error: Please run `codex login`.\nAuthentication required.",
+        stderrTail: "Error running model gpt-5.6-sol: codex login required.\nAuthentication required.",
       })
       return true
     },
   )
 })
 
-test("returns an actionable runtime incompatibility error when gpt-5.5 is unsupported", async () => {
+test("returns an actionable runtime incompatibility error for an unsupported requested model", async () => {
   const transport = new CodexCliWorkerTransport({
     spawnCodex: async () => ({
       exitCode: 1,
@@ -298,7 +298,7 @@ test("returns an actionable runtime incompatibility error when gpt-5.5 is unsupp
       timedOut: false,
       finalMessage: "",
       stdout: "",
-      stderr: "Error: unknown model gpt-5.5\n",
+      stderr: "Error: unknown model gpt-5.6-sol\n",
     }),
   })
 
@@ -306,7 +306,7 @@ test("returns an actionable runtime incompatibility error when gpt-5.5 is unsupp
     () =>
       transport.chatCompletions({
         body: {
-          model: "gpt-5.5",
+          model: "gpt-5.6-sol",
           messages: [{ role: "user", content: "Say ok" }],
         },
       }),
@@ -323,7 +323,7 @@ test("returns an actionable runtime incompatibility error when gpt-5.5 is unsupp
       }
       assert.equal(body.error?.code, "codex_runtime_incompatible")
       assert.equal(body.error?.type, "runtime_incompatible")
-      assert.match(body.error?.message ?? "", /gpt-5\.5/)
+      assert.match(body.error?.message ?? "", /gpt-5\.6-sol/)
       return true
     },
   )

@@ -86,7 +86,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
     const result = await this.spawnCodex({ prompt, model, authJson })
     if (result.exitCode !== 0 || result.timedOut || !result.finalMessage.trim()) {
       const stderrTail = summarizeWorkerStderr(result.stderr)
-      if (isGpt55RuntimeIncompatibility({ model, stderrTail })) {
+      if (isRequestedModelRuntimeIncompatibility({ model, stderrTail })) {
         throw new ProviderTransportError("codex_runtime_incompatible", {
           statusCode: 502,
           code: "codex_runtime_incompatible",
@@ -308,11 +308,21 @@ function parseJsonRecord(text: string): Record<string, unknown> | null {
   }
 }
 
-function isGpt55RuntimeIncompatibility(input: { model: string; stderrTail: string | null }): boolean {
-  if (input.model.trim().toLowerCase() !== "gpt-5.5") return false
+function isRequestedModelRuntimeIncompatibility(input: { model: string; stderrTail: string | null }): boolean {
+  const model = input.model.trim().toLowerCase()
   const stderr = input.stderrTail?.toLowerCase() ?? ""
-  if (!stderr || !stderr.includes("gpt-5.5")) return false
-  return /(unknown|unsupported|not supported|not found|invalid|unrecognized|unavailable)/.test(stderr)
+  if (!model || model === "unknown" || !stderr) return false
+
+  const escapedModel = model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const mentionsRequestedModel = new RegExp(
+    `(?:^|[^a-z0-9._-])${escapedModel}(?=$|[^a-z0-9._-])`,
+    "i",
+  ).test(stderr)
+  if (!mentionsRequestedModel) return false
+
+  const unsupportedModelSignal =
+    /\b(?:unknown|unsupported|not supported|not found|invalid|unrecognized|unavailable)\s+(?:requested\s+)?model\b|\b(?:requested\s+)?model\b[^\r\n]{0,200}\b(?:unknown|unsupported|not supported|not found|invalid|unrecognized|unavailable)\b/
+  return unsupportedModelSignal.test(stderr)
 }
 
 function buildCodexRuntimeIncompatibleBody(input: {
