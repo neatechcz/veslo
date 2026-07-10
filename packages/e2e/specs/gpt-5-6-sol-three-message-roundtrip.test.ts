@@ -43,6 +43,7 @@ test('scenario sends three exact-response prompts in one workspace and records s
   assert.match(scenario, /const turns = \[/);
   assert.match(scenario, /firstAssistantVisibleMs/);
   assert.match(scenario, /settledMs/);
+  assert.match(scenario, /variant: null/);
   assert.match(scenario, /value === token/);
   assert.match(scenario, /const stopButton = Array\.from\(document\.querySelectorAll\("button"\)\)/);
   assert.match(scenario, /return normalize\(nextComposer\.textContent\) === "" && !stopButton;/);
