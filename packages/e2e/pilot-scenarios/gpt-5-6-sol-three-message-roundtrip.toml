@@ -283,14 +283,16 @@ if (!window.__vesloGpt56SolThreeMessageStarted) {
     }
 
     await assertSameWorkspace(initialWorkspace, "final verification");
+    const variant = window.localStorage.getItem("veslo.modelVariant") || null;
     const result = {
       workspace: initialWorkspace,
       provider: aiAccess.provider,
       model: aiAccess.defaultModel,
-      variant: null,
+      variant,
       timings,
     };
     window.__vesloGpt56SolThreeMessageResult = result;
+    console.info("[gpt-5.6-sol-three-message-result]", JSON.stringify(result));
     appendMarker(completeSelector, result);
   })().catch((error) => {
     appendMarker(errorSelector, {

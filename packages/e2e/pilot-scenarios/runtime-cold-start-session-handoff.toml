@@ -334,11 +334,20 @@ if (!window.__vesloRuntimeColdStartSessionHandoffStarted) {
     };
     const waitForActiveManagedConfigReady = async (workspace) => {
       setProgress("waiting-active-managed-ai-config", { workspaceId: workspace.id });
-      return await waitUntil(() =>
-        workflowTrace().find((entry) =>
+      return await waitUntil(() => {
+        const trace = workflowTrace();
+        return trace.find((entry) =>
           entry?.source === "opencode-config" &&
           entry?.event === "apply-gateway-provider-routing:done" &&
-          entry?.workspaceId === workspace.id),
+          entry?.workspaceId === workspace.id) ??
+          trace.find((entry) =>
+            entry?.source === "opencode-config" &&
+            entry?.event === "managed-config-compare" &&
+            entry?.workspaceId === workspace.id &&
+            entry?.matches === true &&
+            Boolean(entry?.managedProviderId) &&
+            Boolean(entry?.managedDefaultModelId));
+      },
       {
         timeout: 90000,
         interval: 500,
