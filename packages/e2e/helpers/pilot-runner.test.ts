@@ -426,6 +426,8 @@ test('runtime cold-start handoff pilot scenario uses a deterministic live infere
   assert.match(content, /Reply with exactly \$\{token\}\. Do not use tools\. No other words\./);
   assert.doesNotMatch(content, /runtime cold start handoff \$\{Date\.now\(\)\}/);
   assert.match(content, /assistantTexts\.some\(\(value\) => value\.includes\(token\)\)/);
+  assert.match(content, /entry\?\.event === "managed-config-compare"/);
+  assert.match(content, /entry\?\.matches === true/);
 });
 
 test('runtime cold-start handoff pilot scenario disables debug dev autostart', () => {
