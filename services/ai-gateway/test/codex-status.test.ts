@@ -658,7 +658,7 @@ test("CachedCodexCredentialStatusProvider probes with the supported Codex catalo
     const args = JSON.parse(await readFile(argsPath, "utf8")) as string[];
 
     assert.equal(status.source, "codex_exec_rate_limits");
-    assert.equal(args[args.indexOf("--model") + 1], "gpt-5.5");
+    assert.equal(args[args.indexOf("--model") + 1], "gpt-5.6-sol");
   } finally {
     await rm(rootDir, { recursive: true, force: true });
   }

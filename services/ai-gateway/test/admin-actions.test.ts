@@ -1656,7 +1656,7 @@ test("default admin service returns Codex model catalog for codex credentials", 
   const payload = await service.listCredentialModels("admin-token", "cred_codex_1");
 
   assert.equal(payload.credentialId, "cred_codex_1");
-  assert.equal(payload.defaultModel, "gpt-5.5");
+  assert.equal(payload.defaultModel, "gpt-5.6-sol");
   assert.ok(payload.models.includes("gpt-5.4"));
   assert.ok(payload.models.includes("gpt-5.5"));
 });
@@ -1706,7 +1706,7 @@ test("default admin service filters unsupported Codex models for a specific cred
   const payload = await service.listCredentialModels("admin-token", "cred_codex_vaclav");
 
   assert.equal(payload.credentialId, "cred_codex_vaclav");
-  assert.equal(payload.defaultModel, "gpt-5.5");
+  assert.equal(payload.defaultModel, "gpt-5.6-sol");
   assert.ok(payload.models.includes("gpt-5.5"));
   assert.ok(!payload.models.includes("gpt-5.3-codex"));
 });
