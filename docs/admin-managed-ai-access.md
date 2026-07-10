@@ -93,20 +93,9 @@ Before this flow works in a live environment, make sure healthy provider binding
 
 ## GPT-5.6 Sol policy migration and credential probe
 
-Run this rollout only after the target AI Gateway revision is deployed and a fresh database backup has completed and passed checksum verification. In the owned-server deployment checkout, use the Compose wrapper from [Cloud Deployments](dev/cloud-deployments.md) and run the guarded operations in this order:
+Run this rollout only after the target AI Gateway revision is deployed. Use the complete copy/paste sequence in [GPT-5.6 Sol rollout](dev/cloud-deployments.md#gpt-56-sol-rollout); it requires the reviewed environment file and existing Compose project, defines the scoped `compose` wrapper, creates and verifies both database backups with `zstd` and checksums, and only then runs the guarded migration and probe operations.
 
-```bash
-compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
-  ops:codex-model-migration -- --model gpt-5.6-sol
-compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
-  ops:codex-model-migration -- --model gpt-5.6-sol --apply
-compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
-  ops:codex-model-migration -- --model gpt-5.6-sol
-compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
-  ops:codex-credential-probe -- --model gpt-5.6-sol
-```
-
-The first migration command is a dry run. Apply updates `default_model`, `allowed_models_json`, and `updated_at` on each changed Codex policy, setting `allowed_models_json` to exactly `["gpt-5.6-sol"]`. It includes disabled rows while preserving `enabled`, credential ids, credential records and encrypted auth, bindings, health state, and assignment origin. The second dry run must report `changedCount: 0`; otherwise the rollout is not idempotent and probing must not start.
+In that sequence, the first migration command is a dry run. Apply updates `default_model`, `allowed_models_json`, and `updated_at` on each changed Codex policy, setting `allowed_models_json` to exactly `["gpt-5.6-sol"]`. It includes disabled rows while preserving `enabled`, credential ids, credential records and encrypted auth, bindings, health state, and assignment origin. The post-apply dry run must report `changedCount: 0`; otherwise the rollout is not idempotent and probing must not start.
 
 The credential probe tests every non-deleted `codex_oauth` credential, including credentials already stored as unhealthy. It uses one shared status provider and awaits credentials sequentially so only one credential probe is active at a time. It persists rotated `auth.json` through the existing encrypted secret store, prints only the target model, credential identity, health, safe outcome labels, counts, and elapsed time, and continues after each failure. After all results are printed, the command exits non-zero if any credential is unsupported, exhausted, authentication-failing, or otherwise failed. It does not print credential secrets and does not alter the GPT-5.6 Sol model policy.
 

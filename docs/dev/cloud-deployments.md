@@ -71,17 +71,52 @@ Do not store production secrets in the repository. Keep production environment v
 
 ### GPT-5.6 Sol rollout
 
-The current managed Codex target is GPT-5.6 Sol, canonical model id `gpt-5.6-sol`; do not pass the moving `gpt-5.6` alias. For a manual staging rollout, define the deployment checkout's existing `compose` wrapper with `packaging/owned-server/compose.yml` and the environment-specific server env file, complete and verify a fresh backup, then run:
+The current managed Codex target is GPT-5.6 Sol, canonical model id `gpt-5.6-sol`; do not pass the moving `gpt-5.6` alias. For a manual rollout, first enter the reviewed deployment checkout and export `OWNED_SERVER_ENV_FILE` as the absolute path to that environment's server env file and `OWNED_SERVER_COMPOSE_PROJECT` as that environment's existing Compose project name. The following guarded subshell stops before mutation when either input is absent, defines the environment/project-scoped `compose` wrapper immediately before use, creates and verifies a fresh backup of both databases, and only then runs the model migration and credential probe:
 
 ```bash
-compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
-  ops:codex-model-migration -- --model gpt-5.6-sol
-compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
-  ops:codex-model-migration -- --model gpt-5.6-sol --apply
-compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
-  ops:codex-model-migration -- --model gpt-5.6-sol
-compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
-  ops:codex-credential-probe -- --model gpt-5.6-sol
+(
+  set -euo pipefail
+  : "${OWNED_SERVER_ENV_FILE:?Export the reviewed environment file path}"
+  : "${OWNED_SERVER_COMPOSE_PROJECT:?Export the existing Compose project name}"
+  test -f "$OWNED_SERVER_ENV_FILE"
+
+  compose() {
+    sudo -n docker compose \
+      --project-name "$OWNED_SERVER_COMPOSE_PROJECT" \
+      -f packaging/owned-server/compose.yml \
+      --env-file "$OWNED_SERVER_ENV_FILE" \
+      "$@"
+  }
+
+  compose config >/dev/null
+  compose run --rm --no-deps backup \
+    bash ./packaging/owned-server/backup/backup-owned-server-databases.sh
+  compose run --rm --no-deps backup bash -lc '
+    set -euo pipefail
+    latest="$(find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name "????????T??????Z" -print | sort | tail -n 1)"
+    test -n "$latest"
+    cd "$latest"
+    zstd -t den.sql.zst ai-gateway.sql.zst
+    sha256sum -c den.sql.zst.sha256
+    sha256sum -c ai-gateway.sql.zst.sha256
+    printf "Verified backup: %s\n" "$latest"
+    ls -lh den.sql.zst ai-gateway.sql.zst manifest.json
+    cat manifest.json
+  '
+
+  compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+    ops:codex-model-migration -- --model gpt-5.6-sol
+  compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+    ops:codex-model-migration -- --model gpt-5.6-sol --apply
+  post_apply_summary="$(
+    compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+      ops:codex-model-migration -- --model gpt-5.6-sol
+  )"
+  printf '%s\n' "$post_apply_summary"
+  printf '%s\n' "$post_apply_summary" | grep -F '"changedCount":0' >/dev/null
+  compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+    ops:codex-credential-probe -- --model gpt-5.6-sol
+)
 ```
 
 The first migration command is the pre-apply dry run and the third is the post-apply dry run. Their matched counts must agree, and the post-apply result must report `changedCount: 0`. The probe covers every non-deleted Codex credential, including unhealthy records, runs sequentially, continues after individual failures, and persists rotated auth through the encrypted secret store without printing it. Authentication-failing, exhausted, or permanently ineligible credentials are reported for reconnect or recovery; runtime lazy repair may bind another healthy eligible credential while retaining `gpt-5.6-sol`, and the request fails only when no eligible replacement exists. An `unsupported_model` result intentionally leaves the selected credential eligible, does not trigger lazy repair, and can fail its probe or request even when another credential exists. An admin must explicitly reassign/select a supported credential or model. Neither path changes the migrated model policy or falls back automatically to GPT-5.5.
@@ -89,10 +124,11 @@ The first migration command is the pre-apply dry run and the third is the post-a
 For production, the equivalent guarded workflow dispatch is:
 
 ```bash
+REVIEWED_DEPLOY_REF="${REVIEWED_DEPLOY_REF:?Export the reviewed pushed branch ref}"
 gh workflow run deploy-owned-server.yml \
   --repo neatechcz/veslo \
-  --ref codex/gpt-5-6-sol-backend \
-  -f branch=codex/gpt-5-6-sol-backend \
+  --ref "$REVIEWED_DEPLOY_REF" \
+  -f branch="$REVIEWED_DEPLOY_REF" \
   -f install_backup_timer=true \
   -f run_backup_now=true \
   -f codex_model_migration=gpt-5.6-sol \
