@@ -55,8 +55,10 @@ To deploy production:
 4. Leave the `branch` input empty to deploy the selected workflow branch, or enter a branch to override it for that run.
 5. Keep `install_backup_timer` enabled for production deploys so the repo-owned Compose backup scheduler is installed or refreshed on the server.
 6. Enable `run_backup_now` only when the deploy should also create and verify an immediate database backup set.
+7. To migrate managed Codex models, set `codex_model_migration` to the canonical model id and require `run_backup_now=true`; the workflow rejects a migration without a fresh verified backup.
+8. Enable `probe_codex_credentials` only with a non-empty `codex_model_migration`. The probe uses the same model and starts only after migration idempotence is verified.
 
-The workflow creates or updates a stable Git checkout on the owned server, checks out the requested branch, validates the production environment file and Compose file, builds the app and worker images, runs Den and AI Gateway migrations, starts the Compose stack, and verifies internal plus public health endpoints. When `install_backup_timer` is enabled, it validates Lettr alert env values and starts the Compose-managed `backup` scheduler. When `run_backup_now` is enabled, it runs the backup container once and verifies the compressed dumps plus checksums. AI Gateway health is process liveness; use AI Gateway `/readiness` separately when an operator needs the inference-available signal.
+The workflow creates or updates a stable Git checkout on the owned server, checks out the requested branch, validates the production environment file and Compose file, builds the app and worker images, runs Den and AI Gateway migrations, starts the Compose stack, and verifies internal plus public health endpoints. When `install_backup_timer` is enabled, it validates Lettr alert env values and starts the Compose-managed `backup` scheduler. When `run_backup_now` is enabled, it runs the backup container once and verifies the compressed dumps plus checksums. When `codex_model_migration` is non-empty, the workflow then runs a dry run, apply, and post-apply dry run, requires the last result to report `changedCount: 0`, and optionally probes every Codex credential. AI Gateway health is process liveness; use AI Gateway `/readiness` separately when an operator needs the inference-available signal.
 
 Required GitHub Actions configuration:
 
@@ -66,6 +68,47 @@ Required GitHub Actions configuration:
 - `VESLO_DEPLOYMENT_DOMAIN` variable when deploying a non-production owned-server environment. Production defaults to `veslo.work`; staging should set `staging.veslo.work`.
 
 Do not store production secrets in the repository. Keep production environment values in the server-side env file and GitHub secrets only.
+
+### GPT-5.6 Sol rollout
+
+The current managed Codex target is GPT-5.6 Sol, canonical model id `gpt-5.6-sol`; do not pass the moving `gpt-5.6` alias. For a manual staging rollout, define the deployment checkout's existing `compose` wrapper with `packaging/owned-server/compose.yml` and the environment-specific server env file, complete and verify a fresh backup, then run:
+
+```bash
+compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+  ops:codex-model-migration -- --model gpt-5.6-sol
+compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+  ops:codex-model-migration -- --model gpt-5.6-sol --apply
+compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+  ops:codex-model-migration -- --model gpt-5.6-sol
+compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+  ops:codex-credential-probe -- --model gpt-5.6-sol
+```
+
+The first migration command is the pre-apply dry run and the third is the post-apply dry run. Their matched counts must agree, and the post-apply result must report `changedCount: 0`. The probe covers every non-deleted Codex credential, including unhealthy records, runs sequentially, continues after individual failures, and persists rotated auth through the encrypted secret store without printing it. Failed or unsupported credentials remain assigned to `gpt-5.6-sol` and are reported for reconnect or recovery; there is no GPT-5.5 fallback.
+
+For production, the equivalent guarded workflow dispatch is:
+
+```bash
+gh workflow run deploy-owned-server.yml \
+  --repo neatechcz/veslo \
+  --ref codex/gpt-5-6-sol-backend \
+  -f branch=codex/gpt-5-6-sol-backend \
+  -f install_backup_timer=true \
+  -f run_backup_now=true \
+  -f codex_model_migration=gpt-5.6-sol \
+  -f probe_codex_credentials=true
+```
+
+Treat rollout evidence as separate gates:
+
+1. **Code committed** means the source change has a local commit; it is not yet remote or live.
+2. **Code pushed** means the exact commit is present on the remote feature branch; it is not deployed by the push.
+3. **Code deployed** means the owned-server workflow checked out that exact revision and its deployment and endpoint checks completed.
+4. **Policy migrated** means every enabled and disabled `codex_oauth` policy has `default_model='gpt-5.6-sol'` and `allowed_models_json='["gpt-5.6-sol"]'`, with the post-apply dry run at `changedCount: 0`.
+5. **Each credential tested** means every non-deleted Codex credential appears exactly once in the completed sequential probe output; failures remain explicit and do not invalidate coverage of later credentials.
+6. **Desktop verified** means a real Tauri desktop run, not a UI-only web server, reads the GPT-5.6 Sol policy and completes the required live multi-message inference scenario.
+
+Do not describe the migration as complete from any earlier gate. In particular, a successful deployment does not prove policy mutation, a migrated policy does not prove credential inference, and credential probes do not prove the desktop path.
 
 ## Production ops workflows
 
@@ -117,4 +160,5 @@ For changes to production deployment behavior:
 2. Confirm no active GitHub Actions workflow deploys production through Render.
 3. Confirm the workflow validates the self-hosted runner path, server-side env file, Compose config, migrations, stack startup, internal worker-manager health, and public Den, AI Gateway, and web endpoints.
 4. Confirm the workflow installs or refreshes the owned-server backup scheduler when requested and verifies immediate backup sets when `run_backup_now` is enabled.
-5. Confirm this document and any service-local deployment notes match the workflow.
+5. For a Codex model rollout, confirm the workflow rejects migration without `run_backup_now=true`, runs dry-run/apply/post-dry-run only after backup verification, and delays the optional credential probe until `changedCount: 0` is proven.
+6. Confirm this document and any service-local deployment notes match the workflow.
