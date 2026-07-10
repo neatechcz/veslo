@@ -301,9 +301,28 @@ function isRequestedModelRuntimeIncompatibility(input: { model: string; stderrTa
   ).test(stderr)
   if (!mentionsRequestedModel) return false
 
-  const unsupportedModelSignal =
-    /\b(?:unknown|unsupported|not supported|not found|invalid|unrecognized|unavailable)\s+(?:requested\s+)?model\b|\b(?:requested\s+)?model\b[^\r\n]{0,200}\b(?:unknown|unsupported|not supported|not found|invalid|unrecognized|unavailable)\b/
-  return unsupportedModelSignal.test(stderr)
+  const authenticationFailureSignal =
+    /\b(?:auth(?:entication|orization)?|login|unauthorized|forbidden|credential(?:s)?|token)\b|\binvalid[_ -]?grant\b|\bapi[_ -]?key\b/
+  if (authenticationFailureSignal.test(stderr)) return false
+
+  const modelIncompatibilitySignal =
+    "(?:unknown|unsupported|invalid|unrecognized|unavailable|not[ \\t]+(?:supported|found|available))"
+  const requestedModelReference = `${escapedModel}(?=$|[^a-z0-9._-])`
+  const modelIncompatibilityPatterns = [
+    new RegExp(
+      `\\b${modelIncompatibilitySignal}[ \\t]+(?:requested[ \\t]+)?model[ \\t]+["']?${requestedModelReference}`,
+      "i",
+    ),
+    new RegExp(
+      `\\b(?:requested[ \\t]+)?model[ \\t]+["']?${requestedModelReference}["']?[ \\t]+(?:(?:is|was)[ \\t]+)?${modelIncompatibilitySignal}\\b`,
+      "i",
+    ),
+    new RegExp(
+      `(?:^|[^a-z0-9._-])${requestedModelReference}["']?[ \\t]+(?:(?:is|was)[ \\t]+)?${modelIncompatibilitySignal}\\b`,
+      "i",
+    ),
+  ]
+  return modelIncompatibilityPatterns.some((pattern) => pattern.test(stderr))
 }
 
 function buildCodexRuntimeIncompatibleBody(input: {
