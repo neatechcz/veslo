@@ -25,7 +25,6 @@ jobs:
       VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo signing diagnostic
       VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS: "120"
       VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS: "1"
-      AZURE_LOG_LEVEL: verbose
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,15 +66,12 @@ jobs:
       - name: Create unsigned signing probe
         shell: pwsh
         run: |
-          $source = @'
-          using System;
-          public static class SigningProbe
-          {
-              public static void Main() => Console.WriteLine("Veslo signing probe");
-          }
-          '@
-
-          Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $env:VESLO_SIGNING_PROBE_PATH -OutputType ConsoleApplication
+          $probeRoot = Join-Path $env:RUNNER_TEMP "signing-probe-${{ matrix.auth_mode }}"
+          $publishRoot = Join-Path $probeRoot "publish"
+          dotnet new console --name SigningProbe --output $probeRoot --framework net8.0 --force
+          Set-Content -Path (Join-Path $probeRoot "Program.cs") -Value 'Console.WriteLine("Veslo signing probe");' -Encoding utf8NoBOM
+          dotnet publish (Join-Path $probeRoot "SigningProbe.csproj") --configuration Release --runtime win-x64 --self-contained false --output $publishRoot -p:UseAppHost=true
+          Copy-Item -Path (Join-Path $publishRoot "SigningProbe.exe") -Destination $env:VESLO_SIGNING_PROBE_PATH -Force
           if (-not (Test-Path $env:VESLO_SIGNING_PROBE_PATH)) {
             throw "Signing probe was not created"
           }
@@ -122,6 +118,8 @@ jobs:
 
       - name: Run dlib signing probe
         shell: pwsh
+        env:
+          AZURE_LOG_LEVEL: DEBUG
         run: |
           $timer = [System.Diagnostics.Stopwatch]::StartNew()
           try {
@@ -176,15 +174,12 @@ jobs:
       - name: Create unsigned signing probe
         shell: pwsh
         run: |
-          $source = @'
-          using System;
-          public static class SigningProbe
-          {
-              public static void Main() => Console.WriteLine("Veslo official action probe");
-          }
-          '@
-
-          Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $env:VESLO_SIGNING_PROBE_PATH -OutputType ConsoleApplication
+          $probeRoot = Join-Path $env:RUNNER_TEMP "signing-probe-official"
+          $publishRoot = Join-Path $probeRoot "publish"
+          dotnet new console --name SigningProbe --output $probeRoot --framework net8.0 --force
+          Set-Content -Path (Join-Path $probeRoot "Program.cs") -Value 'Console.WriteLine("Veslo official action probe");' -Encoding utf8NoBOM
+          dotnet publish (Join-Path $probeRoot "SigningProbe.csproj") --configuration Release --runtime win-x64 --self-contained false --output $publishRoot -p:UseAppHost=true
+          Copy-Item -Path (Join-Path $publishRoot "SigningProbe.exe") -Destination $env:VESLO_SIGNING_PROBE_PATH -Force
           $signature = Get-AuthenticodeSignature -FilePath $env:VESLO_SIGNING_PROBE_PATH
           Write-Host "Initial signature status: $($signature.Status)"
           if ($signature.Status -ne 'NotSigned') {

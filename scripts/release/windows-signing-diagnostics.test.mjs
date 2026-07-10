@@ -18,8 +18,11 @@ test("Windows signing diagnostics isolate authentication and signing layers", ()
   assert.match(workflow, /VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS:\s*"120"/);
   assert.match(workflow, /VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS:\s*"1"/);
   assert.match(workflow, /timeout:\s*120/);
+  assert.match(workflow, /AZURE_LOG_LEVEL:\s*DEBUG/);
+  assert.match(workflow, /dotnet publish/);
   assert.match(workflow, /SigningProbe[^\s]*\.exe/);
   assert.match(workflow, /Get-AuthenticodeSignature/);
+  assert.doesNotMatch(workflow, /Add-Type/);
   assert.doesNotMatch(workflow, /tauri build/i);
   assert.doesNotMatch(workflow, /release upload/i);
 });
