@@ -533,6 +533,8 @@ export function createVesloServerClient(options: {
     submitConversation: conversations.submit,
     abortConversation: conversations.abort,
     getConversationRunStatus: conversations.getRunStatus,
+    listConversationQueue: conversations.listQueue,
+    getConversationQueueItem: conversations.getQueueItem,
     getSessionLatestRunArtifacts: conversations.getLatestRunArtifacts,
     prefetchSessionTranscripts: conversations.prefetchTranscripts,
     getSessionTranscript: (workspaceId: string, sessionId: string, limit = 140, directory?: string) =>

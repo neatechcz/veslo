@@ -1000,6 +1000,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       });
 
       const isBackgroundCatchup = Boolean(sourceWsId && sourceWsId !== deps.routing.activeWorkspaceId());
+      let criticalFailureCount = 0;
+      let lastCriticalFailure: string | null = null;
       for (const sessionID of sessionIds) {
         if (!sessionID) continue;
 
@@ -1009,10 +1011,13 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           deps.setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
           deps.notifySessionBusy(sessionID, normalized, sourceWsId);
         } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          criticalFailureCount += 1;
+          lastCriticalFailure = message;
           deps.recordSessionStatusTrace("sse-reconnect-catchup-status-failed", {
             sessionId: sessionID,
             sourceWorkspaceId: sourceWsId || null,
-            message: error instanceof Error ? error.message : String(error),
+            message,
           });
           continue;
         }
@@ -1033,8 +1038,15 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             ...prev,
             [sessionID]: msgs.length < limit,
           }));
-        } catch {
-          // fail soft per session
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          criticalFailureCount += 1;
+          lastCriticalFailure = message;
+          deps.recordSessionStatusTrace("sse-reconnect-catchup-messages-failed", {
+            sessionId: sessionID,
+            sourceWorkspaceId: sourceWsId || null,
+            message,
+          });
         }
 
         try {
@@ -1055,6 +1067,20 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         await deps.withTimeout(deps.refreshPendingQuestions(), 6000, "question.list");
       } catch {
         // ignore
+      }
+
+      if (criticalFailureCount > 0) {
+        recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "catchup-incomplete", {
+          sessions: sessionIds.length,
+          criticalFailures: criticalFailureCount,
+          generation,
+        });
+        outageEpisode = clearOutageEpisode();
+        emitReconnectState("degraded", {
+          lastError: truncateErrorField(lastCriticalFailure ?? "Reconnect catch-up incomplete"),
+          messagesMayBeDelayed: true,
+        });
+        return;
       }
 
       if (shouldShowReconnected(outageEpisode)) {

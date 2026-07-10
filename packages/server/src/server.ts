@@ -3846,13 +3846,14 @@ function createRoutes(
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
     transcriptStore: conversationTranscriptStore,
-    createOpenCodeSession: async ({ workspace, directory, title, sendTraceId }) => {
+    createOpenCodeSession: async ({ workspace, directory, title, requestedOpenCodeSessionId, sendTraceId }) => {
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
       return await fetchOpencodeJsonWithOrchestratorFallback(config, scopedWorkspace, "/session", {
         method: "POST",
         timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
         sendTraceId,
         body: {
+          ...(requestedOpenCodeSessionId?.trim() ? { id: requestedOpenCodeSessionId.trim() } : {}),
           ...(directory ? { directory } : {}),
           ...(title?.trim() ? { title: title.trim() } : {}),
         },

@@ -169,6 +169,22 @@ pub(crate) fn stop_managed_services(app_handle: &tauri::AppHandle) -> Vec<u32> {
     pids
 }
 
+fn stop_managed_services_for_exit(app_handle: &tauri::AppHandle, reason: &str) {
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    eprintln!(
+        "[veslo:app-exit] phase=before-cleanup reason={reason} timestamp_ms={timestamp_ms} debug={}",
+        cfg!(debug_assertions),
+    );
+    let pids = stop_managed_services(app_handle);
+    eprintln!(
+        "[veslo:app-exit] phase=after-cleanup reason={reason} timestamp_ms={timestamp_ms} debug={} managed_pids={pids:?}",
+        cfg!(debug_assertions),
+    );
+}
+
 /// Best-effort dev-mode cleanup: kill veslo-* sidecars whose process group
 /// differs from ours. A `pnpm dev` Ctrl+C does not always reap orchestrator/
 /// veslo-server/veslo-code-router; orphans bind ports and leave a stale
@@ -415,14 +431,17 @@ pub fn run() {
     // running after the UI quits (especially during dev), leading to multiple
     // orchestrator/veslo-code/veslo-server processes and stale ports.
     app.run(|app_handle, event| match event {
-        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
-            stop_managed_services(&app_handle);
+        tauri::RunEvent::ExitRequested { .. } => {
+            stop_managed_services_for_exit(&app_handle, "exit_requested");
+        }
+        tauri::RunEvent::Exit => {
+            stop_managed_services_for_exit(&app_handle, "exit");
         }
         tauri::RunEvent::WindowEvent {
             event: tauri::WindowEvent::CloseRequested { .. },
             ..
         } => {
-            stop_managed_services(&app_handle);
+            stop_managed_services_for_exit(&app_handle, "window_close_requested");
         }
         _ => {}
     });

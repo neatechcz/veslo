@@ -19,8 +19,10 @@ import {
   markQueuedDraftSending,
   moveQueuedDraft,
   removeQueuedDraft,
+  restoreQueuedDraftAfterEditing,
   updateQueuedDraft,
   type QueuedDraft,
+  type QueuedDraftEnvelope,
 } from "../components/session/session-queue-model.js";
 import type { ComposerDraft, PendingSidebarSessionMetadata } from "../types";
 import type {
@@ -520,6 +522,7 @@ export const markMatchingPendingSubmittedDraftFailed = ({
 export type SendPromptImmediateReason = "normal" | "queue-drain" | "send-now" | "replacement";
 
 export type SendPromptImmediateOptions = {
+  clientMessageId?: string | null;
   reason?: SendPromptImmediateReason;
   expectedSessionKey?: string;
   replaceMessageId?: string;
@@ -591,7 +594,7 @@ export type SessionConversationFlowControllerDeps = {
     ) => void;
   };
   queue: {
-    appendDraftToCurrentQueue: (draft: ComposerDraft) => void;
+    appendDraftToCurrentQueue: (draft: ComposerDraft, envelope: QueuedDraftEnvelope) => void;
     editingQueuedDraftId: () => string | null;
     queuePaused: () => boolean;
     queuedDraftsBySessionKey: () => Record<string, QueuedDraft[]>;
@@ -714,6 +717,7 @@ export type SessionConversationFlowController = {
   ) => Promise<void>;
   handleCancelQueuedDraft: (id: string) => boolean;
   handleEditQueuedDraft: (id: string) => boolean;
+  handleRetryQueuedDraft: (id: string) => boolean;
   handleEditUserMessage: (editable: EditableUserMessageDraft) => boolean;
   handleMoveQueuedDraft: (id: string, targetIndex: number) => void;
   handleSendPrompt: (draft: ComposerDraft, options?: HandleSendPromptOptions) => Promise<SessionSubmitResult>;
@@ -910,7 +914,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
     },
     restoreEditingQueuedDraft: (sessionKey, id) => {
       if (!id) return;
-      deps.queue.updateQueueForSessionKey(sessionKey, (queue) => markQueuedDraftQueued(queue, id));
+      deps.queue.updateQueueForSessionKey(sessionKey, (queue) => restoreQueuedDraftAfterEditing(queue, id));
     },
     handleEditQueuedDraft: (id) => {
       const item = deps.queue.queuedDrafts().find((draft) => draft.id === id);
@@ -927,13 +931,34 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       return true;
     },
     handleCancelQueuedDraft: (id) => {
-      const item = deps.queue.queuedDrafts().find((draft) => draft.id === id);
+      const sessionKey = deps.sessionKeys.currentSessionQueueKey();
+      const queue = deps.queue.queuedDrafts();
+      const item = queue.find((draft) => draft.id === id);
       if (!item || item.state === "sending") return false;
 
       deps.queue.updateCurrentQueue((queue) => removeQueuedDraft(queue, id));
       if (deps.queue.editingQueuedDraftId() === id) {
         deps.queue.setEditingQueuedDraftId(null);
         deps.composer.setComposerDraft(createEmptyComposerDraft(deps.composer.currentDraftMode()));
+      }
+      if (
+        queue[0]?.id === id &&
+        !deps.runState.showRunIndicator() &&
+        !deps.queue.queuePausedForSessionKey(sessionKey)
+      ) {
+        void controller.drainNextQueuedDraft("normal", sessionKey);
+      }
+      return true;
+    },
+    handleRetryQueuedDraft: (id) => {
+      const sessionKey = deps.sessionKeys.currentSessionQueueKey();
+      const queue = deps.queue.queuedDrafts();
+      const item = queue.find((draft) => draft.id === id);
+      if (!item || item.state !== "error" || queue[0]?.id !== id) return false;
+
+      deps.queue.updateCurrentQueue((queue) => markQueuedDraftQueued(queue, id));
+      if (!deps.runState.showRunIndicator() && !deps.queue.queuePausedForSessionKey(sessionKey)) {
+        void controller.drainNextQueuedDraft("normal", sessionKey);
       }
       return true;
     },
@@ -962,7 +987,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
     },
     sendPromptImmediate: async (draft, options = {}) => {
       const origin = resolveSessionSendOriginForReason(options.reason);
-      const clientMessageId = deps.identity.createClientMessageId();
+      const clientMessageId = options.clientMessageId?.trim() || deps.identity.createClientMessageId();
       const source = options.source?.trim() || null;
       const expectedSessionKey = options.expectedSessionKey;
       const baseSessionKey = expectedSessionKey ?? deps.sessionKeys.currentSessionQueueKey();
@@ -1431,8 +1456,18 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         case "save-edited-queued-draft": {
           const editingId = action.editingId;
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
+          const editedItem = deps.queue.queuedDrafts().find((item) => item.id === editingId);
+          const clientMessageId = deps.identity.createClientMessageId();
+          const implicitSkillCommandPolicy =
+            options.implicitSkillCommandPolicy ?? editedItem?.implicitSkillCommandPolicy;
           deps.queue.updateCurrentQueue((queue) =>
-            markQueuedDraftQueued(updateQueuedDraft(queue, editingId, draft), editingId),
+            markQueuedDraftQueued(
+              updateQueuedDraft(queue, editingId, draft, deps.identity.now(), {
+                clientMessageId,
+                ...(implicitSkillCommandPolicy ? { implicitSkillCommandPolicy } : {}),
+              }),
+              editingId,
+            ),
           );
           deps.queue.setEditingQueuedDraftId(null);
           deps.composer.setComposerDraft(createEmptyComposerDraft(draft.mode));
@@ -1446,8 +1481,18 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           const editingId = action.editingId;
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
           const wasPaused = deps.queue.queuePausedForSessionKey(sessionKey);
+          const editedItem = deps.queue.queuedDrafts().find((item) => item.id === editingId);
+          const clientMessageId = deps.identity.createClientMessageId();
+          const implicitSkillCommandPolicy =
+            options.implicitSkillCommandPolicy ?? editedItem?.implicitSkillCommandPolicy;
           deps.queue.updateQueueForSessionKey(sessionKey, (queue) =>
-            markQueuedDraftSending(updateQueuedDraft(queue, editingId, draft), editingId),
+            markQueuedDraftSending(
+              updateQueuedDraft(queue, editingId, draft, deps.identity.now(), {
+                clientMessageId,
+                ...(implicitSkillCommandPolicy ? { implicitSkillCommandPolicy } : {}),
+              }),
+              editingId,
+            ),
           );
           if (deps.sessionKeys.currentSessionQueueKey() === sessionKey) {
             deps.queue.setEditingQueuedDraftId(null);
@@ -1456,10 +1501,11 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           const submitResult = await controller.sendPromptImmediate(draft, {
             reason: "send-now",
             expectedSessionKey: sessionKey,
+            clientMessageId,
             restoreDraftOnFailure: false,
             sendTraceId: options.sendTraceId,
             source: options.source,
-            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+            implicitSkillCommandPolicy,
           });
           const resultSessionKey = deps.queue.resolveQueueKeyForQueuedDraft(sessionKey, editingId);
           if (!sessionSubmitWasAccepted(submitResult)) {
@@ -1495,7 +1541,12 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
 
         case "append-to-paused-queue-and-drain": {
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
-          deps.queue.appendDraftToCurrentQueue(draft);
+          deps.queue.appendDraftToCurrentQueue(draft, {
+            clientMessageId: deps.identity.createClientMessageId(),
+            ...(options.implicitSkillCommandPolicy
+              ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
+              : {}),
+          });
           deps.queue.setQueuePausedForSessionKey(sessionKey, false);
           void controller.drainNextQueuedDraft("normal", sessionKey);
           return localQueuedResult("local_queue_paused_append");
@@ -1503,7 +1554,12 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
 
         case "append-to-existing-queue-and-drain-if-idle": {
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
-          deps.queue.appendDraftToCurrentQueue(draft);
+          deps.queue.appendDraftToCurrentQueue(draft, {
+            clientMessageId: deps.identity.createClientMessageId(),
+            ...(options.implicitSkillCommandPolicy
+              ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
+              : {}),
+          });
           if (!deps.runState.showRunIndicator() && !deps.queue.queuePausedForSessionKey(sessionKey)) {
             void controller.drainNextQueuedDraft("normal", sessionKey);
           }
@@ -1584,6 +1640,8 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         const submitResult = await controller.sendPromptImmediate(start.item.draft, {
           reason,
           expectedSessionKey: drainSessionKey,
+          clientMessageId: start.item.clientMessageId,
+          implicitSkillCommandPolicy: start.item.implicitSkillCommandPolicy,
         });
         const result = resolveQueueDrainCompletionAction({
           accepted: sessionSubmitWasAccepted(submitResult),

@@ -108,6 +108,7 @@ function makeController(options: {
   const workspaceSessionIds = new Set<string>();
   const hydratedSnapshots: any[] = [];
   const messageWrites: Array<{ sessionID: string; messages: MessageWithParts[] }> = [];
+  const errors: unknown[] = [];
   const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
   let refreshPermissionCalls = 0;
   const activeClient = options.activeClient ?? null;
@@ -142,7 +143,7 @@ function makeController(options: {
     sessionDebug: () => {},
     sessionWarn: options.sessionWarn ?? (() => {}),
     addError: (error) => {
-      throw error;
+      errors.push(error);
     },
     withTimeout: async (promise) => promise,
     isWorkspaceRuntimeReady: options.isWorkspaceRuntimeReady ?? (() => true),
@@ -210,6 +211,7 @@ function makeController(options: {
     workspaceSessionIds,
     hydratedSnapshots,
     messageWrites,
+    errors,
     messageCompleteBySession,
     refreshPermissionCalls: () => refreshPermissionCalls,
   };
@@ -924,6 +926,73 @@ test("selectSession falls back to offline transcript when live messages report n
       assert.equal(selectedSessionId(), "sess-404");
       assert.equal(offlineCalls, 1);
       assert.equal(hydratedSnapshots.length, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession exposes retryable unavailable history when the live transcript read fails", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const failure = new Error("transcript transport failed");
+      const { controller, errors, hydratedSnapshots, messageWrites } = makeController({
+        activeWorkspaceId: "ws-a",
+        activeClient: {
+          session: {
+            messages: async () => {
+              throw failure;
+            },
+          },
+        },
+        resolveSessionWorkspaceId: () => "ws-a",
+      });
+
+      await controller.selectSession("sess-failed-live-read");
+
+      assert.equal(hydratedSnapshots.length, 0);
+      assert.equal(messageWrites.length, 0);
+      assert.deepEqual(errors, [failure]);
+      assert.deepEqual(controller.selectedSessionHistoryUnavailable(), {
+        sessionId: "sess-failed-live-read",
+        workspaceId: "ws-a",
+        workspaceRoot: null,
+        directory: null,
+        conversationId: null,
+        opencodeSessionId: null,
+        reason: "live-transcript-read-failed",
+      });
+      assert.equal(controller.selectedSessionHasEarlierMessages(), false);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession exposes retryable unavailable history when the offline transcript reader throws", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const failure = new Error("offline transcript reader failed");
+      const { controller, errors, hydratedSnapshots } = makeController({
+        activeWorkspaceId: "ws-a",
+        shouldBrowseSessionFromDb: () => true,
+        resolveSessionWorkspaceId: () => "ws-a",
+        loadOfflineTranscript: async () => {
+          throw failure;
+        },
+      });
+
+      await controller.selectSession("sess-failed-offline-read");
+
+      assert.equal(hydratedSnapshots.length, 0);
+      assert.deepEqual(errors, [failure]);
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.sessionId, "sess-failed-offline-read");
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.workspaceId, "ws-a");
+      assert.equal(
+        controller.selectedSessionHistoryUnavailable()?.reason,
+        "offline-transcript-read-failed",
+      );
+      assert.equal(controller.selectedSessionHasEarlierMessages(), false);
     } finally {
       dispose();
     }

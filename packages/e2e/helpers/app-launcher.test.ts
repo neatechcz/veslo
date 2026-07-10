@@ -197,7 +197,7 @@ test('startApp does not expose legacy WebDriver wiring in the tauri-pilot harnes
 test('startApp can relaunch while preserving the isolated profile for reconnect checks', () => {
   const source = readFileSync(new URL('./app-launcher.ts', import.meta.url), 'utf8');
 
-  assert.match(source, /type StartAppOptions = \{\s*preserveIsolatedProfile\?: boolean;\s*\}/);
+  assert.match(source, /type StartAppOptions = \{\s*preserveIsolatedProfile\?: boolean;\s*beforeLaunch\?: \(context: StartAppProfileContext\) => Promise<void> \| void;\s*\}/);
   assert.match(source, /startApp\(options: StartAppOptions = \{\}\)/);
   assert.match(source, /options\.preserveIsolatedProfile === true/);
   assert.match(source, /E2E_PRESERVE_ISOLATED_PROFILE/);
@@ -241,6 +241,43 @@ test('seedDefaultWorkspaceState skips network-backed enterprise creators for det
       existsSync(join(root, 'workspaces', 'visual-workspace', '.opencode', '.veslo-enterprise-creators')),
       true,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('seedDefaultWorkspaceState uses the deterministic queue fixture as a remote Veslo workspace', () => {
+  const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-queue-home-'));
+  try {
+    seedDefaultWorkspaceState(root, {
+      E2E_SESSION_QUEUE_FIXTURE_BASE_URL: 'http://127.0.0.1:45678',
+      E2E_SESSION_QUEUE_VESLO_SERVER_URL: 'http://127.0.0.1:45679',
+      E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN: 'session-queue-e2e-token',
+      E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID: 'session-queue-workspace',
+    });
+    const stateDirectory = process.platform === 'win32'
+      ? join(root, 'AppData', 'Roaming', 'com.neatech.veslo.e2e')
+      : join(root, '.local', 'share', 'com.neatech.veslo.e2e');
+    const state = JSON.parse(
+      readFileSync(join(stateDirectory, 'veslo-workspaces.json'), 'utf8'),
+    ) as { workspaces: Array<{ workspaceType?: string; baseUrl?: string | null }> };
+    assert.deepEqual(state.workspaces, [
+      {
+        id: 'e2e-visual-workspace',
+        name: 'Visual Workspace',
+        path: join(root, 'workspaces', 'visual-workspace'),
+        preset: 'starter',
+        workspaceType: 'remote',
+        remoteType: 'veslo',
+        baseUrl: 'http://127.0.0.1:45679/w/session-queue-workspace/opencode',
+        directory: join(root, 'workspaces', 'visual-workspace'),
+        displayName: 'Visual Workspace',
+        vesloHostUrl: 'http://127.0.0.1:45679',
+        vesloToken: 'session-queue-e2e-token',
+        vesloWorkspaceId: 'session-queue-workspace',
+        vesloWorkspaceName: 'Visual Workspace',
+      },
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

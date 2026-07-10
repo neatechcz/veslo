@@ -103,6 +103,7 @@ function makeController(options: {
   recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
   isWorkspaceRuntimeReady?: (workspaceId?: string | null) => boolean;
   onReconnectState?: (state: ReconnectState) => void;
+  onReconnectNotice?: (notice: "reconnecting" | "reconnected") => void;
   sessionErrorTurns?: Array<{ sessionID: string; text: string }>;
 } = {}) {
   const [store, setStore] = makeStore();
@@ -131,6 +132,7 @@ function makeController(options: {
     setError: () => {},
     setSseConnected: options.setSseConnected ?? (() => {}),
     onReconnectState: options.onReconnectState,
+    onReconnectNotice: options.onReconnectNotice,
     onAssistantResponseObserved: options.observer,
     sessionDebugEnabled: () => options.developerMode ?? false,
     sessionWarn: () => {},
@@ -1091,6 +1093,8 @@ test("reconnect catch-up preserves running status when status refresh fails", as
   let reconnectCallback: (() => void) | null = null;
   const statusRefreshes: string[] = [];
   const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const reconnectStates: ReconnectState[] = [];
+  const reconnectNotices: Array<"reconnecting" | "reconnected"> = [];
   let subscribeCount = 0;
 
   globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
@@ -1103,6 +1107,8 @@ test("reconnect catch-up preserves running status when status refresh fails", as
     const { controller, setStore, store, busyCalls } = makeController({
       activeWorkspaceId: "ws-a",
       statusTraces,
+      onReconnectState: (state) => reconnectStates.push(state),
+      onReconnectNotice: (notice) => reconnectNotices.push(notice),
     });
     setStore("sessionStatus", "ws-a\0sess-a", "running");
 
@@ -1144,6 +1150,79 @@ test("reconnect catch-up preserves running status when status refresh fails", as
       statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-status-failed"),
       true,
     );
+    assert.equal(reconnectStates.at(-1)?.status, "degraded");
+    assert.equal(reconnectStates.at(-1)?.messagesMayBeDelayed, true);
+    assert.equal(reconnectStates.at(-1)?.lastError, "status unavailable");
+    assert.equal(reconnectNotices.includes("reconnected"), false);
+
+    cleanup();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("reconnect catch-up stays degraded when transcript refresh fails", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let reconnectCallback: (() => void) | null = null;
+  const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const reconnectStates: ReconnectState[] = [];
+  const reconnectNotices: Array<"reconnecting" | "reconnected"> = [];
+  let subscribeCount = 0;
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
+    reconnectCallback = () => callback();
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+
+  try {
+    const { controller, setStore } = makeController({
+      activeWorkspaceId: "ws-a",
+      statusTraces,
+      onReconnectState: (state) => reconnectStates.push(state),
+      onReconnectNotice: (notice) => reconnectNotices.push(notice),
+    });
+    setStore("sessionStatus", "ws-a\0sess-a", "running");
+
+    const client = {
+      ...makeEventClient(async () => {
+        subscribeCount += 1;
+        if (subscribeCount === 1) {
+          return { stream: (async function* () {})() };
+        }
+        return {
+          stream: (async function* () {
+            await new Promise<void>(() => {});
+          })(),
+        };
+      }),
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => ok({ id: sessionID, status: "running" }),
+        messages: async () => {
+          throw new Error("transcript refresh failed");
+        },
+        todo: async () => ok([]),
+      },
+    } as any;
+
+    const cleanup = controller.setupSseStream("ws-a", client);
+    await tick(4);
+    const runReconnect = reconnectCallback as (() => void) | null;
+    assert.ok(runReconnect);
+
+    runReconnect();
+    await tick(24);
+
+    assert.equal(
+      statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-messages-failed"),
+      true,
+    );
+    assert.equal(reconnectStates.at(-1)?.status, "degraded");
+    assert.equal(reconnectStates.at(-1)?.messagesMayBeDelayed, true);
+    assert.equal(reconnectStates.at(-1)?.lastError, "transcript refresh failed");
+    assert.equal(reconnectNotices.includes("reconnected"), false);
 
     cleanup();
   } finally {

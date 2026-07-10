@@ -581,6 +581,17 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       const sessionClient = deps.clientForSession(sessionID);
       const c = sessionClient.client;
       const readPolicy = deps.sessionReadPolicy(sessionID, sessionClient.workspaceId);
+      const unavailableHistory = (
+        reason: string,
+      ): Extract<SessionHistoryLoadResult, { status: "unavailable" }> => ({
+        status: "unavailable",
+        scope: {
+          sessionId: sessionID,
+          workspaceId:
+            readPolicy.sessionWorkspaceId || sessionClient.workspaceId || readPolicy.activeWorkspaceId || null,
+        },
+        reason,
+      });
       const loadOfflineTranscriptFallback = async (reason: string) => {
         const fallbackKind = classifyOfflineTranscriptFallbackReason(reason);
         const fallbackStartedAt = perfNow();
@@ -626,7 +637,10 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             durationMs: Math.round((perfNow() - fallbackStartedAt) * 100) / 100,
             error: error instanceof Error ? error.message : safeStringify(error),
           });
-          return { status: "failed" as const };
+          return {
+            status: "unavailable" as const,
+            history: unavailableHistory("offline-transcript-read-failed"),
+          };
         }
         if (abortIfStale("selection changed before offline transcript applied")) {
           traceSelect("offline-transcript-fallback:stale", {
@@ -831,8 +845,11 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             return;
           }
         }
-        deps.addError(error);
+        if (!abortIfStale("selection changed before transcript read failure applied")) {
+          markSessionHistoryUnavailable(sessionID, unavailableHistory("live-transcript-read-failed"));
+        }
         clearMessageLoadBusy();
+        deps.addError(error);
         return;
       }
       mark("session.messages done", { limit: requestLimit, count: msgs.length });

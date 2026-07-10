@@ -15,6 +15,7 @@ import type {
   ConversationSubmitAttempt,
   ConversationSubmitAttemptStore,
 } from "./conversation-submit-attempt-store.js";
+import { deriveConversationSubmitOpenCodeSessionId } from "./conversation-submit-attempt-store.js";
 import {
   resolveConversationSubmitDraft,
   type ConversationSubmitDocumentRuntimeStatusReader,
@@ -99,6 +100,7 @@ export function createConversationSubmitService(input: {
           clientMessageId: request.clientMessageId,
         });
       }
+      request = conversationSubmitRequestWithAttemptTarget(request, claimed.attempt);
 
       const completeAttempt = (
         payload: ConversationSubmitResult,
@@ -327,11 +329,30 @@ export function createConversationSubmitService(input: {
       }
 
       try {
+        const requestedOpenCodeSessionId = claimed.attempt.opencodeSessionId ??
+          deriveConversationSubmitOpenCodeSessionId({
+            workspaceId: workspace.id,
+            clientMessageId: request.clientMessageId,
+          });
+        attemptStore.update({
+          workspaceId: workspace.id,
+          clientMessageId: request.clientMessageId,
+          status: "materializing",
+          opencodeSessionId: requestedOpenCodeSessionId,
+        });
         const materializedSession = await conversationService.createConversation({
           workspace,
           directory,
           title: deriveSubmitConversationTitle(request),
+          requestedOpenCodeSessionId,
           sendTraceId: sendTraceId ?? null,
+        });
+        attemptStore.update({
+          workspaceId: workspace.id,
+          clientMessageId: request.clientMessageId,
+          status: "materialized",
+          conversationId: materializedSession.conversationId,
+          opencodeSessionId: materializedSession.opencodeSessionId,
         });
         if (submitResolvedRun) {
           const materializedRequest: ConversationSubmitRequest = {
@@ -492,7 +513,7 @@ function conversationSubmitRequestWithAttemptTarget(
   request: ConversationSubmitRequest,
   attempt: ConversationSubmitAttempt,
 ): ConversationSubmitRequest {
-  if (!attempt.conversationId && !attempt.opencodeSessionId) return request;
+  if (!attempt.conversationId || !attempt.opencodeSessionId) return request;
   if (request.target?.conversationId?.trim() || request.target?.opencodeSessionId?.trim()) return request;
   return {
     ...request,

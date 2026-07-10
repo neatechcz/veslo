@@ -1,6 +1,13 @@
 import type { ConversationService, ConversationTranscriptResult } from "../conversation-service.js";
 import type { ConversationRunLifecycleController } from "../conversation-run-lifecycle-controller.js";
-import type { ConversationRunQueueItem, ConversationRunQueueStore } from "../conversation-run-queue-store.js";
+import {
+  CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT,
+  CONVERSATION_RUN_QUEUE_READABLE_STATES,
+  type ConversationRunQueueCursor,
+  type ConversationRunQueueItem,
+  type ConversationRunQueueReadableState,
+  type ConversationRunQueueStore,
+} from "../conversation-run-queue-store.js";
 import type {
   ConversationSubmitResolvedRunSubmitter,
   ConversationSubmitService,
@@ -39,6 +46,7 @@ import { shortId } from "../utils.js";
 
 const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
 const SESSION_TRANSCRIPT_MAX_LIMIT = 200;
+const CONVERSATION_QUEUE_DEFAULT_LIMIT = 50;
 
 export type ConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
 
@@ -347,6 +355,55 @@ function parseSessionDirectoryMap(input: unknown): Record<string, string> {
   return result;
 }
 
+function parseConversationQueueLimit(input: string | null): number {
+  if (input === null || input.trim() === "") return CONVERSATION_QUEUE_DEFAULT_LIMIT;
+  if (!/^\d+$/.test(input)) {
+    throw new ApiError(400, "invalid_payload", "limit must be a positive integer");
+  }
+  const limit = Number(input);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT) {
+    throw new ApiError(
+      400,
+      "invalid_payload",
+      `limit must be an integer from 1 to ${CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT}`,
+    );
+  }
+  return limit;
+}
+
+function parseConversationQueueStates(values: string[]): ConversationRunQueueReadableState[] {
+  const states = values.length > 0 ? values.map((value) => value.trim()) : [...CONVERSATION_RUN_QUEUE_READABLE_STATES];
+  if (states.length === 0 || states.some((state) => !CONVERSATION_RUN_QUEUE_READABLE_STATES.includes(state as ConversationRunQueueReadableState))) {
+    throw new ApiError(400, "invalid_payload", "status must be pending, starting, or failed");
+  }
+  return [...new Set(states)] as ConversationRunQueueReadableState[];
+}
+
+function parseConversationQueueCursor(value: string | null): ConversationRunQueueCursor | null {
+  if (value === null || value.trim() === "") return null;
+  try {
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid cursor");
+    const cursor = parsed as Record<string, unknown>;
+    if (
+      !Number.isSafeInteger(cursor.createdAt) ||
+      (cursor.createdAt as number) < 0 ||
+      typeof cursor.queueItemId !== "string" ||
+      !cursor.queueItemId.trim()
+    ) {
+      throw new Error("invalid cursor");
+    }
+    return { createdAt: cursor.createdAt as number, queueItemId: cursor.queueItemId.trim() };
+  } catch {
+    throw new ApiError(400, "invalid_payload", "cursor is invalid");
+  }
+}
+
+function encodeConversationQueueCursor(cursor: ConversationRunQueueCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
 function parseSessionPrefetchRef(input: unknown, fieldName: string): SessionTranscriptPrefetchSessionRef | null {
   if (input === undefined || input === null) return null;
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -504,7 +561,19 @@ function optionalSubmitDebugTrace(payload: Record<string, unknown>): {
   return debugTrace ? { debugTrace } : {};
 }
 
-function serializeConversationRunQueueStatus(item: ConversationRunQueueItem): Record<string, unknown> {
+function sanitizeConversationQueueError(error: string | null): string | null {
+  const normalized = error?.replace(/\s+/g, " ").trim() ?? "";
+  if (!normalized) return null;
+  return normalized
+    .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted]")
+    .replace(/\b([a-z_]*token[a-z_]*|authorization)\s*[=:]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .slice(0, 500);
+}
+
+function serializeConversationRunQueueStatus(
+  item: ConversationRunQueueItem,
+  queuePosition: number | null = null,
+): Record<string, unknown> {
   return {
     ok: true,
     workspaceId: item.workspaceId,
@@ -513,16 +582,18 @@ function serializeConversationRunQueueStatus(item: ConversationRunQueueItem): Re
     queueItemId: item.queueItemId,
     reservedRunId: item.reservedRunId,
     clientMessageId: item.clientMessageId,
-    origin: item.origin,
+    kind: parseConversationRunKind(item.kind),
     status: item.state,
-    activeRunId: item.activeRunId,
-    attempts: item.attempts,
+    queuePosition,
+    order: {
+      createdAt: item.createdAt,
+      queueItemId: item.queueItemId,
+    },
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     startedAt: item.startedAt,
-    submittedAt: item.submittedAt,
     completedAt: item.completedAt,
-    error: item.error,
+    error: sanitizeConversationQueueError(item.error),
   };
 }
 
@@ -1053,6 +1124,36 @@ export function registerConversationSessionRoutes(
       runtimeAuthorizationActorTokenHash,
     });
     return jsonResponse(result.payload, result.httpStatus);
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/queue", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
+    if (workspace.workspaceType !== "local") {
+      throw new ApiError(404, "queue_not_found", "Queued runs are unavailable for this workspace");
+    }
+    const conversationId = (ctx.params.conversationId ?? "").trim();
+    if (!conversationId) {
+      throw new ApiError(400, "invalid_payload", "conversationId is required");
+    }
+    const cursorValues = ctx.url.searchParams.getAll("cursor");
+    if (cursorValues.length > 1) {
+      throw new ApiError(400, "invalid_payload", "cursor may be specified once");
+    }
+    const page = conversationRunQueueStore.listForConversation({
+      workspaceId: workspace.id,
+      conversationId,
+      states: parseConversationQueueStates(ctx.url.searchParams.getAll("status")),
+      cursor: parseConversationQueueCursor(cursorValues[0] ?? null),
+      limit: parseConversationQueueLimit(ctx.url.searchParams.get("limit")),
+    });
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      conversationId,
+      items: page.items.map(({ item, queuePosition }) => serializeConversationRunQueueStatus(item, queuePosition)),
+      nextCursor: page.nextCursor ? encodeConversationQueueCursor(page.nextCursor) : null,
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/queue/:queueItemId", "client", async (ctx) => {

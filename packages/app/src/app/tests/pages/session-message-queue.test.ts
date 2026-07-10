@@ -14,6 +14,7 @@ const queueDrainControllerSource = readFileSync(
 const source = `${sessionSource}\n${conversationFlowSource}\n${queueDrainControllerSource}`;
 const appViewPropsSource = readFileSync(new URL("../../app-view-props.ts", import.meta.url), "utf8");
 const sendWorkflowSource = readFileSync(new URL("../../pages/session-send-workflow.ts", import.meta.url), "utf8");
+const sessionRuntimeDoc = readFileSync(new URL("../../../../../../docs/features/session-runtime.md", import.meta.url), "utf8");
 const flowSendImmediateStart = conversationFlowSource.indexOf("sendPromptImmediate: async (");
 const flowSendImmediateEnd = conversationFlowSource.indexOf("export type RunBaseline", flowSendImmediateStart);
 const flowSendImmediateSource = conversationFlowSource.slice(flowSendImmediateStart, flowSendImmediateEnd);
@@ -119,6 +120,75 @@ test("running non-sendNow sends use the server queue-drain contract directly", (
   );
 });
 
+test("accepted server queue work has a separate read-only projection and scoped hydration controller", () => {
+  assert.match(
+    sessionSource,
+    /import ServerQueuedRunList from "\.\.\/components\/session\/server-queued-run-list";/,
+    "session view should render server-owned work through a separate list component",
+  );
+  assert.match(
+    sessionSource,
+    /const \[serverQueuedRuns, setServerQueuedRuns\] = createSignal<ServerQueuedRunProjection\[\]>\(\[\]\);/,
+    "server-owned queue rows must not use the editable local QueuedDraft owner",
+  );
+  assert.match(
+    sessionSource,
+    /const uiConversationKey = currentSessionQueueKey\(\);\s*const result = await props\.sendPromptAsync\(draft, options\);/s,
+    "accepted queue responses should retain the pre-await UI conversation identity",
+  );
+  assert.match(
+    sessionSource,
+    /result\.status === "queued"[\s\S]*setServerQueuedRuns\(\(current\) =>[\s\S]*upsertServerQueuedRunProjection\(current, \{[\s\S]*queueItemId,[\s\S]*reservedRunId,[\s\S]*clientMessageId:[\s\S]*\}, uiConversationKey\),[\s\S]*requestServerQueueProjectionRefresh\(\{ workspaceId, conversationId, uiConversationKey \}\);/s,
+    "accepted queue responses should appear immediately by their server identity and then refresh the captured scope",
+  );
+  assert.match(
+    sessionSource,
+    /const serverQueueProjectionController = createServerQueueProjectionController\(\{[\s\S]*const client = props\.vesloServerClient;[\s\S]*client\.listConversationQueue\(scope\.workspaceId, scope\.conversationId, \{[\s\S]*status: \["pending", "starting", "failed"\],[\s\S]*\}\);[\s\S]*replaceServerQueuedRunScope\(current, scope, items\)/s,
+    "hydration must use the captured server workspace and conversation scope and replace only that projection scope",
+  );
+  assert.match(
+    sessionSource,
+    /props\.reconnectState\?\.status \?\? ""[\s\S]*requestServerQueueProjectionRefresh\(\{ workspaceId, conversationId, uiConversationKey \}\);/s,
+    "activation and reconnect changes should refresh the visible server queue scope",
+  );
+  assert.match(
+    sessionSource,
+    /<ServerQueuedRunList items=\{visibleServerQueuedRuns\(\)\} \/>/,
+    "server queue rows should render separately from local drafts",
+  );
+});
+
+test("canonical queue documentation keeps the local and server ownership contracts distinct", () => {
+  assert.match(
+    sessionRuntimeDoc,
+    /A local queued draft is a pre-admission, editable SessionView item\. It exists only for the lifetime of that view and is not restart-durable\./,
+  );
+  assert.match(
+    sessionRuntimeDoc,
+    /While a session is running or streaming, plain Enter and the queue send button submit directly to server admission instead of first creating a local queue row\./,
+  );
+  assert.match(
+    sessionRuntimeDoc,
+    /Stop aborts the active lifecycle run and pauses only local pre-admission drafts[\s\S]*A server-accepted queue item is not paused or cancelled by Stop and may continue after the aborted run reaches a terminal state\./,
+  );
+  assert.match(
+    sessionRuntimeDoc,
+    /Queue status `submitted` means that queue processing handed the reserved run to the lifecycle; it is not a successful model response\./,
+  );
+  assert.match(
+    sessionRuntimeDoc,
+    /Server projection rows are read-only: they do not expose Retry, Edit, Cancel, Move, Pause, or Resume controls/,
+  );
+  assert.match(
+    sessionRuntimeDoc,
+    /Legacy pending queue-key prefixes remain compatibility state\./,
+  );
+  assert.doesNotMatch(
+    sessionRuntimeDoc,
+    /When a session is running or streaming, plain Enter and the queue send button add the draft to a session-local queue/,
+  );
+});
+
 test("paused queue Enter append unpauses and starts the first drain-eligible queued draft", () => {
   assert.match(
     conversationFlowSource,
@@ -127,7 +197,7 @@ test("paused queue Enter append unpauses and starts the first drain-eligible que
   );
   assert.match(
     flowHandleSendSource,
-    /case "append-to-paused-queue-and-drain": \{\s*const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*deps\.queue\.appendDraftToCurrentQueue\(draft\);\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*void controller\.drainNextQueuedDraft\("normal", sessionKey\);\s*return localQueuedResult\("local_queue_paused_append"\);\s*\}/s,
+    /case "append-to-paused-queue-and-drain": \{\s*const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*deps\.queue\.appendDraftToCurrentQueue\(draft, \{\s*clientMessageId: deps\.identity\.createClientMessageId\(\),[\s\S]*?\}\);\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*void controller\.drainNextQueuedDraft\("normal", sessionKey\);\s*return localQueuedResult\("local_queue_paused_append"\);\s*\}/s,
     "plain Enter while paused should append, unpause, and start draining the first queued item in the flow controller",
   );
 });
@@ -136,7 +206,7 @@ test("idle Enter appends behind an existing queue instead of sending immediately
   const resolverBranch = conversationFlowSource.indexOf("if (queuedDraftCount > 0 && !sendNow)");
   const handlerStart = flowHandleSendSource.indexOf("handleSendPrompt: async (");
   const queuedCase = flowHandleSendSource.indexOf('case "append-to-existing-queue-and-drain-if-idle"', handlerStart);
-  const appendCall = flowHandleSendSource.indexOf("deps.queue.appendDraftToCurrentQueue(draft);", queuedCase);
+  const appendCall = flowHandleSendSource.indexOf("deps.queue.appendDraftToCurrentQueue(draft, {", queuedCase);
   const drainCall = flowHandleSendSource.indexOf('void controller.drainNextQueuedDraft("normal", sessionKey);', appendCall);
   const returnQueued = flowHandleSendSource.indexOf('return localQueuedResult("local_queue_existing_append");', drainCall);
   const sendNowBranch = flowHandleSendSource.indexOf('case "send-now"', returnQueued);
@@ -451,8 +521,8 @@ test("app prompt send accepts an explicit target session without freezing model 
 test("queued edit lifecycle restores editing items and drains idle saves", () => {
   assert.match(
     conversationFlowSource,
-    /restoreEditingQueuedDraft: \(sessionKey, id\) => \{\s*if \(!id\) return;\s*deps\.queue\.updateQueueForSessionKey\(sessionKey, \(queue\) => markQueuedDraftQueued\(queue, id\)\);\s*\}/,
-    "conversation-flow controller should be able to restore an editing queued draft to queued state",
+    /restoreEditingQueuedDraft: \(sessionKey, id\) => \{\s*if \(!id\) return;\s*deps\.queue\.updateQueueForSessionKey\(sessionKey, \(queue\) => restoreQueuedDraftAfterEditing\(queue, id\)\);\s*\}/,
+    "conversation-flow controller should restore an editing queued draft to its original state",
   );
 
   assert.match(
@@ -463,7 +533,7 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
 
   assert.match(
     sessionSource,
-    /const handleEditQueuedDraft = \(id: string\) => \{\s*sessionFlowFacade\.handleEditQueuedDraft\(id\);\s*\};[\s\S]*const handleCancelQueuedDraft = \(id: string\) => \{\s*sessionFlowFacade\.handleCancelQueuedDraft\(id\);\s*\};[\s\S]*const handleMoveQueuedDraft = \(id: string, targetIndex: number\) => \{\s*sessionFlowFacade\.handleMoveQueuedDraft\(id, targetIndex\);\s*\};/s,
+    /const handleEditQueuedDraft = \(id: string\) => \{\s*sessionFlowFacade\.handleEditQueuedDraft\(id\);\s*\};[\s\S]*const handleCancelQueuedDraft = \(id: string\) => \{\s*sessionFlowFacade\.handleCancelQueuedDraft\(id\);\s*\};[\s\S]*const handleRetryQueuedDraft = \(id: string\) => \{\s*sessionFlowFacade\.handleRetryQueuedDraft\(id\);\s*\};[\s\S]*const handleMoveQueuedDraft = \(id: string, targetIndex: number\) => \{\s*sessionFlowFacade\.handleMoveQueuedDraft\(id, targetIndex\);\s*\};/s,
     "session view queue edit callbacks should delegate to the session flow facade",
   );
 
@@ -490,10 +560,23 @@ test("queued edit lifecycle restores editing items and drains idle saves", () =>
   );
 });
 
+test("queued message retry stays scoped to the local queue head", () => {
+  assert.match(
+    conversationFlowSource,
+    /handleRetryQueuedDraft: \(id\) => \{\s*const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const queue = deps\.queue\.queuedDrafts\(\);[\s\S]*if \(!item \|\| item\.state !== "error" \|\| queue\[0\]\?\.id !== id\) return false;[\s\S]*markQueuedDraftQueued\(queue, id\)[\s\S]*void controller\.drainNextQueuedDraft\("normal", sessionKey\);/s,
+    "Retry should only release a local error head and drain its captured session",
+  );
+  assert.match(
+    sessionSource,
+    /<QueuedMessageList[\s\S]*onRetry=\{handleRetryQueuedDraft\}[\s\S]*onMove=\{handleMoveQueuedDraft\}/s,
+    "the session view should pass retry only to the local queued-message list",
+  );
+});
+
 test("edited queued send-now marks the edited item sending before awaiting handoff", () => {
   assert.match(
     flowHandleSendSource,
-    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*deps\.queue\.updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\(updateQueuedDraft\(queue, editingId, draft\), editingId\),\s*\);\s*if \(deps\.sessionKeys\.currentSessionQueueKey\(\) === sessionKey\) \{\s*deps\.queue\.setEditingQueuedDraftId\(null\);\s*deps\.composer\.setComposerDraft\(createEmptyComposerDraft\(draft\.mode\)\);\s*\}\s*const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*implicitSkillCommandPolicy: options\.implicitSkillCommandPolicy,\s*\}\);/s,
+    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*const editedItem = deps\.queue\.queuedDrafts\(\)\.find\(\(item\) => item\.id === editingId\);\s*const clientMessageId = deps\.identity\.createClientMessageId\(\);[\s\S]*?deps\.queue\.updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\([\s\S]*?updateQueuedDraft\(queue, editingId, draft, deps\.identity\.now\(\), \{\s*clientMessageId,[\s\S]*?\}\),[\s\S]*?\),\s*\);[\s\S]*?const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*clientMessageId,\s*restoreDraftOnFailure: false,[\s\S]*?implicitSkillCommandPolicy,\s*\}\);/s,
     "edited queued send-now should persist the edited draft into a sending queue item and release the composer before awaiting handoff",
   );
 });
@@ -501,7 +584,7 @@ test("edited queued send-now marks the edited item sending before awaiting hando
 test("edited queued send-now marks the edited item error when handoff is rejected", () => {
   assert.match(
     flowHandleSendSource,
-    /const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*restoreDraftOnFailure: false,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*implicitSkillCommandPolicy: options\.implicitSkillCommandPolicy,\s*\}\);\s*const resultSessionKey = deps\.queue\.resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!sessionSubmitWasAccepted\(submitResult\)\) \{\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(\s*queue,\s*editingId,\s*submitResult\.message \?\? deps\.runtime\.error\(\) \?\? deps\.feedback\.tr\("session\.connect_server_to_attach"\),\s*\),\s*\);\s*return submitResult;\s*\}\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
+    /const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*clientMessageId,\s*restoreDraftOnFailure: false,[\s\S]*?implicitSkillCommandPolicy,\s*\}\);\s*const resultSessionKey = deps\.queue\.resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!sessionSubmitWasAccepted\(submitResult\)\) \{\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(\s*queue,\s*editingId,\s*submitResult\.message \?\? deps\.runtime\.error\(\) \?\? deps\.feedback\.tr\("session\.connect_server_to_attach"\),\s*\),\s*\);\s*return submitResult;\s*\}\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
     "edited queued send-now should update whichever queue contains the edited item after a pending remap",
   );
 });

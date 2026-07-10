@@ -11,6 +11,10 @@ import {
   startApp,
   stopApp,
 } from './app-launcher.js';
+import {
+  startSessionQueueRuntimeFixture,
+  type SessionQueueRuntimeFixture,
+} from './session-queue-runtime-fixture.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -113,6 +117,8 @@ type PortContentionFixture = {
   server: Server;
   previousE2ePort: string | undefined;
 };
+
+type EnvironmentRestore = () => void;
 
 type DenAuthSummary = {
   denApiBase: string | null;
@@ -328,12 +334,51 @@ export function scenarioSelectionNeedsRelaunchReconnectCheck(scenarios: string[]
   );
 }
 
+export function scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/session-queue-durability.toml'),
+  );
+}
+
 export function assertPilotScenarioSelectionIsolated(scenarios: string[]): void {
   if (scenarioSelectionNeedsModelStreamRetryFixture(scenarios) && scenarios.length > 1) {
     throw new Error(
       'model-stream-retry-no-progress must run as a focused pilot scenario because it enables a global orchestrator probe fixture.',
     );
   }
+  if (scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios) && scenarios.length > 1) {
+    throw new Error(
+      'session-queue-durability must run as a focused pilot scenario because it owns a deterministic OpenCode and lifecycle fixture.',
+    );
+  }
+}
+
+export function assertSessionQueueRuntimeFixtureProfileIsolation(
+  scenarios: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (
+    scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios) &&
+    env.E2E_USE_EXISTING_PROFILE?.trim() === '1'
+  ) {
+    throw new Error(
+      'session-queue-durability is deterministic acceptance coverage and must not use E2E_USE_EXISTING_PROFILE=1. Use the manual live-user Pilot smoke path separately.',
+    );
+  }
+}
+
+function setEnvironmentForFixture(values: Record<string, string>): EnvironmentRestore {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
 }
 
 export function scenarioSelectionNeedsNoWorkspaceProfile(scenarios: string[]): boolean {
@@ -743,6 +788,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     }
   }
   assertPilotScenarioSelectionIsolated(scenarios);
+  assertSessionQueueRuntimeFixtureProfileIsolation(scenarios);
   assertLiveManagedAiAuthForScenarioSelection(scenarios);
 
   if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
@@ -784,13 +830,41 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     process.env.E2E_SKIP_DEFAULT_WORKSPACE_STATE ||= '1';
   }
   let portContentionFixture: PortContentionFixture | null = null;
+  let sessionQueueRuntimeFixture: SessionQueueRuntimeFixture | null = null;
+  let restoreSessionQueueFixtureEnvironment: EnvironmentRestore | null = null;
 
   try {
     if (scenarioSelectionNeedsPortContentionFixture(scenarios)) {
       portContentionFixture = await startPortContentionFixture();
     }
+    if (scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios)) {
+      sessionQueueRuntimeFixture = await startSessionQueueRuntimeFixture();
+      restoreSessionQueueFixtureEnvironment = setEnvironmentForFixture({
+        E2E_SESSION_QUEUE_FIXTURE_BASE_URL: sessionQueueRuntimeFixture.baseUrl,
+        E2E_SESSION_QUEUE_VESLO_SERVER_URL: sessionQueueRuntimeFixture.vesloServerBaseUrl,
+        E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN: sessionQueueRuntimeFixture.vesloServerToken,
+        E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID: sessionQueueRuntimeFixture.vesloWorkspaceId,
+        VESLO_DEV_SERVER_URL: sessionQueueRuntimeFixture.vesloServerBaseUrl,
+        VESLO_DEV_SERVER_TOKEN: sessionQueueRuntimeFixture.vesloServerToken,
+        VESLO_DISABLE_DEV_AUTOSTART: '1',
+      });
+      console.log(`[e2e] Session queue runtime fixture: ${sessionQueueRuntimeFixture.baseUrl}`);
+    }
 
-    await startApp();
+    const queueRuntimeFixtureForLaunch = sessionQueueRuntimeFixture;
+    await startApp(queueRuntimeFixtureForLaunch
+      ? {
+          beforeLaunch: async ({ profileRoot, opencodeHome }) => {
+            if (!profileRoot || !opencodeHome) {
+              throw new Error('Session queue fixture requires the isolated E2E profile and OPENCODE_HOME.');
+            }
+            await queueRuntimeFixtureForLaunch.startVesloServer({
+              workspacePath: join(profileRoot, 'workspaces', 'visual-workspace'),
+              dataDir: join(opencodeHome, '.veslo', 'session-queue-server'),
+            });
+          },
+        }
+      : undefined);
     await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
     await seedPilotDenAuthIfConfigured({ binary, socket, cwd: e2eRoot, timeoutMs });
     for (const scenario of scenarios) {
@@ -844,6 +918,8 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   } finally {
     await stopApp();
     await stopPortContentionFixture(portContentionFixture);
+    await sessionQueueRuntimeFixture?.stop();
+    restoreSessionQueueFixtureEnvironment?.();
   }
 }
 

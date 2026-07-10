@@ -109,6 +109,16 @@ import type { ComposerSendOptions, ComposerSendResult } from "../components/sess
 import ComposerTargetPicker from "../components/session/composer-target-picker";
 import type { SidebarSessionOpenTarget } from "../components/session/workspace-session-list-model";
 import QueuedMessageList from "../components/session/queued-message-list";
+import ServerQueuedRunList from "../components/session/server-queued-run-list";
+import {
+  replaceServerQueuedRunScope,
+  serverQueuedRunsForScope,
+  serverQueuedRunsForVisibleConversation,
+  upsertServerQueuedRunProjection,
+  type ServerQueuedRunProjectionScope,
+  type ServerQueuedRunProjection,
+} from "../components/session/server-queue-projection-model.js";
+import { createServerQueueProjectionController } from "../components/session/server-queue-projection-controller.js";
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
 import {
   createPendingSubmittedDraft,
@@ -127,6 +137,7 @@ import {
   appendQueuedDraft,
   resolveQueuedDraftSessionKey,
   type QueuedDraft,
+  type QueuedDraftEnvelope,
 } from "../components/session/session-queue-model.js";
 import { shouldShowSessionLoadingState } from "../components/session/session-loading-state-model";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
@@ -998,6 +1009,22 @@ export default function SessionView(props: SessionViewProps) {
   const sessionIdForQueueKey = (sessionKey: string) => resolveSessionIdForQueueKey(sessionKey);
   const workspaceIdForQueueKey = (sessionKey: string) =>
     resolveWorkspaceIdForQueueKey(queueKeyContext(), sessionKey);
+  const resolveVesloWorkspaceId = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return null;
+    const workspace =
+      props.workspaces.find((item) => item.id === id) ??
+      props.workspaceSessionGroups.find((group) => group.workspace.id === id)?.workspace;
+    if (workspace?.workspaceType === "remote" && workspace.remoteType === "veslo") {
+      return (
+        workspace.vesloWorkspaceId?.trim() ||
+        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
+        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
+        null
+      );
+    }
+    return workspace?.vesloWorkspaceId?.trim() || null;
+  };
   const statusForQueueKey = (sessionKey: string, statuses: Record<string, string>) => {
     const sessionId = sessionIdForQueueKey(sessionKey);
     if (!sessionId) return "idle";
@@ -1833,6 +1860,7 @@ export default function SessionView(props: SessionViewProps) {
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
   const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
+  const [serverQueuedRuns, setServerQueuedRuns] = createSignal<ServerQueuedRunProjection[]>([]);
   const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
   const [editingTranscriptMessageId, setEditingTranscriptMessageId] = createSignal<string | null>(null);
@@ -1842,6 +1870,27 @@ export default function SessionView(props: SessionViewProps) {
   let escapeStopConfirmationSessionId = props.selectedSessionId;
 
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
+  const activeServerQueueVisibilityScope = createMemo(() => {
+    const ref = props.activeUiConversationRef;
+    return {
+      workspaceId: resolveVesloWorkspaceId(ref?.workspaceId ?? props.activeWorkspaceId) ?? "",
+      conversationId: ref?.conversationId?.trim() ?? "",
+      opencodeSessionId: ref?.opencodeSessionId?.trim() || props.selectedSessionId?.trim() || "",
+      uiConversationKey: ref?.key?.trim() || currentSessionQueueKey(),
+    };
+  });
+  const activeServerQueueProjectionScope = (): ServerQueuedRunProjectionScope | null => {
+    const scope = activeServerQueueVisibilityScope();
+    if (!scope.workspaceId || !scope.conversationId || !scope.uiConversationKey) return null;
+    return {
+      workspaceId: scope.workspaceId,
+      conversationId: scope.conversationId,
+      uiConversationKey: scope.uiConversationKey,
+    };
+  };
+  const visibleServerQueuedRuns = createMemo(() =>
+    serverQueuedRunsForVisibleConversation(serverQueuedRuns(), activeServerQueueVisibilityScope()),
+  );
   const queuePaused = createMemo(() => Boolean(queuePausedAfterStopBySessionKey()[currentSessionQueueKey()]));
   const queuePausedForSessionKey = (sessionKey: string) =>
     Boolean(queuePausedAfterStopBySessionKey()[sessionKey]);
@@ -1951,8 +2000,8 @@ export default function SessionView(props: SessionViewProps) {
     );
   };
 
-  const appendDraftToCurrentQueue = (draft: ComposerDraft) => {
-    updateCurrentQueue((queue) => appendQueuedDraft(queue, draft));
+  const appendDraftToCurrentQueue = (draft: ComposerDraft, envelope: QueuedDraftEnvelope) => {
+    updateCurrentQueue((queue) => appendQueuedDraft(queue, draft, envelope));
   };
 
   const isComposerDraftEmpty = (draft: ComposerDraft) => {
@@ -2957,7 +3006,46 @@ export default function SessionView(props: SessionViewProps) {
     transport: {
       replaceUserMessageAsync: (messageId, draft, options) =>
         props.replaceUserMessageAsync(messageId, draft, options),
-      sendPromptAsync: (draft, options) => props.sendPromptAsync(draft, options),
+      sendPromptAsync: async (draft, options) => {
+        const uiConversationKey = currentSessionQueueKey();
+        const result = await props.sendPromptAsync(draft, options);
+        const workspaceId = result.workspaceId?.trim() ?? "";
+        const conversationId = result.conversationId?.trim() ?? "";
+        const opencodeSessionId = result.opencodeSessionId?.trim() ?? "";
+        const queueItemId = result.queueItemId?.trim() ?? "";
+        const reservedRunId = result.reservedRunId?.trim() ?? "";
+        if (
+          result.status === "queued" &&
+          workspaceId &&
+          conversationId &&
+          opencodeSessionId &&
+          queueItemId &&
+          reservedRunId
+        ) {
+          const now = Date.now();
+          setServerQueuedRuns((current) =>
+            upsertServerQueuedRunProjection(current, {
+              workspaceId,
+              conversationId,
+              opencodeSessionId,
+              queueItemId,
+              reservedRunId,
+              clientMessageId: result.clientMessageId?.trim() || null,
+              kind: draft.mode === "shell" ? "shell" : "prompt_async",
+              status: "pending",
+              queuePosition: result.queuePosition ?? null,
+              order: { createdAt: now, queueItemId },
+              createdAt: now,
+              updatedAt: now,
+              startedAt: null,
+              completedAt: null,
+              error: null,
+            }, uiConversationKey),
+          );
+          requestServerQueueProjectionRefresh({ workspaceId, conversationId, uiConversationKey });
+        }
+        return result;
+      },
     },
     feedback: {
       setToastMessage,
@@ -3013,6 +3101,10 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleCancelQueuedDraft = (id: string) => {
     sessionFlowFacade.handleCancelQueuedDraft(id);
+  };
+
+  const handleRetryQueuedDraft = (id: string) => {
+    sessionFlowFacade.handleRetryQueuedDraft(id);
   };
 
   const handleMoveQueuedDraft = (id: string, targetIndex: number) => {
@@ -3132,22 +3224,57 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
-  const resolveVesloWorkspaceId = (workspaceId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return null;
-    const workspace =
-      props.workspaces.find((item) => item.id === id) ??
-      props.workspaceSessionGroups.find((group) => group.workspace.id === id)?.workspace;
-    if (workspace?.workspaceType === "remote" && workspace.remoteType === "veslo") {
-      return (
-        workspace.vesloWorkspaceId?.trim() ||
-        parseVesloWorkspaceIdFromUrl(workspace.vesloHostUrl ?? "") ||
-        parseVesloWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
-        null
-      );
-    }
-    return workspace?.vesloWorkspaceId?.trim() || null;
+  const serverQueueProjectionController = createServerQueueProjectionController({
+    getScope: activeServerQueueProjectionScope,
+    fetchScope: async (scope) => {
+      const client = props.vesloServerClient;
+      if (!client || props.vesloServerStatus !== "connected") return null;
+      const page = await client.listConversationQueue(scope.workspaceId, scope.conversationId, {
+        status: ["pending", "starting", "failed"],
+      });
+      return page.items;
+    },
+    replaceScope: (scope, items) => {
+      setServerQueuedRuns((current) => replaceServerQueuedRunScope(current, scope, items));
+    },
+    hasKnownPollingRows: (scope) =>
+      serverQueuedRunsForScope(untrack(serverQueuedRuns), scope.workspaceId, scope.conversationId).some(
+        (item) => item.status === "pending" || item.status === "starting",
+      ),
+  });
+  const requestServerQueueProjectionRefresh = (scope = activeServerQueueProjectionScope()) => {
+    void serverQueueProjectionController.refreshAndPoll(scope);
   };
+  createEffect(
+    on(
+      () => [
+        activeServerQueueProjectionScope()?.workspaceId ?? "",
+        activeServerQueueProjectionScope()?.conversationId ?? "",
+        activeServerQueueProjectionScope()?.uiConversationKey ?? "",
+        props.vesloServerClient,
+        props.vesloServerStatus,
+        props.reconnectState?.status ?? "",
+      ] as const,
+      ([workspaceId, conversationId, uiConversationKey, _client, status]) => {
+        if (!workspaceId || !conversationId || !uiConversationKey || status !== "connected") {
+          serverQueueProjectionController.stopPolling();
+          return;
+        }
+        requestServerQueueProjectionRefresh({ workspaceId, conversationId, uiConversationKey });
+      },
+    ),
+  );
+  createEffect(
+    on(
+      () => [props.sessionStatus, activeServerQueueProjectionScope()?.uiConversationKey ?? ""] as const,
+      ([status, uiConversationKey], previous) => {
+        if (!uiConversationKey || !previous || status === previous[0]) return;
+        requestServerQueueProjectionRefresh();
+      },
+      { defer: true },
+    ),
+  );
+  onCleanup(() => serverQueueProjectionController.dispose());
 
   const reportLoadedSessionPrefetchInterest: LoadedSessionPrefetchInterestChangeHandler = (workspaceId, interest) => {
     const client = props.vesloServerClient;
@@ -3984,8 +4111,14 @@ export default function SessionView(props: SessionViewProps) {
                     items={queuedDrafts()}
                     onEdit={handleEditQueuedDraft}
                     onCancel={handleCancelQueuedDraft}
+                    onRetry={handleRetryQueuedDraft}
                     onMove={handleMoveQueuedDraft}
                   />
+                </div>
+              </Show>
+              <Show when={visibleServerQueuedRuns().length > 0}>
+                <div class={`mx-auto mb-2 w-full ${railWidthClass()}`}>
+                  <ServerQueuedRunList items={visibleServerQueuedRuns()} />
                 </div>
               </Show>
               <Show when={showFooterComposerTargetContext()}>

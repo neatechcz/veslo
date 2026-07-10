@@ -147,6 +147,39 @@ test("resolveDesktopAuthSeedFromEnv accepts the production desktop snapshot env 
   }
 });
 
+test("resolveDesktopAuthSeedFromEnv lets an isolated E2E run override onboarding without rewriting the live snapshot", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-onboarding-override-"));
+  const sourcePath = join(tempDir, "den-auth.json");
+  writeFileSync(sourcePath, JSON.stringify({
+    version: 1,
+    authJson: "{\"token\":\"live-user-token\"}",
+    keepSignedIn: true,
+    language: "cs",
+    onboardingComplete: false,
+    updatedAt: Date.now(),
+    source: "desktop-runtime",
+  }));
+
+  try {
+    const seed = resolveDesktopAuthSeedFromEnv({
+      VESLO_DEN_AUTH_SNAPSHOT_PATH: sourcePath,
+      E2E_ONBOARDING_COMPLETE: "1",
+    });
+
+    assert.deepEqual(seed, {
+      authJson: "{\"token\":\"live-user-token\"}",
+      keepSignedIn: true,
+      language: "cs",
+      onboardingComplete: true,
+      source: "desktop-runtime",
+    });
+    const original = JSON.parse(readFileSync(sourcePath, "utf8")) as Record<string, unknown>;
+    assert.equal(original.onboardingComplete, false);
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("resolveDesktopAuthSeedFromEnv tolerates a UTF-8 BOM in snapshot files", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "veslo-e2e-auth-seed-bom-"));
   const sourcePath = join(tempDir, "den-auth.json");

@@ -1043,12 +1043,20 @@ describe("conversation service", () => {
     tempDirs.push(dataDir);
     const directory = join(dataDir, "workspace-a");
     const bindingStore = createConversationBindingStore({ dataDir, now: () => 2_000 });
-    const createInputs: Array<{ directory: string | null; title?: string | null }> = [];
+    const createInputs: Array<{
+      directory: string | null;
+      title?: string | null;
+      requestedOpenCodeSessionId?: string | null;
+    }> = [];
     const service = createConversationService({
       readStore: fakeReadStore(directory),
       bindingStore,
       createOpenCodeSession: async (input) => {
-        createInputs.push({ directory: input.directory, title: input.title });
+        createInputs.push({
+          directory: input.directory,
+          title: input.title,
+          requestedOpenCodeSessionId: input.requestedOpenCodeSessionId,
+        });
         return {
           id: "sess-created",
           title: input.title,
@@ -1062,10 +1070,12 @@ describe("conversation service", () => {
       workspace: workspaceFor(directory),
       directory,
       title: "Created",
+      requestedOpenCodeSessionId: "ses_veslo_v1_requested",
     });
 
     expect(createInputs[0]?.directory).toBe(directory);
     expect(createInputs[0]?.title).toBe("Created");
+    expect(createInputs[0]?.requestedOpenCodeSessionId).toBe("ses_veslo_v1_requested");
     expect(result.id).toBe("sess-created");
     expect(result.opencodeSessionId).toBe("sess-created");
     expect(result.conversationId).toMatch(/^conv-/);

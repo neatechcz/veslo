@@ -19,6 +19,7 @@ const draft = (text: string): ComposerDraft => ({
 
 const item = (id: string, state: QueuedDraft["state"], text = id): QueuedDraft => ({
   id,
+  clientMessageId: `client-${id}`,
   draft: draft(text),
   createdAt: 100,
   updatedAt: 100,
@@ -34,7 +35,7 @@ test("queued message list exposes the queue component contract and visible draft
 
   assert.match(
     source,
-    /export type QueuedMessageListProps = \{\s*items: QueuedDraft\[\];\s*onEdit: \(id: string\) => void;\s*onCancel: \(id: string\) => void;\s*onMove: \(id: string, targetIndex: number\) => void;\s*\};/,
+    /export type QueuedMessageListProps = \{\s*items: QueuedDraft\[\];\s*onEdit: \(id: string\) => void;\s*onCancel: \(id: string\) => void;\s*onRetry: \(id: string\) => void;\s*onMove: \(id: string, targetIndex: number\) => void;\s*\};/,
     "component should expose the requested prop contract",
   );
 
@@ -60,12 +61,13 @@ test("queued message list exposes the queue component contract and visible draft
 test("queued message list renders compact icon controls and sending state", () => {
   assert.match(
     source,
-    /import \{[\s\S]*GripVertical,[\s\S]*Loader2,[\s\S]*Pencil,[\s\S]*X,[\s\S]*\} from "lucide-solid";/,
+    /import \{[\s\S]*GripVertical,[\s\S]*Loader2,[\s\S]*Pencil,[\s\S]*RotateCcw,[\s\S]*X,[\s\S]*\} from "lucide-solid";/,
     "component should use the requested lucide icons",
   );
 
   assert.match(source, /<GripVertical size=\{14\}/, "drag handle should use GripVertical");
   assert.match(source, /<Pencil size=\{14\}/, "edit control should use Pencil");
+  assert.match(source, /<RotateCcw size=\{14\}/, "retry control should use RotateCcw");
   assert.match(source, /<X size=\{14\}/, "cancel control should use X");
   assert.match(
     source,
@@ -94,6 +96,19 @@ test("queued message list renders queued draft errors visibly", () => {
   );
 });
 
+test("queued message list renders Retry only for the local failed head row", () => {
+  assert.match(
+    source,
+    /const isRetryable = \(item: QueuedDraft, index: number\) => item\.state === "error" && index === 0;/,
+    "only the failed local head should expose retry",
+  );
+  assert.match(
+    source,
+    /<Show when=\{isRetryable\(item, index\(\)\)\}>[\s\S]*title=\{tr\("common\.retry"\)\}[\s\S]*props\.onRetry\(item\.id\)/,
+    "Retry should be a local queue action and invoke only the local retry callback",
+  );
+});
+
 test("queued message list guards sending items and wires drag/drop callbacks", () => {
   assert.match(
     source,
@@ -103,14 +118,14 @@ test("queued message list guards sending items and wires drag/drop callbacks", (
 
   assert.match(
     source,
-    /import \{ isQueuedMessageMovable, movableQueueTargetIndex \} from "\.\/queued-message-list-model\.js";/,
-    "component should align movable rows with the queue model's drain-eligible states",
+    /canReorderQueuedMessages,[\s\S]*isQueuedMessageMovable,[\s\S]*movableQueueTargetIndex,/,
+    "component should disable reordering while the queue has a blocked row",
   );
 
   assert.match(
     source,
-    /draggable=\{isQueuedMessageMovable\(item\)\}/,
-    "only movable rows should be draggable",
+    /draggable=\{canReorder\(\) && isQueuedMessageMovable\(item\)\}/,
+    "only queued rows in an unblocked queue should be draggable",
   );
 
   assert.match(
@@ -159,13 +174,14 @@ test("queued message list computes drop target index in the movable subset", () 
     item("failed", "error"),
   ];
 
-  assert.equal(movableQueueTargetIndex(items, "first"), 0);
-  assert.equal(movableQueueTargetIndex(items, "second"), 1);
-  assert.equal(movableQueueTargetIndex(items, "failed"), 2);
+  assert.equal(movableQueueTargetIndex(items, "first"), -1);
+  assert.equal(movableQueueTargetIndex(items, "second"), -1);
+  assert.equal(movableQueueTargetIndex(items, "failed"), -1);
   assert.equal(movableQueueTargetIndex(items, "sending"), -1);
   assert.equal(movableQueueTargetIndex(items, "editing"), -1);
   assert.equal(isQueuedMessageMovable(items[1]!), true);
   assert.equal(isQueuedMessageMovable(items[2]!), false);
+  assert.equal(isQueuedMessageMovable(items[4]!), false);
 });
 
 test("queued message list exposes keyboard reordering on the drag handle", () => {

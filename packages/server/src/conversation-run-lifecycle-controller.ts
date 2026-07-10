@@ -952,11 +952,12 @@ export function createConversationRunLifecycleController(
     if (queueDrainInFlight.has(key)) return;
     queueDrainInFlight.add(key);
     let item = null as ReturnType<ConversationRunQueueStore["nextPending"]>;
+    let runTrace: ConversationRunLifecycleTracer | null = null;
     try {
       const workspace = options.resolveWorkspace?.(workspaceId) ?? null;
       if (!workspace) return;
       const lifecycleOwner = workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
-      const runTrace = options.createBackgroundRunTrace?.() ?? createNoopRunTrace();
+      runTrace = options.createBackgroundRunTrace?.() ?? createNoopRunTrace();
       if (lifecycleOwner) {
         try {
           const latest = await lifecycleOwner.status(workspace.id, normalizedConversationId, "latest");
@@ -968,7 +969,8 @@ export function createConversationRunLifecycleController(
             );
             if (shouldFailStaleActiveLifecycleRun(latest, reconcileMaxAttempts, reconcilePollMs)) {
               const activeRunId = latest.runId?.trim() || "latest";
-              runTrace.record("server:conversation-run:queue-drain-stale-active-failing", {
+              const activeRunTrace = runTrace;
+              activeRunTrace.record("server:conversation-run:queue-drain-stale-active-failing", {
                 workspaceId,
                 conversationId: normalizedConversationId,
                 runId: activeRunId,
@@ -981,14 +983,14 @@ export function createConversationRunLifecycleController(
                 activeRunId,
                 "run lifecycle stale/no-progress while draining queued conversation runs",
               ).then(() => {
-                runTrace.record("server:conversation-run:queue-drain-stale-active-failed", {
+                activeRunTrace.record("server:conversation-run:queue-drain-stale-active-failed", {
                   workspaceId,
                   conversationId: normalizedConversationId,
                   runId: activeRunId,
                 });
                 scheduleQueueDrain(workspaceId, normalizedConversationId, 0);
               }).catch((error) => {
-                runTrace.record("server:conversation-run:queue-drain-stale-active-failed-error", {
+                activeRunTrace.record("server:conversation-run:queue-drain-stale-active-failed-error", {
                   workspaceId,
                   conversationId: normalizedConversationId,
                   runId: activeRunId,
@@ -1014,8 +1016,17 @@ export function createConversationRunLifecycleController(
 
       item = options.queueStore.nextPending(workspaceId, normalizedConversationId);
       if (!item) return;
-      item = options.queueStore.markStarting(item.queueItemId);
-      if (!item || item.state !== "starting") return;
+      const claimed = options.queueStore.markStarting(item.queueItemId);
+      if (!claimed || claimed.state !== "starting") {
+        runTrace.record("server:conversation-run:queue-drain-claim-lost", {
+          workspaceId,
+          conversationId: normalizedConversationId,
+          queueItemId: item.queueItemId,
+          state: claimed?.state ?? null,
+        });
+        return;
+      }
+      item = claimed;
 
       let body: Record<string, unknown>;
       try {
@@ -1025,7 +1036,18 @@ export function createConversationRunLifecycleController(
         }
         body = parsed as Record<string, unknown>;
       } catch (error) {
-        options.queueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+        const failed = options.queueStore.markFailed(
+          item.queueItemId,
+          error instanceof Error ? error.message : String(error),
+        );
+        if (!failed) {
+          runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
+            workspaceId,
+            conversationId: normalizedConversationId,
+            queueItemId: item.queueItemId,
+            transition: "failed",
+          });
+        }
         return;
       }
 
@@ -1064,11 +1086,31 @@ export function createConversationRunLifecycleController(
           );
         } catch (error) {
           if (error instanceof RunAlreadyActiveError) {
-            options.queueStore.markPending(item.queueItemId, error.activeRunId);
+            const pending = options.queueStore.markPending(item.queueItemId, error.activeRunId);
+            if (!pending) {
+              runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
+                workspaceId,
+                conversationId: normalizedConversationId,
+                queueItemId: item.queueItemId,
+                transition: "pending",
+              });
+              return;
+            }
             scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
             return;
           }
-          options.queueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+          const failed = options.queueStore.markFailed(
+            item.queueItemId,
+            error instanceof Error ? error.message : String(error),
+          );
+          if (!failed) {
+            runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
+              workspaceId,
+              conversationId: normalizedConversationId,
+              queueItemId: item.queueItemId,
+              transition: "failed",
+            });
+          }
           return;
         }
       }
@@ -1085,11 +1127,30 @@ export function createConversationRunLifecycleController(
         expectAiGatewayStart,
         runtimeAuthorizationActorTokenHash,
       }, lifecycleOwner);
-      options.queueStore.markSubmitted(item.queueItemId);
+      const submitted = options.queueStore.markSubmitted(item.queueItemId);
+      if (!submitted) {
+        runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
+          workspaceId,
+          conversationId: normalizedConversationId,
+          queueItemId: item.queueItemId,
+          transition: "submitted",
+        });
+      }
       scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
     } catch (error) {
       if (item) {
-        options.queueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+        const failed = options.queueStore.markFailed(
+          item.queueItemId,
+          error instanceof Error ? error.message : String(error),
+        );
+        if (!failed) {
+          (runTrace ?? createNoopRunTrace()).record("server:conversation-run:queue-drain-terminal-transition-stale", {
+            workspaceId,
+            conversationId: normalizedConversationId,
+            queueItemId: item.queueItemId,
+            transition: "failed",
+          });
+        }
       }
     } finally {
       queueDrainInFlight.delete(key);

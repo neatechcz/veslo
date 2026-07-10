@@ -1021,10 +1021,16 @@ export default function Composer(props: ComposerProps) {
     applyHistoryDraft(target);
   };
 
-  const [sending, setSending] = createSignal(false);
+  const [sendingCount, setSendingCount] = createSignal(0);
+  const sending = createMemo(() => sendingCount() > 0);
   const [sendNowPending, setSendNowPending] = createSignal(false);
-  const submitLocked = createMemo(() => sending());
+  // A running lifecycle owns the global activity state. Once it is visible,
+  // another Enter must be able to admit a durable server queue item even while
+  // the first submit is finishing its local handoff bookkeeping.
+  const submitLocked = createMemo(() => sending() && !props.isStreaming);
   const sendDisabled = createMemo(() => !hasDraftContent() || (props.busy && !props.isStreaming));
+  const beginSending = () => setSendingCount((count) => count + 1);
+  const finishSending = () => setSendingCount((count) => Math.max(0, count - 1));
 
   const sendDraft = async (options: ComposerSendOptions = {}) => {
     if (options.sendNow && sendNowPending()) return;
@@ -1060,7 +1066,7 @@ export default function Composer(props: ComposerProps) {
 
     recordHistory(draft);
     const submittedDraft = draft;
-    setSending(true);
+    beginSending();
     if (options.sendNow) setSendNowPending(true);
     setMentionOpen(false);
     setMentionQuery("");
@@ -1081,7 +1087,7 @@ export default function Composer(props: ComposerProps) {
       sendPromise = props.onSend(submittedDraft, options);
     } catch (error) {
       setActiveSendTraceId(null);
-      setSending(false);
+      finishSending();
       if (options.sendNow) setSendNowPending(false);
       recordSendTrace("sendDraft:onSend:error", {
         sendTraceId: options.sendTraceId,
@@ -1118,7 +1124,7 @@ export default function Composer(props: ComposerProps) {
         source: options.source,
       });
     } finally {
-      setSending(false);
+      finishSending();
       setActiveSendTraceId(null);
       if (options.sendNow) setSendNowPending(false);
     }
@@ -1651,7 +1657,7 @@ export default function Composer(props: ComposerProps) {
 
     if (event.key === "Enter") {
       event.preventDefault();
-      if (sending()) return;
+      if (sending() && !props.isStreaming) return;
       if (props.busy && !props.isStreaming) return;
       if (event.ctrlKey || event.metaKey) {
         void sendDraft({ sendNow: true, source: "ctrl-enter" });
@@ -2006,7 +2012,7 @@ export default function Composer(props: ComposerProps) {
                                   busy: props.busy,
                                   hasDraftContent: hasDraftContent(),
                                 });
-                                if (sending() || (props.busy && !props.isStreaming)) {
+                                if ((sending() && !props.isStreaming) || (props.busy && !props.isStreaming)) {
                                   recordSendTrace("sendButton:blocked", {
                                     sending: sending(),
                                     busy: props.busy,

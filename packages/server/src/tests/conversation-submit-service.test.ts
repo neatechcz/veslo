@@ -3,11 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { createConversationSubmitAttemptStore } from "../conversation-submit-attempt-store.js";
+import {
+  createConversationSubmitAttemptStore,
+  deriveConversationSubmitOpenCodeSessionId,
+} from "../conversation-submit-attempt-store.js";
+import { createConversationBindingStore } from "../conversation-binding-store.js";
 import {
   createConversationSubmitService,
 } from "../conversation-submit-service.js";
-import type { ConversationService } from "../conversation-service.js";
+import { createConversationService, type ConversationService } from "../conversation-service.js";
+import { createConversationSubmitRequestHash, parseConversationSubmitRequest } from "../conversation-submit-contract.js";
 import { ApiError } from "../errors.js";
 import { createDocumentRuntimeStatusPayload } from "../routes/document-runtime.js";
 import type { WorkspaceInfo } from "../types.js";
@@ -44,7 +49,7 @@ const remoteWorkspace = (root: string): WorkspaceInfo => ({
 });
 
 const createConversationServiceStub = (
-  onCreate: () => void,
+  onCreate: (input: Parameters<ConversationService["createConversation"]>[0]) => void,
 ): ConversationService => ({
   listConversations: async () => ({ workspaceId: "ws_1", items: [], source: "sqlite" }),
   resolveOpenCodeSessionForRead: async () => null,
@@ -64,8 +69,8 @@ const createConversationServiceStub = (
     messages: [],
     partsByMessageId: {},
   }),
-  createConversation: async () => {
-    onCreate();
+  createConversation: async (input) => {
+    onCreate(input);
     return {
       workspaceId: "ws_1",
       id: "sess_1",
@@ -124,6 +129,233 @@ describe("conversation submit service", () => {
       },
     });
     expect(createConversationCalls).toBe(0);
+  });
+
+  test("checkpoints a deterministic OpenCode session id before materializing a first-session submit", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-precheckpoint-"));
+    tempDirs.push(workspaceRoot);
+    const attemptStore = createConversationSubmitAttemptStore({
+      dbPath: await createTempDbPath("veslo-submit-service-precheckpoint-db-"),
+    });
+    const clientMessageId = "msg-precheckpoint";
+    const expectedOpenCodeSessionId = deriveConversationSubmitOpenCodeSessionId({
+      workspaceId: "ws_1",
+      clientMessageId,
+    });
+    let attemptAtCreate: ReturnType<typeof attemptStore.get> = null;
+    const service = createConversationSubmitService({
+      attemptStore,
+      conversationService: createConversationServiceStub((input) => {
+        expect(input.requestedOpenCodeSessionId).toBe(expectedOpenCodeSessionId);
+        attemptAtCreate = attemptStore.get("ws_1", clientMessageId);
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const response = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId,
+        origin: "session:normal",
+        target: { directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "Persist identity before session create",
+          parts: [{ type: "text", text: "Persist identity before session create" }],
+        },
+        options: {},
+      },
+      resolveDirectory: async () => workspaceRoot,
+    });
+
+    expect(response.payload.status).toBe("materialized");
+    expect(attemptAtCreate).toMatchObject({
+      status: "materializing",
+      opencodeSessionId: expectedOpenCodeSessionId,
+      conversationId: null,
+    });
+    expect(attemptStore.get("ws_1", clientMessageId)).toMatchObject({
+      status: "materialized",
+      opencodeSessionId: "sess_1",
+      conversationId: "conv_1",
+    });
+  });
+
+  test("reuses a stored materialized target when resultJson is absent", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-stored-target-"));
+    tempDirs.push(workspaceRoot);
+    const attemptStore = createConversationSubmitAttemptStore({
+      dbPath: await createTempDbPath("veslo-submit-service-stored-target-db-"),
+    });
+    const clientMessageId = "msg-stored-target";
+    const body = {
+      clientMessageId,
+      origin: "session:normal",
+      target: { directory: workspaceRoot },
+      draft: {
+        mode: "prompt",
+        text: "Resume the stored target",
+        parts: [{ type: "text", text: "Resume the stored target" }],
+      },
+      options: {},
+    };
+    attemptStore.claim({
+      workspaceId: "ws_1",
+      clientMessageId,
+      requestHash: createConversationSubmitRequestHash(parseConversationSubmitRequest(body)),
+    });
+    attemptStore.update({
+      workspaceId: "ws_1",
+      clientMessageId,
+      status: "materialized",
+      conversationId: "conv-stored",
+      opencodeSessionId: "sess-stored",
+    });
+    let createConversationCalls = 0;
+    let submitRunCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore,
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const response = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body,
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async (input) => {
+        submitRunCalls += 1;
+        expect(input.request.target).toMatchObject({
+          conversationId: "conv-stored",
+          opencodeSessionId: "sess-stored",
+        });
+        return {
+          httpStatus: 200,
+          payload: {
+            status: "submitted",
+            workspaceId: "ws_1",
+            conversationId: "conv-stored",
+            opencodeSessionId: "sess-stored",
+            runId: "run-stored",
+            clientMessageId,
+            draftDisposition: "clear",
+          },
+        };
+      },
+    });
+
+    expect(response.payload.status).toBe("submitted");
+    expect(createConversationCalls).toBe(0);
+    expect(submitRunCalls).toBe(1);
+  });
+
+  test("a new service instance recovers the one upstream session after a pre-checkpoint process loss", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-submit-service-recovery-"));
+    tempDirs.push(dataDir);
+    const workspaceRoot = join(dataDir, "workspace");
+    const attemptDbPath = join(dataDir, "submit-attempts.sqlite");
+    const clientMessageId = "msg-recover-precheckpoint";
+    const requestedOpenCodeSessionId = deriveConversationSubmitOpenCodeSessionId({
+      workspaceId: "ws_1",
+      clientMessageId,
+    });
+    const upstreamSessions = new Map<string, Record<string, unknown>>([
+      [requestedOpenCodeSessionId, {
+        id: requestedOpenCodeSessionId,
+        title: "Recovered first session",
+        directory: workspaceRoot,
+        parentID: null,
+        time: { created: 100, updated: 100 },
+      }],
+    ]);
+    const upstreamCreateIds: string[] = [];
+    const createConversationServiceForRecovery = () => createConversationService({
+      readStore: {
+        listConversations: async (input) => ({ workspaceId: input.workspaceId, items: [], source: "sqlite" as const }),
+        getTranscript: async (input) => ({
+          workspaceId: input.workspaceId,
+          sessionId: input.sessionId,
+          limit: input.limit,
+          messages: [],
+          partsByMessageId: {},
+          fetchedAt: 100,
+          source: "sqlite" as const,
+        }),
+      },
+      bindingStore: createConversationBindingStore({ dataDir }),
+      createOpenCodeSession: async (input) => {
+        const id = input.requestedOpenCodeSessionId;
+        expect(id).toBe(requestedOpenCodeSessionId);
+        upstreamCreateIds.push(id ?? "");
+        const session = id ? upstreamSessions.get(id) : undefined;
+        if (!session) throw new Error("upstream session identity was not recoverable");
+        return session;
+      },
+    });
+    const body = {
+      clientMessageId,
+      origin: "session:normal",
+      target: { directory: workspaceRoot },
+      draft: {
+        mode: "prompt",
+        text: "Recover first-session submit",
+        parts: [{ type: "text", text: "Recover first-session submit" }],
+      },
+      options: {},
+    };
+    const initialAttemptStore = createConversationSubmitAttemptStore({ dbPath: attemptDbPath });
+    initialAttemptStore.claim({
+      workspaceId: "ws_1",
+      clientMessageId,
+      requestHash: createConversationSubmitRequestHash(parseConversationSubmitRequest(body)),
+    });
+    initialAttemptStore.update({
+      workspaceId: "ws_1",
+      clientMessageId,
+      status: "materializing",
+      opencodeSessionId: requestedOpenCodeSessionId,
+    });
+    await createConversationServiceForRecovery().createConversation({
+      workspace: workspace(workspaceRoot),
+      directory: workspaceRoot,
+      title: "Recovered first session",
+      requestedOpenCodeSessionId,
+    });
+
+    let submitRunCalls = 0;
+    const recoveredService = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({ dbPath: attemptDbPath }),
+      conversationService: createConversationServiceForRecovery(),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+    const response = await recoveredService.submit({
+      workspace: workspace(workspaceRoot),
+      body,
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async (input) => {
+        submitRunCalls += 1;
+        expect(input.request.target?.opencodeSessionId).toBe(requestedOpenCodeSessionId);
+        return {
+          httpStatus: 200,
+          payload: {
+            status: "submitted",
+            workspaceId: "ws_1",
+            conversationId: input.request.target?.conversationId ?? "",
+            opencodeSessionId: input.request.target?.opencodeSessionId ?? "",
+            runId: "run-recovered",
+            clientMessageId,
+            draftDisposition: "clear",
+          },
+        };
+      },
+    });
+
+    expect(response.payload.status).toBe("submitted");
+    expect(upstreamCreateIds).toEqual([requestedOpenCodeSessionId, requestedOpenCodeSessionId]);
+    expect([...upstreamSessions]).toHaveLength(1);
+    expect(submitRunCalls).toBe(1);
   });
 
   test("resolves compact submit as a summarize run for existing targets", async () => {

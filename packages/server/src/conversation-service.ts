@@ -21,6 +21,7 @@ type OpenCodeSessionCreateInput = {
   workspace: WorkspaceInfo;
   directory: string | null;
   title?: string | null;
+  requestedOpenCodeSessionId?: string | null;
   sendTraceId?: string | null;
 };
 
@@ -100,6 +101,7 @@ export type ConversationService = {
     workspace: WorkspaceInfo;
     directory: string | null;
     title?: string | null;
+    requestedOpenCodeSessionId?: string | null;
     sendTraceId?: string | null;
   }): Promise<ConversationCreateResult>;
 
@@ -666,6 +668,7 @@ export function createConversationService(options: {
         workspace: input.workspace,
         directory,
         title: input.title,
+        requestedOpenCodeSessionId: input.requestedOpenCodeSessionId ?? null,
         sendTraceId: input.sendTraceId ?? null,
       });
       const record = isRecord(created) ? created : {};

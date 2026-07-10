@@ -1651,6 +1651,37 @@ export type VesloConversationRunStatusResult = {
   noProgressSeconds?: number | null;
 };
 
+export type VesloConversationQueueStatus = "pending" | "starting" | "failed";
+
+export type VesloConversationQueueItem = {
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  queueItemId: string;
+  reservedRunId: string;
+  clientMessageId: string | null;
+  kind: VesloConversationRunKind;
+  status: VesloConversationQueueStatus;
+  queuePosition: number | null;
+  order: {
+    createdAt: number;
+    queueItemId: string;
+  };
+  createdAt: number;
+  updatedAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  error: string | null;
+};
+
+export type VesloConversationQueueList = {
+  ok: boolean;
+  workspaceId: string;
+  conversationId: string;
+  items: VesloConversationQueueItem[];
+  nextCursor: string | null;
+};
+
 export type VesloConversationAbortInput = {
   directory?: string | null;
   runId?: string | null;

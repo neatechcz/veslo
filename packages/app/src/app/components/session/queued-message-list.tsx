@@ -3,21 +3,28 @@ import {
   GripVertical,
   Loader2,
   Pencil,
+  RotateCcw,
   X,
 } from "lucide-solid";
 
 import { t as tr } from "../../../i18n";
 import type { QueuedDraft } from "./session-queue-model.js";
-import { isQueuedMessageMovable, movableQueueTargetIndex } from "./queued-message-list-model.js";
+import {
+  canReorderQueuedMessages,
+  isQueuedMessageMovable,
+  movableQueueTargetIndex,
+} from "./queued-message-list-model.js";
 
 export type QueuedMessageListProps = {
   items: QueuedDraft[];
   onEdit: (id: string) => void;
   onCancel: (id: string) => void;
+  onRetry: (id: string) => void;
   onMove: (id: string, targetIndex: number) => void;
 };
 
 const isSending = (item: QueuedDraft) => item.state === "sending";
+const isRetryable = (item: QueuedDraft, index: number) => item.state === "error" && index === 0;
 
 const draftPreview = (item: QueuedDraft) => {
   const text = item.draft.text.trim();
@@ -27,6 +34,7 @@ const draftPreview = (item: QueuedDraft) => {
 export default function QueuedMessageList(props: QueuedMessageListProps) {
   const [draggedItemId, setDraggedItemId] = createSignal<string | null>(null);
   const hasItems = createMemo(() => props.items.length > 0);
+  const canReorder = createMemo(() => canReorderQueuedMessages(props.items));
   const movableItems = createMemo(() => props.items.filter(isQueuedMessageMovable));
 
   const movableTargetIndex = (target: QueuedDraft) => {
@@ -34,7 +42,7 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
   };
 
   const handleMoveKeyDown = (event: KeyboardEvent, item: QueuedDraft) => {
-    if (!isQueuedMessageMovable(item)) return;
+    if (!canReorder() || !isQueuedMessageMovable(item)) return;
     if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
 
     event.preventDefault();
@@ -46,7 +54,7 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
   };
 
   const handleDragStart = (event: DragEvent, item: QueuedDraft) => {
-    if (!isQueuedMessageMovable(item)) {
+    if (!canReorder() || !isQueuedMessageMovable(item)) {
       event.preventDefault();
       return;
     }
@@ -82,7 +90,7 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
               class={`group flex items-center gap-2 rounded-lg border border-gray-5/70 bg-gray-2/60 px-2 py-1.5 text-gray-11 transition-colors ${
                 isSending(item) ? "opacity-80" : "hover:border-gray-6 hover:bg-gray-2"
               }`}
-              draggable={isQueuedMessageMovable(item)}
+              draggable={canReorder() && isQueuedMessageMovable(item)}
               onDragStart={(event) => handleDragStart(event, item)}
               onDragOver={handleDragOver}
               onDrop={(event) => handleDrop(event, item)}
@@ -90,10 +98,12 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
             >
               <button
                 type="button"
-                disabled={!isQueuedMessageMovable(item)}
+                disabled={!canReorder() || !isQueuedMessageMovable(item)}
                 onKeyDown={(event) => handleMoveKeyDown(event, item)}
                 class={`shrink-0 rounded-md p-1 text-gray-9 ${
-                  isQueuedMessageMovable(item) ? "cursor-grab active:cursor-grabbing" : "cursor-default"
+                  canReorder() && isQueuedMessageMovable(item)
+                    ? "cursor-grab active:cursor-grabbing"
+                    : "cursor-default"
                 }`}
                 title={tr("session.reorder_queued_message")}
                 aria-label={tr("session.reorder_queued_message")}
@@ -116,6 +126,17 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
                 when={isSending(item)}
                 fallback={
                   <div class="flex shrink-0 items-center gap-1">
+                    <Show when={isRetryable(item, index())}>
+                      <button
+                        type="button"
+                        class="rounded-full p-1 text-gray-10 transition-colors hover:bg-gray-4 hover:text-gray-12"
+                        title={tr("common.retry")}
+                        aria-label={tr("common.retry")}
+                        onClick={() => props.onRetry(item.id)}
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                    </Show>
                     <button
                       type="button"
                       class="rounded-full p-1 text-gray-10 transition-colors hover:bg-gray-4 hover:text-gray-12"

@@ -156,6 +156,7 @@ class QueueHarness implements ConversationRunQueueStore {
   private nextId = 1;
   readonly items: ConversationRunQueueItem[] = [];
   readonly enqueueCalls: Array<Parameters<ConversationRunQueueStore["enqueue"]>[0]> = [];
+  lostClaimQueueItemId: string | null = null;
 
   enqueue(input: Parameters<ConversationRunQueueStore["enqueue"]>[0]) {
     this.enqueueCalls.push(input);
@@ -209,20 +210,25 @@ class QueueHarness implements ConversationRunQueueStore {
     ) ?? null;
   }
 
+  listForConversation(): ReturnType<ConversationRunQueueStore["listForConversation"]> {
+    return { items: [], nextCursor: null };
+  }
+
   markStarting(queueItemId: string): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item || item.state !== "pending") return item ?? null;
+    if (!item || item.state !== "pending") return null;
     item.state = "starting";
     item.attempts += 1;
     item.startedAt = Date.now();
     item.updatedAt = item.startedAt;
     item.error = null;
+    if (this.lostClaimQueueItemId === queueItemId) return null;
     return item;
   }
 
   markPending(queueItemId: string, activeRunId?: string | null): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item || item.state !== "starting") return item ?? null;
+    if (!item || item.state !== "starting") return null;
     item.state = "pending";
     item.activeRunId = activeRunId ?? null;
     item.startedAt = null;
@@ -232,7 +238,7 @@ class QueueHarness implements ConversationRunQueueStore {
 
   markSubmitted(queueItemId: string): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item) return null;
+    if (!item || item.state !== "starting") return null;
     const now = Date.now();
     item.state = "submitted";
     item.submittedAt = now;
@@ -243,7 +249,7 @@ class QueueHarness implements ConversationRunQueueStore {
 
   markFailed(queueItemId: string, error: string): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item) return null;
+    if (!item || item.state !== "starting") return null;
     const now = Date.now();
     item.state = "failed";
     item.error = error;
@@ -1144,6 +1150,17 @@ test("queue drain submits the next pending item after terminal latest lifecycle"
     "status:ws_1:conv-a:latest",
     "register:ws_1:conv-a:run-queued:sess-a:prompt",
   ]);
+});
+
+test("queue drain does not submit when another controller wins the durable claim", async () => {
+  const { controller, queue, submitCalls } = controllerHarness();
+  const item = enqueuePendingRun(queue);
+  queue.lostClaimQueueItemId = item.queueItemId;
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(queue.items[0]?.state).toBe("starting");
+  expect(submitCalls).toEqual([]);
 });
 
 test("lifecycle reconcile marks missing aborted runs as aborted and wakes queue", async () => {

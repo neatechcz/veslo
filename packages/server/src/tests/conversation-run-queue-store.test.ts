@@ -127,6 +127,156 @@ describe("conversation run queue store", () => {
     expect(store.nextPending("ws-a", "conv-a")).toBeNull();
   });
 
+  test("claims a pending row exactly once across two stores sharing one SQLite file", async () => {
+    const dataDir = await tempDataDir();
+    const firstStore = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const secondStore = createConversationRunQueueStore({ dataDir, now: () => 2_001 });
+    const queued = firstStore.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: "run-a",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+    });
+
+    const claims = [
+      firstStore.markStarting(queued.item.queueItemId),
+      secondStore.markStarting(queued.item.queueItemId),
+    ];
+
+    expect(claims.filter((claim) => claim?.state === "starting")).toHaveLength(1);
+    expect(claims.filter((claim) => claim === null)).toHaveLength(1);
+    expect(firstStore.getForConversation("ws-a", "conv-a", queued.item.queueItemId)?.state).toBe("starting");
+  });
+
+  test("guards stale queue transitions without overwriting the winning state", async () => {
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const queued = store.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: "run-a",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+    });
+
+    expect(store.markPending(queued.item.queueItemId, "run-other")).toBeNull();
+    expect(store.markSubmitted(queued.item.queueItemId)).toBeNull();
+    expect(store.markFailed(queued.item.queueItemId, "stale failure")).toBeNull();
+    expect(store.getForConversation("ws-a", "conv-a", queued.item.queueItemId)?.state).toBe("pending");
+
+    expect(store.markStarting(queued.item.queueItemId)?.state).toBe("starting");
+    expect(store.markPending(queued.item.queueItemId, "run-active")?.state).toBe("pending");
+    expect(store.markSubmitted(queued.item.queueItemId)).toBeNull();
+    expect(store.markFailed(queued.item.queueItemId, "stale failure")).toBeNull();
+    expect(store.getForConversation("ws-a", "conv-a", queued.item.queueItemId)?.state).toBe("pending");
+
+    expect(store.markStarting(queued.item.queueItemId)?.state).toBe("starting");
+    expect(store.markSubmitted(queued.item.queueItemId)?.state).toBe("submitted");
+    expect(store.markFailed(queued.item.queueItemId, "late failure")).toBeNull();
+    expect(store.getForConversation("ws-a", "conv-a", queued.item.queueItemId)?.state).toBe("submitted");
+  });
+
+  test("lists scoped readable rows in stable cursor order without submitted rows", async () => {
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    const enqueue = (clientMessageId: string) => store.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: `run-${clientMessageId}`,
+      clientMessageId,
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: clientMessageId }] }),
+    }).item;
+    const pending = enqueue("pending");
+    const starting = enqueue("starting");
+    const failed = enqueue("failed");
+    const submitted = enqueue("submitted");
+    store.markStarting(starting.queueItemId);
+    store.markStarting(failed.queueItemId);
+    store.markFailed(failed.queueItemId, "failed");
+    store.markStarting(submitted.queueItemId);
+    store.markSubmitted(submitted.queueItemId);
+
+    const all = store.listForConversation({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      states: ["pending", "starting", "failed"],
+      limit: 100,
+    });
+    const firstPage = store.listForConversation({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      states: ["pending", "starting", "failed"],
+      limit: 2,
+    });
+    const secondPage = store.listForConversation({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      states: ["pending", "starting", "failed"],
+      cursor: firstPage.nextCursor,
+      limit: 2,
+    });
+
+    expect(all.items.map(({ item }) => item.queueItemId)).toEqual([
+      ...firstPage.items.map(({ item }) => item.queueItemId),
+      ...secondPage.items.map(({ item }) => item.queueItemId),
+    ]);
+    expect(all.items.map(({ item }) => item.queueItemId)).toEqual(expect.not.arrayContaining([submitted.queueItemId]));
+    expect(firstPage.nextCursor).toEqual({
+      createdAt: firstPage.items[1]?.item.createdAt,
+      queueItemId: firstPage.items[1]?.item.queueItemId,
+    });
+    const waitingPositions = all.items
+      .filter(({ item }) => item.queueItemId === pending.queueItemId || item.queueItemId === starting.queueItemId)
+      .map(({ queuePosition }) => queuePosition)
+      .sort();
+    expect(waitingPositions).toEqual([1, 2]);
+    expect(all.items.find(({ item }) => item.queueItemId === failed.queueItemId)?.queuePosition).toBeNull();
+  });
+
+  test("rejects unbounded list inputs and keeps workspace/conversation scope isolated", async () => {
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    store.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: "run-a",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [] }),
+    });
+
+    expect(() => store.listForConversation({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      states: ["submitted" as never],
+      limit: 1,
+    })).toThrow("states must contain only pending, starting, or failed");
+    expect(() => store.listForConversation({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      states: ["pending"],
+      limit: 101,
+    })).toThrow("limit must be an integer from 1 to 100");
+    expect(store.listForConversation({
+      workspaceId: "ws-a",
+      conversationId: "conv-other",
+      states: ["pending"],
+      limit: 10,
+    }).items).toEqual([]);
+    expect(store.listForConversation({
+      workspaceId: "ws-other",
+      conversationId: "conv-a",
+      states: ["pending"],
+      limit: 10,
+    }).items).toEqual([]);
+  });
+
   test("reads queue item status only inside its workspace and conversation", async () => {
     const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
     const queued = store.enqueue({
@@ -141,6 +291,7 @@ describe("conversation run queue store", () => {
       activeRunId: "run-active",
     });
 
+    store.markStarting(queued.item.queueItemId);
     store.markFailed(queued.item.queueItemId, "engine rejected queued run");
 
     const status = store.getForConversation("ws-a", "conv-a", queued.item.queueItemId);

@@ -8,6 +8,9 @@ import type {
   VesloConversationRunInput,
   VesloConversationRunResult,
   VesloConversationRunStatusResult,
+  VesloConversationQueueItem,
+  VesloConversationQueueList,
+  VesloConversationQueueStatus,
   VesloConversationSubmitRequest,
   VesloConversationSubmitResult,
   VesloSessionArchiveRecord,
@@ -221,6 +224,30 @@ export function createConversationsClient(context: ConversationsClientContext) {
       requestJson<VesloConversationRunStatusResult>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runId)}`,
+        { token, hostToken, timeoutMs: timeouts.status },
+      ),
+
+    listQueue: (
+      workspaceId: string,
+      conversationId: string,
+      options?: { status?: VesloConversationQueueStatus[]; cursor?: string | null; limit?: number },
+    ) => {
+      const search = new URLSearchParams();
+      for (const status of options?.status ?? ["pending", "starting", "failed"]) search.append("status", status);
+      const cursor = options?.cursor?.trim() ?? "";
+      if (cursor) search.set("cursor", cursor);
+      search.set("limit", String(options?.limit ?? 50));
+      return requestJson<VesloConversationQueueList>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/queue?${search.toString()}`,
+        { token, hostToken, timeoutMs: timeouts.status },
+      );
+    },
+
+    getQueueItem: (workspaceId: string, conversationId: string, queueItemId: string) =>
+      requestJson<VesloConversationQueueItem>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(queueItemId)}`,
         { token, hostToken, timeoutMs: timeouts.status },
       ),
 

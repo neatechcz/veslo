@@ -29,3 +29,14 @@ test("tauri-dev enables the manual Pilot runtime diagnostics by default", () => 
   assert.match(source, /"--features"/);
   assert.match(source, /"e2e"/);
 });
+
+test("tauri-dev attributes the child exit before forwarding its result", () => {
+  const source = readFileSync(scriptPath, "utf8");
+
+  assert.match(source, /tauri-child-exit/);
+  assert.match(source, /timestamp=.*code=.*signal=/);
+  assert.ok(
+    source.indexOf("tauri-child-exit") < source.indexOf("process.exit(code ?? 0)"),
+    "exit attribution must be written before the wrapper exits",
+  );
+});

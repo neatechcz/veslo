@@ -25,6 +25,8 @@ import {
   scenarioSelectionNeedsModelStreamRetryFixture,
   scenarioSelectionDisablesDevAutostart,
   scenarioSelectionNeedsRelaunchReconnectCheck,
+  scenarioSelectionNeedsSessionQueueRuntimeFixture,
+  assertSessionQueueRuntimeFixtureProfileIsolation,
   scenarioSelectionNeedsNoWorkspaceProfile,
   scenarioSelectionNeedsPortContentionFixture,
   scenarioSelectionRequiresLiveManagedAiAuth,
@@ -440,6 +442,24 @@ test('runtime cold-start handoff pilot scenario disables debug dev autostart', (
     scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
+});
+
+test('session queue durability uses its isolated deterministic runtime fixture', () => {
+  const selected = ['/repo/packages/e2e/pilot-scenarios/session-queue-durability.toml'];
+  assert.equal(scenarioSelectionNeedsSessionQueueRuntimeFixture(selected), true);
+  assert.throws(
+    () => assertPilotScenarioSelectionIsolated([...selected, '/repo/packages/e2e/pilot-scenarios/smoke.toml']),
+    /session-queue-durability must run as a focused pilot scenario/,
+  );
+});
+
+test('session queue durability rejects the shared existing-profile switch', () => {
+  const selected = ['/repo/packages/e2e/pilot-scenarios/session-queue-durability.toml'];
+  assert.throws(
+    () => assertSessionQueueRuntimeFixtureProfileIsolation(selected, { E2E_USE_EXISTING_PROFILE: '1' }),
+    /must not use E2E_USE_EXISTING_PROFILE=1/,
+  );
+  assert.doesNotThrow(() => assertSessionQueueRuntimeFixtureProfileIsolation(selected, {}));
 });
 
 test('resolvePilotDenAuthJson reads authJson from the production desktop snapshot path', () => {
