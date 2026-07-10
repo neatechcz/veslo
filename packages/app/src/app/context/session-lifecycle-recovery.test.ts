@@ -23,7 +23,6 @@ test("session lifecycle recovery clears local busy state after terminal backend 
   const statusWrites: Array<{ sessionId: string; status: string; workspaceId?: string | null }> = [];
   const busyWrites: Array<{ sessionId: string; status: string; workspaceId?: string }> = [];
   const transcriptIngestions: Array<{ sessionId: string; workspaceId?: string; reason: string }> = [];
-  const selectedTranscriptRefreshes: Array<{ sessionId: string; workspaceId: string; reason: string }> = [];
   let readCount = 0;
 
   const controller = createSessionLifecycleRecoveryController({
@@ -47,14 +46,8 @@ test("session lifecycle recovery clears local busy state after terminal backend 
     notifySessionBusy: (sessionId, status, workspaceId) => {
       busyWrites.push({ sessionId, status, workspaceId });
     },
-    scheduleTranscriptIngestion: (sessionId, workspaceId, reason) => {
-      transcriptIngestions.push({ sessionId, workspaceId, reason });
-    },
     scheduleBackgroundTranscriptIngestion: (sessionId, workspaceId, reason) => {
       transcriptIngestions.push({ sessionId, workspaceId, reason });
-    },
-    refreshSelectedSessionTranscript: (sessionId, workspaceId, reason) => {
-      selectedTranscriptRefreshes.push({ sessionId, workspaceId, reason });
     },
     scheduleTimer: (callback, delayMs) => {
       const timer = { callback, delayMs, cleared: false };
@@ -84,12 +77,7 @@ test("session lifecycle recovery clears local busy state after terminal backend 
     ["ses-a", "idle", "ws-a"],
     ["conv-a", "idle", "ws-a"],
   ]);
-  assert.deepEqual(transcriptIngestions, [
-    { sessionId: "ses-a", workspaceId: "ws-a", reason: "lifecycle recovery" },
-  ]);
-  assert.deepEqual(selectedTranscriptRefreshes, [
-    { sessionId: "ses-a", workspaceId: "ws-a", reason: "lifecycle recovery" },
-  ]);
+  assert.deepEqual(transcriptIngestions, []);
   assert.equal(controller.activeWatchCount(), 0);
 });
 
@@ -101,7 +89,6 @@ test("session lifecycle recovery keeps polling stale backend statuses", async ()
     { runId: "run-a", status: "completed", stale: false },
   ];
   const statusWrites: string[] = [];
-  let selectedTranscriptRefreshCount = 0;
 
   const controller = createSessionLifecycleRecoveryController({
     sessionStatusById: () => statuses,
@@ -118,11 +105,7 @@ test("session lifecycle recovery keeps polling stale backend statuses", async ()
       statusWrites.push(`${sessionId}:${status}`);
     },
     notifySessionBusy: () => {},
-    scheduleTranscriptIngestion: () => {},
     scheduleBackgroundTranscriptIngestion: () => {},
-    refreshSelectedSessionTranscript: () => {
-      selectedTranscriptRefreshCount += 1;
-    },
     scheduleTimer: (callback, delayMs) => {
       const timer = { callback, delayMs, cleared: false };
       timers.push(timer);
@@ -147,7 +130,6 @@ test("session lifecycle recovery keeps polling stale backend statuses", async ()
   await waitForAsyncPoll();
 
   assert.deepEqual(statusWrites, ["ses-a:idle", "conv-a:idle"]);
-  assert.equal(selectedTranscriptRefreshCount, 0);
   assert.equal(controller.activeWatchCount(), 0);
 });
 
@@ -183,7 +165,6 @@ test("session lifecycle recovery reports active no-progress diagnostics", async 
     },
     setSessionStatusForWorkspace: () => {},
     notifySessionBusy: () => {},
-    scheduleTranscriptIngestion: () => {},
     scheduleBackgroundTranscriptIngestion: () => {},
     scheduleTimer: (callback, delayMs) => {
       const timer = { callback, delayMs, cleared: false };
@@ -241,7 +222,6 @@ test("session lifecycle recovery keeps an admitted watch after engine idle and w
     onConversationRunTerminal: (_scope, status) => terminals.push(status),
     setSessionStatusForWorkspace: (sessionId, status) => statusWrites.push(`${sessionId}:${status}`),
     notifySessionBusy: () => {},
-    scheduleTranscriptIngestion: () => {},
     scheduleBackgroundTranscriptIngestion: () => {},
     scheduleTimer: (callback, delayMs) => {
       const timer = { callback, delayMs, cleared: false };
@@ -299,7 +279,6 @@ test("session lifecycle recovery keeps a durable queued run submitted through en
       statusWrites.push(`${sessionId}:${status}`);
     },
     notifySessionBusy: (sessionId, status) => busyWrites.push(`${sessionId}:${status}`),
-    scheduleTranscriptIngestion: () => {},
     scheduleBackgroundTranscriptIngestion: () => {},
   });
 
@@ -319,6 +298,7 @@ test("session lifecycle recovery keeps a durable queued run submitted through en
 test("selected exact conversation probes latest once after reload and restores durable failure", async () => {
   let reads = 0;
   const terminals: Array<{ runId: string; status: string; error?: string | null }> = [];
+  const transcriptRecoveries: Array<{ sessionId: string; workspaceId: string; reason: string; delayMs?: number }> = [];
   const controller = createSessionLifecycleRecoveryController({
     sessionStatusById: () => ({ "ws-a\0ses-a": "idle" }),
     selectedSessionId: () => "ses-a",
@@ -342,8 +322,9 @@ test("selected exact conversation probes latest once after reload and restores d
     }),
     setSessionStatusForWorkspace: () => {},
     notifySessionBusy: () => {},
-    scheduleTranscriptIngestion: () => {},
-    scheduleBackgroundTranscriptIngestion: () => {},
+    scheduleBackgroundTranscriptIngestion: (sessionId, workspaceId, reason, delayMs) => {
+      transcriptRecoveries.push({ sessionId, workspaceId, reason, delayMs });
+    },
   });
 
   assert.equal(await controller.probeSelectedConversationLatestRun(), true);
@@ -353,6 +334,12 @@ test("selected exact conversation probes latest once after reload and restores d
     runId: "run-failed",
     status: "failed",
     error: "restored failure",
+  }]);
+  assert.deepEqual(transcriptRecoveries, [{
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    reason: "lifecycle latest recovery",
+    delayMs: 0,
   }]);
 });
 
@@ -377,7 +364,6 @@ test("terminal lifecycle truth remains available after its watch is released", a
     onConversationRunStatus: (_scope, status) => diagnostics.push(status),
     setSessionStatusForWorkspace: () => {},
     notifySessionBusy: () => {},
-    scheduleTranscriptIngestion: () => {},
     scheduleBackgroundTranscriptIngestion: () => {},
     scheduleTimer: (callback, delayMs) => {
       const timer = { callback, delayMs, cleared: false };
@@ -423,7 +409,6 @@ test("a superseded in-flight lifecycle poll cannot terminalize its replacement",
     onConversationRunTerminal: (scope) => terminals.push(scope.runId),
     setSessionStatusForWorkspace: (sessionId, status) => statusWrites.push(`${sessionId}:${status}`),
     notifySessionBusy: () => {},
-    scheduleTranscriptIngestion: () => {},
     scheduleBackgroundTranscriptIngestion: () => {},
     scheduleTimer: (callback, delayMs) => {
       const timer = { callback, delayMs, cleared: false };

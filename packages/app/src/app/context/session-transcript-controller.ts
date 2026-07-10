@@ -437,12 +437,9 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
       .catch(() => undefined)
       .then(async () => {
         const entry = deps.routing.entry(workspaceId);
-        const session = deps.applySessionDirectoryOverride(
-          unwrap(await deps.withTimeout(c.session.get({ sessionID }), 8_000, "background session.get")),
-        );
-        const directory =
-          deps.resolveSessionDirectory(session) ||
-          normalizeDirectoryPath(entry?.directory ?? "");
+        const directory = resolveTranscriptIngestDirectory(workspaceId, sessionID, {
+          directory: entry?.directory,
+        });
         if (!directory) return;
 
         const limit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);

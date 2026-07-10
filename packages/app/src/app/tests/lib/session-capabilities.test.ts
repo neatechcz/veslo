@@ -241,6 +241,17 @@ test("app shell bootstraps the shared local skill inventory outside the session 
     /const activeLocalSkillInventoryContext = createMemo\(\(\) => \{[\s\S]*workspaceType === "local" && workspaceId && workspaceRoot[\s\S]*createEffect\([\s\S]*on\(activeLocalSkillInventoryContext,[\s\S]*void refreshSkillInventory\(\)\.catch\(\(error: unknown\) =>[\s\S]*"skills\.refreshInventory\.bootstrap"/,
     "the app shell should react to a local workspace context and populate the shared inventory while the session sidebar remains read-only",
   );
+
+  const workspaceStoreIndex = appSource.indexOf("const workspaceStore = createWorkspaceStore({");
+  const workspaceStoreBindIndex = appSource.indexOf("lateWorkspaceStore.bind(workspaceStore);");
+  const skillBootstrapIndex = appSource.indexOf("const activeLocalSkillInventoryContext = createMemo(() => {");
+
+  assert.ok(workspaceStoreIndex >= 0, "the workspace store should be initialized in the app shell");
+  assert.ok(workspaceStoreBindIndex > workspaceStoreIndex, "the workspace store should be bound after initialization");
+  assert.ok(
+    skillBootstrapIndex > workspaceStoreBindIndex,
+    "the skill bootstrap must not read workspaceStore before it is initialized and bound",
+  );
 });
 
 test("session capabilities cache loads by selected chat directory", async () => {
@@ -319,7 +330,7 @@ test("session capabilities cache supports force reload and clear", async () => {
   assert.equal((await cache.load({ directory: "/workspaces/a" })).skills[0]?.name, "skill:3");
 });
 
-test("session capabilities cache ignores stale same-directory writes", async () => {
+test("session capabilities cache joins concurrent same-directory loads", async () => {
   const resolvers: Array<() => void> = [];
   const cache = createSessionCapabilitiesCache(
     (scope) =>
@@ -345,13 +356,11 @@ test("session capabilities cache ignores stale same-directory writes", async () 
 
   const first = cache.load({ directory: "/workspaces/a" }, { force: true });
   const second = cache.load({ directory: "/workspaces/a" }, { force: true });
-  assert.equal(resolvers.length, 2);
-
-  resolvers[1]?.();
-  assert.equal((await second).skills[0]?.name, "skill:2");
+  assert.equal(resolvers.length, 1);
 
   resolvers[0]?.();
   assert.equal((await first).skills[0]?.name, "skill:1");
+  assert.equal((await second).skills[0]?.name, "skill:1");
 
-  assert.equal((await cache.load({ directory: "/workspaces/a" })).skills[0]?.name, "skill:2");
+  assert.equal((await cache.load({ directory: "/workspaces/a" })).skills[0]?.name, "skill:1");
 });

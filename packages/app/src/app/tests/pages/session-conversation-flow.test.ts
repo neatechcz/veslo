@@ -48,6 +48,7 @@ import {
   sessionSubmitBlockedResult,
   sessionSubmitFailedResult,
   sessionSubmitQueuedResult,
+  sessionSubmitSubmittedResult,
   type SessionSubmitResult,
 } from "../../lib/session-send-contract.js";
 
@@ -264,7 +265,33 @@ test("conversation flow controller blocks before transport while preserving opti
     },
   });
 
-  const accepted = await controller.sendPromptImmediate(draft);
+  const transferredDraft = {
+    ...draft,
+    parts: [{ type: "file" as const, path: "/workspace/report.md", label: "report.md" }],
+    attachments: [{
+      id: "attachment-1",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      size: 42,
+      kind: "file" as const,
+      dataUrl: "data:application/pdf;base64,JVBERi0=",
+    }],
+  };
+  let transferCount = 0;
+  const acceptedPromise = controller.sendPromptImmediate(transferredDraft, {
+    onDraftTransferred: () => {
+      transferCount += 1;
+    },
+  });
+
+  assert.equal(transferCount, 1, "local pending ownership should be acknowledged before awaiting transport");
+  assert.deepEqual(
+    pendingDrafts["pending-session:generated"]?.draft,
+    transferredDraft,
+    "the complete part and attachment snapshot must be stored before transfer acknowledgement",
+  );
+
+  const accepted = await acceptedPromise;
 
   assert.equal(accepted.accepted, false);
   assert.deepEqual(transportCalls, []);
@@ -279,10 +306,19 @@ test("conversation flow controller blocks before transport while preserving opti
   assert.equal(pendingDrafts["pending-session:generated"]?.error, "AI access blocked");
 });
 
+test("an occupied transient echo slot blocks transport before it can lose the second draft owner", () => {
+  assert.match(
+    sessionConversationFlowSource,
+    /pendingStored = result\.kind === "stored";[\s\S]*pendingSlotOccupied = result\.kind === "occupied";[\s\S]*if \(!pendingStored\) \{[\s\S]*code: pendingSlotOccupied \? "pending_submit_slot_occupied" : "pending_submit_slot_invalid",[\s\S]*draftDisposition: "restore",[\s\S]*\}[\s\S]*options\.onDraftTransferred\?\.\(\);[\s\S]*const aiAccessBlockedReason/s,
+    "a draft without a local pending owner must return before transport and remain in Composer",
+  );
+});
+
 test("conversation flow starts materialized first sends on the captured scoped session key", async () => {
   const mappings: Array<[string, string]> = [];
   const remaps: Array<{ pendingKey: string; sessionId: string; sessionKey: string | null | undefined }> = [];
   const startedRuns: string[] = [];
+  let pendingDrafts: PendingSubmittedDraftBySessionKey = {};
   let materializedSessionKeyCalls = 0;
 
   const controller = createSessionConversationFlow({
@@ -335,7 +371,9 @@ test("conversation flow starts materialized first sends on the captured scoped s
     pendingSubmitted: {
       optimisticSubmittedDraft: () => null,
       setOptimisticSubmittedDraft: () => undefined,
-      updatePendingSubmittedDrafts: () => undefined,
+      updatePendingSubmittedDrafts: (updater) => {
+        pendingDrafts = updater(pendingDrafts);
+      },
     },
     queue: {
       appendDraftToCurrentQueue: () => undefined,
@@ -437,6 +475,8 @@ test("conversation flow reuses one pending-session materialization for concurren
   }> = [];
   const remaps: Array<{ pendingKey: string; sessionId: string; sessionKey: string | null | undefined }> = [];
   let currentSessionKey = "pending:base";
+  let pendingDrafts: PendingSubmittedDraftBySessionKey = {};
+  let firstTransferCount = 0;
   let releaseFirstSubmit!: () => void;
   const firstSubmitGate = new Promise<void>((resolve) => {
     releaseFirstSubmit = resolve;
@@ -484,7 +524,9 @@ test("conversation flow reuses one pending-session materialization for concurren
     pendingSubmitted: {
       optimisticSubmittedDraft: () => null,
       setOptimisticSubmittedDraft: () => undefined,
-      updatePendingSubmittedDrafts: () => undefined,
+      updatePendingSubmittedDrafts: (updater) => {
+        pendingDrafts = updater(pendingDrafts);
+      },
     },
     queue: {
       appendDraftToCurrentQueue: () => undefined,
@@ -550,7 +592,10 @@ test("conversation flow reuses one pending-session materialization for concurren
             opencodeSessionId: "sess-first",
           }));
         }
-        return acceptedSubmitResult();
+        return sessionSubmitSubmittedResult({
+          runId: `run-${options.clientMessageId}`,
+          clientMessageId: options.clientMessageId,
+        });
       },
     },
     feedback: {
@@ -567,7 +612,13 @@ test("conversation flow reuses one pending-session materialization for concurren
     },
   });
 
-  const first = controller.sendPromptImmediate(draft, { clientMessageId: "client-first" });
+  const first = controller.sendPromptImmediate(draft, {
+    clientMessageId: "client-first",
+    onDraftTransferred: () => {
+      firstTransferCount += 1;
+    },
+  });
+  assert.equal(firstTransferCount, 1, "normal send should transfer before deferred transport settles");
   await Promise.resolve();
   const second = controller.sendPromptImmediate(
     { ...draft, text: "follow-up", resolvedText: "follow-up" },
@@ -1092,6 +1143,7 @@ test("conversation flow controller surfaces terminal server queue failure on que
   };
   const updates: Array<{ sessionKey: string; states: string[] }> = [];
   const sends: Array<{ clientMessageId: string; implicitSkillCommandPolicy: string | undefined }> = [];
+  let pendingDrafts: PendingSubmittedDraftBySessionKey = {};
 
   const controller = createSessionConversationFlow({
     identity: {
@@ -1131,7 +1183,9 @@ test("conversation flow controller surfaces terminal server queue failure on que
     pendingSubmitted: {
       optimisticSubmittedDraft: () => null,
       setOptimisticSubmittedDraft: () => undefined,
-      updatePendingSubmittedDrafts: () => undefined,
+      updatePendingSubmittedDrafts: (updater) => {
+        pendingDrafts = updater(pendingDrafts);
+      },
     },
     queue: {
       appendDraftToCurrentQueue: (nextDraft, envelope) => {
@@ -1452,9 +1506,17 @@ test("conversation flow controller sends edited queued drafts now with remap-awa
     },
   });
 
+  let transferCount = 0;
   const accepted = await controller.handleSendPrompt(
     { ...draft, text: "edited", resolvedText: "edited" },
-    { sendNow: true, sendTraceId: "trace-1", implicitSkillCommandPolicy: "disable" },
+    {
+      sendNow: true,
+      sendTraceId: "trace-1",
+      implicitSkillCommandPolicy: "disable",
+      onDraftTransferred: () => {
+        transferCount += 1;
+      },
+    },
   );
 
   assert.equal(accepted.accepted, false);
@@ -1463,7 +1525,8 @@ test("conversation flow controller sends edited queued drafts now with remap-awa
     clientMessageId: "submit-edited",
     implicitSkillCommandPolicy: "disable",
   }]);
-  assert.deepEqual(composerDrafts, [""]);
+  assert.equal(transferCount, 1, "the queued edit snapshot should transfer exactly once before transport settles");
+  assert.deepEqual(composerDrafts, [], "conversation flow must not clear the live Composer directly");
   assert.deepEqual(pauseWrites, []);
   assert.equal(pendingDrafts["session-a"]?.state, "error");
   assert.deepEqual(updates[0], {
@@ -1478,7 +1541,7 @@ test("conversation flow controller sends edited queued drafts now with remap-awa
   assert.equal(queues["session-a"]?.[0]?.implicitSkillCommandPolicy, "disable");
 });
 
-test("conversation flow controller owns queued draft edit actions", () => {
+test("conversation flow controller owns queued draft edit actions", async () => {
   let queues: Record<string, QueuedDraft[]> = {
     "session-a": [
       { id: "queued-1", clientMessageId: "msg-first", draft: { ...draft, text: "first" }, createdAt: 1, updatedAt: 1, state: "queued" },
@@ -1652,6 +1715,29 @@ test("conversation flow controller owns queued draft edit actions", () => {
   assert.equal(controller.handleRetryQueuedDraft("queued-1"), true);
   assert.equal(queues["session-a"]?.[0]?.state, "queued");
   assert.equal(sentCount, 0, "retry while non-idle must not start a drain");
+
+  runVisible = false;
+  editingId = "queued-missing";
+  const queueBeforeStaleSave = queues["session-a"];
+  let transferCount = 0;
+  const staleSaveResult = await controller.handleSendPrompt(
+    { ...draft, text: "stale edited draft", resolvedText: "stale edited draft" },
+    {
+      onDraftTransferred: () => {
+        transferCount += 1;
+      },
+    },
+  );
+
+  assert.equal(staleSaveResult.accepted, false);
+  assert.equal(staleSaveResult.status, "blocked");
+  assert.equal(staleSaveResult.code, "queued_draft_missing");
+  assert.equal(staleSaveResult.draftDisposition, "restore");
+  assert.equal(transferCount, 0, "a missing queued item cannot accept ownership of the edited draft");
+  assert.equal(editingId, "queued-missing", "the stale edit must remain selected until the caller reconciles it");
+  assert.equal(queues["session-a"], queueBeforeStaleSave, "the stale save must not mutate the queue");
+  await Promise.resolve();
+  assert.equal(sentCount, 0, "the stale save must not drain another queued item");
 });
 
 test("conversation flow controller owns transcript edit recovery", () => {

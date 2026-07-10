@@ -130,7 +130,10 @@ import {
   pendingSubmittedDraftToEditable,
   pendingSubmittedDraftToMessage,
 } from "../components/session/pending-submit-model";
-import { decidePendingSubmittedTranscriptAdoption } from "../components/session/pending-submit-reconciliation";
+import {
+  decidePendingSubmittedTranscriptAdoption,
+  resolvePendingSubmittedRenderReplacement,
+} from "../components/session/pending-submit-reconciliation";
 import {
   createPendingSessionInstanceId,
   materializePendingSessionInstance,
@@ -512,11 +515,19 @@ const reconnectStateLabelKey = (status: ReconnectState["status"]) => {
 };
 
 type ImplicitSkillConfirmationRequest = {
+  sessionKey: string;
   draft: ComposerDraft;
   options: ComposerSendOptions;
   skillName: string;
   arguments: string;
 };
+
+const snapshotImplicitSkillConfirmationDraft = (draft: ComposerDraft): ComposerDraft => ({
+  ...draft,
+  parts: draft.parts.map((part) => ({ ...part })),
+  attachments: draft.attachments.map((attachment) => ({ ...attachment })),
+  command: draft.command ? { ...draft.command } : undefined,
+});
 
 export default function SessionView(props: SessionViewProps) {
   const tr = (key: string) => t(key, currentLocale());
@@ -566,8 +577,8 @@ export default function SessionView(props: SessionViewProps) {
     sessionId: string;
     workspaceId: string | null;
   } | null>(null);
-  const [implicitSkillConfirmation, setImplicitSkillConfirmation] =
-    createSignal<ImplicitSkillConfirmationRequest | null>(null);
+  const [implicitSkillConfirmationBySessionKey, setImplicitSkillConfirmationBySessionKey] =
+    createSignal<Record<string, ImplicitSkillConfirmationRequest>>({});
   const [historyActionBusy, setHistoryActionBusy] = createSignal<"undo" | "redo" | "compact" | null>(null);
 
   const [layoutRootWidth, setLayoutRootWidth] = createSignal(0);
@@ -1067,6 +1078,9 @@ export default function SessionView(props: SessionViewProps) {
       pendingQueueKeyAwaitingSessionIdByBaseKey: pendingQueueKeyAwaitingSessionIdByBaseKey(),
     });
   });
+  const implicitSkillConfirmation = createMemo(() =>
+    implicitSkillConfirmationBySessionKey()[currentSessionQueueKey()] ?? null,
+  );
   const [composerEntryDismissedBySessionKey, setComposerEntryDismissedBySessionKey] =
     createSignal<Record<string, boolean>>({});
   const composerEntryDismissed = createMemo(() => {
@@ -1373,10 +1387,17 @@ export default function SessionView(props: SessionViewProps) {
     return snapshot.id === baseline.assistantId && snapshot.partCount > baseline.partCount;
   });
 
-  const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {
+  const localSubmittedMessage = createMemo<MessageWithParts | null>(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return null;
     if (submitted.sessionKey !== currentSessionQueueKey()) return null;
+    const renderReplacement = resolvePendingSubmittedRenderReplacement({
+      pending: submitted,
+      messages: props.messages,
+      sessionKey: currentSessionQueueKey(),
+      sessionId: props.selectedSessionId,
+    });
+    if (renderReplacement.kind === "show-canonical") return null;
     return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
   });
   createEffect(() => {
@@ -1398,27 +1419,46 @@ export default function SessionView(props: SessionViewProps) {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return {};
     if (submitted.sessionKey !== currentSessionQueueKey()) return {};
-    if (submitted.state === "sending" && terminalLifecycleOwnsOptimistic({
-      lifecycle: runDiagnosticForQueueKey(submitted.sessionKey),
-      optimisticSending: true,
-      optimisticAccepted: submitted.admission === "accepted",
-      acceptedRunId: submitted.acceptedRunId,
-      acceptedClientMessageId: submitted.acceptedClientMessageId,
-    })) {
-      return {};
+    if (submitted.state === "error") {
+      return {
+        [submitted.id]: { state: "error", error: submitted.error },
+      };
     }
-    return {
-      [submitted.id]: submitted.state === "error"
-        ? { state: "error", error: submitted.error }
-        : { state: "sending" },
-    };
+    if (submitted.state === "outcome-unknown") {
+      return {
+        [submitted.id]: { state: "sync-warning", reason: "delivery-unconfirmed" },
+      };
+    }
+    const adoption = decidePendingSubmittedTranscriptAdoption({
+      pending: submitted,
+      messages: props.messages,
+      sessionKey: currentSessionQueueKey(),
+      sessionId: props.selectedSessionId,
+    });
+    if (
+      submitted.admission === "accepted" &&
+      adoption.kind === "unresolved" &&
+      (adoption.reason === "ambiguous-fingerprint" || adoption.reason === "ambiguous-identity") &&
+      terminalLifecycleOwnsOptimistic({
+        lifecycle: runDiagnosticForQueueKey(submitted.sessionKey),
+        optimisticSending: true,
+        optimisticAccepted: true,
+        acceptedRunId: submitted.acceptedRunId,
+        acceptedClientMessageId: submitted.acceptedClientMessageId,
+      })
+    ) {
+      return {
+        [submitted.id]: { state: "sync-warning", reason: "ambiguous-legacy" },
+      };
+    }
+    return {};
   });
 
   const totalPartCount = createMemo(() => props.messages.reduce((total, message) => total + message.parts.length, 0));
 
   const transcriptViewport = createSessionTranscriptViewport({
     messages: () => props.messages,
-    optimisticSubmittedMessage,
+    localSubmittedMessage,
     searchActive,
     sessionStatus: () => props.sessionStatus,
     developerMode: () => props.developerMode,
@@ -3101,47 +3141,54 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}): Promise<ComposerSendResult> => {
+    const submissionSessionKey = currentSessionQueueKey();
     recordSendTrace("handleSendPrompt:start", {
       sendTraceId: options.sendTraceId ?? null,
       sendNow: options.sendNow,
       source: options.source,
+      sessionKey: submissionSessionKey,
       editingQueuedDraftId: editingQueuedDraftId(),
       queuePaused: queuePaused(),
       showRunIndicator: showRunIndicator(),
     });
     if (showComposerEntryState() || showFooterComposerTargetContext()) {
-      dismissComposerEntryForSessionKey();
+      dismissComposerEntryForSessionKey(submissionSessionKey);
     }
     const result = await sessionFlowFacade.handleSendPrompt(draft, {
       sendNow: options.sendNow,
       sendTraceId: options.sendTraceId,
       source: options.source,
       implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+      onDraftTransferred: options.onDraftTransferred,
     });
-    if (result.draftDisposition === "clear") {
-      props.setComposerDraft({
-        mode: draft.mode,
-        parts: [],
-        attachments: [],
-        text: "",
-        resolvedText: "",
-      });
-    }
     if (sessionSubmitNeedsImplicitSkillConfirmation(result)) {
-      setImplicitSkillConfirmation({
-        draft,
-        options,
-        skillName: result.confirmation.skillName,
-        arguments: result.confirmation.arguments,
-      });
+      setImplicitSkillConfirmationBySessionKey((current) => ({
+        ...current,
+        [submissionSessionKey]: {
+          sessionKey: submissionSessionKey,
+          draft: snapshotImplicitSkillConfirmationDraft(draft),
+          options: { ...options },
+          skillName: result.confirmation.skillName,
+          arguments: result.confirmation.arguments,
+        },
+      }));
     }
     return result;
+  };
+
+  const removeImplicitSkillConfirmation = (pending: ImplicitSkillConfirmationRequest) => {
+    setImplicitSkillConfirmationBySessionKey((current) => {
+      if (current[pending.sessionKey] !== pending) return current;
+      const { [pending.sessionKey]: _removed, ...rest } = current;
+      return rest;
+    });
   };
 
   const sendImplicitSkillAsPrompt = async () => {
     const pending = implicitSkillConfirmation();
     if (!pending) return;
-    setImplicitSkillConfirmation(null);
+    if (pending.sessionKey !== currentSessionQueueKey()) return;
+    removeImplicitSkillConfirmation(pending);
     await handleSendPrompt(pending.draft, {
       ...pending.options,
       implicitSkillCommandPolicy: "disable",
@@ -3151,7 +3198,8 @@ export default function SessionView(props: SessionViewProps) {
   const runImplicitSkillCommand = async () => {
     const pending = implicitSkillConfirmation();
     if (!pending) return;
-    setImplicitSkillConfirmation(null);
+    if (pending.sessionKey !== currentSessionQueueKey()) return;
+    removeImplicitSkillConfirmation(pending);
     await handleSendPrompt({
       ...pending.draft,
       command: {
@@ -4343,7 +4391,10 @@ export default function SessionView(props: SessionViewProps) {
         variant="warning"
         onConfirm={() => void runImplicitSkillCommand()}
         onCancel={() => void sendImplicitSkillAsPrompt()}
-        onClose={() => setImplicitSkillConfirmation(null)}
+        onClose={() => {
+          const pending = implicitSkillConfirmation();
+          if (pending) removeImplicitSkillConfirmation(pending);
+        }}
       />
 
       <ShareWorkspaceModal

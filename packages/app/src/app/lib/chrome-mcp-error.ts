@@ -28,12 +28,19 @@ const hasProfileConflictSignature = (value: string) => {
   return PROFILE_CONFLICT_PATTERNS.every((pattern) => haystack.includes(pattern));
 };
 
+export function isChromeMcpTool(part: Part): boolean {
+  if (part.type !== "tool") return false;
+  const record = part as Part & { tool?: unknown };
+  const toolName = readString(record.tool);
+  return Boolean(toolName && isChromeTool(toolName));
+}
+
 export function detectChromeMcpCompletedError(part: Part): string | null {
-  if (part.type !== "tool") return null;
+  if (!isChromeMcpTool(part)) return null;
 
   const record = part as Part & { tool?: unknown; state?: Record<string, unknown> };
   const toolName = readString(record.tool);
-  if (!toolName || !isChromeTool(toolName)) return null;
+  if (!toolName) return null;
 
   const state = record.state ?? {};
   const status = readString(state.status).toLowerCase();

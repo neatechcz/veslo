@@ -83,7 +83,7 @@ test("composer exposes send result so the parent can handle failed handoff state
   );
 });
 
-test("composer clears the submitted draft only after a clear submit disposition", () => {
+test("composer clears transferred drafts through the revision-owned handoff", () => {
   assert.match(
     composerSource,
     /const sendDisabled = createMemo\(\(\) => !hasDraftContent\(\) \|\| \(props\.busy && !props\.isStreaming\)\);/,
@@ -104,14 +104,14 @@ test("composer clears the submitted draft only after a clear submit disposition"
 
   assert.match(
     composerSource,
-    /sendResult = await sendPromise;[\s\S]*sent = sendResult\.accepted;[\s\S]*if \(sendResult\.draftDisposition === "clear"\) \{[\s\S]*setAttachments\(\[\]\);[\s\S]*setEditorText\(""\);[\s\S]*props\.onDraftChange\(\{[\s\S]*mode: submittedDraft\.mode,[\s\S]*parts: \[\],[\s\S]*attachments: \[\],[\s\S]*text: "",[\s\S]*resolvedText: "",[\s\S]*\}\);/,
-    "composer should clear the editor only after the submit result asks it to clear",
+    /const submittedRevision = draftHandoffController\.beginSubmission\(\);[\s\S]*onDraftTransferred: \(\) => \{[\s\S]*draftHandoffController\.acknowledgeTransfer\(submittedRevision,[\s\S]*sendResult = await sendPromise;[\s\S]*draftHandoffController\.applyResult\(/,
+    "composer should allow synchronous ownership transfer and guard delayed result clearing with one submitted revision",
   );
 
   assert.match(
     composerSource,
-    /sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*finally \{[\s\S]*setSending\(false\);[\s\S]*setActiveSendTraceId\(null\);/,
-    "local sending should be released after the handoff promise settles",
+    /sendPromise = props\.onSend\(submittedDraft, sendOptions\);[\s\S]*finally \{[\s\S]*finishSending\(\);[\s\S]*setActiveSendTraceId\(null\);/,
+    "counter-based local sending and active trace state should be released after the handoff promise settles",
   );
 
   assert.doesNotMatch(

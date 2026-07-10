@@ -569,6 +569,64 @@ test(
 );
 
 test(
+  "Chrome MCP tool trace records only state metadata and suppresses duplicate updates",
+  withSendWorkflowTraceWindow(async (traceWindow) => {
+    await createRoot(async (dispose) => {
+      try {
+        const { controller } = makeController({
+          workspaceSessionIds: new Set(["sess-a"]),
+        });
+
+        await controller.applyEvent(
+          {
+            type: "message.updated",
+            properties: { info: makeMessage("sess-a", "msg-assistant", "assistant") },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+        const toolEvent = {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "part-chrome",
+              sessionID: "sess-a",
+              messageID: "msg-assistant",
+              type: "tool",
+              tool: "chrome-devtools_new_page",
+              state: { status: "running", input: { url: "https://private.example" } },
+            },
+          },
+        } as OpencodeEvent;
+
+        await controller.applyEvent(toolEvent, "ws-a");
+        await controller.applyEvent(toolEvent, "ws-a");
+
+        const chromeToolTrace = (traceWindow.__vesloSendWorkflowTrace ?? []).filter(
+          (entry) => entry.event === "session-sse:chrome-mcp-tool-updated",
+        );
+        assert.equal(chromeToolTrace.length, 1);
+        const [{ schema: _schema, id: _id, at: _at, ts: _ts, perfMs: _perfMs, ...tracePayload }] = chromeToolTrace;
+        assert.deepEqual(tracePayload, {
+          source: "session-sse",
+          event: "session-sse:chrome-mcp-tool-updated",
+          workspaceId: "ws-a",
+          sessionID: "sess-a",
+          messageID: "msg-assistant",
+          partID: "part-chrome",
+          tool: "chrome-devtools_new_page",
+          status: "running",
+          terminal: false,
+          hasOutput: false,
+          hasError: false,
+        });
+      } finally {
+        dispose();
+      }
+    });
+  }),
+);
+
+test(
   "text part trace does not infer assistant role from a placeholder message",
   withSendWorkflowTraceWindow(async (traceWindow) => {
     await createRoot(async (dispose) => {
@@ -604,7 +662,7 @@ test(
   }),
 );
 
-test("active session idle schedules local and engine transcript ingestion immediately", async () => {
+test("active session idle schedules one canonical transcript ingestion immediately", async () => {
   await createRoot(async (dispose) => {
     try {
       const transcriptIngest: Array<Record<string, unknown>> = [];
@@ -623,14 +681,7 @@ test("active session idle schedules local and engine transcript ingestion immedi
         "ws-a",
       );
 
-      assert.deepEqual(transcriptIngest, [
-        {
-          sessionID: "sess-a",
-          sourceWsId: "ws-a",
-          reason: "session.idle",
-          delayMs: 0,
-        },
-      ]);
+      assert.deepEqual(transcriptIngest, []);
       assert.deepEqual(backgroundIngest, [
         {
           sessionID: "sess-a",
@@ -645,11 +696,10 @@ test("active session idle schedules local and engine transcript ingestion immedi
   });
 });
 
-test("scoped session idle does not refresh through the active fallback client", async () => {
+test("scoped session idle does not read through the active fallback client", async () => {
   await createRoot(async (dispose) => {
     try {
       const activeClientGets: string[] = [];
-      const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
       const routing = {
         activeWorkspaceId: () => "ws-a",
         active: () => null,
@@ -671,7 +721,6 @@ test("scoped session idle does not refresh through the active fallback client", 
         workspaceSessionIds: new Set(["sess-a"]),
         routing,
         client: () => activeClient,
-        statusTraces,
       });
 
       await controller.applyEvent(
@@ -683,10 +732,6 @@ test("scoped session idle does not refresh through the active fallback client", 
       );
 
       assert.deepEqual(activeClientGets, []);
-      assert.equal(
-        statusTraces.some((trace) => trace.event === "sse-session-idle-live-refresh-skipped"),
-        true,
-      );
     } finally {
       dispose();
     }

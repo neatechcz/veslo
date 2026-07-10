@@ -161,8 +161,8 @@ test("first submit dismisses the centered composer entry before backend handoff 
 
   assert.match(
     sessionSource,
-    /const handleSendPrompt = async \(draft: ComposerDraft, options: ComposerSendOptions = \{\}\): Promise<ComposerSendResult> => \{[\s\S]*if \(showComposerEntryState\(\) \|\| showFooterComposerTargetContext\(\)\) \{[\s\S]*dismissComposerEntryForSessionKey\(\);[\s\S]*\}/s,
-    "the send handler should dismiss the no-session target context immediately when the user submits from the bare new-session state",
+    /const handleSendPrompt = async \(draft: ComposerDraft, options: ComposerSendOptions = \{\}\): Promise<ComposerSendResult> => \{[\s\S]*const submissionSessionKey = currentSessionQueueKey\(\);[\s\S]*if \(showComposerEntryState\(\) \|\| showFooterComposerTargetContext\(\)\) \{[\s\S]*dismissComposerEntryForSessionKey\(submissionSessionKey\);[\s\S]*\}/s,
+    "the send handler should dismiss the no-session target context immediately for the session scope captured before the async handoff",
   );
 });
 
@@ -282,7 +282,7 @@ test("optimistic responding state survives idle workspace preflight while send h
   );
 });
 
-test("optimistic responding state renders as the footer run indicator, not assistant response text", () => {
+test("pending send state renders an immediate local echo while the footer owns run progress", () => {
   assert.doesNotMatch(
     sessionSource,
     /pendingSubmittedDraftToAssistantPlaceholderMessage/,
@@ -291,14 +291,14 @@ test("optimistic responding state renders as the footer run indicator, not assis
 
   assert.match(
     sessionSource,
-    /const transcriptViewport = createSessionTranscriptViewport\(\{[\s\S]*messages: \(\) => props\.messages,[\s\S]*optimisticSubmittedMessage,[\s\S]*\}\);[\s\S]*const renderedMessages = transcriptViewport\.renderedMessages;/s,
-    "session view should delegate optimistic user message rendering to the transcript viewport controller",
+    /const localSubmittedMessage = createMemo<MessageWithParts \| null>\(\(\) => \{[\s\S]*resolvePendingSubmittedRenderReplacement\([\s\S]*renderReplacement\.kind === "show-canonical"[\s\S]*const transcriptViewport = createSessionTranscriptViewport\(\{[\s\S]*messages: \(\) => props\.messages,[\s\S]*localSubmittedMessage,[\s\S]*\}\);[\s\S]*const renderedMessages = transcriptViewport\.renderedMessages;/s,
+    "session view should render a local echo only until its canonical message can take its place",
   );
 
   assert.match(
     transcriptViewportSource,
-    /export const resolveTranscriptSourceMessages = <T,>\(\{[\s\S]*optimisticMessage \? \[\.\.\.messages, optimisticMessage\] : \[\.\.\.messages\];/s,
-    "rendered messages should append only the optimistic user message while the run indicator owns responding status",
+    /export const resolveTranscriptSourceMessages = <T,>\(\{[\s\S]*localSubmittedMessage \? \[\.\.\.messages, localSubmittedMessage\] : \[\.\.\.messages\];/s,
+    "rendered messages should append the local echo only while canonical transcript data is absent",
   );
 
   assert.match(

@@ -300,7 +300,6 @@ test("live transcript ingestion can use routing scope when session is missing at
 
 test("background transcript ingestion reads from the explicit source workspace client", async () => {
   const writes: any[] = [];
-  let getCalls = 0;
   let messageCalls = 0;
   const transcript: MessageWithParts[] = [
     {
@@ -314,10 +313,6 @@ test("background transcript ingestion reads from the explicit source workspace c
       const { controller } = makeController({
         routingClient: {
           session: {
-            get: async () => {
-              getCalls += 1;
-              return ok(makeSession("sess-b", "/background"));
-            },
             messages: async ({ limit }: { limit: number }) => {
               messageCalls += 1;
               assert.equal(limit, INITIAL_SESSION_MESSAGE_LIMIT);
@@ -332,7 +327,6 @@ test("background transcript ingestion reads from the explicit source workspace c
 
       await controller.flushBackgroundTranscriptIngestion("ws-b", "sess-b", "background message.updated");
 
-      assert.equal(getCalls, 1);
       assert.equal(messageCalls, 1);
       assert.equal(writes[0].workspaceId, "ws-b");
       assert.equal(writes[0].directory, "/background");

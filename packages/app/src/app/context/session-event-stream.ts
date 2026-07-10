@@ -552,24 +552,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           });
           deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
           deps.notifySessionBusy(sessionID, "idle", sourceWsId);
-          const c = sourceWsId
-            ? deps.routing.client(sourceWsId)
-            : null;
-          if (c) {
-            try {
-              const latest = deps.applySessionDirectoryOverride(unwrap(await c.session.get({ sessionID })));
-              deps.setStore("sessions", (current: Session[]) => upsertSession(current, latest));
-            } catch {
-              // ignore
-            }
-          } else if (sourceWsId) {
-            deps.recordSessionStatusTrace("sse-session-idle-live-refresh-skipped", {
-              sessionId: sessionID,
-              sourceWorkspaceId: sourceWsId,
-              reason: "missing-routed-client",
-            });
-          }
-          deps.scheduleTranscriptIngestion(sessionID, sourceWsId, "session.idle", 0);
           const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
           if (workspaceId) {
             deps.scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "session.idle engine snapshot", 0);

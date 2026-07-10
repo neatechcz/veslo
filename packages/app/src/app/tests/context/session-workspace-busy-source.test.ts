@@ -33,18 +33,13 @@ test("background SSE events update scoped runtime state without merging messages
   );
   assert.match(
     transcriptControllerSource,
-    /const flushBackgroundTranscriptIngestion = async \([\s\S]*workspaceId: string,[\s\S]*sessionID: string,[\s\S]*const c = deps\.routing\.client\(workspaceId\);[\s\S]*c\.session\.get\(\{ sessionID \}\)[\s\S]*c\.session\.messages\(\{ sessionID, limit \}\)[\s\S]*await writer\(\{[\s\S]*workspaceId,[\s\S]*sessionId: sessionID,[\s\S]*messages,[\s\S]*partsByMessageId,/,
-    "background transcript ingestion should read from the explicit source workspace client and persist that transcript",
+    /const flushBackgroundTranscriptIngestion = async \([\s\S]*workspaceId: string,[\s\S]*sessionID: string,[\s\S]*const c = deps\.routing\.client\(workspaceId\);[\s\S]*resolveTranscriptIngestDirectory\(workspaceId, sessionID,[\s\S]*c\.session\.messages\(\{ sessionID, limit \}\)[\s\S]*await writer\(\{[\s\S]*workspaceId,[\s\S]*sessionId: sessionID,[\s\S]*messages,[\s\S]*partsByMessageId,/,
+    "background transcript ingestion should use the explicit source workspace client for one canonical messages read",
   );
   assert.match(
     eventStreamSource,
     /if \(isPermissionRefreshEvent\(event\.type\)\) \{[\s\S]*void deps\.refreshPendingPermissions\(\);[\s\S]*\}/,
     "background permission events should refresh aggregated permission state",
-  );
-  assert.match(
-    eventStreamSource,
-    /const c = sourceWsId\s*\?\s*deps\.routing\.client\(sourceWsId\)\s*:\s*null;[\s\S]*else if \(sourceWsId\) \{[\s\S]*reason: "missing-routed-client"/,
-    "session idle refreshes should use only the source workspace client and avoid silently mutating through the active client",
   );
   assert.match(
     appSource,

@@ -189,6 +189,7 @@ export function deriveRunActivityFromSessionMessages(payload: unknown): RunProbe
   }
 
   const progressSignature = messageProgressSignature(messages, latestInfo, latestMessage);
+  const parts = readParts(latestMessage);
   if (assistantMessageIsTerminal(latestInfo)) {
     return {
       active: false,
@@ -198,7 +199,6 @@ export function deriveRunActivityFromSessionMessages(payload: unknown): RunProbe
     };
   }
 
-  const parts = readParts(latestMessage);
   const activeTool = parts.find((part) => {
     if (!isRecord(part)) return false;
     if (readString(part.type) !== "tool") return false;
@@ -294,7 +294,6 @@ export function createRunActivityProbe<Engine>(deps: {
       if (status.ok) {
         const activity = deriveRunActivityFromSessionStatus(status.payload, record.engineSessionId);
         if (activity && !("unreachable" in activity)) {
-          if (activity.activityKind !== "model_retry") return activity;
           const messages = await fetchJson(
             engine,
             record,
@@ -302,7 +301,24 @@ export function createRunActivityProbe<Engine>(deps: {
           );
           if (messages.status === 404) return { active: false };
           if (!messages.ok) return { unreachable: true };
-          return mergeRetryStatusWithMessages(deriveRunActivityFromSessionMessages(messages.payload));
+          const messageActivity = deriveRunActivityFromSessionMessages(messages.payload);
+          if ("unreachable" in messageActivity) return messageActivity;
+          if (!activity.active) {
+            return activity;
+          }
+          // OpenCode can leave /session/status at busy briefly after it has written a
+          // terminal assistant message. For one server-owned run, explicit transcript
+          // completion is stronger evidence than that stale status; otherwise the UI
+          // keeps rendering a second "responding" state beneath the completed reply.
+          if (!messageActivity.active) {
+            return messageActivity;
+          }
+          if (activity.activityKind === "model_retry") {
+            return mergeRetryStatusWithMessages(messageActivity);
+          }
+          return messageActivity.activityKind === "local_tool" || messageActivity.activityKind === "assistant_output"
+            ? messageActivity
+            : activity;
         }
       } else if (status.status !== 404) {
         return { unreachable: true };

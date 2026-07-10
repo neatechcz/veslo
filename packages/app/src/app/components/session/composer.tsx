@@ -11,6 +11,7 @@ import { recordSendWorkflowTrace } from "../../lib/send-workflow-trace";
 import { currentLocale, t, useTranslate } from "../../../i18n";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
+import { createComposerDraftHandoffController } from "./composer-draft-handoff";
 import { findMentionTrigger } from "./composer-mention-trigger";
 
 
@@ -33,6 +34,7 @@ export type ComposerSendOptions = {
   source?: "button" | "enter" | "ctrl-enter";
   sendTraceId?: string;
   implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
+  onDraftTransferred?: () => void;
 };
 
 export type ComposerSendResult = SessionSubmitResult;
@@ -473,6 +475,7 @@ export default function Composer(props: ComposerProps) {
   const [attachments, setAttachments] = createSignal<ComposerAttachment[]>(
     (props.initialDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
   );
+  const draftHandoffController = createComposerDraftHandoffController();
   const [draftText, setDraftText] = createSignal(normalizeText(props.initialDraft.text ?? props.prompt));
   const [mode, setMode] = createSignal<PromptMode>(props.initialDraft.mode ?? "prompt");
   const [historySnapshot, setHistorySnapshot] = createSignal<ComposerDraft | null>(null);
@@ -644,6 +647,7 @@ export default function Composer(props: ComposerProps) {
 
     if (suppressPromptSync) {
       if (!value && current) {
+        draftHandoffController.markDraftChanged();
         setEditorText("");
         setAttachments([]);
         setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
@@ -687,6 +691,7 @@ export default function Composer(props: ComposerProps) {
   let emitTimer: number | null = null;
   const emitDraftChange = () => {
     if (!editorRef) return;
+    draftHandoffController.markDraftChanged();
     draftScheduledAt = perfNow();
 
     if (emitTimer) window.clearTimeout(emitTimer);
@@ -915,6 +920,7 @@ export default function Composer(props: ComposerProps) {
     setSlashQuery("");
     // Replace editor content with a styled "/<command>" chip and a trailing space for args.
     const text = `/${cmd.name} `;
+    draftHandoffController.markDraftChanged();
     editorRef.innerHTML = "";
     const chip = createSlashSpan(cmd);
     editorRef.appendChild(chip);
@@ -989,6 +995,7 @@ export default function Composer(props: ComposerProps) {
 
   const applyHistoryDraft = (draft: ComposerDraft | null) => {
     if (!draft) return;
+    draftHandoffController.markDraftChanged();
     setMode(draft.mode);
     renderParts(draft.parts, false);
     setDraftText(draft.text);
@@ -1019,6 +1026,24 @@ export default function Composer(props: ComposerProps) {
     }
     const target = list[list.length - 1 - nextIndex];
     applyHistoryDraft(target);
+  };
+
+  const clearSubmittedDraft = (submittedMode: ComposerDraft["mode"]) => {
+    setAttachments([]);
+    setEditorText("");
+    pasteTextById.clear();
+    resetRecentEmits("");
+    suppressPromptSync = true;
+    props.onDraftChange({
+      mode: submittedMode,
+      parts: [],
+      attachments: [],
+      text: "",
+      resolvedText: "",
+    });
+    queueMicrotask(() => {
+      suppressPromptSync = false;
+    });
   };
 
   const [sendingCount, setSendingCount] = createSignal(0);
@@ -1066,6 +1091,7 @@ export default function Composer(props: ComposerProps) {
 
     recordHistory(draft);
     const submittedDraft = draft;
+    const submittedRevision = draftHandoffController.beginSubmission();
     beginSending();
     if (options.sendNow) setSendNowPending(true);
     setMentionOpen(false);
@@ -1082,9 +1108,17 @@ export default function Composer(props: ComposerProps) {
     let sent = false;
     let sendResult: ComposerSendResult | null = null;
     let sendPromise: Promise<ComposerSendResult>;
+    const sendOptions: ComposerSendOptions = {
+      ...options,
+      onDraftTransferred: () => {
+        draftHandoffController.acknowledgeTransfer(submittedRevision, () => {
+          clearSubmittedDraft(submittedDraft.mode);
+        });
+      },
+    };
     try {
       setActiveSendTraceId(options.sendTraceId ?? null);
-      sendPromise = props.onSend(submittedDraft, options);
+      sendPromise = props.onSend(submittedDraft, sendOptions);
     } catch (error) {
       setActiveSendTraceId(null);
       finishSending();
@@ -1100,22 +1134,11 @@ export default function Composer(props: ComposerProps) {
     try {
       sendResult = await sendPromise;
       sent = sendResult.accepted;
-      if (sendResult.draftDisposition === "clear") {
-        setAttachments([]);
-        setEditorText("");
-        rememberRecentEmit("");
-        suppressPromptSync = true;
-        props.onDraftChange({
-          mode: submittedDraft.mode,
-          parts: [],
-          attachments: [],
-          text: "",
-          resolvedText: "",
-        });
-        queueMicrotask(() => {
-          suppressPromptSync = false;
-        });
-      }
+      draftHandoffController.applyResult(
+        submittedRevision,
+        sendResult.draftDisposition,
+        () => clearSubmittedDraft(submittedDraft.mode),
+      );
     } catch (error) {
       recordSendTrace("sendDraft:onSend:error", {
         sendTraceId: options.sendTraceId,
@@ -1141,7 +1164,7 @@ export default function Composer(props: ComposerProps) {
     if (!sent) {
       return;
     }
-    emitDraftChange();
+    if (!submittedRevision.clearApplied) emitDraftChange();
     queueMicrotask(() => focusEditorEnd());
   };
 

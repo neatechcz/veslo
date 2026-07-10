@@ -938,6 +938,55 @@ test("session send workflow submits an existing local prompt through server subm
   }]);
 });
 
+test("session send workflow replays the same client id after a transport error", async () => {
+  const clientMessageIds: string[] = [];
+  let attempts = 0;
+  const harness = createHarness({
+    prepareSendRuntimeForSend: async () => {
+      throw new Error("runtime prep should not run for server submit");
+    },
+    submitConversationRunViaVesloWriteApi: async () => {
+      throw new Error("compatibility run should not run for server submit");
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) => sessionId === "sess-target"
+      ? {
+          sessionId,
+          workspaceId: "ws-active",
+          workspaceRoot: "/active",
+          directory: "/active",
+          conversationId: "conv-target",
+          opencodeSessionId: "open-target",
+        }
+      : null,
+    submitConversationFromVesloWriteApi: async (workspaceId, _directory, input) => {
+      attempts += 1;
+      clientMessageIds.push(input.clientMessageId);
+      if (attempts === 1) throw new Error("connection closed after dispatch");
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        runId: "run-replayed",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("replay transport"), {
+    clientMessageId: "client-replay-same-id",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.deepEqual(clientMessageIds, ["client-replay-same-id", "client-replay-same-id"]);
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing:replay-after-transport-error"));
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
+});
+
 test("session send workflow blocks existing-session submit when scoped workspace activation reports missing scope", async () => {
   let submitCalls = 0;
   const harness = createHarness({

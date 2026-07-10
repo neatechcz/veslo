@@ -1,7 +1,7 @@
 ---
 title: Session Message Truth And Render Stability Implementation Plan
 date: 2026-07-10
-status: ready-for-implementation
+status: superseded
 done: false
 repository_snapshot: veslo-main main 7e0819a7 plus active queue and fix-46 working tree
 depends_on:
@@ -19,6 +19,13 @@ smt06_desktop_transition_gate_done: false
 ## Canonical Status
 
 done: false
+
+> Superseded on 2026-07-10. Do not implement the canonical OpenCode message-id
+> phases in this document: injecting `messageID` into submit bodies caused an
+> upstream runtime regression. The retained implementation uses scoped
+> client-metadata/fingerprint transcript adoption, bounded assistant catch-up,
+> and narrow lifecycle transcript recovery instead. This file is historical
+> audit context only.
 
 This is the implementation plan for the remaining session-message and rendered
 UI stabilization gaps found after the queue deep audit and the narrow Fix 46
@@ -997,6 +1004,14 @@ Append entries; do not rewrite earlier evidence.
 2026-07-10 - SMT03 - changed: packages/app/src/app/pages/session-run-presentation.ts, session page integration, focused presentation/Escape tests - verification: `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-run-presentation.test.ts src/app/tests/pages/session-inline-loading.test.ts src/app/tests/pages/session-escape-stop-confirmation.test.ts src/app/tests/pages/session-conversation-flow.test.ts` (80 pass, 0 fail); app typecheck passed; `git diff --check` passed - notes: run indicator, Stop/Escape affordance, and abortability consume one scoped projection; operational errors render separately - done: true
 2026-07-10 - SMT04 - changed: pending-submit admission/reconciliation model, session adoption effect, pending-message visibility, focused app tests - verification: `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/session/pending-submit-model.test.ts src/app/tests/components/session/pending-submit-reconciliation.test.ts src/app/components/session/pending-session-instance-model.test.ts src/app/tests/pages/session-conversation-flow.test.ts src/app/tests/pages/session-scroll-behavior.test.ts src/app/tests/pages/session-transcript-viewport.test.ts` (100 pass, 0 fail); app typecheck passed; `git diff --check` passed - notes: accepted rows adopt only through a unique scoped identity/fingerprint candidate; attachment-only sends are covered and ambiguities stay visibly optimistic - done: true
 ```
+
+Corrective note (2026-07-10): keep the SMT04 flag and verification entry above
+as historical completion evidence. Its local-echo adoption contract is
+superseded and tightened by
+`docs/plans/2026-07-10-composer-local-echo-canonical-handoff-stabilization-implementation-plan.md`,
+which separates render replacement from durable cleanup and adds a distinct
+server-derived canonical OpenCode message id. This note does not change SMT05
+or SMT06 status.
 
 Change an entry's final value to `done: true` only when the matching phase flag
 and phase-local `done` value are also changed to true.

@@ -681,6 +681,73 @@ describe("conversation submit service", () => {
     expect(createConversationCalls).toBe(0);
   });
 
+  test("keeps canonical identity absent for a legacy submitted replay", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-legacy-canonical-replay-"));
+    tempDirs.push(workspaceRoot);
+    const attemptStore = createConversationSubmitAttemptStore({
+      dbPath: await createTempDbPath("veslo-submit-service-legacy-canonical-replay-db-"),
+    });
+    const body = {
+      clientMessageId: "msg-legacy-canonical-replay",
+      origin: "session:normal",
+      target: { conversationId: "conv-existing", directory: workspaceRoot },
+      draft: {
+        mode: "prompt",
+        text: "Replay legacy submit",
+        parts: [{ type: "text", text: "Replay legacy submit" }],
+      },
+    };
+    const request = parseConversationSubmitRequest(body);
+    attemptStore.claim({
+      workspaceId: "ws_1",
+      clientMessageId: request.clientMessageId,
+      requestHash: createConversationSubmitRequestHash(request),
+    });
+    attemptStore.update({
+      workspaceId: "ws_1",
+      clientMessageId: request.clientMessageId,
+      status: "completed",
+      conversationId: "conv-existing",
+      opencodeSessionId: "sess-existing",
+      runId: "run-existing",
+      resultJson: JSON.stringify({
+        status: "submitted",
+        workspaceId: "ws_1",
+        conversationId: "conv-existing",
+        opencodeSessionId: "sess-existing",
+        runId: "run-existing",
+        clientMessageId: request.clientMessageId,
+        draftDisposition: "clear",
+      }),
+    });
+    const service = createConversationSubmitService({
+      attemptStore,
+      conversationService: createConversationServiceStub(() => {
+        throw new Error("legacy replay must not materialize a conversation");
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body,
+      resolveDirectory: async () => {
+        throw new Error("legacy replay must not resolve the target directory");
+      },
+      submitResolvedRun: async () => {
+        throw new Error("legacy replay must not submit upstream");
+      },
+    });
+    expect(result.payload).toMatchObject({
+      status: "submitted",
+      runId: "run-existing",
+    });
+    expect("canonicalMessageId" in result.payload).toBe(false);
+    expect("canonicalMessageId" in JSON.parse(
+      attemptStore.get("ws_1", request.clientMessageId)?.resultJson ?? "{}",
+    )).toBe(false);
+  });
+
   test("joins concurrent identical existing-target submits before upstream result is persisted", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-existing-run-concurrent-"));
     tempDirs.push(workspaceRoot);

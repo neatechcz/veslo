@@ -6,7 +6,33 @@ export type PendingSubmittedTranscriptAdoption =
   | { kind: "adopt"; messageId: string; match: "identity" | "fingerprint"; candidateCount: number }
   | {
       kind: "unresolved";
-      reason: "not-accepted" | "client-message-mismatch" | "scope-mismatch" | "no-match" | "ambiguous-identity" | "ambiguous-fingerprint";
+      reason:
+        | "not-accepted"
+        | "client-message-mismatch"
+        | "scope-mismatch"
+        | "no-match"
+        | "ambiguous-identity"
+        | "ambiguous-fingerprint";
+      candidateCount: number;
+    };
+
+export type PendingSubmittedRenderReplacement =
+  | { kind: "show-local" }
+  | {
+      kind: "show-canonical";
+      messageId: string;
+      match: "identity" | "fingerprint";
+      candidateCount: number;
+    };
+
+type PendingSubmittedTranscriptMatch =
+  | Extract<PendingSubmittedTranscriptAdoption, { kind: "adopt" }>
+  | {
+      kind: "unresolved";
+      reason: Exclude<
+        Extract<PendingSubmittedTranscriptAdoption, { kind: "unresolved" }>["reason"],
+        "not-accepted"
+      >;
       candidateCount: number;
     };
 
@@ -134,18 +160,15 @@ const messageMatchesPendingFingerprint = (message: MessageWithParts, pending: Pe
     fileFingerprintsMatch(pendingFileFingerprints(pending), messageFileFingerprints(message));
 };
 
-export function decidePendingSubmittedTranscriptAdoption(input: {
+function findPendingSubmittedTranscriptMatch(input: {
   pending: PendingSubmittedDraft;
   messages: MessageWithParts[];
   sessionKey: string;
   sessionId?: string | null;
-}): PendingSubmittedTranscriptAdoption {
+}): PendingSubmittedTranscriptMatch {
   const pending = input.pending;
-  if (pending.state !== "sending" || pending.admission !== "accepted") {
-    return { kind: "unresolved", reason: "not-accepted", candidateCount: 0 };
-  }
-  if (pending.admissionDiagnostic === "client-message-mismatch") {
-    return { kind: "unresolved", reason: "client-message-mismatch", candidateCount: 0 };
+  if (pending.admissionDiagnostic) {
+    return { kind: "unresolved", reason: pending.admissionDiagnostic, candidateCount: 0 };
   }
   if (pending.sessionKey !== input.sessionKey.trim()) {
     return { kind: "unresolved", reason: "scope-mismatch", candidateCount: 0 };
@@ -180,4 +203,38 @@ export function decidePendingSubmittedTranscriptAdoption(input: {
   return fingerprintMatches.length > 1
     ? { kind: "unresolved", reason: "ambiguous-fingerprint", candidateCount: fingerprintMatches.length }
     : { kind: "unresolved", reason: "no-match", candidateCount: 0 };
+}
+
+export function resolvePendingSubmittedRenderReplacement(input: {
+  pending: PendingSubmittedDraft;
+  messages: MessageWithParts[];
+  sessionKey: string;
+  sessionId?: string | null;
+}): PendingSubmittedRenderReplacement {
+  if (input.pending.state === "error") return { kind: "show-local" };
+  const match = findPendingSubmittedTranscriptMatch(input);
+  return match.kind === "adopt"
+    ? {
+        kind: "show-canonical",
+        messageId: match.messageId,
+        match: match.match,
+        candidateCount: match.candidateCount,
+      }
+    : { kind: "show-local" };
+}
+
+export function decidePendingSubmittedTranscriptAdoption(input: {
+  pending: PendingSubmittedDraft;
+  messages: MessageWithParts[];
+  sessionKey: string;
+  sessionId?: string | null;
+}): PendingSubmittedTranscriptAdoption {
+  const pending = input.pending;
+  if (pending.state !== "sending" || pending.admission !== "accepted") {
+    return { kind: "unresolved", reason: "not-accepted", candidateCount: 0 };
+  }
+  if (pending.admissionDiagnostic) {
+    return { kind: "unresolved", reason: pending.admissionDiagnostic, candidateCount: 0 };
+  }
+  return findPendingSubmittedTranscriptMatch(input);
 }

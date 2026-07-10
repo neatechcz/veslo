@@ -104,8 +104,10 @@ Submit behavior:
 - when a local workspace is in browsing mode, the OpenCode runtime warmup needed before a send must also stay outside the global app busy/navigation lock; the warmup may delay that send, but the rest of the app remains usable
 - remote skill registry/Den failures during local runtime warmup are degraded telemetry conditions, not prompt-send failures, as long as local materialized skill state can still be used safely
 - browsing-mode runtime warmup must preserve the currently selected session route even when the engine has to cold-start instead of reattaching to an existing runtime
-- the Composer clears immediately and remains available for a separate new draft, including while a new session is still being materialized
-- attachment staging, pending-session creation, and message handoff continue in the backend/session layer after the Composer releases the submitted draft
+- the Composer is the sole owner of its live editor value; each send snapshots one immutable draft revision
+- when a pending submitted row or local queued item accepts that snapshot, the Composer clears that exact revision immediately and remains available for a separate new draft, including while a new session is still being materialized
+- attachment staging, pending-session creation, and message handoff continue in the backend/session layer after that local ownership transfer; delayed results from the submitted revision cannot clear newer text
+- when no local owner accepts the snapshot, a typed submit result applies only while the same Composer revision is still current
 - after a pending chat is materialized into a real session, attachment staging must resolve the active workspace against the live Veslo server workspace list before opening a file session; for local desktop workspaces, a missing server workspace is recovered once by refreshing the local server/workspace state before the agent/model prompt starts
 - if handoff fails before a real message exists, the temporary user message stays in the timeline with failed status instead of being restored into the Composer automatically
 - failed pending submitted messages can be changed only through the explicit edit pencil, which removes that pending timeline message and loads that exact draft into the Composer
@@ -115,6 +117,7 @@ Submit behavior:
 Main source of truth:
 
 - `packages/app/src/app/components/session/composer.tsx`
+- `packages/app/src/app/components/session/composer-draft-handoff.ts`
 
 ## Run Truth And Transcript Adoption
 
@@ -130,18 +133,40 @@ different visible outcomes: only a durable failed result creates one scoped red 
 and aborted results settle idle without failed-run treatment. App-wide operational errors render in a
 separate neutral boundary and do not change an unrelated session's run phase or abortability.
 
-Submitted user rows remain optimistic until the app finds exactly one canonical user transcript row
-in the same workspace/session scope after admission. Explicit client-message identity wins when it
-exists; otherwise the app uses a normalized display fingerprint across prompt/shell mode, text, and
-file name/MIME identity. This covers attachment-only messages. Ambiguous or mismatched candidates
-remain visibly optimistic rather than deleting either row or replaying the send.
+For an active `busy` engine session, lifecycle reconciliation reads the latest message parts before
+settling on a generic waiting label. A running tool therefore remains visible as local tool work
+instead of being collapsed into `assistant_message_open`. Chrome MCP tool transitions are recorded
+with identifiers, tool name, status, and output/error presence only; URLs, inputs, and tool output
+remain out of diagnostic traces. A terminal tool `error` or `failed` state is read after the engine
+is idle and only when no later assistant text recovered the step. Otherwise it is persisted as the
+fixed redacted reason
+`opencode_tool_execution_failed`; raw tool error text remains out of traces and run storage.
+
+Pending submissions immediately render a transient local echo while the canonical user transcript row
+is unavailable. This is presentation state, not optimistic server admission or durable transcript
+truth. Render replacement and durable cleanup are deliberately separate: the projection suppresses
+the echo in the same render that includes its canonical row, while pending state is removed only after
+confirmed canonical adoption, never merely because the server accepted the run.
+
+`clientMessageId` is used for server admission and idempotency; it is not
+forwarded as an OpenCode message id. Pending transcript adoption requires one
+scoped, post-baseline user candidate. Explicit compatible client metadata wins;
+otherwise the app uses a bounded text/mode/file fingerprint. Ambiguous matches
+remain visible rather than being guessed. Bounded catch-up is reserved for a
+missing assistant response, and only a failure known before admission is
+editable.
+
+If an existing-conversation server-submit transport loses its response, Veslo replays the same
+idempotent `clientMessageId` once. A second transport failure is shown as an unconfirmed-delivery
+warning, not as an editable retry with a fresh id. While any transient local submission remains
+unresolved, a new normal send stays in Composer and is not dispatched without its own local owner.
 
 Main source of truth:
 
 - lifecycle reconciliation: `packages/app/src/app/context/session-lifecycle-recovery.ts`
 - SSE arbitration: `packages/app/src/app/context/session-event-stream.ts`
 - run presentation: `packages/app/src/app/pages/session-run-presentation.ts`
-- optimistic adoption: `packages/app/src/app/components/session/pending-submit-reconciliation.ts`
+- pending-submission reconciliation: `packages/app/src/app/components/session/pending-submit-reconciliation.ts`
 
 ## Session Message Queue
 
@@ -236,7 +261,7 @@ Current behavior:
 - switching between chat and workspace targets keeps the current text and attachments, updates the selected destination metadata, and never loads a destination-specific draft body
 - old per-workspace pending draft records are obsolete; they are ignored and are not migrated into the global draft
 - a real OpenCode session is materialized only when the pending draft is sent successfully
-- first send snapshots both the current global draft and the selected destination; successful handoff clears the global pending draft, while failed handoff keeps the draft and destination available for retry
+- first send snapshots both the current global draft and the selected destination; once pending submission state accepts local ownership, the Composer clears only that submitted revision, and a pre-admission failure remains as an explicit editable timeline row instead of being restored automatically over a newer draft
 - real OpenCode sessions keep the existing per-session composer draft behavior after materialization
 
 ## Titlebar Context

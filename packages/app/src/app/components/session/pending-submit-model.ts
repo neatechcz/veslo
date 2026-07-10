@@ -4,7 +4,7 @@ import type { ComposerDraft, MessageWithParts } from "../../types";
 import type { EditableUserMessageDraft } from "./message-editability";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../../i18n";
 
-export type PendingSubmittedDraftState = "sending" | "error";
+export type PendingSubmittedDraftState = "sending" | "error" | "outcome-unknown";
 export type PendingSubmittedDraftAdmission = "pending" | "accepted";
 
 export type PendingSubmittedDraft = {
@@ -57,6 +57,7 @@ export function markPendingSubmittedAccepted(
   input: { runId?: string | null; clientMessageId?: string | null },
 ): PendingSubmittedDraft {
   if (pending.state === "error") return pending;
+  if (pending.admissionDiagnostic) return pending;
   const acceptedClientMessageId = input.clientMessageId?.trim() || pending.clientMessageId.trim();
   if (acceptedClientMessageId && acceptedClientMessageId !== pending.clientMessageId.trim()) {
     return {
@@ -80,6 +81,22 @@ export function markPendingSubmittedFailed(
   return {
     ...pending,
     state: "error",
+    error,
+  };
+}
+
+/**
+ * A transport failure after dispatch is not proof that the server rejected the
+ * prompt. Keep the immutable submission owner visible, but do not turn it
+ * into an editable retry with a fresh client id.
+ */
+export function markPendingSubmittedOutcomeUnknown(
+  pending: PendingSubmittedDraft,
+  error: string,
+): PendingSubmittedDraft {
+  return {
+    ...pending,
+    state: "outcome-unknown",
     error,
   };
 }

@@ -17,19 +17,32 @@ const message = (id: string): MessageWithParts => ({
   parts: [],
 });
 
-test("rendered transcript window appends optimistic submits before applying the visible window", () => {
+test("rendered transcript window contains canonical messages when there is no local submitted echo", () => {
   const messages = Array.from({ length: 6 }, (_, index) => message(`m${index + 1}`));
-  const optimisticMessage = message("optimistic");
 
   const rendered = resolveRenderedTranscriptMessages({
     messages,
-    optimisticMessage,
+    localSubmittedMessage: null,
     searchActive: false,
     windowExpanded: false,
     windowStart: 4,
   });
 
-  assert.deepEqual(rendered.map((item) => item.info.id), ["m5", "m6", "optimistic"]);
+  assert.deepEqual(rendered.map((item) => item.info.id), ["m5", "m6"]);
+});
+
+test("rendered transcript window appends a local submitted echo without masking canonical messages", () => {
+  const messages = Array.from({ length: 2 }, (_, index) => message(`m${index + 1}`));
+
+  const rendered = resolveRenderedTranscriptMessages({
+    messages,
+    localSubmittedMessage: message("local-submit"),
+    searchActive: false,
+    windowExpanded: false,
+    windowStart: 0,
+  });
+
+  assert.deepEqual(rendered.map((item) => item.info.id), ["m1", "m2", "local-submit"]);
 });
 
 test("transcript windowing is disabled while search is active or the window is expanded", () => {
@@ -38,7 +51,7 @@ test("transcript windowing is disabled while search is active or the window is e
   assert.deepEqual(
     resolveRenderedTranscriptMessages({
       messages,
-      optimisticMessage: null,
+      localSubmittedMessage: null,
       searchActive: true,
       windowExpanded: false,
       windowStart: 2,

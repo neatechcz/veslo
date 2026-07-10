@@ -2221,23 +2221,6 @@ export default function App() {
     abortRefreshes,
   } = extensionsStore;
 
-  const activeLocalSkillInventoryContext = createMemo(() => {
-    const workspaceId = workspaceStore.activeWorkspaceId().trim();
-    const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
-    const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
-    return workspaceType === "local" && workspaceId && workspaceRoot
-      ? `${workspaceId}\u0000${workspaceRoot}`
-      : null;
-  });
-  createEffect(
-    on(activeLocalSkillInventoryContext, (context) => {
-      if (!context) return;
-      void refreshSkillInventory().catch((error: unknown) =>
-        reportError(error, "skills.refreshInventory.bootstrap"),
-      );
-    }),
-  );
-
   let lastPluginsConnectedRefreshKey = "";
   createEffect(() => {
     if (tab() !== "plugins") {
@@ -2556,6 +2539,23 @@ export default function App() {
     },
   });
   lateWorkspaceStore.bind(workspaceStore);
+
+  const activeLocalSkillInventoryContext = createMemo(() => {
+    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
+    return workspaceType === "local" && workspaceId && workspaceRoot
+      ? `${workspaceId}\u0000${workspaceRoot}`
+      : null;
+  });
+  createEffect(
+    on(activeLocalSkillInventoryContext, (context) => {
+      if (!context) return;
+      void refreshSkillInventory().catch((error: unknown) =>
+        reportError(error, "skills.refreshInventory.bootstrap"),
+      );
+    }),
+  );
 
   let e2eFolderAccessPromptRoot: E2EFolderAccessPromptRoot | null = null;
   let e2eFolderAccessPromptHookCancelled = false;
@@ -4887,7 +4887,10 @@ export default function App() {
           <OnboardingView {...appViewProps.onboardingProps()} />
         </Match>
         <Match when={currentView() === "session"}>
-          <SessionView {...appViewProps.sessionProps()} onOpenFeedback={feedbackWorkflow.openFeedbackModal} />
+          <SessionView
+            {...appViewProps.sessionProps()}
+            onOpenFeedback={feedbackWorkflow.openFeedbackModal}
+          />
         </Match>
         <Match when={true}>
           <DashboardView

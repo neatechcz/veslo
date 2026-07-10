@@ -58,23 +58,12 @@ export type SessionLifecycleRecoveryControllerOptions = {
     workspaceId?: string | null,
   ) => void;
   notifySessionBusy: (sessionId: string, status: string, workspaceId?: string) => void;
-  scheduleTranscriptIngestion: (
-    sessionId: string,
-    workspaceId: string | undefined,
-    reason: string,
-    delayMs?: number,
-  ) => void;
   scheduleBackgroundTranscriptIngestion: (
     sessionId: string,
     workspaceId: string,
     reason: string,
     delayMs?: number,
   ) => void;
-  refreshSelectedSessionTranscript?: (
-    sessionId: string,
-    workspaceId: string,
-    reason: string,
-  ) => Promise<void> | void;
   trace?: (event: string, payload?: Record<string, unknown>) => void;
   initialDelayMs?: number;
   pollMs?: number;
@@ -179,6 +168,7 @@ export function createSessionLifecycleRecoveryController(
   const recoverTerminalRun = (
     scope: SessionLifecycleRecoveryScope,
     status: VesloConversationRunLifecycleStatus,
+    source: "watch" | "latest-probe",
   ) => {
     const workspaceId = normalize(scope.workspaceId);
     const sessionIds = unique([
@@ -192,56 +182,16 @@ export function createSessionLifecycleRecoveryController(
     }
 
     const selectedSessionId = normalize(options.selectedSessionId());
+    const selectedRun = Boolean(selectedSessionId && sessionIds.includes(selectedSessionId));
     const transcriptSessionId =
-      (selectedSessionId && sessionIds.includes(selectedSessionId) ? selectedSessionId : "") ||
-      normalize(scope.opencodeSessionId) ||
-      normalize(scope.sessionId);
+      (selectedRun ? selectedSessionId : "") || normalize(scope.opencodeSessionId) || normalize(scope.sessionId);
     if (transcriptSessionId && workspaceId) {
-      if (selectedSessionId && sessionIds.includes(selectedSessionId)) {
-        options.scheduleTranscriptIngestion(transcriptSessionId, workspaceId, "lifecycle recovery", 0);
-        if (options.refreshSelectedSessionTranscript) {
-          trace("session-lifecycle-recovery:refresh-selected-transcript:start", {
-            workspaceId,
-            conversationId: scope.conversationId,
-            runId: scope.runId,
-            sessionId: transcriptSessionId,
-            status,
-          });
-          try {
-            void Promise.resolve(
-              options.refreshSelectedSessionTranscript(transcriptSessionId, workspaceId, "lifecycle recovery"),
-            )
-              .then(() => {
-                trace("session-lifecycle-recovery:refresh-selected-transcript:done", {
-                  workspaceId,
-                  conversationId: scope.conversationId,
-                  runId: scope.runId,
-                  sessionId: transcriptSessionId,
-                  status,
-                });
-              })
-              .catch((error) => {
-                trace("session-lifecycle-recovery:refresh-selected-transcript:error", {
-                  workspaceId,
-                  conversationId: scope.conversationId,
-                  runId: scope.runId,
-                  sessionId: transcriptSessionId,
-                  status,
-                  message: error instanceof Error ? error.message : String(error),
-                });
-              });
-          } catch (error) {
-            trace("session-lifecycle-recovery:refresh-selected-transcript:error", {
-              workspaceId,
-              conversationId: scope.conversationId,
-              runId: scope.runId,
-              sessionId: transcriptSessionId,
-              status,
-              message: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
-      } else {
+      // Normal selected runs already receive SSE and submitted-run catch-up. A latest-run
+      // probe happens after reload, where neither may have observed the terminal transcript;
+      // use the narrow transcript reader then, never selectSession or sidebar reads.
+      if (selectedRun && source === "latest-probe") {
+        options.scheduleBackgroundTranscriptIngestion(transcriptSessionId, workspaceId, "lifecycle latest recovery", 0);
+      } else if (!selectedRun) {
         options.scheduleBackgroundTranscriptIngestion(transcriptSessionId, workspaceId, "lifecycle recovery", 0);
       }
     }
@@ -251,6 +201,7 @@ export function createSessionLifecycleRecoveryController(
       conversationId: scope.conversationId,
       runId: scope.runId,
       status,
+      source,
       sessionIds,
     });
   };
@@ -319,7 +270,7 @@ export function createSessionLifecycleRecoveryController(
       }
       if (terminal && status) {
         options.onConversationRunTerminal?.(watch.scope, status);
-        recoverTerminalRun(watch.scope, status.status);
+        recoverTerminalRun(watch.scope, status.status, "watch");
         clearWatch(key, { clearDiagnostic: false });
         return;
       }
@@ -413,7 +364,7 @@ export function createSessionLifecycleRecoveryController(
       options.onConversationRunStatus?.(resolvedScope, status);
       if (terminal) {
         options.onConversationRunTerminal?.(resolvedScope, status);
-        recoverTerminalRun(resolvedScope, status.status);
+        recoverTerminalRun(resolvedScope, status.status, "latest-probe");
         return true;
       }
       const key = recoveryKey(resolvedScope);

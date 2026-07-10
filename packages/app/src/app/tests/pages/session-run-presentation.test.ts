@@ -65,6 +65,28 @@ test("matching durable terminal releases an accepted optimistic send before cano
   assert.equal(projection.abortable, false);
 });
 
+test("all matching terminal lifecycle outcomes leave a retained transcript-sync row independent from the footer", () => {
+  for (const status of ["completed", "failed", "aborted"]) {
+    const projection = deriveSessionRunPresentation({
+      hasSessionScope: true,
+      engineStatus: "idle",
+      lifecycle: { runId: "run-a", status, stale: false, clientMessageId: "msg-a" },
+      local: {
+        started: true,
+        hasBegun: true,
+        optimisticSending: true,
+        optimisticAccepted: true,
+        acceptedRunId: "run-a",
+        acceptedClientMessageId: "msg-a",
+        responseStarted: false,
+      },
+    });
+
+    assert.equal(projection.phase, "idle", status);
+    assert.equal(projection.showIndicator, false, status);
+  }
+});
+
 test("an older terminal run cannot hide a newer optimistic send", () => {
   const projection = deriveSessionRunPresentation({
     hasSessionScope: true,
