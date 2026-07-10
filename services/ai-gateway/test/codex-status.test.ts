@@ -664,6 +664,116 @@ test("CachedCodexCredentialStatusProvider probes with the supported Codex catalo
   }
 });
 
+test("CachedCodexCredentialStatusProvider passes an explicitly injected GPT-5.6 Sol model to Codex", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-status-injected-model-test-"));
+  const commandPath = path.join(rootDir, "fake-codex.cjs");
+  const argsPath = path.join(rootDir, "args.json");
+  const authJson = JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      refresh_token: "refresh-token",
+      account_id: "acct",
+    },
+  });
+
+  await writeFile(
+    commandPath,
+    [
+      'const { mkdirSync, writeFileSync } = require("node:fs");',
+      'const path = require("node:path");',
+      `writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));`,
+      'const sessionDir = path.join(process.env.CODEX_HOME, "sessions", "2026", "07", "10");',
+      "mkdirSync(sessionDir, { recursive: true });",
+      "const event = {",
+      '  timestamp: "2026-07-10T12:00:00.000Z",',
+      '  type: "event_msg",',
+      "  payload: {",
+      '    type: "token_count",',
+      "    info: {",
+      "      rate_limits: {",
+      "        primary: { used_percent: 30, window_minutes: 300, resets_at: 1783688400 },",
+      "        secondary: null,",
+      '        plan_type: "plus",',
+      "      },",
+      "    },",
+      "  },",
+      "};",
+      'writeFileSync(path.join(sessionDir, "probe.jsonl"), `${JSON.stringify(event)}\\n`);',
+      'console.log("OK");',
+      "",
+    ].join("\n"),
+  );
+
+  try {
+    const provider = new CachedCodexCredentialStatusProvider({
+      model: "gpt-5.6-sol",
+      ttlMs: 5 * 60 * 1000,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+      loadCredentialAuthJson: async () => authJson,
+      command: process.execPath,
+      commandArgsPrefix: [commandPath, "--model", "inherited-cli-default"],
+      workDir: rootDir,
+      timeoutMs: 5000,
+    });
+
+    const status = await provider.getStatus({
+      credentialId: "cred_codex_1",
+      credentialName: "Credential cred_codex_1",
+    });
+    const args = JSON.parse(await readFile(argsPath, "utf8")) as string[];
+    const modelArguments = args
+      .map((value, index) => value === "--model" ? args[index + 1] : null)
+      .filter((value): value is string => typeof value === "string");
+
+    assert.equal(status.source, "codex_exec_rate_limits");
+    assert.deepEqual(modelArguments, ["inherited-cli-default", "gpt-5.6-sol"]);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("CachedCodexCredentialStatusProvider trims and honors a non-default injected model", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-status-nondefault-model-test-"));
+  const commandPath = path.join(rootDir, "fake-codex.cjs");
+  const argsPath = path.join(rootDir, "args.json");
+
+  await writeFile(
+    commandPath,
+    [
+      'const { writeFileSync } = require("node:fs");',
+      `writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));`,
+      'console.log("OK");',
+      "",
+    ].join("\n"),
+  );
+
+  try {
+    const provider = new CachedCodexCredentialStatusProvider({
+      model: "  gpt-5.6-sol.probe  ",
+      ttlMs: 5 * 60 * 1000,
+      now: () => new Date("2026-07-10T12:00:00.000Z"),
+      loadCredentialAuthJson: async () => JSON.stringify({
+        auth_mode: "chatgpt",
+        tokens: { refresh_token: "refresh-token", account_id: "acct" },
+      }),
+      command: process.execPath,
+      commandArgsPrefix: [commandPath],
+      workDir: rootDir,
+      timeoutMs: 5000,
+    });
+
+    await provider.getStatus({
+      credentialId: "cred_codex_1",
+      credentialName: "Credential cred_codex_1",
+    });
+    const args = JSON.parse(await readFile(argsPath, "utf8")) as string[];
+
+    assert.equal(args[args.lastIndexOf("--model") + 1], "gpt-5.6-sol.probe");
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("CachedCodexCredentialStatusProvider keeps successful probe status when temporary cleanup fails", async () => {
   const rootDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-status-cleanup-test-"));
   const commandPath = path.join(rootDir, "fake-codex.cjs");
