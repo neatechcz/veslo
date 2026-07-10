@@ -2276,6 +2276,28 @@ describe("conversation routes", () => {
       error: null,
     });
 
+    const queuedRunStatusResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${created.conversationId}/runs/${payload.reservedRunId}`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+    expect(queuedRunStatusResponse.status).toBe(200);
+    const queuedRunStatusPayload = await queuedRunStatusResponse.json() as Record<string, unknown>;
+    expect(queuedRunStatusPayload).toMatchObject({
+      ok: true,
+      workspaceId: "ws_1",
+      conversationId: created.conversationId,
+      runId: payload.reservedRunId,
+      status: "queued",
+      stale: false,
+      clientMessageId: "msg-submit-send-now-queued",
+      queueItemId: payload.queueItemId,
+      queueState: "pending",
+    });
+
     const listConversationId = "conv-queue-read";
     const listStore = createConversationRunQueueStore({ dataDir: vesloDataDir, now: () => 2_000 });
     const enqueueListItem = (clientMessageId: string) => listStore.enqueue({

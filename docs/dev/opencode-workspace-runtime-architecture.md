@@ -298,6 +298,11 @@ Do not build a separate conversation model only for sandboxed execution.
     `clientMessageId` remains only the app/server idempotency key.
 11. Events and transcript data are mirrored back to the conversation and run.
 
+When several sends share the same unmaterialized pending chat, the app keeps
+one in-flight materialization for that pending-session key. Followers wait for
+the first submit's server-owned handoff, then submit against the resulting
+session. They must not each create an independent conversation.
+
 If any step fails, store the failure at the narrowest correct level:
 
 - local server connection failure,

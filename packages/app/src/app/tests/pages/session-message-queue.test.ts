@@ -295,7 +295,7 @@ test("queued drain uses a stable session key and guards stale navigation", () =>
 
   assert.match(
     flowSendImmediateSource,
-    /if \([\s\S]*options\.expectedSessionKey &&[\s\S]*deps\.sessionKeys\.currentSessionQueueKey\(\) !== options\.expectedSessionKey[\s\S]*\) \{\s*if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return submitResult;\s*\}/,
+    /if \(\s*options\.expectedSessionKey &&\s*deps\.sessionKeys\.currentSessionQueueKey\(\) !== options\.expectedSessionKey\s*\) \{\s*return submitResult;\s*\}[\s\S]*deps\.runState\.startRun\(/,
     "stale queue sends should not start run UI for the newly selected session",
   );
 });
@@ -391,8 +391,18 @@ test("accepted first pending submit captures and remaps the pending queue key", 
 
   assert.match(
     flowSendImmediateSource,
-    /const handoffScope = resolvePendingSessionHandoffScope\(\{[\s\S]*baseSessionKey,[\s\S]*targetSessionId,[\s\S]*pendingSessionQueueKey: deps\.sessionKeys\.pendingSessionQueueKey\(\),[\s\S]*createPendingSessionInstanceId: deps\.identity\.createPendingSessionInstanceId,[\s\S]*\}\);[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*sessionKey,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*= handoffScope;[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\([\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*\);[\s\S]*const materializePendingHandoffToSession = \([\s\S]*handoff: MaterializedSessionHandoff \| null \| undefined,[\s\S]*resolvePendingSessionHandoffMaterialization\(\{[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*clientMessageId,[\s\S]*handoff,[\s\S]*\}\);[\s\S]*materializedPendingSessionTarget\.current = \{[\s\S]*sessionId: materializedSessionId,[\s\S]*sessionKey: materializedSessionKey,[\s\S]*\};[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\([\s\S]*pendingSessionBaseKey,[\s\S]*materializedSessionKey,[\s\S]*\);[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\([\s\S]*pendingSessionKey,[\s\S]*materializedSessionId,[\s\S]*materializedSessionKey,[\s\S]*\);[\s\S]*const handleMaterializedSessionId = \(handoff: MaterializedSessionHandoff\) => \{[\s\S]*materializePendingHandoffToSession\(handoff\);[\s\S]*const submitResult = await \(options\.replaceMessageId[\s\S]*if \([\s\S]*materializedPendingSessionTarget\.current[\s\S]*\) \{[\s\S]*const target = materializedPendingSessionTarget\.current;[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\([\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*target\.sessionKey,[\s\S]*\);/s,
+    /const handoffScope = resolvePendingSessionHandoffScope\(\{[\s\S]*baseSessionKey,[\s\S]*targetSessionId,[\s\S]*pendingSessionQueueKey: deps\.sessionKeys\.pendingSessionQueueKey\(\),[\s\S]*createPendingSessionInstanceId: deps\.identity\.createPendingSessionInstanceId,[\s\S]*\}\);[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*sessionKey,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*= handoffScope;[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\([\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*\);[\s\S]*const materializePendingHandoffToSession = \([\s\S]*handoff: MaterializedSessionHandoff \| null \| undefined,[\s\S]*materializationClientMessageId = clientMessageId,[\s\S]*resolvePendingSessionHandoffMaterialization\(\{[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*clientMessageId: materializationClientMessageId,[\s\S]*handoff,[\s\S]*\}\);[\s\S]*materializedPendingSessionTarget\.current = \{[\s\S]*sessionId: materializedSessionId,[\s\S]*sessionKey: materializedSessionKey,[\s\S]*\};[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\([\s\S]*pendingSessionBaseKey,[\s\S]*materializedSessionKey,[\s\S]*\);[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\([\s\S]*pendingSessionKey,[\s\S]*materializedSessionId,[\s\S]*materializedSessionKey,[\s\S]*\);/s,
     "sendPromptImmediate should capture the pending queue key before await and remap it after an accepted first submit only from the captured handoff",
+  );
+  assert.match(
+    conversationFlowSource,
+    /const pendingSessionMaterializationFlightByKey = new Map<[\s\S]*PendingSessionMaterializationFlight[\s\S]*>\(\);/s,
+    "conversation flow should retain one in-flight materialization per pending session key",
+  );
+  assert.match(
+    flowSendImmediateSource,
+    /const existingFlight = pendingSessionMaterializationFlightByKey\.get\([\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*\);[\s\S]*const outcome = await existingFlight\.promise;[\s\S]*const materializedTarget = materializePendingHandoffToSession\([\s\S]*outcome\.handoff,[\s\S]*outcome\.handoff\.clientMessageId\?\.trim\(\) \|\| clientMessageId,[\s\S]*\);[\s\S]*transportTargetSessionId = materializedTarget\.sessionId;/s,
+    "queued first sends should await and adopt the same pending-session handoff instead of creating another conversation",
   );
   assert.doesNotMatch(
     flowSendImmediateSource,

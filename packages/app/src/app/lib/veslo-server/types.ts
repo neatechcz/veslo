@@ -1395,6 +1395,7 @@ export type VesloConversationImportResult = {
 
 export type VesloConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
 export type VesloConversationRunLifecycleStatus =
+  | "queued"
   | "submitted"
   | "running"
   | "blocked"

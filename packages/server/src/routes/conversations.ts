@@ -638,6 +638,25 @@ function serializeConversationRunQueueStatus(
   };
 }
 
+function serializeQueuedRunLifecycleStatus(item: ConversationRunQueueItem): Record<string, unknown> {
+  const terminalFailure = item.state === "failed";
+  const submittedWithoutLifecycle = item.state === "submitted";
+  return {
+    ok: true,
+    workspaceId: item.workspaceId,
+    conversationId: item.conversationId,
+    runId: item.reservedRunId,
+    status: terminalFailure ? "failed" : submittedWithoutLifecycle ? "submitted" : "queued",
+    stale: submittedWithoutLifecycle,
+    error: terminalFailure ? sanitizeConversationRunError(item.error) : null,
+    clientMessageId: item.clientMessageId,
+    activityKind: terminalFailure ? "idle" : "unknown",
+    waitReason: "none",
+    queueItemId: item.queueItemId,
+    queueState: item.state,
+  };
+}
+
 function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
   const status = error.status === 401 || error.status === 403
     ? 503
@@ -1305,6 +1324,8 @@ export function registerConversationSessionRoutes(
       throw error;
     }
     if (!status) {
+      const queued = conversationRunQueueStore.getForReservedRun(workspace.id, conversationId, runId);
+      if (queued) return jsonResponse(serializeQueuedRunLifecycleStatus(queued));
       throw new ApiError(404, "run_not_found", "Run was not found for this conversation");
     }
     return jsonResponse({

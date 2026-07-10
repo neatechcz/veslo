@@ -429,6 +429,184 @@ test("conversation flow starts materialized first sends on the captured scoped s
   assert.equal(mappings.at(-1)?.[1], scopedSessionKey);
 });
 
+test("conversation flow reuses one pending-session materialization for concurrent first sends", async () => {
+  const sendCalls: Array<{
+    clientMessageId: string;
+    targetSessionId: string | null | undefined;
+    hasPendingSession: boolean;
+  }> = [];
+  const remaps: Array<{ pendingKey: string; sessionId: string; sessionKey: string | null | undefined }> = [];
+  let currentSessionKey = "pending:base";
+  let releaseFirstSubmit!: () => void;
+  const firstSubmitGate = new Promise<void>((resolve) => {
+    releaseFirstSubmit = resolve;
+  });
+
+  const controller = createSessionConversationFlow({
+    identity: {
+      createClientMessageId: () => "generated-client-id",
+      createPendingSessionInstanceId: () => "pending-session:generated",
+      now: () => 123,
+    },
+    sessionKeys: {
+      activeUiConversationWorkspaceId: () => "workspace-1",
+      activeWorkspaceId: () => "workspace-1",
+      currentSessionQueueKey: () => currentSessionKey,
+      pendingSessionQueueKey: () => "pending:base",
+      selectedSessionId: () => null,
+      sessionIdForQueueKey: () => null,
+      sessionQueueKeyForSessionId: (sessionId) => `session:${sessionId ?? ""}`,
+      workspaceIdForQueueKey: () => "workspace-1",
+    },
+    runtime: {
+      activePendingDraftKey: () => "draft-1",
+      aiAccessBlockedReason: () => null,
+      busyHint: () => null,
+      busyLabel: () => null,
+      error: () => null,
+    },
+    transcript: {
+      messageCount: () => 0,
+      messageIds: () => [],
+    },
+    pendingHandoff: {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+      createPendingSidebarSessionWorkspaceId: () => "workspace-1",
+      createPendingSidebarSessionWorkspaceRoot: () => "/repo",
+      remapPendingQueueToSession: (pendingKey, sessionId, sessionKey) => {
+        remaps.push({ pendingKey, sessionId, sessionKey });
+      },
+      restoreMaterializedQueueToPending: () => undefined,
+      setPendingQueueKeyAwaitingSessionIdForBaseKey: (_baseKey, pendingKey) => {
+        currentSessionKey = pendingKey;
+      },
+    },
+    pendingSubmitted: {
+      optimisticSubmittedDraft: () => null,
+      setOptimisticSubmittedDraft: () => undefined,
+      updatePendingSubmittedDrafts: () => undefined,
+    },
+    queue: {
+      appendDraftToCurrentQueue: () => undefined,
+      editingQueuedDraftId: () => null,
+      queuePaused: () => false,
+      queuePausedForSessionKey: () => false,
+      queuedDrafts: () => [],
+      queuedDraftsBySessionKey: () => ({}),
+      resolveQueueKeyForQueuedDraft: (sessionKey) => sessionKey,
+      setEditingQueuedDraftId: () => undefined,
+      setQueuePausedForSessionKey: () => undefined,
+      updateCurrentQueue: () => undefined,
+      updateQueueForSessionKey: () => undefined,
+    },
+    composer: {
+      clearComposerDraftForSession: () => undefined,
+      currentDraftMode: () => "prompt",
+      setComposerDraft: () => undefined,
+    },
+    transcriptEdit: {
+      editableUserMessage: () => null,
+      editingTranscriptMessageId: () => null,
+      setEditingTranscriptMessageId: () => undefined,
+    },
+    runControl: {
+      abortBusy: () => false,
+      abortSession: async () => undefined,
+      lastPromptSent: () => "",
+      retryLastPrompt: () => undefined,
+      runPhase: () => "idle",
+      setAbortBusy: () => undefined,
+      setEscapeStopConfirmationPending: () => undefined,
+    },
+    runState: {
+      resetRunState: () => undefined,
+      showRunIndicator: () => false,
+      startRun: () => undefined,
+    },
+    viewport: {
+      scheduleScrollToLatest: () => undefined,
+      setStickToBottom: () => undefined,
+    },
+    transport: {
+      replaceUserMessageAsync: async () => {
+        throw new Error("replacement should not run for a first send");
+      },
+      sendPromptAsync: async (_sentDraft, options) => {
+        sendCalls.push({
+          clientMessageId: options.clientMessageId,
+          targetSessionId: options.targetSessionId,
+          hasPendingSession: Boolean(options.pendingSession),
+        });
+        if (!options.targetSessionId) {
+          await firstSubmitGate;
+          options.onMaterializedSessionId?.(createMaterializedSessionHandoff({
+            workspaceId: "workspace-1",
+            workspaceRoot: "/repo",
+            directory: "/repo",
+            pendingSessionKey: "pending-session:generated",
+            sessionId: "sess-first",
+            clientMessageId: options.clientMessageId,
+            conversationId: "conv-first",
+            opencodeSessionId: "sess-first",
+          }));
+        }
+        return acceptedSubmitResult();
+      },
+    },
+    feedback: {
+      setToastMessage: () => undefined,
+      tr: (key) => key,
+    },
+    trace: {
+      markTempRuntimeUiRenderSource: () => undefined,
+      recordSendTrace: () => undefined,
+      reportError: () => undefined,
+    },
+    effects: {
+      batch: (fn) => fn(),
+    },
+  });
+
+  const first = controller.sendPromptImmediate(draft, { clientMessageId: "client-first" });
+  await Promise.resolve();
+  const second = controller.sendPromptImmediate(
+    { ...draft, text: "follow-up", resolvedText: "follow-up" },
+    {
+      reason: "queue-drain",
+      clientMessageId: "client-second",
+      expectedSessionKey: "pending-session:generated",
+    },
+  );
+  await Promise.resolve();
+
+  assert.deepEqual(sendCalls, [
+    {
+      clientMessageId: "client-first",
+      targetSessionId: undefined,
+      hasPendingSession: true,
+    },
+  ]);
+
+  releaseFirstSubmit();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+
+  assert.equal(firstResult.accepted, true);
+  assert.equal(secondResult.accepted, true);
+  assert.deepEqual(sendCalls, [
+    {
+      clientMessageId: "client-first",
+      targetSessionId: undefined,
+      hasPendingSession: true,
+    },
+    {
+      clientMessageId: "client-second",
+      targetSessionId: "sess-first",
+      hasPendingSession: false,
+    },
+  ]);
+  assert.equal(remaps.every((entry) => entry.sessionId === "sess-first"), true);
+});
+
 test("conversation flow controller submits running Enter to the server queue", async () => {
   const queueAppends: string[] = [];
   const sendCalls: Array<{

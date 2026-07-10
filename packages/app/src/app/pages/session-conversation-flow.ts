@@ -686,6 +686,24 @@ export type MaterializedPendingSessionTarget = {
   sendTraceId: string | null;
 };
 
+type PendingSessionMaterializationFlightOutcome = {
+  handoff: MaterializedSessionHandoff | null;
+  submitResult: SessionSubmitResult;
+};
+
+type PendingSessionMaterializationFlight = {
+  promise: Promise<PendingSessionMaterializationFlightOutcome>;
+  resolve: (outcome: PendingSessionMaterializationFlightOutcome) => void;
+};
+
+const createPendingSessionMaterializationFlight = (): PendingSessionMaterializationFlight => {
+  let resolveFlight: (outcome: PendingSessionMaterializationFlightOutcome) => void = () => undefined;
+  const promise = new Promise<PendingSessionMaterializationFlightOutcome>((resolve) => {
+    resolveFlight = resolve;
+  });
+  return { promise, resolve: resolveFlight };
+};
+
 export const materializedSessionKeyFromHandoff = (
   handoff: MaterializedSessionHandoff,
   sessionId: string,
@@ -763,6 +781,10 @@ const createEmptyComposerDraft = (mode: ComposerDraft["mode"] = "prompt"): Compo
 
 export function createSessionConversationFlow(deps: SessionConversationFlowControllerDeps): SessionConversationFlowController {
   const queueDrainAttemptInFlightBySessionKey = new Set<string>();
+  const pendingSessionMaterializationFlightByKey = new Map<
+    string,
+    PendingSessionMaterializationFlight
+  >();
   const pendingSubmittedDrafts = () => deps.pendingSubmitted.pendingSubmittedDrafts?.() ?? {};
   const statusForSessionId = (sessionId: string, statuses: Record<string, string>) =>
     deps.sessionStatus?.statusForSessionId(sessionId, statuses) ?? statuses[sessionId]?.trim() ?? "idle";
@@ -1081,6 +1103,9 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       const pendingSubmitId = clientMessageId;
       let materializedSessionIdFromHandoff: string | null = null;
       let materializedSessionIdForRunStateReset: string | null = null;
+      let pendingSessionMaterializationFlight: PendingSessionMaterializationFlight | null = null;
+      let ownsPendingSessionMaterializationFlight = false;
+      let pendingSessionMaterializedHandoff: MaterializedSessionHandoff | null = null;
       const materializedPendingSessionTarget: {
         current: MaterializedPendingSessionTarget | null;
       } = { current: null };
@@ -1096,15 +1121,16 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       };
       const materializePendingHandoffToSession = (
         handoff: MaterializedSessionHandoff | null | undefined,
+        materializationClientMessageId = clientMessageId,
       ) => {
         const materialization = resolvePendingSessionHandoffMaterialization({
           pendingSessionBaseKeyBeforeHandoff,
           pendingSessionKeyBeforeHandoff,
-          clientMessageId,
+          clientMessageId: materializationClientMessageId,
           handoff,
         });
-        if (materialization.kind === "skip") return;
-        if (!handoff) return;
+        if (materialization.kind === "skip") return null;
+        if (!handoff) return null;
         const {
           pendingSessionBaseKey,
           pendingSessionKey,
@@ -1157,7 +1183,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             pendingWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(pendingSessionKey),
             materializedWorkspaceId: deps.sessionKeys.workspaceIdForQueueKey(materializedSessionKey),
           });
-          return;
+          return null;
         }
         deps.effects.batch(() => {
           deps.pendingHandoff.setPendingQueueKeyAwaitingSessionIdForBaseKey(
@@ -1170,6 +1196,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             materializedSessionKey,
           );
         });
+        return materializedPendingSessionTarget.current;
       };
       const handleMaterializedSessionId = (handoff: MaterializedSessionHandoff) => {
         deps.trace.markTempRuntimeUiRenderSource(
@@ -1181,7 +1208,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             detail: `workspaceId=${handoff.workspaceId} pendingSessionKey=${handoff.pendingSessionKey ?? "none"} materializedSessionId=${handoff.sessionId}`,
           },
         );
-        materializePendingHandoffToSession(handoff);
+        const materializedTarget = materializePendingHandoffToSession(handoff);
+        if (ownsPendingSessionMaterializationFlight && materializedTarget) {
+          pendingSessionMaterializedHandoff = handoff;
+        }
       };
       const clearMatchingPendingSubmit = () => {
         deps.pendingSubmitted.updatePendingSubmittedDrafts((current) =>
@@ -1294,6 +1324,95 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         });
       }
 
+      let transportTargetSessionId = targetSessionId;
+      if (pendingSessionKeyBeforeHandoff && !transportTargetSessionId && !options.replaceMessageId) {
+        const existingFlight = pendingSessionMaterializationFlightByKey.get(
+          pendingSessionKeyBeforeHandoff,
+        );
+        if (existingFlight) {
+          deps.trace.recordSendTrace("sendPromptImmediate:pending-handoff-flight:wait", {
+            clientMessageId,
+            origin,
+            pendingSessionKeyBeforeHandoff,
+          });
+          const outcome = await existingFlight.promise;
+          if (!outcome.handoff) {
+            const failedResult = outcome.submitResult.accepted
+              ? sessionSubmitBlockedResult({
+                  code: "pending_session_handoff_missing",
+                  message: "The first message created no reusable session.",
+                })
+              : outcome.submitResult;
+            const errorMessage =
+              failedResult.message ?? deps.runtime.error() ?? deps.feedback.tr("session.connect_server_to_attach");
+            if (showOptimisticSubmit) {
+              markMatchingPendingSubmitFailed(errorMessage);
+              deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "pending-handoff-flight-failed");
+            }
+            finishPendingSessionHandoffFailure();
+            deps.feedback.setToastMessage(errorMessage);
+            return failedResult;
+          }
+          const materializedTarget = materializePendingHandoffToSession(
+            outcome.handoff,
+            outcome.handoff.clientMessageId?.trim() || clientMessageId,
+          );
+          if (!materializedTarget) {
+            const failedResult = sessionSubmitBlockedResult({
+              code: "pending_session_handoff_mismatch",
+              message: "The first message created a session for a different conversation.",
+            });
+            if (showOptimisticSubmit) {
+              markMatchingPendingSubmitFailed(failedResult.message ?? "");
+              deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "pending-handoff-flight-mismatch");
+            }
+            finishPendingSessionHandoffFailure();
+            deps.feedback.setToastMessage(failedResult.message ?? deps.feedback.tr("session.connect_server_to_attach"));
+            return failedResult;
+          }
+          transportTargetSessionId = materializedTarget.sessionId;
+          deps.trace.recordSendTrace("sendPromptImmediate:pending-handoff-flight:adopted", {
+            clientMessageId,
+            origin,
+            pendingSessionKeyBeforeHandoff,
+            materializedSessionId: materializedTarget.sessionId,
+            materializedSessionKey: materializedTarget.sessionKey,
+          });
+        } else {
+          pendingSessionMaterializationFlight = createPendingSessionMaterializationFlight();
+          pendingSessionMaterializationFlightByKey.set(
+            pendingSessionKeyBeforeHandoff,
+            pendingSessionMaterializationFlight,
+          );
+          ownsPendingSessionMaterializationFlight = true;
+          deps.trace.recordSendTrace("sendPromptImmediate:pending-handoff-flight:start", {
+            clientMessageId,
+            origin,
+            pendingSessionKeyBeforeHandoff,
+          });
+        }
+      }
+
+      const settlePendingSessionMaterializationFlight = (submitResult: SessionSubmitResult) => {
+        if (
+          !ownsPendingSessionMaterializationFlight ||
+          !pendingSessionMaterializationFlight ||
+          !pendingSessionKeyBeforeHandoff
+        ) {
+          return;
+        }
+        if (
+          pendingSessionMaterializationFlightByKey.get(pendingSessionKeyBeforeHandoff) ===
+          pendingSessionMaterializationFlight
+        ) {
+          pendingSessionMaterializationFlightByKey.delete(pendingSessionKeyBeforeHandoff);
+        }
+        pendingSessionMaterializationFlight.resolve({
+          handoff: pendingSessionMaterializedHandoff,
+          submitResult,
+        });
+      };
+
       try {
         const promptSendOptions: SessionSendOptionsBase & {
           targetSessionId?: string | null;
@@ -1304,12 +1423,12 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           clientMessageId,
           origin,
           source,
-          ...(targetSessionId ? { targetSessionId } : {}),
+          ...(transportTargetSessionId ? { targetSessionId: transportTargetSessionId } : {}),
           ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
           ...(options.implicitSkillCommandPolicy
             ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
             : {}),
-          ...(pendingSessionKeyBeforeHandoff
+          ...(pendingSessionKeyBeforeHandoff && !transportTargetSessionId
             ? {
                 onMaterializedSessionId: handleMaterializedSessionId,
                 pendingSession: pendingSidebarSession,
@@ -1338,7 +1457,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           draftDisposition: submitResult.draftDisposition,
           error: deps.runtime.error(),
           expectedSessionKey: expectedSessionKey ?? null,
-          targetSessionId,
+          targetSessionId: transportTargetSessionId,
           reason: options.reason ?? "normal",
         });
         if (!submitResult.accepted) {
@@ -1348,6 +1467,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "implicit-skill-confirmation");
             }
             finishPendingSessionHandoffFailure();
+            settlePendingSessionMaterializationFlight(submitResult);
             return submitResult;
           }
           if (showOptimisticSubmit) {
@@ -1362,8 +1482,9 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           deps.feedback.setToastMessage(
             submitResult.message ??
             deps.runtime.error() ??
-            deps.feedback.tr("session.connect_server_to_attach"),
+              deps.feedback.tr("session.connect_server_to_attach"),
           );
+          settlePendingSessionMaterializationFlight(submitResult);
           return submitResult;
         }
         deps.trace.markTempRuntimeUiRenderSource(
@@ -1433,6 +1554,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         deps.viewport.setStickToBottom(true);
         deps.viewport.scheduleScrollToLatest("auto");
         deps.runState.startRun(materializedPendingSessionTarget.current?.sessionKey ?? sessionKey);
+        settlePendingSessionMaterializationFlight(submitResult);
         return submitResult;
       } catch (error) {
         if (showOptimisticSubmit) {
@@ -1447,13 +1569,15 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         finishPendingSessionHandoffFailure();
         deps.trace.reportError(error, "session.sendPrompt");
         deps.feedback.setToastMessage(deps.runtime.error() ?? deps.feedback.tr("session.connect_server_to_attach"));
-        return sessionSubmitBlockedResult({
+        const submitResult = sessionSubmitBlockedResult({
           code: "send_exception",
           message: deps.runtime.error() ??
             (error instanceof Error
               ? error.message
               : deps.feedback.tr("session.connect_server_to_attach")),
         });
+        settlePendingSessionMaterializationFlight(submitResult);
+        return submitResult;
       }
     },
     handleSendPrompt: async (draft, options = {}) => {

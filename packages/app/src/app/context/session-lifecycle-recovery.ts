@@ -255,6 +255,25 @@ export function createSessionLifecycleRecoveryController(
     });
   };
 
+  const retainQueuedRun = (scope: SessionLifecycleRecoveryScope) => {
+    const workspaceId = normalize(scope.workspaceId);
+    const sessionIds = unique([
+      scope.sessionId,
+      scope.opencodeSessionId,
+      scope.conversationId,
+    ]);
+    for (const sessionId of sessionIds) {
+      options.setSessionStatusForWorkspace(sessionId, "submitted", workspaceId);
+      options.notifySessionBusy(sessionId, "submitted", workspaceId);
+    }
+    trace("session-lifecycle-recovery:queued", {
+      workspaceId,
+      conversationId: scope.conversationId,
+      runId: scope.runId,
+      sessionIds,
+    });
+  };
+
   async function pollWatch(key: string, immediate = false): Promise<void> {
     const watch = watches.get(key);
     if (!watch) return;
@@ -296,6 +315,7 @@ export function createSessionLifecycleRecoveryController(
         options.onConversationRunStatus?.(watch.scope, null);
       } else {
         options.onConversationRunStatus?.(watch.scope, status);
+        if (status.status === "queued") retainQueuedRun(watch.scope);
       }
       if (terminal && status) {
         options.onConversationRunTerminal?.(watch.scope, status);

@@ -71,7 +71,7 @@ test("queued message list renders compact icon controls and sending state", () =
   assert.match(source, /<X size=\{14\}/, "cancel control should use X");
   assert.match(
     source,
-    /<Loader2 size=\{14\} class="animate-spin/,
+    /<Loader2 size=\{15\} class="animate-spin/,
     "sending state should use an animated Loader2",
   );
 
@@ -205,7 +205,21 @@ test("queued message list exposes keyboard reordering on the drag handle", () =>
 
   assert.match(
     source,
-    /<button[\s\S]*onKeyDown=\{\(event\) => handleMoveKeyDown\(event, item\)\}[\s\S]*aria-label=\{tr\("session\.reorder_queued_message"\)\}/,
+    /<Button[\s\S]*onKeyDown=\{\(event\) => handleMoveKeyDown\(event, item\)\}[\s\S]*aria-label=\{tr\("session\.reorder_queued_message"\)\}/,
     "drag handle should be keyboard-focusable and labelled",
+  );
+});
+
+test("queued message list uses a card item hierarchy with a visible queue status", () => {
+  assert.match(source, /import Button from "\.\.\/button";/, "queue actions should use the shared Button primitive");
+  assert.match(
+    source,
+    /role="list" aria-label=\{tr\("session\.queued_message_title"\)\}[\s\S]*role="listitem"[\s\S]*rounded-xl border border-gray-6\/80 bg-gray-1/,
+    "queue rows should use the same accessible card surface as the session composer",
+  );
+  assert.match(
+    source,
+    /\{tr\("session\.queued_message_title"\)\}/,
+    "each queued row should name its state as a message in the queue",
   );
 });

@@ -278,6 +278,44 @@ test("session lifecycle recovery keeps an admitted watch after engine idle and w
   assert.equal(controller.activeWatchCount(), 0);
 });
 
+test("session lifecycle recovery keeps a durable queued run submitted through engine idle", async () => {
+  const statuses: Record<string, string> = { "ws-a\0ses-a": "running" };
+  const statusWrites: string[] = [];
+  const busyWrites: string[] = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => statuses,
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: (sessionId, workspaceIdHint) => ({
+      sessionId,
+      workspaceId: workspaceIdHint || "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "ses-a",
+      runId: "run-queued",
+    }),
+    readConversationRunStatus: async () => ({ runId: "run-queued", status: "queued", stale: false }),
+    setSessionStatusForWorkspace: (sessionId, status, workspaceId) => {
+      const key = `${workspaceId || "ws-a"}\0${sessionId}`;
+      statuses[key] = status;
+      statusWrites.push(`${sessionId}:${status}`);
+    },
+    notifySessionBusy: (sessionId, status) => busyWrites.push(`${sessionId}:${status}`),
+    scheduleTranscriptIngestion: () => {},
+    scheduleBackgroundTranscriptIngestion: () => {},
+  });
+
+  controller.reconcile();
+  statuses["ws-a\0ses-a"] = "idle";
+  controller.reconcile();
+
+  assert.equal(controller.observeSessionLifecycleEvent("ses-a", "ws-a", "session.idle"), true);
+  await waitForAsyncPoll();
+
+  assert.deepEqual(statusWrites, ["ses-a:submitted", "conv-a:submitted"]);
+  assert.deepEqual(busyWrites, ["ses-a:submitted", "conv-a:submitted"]);
+  assert.equal(statuses["ws-a\0ses-a"], "submitted");
+  assert.equal(controller.activeWatchCount(), 1);
+});
+
 test("selected exact conversation probes latest once after reload and restores durable failure", async () => {
   let reads = 0;
   const terminals: Array<{ runId: string; status: string; error?: string | null }> = [];

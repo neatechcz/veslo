@@ -11,5 +11,7 @@ test("server queued run list uses generic typed labels and exposes no local muta
   assert.match(source, /return tr\("session\.server_queue_prompt_label"\);/);
   assert.match(source, /aria-label=\{tr\("session\.server_queue_readonly_label"\)\}/);
   assert.match(source, /item\.status === "failed" && item\.error/);
+  assert.match(source, /role="list"[\s\S]*role="listitem"[\s\S]*rounded-xl border bg-gray-1/);
+  assert.match(source, /text-\[10px\] font-medium text-blue-11/);
   assert.doesNotMatch(source, /<button\b|onRetry|onEdit|onCancel|onMove|draggable|RotateCcw|Pencil|GripVertical/);
 });

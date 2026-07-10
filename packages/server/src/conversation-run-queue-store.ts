@@ -76,6 +76,11 @@ export type ConversationRunQueueStore = {
     conversationId: string,
     queueItemId: string,
   ): ConversationRunQueueItem | null;
+  getForReservedRun(
+    workspaceId: string,
+    conversationId: string,
+    reservedRunId: string,
+  ): ConversationRunQueueItem | null;
   recoverStarting(): Array<{ workspaceId: string; conversationId: string }>;
   pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }>;
 };
@@ -159,6 +164,8 @@ function createDatabase(dbPath: string): Database {
     );
     CREATE INDEX IF NOT EXISTS conversation_run_queue_pending_idx
       ON conversation_run_queue (workspace_id, conversation_id, state, created_at, queue_item_id);
+    CREATE INDEX IF NOT EXISTS conversation_run_queue_reserved_run_idx
+      ON conversation_run_queue (workspace_id, conversation_id, reserved_run_id);
     CREATE UNIQUE INDEX IF NOT EXISTS conversation_run_queue_client_message_uidx
       ON conversation_run_queue (workspace_id, conversation_id, client_message_id)
       WHERE client_message_id IS NOT NULL AND client_message_id <> '';
@@ -506,6 +513,23 @@ export function createConversationRunQueueStore(options?: {
           normalizeText(workspaceId),
           normalizeText(conversationId),
           normalizeText(queueItemId),
+        );
+        return row ? rowToItem(row) : null;
+      });
+    },
+
+    getForReservedRun(workspaceId, conversationId, reservedRunId) {
+      return withDb((db) => {
+        const row = db.query<QueueRow, [string, string, string]>(
+          `SELECT * FROM conversation_run_queue
+           WHERE workspace_id = ?1
+             AND conversation_id = ?2
+             AND reserved_run_id = ?3
+           LIMIT 1`,
+        ).get(
+          normalizeText(workspaceId),
+          normalizeText(conversationId),
+          normalizeText(reservedRunId),
         );
         return row ? rowToItem(row) : null;
       });
