@@ -18,6 +18,8 @@ const completeSelector = '[data-testid="gpt-5-6-sol-three-message-complete"]';
 const errorSelector = '[data-testid="gpt-5-6-sol-three-message-error"]';
 document.querySelector(completeSelector)?.remove();
 document.querySelector(errorSelector)?.remove();
+window.__vesloSendWorkflowTraceEnabled = true;
+window.localStorage.setItem("veslo.sendWorkflowTrace", "1");
 
 const appendMarker = (selector, payload) => {
   const marker = document.createElement("pre");
@@ -63,6 +65,8 @@ if (!window.__vesloGpt56SolThreeMessageStarted) {
       Array.from(document.querySelectorAll(`[data-message-role="${role}"]`))
         .filter(isVisibleElement)
         .map((element) => normalize(element.textContent));
+    const workflowTrace = () =>
+      Array.isArray(window.__vesloSendWorkflowTrace) ? window.__vesloSendWorkflowTrace.slice(-1000) : [];
     const assertNoInferenceError = () => {
       const text = bodyText();
       if (/Send failed|model_not_allowed|codex_runtime_incompatible/i.test(text)) {
@@ -228,6 +232,18 @@ if (!window.__vesloGpt56SolThreeMessageStarted) {
     const aiAccess = await waitForExpectedAiAccess(connection);
     window.dispatchEvent(new Event("focus"));
     document.dispatchEvent(new Event("visibilitychange"));
+    await waitUntil(() => workflowTrace().find((entry) =>
+      entry?.source === "opencode-config" &&
+      entry?.event === "managed-config-compare" &&
+      entry?.workspaceId === initialWorkspace.id &&
+      entry?.matches === true &&
+      entry?.managedProviderId === "codex_oauth" &&
+      entry?.managedDefaultModelId === "gpt-5.6-sol"
+    ), {
+      timeout: 120000,
+      interval: 500,
+      message: `Managed GPT-5.6 Sol routing did not settle. Workflow=${JSON.stringify(workflowTrace())}`,
+    });
     navigateToSession();
     await waitUntil(() => window.location.hash.includes("/session"), {
       timeout: 10000,
@@ -241,6 +257,7 @@ if (!window.__vesloGpt56SolThreeMessageStarted) {
       { label: "run 3", token: `gpt-5-6-sol-warm-3-${nonce}` },
     ];
     const timings = [];
+    const routes = [];
     for (const turn of turns) {
       await assertSameWorkspace(initialWorkspace, turn.label);
       assertNoInferenceError();
@@ -254,8 +271,26 @@ if (!window.__vesloGpt56SolThreeMessageStarted) {
         interval: 250,
         message: `No enabled send button for ${turn.label}`,
       });
+      const traceLastIdBefore = Number(workflowTrace().at(-1)?.id ?? 0);
       const startedAt = Date.now();
       sendButton.click();
+      const route = await waitUntil(() => workflowTrace().find((entry) =>
+        Number(entry?.id ?? 0) > traceLastIdBefore &&
+        entry?.event === "server:conversation-run:opencode-submit-body"
+      ), {
+        timeout: 120000,
+        interval: 250,
+        message: `Server submit route was not traced for ${turn.label}. Workflow=${JSON.stringify(workflowTrace())}`,
+      });
+      assert(route?.body?.model?.providerID === "codex_oauth", `${turn.label} used provider ${route?.body?.model?.providerID}.`);
+      assert(route?.body?.model?.modelID === "gpt-5.6-sol", `${turn.label} used model ${route?.body?.model?.modelID}.`);
+      assert(typeof route?.body?.variant === "string" && route.body.variant.length > 0, `${turn.label} did not submit a model variant.`);
+      routes.push({
+        label: turn.label,
+        provider: route.body.model.providerID,
+        model: route.body.model.modelID,
+        variant: route.body.variant,
+      });
       await waitUntil(() => {
         assertNoInferenceError();
         const assistantTexts = visibleMessageTexts("assistant");
@@ -283,12 +318,14 @@ if (!window.__vesloGpt56SolThreeMessageStarted) {
     }
 
     await assertSameWorkspace(initialWorkspace, "final verification");
-    const variant = window.localStorage.getItem("veslo.modelVariant") || null;
+    assert(routes.length === turns.length, `Expected ${turns.length} traced routes, received ${routes.length}.`);
+    assert(routes.every((route) => route.variant === routes[0].variant), `Model variants changed between turns: ${JSON.stringify(routes)}`);
     const result = {
       workspace: initialWorkspace,
       provider: aiAccess.provider,
       model: aiAccess.defaultModel,
-      variant,
+      variant: routes[0].variant,
+      routes,
       timings,
     };
     window.__vesloGpt56SolThreeMessageResult = result;

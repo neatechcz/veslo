@@ -31,6 +31,9 @@ test('scenario requires the live Codex access policy for GPT-5.6 Sol', () => {
   assert.match(scenario, /aiAccess\?\.provider === "codex_oauth"/);
   assert.match(scenario, /aiAccess\?\.defaultModel === "gpt-5\.6-sol"/);
   assert.match(scenario, /!auth\.email\.endsWith\("@example\.test"\)/);
+  assert.match(scenario, /window\.__vesloSendWorkflowTraceEnabled = true/);
+  assert.match(scenario, /entry\?\.event === "managed-config-compare"/);
+  assert.match(scenario, /entry\?\.managedDefaultModelId === "gpt-5\.6-sol"/);
 });
 
 test('scenario sends three exact-response prompts in one workspace and records separate timings', () => {
@@ -43,8 +46,10 @@ test('scenario sends three exact-response prompts in one workspace and records s
   assert.match(scenario, /const turns = \[/);
   assert.match(scenario, /firstAssistantVisibleMs/);
   assert.match(scenario, /settledMs/);
-  assert.match(scenario, /const variant = window\.localStorage\.getItem\("veslo\.modelVariant"\) \|\| null;/);
-  assert.match(scenario, /variant,/);
+  assert.match(scenario, /server:conversation-run:opencode-submit-body/);
+  assert.match(scenario, /route\?\.body\?\.model\?\.providerID === "codex_oauth"/);
+  assert.match(scenario, /route\?\.body\?\.model\?\.modelID === "gpt-5\.6-sol"/);
+  assert.match(scenario, /variant: routes\[0\]\.variant/);
   assert.match(scenario, /gpt-5\.6-sol-three-message-result/);
   assert.match(scenario, /value === token/);
   assert.match(scenario, /const stopButton = Array\.from\(document\.querySelectorAll\("button"\)\)/);
