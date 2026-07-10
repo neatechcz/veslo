@@ -6,6 +6,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
   onMount,
   untrack,
@@ -2219,6 +2220,23 @@ export default function App() {
     importSkillCandidates,
     abortRefreshes,
   } = extensionsStore;
+
+  const activeLocalSkillInventoryContext = createMemo(() => {
+    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
+    return workspaceType === "local" && workspaceId && workspaceRoot
+      ? `${workspaceId}\u0000${workspaceRoot}`
+      : null;
+  });
+  createEffect(
+    on(activeLocalSkillInventoryContext, (context) => {
+      if (!context) return;
+      void refreshSkillInventory().catch((error: unknown) =>
+        reportError(error, "skills.refreshInventory.bootstrap"),
+      );
+    }),
+  );
 
   let lastPluginsConnectedRefreshKey = "";
   createEffect(() => {

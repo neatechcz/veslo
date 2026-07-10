@@ -312,6 +312,11 @@ Run presentation may not reset from a transient scoped `idle` observation while
 the same session has fresh durable lifecycle evidence of `submitted`, `running`,
 or `blocked`; terminal or stale lifecycle evidence releases that guard.
 
+The session capabilities sidebar projects the app-owned shared skill inventory;
+it never triggers its own filesystem scan. The app shell loads that inventory
+for an active local workspace so a first opened session can show global and
+workspace skills immediately.
+
 If any step fails, store the failure at the narrowest correct level:
 
 - local server connection failure,

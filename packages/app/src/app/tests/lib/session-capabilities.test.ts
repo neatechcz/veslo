@@ -233,6 +233,16 @@ test("app session capabilities project local skills from the shared inventory su
   assert.doesNotMatch(source, /listLocalSkillsScoped\(directory,\s*"workspace"\)/);
 });
 
+test("app shell bootstraps the shared local skill inventory outside the session sidebar", () => {
+  const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    appSource,
+    /const activeLocalSkillInventoryContext = createMemo\(\(\) => \{[\s\S]*workspaceType === "local" && workspaceId && workspaceRoot[\s\S]*createEffect\([\s\S]*on\(activeLocalSkillInventoryContext,[\s\S]*void refreshSkillInventory\(\)\.catch\(\(error: unknown\) =>[\s\S]*"skills\.refreshInventory\.bootstrap"/,
+    "the app shell should react to a local workspace context and populate the shared inventory while the session sidebar remains read-only",
+  );
+});
+
 test("session capabilities cache loads by selected chat directory", async () => {
   const calls: string[] = [];
   const cache = createSessionCapabilitiesCache(async (scope) => {
