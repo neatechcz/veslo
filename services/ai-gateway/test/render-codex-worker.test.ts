@@ -15,12 +15,12 @@ test("AI Gateway package installs Codex CLI for the worker transport", async () 
   assert.equal(typeof packageJson.dependencies?.["@openai/codex"], "string")
 })
 
-test("AI Gateway Codex CLI is new enough to expose subscription rate limit snapshots", async () => {
+test("AI Gateway Codex CLI satisfies the GPT-5.6 Sol runtime requirement", async () => {
   const packageJson = JSON.parse(await readFile(path.resolve(testDir, "../package.json"), "utf8")) as {
     dependencies?: Record<string, string>
   }
 
-  assert.equal(compareSemver(packageJson.dependencies?.["@openai/codex"] ?? "0.0.0", "0.137.0") >= 0, true)
+  assert.equal(compareSemver(packageJson.dependencies?.["@openai/codex"] ?? "0.0.0", "0.144.1") >= 0, true)
 })
 
 test("owned-server compose wires Codex worker state into AI Gateway", async () => {
