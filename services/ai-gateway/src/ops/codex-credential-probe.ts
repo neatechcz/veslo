@@ -1,6 +1,9 @@
 import type { AdminCredentialRecord, ListAdminCredentialsInput } from "../credentials/repository.js";
 import { CODEX_OAUTH_PROVIDER } from "../providers/ids.js";
-import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js";
+import {
+  evaluateCodexCredentialEligibility,
+  isCodexPermanentCredentialFailureStatusText,
+} from "../usage/codex-eligibility.js";
 import type { CodexCredentialStatusProvider, CodexUsageStatus } from "../usage/codex-status.js";
 import { assertValidCodexModelId } from "./codex-model-migration.js";
 
@@ -88,8 +91,7 @@ function classifyProbeStatus(
 
 function isAuthenticationFailure(status: CodexUsageStatus): boolean {
   const statusText = [status.label, status.detail].filter(Boolean).join(" | ");
-  return /invalid[_\s-]?grant|(?:authentication|access|refresh|id)[_\s-]?token\s+(?:is\s+)?(?:invalid|expired|revoked|reused)|invalid\s+(?:(?:authentication|access|refresh|id)\s+)?token|refresh[_\s-]?token(?:\s+has)?\s+(?:already\s+)?(?:been\s+)?used|refresh[_\s-]?token[_\s-]?reused|reused\s+refresh[_\s-]?token|codex\s+login|required\s+login|login\s+required|authentication\s+required|revoked\s+auth|access\s+token\s+could\s+not\s+be\s+refreshed|HTTP\s+error:\s*401|401\s+Unauthorized/i
-    .test(statusText);
+  return isCodexPermanentCredentialFailureStatusText(statusText);
 }
 
 function safeStatusLabel(outcome: CodexCredentialProbeOutcome): string {

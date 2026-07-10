@@ -872,6 +872,7 @@ test("CachedCodexCredentialStatusProvider reports healthy probes with unknown li
 
 test("CachedCodexCredentialStatusProvider keeps credentials available when one Codex model is unsupported", async () => {
   const provider = new CachedCodexCredentialStatusProvider({
+    model: "gpt-5.3-codex",
     ttlMs: 5 * 60 * 1000,
     now: () => new Date("2026-06-04T15:14:57.039Z"),
     loadCredentialAuthJson: async () => JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "rt", account_id: "acct" } }),
@@ -929,6 +930,59 @@ test("CachedCodexCredentialStatusProvider preserves rate limits and unsupported 
   assert.equal(status.probeSucceeded, false);
   assert.equal(status.limits?.fiveHour?.usedPercent, 30);
   assert.deepEqual(status.unsupportedModels, ["gpt-5.6-sol"]);
+});
+
+test("CachedCodexCredentialStatusProvider recognizes exact requested-model incompatibility variants", async () => {
+  const cases = [
+    ["unknown", "Error: unknown model: gpt-5.6-sol", true],
+    ["quoted", "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.", true],
+    ["unsupported", "Error: unsupported requested model gpt-5.6-sol", true],
+    ["not_found", "Error: requested model 'gpt-5.6-sol' was not found", true],
+    ["invalid", "Error: gpt-5.6-sol model is invalid", true],
+    ["unrecognized", "Error: unrecognized model: gpt-5.6-sol", true],
+    ["unavailable", "Error: model 'gpt-5.6-sol' is unavailable", true],
+    ["prefix_collision", "Error: unknown model: gpt-5.6-sol-preview", false],
+    ["unrelated", "Error: unknown model: gpt-5.5", false],
+    ["provider_invalid", "Error: requested model gpt-5.6-sol; provider request invalid", false],
+    ["auth_failure", "Error: unknown model gpt-5.6-sol; access_token invalid", false],
+  ] as const;
+  const detailByCredential = new Map(cases.map(([id, detail]) => [`cred_${id}`, detail]));
+  const provider = new CachedCodexCredentialStatusProvider({
+    model: "gpt-5.6-sol",
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date("2026-07-10T12:00:00.000Z"),
+    loadCredentialAuthJson: async () => JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: { refresh_token: "rt", account_id: "acct" },
+    }),
+    probe: async ({ credentialId }) => ({
+      checkedAt: "2026-07-10T12:00:00.000Z",
+      rateLimits: {
+        primary: {
+          used_percent: 30,
+          window_minutes: 300,
+          resets_at: 1783692000,
+        },
+        secondary: null,
+        plan_type: "plus",
+      },
+      ok: false,
+      detail: detailByCredential.get(credentialId) ?? "unknown test case",
+    }),
+  });
+
+  for (const [id, , expectedUnsupported] of cases) {
+    const status = await provider.getStatus({
+      credentialId: `cred_${id}`,
+      credentialName: id,
+    });
+
+    assert.deepEqual(
+      status.unsupportedModels ?? [],
+      expectedUnsupported ? ["gpt-5.6-sol"] : [],
+      id,
+    );
+  }
 });
 
 async function makeTreeWritable(root: string): Promise<void> {
