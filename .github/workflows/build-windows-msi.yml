@@ -1,4 +1,4 @@
-name: Build Windows MSI
+name: Windows Signing Diagnostics
 
 on:
   workflow_dispatch:
@@ -8,108 +8,27 @@ permissions:
   id-token: write
 
 jobs:
-  build-windows-msi:
-    name: Build MSI (Windows)
+  dlib-probe:
+    name: Dlib probe (${{ matrix.auth_mode }})
     runs-on: windows-2022
-    timeout-minutes: 180
+    timeout-minutes: 10
     environment: release-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        auth_mode: [default-chain, azure-cli-only]
     env:
-      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
-      VESLO_SIDECAR_FORCE_BUILD: "1"
-      TARGET_TRIPLE: x86_64-pc-windows-msvc
-      TAURI_WINDOWS_RELEASE_CONFIG: src-tauri/tauri.windows.release.conf.json
-      VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo by Neatech
-      VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS: 900
-      VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS: 2
-      VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
-      VITE_VESLO_GLITCHTIP_DSN: ${{ vars.VESLO_GLITCHTIP_DSN }}
-      VESLO_GLITCHTIP_ENVIRONMENT: production
-      VITE_VESLO_GLITCHTIP_ENVIRONMENT: production
-      VESLO_GLITCHTIP_TRACES_SAMPLE_RATE: ${{ vars.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE || '0' }}
-      VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE: ${{ vars.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE || '0' }}
-
+      AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+      AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+      AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME }}
+      VESLO_SIGNING_PROBE_PATH: ${{ github.workspace }}\SigningProbe-${{ matrix.auth_mode }}.exe
+      VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo signing diagnostic
+      VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS: "120"
+      VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS: "1"
+      AZURE_LOG_LEVEL: verbose
     steps:
-      - name: Enable git long paths
-        shell: pwsh
-        run: git config --global core.longpaths true
-
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.27.0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: 1.3.11
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Verify GlitchTip release monitoring env
-        shell: pwsh
-        run: node scripts/release/verify-glitchtip-release-env.mjs
-
-      - name: Review release packaging
-        run: pnpm release:review --strict
-
-      - name: Create CI Tauri config (disable updater artifacts)
-        shell: bash
-        run: |
-          node -e "const fs=require('fs'); const configPath='packages/desktop/src-tauri/tauri.conf.json'; const ciPath='packages/desktop/src-tauri/tauri.conf.ci.json'; const config=JSON.parse(fs.readFileSync(configPath,'utf8')); config.bundle={...config.bundle, createUpdaterArtifacts:false}; fs.writeFileSync(ciPath, JSON.stringify(config, null, 2));"
-
-      - name: Prepare desktop sidecars
-        run: pnpm -C packages/desktop prepare:sidecar
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Cache document runtime downloads
-        uses: actions/cache@v4
-        continue-on-error: true
-        with:
-          path: |
-            packages/document-runtime/.cache/windows-native-x64
-            packages/document-runtime/manifests/sources/windows-native-x64.lock.json
-          key: windows-document-runtime-${{ hashFiles('packages/document-runtime/manifests/sources/windows-native-x64.json') }}
-          restore-keys: |
-            windows-document-runtime-
-
-      - name: Assemble Windows document runtime
-        shell: pwsh
-        run: node scripts/document-runtime/assemble-windows.mjs
-
-      - name: Verify Windows document runtime bundle
-        shell: pwsh
-        run: node scripts/release/verify-document-runtime-windows.mjs --profile local-docs-required --json
-
-      - name: Resolve Windows signing
-        id: signing
-        shell: bash
-        env:
-          OS_TYPE: windows
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
-          AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME }}
-        run: node scripts/release/release-signing.mjs
 
       - name: Azure login
         uses: azure/login@v2
@@ -118,80 +37,189 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Probe network and Azure CLI token
+        shell: pwsh
+        run: |
+          $endpoint = [Uri]$env:AZURE_ARTIFACT_SIGNING_ENDPOINT
+          Resolve-DnsName -Name $endpoint.Host -Type A | Format-Table -AutoSize
+
+          $network = Test-NetConnection -ComputerName $endpoint.Host -Port 443 -InformationLevel Detailed
+          if (-not $network.TcpTestSucceeded) {
+            throw "TCP connectivity failed for $($endpoint.Host):443"
+          }
+          Write-Host "TCP connect succeeded: remote=$($network.RemoteAddress)"
+
+          $httpProbe = curl.exe -sS -o NUL -w "status=%{http_code} connect=%{time_connect}s total=%{time_total}s" --max-time 20 $env:AZURE_ARTIFACT_SIGNING_ENDPOINT
+          if ($LASTEXITCODE -ne 0) {
+            throw "Artifact Signing endpoint probe failed with exit code $LASTEXITCODE"
+          }
+          Write-Host "Endpoint response: $httpProbe"
+
+          $tokenTimer = [System.Diagnostics.Stopwatch]::StartNew()
+          $tokenInfo = az account get-access-token --resource https://codesigning.azure.net --query '{expiresOn:expiresOn,subscription:subscription,tenant:tenant,tokenType:tokenType}' -o json
+          $tokenTimer.Stop()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Azure CLI token acquisition failed with exit code $LASTEXITCODE"
+          }
+          Write-Host "Azure CLI token acquired in $($tokenTimer.ElapsedMilliseconds) ms"
+          Write-Host $tokenInfo
+
+      - name: Create unsigned signing probe
+        shell: pwsh
+        run: |
+          $source = @'
+          using System;
+          public static class SigningProbe
+          {
+              public static void Main() => Console.WriteLine("Veslo signing probe");
+          }
+          '@
+
+          Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $env:VESLO_SIGNING_PROBE_PATH -OutputType ConsoleApplication
+          if (-not (Test-Path $env:VESLO_SIGNING_PROBE_PATH)) {
+            throw "Signing probe was not created"
+          }
+
+          $signature = Get-AuthenticodeSignature -FilePath $env:VESLO_SIGNING_PROBE_PATH
+          Write-Host "Initial signature status: $($signature.Status)"
+          if ($signature.Status -ne 'NotSigned') {
+            throw "Expected an unsigned probe, got $($signature.Status)"
+          }
+
       - name: Install Artifact Signing dlib package
         shell: pwsh
-        timeout-minutes: 10
+        timeout-minutes: 5
         run: ./scripts/release/install-artifact-signing-client-tools.ps1
 
       - name: Write Artifact Signing metadata
         shell: pwsh
-        env:
-          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
-          AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME }}
         run: |
-          $metadataPath = Join-Path $env:RUNNER_TEMP 'veslo-artifact-signing-metadata.json'
-          $metadata = @{
+          $metadataPath = Join-Path $env:RUNNER_TEMP "veslo-signing-${{ matrix.auth_mode }}.json"
+          $metadata = [ordered]@{
             Endpoint = $env:AZURE_ARTIFACT_SIGNING_ENDPOINT
             CodeSigningAccountName = $env:AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME
             CertificateProfileName = $env:AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME
-            CorrelationId = "${{ github.run_id }}-${{ github.job }}"
-          } | ConvertTo-Json -Depth 4
+            CorrelationId = "${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.auth_mode }}"
+          }
 
-          Set-Content -Path $metadataPath -Value $metadata -Encoding utf8NoBOM
+          if ("${{ matrix.auth_mode }}" -eq "azure-cli-only") {
+            $metadata.ExcludeCredentials = @(
+              "EnvironmentCredential"
+              "WorkloadIdentityCredential"
+              "ManagedIdentityCredential"
+              "SharedTokenCacheCredential"
+              "VisualStudioCredential"
+              "VisualStudioCodeCredential"
+              "AzurePowerShellCredential"
+              "AzureDeveloperCliCredential"
+              "InteractiveBrowserCredential"
+            )
+          }
+
+          $metadata | ConvertTo-Json -Depth 4 | Set-Content -Path $metadataPath -Encoding utf8NoBOM
           "VESLO_WINDOWS_SIGNING_METADATA_PATH=$metadataPath" >> $env:GITHUB_ENV
+          Get-Content $metadataPath
 
-      - name: Build Windows MSI
-        shell: pwsh
-        run: pnpm --filter @neatech/veslo exec tauri build --config src-tauri/tauri.conf.ci.json --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
-
-      - name: Verify bundled sidecars
-        shell: pwsh
-        run: node scripts/release/verify-bundled-versions.mjs "packages/desktop/src-tauri/target/$env:TARGET_TRIPLE/release" "$env:TARGET_TRIPLE"
-
-      - name: Resolve Windows bundle paths
+      - name: Run dlib signing probe
         shell: pwsh
         run: |
-          $bundleDir = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\bundle\msi"
-          if (-not (Test-Path $bundleDir)) {
-            throw "Windows bundle directory not found: $bundleDir"
+          $timer = [System.Diagnostics.Stopwatch]::StartNew()
+          try {
+            ./scripts/release/windows-sign.ps1 -TargetFile $env:VESLO_SIGNING_PROBE_PATH
+          } finally {
+            $timer.Stop()
+            Write-Host "Dlib signing elapsed: $($timer.Elapsed)"
           }
 
-          $msi = Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          $appExe = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\veslo.exe"
-
-          if (-not $msi) {
-            throw "No MSI bundle found in $bundleDir"
-          }
-          if (-not (Test-Path $appExe)) {
-            throw "Signed Windows app executable not found at $appExe"
-          }
-
-          "VESLO_WINDOWS_MSI_PATH=$($msi.FullName)" >> $env:GITHUB_ENV
-          "VESLO_WINDOWS_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
-
-      - name: Verify Windows signatures
+      - name: Verify dlib signature
         shell: pwsh
         run: |
-          $files = @(
-            $env:VESLO_WINDOWS_APP_EXE_PATH,
-            $env:VESLO_WINDOWS_MSI_PATH
-          )
-
-          foreach ($file in $files) {
-            $signature = Get-AuthenticodeSignature -FilePath $file
-            if ($signature.Status -ne 'Valid') {
-              $signature | Format-List * | Out-String | Write-Host
-              throw "Authenticode signature is not valid for $file"
-            }
-
-            Write-Host "Valid signature for $file"
-            Write-Host "Signer: $($signature.SignerCertificate.Subject)"
+          $signature = Get-AuthenticodeSignature -FilePath $env:VESLO_SIGNING_PROBE_PATH
+          $signature | Format-List Status,StatusMessage,SignerCertificate,TimeStamperCertificate | Out-String | Write-Host
+          if ($signature.Status -ne 'Valid') {
+            throw "Dlib probe signature is not valid"
           }
 
-      - name: Upload MSI artifact
-        uses: actions/upload-artifact@v4
+  official-action-probe:
+    name: Official Artifact Signing Action probe
+    runs-on: windows-2022
+    timeout-minutes: 10
+    environment: release-signing
+    env:
+      AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+      AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+      AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME }}
+      VESLO_SIGNING_PROBE_PATH: ${{ github.workspace }}\SigningProbe-official.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v3
         with:
-          name: veslo-windows-msi-x86_64-pc-windows-msvc
-          path: ${{ env.VESLO_WINDOWS_MSI_PATH }}
-          if-no-files-found: error
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Probe Azure CLI token
+        shell: pwsh
+        run: |
+          $tokenTimer = [System.Diagnostics.Stopwatch]::StartNew()
+          $tokenInfo = az account get-access-token --resource https://codesigning.azure.net --query '{expiresOn:expiresOn,subscription:subscription,tenant:tenant,tokenType:tokenType}' -o json
+          $tokenTimer.Stop()
+          if ($LASTEXITCODE -ne 0) {
+            throw "Azure CLI token acquisition failed with exit code $LASTEXITCODE"
+          }
+          Write-Host "Azure CLI token acquired in $($tokenTimer.ElapsedMilliseconds) ms"
+          Write-Host $tokenInfo
+
+      - name: Create unsigned signing probe
+        shell: pwsh
+        run: |
+          $source = @'
+          using System;
+          public static class SigningProbe
+          {
+              public static void Main() => Console.WriteLine("Veslo official action probe");
+          }
+          '@
+
+          Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $env:VESLO_SIGNING_PROBE_PATH -OutputType ConsoleApplication
+          $signature = Get-AuthenticodeSignature -FilePath $env:VESLO_SIGNING_PROBE_PATH
+          Write-Host "Initial signature status: $($signature.Status)"
+          if ($signature.Status -ne 'NotSigned') {
+            throw "Expected an unsigned probe, got $($signature.Status)"
+          }
+
+      - name: Sign with official Artifact Signing Action
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ env.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ env.AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME }}
+          files: ${{ env.VESLO_SIGNING_PROBE_PATH }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-visual-studio-code-credential: true
+          exclude-azure-cli-credential: false
+          exclude-azure-powershell-credential: true
+          exclude-azure-developer-cli-credential: true
+          exclude-interactive-browser-credential: true
+          timeout: 120
+          cache-dependencies: false
+          trace: true
+
+      - name: Verify official action signature
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature -FilePath $env:VESLO_SIGNING_PROBE_PATH
+          $signature | Format-List Status,StatusMessage,SignerCertificate,TimeStamperCertificate | Out-String | Write-Host
+          if ($signature.Status -ne 'Valid') {
+            throw "Official action probe signature is not valid"
+          }
