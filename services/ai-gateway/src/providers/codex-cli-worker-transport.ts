@@ -308,7 +308,7 @@ function parseJsonRecord(text: string): Record<string, unknown> | null {
   }
 }
 
-function isRequestedModelRuntimeIncompatibility(input: { model: string; stderrTail: string | null }): boolean {
+export function isRequestedModelRuntimeIncompatibility(input: { model: string; stderrTail: string | null }): boolean {
   const model = input.model.trim().toLowerCase()
   const stderr = input.stderrTail?.toLowerCase() ?? ""
   if (!model || model === "unknown" || !stderr) return false

@@ -5,7 +5,10 @@ import path from "node:path";
 
 import { CODEX_DEFAULT_MODEL } from "../providers/codex-model-catalog.js";
 import { resolveCodexCliCommandSpec, type CodexCliCommandSpec } from "../providers/codex-command.js";
-import { materializeCodexAuthJson } from "../providers/codex-cli-worker-transport.js";
+import {
+  isRequestedModelRuntimeIncompatibility,
+  materializeCodexAuthJson,
+} from "../providers/codex-cli-worker-transport.js";
 
 export type CodexUsageStatusSource =
   | "codex_exec_rate_limits"
@@ -101,6 +104,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     credentialName: string;
     authJson: string;
   }) => Promise<ProbeResult>;
+  private readonly model: string;
   private readonly ttlMs: number;
   private readonly now: () => Date;
   private readonly cache = new Map<string, CachedStatusEntry>();
@@ -111,7 +115,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     this.saveCredentialAuthJson = deps.saveCredentialAuthJson ?? null;
     this.ttlMs = deps.ttlMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_STATUS_TTL_MS, 5 * 60 * 1000);
     this.now = deps.now ?? (() => new Date());
-    const model = deps.model?.trim() || CODEX_DEFAULT_MODEL;
+    this.model = deps.model?.trim() || CODEX_DEFAULT_MODEL;
     this.probe =
       deps.probe ??
       ((input) =>
@@ -125,7 +129,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
             },
             workDir: deps.workDir?.trim() || process.env.AI_GATEWAY_CODEX_WORKDIR?.trim() || tmpdir(),
             timeoutMs: deps.timeoutMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_TIMEOUT_MS, 120000),
-            model,
+            model: this.model,
             now: this.now,
           });
         });
@@ -156,7 +160,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
             authJson,
           });
           await this.persistUpdatedAuthJson(input.credentialId, authJson, result.updatedAuthJson);
-          const unsupportedModels = extractUnsupportedCodexModels(result.detail);
+          const unsupportedModels = extractUnsupportedCodexModels(result.detail, this.model);
           const usageLimitStatus = result.rateLimits
             ? null
             : codexUsageStatusFromUsageLimitFailure(result.detail, result.checkedAt);
@@ -284,28 +288,16 @@ function codexUsageStatusUnknownLimits(
   };
 }
 
-function extractUnsupportedCodexModels(detail: string | null | undefined): string[] {
-  const text = detail?.trim();
-  if (!text || !/model is not supported/i.test(text)) {
-    return [];
-  }
-
-  const models = new Set<string>();
-  const quotedPattern = /['"`]([a-z0-9][a-z0-9._:-]*)['"`]\s+model is not supported/gi;
-  for (const match of text.matchAll(quotedPattern)) {
-    if (match[1]) {
-      models.add(match[1]);
-    }
-  }
-
-  const unquotedPattern = /\b([a-z0-9][a-z0-9._:-]*)['"`]?\s+model is not supported/gi;
-  for (const match of text.matchAll(unquotedPattern)) {
-    if (match[1] && !["the", "a", "this"].includes(match[1].toLowerCase())) {
-      models.add(match[1]);
-    }
-  }
-
-  return Array.from(models);
+function extractUnsupportedCodexModels(
+  detail: string | null | undefined,
+  requestedModel: string,
+): string[] {
+  return isRequestedModelRuntimeIncompatibility({
+    model: requestedModel,
+    stderrTail: detail?.trim() || null,
+  })
+    ? [requestedModel]
+    : [];
 }
 
 function codexUsageStatusFromUsageLimitFailure(

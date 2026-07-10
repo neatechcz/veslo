@@ -118,6 +118,8 @@ test("credential coordinator recognizes invalid grant, login, invalid token, and
     ["cred_b", "Codex login required"],
     ["cred_c", "authentication token invalid"],
     ["cred_d", "refresh token has already been used"],
+    ["cred_e", "missing field `id_token`"],
+    ["cred_f", "login required"],
   ]);
   const credentials = Array.from(authFailures.keys(), (id) => credential({ id, name: id }));
 
@@ -133,6 +135,8 @@ test("credential coordinator recognizes invalid grant, login, invalid token, and
   });
 
   assert.deepEqual(results.map((entry) => entry.outcome), [
+    "auth_failed",
+    "auth_failed",
     "auth_failed",
     "auth_failed",
     "auth_failed",
@@ -181,7 +185,7 @@ test("credential coordinator distinguishes failed, unsupported, and exhausted pr
       },
       ok: false,
       detail: credentialId === "cred_unsupported"
-        ? "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."
+        ? "Error: unknown model: gpt-5.6-sol"
         : "Codex subprocess exited before completing the requested probe.",
     }),
   });
