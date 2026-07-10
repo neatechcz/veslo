@@ -100,7 +100,11 @@ import {
 } from "../lib/session-send-contract";
 import type { UiConversationRef } from "../lib/ui-conversation-scope";
 import { resolveEscapeStopShortcut } from "./session-shortcuts";
-import { deriveSessionRunPresentation, terminalLifecycleOwnsOptimistic } from "./session-run-presentation";
+import {
+  deriveSessionRunPresentation,
+  lifecycleKeepsRunPresentationActive,
+  terminalLifecycleOwnsOptimistic,
+} from "./session-run-presentation";
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
 
@@ -2356,6 +2360,7 @@ export default function SessionView(props: SessionViewProps) {
           const previousStatus = statusForQueueKey(sessionKey, previousStatuses);
           const status = statusForQueueKey(sessionKey, statuses);
           if (!isActiveRunStatus(previousStatus) || isActiveRunStatus(status)) continue;
+          if (lifecycleKeepsRunPresentationActive(runDiagnosticForQueueKey(sessionKey))) continue;
           resetRunState(sessionKey, "session-status-idle");
         }
       },
@@ -2376,6 +2381,7 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (!runStartedAt()) return;
+    if (lifecycleKeepsRunPresentationActive(activeRunDiagnostic())) return;
     if (props.sessionStatus === "idle" && (runHasBegun() || responseStarted())) {
       resetRunState(currentSessionQueueKey(), "active-session-idle");
     }
@@ -2390,13 +2396,15 @@ export default function SessionView(props: SessionViewProps) {
     if (props.sessionStatus !== "idle") return;
     if (optimisticSubmittedDraft()?.state === "sending") return;
     if (runHasBegun() || responseStarted()) return;
+    if (lifecycleKeepsRunPresentationActive(activeRunDiagnostic())) return;
     const timer = setTimeout(() => {
       if (
         runStartedAt() &&
         props.sessionStatus === "idle" &&
         optimisticSubmittedDraft()?.state !== "sending" &&
         !runHasBegun() &&
-        !responseStarted()
+        !responseStarted() &&
+        !lifecycleKeepsRunPresentationActive(activeRunDiagnostic())
       ) {
         resetRunState(currentSessionQueueKey(), "idle-grace-expired");
       }
@@ -3110,6 +3118,15 @@ export default function SessionView(props: SessionViewProps) {
       source: options.source,
       implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
     });
+    if (result.draftDisposition === "clear") {
+      props.setComposerDraft({
+        mode: draft.mode,
+        parts: [],
+        attachments: [],
+        text: "",
+        resolvedText: "",
+      });
+    }
     if (sessionSubmitNeedsImplicitSkillConfirmation(result)) {
       setImplicitSkillConfirmation({
         draft,

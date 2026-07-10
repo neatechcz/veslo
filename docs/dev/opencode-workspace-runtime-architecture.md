@@ -303,6 +303,15 @@ one in-flight materialization for that pending-session key. Followers wait for
 the first submit's server-owned handoff, then submit against the resulting
 session. They must not each create an independent conversation.
 
+When that handoff mounts the active session's footer composer, an accepted
+`draftDisposition: "clear"` is applied by the session owner as well as by the
+originating composer. This prevents a first-send draft from persisting in the
+newly mounted composer.
+
+Run presentation may not reset from a transient scoped `idle` observation while
+the same session has fresh durable lifecycle evidence of `submitted`, `running`,
+or `blocked`; terminal or stale lifecycle evidence releases that guard.
+
 If any step fails, store the failure at the narrowest correct level:
 
 - local server connection failure,

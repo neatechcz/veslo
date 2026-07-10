@@ -274,8 +274,22 @@ test("session switching preserves keyed run UI state until runtime idle", () => 
   );
   assert.match(
     source,
-    /for \(const \[sessionKey, runState\] of Object\.entries\(untrack\(runStateBySessionKey\)\)\) \{[\s\S]*const previousStatus = statusForQueueKey\(sessionKey, previousStatuses\);[\s\S]*const status = statusForQueueKey\(sessionKey, statuses\);[\s\S]*if \(!isActiveRunStatus\(previousStatus\) \|\| isActiveRunStatus\(status\)\) continue;[\s\S]*resetRunState\(sessionKey, "session-status-idle"\);[\s\S]*\}/,
-    "background scoped session status should reset preserved run UI state only after runtime idle",
+    /for \(const \[sessionKey, runState\] of Object\.entries\(untrack\(runStateBySessionKey\)\)\) \{[\s\S]*const previousStatus = statusForQueueKey\(sessionKey, previousStatuses\);[\s\S]*const status = statusForQueueKey\(sessionKey, statuses\);[\s\S]*if \(!isActiveRunStatus\(previousStatus\) \|\| isActiveRunStatus\(status\)\) continue;[\s\S]*if \(lifecycleKeepsRunPresentationActive\(runDiagnosticForQueueKey\(sessionKey\)\)\) continue;[\s\S]*resetRunState\(sessionKey, "session-status-idle"\);[\s\S]*\}/,
+    "background scoped session status should defer a preserved run reset while durable lifecycle truth remains active",
+  );
+});
+
+test("accepted first-send cleanup clears the materialized session composer draft", () => {
+  const handleSendPromptStart = sessionSource.indexOf("const handleSendPrompt = async");
+  const handleSendPromptEnd = sessionSource.indexOf("const sendImplicitSkillAsPrompt", handleSendPromptStart);
+  assert.notEqual(handleSendPromptStart, -1, "session send handler should exist");
+  assert.notEqual(handleSendPromptEnd, -1, "session send handler should end before implicit skill handling");
+  const handleSendPromptSource = sessionSource.slice(handleSendPromptStart, handleSendPromptEnd);
+
+  assert.match(
+    handleSendPromptSource,
+    /const result = await sessionFlowFacade\.handleSendPrompt\(draft,[\s\S]*if \(result\.draftDisposition === "clear"\) \{[\s\S]*props\.setComposerDraft\(\{[\s\S]*mode: draft\.mode,[\s\S]*parts: \[\],[\s\S]*attachments: \[\],[\s\S]*text: "",[\s\S]*resolvedText: "",[\s\S]*\}\);/,
+    "the session owner should clear the draft after a first-send handoff mounts the active composer",
   );
 });
 

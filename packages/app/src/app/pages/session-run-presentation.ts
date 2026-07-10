@@ -45,6 +45,12 @@ const idlePresentation = (): SessionRunPresentation => ({
   diagnosticKind: null,
 });
 
+export function lifecycleKeepsRunPresentationActive(
+  lifecycle: SessionRunLifecycleEvidence | null | undefined,
+): boolean {
+  return lifecycle?.stale !== true && ACTIVE_LIFECYCLE_STATUSES.has(lifecycle?.status ?? "");
+}
+
 export function terminalLifecycleOwnsOptimistic(input: {
   lifecycle: SessionRunLifecycleEvidence | null | undefined;
   optimisticSending: boolean;
@@ -79,7 +85,7 @@ export function deriveSessionRunPresentation(input: SessionRunPresentationInput)
   if (terminalOwnsLocal && (input.local.optimisticSending || !engineActive)) {
     return idlePresentation();
   }
-  const lifecycleActive = lifecycle?.stale !== true && ACTIVE_LIFECYCLE_STATUSES.has(lifecycle?.status ?? "");
+  const lifecycleActive = lifecycleKeepsRunPresentationActive(lifecycle);
   if (lifecycleActive) {
     if (lifecycle?.waitReason === "model_retry_no_output") {
       const blocked = lifecycle.status === "blocked";

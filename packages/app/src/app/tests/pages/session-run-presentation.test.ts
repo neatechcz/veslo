@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deriveSessionRunPresentation } from "../../pages/session-run-presentation.js";
+import {
+  deriveSessionRunPresentation,
+  lifecycleKeepsRunPresentationActive,
+} from "../../pages/session-run-presentation.js";
+
+test("only fresh active lifecycle evidence defers an idle run reset", () => {
+  assert.equal(lifecycleKeepsRunPresentationActive({ status: "submitted", stale: false }), true);
+  assert.equal(lifecycleKeepsRunPresentationActive({ status: "running", stale: false }), true);
+  assert.equal(lifecycleKeepsRunPresentationActive({ status: "blocked", stale: false }), true);
+  assert.equal(lifecycleKeepsRunPresentationActive({ status: "completed", stale: false }), false);
+  assert.equal(lifecycleKeepsRunPresentationActive({ status: "running", stale: true }), false);
+});
 
 test("active lifecycle truth wins over an idle engine observation", () => {
   const projection = deriveSessionRunPresentation({
