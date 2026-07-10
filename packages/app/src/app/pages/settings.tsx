@@ -8,7 +8,6 @@ import WindowsSandboxRepair from "../components/windows-sandbox-repair";
 import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X } from "lucide-solid";
 import type { OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
-  VesloAuditEntry,
   VesloServerCapabilities,
   VesloServerDiagnostics,
   VesloServerSettings,
@@ -76,9 +75,6 @@ export type SettingsViewProps = {
   vesloServerDiagnostics: VesloServerDiagnostics | null;
   vesloServerWorkspaceId: string | null;
   activeWorkspaceRoot: string;
-  vesloAuditEntries: VesloAuditEntry[];
-  vesloAuditStatus: "idle" | "loading" | "error";
-  vesloAuditError: string | null;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   engineInfo: EngineInfo | null;
   orchestratorStatus: OrchestratorStatus | null;
@@ -650,20 +646,6 @@ export default function SettingsView(props: SettingsViewProps) {
       : "bg-gray-4/60 text-gray-11 border-gray-7/50";
   });
 
-  const vesloAuditStatusLabel = createMemo(() => {
-    if (!props.vesloServerWorkspaceId) return translate("status.unavailable");
-    if (props.vesloAuditStatus === "loading") return translate("status.loading");
-    if (props.vesloAuditStatus === "error") return translate("status.error");
-    return translate("status.ready");
-  });
-
-  const vesloAuditStatusStyle = createMemo(() => {
-    if (!props.vesloServerWorkspaceId) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-    if (props.vesloAuditStatus === "loading") return "bg-amber-7/10 text-amber-11 border-amber-7/20";
-    if (props.vesloAuditStatus === "error") return "bg-red-7/10 text-red-11 border-red-7/20";
-    return "bg-green-7/10 text-green-11 border-green-7/20";
-  });
-
   const isLocalEngineRunning = createMemo(() => Boolean(props.engineInfo?.running));
   const startupLabel = createMemo(() => "Connect to cloud server");
 
@@ -682,16 +664,6 @@ export default function SettingsView(props: SettingsViewProps) {
       props.setSettingsTab(activeTab());
     }
   });
-
-  const formatActor = (entry: VesloAuditEntry) => {
-    const actor = entry.actor;
-    if (!actor) return translate("status.unknown");
-    if (actor.type === "host") return translate("settings.actor_host");
-    if (actor.type === "remote") {
-      return actor.clientId ? `${translate("settings.actor_remote")}:${actor.clientId}` : translate("settings.actor_remote");
-    }
-    return translate("status.unknown");
-  };
 
   const formatCapability = (cap?: { read?: boolean; write?: boolean; source?: string }) => {
     if (!cap) return translate("status.unavailable");
@@ -988,41 +960,6 @@ export default function SettingsView(props: SettingsViewProps) {
     "inline-flex items-center gap-1.5 rounded-md border border-red-7/35 bg-red-3/25 px-3 py-1.5 text-xs font-medium text-red-11 transition-colors duration-150 hover:border-red-7/50 hover:bg-red-3/45 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-7/35 disabled:cursor-not-allowed disabled:opacity-60";
   const compactInputClass =
     "w-full rounded-md border border-dls-border bg-dls-surface px-3 py-2 text-xs text-dls-text font-mono shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] placeholder:text-dls-secondary/70";
-  const auditLogPanel = () => (
-    <div data-testid="settings-audit-log" class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
-      <div class="flex items-center justify-between gap-3">
-        <div class="text-sm font-medium text-gray-12">{__vesloT("ui.literal.audit_log_1kguyf", __vesloCurrentLocale())}</div>
-        <div class={`text-xs px-2 py-1 rounded-full border ${vesloAuditStatusStyle()}`}>
-          {vesloAuditStatusLabel()}
-        </div>
-      </div>
-      <Show when={props.vesloAuditError}>
-        <div class="text-xs text-red-11">{props.vesloAuditError}</div>
-      </Show>
-      <Show
-        when={props.vesloAuditEntries.length > 0}
-        fallback={<div class="text-xs text-gray-9">{__vesloT("ui.literal.no_audit_entries_yet_m8w4dn", __vesloCurrentLocale())}</div>}
-      >
-        <div class="divide-y divide-gray-6/50">
-          <For each={props.vesloAuditEntries}>
-            {(entry) => (
-              <div class="flex items-start justify-between gap-4 py-2">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12 truncate">{entry.summary}</div>
-                  <div class="text-[11px] text-gray-9 truncate">
-                    {entry.action} · {entry.target} · {formatActor(entry)}
-                  </div>
-                </div>
-                <div class="text-[11px] text-gray-9 whitespace-nowrap">
-                  {entry.timestamp ? formatRelativeTime(entry.timestamp) : "—"}
-                </div>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-    </div>
-  );
 
   return (
     <section class="space-y-6">
@@ -1266,8 +1203,6 @@ export default function SettingsView(props: SettingsViewProps) {
                 </Show>
               </div>
             </Show>
-
-            {auditLogPanel()}
 
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
               <div>
@@ -2424,8 +2359,6 @@ export default function SettingsView(props: SettingsViewProps) {
                       {props.safeStringify(props.workspaceDebugEvents)}
                     </pre>
                   </div>
-
-                  {auditLogPanel()}
                 </div>
               </div>
             </section>

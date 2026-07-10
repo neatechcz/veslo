@@ -19,7 +19,6 @@ import {
   writeVesloServerSettings,
   clearVesloServerSettings,
   resolveVesloServerAuthFailureStatus,
-  type VesloAuditEntry,
   type VesloServerCapabilities,
   type VesloServerClient,
   type VesloServerDiagnostics,
@@ -274,10 +273,6 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     createSignal<OrchestratorStatus | null>(null);
   const [orchestratorEnginesState, setOrchestratorEnginesState] =
     createSignal<OrchestratorEngineSnapshot[]>([]);
-  const [vesloAuditEntries, setVesloAuditEntries] = createSignal<VesloAuditEntry[]>([]);
-  const [vesloAuditStatus, setVesloAuditStatus] =
-    createSignal<"idle" | "loading" | "error">("idle");
-  const [vesloAuditError, setVesloAuditError] = createSignal<string | null>(null);
   const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
   let vesloServerLastReachableAt = 0;
   const ensureLocalVesloServerRunningInFlight = new Map<string, Promise<boolean>>();
@@ -973,12 +968,6 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     orchestratorEnginesState,
     setOrchestratorEnginesState,
     readyEngineWorkspaceIds,
-    vesloAuditEntries,
-    setVesloAuditEntries,
-    vesloAuditStatus,
-    setVesloAuditStatus,
-    vesloAuditError,
-    setVesloAuditError,
     devtoolsWorkspaceId,
     setDevtoolsWorkspaceId,
     activeVesloServerHostInfo,

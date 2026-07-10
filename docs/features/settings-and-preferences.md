@@ -82,9 +82,10 @@ Current advanced and debug areas include:
 - cache repair
 - Docker cleanup
 - service restarts and logs
-- audit log
 
 These are primarily debugging and support surfaces. If behavior changes, update this doc and `docs/dev/state-and-config-reference.md` when persistence or scope changes too.
+The workspace audit trail remains available through the local Veslo server API,
+but Settings does not expose it as a visible panel in the default app surface.
 
 ## Dashboard Link Tabs
 
