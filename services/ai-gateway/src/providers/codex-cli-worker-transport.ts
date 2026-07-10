@@ -321,7 +321,7 @@ function isRequestedModelRuntimeIncompatibility(input: { model: string; stderrTa
   if (!mentionsRequestedModel) return false
 
   const authenticationFailureSignal =
-    /\b(?:auth(?:entication|orization)?|login|unauthorized|forbidden|credential(?:s)?|token)\b|\binvalid[_ -]?grant\b|\bapi[_ -]?key\b/
+    /\b(?:auth(?:entication|orization)?|login|unauthorized|forbidden|credential(?:s)?|token)\b|\b(?:access|refresh)_token\b|\binvalid[_ -]?grant\b|\bapi[_ -]?key\b/
   if (authenticationFailureSignal.test(stderr)) return false
 
   const modelIncompatibilitySignal =
@@ -329,7 +329,7 @@ function isRequestedModelRuntimeIncompatibility(input: { model: string; stderrTa
   const requestedModelReference = `${escapedModel}(?=$|[^a-z0-9._-])`
   const modelIncompatibilityPatterns = [
     new RegExp(
-      `\\b${modelIncompatibilitySignal}[ \\t]+(?:requested[ \\t]+)?model[ \\t]+["']?${requestedModelReference}`,
+      `\\b${modelIncompatibilitySignal}[ \\t]+(?:requested[ \\t]+)?model[ \\t]*:?[ \\t]+["']?${requestedModelReference}`,
       "i",
     ),
     new RegExp(
@@ -337,7 +337,7 @@ function isRequestedModelRuntimeIncompatibility(input: { model: string; stderrTa
       "i",
     ),
     new RegExp(
-      `(?:^|[^a-z0-9._-])${requestedModelReference}["']?[ \\t]+(?:(?:is|was)[ \\t]+)?${modelIncompatibilitySignal}\\b`,
+      `(?:^|[^a-z0-9._-])${requestedModelReference}["']?[ \\t]+(?:model[ \\t]+)?(?:(?:is|was)[ \\t]+)?${modelIncompatibilitySignal}\\b`,
       "i",
     ),
   ]

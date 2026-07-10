@@ -442,6 +442,26 @@ test("keeps unrelated provider errors that mention the requested model as worker
   )
 })
 
+test("classifies Codex account-specific unsupported model wording as runtime incompatible", async () => {
+  await assertCodexWorkerError(
+    "gpt-5.6-sol model is not supported when using Codex with a ChatGPT account.",
+    "codex_runtime_incompatible",
+  )
+})
+
+test("classifies colon-delimited unknown model wording as runtime incompatible", async () => {
+  await assertCodexWorkerError("Error: unknown model: gpt-5.6-sol", "codex_runtime_incompatible")
+})
+
+test("keeps snake_case Codex token failures as worker failures", async () => {
+  for (const tokenKey of ["refresh_token", "access_token"]) {
+    await assertCodexWorkerError(
+      `Error: unknown model gpt-5.6-sol; ${tokenKey} invalid`,
+      "codex_worker_failed",
+    )
+  }
+})
+
 test("returns an actionable runtime incompatibility error for an unsupported requested model", async () => {
   const transport = new CodexCliWorkerTransport({
     spawnCodex: async () => ({
@@ -516,3 +536,31 @@ test("rejects invalid Codex auth JSON before writing worker credentials", async 
     await rm(codexHome, { recursive: true, force: true })
   }
 })
+
+async function assertCodexWorkerError(stderr: string, expectedMessage: string) {
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => ({
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      finalMessage: "",
+      stdout: "",
+      stderr,
+    }),
+  })
+
+  await assert.rejects(
+    () =>
+      transport.chatCompletions({
+        body: {
+          model: "gpt-5.6-sol",
+          messages: [{ role: "user", content: "Say ok." }],
+        },
+      }),
+    (error) => {
+      assert(error instanceof ProviderTransportError)
+      assert.equal(error.message, expectedMessage, stderr)
+      return true
+    },
+  )
+}
