@@ -15,6 +15,8 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
   - `credentialId` for providers that require a specific assigned credential
   - `defaultModel`
   - `allowedModels`
+- `credential_record`, `credential_secret`, and `credential_binding` own the Codex connection identity, encrypted OAuth authentication, binding, and health lifecycle. A model rollout does not rewrite those credential records.
+- `user_ai_access_policy.default_model` and `user_ai_access_policy.allowed_models_json` own the model assigned to a user. Updating all Codex connections to a new model therefore means migrating every `provider='codex_oauth'` policy row, including disabled rows, while preserving the credential id, encrypted secret, binding, health state, and `assignment_origin`.
 
 ## Runtime flow
 
@@ -45,7 +47,7 @@ wired through `packages/server/src/server.ts`.
 - The AI Gateway admin `Users` page includes an `AI access` editor.
 - The AI Gateway admin `Organization` page is shared by Platform Admins and Organization Admins. Platform Admins can switch the edited organization with the searchable organization selector on that page; Organization Admins only see their active organization and do not see the selector or seat-limit controls.
 - Platform admins can enable/disable access, pick the assigned provider, set the default model, and optionally restrict allowed models.
-- New DEN sign-ups are auto-assigned to Codex / ChatGPT inference with `gpt-5.5` when at least one eligible Codex OAuth inference credential exists. These rows are marked `auto_assigned`. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
+- New DEN sign-ups are auto-assigned to Codex / ChatGPT inference with GPT-5.6 Sol, canonical model id `gpt-5.6-sol`, when at least one eligible Codex OAuth inference credential exists. The moving `gpt-5.6` alias is not used. These rows are marked `auto_assigned`. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
 - Admin edits are marked `admin_assigned`. Non-Codex admin assignments remain explicit credential choices.
 - Assigned Codex access is lazily repaired on the next Codex request, including both `auto_assigned` and `admin_assigned` rows. If the assigned credential is missing, no longer healthy, revoked, permanently unavailable, or currently exhausted, DEN selects another healthy eligible Codex credential and updates the user's policy before routing the request. If no replacement exists, the request fails explicitly and the existing assignment is kept.
 - Codex credential assignment options only include credentials whose provider is `codex_oauth`, whose stored state is `healthy`, and whose latest upstream status probe reports OK. A successful `codex | OK` probe is eligible even when rate-limit windows cannot be parsed; revoked, draining, unhealthy, invalid-grant, or probe-failing credentials are hidden from assignment.
@@ -59,7 +61,7 @@ wired through `packages/server/src/server.ts`.
 - When an OpenAI-compatible credential is selected in the user AI access editor, the admin UI asks that credential's `/models` endpoint for available model IDs and uses the result as suggestions for the default model field. Admins can still type a model manually when discovery fails or the upstream returns an empty list.
 - The hosted admin `Usage` page shows recorded usage for every credential, including credentials with zero recorded traffic.
 - The hosted admin `Usage` and `Credentials` pages show best-effort Codex upstream status for inference credentials. The Codex status probe runs the gateway's default Codex model so it does not inherit an unsupported CLI default model from the bundled Codex runtime. When the Codex probe returns parseable 5h and weekly windows, both pages show those windows and reset times. When the probe succeeds but no windows are parsed, both pages show `Codex OK, limits unknown` without making the credential ineligible. Any healthy Codex credential with unknown or unavailable limits creates a Codex capacity visibility alert so admins are notified even when other credentials still report measurable limits. Authentication failures such as `invalid_grant`, reused refresh tokens, or 401 responses remain visible as unavailable upstream status and require reconnecting or rotating the credential.
-- If a Codex probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains usable and the unsupported model is removed from that credential's admin model choices. Admins should assign another listed Codex model for that credential instead of reconnecting it.
+- If a normal Codex status probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains visible and that model is removed from the credential's admin model choices. The forced GPT-5.6 Sol rollout does not fall back to GPT-5.5 or silently change the migrated policy: unsupported, authentication-failing, exhausted, and otherwise failing credentials remain on the `gpt-5.6-sol` policy and are reported for reconnect or recovery. Temporary inference failure is expected until the credential supports the assigned model again.
 - Provider proxy network failures, such as container outbound DNS, firewall/NAT, or upstream reachability timeouts, create a critical admin alert titled `AI inference upstream is unreachable` linked to the affected credential.
 - The hosted admin UI shows a bottom-right connection status whenever it is waiting for `/admin/api` responses. If the browser cannot reach the backend, the status remains visible and tells the admin that it is still trying to connect.
 
@@ -88,6 +90,25 @@ OpenAI-compatible proxy transport failures are reported separately from upstream
 ## Manual setup
 
 Before this flow works in a live environment, make sure healthy provider bindings exist for the platform pool owner that matches the assigned provider. If the managed-AI tables still only contain legacy per-user BYOK bindings, prompts will fail with `no_eligible_bindings`.
+
+## GPT-5.6 Sol policy migration and credential probe
+
+Run this rollout only after the target AI Gateway revision is deployed and a fresh database backup has completed and passed checksum verification. In the owned-server deployment checkout, use the Compose wrapper from [Cloud Deployments](dev/cloud-deployments.md) and run the guarded operations in this order:
+
+```bash
+compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+  ops:codex-model-migration -- --model gpt-5.6-sol
+compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+  ops:codex-model-migration -- --model gpt-5.6-sol --apply
+compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+  ops:codex-model-migration -- --model gpt-5.6-sol
+compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
+  ops:codex-credential-probe -- --model gpt-5.6-sol
+```
+
+The first migration command is a dry run. Apply updates only `default_model` and `allowed_models_json`, setting the latter to exactly `["gpt-5.6-sol"]`, on every Codex policy including disabled rows. The second dry run must report `changedCount: 0`; otherwise the rollout is not idempotent and probing must not start.
+
+The credential probe tests every non-deleted `codex_oauth` credential, including credentials already stored as unhealthy. It uses one shared status provider and awaits credentials sequentially so only one credential probe is active at a time. It persists rotated `auth.json` through the existing encrypted secret store, prints only credential identity, health, safe outcome labels, counts, and elapsed time, and continues after each failure. After all results are printed, the command exits non-zero if any credential is unsupported, exhausted, authentication-failing, or otherwise failed. It does not print credential secrets and does not alter the GPT-5.6 Sol model policy.
 
 ## Verification tooling
 
