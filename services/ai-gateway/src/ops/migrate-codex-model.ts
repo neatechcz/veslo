@@ -29,8 +29,9 @@ export function parseMigrationCliArgs(argv: string[]): MigrationCliArgs {
   let model = CODEX_DEFAULT_MODEL;
   let sawApply = false;
   let sawModel = false;
+  const firstArgumentIndex = argv[0] === "--" ? 1 : 0;
 
-  for (let index = 0; index < argv.length; index += 1) {
+  for (let index = firstArgumentIndex; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--apply" && !sawApply) {
       apply = true;

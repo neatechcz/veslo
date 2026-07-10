@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import type { AiGatewayDb } from "../db/index.js";
 import { userAiAccessPolicyTable } from "../db/schema.js";
@@ -94,7 +94,8 @@ export class MySqlCodexPolicyMigrationStore implements CodexPolicyMigrationStore
           assignmentOrigin: userAiAccessPolicyTable.assignment_origin,
         })
         .from(userAiAccessPolicyTable)
-        .where(eq(userAiAccessPolicyTable.provider, CODEX_OAUTH_PROVIDER));
+        .where(eq(userAiAccessPolicyTable.provider, CODEX_OAUTH_PROVIDER))
+        .for("update");
       const snapshots = rows.map(mapPolicySnapshot);
       const targetAllowedModelsJson = JSON.stringify([input.model]);
       const changedIds = snapshots
@@ -111,7 +112,10 @@ export class MySqlCodexPolicyMigrationStore implements CodexPolicyMigrationStore
             allowed_models_json: targetAllowedModelsJson,
             updated_at: input.now,
           })
-          .where(inArray(userAiAccessPolicyTable.id, changedIds));
+          .where(and(
+            inArray(userAiAccessPolicyTable.id, changedIds),
+            eq(userAiAccessPolicyTable.provider, CODEX_OAUTH_PROVIDER),
+          ));
       }
 
       return snapshots;

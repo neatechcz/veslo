@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { type SQL } from "drizzle-orm";
+import { MySqlDialect } from "drizzle-orm/mysql-core";
+
 import {
+  MySqlCodexPolicyMigrationStore,
   runCodexModelMigration,
   type CodexPolicyMigrationStore,
   type CodexPolicySnapshot,
 } from "../src/ops/codex-model-migration.js";
+import type { AiGatewayDb } from "../src/db/index.js";
 import {
   parseMigrationCliArgs,
   runCodexModelMigrationCli,
@@ -205,6 +210,31 @@ test("CLI arguments default to dry run and the managed Codex default model", () 
   assert.throws(() => parseMigrationCliArgs(["--model", "GPT-5.6-SOL"]), /Invalid Codex model id/);
 });
 
+test("CLI accepts the single leading separator passed by the pnpm package script", async () => {
+  assert.deepEqual(parseMigrationCliArgs(["--", "--apply", "--model", TARGET_MODEL]), {
+    apply: true,
+    model: TARGET_MODEL,
+  });
+  assert.throws(
+    () => parseMigrationCliArgs(["--", "--", "--model", TARGET_MODEL]),
+    /Invalid migration arguments/,
+  );
+
+  const store = new InMemoryCodexPolicyMigrationStore([
+    policy({ id: "policy_enabled", enabled: true, defaultModel: "gpt-5.5" }),
+  ]);
+  const output: string[] = [];
+
+  await runCodexModelMigrationCli(["--", "--model", TARGET_MODEL], {
+    databaseUrl: "mysql://user:password@private.example/ai_gateway",
+    openStore: () => ({ store, close: async () => {} }),
+    writeOutput: (line) => output.push(line),
+  });
+
+  assert.equal(output.length, 1);
+  assert.equal(JSON.parse(output[0] ?? "").mode, "dry-run");
+});
+
 test("CLI uses the configured database, emits one safe JSON summary, and always closes", async () => {
   const store = new InMemoryCodexPolicyMigrationStore([
     policy({ id: "policy_enabled", enabled: true, defaultModel: "gpt-5.5" }),
@@ -271,6 +301,72 @@ test("CLI closes the database and emits no summary when the migration fails", as
   assert.deepEqual(output, []);
 });
 
+test("MySQL apply locks every matching policy and provider-guards changed-ID updates", async () => {
+  const now = new Date("2026-07-10T12:00:00.000Z");
+  const database = createInstrumentedMigrationDb([
+    mysqlPolicy({ id: "policy_enabled", enabled: 1 }),
+    mysqlPolicy({ id: "policy_disabled", enabled: 0, assignmentOrigin: "auto_assigned" }),
+  ]);
+  const store = new MySqlCodexPolicyMigrationStore(database.db as AiGatewayDb);
+
+  const snapshots = await store.apply({ model: TARGET_MODEL, now });
+
+  assert.deepEqual(database.events, ["begin", "select", "lock:update", "update", "commit"]);
+  assert.deepEqual(snapshots.map((row) => row.enabled), [true, false]);
+  assert.deepEqual(snapshots.map((row) => row.assignmentOrigin), ["admin_assigned", "auto_assigned"]);
+  assert.equal(database.updateCalls, 1);
+  assert.deepEqual(database.updateValues, {
+    default_model: TARGET_MODEL,
+    allowed_models_json: JSON.stringify([TARGET_MODEL]),
+    updated_at: now,
+  });
+
+  const selectPredicate = compileCondition(database.selectPredicate);
+  assert.deepEqual(selectPredicate.params, ["codex_oauth"]);
+  assert.match(selectPredicate.sql, /`user_ai_access_policy`\.`provider` = \?/);
+  assert.doesNotMatch(selectPredicate.sql, /enabled/);
+
+  const updatePredicate = compileCondition(database.updatePredicate);
+  assert.deepEqual(updatePredicate.params, ["policy_enabled", "policy_disabled", "codex_oauth"]);
+  assert.match(updatePredicate.sql, /`user_ai_access_policy`\.`id` in \(\?, \?\)/);
+  assert.match(updatePredicate.sql, /`user_ai_access_policy`\.`provider` = \?/);
+});
+
+test("MySQL apply retains the lock but performs no update when every policy already matches", async () => {
+  const database = createInstrumentedMigrationDb([
+    mysqlPolicy({
+      id: "policy_current",
+      defaultModel: TARGET_MODEL,
+      allowedModelsJson: JSON.stringify([TARGET_MODEL]),
+    }),
+  ]);
+  const store = new MySqlCodexPolicyMigrationStore(database.db as AiGatewayDb);
+
+  await store.apply({ model: TARGET_MODEL, now: new Date("2026-07-10T12:00:00.000Z") });
+
+  assert.deepEqual(database.events, ["begin", "select", "lock:update", "commit"]);
+  assert.equal(database.updateCalls, 0);
+  assert.equal(database.updateValues, null);
+  assert.equal(database.updatePredicate, null);
+});
+
+test("MySQL apply propagates update failures so the transaction rolls back", async () => {
+  const database = createInstrumentedMigrationDb(
+    [mysqlPolicy({ id: "policy_changed" })],
+    { failUpdate: true },
+  );
+  const store = new MySqlCodexPolicyMigrationStore(database.db as AiGatewayDb);
+
+  await assert.rejects(
+    store.apply({ model: TARGET_MODEL, now: new Date("2026-07-10T12:00:00.000Z") }),
+    /injected update failure/,
+  );
+
+  assert.deepEqual(database.events, ["begin", "select", "lock:update", "update", "rollback"]);
+  assert.equal(database.committed, false);
+  assert.equal(database.rolledBack, true);
+});
+
 function policy(overrides: Partial<StoredPolicy> = {}): StoredPolicy {
   return {
     id: "policy_1",
@@ -295,4 +391,129 @@ function toSnapshot(row: StoredPolicy): CodexPolicySnapshot {
     allowedModelsJson: row.allowedModelsJson,
     assignmentOrigin: row.assignmentOrigin,
   };
+}
+
+type InstrumentedMysqlPolicy = {
+  id: string;
+  userId: string;
+  enabled: number;
+  credentialId: string | null;
+  defaultModel: string | null;
+  allowedModelsJson: string;
+  assignmentOrigin: string;
+};
+
+function mysqlPolicy(overrides: Partial<InstrumentedMysqlPolicy> = {}): InstrumentedMysqlPolicy {
+  return {
+    id: "policy_1",
+    userId: "user_1",
+    enabled: 1,
+    credentialId: "credential_1",
+    defaultModel: "gpt-5.5",
+    allowedModelsJson: JSON.stringify(["gpt-5.5"]),
+    assignmentOrigin: "admin_assigned",
+    ...overrides,
+  };
+}
+
+function createInstrumentedMigrationDb(
+  rows: InstrumentedMysqlPolicy[],
+  options: { failUpdate?: boolean } = {},
+) {
+  const events: string[] = [];
+  let selectPredicate: unknown = null;
+  let updatePredicate: unknown = null;
+  let updateValues: Record<string, unknown> | null = null;
+  let updateCalls = 0;
+  let committed = false;
+  let rolledBack = false;
+
+  const transaction = {
+    select() {
+      events.push("select");
+      return {
+        from() {
+          return {
+            where(predicate: unknown) {
+              selectPredicate = predicate;
+              return {
+                for(strength: string) {
+                  events.push(`lock:${strength}`);
+                  return Promise.resolve(rows);
+                },
+                then<TResult1 = InstrumentedMysqlPolicy[], TResult2 = never>(
+                  onfulfilled?: ((value: InstrumentedMysqlPolicy[]) => TResult1 | PromiseLike<TResult1>) | null,
+                  onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+                ) {
+                  events.push("select:unlocked");
+                  return Promise.resolve(rows).then(onfulfilled, onrejected);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    update() {
+      updateCalls += 1;
+      events.push("update");
+      return {
+        set(values: Record<string, unknown>) {
+          updateValues = values;
+          return {
+            async where(predicate: unknown) {
+              updatePredicate = predicate;
+              if (options.failUpdate) {
+                throw new Error("injected update failure");
+              }
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const db = {
+    async transaction<T>(callback: (tx: typeof transaction) => Promise<T>): Promise<T> {
+      events.push("begin");
+      try {
+        const result = await callback(transaction);
+        committed = true;
+        events.push("commit");
+        return result;
+      } catch (error) {
+        rolledBack = true;
+        events.push("rollback");
+        throw error;
+      }
+    },
+  };
+
+  return {
+    db,
+    events,
+    get selectPredicate() {
+      return selectPredicate;
+    },
+    get updatePredicate() {
+      return updatePredicate;
+    },
+    get updateValues() {
+      return updateValues;
+    },
+    get updateCalls() {
+      return updateCalls;
+    },
+    get committed() {
+      return committed;
+    },
+    get rolledBack() {
+      return rolledBack;
+    },
+  };
+}
+
+function compileCondition(condition: unknown) {
+  assert.ok(condition);
+  return new MySqlDialect().sqlToQuery(condition as SQL);
 }
