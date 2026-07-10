@@ -9,7 +9,7 @@ import {
   type CodexCredentialStatusProvider,
 } from "./usage/codex-status.js"
 
-export const DEFAULT_CODEX_AUTO_ASSIGN_MODEL = "gpt-5.5"
+export const DEFAULT_CODEX_AUTO_ASSIGN_MODEL = "gpt-5.6-sol"
 
 export type ManagedAiSignupAssignmentCredential = {
   credentialId: string

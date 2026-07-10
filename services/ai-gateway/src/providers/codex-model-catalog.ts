@@ -1,6 +1,7 @@
-export const CODEX_DEFAULT_MODEL = "gpt-5.5";
+export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
 
 const CODEX_MODEL_CATALOG = [
+  "gpt-5.6-sol",
   "gpt-5.5",
   "gpt-5.4",
   "gpt-5.4-mini",
