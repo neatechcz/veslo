@@ -19,6 +19,7 @@ const DEFAULT_PILOT_SCENARIO_COMMAND_TIMEOUT_MS = 20 * 60_000;
 const DEFAULT_PILOT_SCENARIO_NAMES = ['smoke', 'navigation'] as const;
 const MANAGED_AI_INFERENCE_SCENARIO_NAMES = [
   'global-unpublished-draft',
+  'gpt-5-6-sol-three-message-roundtrip',
   'message-send-registry-degraded',
   'live-skills-finder-roundtrip',
   'model-stream-retry-no-progress',
