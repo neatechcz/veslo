@@ -84,7 +84,7 @@ compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway \
   ops:codex-credential-probe -- --model gpt-5.6-sol
 ```
 
-The first migration command is the pre-apply dry run and the third is the post-apply dry run. Their matched counts must agree, and the post-apply result must report `changedCount: 0`. The probe covers every non-deleted Codex credential, including unhealthy records, runs sequentially, continues after individual failures, and persists rotated auth through the encrypted secret store without printing it. Failed or unsupported credentials remain assigned to `gpt-5.6-sol` and are reported for reconnect or recovery; there is no GPT-5.5 fallback.
+The first migration command is the pre-apply dry run and the third is the post-apply dry run. Their matched counts must agree, and the post-apply result must report `changedCount: 0`. The probe covers every non-deleted Codex credential, including unhealthy records, runs sequentially, continues after individual failures, and persists rotated auth through the encrypted secret store without printing it. Failed or unsupported credentials are reported for reconnect or recovery without changing the `gpt-5.6-sol` model policy or falling back to GPT-5.5. At request time, lazy repair can bind another healthy eligible credential while retaining that model; inference fails only when no eligible replacement can serve the request.
 
 For production, the equivalent guarded workflow dispatch is:
 
