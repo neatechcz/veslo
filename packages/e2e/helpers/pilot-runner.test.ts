@@ -36,6 +36,7 @@ import {
 
 const MANAGED_AI_INFERENCE_SCENARIOS = [
   'global-unpublished-draft',
+  'gpt-5-6-sol-three-message-roundtrip',
   'message-send-registry-degraded',
   'model-stream-retry-no-progress',
   'pending-session-instance-isolation',
