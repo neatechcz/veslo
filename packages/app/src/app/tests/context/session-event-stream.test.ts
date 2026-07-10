@@ -105,6 +105,12 @@ function makeController(options: {
   onReconnectState?: (state: ReconnectState) => void;
   onReconnectNotice?: (notice: "reconnecting" | "reconnected") => void;
   sessionErrorTurns?: Array<{ sessionID: string; text: string }>;
+  errors?: Array<string | null>;
+  lifecycleObservation?: (
+    sessionID: string,
+    workspaceId: string | null | undefined,
+    type: "session.idle" | "session.error",
+  ) => boolean;
 } = {}) {
   const [store, setStore] = makeStore();
   const workspaceSessionIds = options.workspaceSessionIds ?? new Set<string>();
@@ -129,7 +135,9 @@ function makeController(options: {
     activeWorkspaceRoot: () => "/repo",
     selectedSessionId: () => options.selectedSessionId ?? "sess-a",
     developerMode: () => options.developerMode ?? false,
-    setError: () => {},
+    setError: (error) => {
+      options.errors?.push(error);
+    },
     setSseConnected: options.setSseConnected ?? (() => {}),
     onReconnectState: options.onReconnectState,
     onReconnectNotice: options.onReconnectNotice,
@@ -154,6 +162,7 @@ function makeController(options: {
     appendSessionErrorTurn: (sessionID, text) => {
       options.sessionErrorTurns?.push({ sessionID, text });
     },
+    onSessionLifecycleObservation: options.lifecycleObservation,
     setCommandDisplay: () => {},
     recordSyntheticContinueDiagnostic: () => {},
     maybeMarkReloadRequired: () => {},
@@ -720,6 +729,39 @@ test("event stream socket close reconnects without route release when scoped run
       assert.deepEqual(released, []);
       assert.deepEqual(recovered, []);
       assert.equal(reconnectStates.some((state) => state.status === "reconnecting"), true);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("known admitted run uses durable lifecycle arbitration for SSE errors", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const observed: Array<{ sessionID: string; workspaceId: string | null | undefined; type: string }> = [];
+      const sessionErrorTurns: Array<{ sessionID: string; text: string }> = [];
+      const errors: Array<string | null> = [];
+      const { controller } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        sessionErrorTurns,
+        errors,
+        lifecycleObservation: (sessionID, workspaceId, type) => {
+          observed.push({ sessionID, workspaceId, type });
+          return true;
+        },
+      });
+
+      await controller.applyEvent({
+        type: "session.error",
+        properties: {
+          sessionID: "sess-a",
+          error: { name: "ProviderError", message: "transient engine observation" },
+        },
+      } as OpencodeEvent, "ws-a");
+
+      assert.deepEqual(observed, [{ sessionID: "sess-a", workspaceId: "ws-a", type: "session.error" }]);
+      assert.deepEqual(sessionErrorTurns, []);
+      assert.deepEqual(errors, []);
     } finally {
       dispose();
     }

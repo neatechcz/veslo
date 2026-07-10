@@ -88,7 +88,7 @@ function LeftSidebarFrame(props: {
   onStartResize: (event: PointerEvent) => void;
 }) {
   return (
-    <aside class={sidebarClass(props.resizing)} style={props.style}>
+    <aside data-testid="session-left-sidebar" data-sidebar-mode="docked" class={sidebarClass(props.resizing)} style={props.style}>
       <SessionLeftSidebarContent
         updatePill={props.updatePill}
         workspaceSessionListProps={props.workspaceSessionListProps}
@@ -108,6 +108,8 @@ function LeftSidebarOverlay(props: SessionLeftSidebarProps) {
     <Show when={props.overlayOpen}>
       <SidebarOverlayBackdrop onClose={props.onCloseOverlay} />
       <aside
+        data-testid="session-left-sidebar"
+        data-sidebar-mode="overlay"
         class={overlaySidebarClass(props.resizing)}
         style={props.overlayStyle}
         onClick={(event) => event.stopPropagation()}

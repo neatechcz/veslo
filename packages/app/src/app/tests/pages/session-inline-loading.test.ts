@@ -68,7 +68,7 @@ test("temporary runtime UI diagnostic is developer-mode only", () => {
 
 test("session switch records browse scope and routes immediately without arming a preloader", () => {
   const openSessionStart = sessionSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
-  const openSessionEnd = sessionSource.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
+  const openSessionEnd = sessionSource.indexOf("\n  const ", openSessionStart + 4);
   const helperStart = sessionNavigationSource.indexOf("export function openSidebarSessionFromList");
   const helperEnd = sessionNavigationSource.indexOf("export async function createSessionWithWorkspaceActivation", helperStart);
   assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
@@ -252,11 +252,11 @@ test("materializing a pending submitted draft holds the transcript surface until
   );
 });
 
-test("optimistic submitted drafts enter responding phase before assistant parts arrive", () => {
+test("session page delegates optimistic run presentation to the pure projection", () => {
   assert.match(
     sessionSource,
-    /if \(status === "idle"\) \{\s*if \(!started\) return "idle";\s*if \(optimisticSubmittedDraft\(\)\) return "responding";/s,
-    "a first optimistic submit should use the responding run phase, with the label decided separately from the phase",
+    /const runPresentation = createMemo\(\(\) => deriveSessionRunPresentation\(\{[\s\S]*optimisticSending: optimisticSubmittedDraft\(\)\?\.state === "sending"/s,
+    "the page should pass optimistic state to the pure run-presentation model",
   );
 });
 
@@ -308,7 +308,7 @@ test("optimistic responding state renders as the footer run indicator, not assis
   );
 });
 
-test("model retry no-output diagnostics own the footer run label", () => {
+test("model retry diagnostics remain a dedicated lifecycle footer label", () => {
   assert.match(
     sessionSource,
     /const activeRunDiagnostic = createMemo\(\(\) => runDiagnosticForQueueKey\(currentSessionQueueKey\(\)\)\);/,
@@ -316,8 +316,8 @@ test("model retry no-output diagnostics own the footer run label", () => {
   );
   assert.match(
     sessionSource,
-    /const diagnostic = activeRunDiagnostic\(\);[\s\S]*if \(diagnostic\?\.waitReason === "model_retry_no_output"\) \{[\s\S]*return diagnostic\.status === "blocked" \? "error" : "retrying";[\s\S]*\}/,
-    "model/API retry with no output should use retrying until the lifecycle reports blocked",
+    /const runPresentation = createMemo\(\(\) => deriveSessionRunPresentation\(/,
+    "the lifecycle diagnostic phase should be owned by the shared presentation model",
   );
   assert.match(
     sessionSource,

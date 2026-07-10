@@ -559,6 +559,8 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
     sessionQueueVesloServerToken &&
     sessionQueueVesloWorkspaceId,
   );
+  const sessionRuntimeRequiresExplicitActivation =
+    sessionQueueUsesVesloWorkspace && env.E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION?.trim() === '1';
   mkdirSync(workspacePath, { recursive: true });
   const opencodePath = join(workspacePath, '.opencode');
   mkdirSync(opencodePath, { recursive: true });
@@ -598,6 +600,23 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
       : {}),
   }];
 
+  // Remote workspaces deliberately lazy-boot. These lifecycle scenarios must
+  // exercise the same user click that connects a pre-selected workspace, so
+  // start them on a harmless remote entry instead of pre-activating the target.
+  if (sessionRuntimeRequiresExplicitActivation) {
+    workspaces.push({
+      id: 'e2e-session-runtime-decoy',
+      name: 'E2E activation decoy',
+      path: workspacePath,
+      preset: 'remote',
+      workspaceType: 'remote',
+      remoteType: 'opencode',
+      baseUrl: 'http://127.0.0.1:9/e2e-activation-decoy',
+      directory: workspacePath,
+      displayName: 'E2E activation decoy',
+    });
+  }
+
   if (shouldSeedAutomationsSecondaryWorkspace(env)) {
     mkdirSync(secondaryAutomationWorkspacePath, { recursive: true });
     workspaces.push({
@@ -615,7 +634,9 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
 
   const workspaceState = {
     version: 4,
-    activeId: 'e2e-visual-workspace',
+    activeId: sessionRuntimeRequiresExplicitActivation
+      ? 'e2e-session-runtime-decoy'
+      : 'e2e-visual-workspace',
     workspaces,
   };
 

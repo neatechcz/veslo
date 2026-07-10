@@ -172,6 +172,56 @@ describe("orchestrator lifecycle client", () => {
     });
   });
 
+  test("status preserves durable terminal error and correlation fields", async () => {
+    const fetchImpl = mockFetch(async () =>
+      new Response(JSON.stringify({
+        ok: true,
+        runId: "run-failed",
+        status: "failed",
+        stale: false,
+        clientMessageId: "msg-failed",
+        origin: "session:send",
+        error: "upstream request failed",
+      }), { status: 200 }));
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    await expect(client.status("ws-a", "conv-a", "run-failed")).resolves.toEqual({
+      runId: "run-failed",
+      status: "failed",
+      stale: false,
+      clientMessageId: "msg-failed",
+      origin: "session:send",
+      error: "upstream request failed",
+    });
+  });
+
+  test("status normalizes malformed optional durable errors to null", async () => {
+    const fetchImpl = mockFetch(async () =>
+      new Response(JSON.stringify({
+        ok: true,
+        runId: "run-a",
+        status: "completed",
+        stale: false,
+        error: { detail: "not a displayable error" },
+      }), { status: 200 }));
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    await expect(client.status("ws-a", "conv-a", "run-a")).resolves.toEqual({
+      runId: "run-a",
+      status: "completed",
+      stale: false,
+      error: null,
+    });
+  });
+
   test("status rejects malformed successful payloads", async () => {
     const fetchImpl = mockFetch(async () =>
       new Response(JSON.stringify({ ok: true }), { status: 200 }));

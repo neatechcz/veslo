@@ -1,5 +1,6 @@
 import {
   createPendingSubmittedDraft,
+  markPendingSubmittedAccepted,
   markPendingSubmittedFailed,
   pendingSubmittedDraftToEditable,
   type PendingSubmittedDraft,
@@ -1374,6 +1375,23 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             detail: `sessionKey=${sessionKey}`,
           },
         );
+        if (showOptimisticSubmit) {
+          deps.pendingSubmitted.updatePendingSubmittedDrafts((draftsBySessionKey) => {
+            const matchingEntry = Object.entries(draftsBySessionKey).find(([, pending]) =>
+              pending.id === pendingSubmitId,
+            );
+            if (!matchingEntry) return draftsBySessionKey;
+            const [pendingSessionKey, pending] = matchingEntry;
+            return setPendingSubmittedDraftForKey(
+              draftsBySessionKey,
+              pendingSessionKey,
+              markPendingSubmittedAccepted(pending, {
+                runId: submitResult.runId ?? submitResult.reservedRunId ?? null,
+                clientMessageId: submitResult.clientMessageId ?? null,
+              }),
+            );
+          });
+        }
         if (
           pendingSessionBaseKeyBeforeHandoff &&
           pendingSessionKeyBeforeHandoff &&
@@ -1410,9 +1428,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           options.expectedSessionKey &&
           deps.sessionKeys.currentSessionQueueKey() !== options.expectedSessionKey
         ) {
-          if (showOptimisticSubmit) {
-            clearMatchingPendingSubmit();
-          }
           return submitResult;
         }
         deps.viewport.setStickToBottom(true);

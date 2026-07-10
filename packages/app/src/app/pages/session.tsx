@@ -100,6 +100,7 @@ import {
 } from "../lib/session-send-contract";
 import type { UiConversationRef } from "../lib/ui-conversation-scope";
 import { resolveEscapeStopShortcut } from "./session-shortcuts";
+import { deriveSessionRunPresentation, terminalLifecycleOwnsOptimistic } from "./session-run-presentation";
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
 
@@ -125,6 +126,7 @@ import {
   pendingSubmittedDraftToEditable,
   pendingSubmittedDraftToMessage,
 } from "../components/session/pending-submit-model";
+import { decidePendingSubmittedTranscriptAdoption } from "../components/session/pending-submit-reconciliation";
 import {
   createPendingSessionInstanceId,
   materializePendingSessionInstance,
@@ -165,7 +167,11 @@ import type { WorkspaceActivationOptions } from "../context/workspace-types";
 import type { ReconnectState } from "../context/session-reconnect";
 import { createSessionViewFlowFacade } from "../context/session-flow-facade";
 import { createSessionQueueDrainController } from "../context/session-queue-drain-controller";
-import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "./session-layout-width";
+import {
+  availableChatWidthForLayout,
+  reconcileSidebarLayoutForRootWidth,
+  responsiveLayoutRootWidth,
+} from "./session-layout-width";
 import { resolveSessionTitlebarContext } from "./session-titlebar-context";
 import {
   EMPTY_RUN_STATE,
@@ -765,7 +771,10 @@ export default function SessionView(props: SessionViewProps) {
     if (sidebarLayoutResizeFrame !== undefined) return;
     sidebarLayoutResizeFrame = window.requestAnimationFrame(() => {
       sidebarLayoutResizeFrame = undefined;
-      const rootWidth = sessionLayoutRootEl?.clientWidth ?? 0;
+      const rootWidth = responsiveLayoutRootWidth(
+        sessionLayoutRootEl?.clientWidth ?? 0,
+        typeof window !== "undefined" ? window.innerWidth : undefined,
+      );
       setLayoutRootWidth(rootWidth);
       applySidebarModeForRootWidth(rootWidth);
     });
@@ -782,7 +791,10 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const toggleSidebarMenu = (side: SidebarSide) => {
-    const measuredRootWidth = layoutRootWidth() || sessionLayoutRootEl?.clientWidth || 0;
+    const measuredRootWidth = layoutRootWidth() || responsiveLayoutRootWidth(
+      sessionLayoutRootEl?.clientWidth ?? 0,
+      typeof window !== "undefined" ? window.innerWidth : undefined,
+    );
     setSidebarLayoutState((current) => {
       const toggled = toggleSidebarFromButton(current, side);
       if (current.mode === "wide" && toggled.mode === "wide") {
@@ -857,6 +869,9 @@ export default function SessionView(props: SessionViewProps) {
     const root = sessionLayoutRootEl;
     if (!root) return;
 
+    const onResize = () => queueSidebarRootMeasurement();
+    window.addEventListener("resize", onResize);
+
     if (typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(() => {
         queueSidebarRootMeasurement();
@@ -865,6 +880,7 @@ export default function SessionView(props: SessionViewProps) {
       queueSidebarRootMeasurement();
       onCleanup(() => {
         observer.disconnect();
+        window.removeEventListener("resize", onResize);
         if (sidebarLayoutResizeFrame !== undefined) {
           window.cancelAnimationFrame(sidebarLayoutResizeFrame);
           sidebarLayoutResizeFrame = undefined;
@@ -873,8 +889,6 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
 
-    const onResize = () => queueSidebarRootMeasurement();
-    window.addEventListener("resize", onResize);
     queueSidebarRootMeasurement();
     onCleanup(() => {
       window.removeEventListener("resize", onResize);
@@ -1037,11 +1051,8 @@ export default function SessionView(props: SessionViewProps) {
     if (!sessionId) return null;
     const workspaceId = workspaceIdForQueueKey(sessionKey);
     const scoped = scopedSessionStatusKey(workspaceId, sessionId);
-    return (
-      (scoped ? props.conversationRunDiagnosticsBySessionKey[scoped] : null) ??
-      props.conversationRunDiagnosticsBySessionKey[sessionId] ??
-      null
-    );
+    if (scoped) return props.conversationRunDiagnosticsBySessionKey[scoped] ?? null;
+    return props.conversationRunDiagnosticsBySessionKey[sessionId] ?? null;
   };
   const [pendingQueueKeyAwaitingSessionIdByBaseKey, setPendingQueueKeyAwaitingSessionIdByBaseKey] =
     createSignal<Record<string, string>>({});
@@ -1224,35 +1235,6 @@ export default function SessionView(props: SessionViewProps) {
       setMaterializedSubmitDisplayHoldSessionId(null);
     }
   });
-  const messagePartMessageIds = (message: MessageWithParts) =>
-    message.parts
-      .map((part) => {
-        const messageID = (part as { messageID?: string | number }).messageID;
-        return typeof messageID === "string" ? messageID : typeof messageID === "number" ? String(messageID) : "";
-      })
-      .filter(Boolean);
-  const submittedDraftHasMessageInTranscript = (submitted: ReturnType<typeof optimisticSubmittedDraft>) => {
-    if (!submitted) return false;
-    const clientMessageId = submitted.clientMessageId.trim();
-    if (clientMessageId) {
-      const matchedById = props.messages.some((message) => {
-        if ((message.info as { role?: string }).role !== "user") return false;
-        if (messageIdFromInfo(message) === clientMessageId) return true;
-        return messagePartMessageIds(message).some((messageID) => messageID === clientMessageId);
-      });
-      if (matchedById) return true;
-    }
-
-    const text = (submitted.draft.resolvedText ?? submitted.draft.text).trim();
-    if (!text) return false;
-    const baselineIds = new Set(submitted.transcriptMessageIdsAtSubmit ?? []);
-    return props.messages.some((message) => {
-      if ((message.info as { role?: string }).role !== "user") return false;
-      const messageId = messageIdFromInfo(message);
-      if (messageId && baselineIds.has(messageId)) return false;
-      return message.parts.some((part) => part.type === "text" && (part.text ?? "").trim() === text);
-    });
-  };
   const setOptimisticSubmittedDraft = (
     sessionKey: string,
     draft: ReturnType<typeof createPendingSubmittedDraft>,
@@ -1396,7 +1378,13 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted || submitted.state !== "sending") return;
-    if (!submittedDraftHasMessageInTranscript(submitted)) return;
+    const adoption = decidePendingSubmittedTranscriptAdoption({
+      pending: submitted,
+      messages: props.messages,
+      sessionKey: currentSessionQueueKey(),
+      sessionId: props.selectedSessionId,
+    });
+    if (adoption.kind !== "adopt") return;
     setPendingSubmittedDraftBySessionKey((current) =>
       removePendingSubmittedDraftForKey(current, submitted.sessionKey, submitted.id),
     );
@@ -1406,9 +1394,19 @@ export default function SessionView(props: SessionViewProps) {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return {};
     if (submitted.sessionKey !== currentSessionQueueKey()) return {};
-    if (submitted.state !== "error") return {};
+    if (submitted.state === "sending" && terminalLifecycleOwnsOptimistic({
+      lifecycle: runDiagnosticForQueueKey(submitted.sessionKey),
+      optimisticSending: true,
+      optimisticAccepted: submitted.admission === "accepted",
+      acceptedRunId: submitted.acceptedRunId,
+      acceptedClientMessageId: submitted.acceptedClientMessageId,
+    })) {
+      return {};
+    }
     return {
-      [submitted.id]: { state: submitted.state, error: submitted.error },
+      [submitted.id]: submitted.state === "error"
+        ? { state: "error", error: submitted.error }
+        : { state: "sending" },
     };
   });
 
@@ -2058,46 +2056,25 @@ export default function SessionView(props: SessionViewProps) {
       ? formatTr("session.run_model_retry_blocked", { time })
       : formatTr("session.run_model_retry_no_output", { time });
   });
-  const hasAbortableBackendRun = createMemo(() => {
-    const diagnostic = activeRunDiagnostic();
-    if (diagnostic?.stale !== true) {
-      if (
-        diagnostic?.status === "submitted" ||
-        diagnostic?.status === "running" ||
-        diagnostic?.status === "blocked"
-      ) {
-        return true;
-      }
-    }
-    return (
-      props.sessionStatus === "submitted" ||
-      props.sessionStatus === "running" ||
-      props.sessionStatus === "retry" ||
-      props.sessionStatus === "blocked"
-    );
-  });
-
-  const runPhase = createMemo(() => {
-    if (props.error && (runStartedAt() !== null || runHasBegun())) return "error";
-    const diagnostic = activeRunDiagnostic();
-    if (diagnostic?.waitReason === "model_retry_no_output") {
-      return diagnostic.status === "blocked" ? "error" : "retrying";
-    }
-    const status = props.sessionStatus;
-    const started = runStartedAt() !== null;
-    if (status === "idle") {
-      if (!started) return "idle";
-      if (optimisticSubmittedDraft()) return "responding";
-      if (responseStarted()) return "responding";
-      return "sending";
-    }
-    if (status === "retry") return responseStarted() ? "responding" : "retrying";
-    if (responseStarted()) return "responding";
-    return "thinking";
-  });
-
-  const showRunIndicator = createMemo(() => runPhase() !== "idle");
+  const runPresentation = createMemo(() => deriveSessionRunPresentation({
+    hasSessionScope: Boolean(props.selectedSessionId?.trim()),
+    engineStatus: props.sessionStatus,
+    lifecycle: activeRunDiagnostic(),
+    local: {
+      started: runStartedAt() !== null,
+      hasBegun: runHasBegun(),
+      optimisticSending: optimisticSubmittedDraft()?.state === "sending",
+      optimisticAccepted: optimisticSubmittedDraft()?.admission === "accepted",
+      acceptedRunId: optimisticSubmittedDraft()?.acceptedRunId,
+      acceptedClientMessageId: optimisticSubmittedDraft()?.acceptedClientMessageId,
+      responseStarted: responseStarted(),
+    },
+  }));
+  const hasAbortableBackendRun = createMemo(() => runPresentation().abortable);
+  const runPhase = createMemo(() => runPresentation().phase);
+  const showRunIndicator = createMemo(() => runPresentation().showIndicator);
   const showFooterRunIndicator = createMemo(() => showRunIndicator());
+  const operationalError = createMemo(() => props.error?.trim() || null);
   createEffect(() => {
     const sessionId = props.selectedSessionId;
     if (sessionId === escapeStopConfirmationSessionId) return;
@@ -3566,7 +3543,7 @@ export default function SessionView(props: SessionViewProps) {
         sessionLayoutRootEl = el;
       }}
       data-feedback-capture-root
-      class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden"
+      class="flex h-screen w-full min-w-0 bg-dls-sidebar text-gray-12 font-sans overflow-hidden"
     >
       <TitlebarMenuToggles
         leftActive={leftSidebarToggleActive()}
@@ -3789,9 +3766,13 @@ export default function SessionView(props: SessionViewProps) {
         </>
         )}
         transcript={(
-        <div class="flex-1 flex overflow-hidden">
+        <div
+          data-testid="session-center-pane"
+          class="flex-1 flex overflow-hidden"
+        >
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
+              data-testid="session-transcript-viewport"
               class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-8 pb-20" : "pt-0 pb-0"} scroll-smooth bg-gray-1 ${nearBottom() ? "chat-scrollbar-hidden" : ""} ${initialAnchorPending() ? "invisible" : "visible"}`}
               style={{ contain: "layout paint style" }}
               ref={(el) => {
@@ -3993,7 +3974,7 @@ export default function SessionView(props: SessionViewProps) {
                           runPhase() === "error" ? "bg-red-9" : "bg-gray-8 animate-pulse"
                         }`}
                       />
-                      <span class="truncate">{(runPhase() === "error" && props.error) ? props.error : (runDiagnosticLabel() || thinkingStatus() || runLabel())}</span>
+                      <span class="truncate">{runDiagnosticLabel() || thinkingStatus() || runLabel()}</span>
                       <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
                     </div>
                   </div>
@@ -4001,6 +3982,12 @@ export default function SessionView(props: SessionViewProps) {
               ) : undefined
             }
           />
+
+          <Show when={operationalError()}>
+            <div class="px-3 py-2 text-xs text-gray-10" data-testid="session-operational-error" role="status">
+              {operationalError()}
+            </div>
+          </Show>
 
            <div
              ref={(el) => {

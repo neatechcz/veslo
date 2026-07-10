@@ -39,7 +39,7 @@ import {
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
 
 export type PendingMessageState = {
-  state: "error";
+  state: "sending" | "error";
   error?: string;
 };
 
@@ -1530,6 +1530,7 @@ export default function MessageList(props: MessageListProps) {
     return (
             <div
               class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+              data-testid="session-message-row"
               data-message-role={block.isUser ? "user" : "assistant"}
               data-message-id={block.messageId}
               style={blockPerfStyle(blockIndex)}
@@ -1607,6 +1608,11 @@ export default function MessageList(props: MessageListProps) {
                   >
                     <CircleAlert size={12} />
                     <span>{pendingSubmitFailureLabel(pendingMessageState()?.error)}</span>
+                  </div>
+                </Show>
+                <Show when={block.isUser && pendingMessageState()?.state === "sending"}>
+                  <div class="mt-2 font-product type-ui-xs text-gray-10" role="status" data-testid="pending-submit-sending">
+                    {tr("session.pending_submit_sending")}
                   </div>
                 </Show>
                 <div class="absolute bottom-2 right-2 flex justify-end gap-1 opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">

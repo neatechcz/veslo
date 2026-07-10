@@ -8,9 +8,12 @@ import {
   appendSessionErrorTurnModel,
   createPlaceholderMessage,
   formatSlashCommandDisplay,
+  readSessionErrorTurnsForScope,
   removeMessageInfo,
   removePartInfo,
   removeSession,
+  scopedSessionAliasKeys,
+  sessionErrorTurnScopeKey,
   sortMessagesByActivity,
   sortSessionsByActivity,
   upsertMessageInfo,
@@ -41,6 +44,25 @@ const makeMessage = (id: string, created: number, sessionID = "sess-a"): Message
     cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
   }) as MessageInfo;
+
+test("lifecycle diagnostics and error turns use workspace-scoped keys", () => {
+  assert.deepEqual(
+    scopedSessionAliasKeys("ws-a", ["sess-a", "open-a", "sess-a", "conv-a"]),
+    ["ws-a\0sess-a", "ws-a\0open-a", "ws-a\0conv-a"],
+  );
+  assert.equal(sessionErrorTurnScopeKey("ws-a", "sess-a"), "ws-a\0sess-a");
+  assert.equal(sessionErrorTurnScopeKey("ws-b", "sess-a"), "ws-b\0sess-a");
+
+  const legacyUnscoped = [{ id: "legacy", sessionID: "sess-a", text: "legacy", afterMessageID: null, time: 1 }];
+  const workspaceA = [{ id: "a", sessionID: "sess-a", text: "a", afterMessageID: null, time: 2 }];
+  const turns = {
+    "sess-a": legacyUnscoped,
+    "ws-a\0sess-a": workspaceA,
+  };
+  assert.deepEqual(readSessionErrorTurnsForScope(turns, "ws-a", "sess-a"), workspaceA);
+  assert.deepEqual(readSessionErrorTurnsForScope(turns, "ws-b", "sess-a"), []);
+  assert.deepEqual(readSessionErrorTurnsForScope(turns, null, "sess-a"), legacyUnscoped);
+});
 
 const makeUserMessage = (id: string, created: number, sessionID = "sess-a"): MessageInfo =>
   ({
@@ -160,4 +182,24 @@ test("placeholder messages and session error turns are modeled without store sid
   });
   assert.equal(next.length, 2);
   assert.match(next[1].id, /^session-error:sess-a:300:1$/);
+
+  const durable = appendSessionErrorTurnModel({
+    current: next,
+    sessionID: "sess-a",
+    message: "durable failure",
+    messages,
+    runId: "run-failed",
+    now: 400,
+  });
+  const duplicateDurable = appendSessionErrorTurnModel({
+    current: durable,
+    sessionID: "sess-a",
+    message: "durable failure repeated after reload",
+    messages,
+    runId: "run-failed",
+    now: 500,
+  });
+  assert.equal(durable.length, 3);
+  assert.equal(durable[2]?.durableRunId, "run-failed");
+  assert.equal(duplicateDurable, durable);
 });

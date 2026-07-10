@@ -6,12 +6,40 @@ import { startSessionQueueRuntimeFixture } from './session-queue-runtime-fixture
 test('session queue runtime fixture holds, releases, and deterministically fails queued OpenCode submissions', async () => {
   const fixture = await startSessionQueueRuntimeFixture();
   try {
+    const health = await fetch(`${fixture.baseUrl}/global/health`);
+    assert.equal(health.status, 200);
+    assert.deepEqual(await health.json(), { healthy: true });
+
     const session = await fetch(`${fixture.baseUrl}/session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id: 'ses-fixture', directory: '/fixture/workspace' }),
     });
     assert.equal(session.status, 200);
+
+    const mirroredTranscript = await fetch(`${fixture.baseUrl}/__session_queue_fixture/append-session-transcript`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 'ses-fixture',
+        messages: [{ id: 'msg-fixture', sessionID: 'ses-fixture', role: 'user' }],
+        partsByMessageId: {
+          'msg-fixture': [{ id: 'part-fixture', messageID: 'msg-fixture', type: 'file', filename: 'fixture.txt' }],
+        },
+      }),
+    });
+    assert.equal(mirroredTranscript.status, 200);
+    assert.deepEqual(
+      await fetch(`${fixture.baseUrl}/session/ses-fixture/message`).then((response) => response.json()),
+      [{
+        info: { id: 'msg-fixture', sessionID: 'ses-fixture', role: 'user' },
+        parts: [{ id: 'part-fixture', messageID: 'msg-fixture', type: 'file', filename: 'fixture.txt' }],
+      }],
+    );
+    assert.deepEqual(
+      await fetch(`${fixture.baseUrl}/session/ses-fixture/message/msg-fixture/part`).then((response) => response.json()),
+      [{ id: 'part-fixture', messageID: 'msg-fixture', type: 'file', filename: 'fixture.txt' }],
+    );
 
     const registered = await fetch(`${fixture.baseUrl}/workspace/ws-fixture/runs/register`, {
       method: 'POST',

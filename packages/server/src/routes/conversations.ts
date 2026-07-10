@@ -561,12 +561,53 @@ function optionalSubmitDebugTrace(payload: Record<string, unknown>): {
   return debugTrace ? { debugTrace } : {};
 }
 
-function sanitizeConversationQueueError(error: string | null): string | null {
+function isSensitiveConversationRunErrorKey(key: string): boolean {
+  const normalized = key.trim().toLowerCase().replace(/[-\s]+/g, "_");
+  return normalized.includes("token") ||
+    normalized === "authorization" ||
+    normalized === "directory" ||
+    normalized === "body" ||
+    normalized === "request_body" ||
+    normalized === "prompt" ||
+    normalized === "prompt_text" ||
+    normalized === "parts" ||
+    normalized === "messages";
+}
+
+function redactStructuredConversationRunError(value: unknown, depth = 0): unknown {
+  if (depth > 8) return "[redacted]";
+  if (Array.isArray(value)) {
+    return value.map((item) => redactStructuredConversationRunError(item, depth + 1));
+  }
+  if (!isRecordLike(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    isSensitiveConversationRunErrorKey(key)
+      ? "[redacted]"
+      : redactStructuredConversationRunError(item, depth + 1),
+  ]));
+}
+
+function sanitizeConversationRunError(error: string | null): string | null {
   const normalized = error?.replace(/\s+/g, " ").trim() ?? "";
   if (!normalized) return null;
-  return normalized
-    .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted]")
-    .replace(/\b([a-z_]*token[a-z_]*|authorization)\s*[=:]\s*[^\s,;]+/gi, "$1=[redacted]")
+  let sanitized = normalized;
+  try {
+    sanitized = JSON.stringify(redactStructuredConversationRunError(JSON.parse(normalized)));
+  } catch {
+    // Most lifecycle errors are plain text. Assignment redaction below handles those.
+  }
+  return sanitized
+    .replace(/\bBearer\s+[^\s,;}"']+/gi, "Bearer [redacted]")
+    .replace(
+      /(["'])([a-z_]*(?:token|authorization)[a-z_]*|directory|request_?body|body|prompt(?:_text)?)\1\s*:\s*(["'])[^"']*\3/gi,
+      (_match, keyQuote: string, key: string, valueQuote: string) =>
+        `${keyQuote}${key}${keyQuote}:${valueQuote}[redacted]${valueQuote}`,
+    )
+    .replace(
+      /\b([a-z_]*(?:token|authorization)[a-z_]*|directory|request_?body|body|prompt(?:_text)?)\b\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)/gi,
+      "$1=[redacted]",
+    )
     .slice(0, 500);
 }
 
@@ -593,7 +634,7 @@ function serializeConversationRunQueueStatus(
     updatedAt: item.updatedAt,
     startedAt: item.startedAt,
     completedAt: item.completedAt,
-    error: sanitizeConversationQueueError(item.error),
+    error: sanitizeConversationRunError(item.error),
   };
 }
 
@@ -1273,6 +1314,8 @@ export function registerConversationSessionRoutes(
       runId: status.runId,
       status: status.status,
       stale: status.stale,
+      error: sanitizeConversationRunError(status.error ?? null),
+      clientMessageId: status.clientMessageId ?? null,
       activityKind: status.activityKind ?? null,
       waitReason: status.waitReason ?? null,
       lastUsefulProgressAt: status.lastUsefulProgressAt ?? null,

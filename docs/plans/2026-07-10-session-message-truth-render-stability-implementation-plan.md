@@ -6,10 +6,10 @@ done: false
 repository_snapshot: veslo-main main 7e0819a7 plus active queue and fix-46 working tree
 depends_on:
   - docs/plans/2026-07-10-session-queue-final-implementation-plan.md
-smt01_durable_lifecycle_error_contract_done: false
-smt02_sse_lifecycle_arbitration_done: false
-smt03_scoped_run_presentation_done: false
-smt04_optimistic_transcript_adoption_done: false
+smt01_durable_lifecycle_error_contract_done: true
+smt02_sse_lifecycle_arbitration_done: true
+smt03_scoped_run_presentation_done: true
+smt04_optimistic_transcript_adoption_done: true
 smt05_render_geometry_gate_done: false
 smt06_desktop_transition_gate_done: false
 ---
@@ -350,7 +350,7 @@ Agents implement this plan in SMT order. Take the first phase whose
 
 ## SMT01 - Durable Lifecycle Error And Correlation Contract
 
-done: false
+done: true
 
 Priority: P1 durable run truth
 
@@ -425,7 +425,7 @@ git diff --check
 
 ## SMT02 - SSE And Durable Lifecycle Arbitration
 
-done: false
+done: true
 
 Priority: P1 false-terminal prevention
 
@@ -538,7 +538,7 @@ git diff --check
 
 ## SMT03 - Scoped Run Presentation Projection
 
-done: false
+done: true
 
 Priority: P1/P2 predictable run UI
 
@@ -619,7 +619,7 @@ git diff --check
 
 ## SMT04 - Deterministic Optimistic Transcript Adoption
 
-done: false
+done: true
 
 Priority: P1/P2 duplicate and disappearing message prevention
 
@@ -992,6 +992,10 @@ Append entries; do not rewrite earlier evidence.
 
 ```text
 2026-07-10 - SMTxx - changed: <paths> - verification: <exact commands and pass/fail counts> - notes: <scope or blocker> - done: false
+2026-07-10 - SMT01 - changed: packages/server/src/orchestrator-lifecycle-client.ts, packages/server/src/routes/conversations.ts, packages/app/src/app/lib/veslo-server/types.ts, focused server/app tests - verification: `pnpm --filter veslo-server exec bun test src/tests/orchestrator-lifecycle-client.test.ts src/tests/server-conversations.test.ts` (54 pass, 0 fail); `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/context/conversation-service.test.ts` (34 pass, 0 fail); server and app typechecks passed; `pnpm --filter veslo-server build:bin` passed; `git diff --check` passed - notes: durable error is sanitized at the public route and origin remains private - done: true
+2026-07-10 - SMT02 - changed: lifecycle recovery, session SSE arbitration, durable error-turn model, conversation latest-run recovery, focused app tests - verification: `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/context/session-lifecycle-recovery.test.ts src/app/tests/context/session-event-stream.test.ts src/app/tests/context/session-store-model.test.ts src/app/tests/context/session-workspace-cache.test.ts src/app/tests/context/conversation-service.test.ts src/app/tests/context/workspace-session-selection.test.ts` (80 pass, 0 fail); app typecheck passed; `git diff --check` passed - notes: SSE errors and idle observations now trigger a scoped immediate durable poll without disposing an admitted-run watch; exact selected conversations probe `latest` once after reload - done: true
+2026-07-10 - SMT03 - changed: packages/app/src/app/pages/session-run-presentation.ts, session page integration, focused presentation/Escape tests - verification: `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/pages/session-run-presentation.test.ts src/app/tests/pages/session-inline-loading.test.ts src/app/tests/pages/session-escape-stop-confirmation.test.ts src/app/tests/pages/session-conversation-flow.test.ts` (80 pass, 0 fail); app typecheck passed; `git diff --check` passed - notes: run indicator, Stop/Escape affordance, and abortability consume one scoped projection; operational errors render separately - done: true
+2026-07-10 - SMT04 - changed: pending-submit admission/reconciliation model, session adoption effect, pending-message visibility, focused app tests - verification: `pnpm --filter @neatech/veslo-ui exec node --test --import=tsx/esm src/app/tests/components/session/pending-submit-model.test.ts src/app/tests/components/session/pending-submit-reconciliation.test.ts src/app/components/session/pending-session-instance-model.test.ts src/app/tests/pages/session-conversation-flow.test.ts src/app/tests/pages/session-scroll-behavior.test.ts src/app/tests/pages/session-transcript-viewport.test.ts` (100 pass, 0 fail); app typecheck passed; `git diff --check` passed - notes: accepted rows adopt only through a unique scoped identity/fingerprint candidate; attachment-only sends are covered and ambiguities stay visibly optimistic - done: true
 ```
 
 Change an entry's final value to `done: true` only when the matching phase flag

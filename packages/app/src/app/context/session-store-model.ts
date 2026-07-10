@@ -7,6 +7,38 @@ import type {
   SessionErrorTurn,
 } from "../types";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
+import { scopedSessionStatusKey } from "../lib/scoped-session-status";
+
+export function scopedSessionAliasKeys(
+  workspaceId: string | null | undefined,
+  values: Array<string | null | undefined>,
+): string[] {
+  const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+  const ids = values.map((value) => value?.trim() ?? "").filter(Boolean);
+  return [...new Set(ids.map((id) => scopedSessionStatusKey(normalizedWorkspaceId, id) || id))];
+}
+
+export function sessionErrorTurnScopeKey(
+  workspaceId: string | null | undefined,
+  sessionId: string | null | undefined,
+): string {
+  const id = sessionId?.trim() ?? "";
+  if (!id) return "";
+  return scopedSessionStatusKey(workspaceId?.trim() ?? "", id) || id;
+}
+
+export function readSessionErrorTurnsForScope(
+  current: Record<string, SessionErrorTurn[] | undefined>,
+  workspaceId: string | null | undefined,
+  sessionId: string | null | undefined,
+): SessionErrorTurn[] {
+  const id = sessionId?.trim() ?? "";
+  if (!id) return [];
+  const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+  const key = sessionErrorTurnScopeKey(normalizedWorkspaceId, id);
+  if (normalizedWorkspaceId) return current[key] ?? [];
+  return current[id] ?? [];
+}
 
 export const sortById = <T extends { id: string }>(list: T[]) =>
   list.slice().sort((a, b) => a.id.localeCompare(b.id));
@@ -137,12 +169,17 @@ export function appendSessionErrorTurnModel(input: {
   sessionID: string;
   message: string | null | undefined;
   messages: MessageInfo[];
+  runId?: string | null;
   now?: number;
 }): SessionErrorTurn[] {
   const text = input.message?.trim() ?? "";
   if (!input.sessionID || !text) return input.current ?? [];
 
   const existing = input.current ?? [];
+  const durableRunId = input.runId?.trim() || null;
+  if (durableRunId && existing.some((turn) => turn.durableRunId === durableRunId)) {
+    return existing;
+  }
   const lastMessage = input.messages.length > 0 ? input.messages[input.messages.length - 1] : null;
   const afterMessageID = lastMessage?.id ?? null;
   const previous = existing[existing.length - 1];
@@ -156,6 +193,7 @@ export function appendSessionErrorTurnModel(input: {
     text,
     afterMessageID,
     time: now,
+    durableRunId,
   });
 }
 

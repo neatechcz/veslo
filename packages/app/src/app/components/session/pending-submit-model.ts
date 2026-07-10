@@ -5,6 +5,7 @@ import type { EditableUserMessageDraft } from "./message-editability";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../../i18n";
 
 export type PendingSubmittedDraftState = "sending" | "error";
+export type PendingSubmittedDraftAdmission = "pending" | "accepted";
 
 export type PendingSubmittedDraft = {
   id: string;
@@ -16,9 +17,16 @@ export type PendingSubmittedDraft = {
   draft: ComposerDraft;
   state: PendingSubmittedDraftState;
   error?: string;
+  admission?: PendingSubmittedDraftAdmission;
+  acceptedRunId?: string | null;
+  acceptedClientMessageId?: string | null;
+  admissionDiagnostic?: "client-message-mismatch";
 };
 
-type PendingSubmittedDraftInput = Omit<PendingSubmittedDraft, "state" | "error">;
+type PendingSubmittedDraftInput = Omit<
+  PendingSubmittedDraft,
+  "state" | "error" | "admission" | "acceptedRunId" | "acceptedClientMessageId" | "admissionDiagnostic"
+>;
 
 const filenameFromPath = (path: string) => {
   const normalized = path.replace(/\\/g, "/");
@@ -40,6 +48,28 @@ export function createPendingSubmittedDraft(input: PendingSubmittedDraftInput): 
   return {
     ...input,
     state: "sending",
+    admission: "pending",
+  };
+}
+
+export function markPendingSubmittedAccepted(
+  pending: PendingSubmittedDraft,
+  input: { runId?: string | null; clientMessageId?: string | null },
+): PendingSubmittedDraft {
+  if (pending.state === "error") return pending;
+  const acceptedClientMessageId = input.clientMessageId?.trim() || pending.clientMessageId.trim();
+  if (acceptedClientMessageId && acceptedClientMessageId !== pending.clientMessageId.trim()) {
+    return {
+      ...pending,
+      admissionDiagnostic: "client-message-mismatch",
+    };
+  }
+  return {
+    ...pending,
+    admission: "accepted",
+    acceptedRunId: input.runId?.trim() || null,
+    acceptedClientMessageId: acceptedClientMessageId || null,
+    admissionDiagnostic: undefined,
   };
 }
 

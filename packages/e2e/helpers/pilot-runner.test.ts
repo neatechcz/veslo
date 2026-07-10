@@ -12,6 +12,7 @@ import {
   defaultPilotScenarios,
   pilotScenarioSuiteNames,
   pilotFailureDiagnosticCommands,
+  pilotSessionRenderSuccessArtifactCommands,
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolvePilotDenAuthJson,
@@ -450,6 +451,37 @@ test('session queue durability uses its isolated deterministic runtime fixture',
   assert.throws(
     () => assertPilotScenarioSelectionIsolated([...selected, '/repo/packages/e2e/pilot-scenarios/smoke.toml']),
     /session-queue-durability must run as a focused pilot scenario/,
+  );
+});
+
+test('session render stability reuses the isolated deterministic lifecycle fixture and captures width-specific artifacts', () => {
+  const selected = ['/repo/packages/e2e/pilot-scenarios/session-render-stability.toml'];
+  assert.equal(scenarioSelectionNeedsSessionQueueRuntimeFixture(selected), true);
+  assert.throws(
+    () => assertPilotScenarioSelectionIsolated([...selected, '/repo/packages/e2e/pilot-scenarios/smoke.toml']),
+    /session-queue-durability must run as a focused pilot scenario/,
+  );
+  const commands = pilotSessionRenderSuccessArtifactCommands('/tmp/session-render-artifacts');
+  assert.deepEqual(
+    commands.filter((command) => command.name.startsWith('screenshot-')).map((command) => command.args.at(-1)),
+    [
+      join('/tmp/session-render-artifacts', 'session-390x844.png'),
+      join('/tmp/session-render-artifacts', 'session-768x900.png'),
+      join('/tmp/session-render-artifacts', 'session-1440x1000.png'),
+    ],
+  );
+  assert.deepEqual(
+    commands.find((command) => command.name === 'session-center-snapshot')?.args,
+    ['--window', 'main', 'snapshot', '-i', '--selector', '[data-testid="session-center-pane"]', '--depth', '8'],
+  );
+});
+
+test('session run truthfulness reuses the focused deterministic lifecycle fixture', () => {
+  const selected = ['/repo/packages/e2e/pilot-scenarios/session-run-truthfulness.toml'];
+  assert.equal(scenarioSelectionNeedsSessionQueueRuntimeFixture(selected), true);
+  assert.throws(
+    () => assertSessionQueueRuntimeFixtureProfileIsolation(selected, { E2E_USE_EXISTING_PROFILE: '1' }),
+    /must not use E2E_USE_EXISTING_PROFILE=1/,
   );
 });
 

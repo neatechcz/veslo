@@ -22,6 +22,8 @@
     "test:pilot:sidebar-context-menu": "node --import=tsx/esm ./specs/sidebar-context-menu.pilot.ts",
     "test:pilot:plugins-policy": "node --import=tsx/esm ./specs/plugins-policy.pilot.ts",
     "test:pilot:visual-regression": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario visual-regression",
+    "test:pilot:session-render-stability": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-render-stability",
+    "test:pilot:session-run-truthfulness": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-run-truthfulness",
     "test:pilot:feedback-youtrack-live": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario feedback-youtrack-live",
     "test:pilot:live-admin-codex-roundtrip": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario live-admin-codex-roundtrip",
     "test:pilot:den-managed-openai-anthropic": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario den-managed-openai-anthropic",

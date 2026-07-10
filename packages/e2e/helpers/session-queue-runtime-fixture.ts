@@ -19,6 +19,7 @@ type FixtureRun = {
   clientMessageId: string | null;
   origin: string | null;
   status: LifecycleStatus;
+  error: string | null;
   createdAt: number;
 };
 
@@ -30,9 +31,18 @@ type FixtureSession = {
   time: { created: number; updated: number };
 };
 
+type FixtureTranscript = {
+  messages: unknown[];
+  partsByMessageId: Record<string, unknown[]>;
+};
+
 type FixtureState = {
   sessions: Map<string, FixtureSession>;
+  transcripts: Map<string, FixtureTranscript>;
   runs: Map<string, FixtureRun>;
+  eventStreams: Set<ServerResponse>;
+  emittedEventCount: number;
+  runStatusReads: number;
   promptCalls: number;
   failedPromptCalls: number;
   failNextPromptCalls: number;
@@ -86,6 +96,7 @@ const lifecyclePayload = (run: FixtureRun) => ({
   stale: false,
   clientMessageId: run.clientMessageId,
   origin: run.origin,
+  error: run.error,
   activityKind: run.status === 'running' ? 'unknown' : 'idle',
   waitReason: run.status === 'running' ? 'assistant_message_open' : 'session_idle',
   lastUsefulProgressAt: run.createdAt,
@@ -96,6 +107,9 @@ const fixtureStatePayload = (state: FixtureState) => ({
   promptCalls: state.promptCalls,
   failedPromptCalls: state.failedPromptCalls,
   failNextPromptCalls: state.failNextPromptCalls,
+  sseSubscriberCount: state.eventStreams.size,
+  emittedEventCount: state.emittedEventCount,
+  runStatusReads: state.runStatusReads,
   runs: [...state.runs.values()].map((run) => ({
     workspaceId: run.workspaceId,
     conversationId: run.conversationId,
@@ -105,6 +119,18 @@ const fixtureStatePayload = (state: FixtureState) => ({
     status: run.status,
   })),
 });
+
+const emitFixtureEvent = (state: FixtureState, event: unknown) => {
+  state.emittedEventCount += 1;
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  for (const response of state.eventStreams) {
+    if (response.writableEnded || response.destroyed) {
+      state.eventStreams.delete(response);
+      continue;
+    }
+    response.write(payload);
+  }
+};
 
 const activeRunForConversation = (state: FixtureState, workspaceId: string, conversationId: string) =>
   [...state.runs.values()]
@@ -120,6 +146,34 @@ const latestRunForConversation = (state: FixtureState, workspaceId: string, conv
 const findRunById = (state: FixtureState, workspaceId: string, runId: string) => {
   const run = state.runs.get(runId) ?? null;
   return run?.workspaceId === workspaceId ? run : null;
+};
+
+const transcriptMessageId = (value: unknown) =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? normalized((value as Record<string, unknown>).id)
+    : '';
+
+const appendFixtureTranscript = (state: FixtureState, sessionId: string, input: Record<string, unknown>) => {
+  const messages = Array.isArray(input.messages) ? input.messages : [];
+  const suppliedParts = input.partsByMessageId;
+  const partsByMessageId = suppliedParts && typeof suppliedParts === 'object' && !Array.isArray(suppliedParts)
+    ? suppliedParts as Record<string, unknown>
+    : {};
+  const current = state.transcripts.get(sessionId) ?? { messages: [], partsByMessageId: {} };
+  const messageIds = new Set(messages.map(transcriptMessageId).filter(Boolean));
+  const mergedMessages = [
+    ...current.messages.filter((message) => !messageIds.has(transcriptMessageId(message))),
+    ...messages,
+  ];
+  const mergedParts = { ...current.partsByMessageId };
+  for (const [messageId, parts] of Object.entries(partsByMessageId)) {
+    const id = messageId.trim();
+    if (!id || !Array.isArray(parts)) continue;
+    mergedParts[id] = parts;
+  }
+  const transcript = { messages: mergedMessages, partsByMessageId: mergedParts };
+  state.transcripts.set(sessionId, transcript);
+  return transcript;
 };
 
 async function listen(server: Server): Promise<number> {
@@ -186,7 +240,11 @@ async function stopVesloServerChild(child: ChildProcess): Promise<void> {
 export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRuntimeFixture> {
   const state: FixtureState = {
     sessions: new Map(),
+    transcripts: new Map(),
     runs: new Map(),
+    eventStreams: new Set(),
+    emittedEventCount: 0,
+    runStatusReads: 0,
     promptCalls: 0,
     failedPromptCalls: 0,
     failNextPromptCalls: 0,
@@ -271,6 +329,22 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
       sendJson(response, 200, { ok: true });
       return;
     }
+    if (method === 'GET' && url.pathname.endsWith('/global/health')) {
+      sendJson(response, 200, { healthy: true });
+      return;
+    }
+    if (method === 'GET' && url.pathname.endsWith('/event')) {
+      response.writeHead(200, {
+        'access-control-allow-origin': '*',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive',
+        'content-type': 'text/event-stream; charset=utf-8',
+      });
+      response.write(': session queue fixture connected\n\n');
+      state.eventStreams.add(response);
+      request.once('close', () => state.eventStreams.delete(response));
+      return;
+    }
     if (url.pathname === '/__session_queue_fixture/state' && method === 'GET') {
       sendJson(response, 200, fixtureStatePayload(state));
       return;
@@ -287,6 +361,64 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
       const count = Number(body.count);
       state.failNextPromptCalls = Number.isInteger(count) && count > 0 ? count : 1;
       sendJson(response, 200, fixtureStatePayload(state));
+      return;
+    }
+    if (url.pathname === '/__session_queue_fixture/emit-session-error' && method === 'POST') {
+      const body = await readJson(request);
+      const sessionId = normalized(body.sessionId);
+      const message = normalized(body.message) || 'Session queue fixture emitted session.error.';
+      if (!sessionId) {
+        sendJson(response, 400, { error: 'session_id_required' });
+        return;
+      }
+      emitFixtureEvent(state, {
+        type: 'session.error',
+        properties: { sessionID: sessionId, error: { name: 'FixtureSessionError', message } },
+      });
+      sendJson(response, 200, fixtureStatePayload(state));
+      return;
+    }
+    if (url.pathname === '/__session_queue_fixture/emit-session-idle' && method === 'POST') {
+      const body = await readJson(request);
+      const sessionId = normalized(body.sessionId);
+      if (!sessionId) {
+        sendJson(response, 400, { error: 'session_id_required' });
+        return;
+      }
+      emitFixtureEvent(state, { type: 'session.idle', properties: { sessionID: sessionId } });
+      sendJson(response, 200, fixtureStatePayload(state));
+      return;
+    }
+    if (url.pathname === '/__session_queue_fixture/emit-operational-error' && method === 'POST') {
+      const body = await readJson(request);
+      const message = normalized(body.message) || 'Session queue fixture emitted an unrelated operational error.';
+      emitFixtureEvent(state, {
+        type: 'session.error',
+        properties: { error: { name: 'FixtureOperationalError', message } },
+      });
+      sendJson(response, 200, fixtureStatePayload(state));
+      return;
+    }
+    if (url.pathname === '/__session_queue_fixture/emit-session-created' && method === 'POST') {
+      const body = await readJson(request);
+      const sessionId = normalized(body.sessionId);
+      const session = state.sessions.get(sessionId);
+      if (!session) {
+        sendJson(response, 404, { error: 'session_not_found' });
+        return;
+      }
+      emitFixtureEvent(state, { type: 'session.created', properties: { info: session } });
+      sendJson(response, 200, fixtureStatePayload(state));
+      return;
+    }
+    if (url.pathname === '/__session_queue_fixture/append-session-transcript' && method === 'POST') {
+      const body = await readJson(request);
+      const sessionId = normalized(body.sessionId);
+      if (!sessionId || !state.sessions.has(sessionId)) {
+        sendJson(response, 404, { error: 'session_not_found' });
+        return;
+      }
+      sendJson(response, 200, appendFixtureTranscript(state, sessionId, body));
       return;
     }
     if (url.pathname === '/__session_queue_fixture/restart-veslo-server' && method === 'POST') {
@@ -329,8 +461,17 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
         sendJson(response, 200, session);
         return;
       }
-      if (method === 'GET' && segments[2] === 'message') {
-        sendJson(response, 200, []);
+      if (method === 'GET' && segments[2] === 'message' && segments.length === 3) {
+        const transcript = state.transcripts.get(sessionId);
+        sendJson(response, 200, (transcript?.messages ?? []).map((info) => ({
+          info,
+          parts: transcript?.partsByMessageId[normalized(info.id)] ?? [],
+        })));
+        return;
+      }
+      if (method === 'GET' && segments[2] === 'message' && segments[4] === 'part') {
+        const messageId = segments[3] ?? '';
+        sendJson(response, 200, state.transcripts.get(sessionId)?.partsByMessageId[messageId] ?? []);
         return;
       }
       if (method === 'POST' && segments[2] === 'abort') {
@@ -367,6 +508,7 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
         clientMessageId: normalized(body.clientMessageId) || null,
         origin: normalized(body.origin) || null,
         status: 'running',
+        error: null,
         createdAt: Date.now(),
       };
       state.runs.set(runId, created);
@@ -381,12 +523,17 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
         return;
       }
       const action = segments[4];
-      if (action === 'failed') run.status = 'failed';
+      if (action === 'failed') {
+        run.status = 'failed';
+        run.error = normalized((await readJson(request)).error) || 'Session queue fixture run failed.';
+      }
+      if (action === 'completed') run.status = 'completed';
       if (action === 'aborted') run.status = 'aborted';
       sendJson(response, 200, lifecyclePayload(run));
       return;
     }
     if (segments[0] === 'workspace' && segments[2] === 'conversations' && segments[4] === 'runs' && method === 'GET') {
+      state.runStatusReads += 1;
       const workspaceId = segments[1] ?? '';
       const conversationId = segments[3] ?? '';
       const requestedRunId = segments[5] ?? '';

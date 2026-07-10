@@ -1644,6 +1644,8 @@ export type VesloConversationRunStatusResult = {
   runId: string;
   status: VesloConversationRunLifecycleStatus;
   stale: boolean;
+  error?: string | null;
+  clientMessageId?: string | null;
   activityKind?: VesloConversationRunActivityKind | null;
   waitReason?: VesloConversationRunWaitReason | null;
   lastUsefulProgressAt?: number | null;

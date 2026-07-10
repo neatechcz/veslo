@@ -180,6 +180,11 @@ export type SessionEventStreamControllerDeps = {
   onReconnectNotice?: (notice: ReconnectNotice) => void;
   onReconnectState?: (state: ReconnectState) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
+  onSessionLifecycleObservation?: (
+    sessionId: string,
+    workspaceId: string | null | undefined,
+    type: "session.idle" | "session.error",
+  ) => boolean;
   sessionDebugEnabled: () => boolean;
   sessionWarn: (label: string, payload?: unknown) => void;
   recordSessionStatusTrace: (event: string, payload?: Record<string, unknown>) => void;
@@ -193,7 +198,7 @@ export type SessionEventStreamControllerDeps = {
   workspaceSessionIds: Set<string>;
   applySessionDirectoryOverride: <T extends Session>(session: T) => T;
   resolveSessionDirectory: (session: Pick<Session, "id" | "directory">) => string;
-  appendSessionErrorTurn: (sessionID: string, text: string) => void;
+  appendSessionErrorTurn: (sessionID: string, text: string, options?: { workspaceId?: string | null }) => void;
   setCommandDisplay: (messageID: string, name: string, args: string) => void;
   recordSyntheticContinueDiagnostic: (part: Part) => void;
   maybeMarkReloadRequired: (part: Part) => void;
@@ -367,6 +372,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     }
 
     if ((event.type === "session.idle" || event.type === "session.error") && sessionID) {
+      deps.onSessionLifecycleObservation?.(sessionID, workspaceId, event.type);
       deps.recordSessionStatusTrace("background-sse-session-idle", {
         sessionId: sessionID,
         status: "idle",
@@ -537,6 +543,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
+          deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.idle");
           deps.recordSessionStatusTrace("sse-session-idle", {
             sessionId: sessionID,
             status: "idle",
@@ -579,13 +586,16 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
+        const errorObj = record.error as Record<string, unknown> | undefined;
+        const errorName = typeof errorObj?.name === "string" ? errorObj.name : "UnknownError";
+        const lifecycleOwnsEvent = sessionID && errorName !== "MessageAbortedError"
+          ? deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.error") === true
+          : false;
         if (sessionID) {
           deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
           deps.notifySessionBusy(sessionID, "idle", sourceWsId);
         }
-        const errorObj = record.error as Record<string, unknown> | undefined;
         if (errorObj) {
-          const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
           if (errorName === "MessageAbortedError") {
             if (!sessionID) {
               deps.setError(null);
@@ -595,7 +605,9 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           const formattedError = addOpencodeCacheHint(formatSessionError(errorObj));
           const localInvalidBearer = isLocalVesloServerInvalidBearerError(errorObj);
           if (sessionID) {
-            deps.appendSessionErrorTurn(sessionID, formattedError);
+            if (!lifecycleOwnsEvent) {
+              deps.appendSessionErrorTurn(sessionID, formattedError, { workspaceId: sourceWsId });
+            }
           } else {
             deps.setError(formattedError);
           }
@@ -650,7 +662,9 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
         const fallback = truncateErrorField(record.error, 700) ?? "An unexpected error occurred";
         if (sessionID) {
-          deps.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback));
+          if (!lifecycleOwnsEvent) {
+            deps.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback), { workspaceId: sourceWsId });
+          }
         } else {
           deps.setError(addOpencodeCacheHint(fallback));
         }

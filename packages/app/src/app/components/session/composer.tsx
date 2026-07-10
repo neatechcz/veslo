@@ -1724,6 +1724,7 @@ export default function Composer(props: ComposerProps) {
 
   return (
     <div
+      data-testid="session-composer"
       class={rootClass()}
       style={{ contain: "layout style" }}
     >

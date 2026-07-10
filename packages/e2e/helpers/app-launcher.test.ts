@@ -283,6 +283,40 @@ test('seedDefaultWorkspaceState uses the deterministic queue fixture as a remote
   }
 });
 
+test('seedDefaultWorkspaceState can require an explicit user activation for session runtime fixtures', () => {
+  const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-session-runtime-home-'));
+  try {
+    seedDefaultWorkspaceState(root, {
+      E2E_SESSION_QUEUE_FIXTURE_BASE_URL: 'http://127.0.0.1:45678',
+      E2E_SESSION_QUEUE_VESLO_SERVER_URL: 'http://127.0.0.1:45679',
+      E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN: 'session-queue-e2e-token',
+      E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID: 'session-queue-workspace',
+      E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION: '1',
+    });
+    const stateDirectory = process.platform === 'win32'
+      ? join(root, 'AppData', 'Roaming', 'com.neatech.veslo.e2e')
+      : join(root, '.local', 'share', 'com.neatech.veslo.e2e');
+    const state = JSON.parse(readFileSync(join(stateDirectory, 'veslo-workspaces.json'), 'utf8')) as {
+      activeId: string;
+      workspaces: Array<{ id: string; workspaceType?: string; remoteType?: string; baseUrl?: string | null }>;
+    };
+    assert.equal(state.activeId, 'e2e-session-runtime-decoy');
+    assert.deepEqual(state.workspaces.at(-1), {
+      id: 'e2e-session-runtime-decoy',
+      name: 'E2E activation decoy',
+      path: join(root, 'workspaces', 'visual-workspace'),
+      preset: 'remote',
+      workspaceType: 'remote',
+      remoteType: 'opencode',
+      baseUrl: 'http://127.0.0.1:9/e2e-activation-decoy',
+      directory: join(root, 'workspaces', 'visual-workspace'),
+      displayName: 'E2E activation decoy',
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('seedDefaultWorkspaceState can seed legacy manifestless Soul runtime files', () => {
   const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-home-'));
   try {

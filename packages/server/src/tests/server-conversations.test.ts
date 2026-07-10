@@ -4472,6 +4472,8 @@ describe("conversation routes", () => {
     let runIdFromRegister = "";
     let conversationIdFromRegister = "";
     let activeRunAvailable = false;
+    let lifecycleStatus = "running";
+    let lifecycleError: string | null = null;
     const orchestratorRequests: Array<{
       method: string;
       pathname: string;
@@ -4581,8 +4583,10 @@ describe("conversation routes", () => {
             workspaceId: "ws_1",
             conversationId: conversationIdFromRegister,
             runId: runIdFromRegister,
-            status: "running",
+            status: lifecycleStatus,
             stale: false,
+            clientMessageId: "msg-lifecycle",
+            error: lifecycleError,
             activityKind: "model_retry",
             waitReason: "model_retry_no_output",
             lastUsefulProgressAt: 1_000,
@@ -4708,6 +4712,46 @@ describe("conversation routes", () => {
     expect(statusPayload.lastUsefulProgressAt).toBe(1_000);
     expect(statusPayload.retrySince).toBe(2_000);
     expect(statusPayload.noProgressSeconds).toBe(12);
+
+    lifecycleStatus = "failed";
+    lifecycleError = `Bearer secret-token authorization=secret-authorization ${"detail ".repeat(100)}`;
+    const failedStatusResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/latest`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    expect(failedStatusResponse.status).toBe(200);
+    const failedStatusPayload = await failedStatusResponse.json() as Record<string, unknown>;
+    expect(failedStatusPayload).toMatchObject({
+      runId: runIdFromRegister,
+      status: "failed",
+      clientMessageId: "msg-lifecycle",
+    });
+    expect(String(failedStatusPayload.error)).toStartWith("Bearer [redacted] authorization=[redacted]");
+    expect(String(failedStatusPayload.error).length).toBeLessThanOrEqual(500);
+    expect(failedStatusPayload).not.toHaveProperty("origin");
+    expect(failedStatusPayload).not.toHaveProperty("directory");
+    expect(failedStatusPayload).not.toHaveProperty("body");
+    expect(failedStatusPayload).not.toHaveProperty("runtimeAuthorizationActorTokenHash");
+
+    lifecycleError = JSON.stringify({
+      authorization: "json-authorization-secret",
+      access_token: "json-token-secret",
+      directory: workspaceRoot,
+      body: { prompt: "private prompt", parts: [{ type: "text", text: "private body" }] },
+      detail: "actionable failure detail",
+    });
+    const structuredFailureResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/latest`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    const structuredFailurePayload = await structuredFailureResponse.json() as { error?: string | null };
+    expect(structuredFailureResponse.status).toBe(200);
+    expect(structuredFailurePayload.error).toContain("actionable failure detail");
+    expect(structuredFailurePayload.error).not.toContain("json-authorization-secret");
+    expect(structuredFailurePayload.error).not.toContain("json-token-secret");
+    expect(structuredFailurePayload.error).not.toContain(workspaceRoot);
+    expect(structuredFailurePayload.error).not.toContain("private prompt");
+    expect(structuredFailurePayload.error).not.toContain("private body");
 
     activeRunAvailable = true;
     const activeAbortResponse = await fetch(

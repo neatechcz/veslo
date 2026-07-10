@@ -116,6 +116,33 @@ Main source of truth:
 
 - `packages/app/src/app/components/session/composer.tsx`
 
+## Run Truth And Transcript Adoption
+
+After a server accepts a scoped conversation run, the durable lifecycle record owns its terminal
+truth. OpenCode SSE `session.error` and `session.idle` observations are immediate reconciliation
+signals: they can refresh local activity presentation and trigger a durable run-status read, but
+they cannot by themselves turn an admitted run into a failed terminal outcome.
+
+The visible run indicator, Stop control, and Escape stop shortcut use the same session-scoped
+projection. A non-stale lifecycle `running` result stays active even if a transient SSE observation
+has already made the engine session look idle. Failed, completed, and aborted lifecycle results have
+different visible outcomes: only a durable failed result creates one scoped red error turn; completed
+and aborted results settle idle without failed-run treatment. App-wide operational errors render in a
+separate neutral boundary and do not change an unrelated session's run phase or abortability.
+
+Submitted user rows remain optimistic until the app finds exactly one canonical user transcript row
+in the same workspace/session scope after admission. Explicit client-message identity wins when it
+exists; otherwise the app uses a normalized display fingerprint across prompt/shell mode, text, and
+file name/MIME identity. This covers attachment-only messages. Ambiguous or mismatched candidates
+remain visibly optimistic rather than deleting either row or replaying the send.
+
+Main source of truth:
+
+- lifecycle reconciliation: `packages/app/src/app/context/session-lifecycle-recovery.ts`
+- SSE arbitration: `packages/app/src/app/context/session-event-stream.ts`
+- run presentation: `packages/app/src/app/pages/session-run-presentation.ts`
+- optimistic adoption: `packages/app/src/app/components/session/pending-submit-reconciliation.ts`
+
 ## Session Message Queue
 
 There are two deliberately separate queue owners:

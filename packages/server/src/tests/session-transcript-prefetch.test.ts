@@ -2,6 +2,29 @@ import { describe, expect, test } from "bun:test";
 import { createSessionTranscriptPrefetchStore } from "../session-transcript-prefetch.js";
 
 describe("session transcript prefetch core", () => {
+  test("invalidates a Windows path cache entry through an equivalent path spelling", async () => {
+    let calls = 0;
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId, directory }) => {
+        calls += 1;
+        return {
+          workspaceId,
+          sessionId,
+          directory: directory ?? undefined,
+          messages: [{ id: `msg-${calls}` }],
+          partsByMessageId: {},
+        };
+      },
+    });
+
+    await store.getOrLoad({ workspaceId: "ws-a", sessionId: "ses-a", limit: 10, directory: "C:\\Work\\Veslo" });
+    store.invalidate({ workspaceId: "ws-a", sessionId: "ses-a", directory: "c:/work/veslo" });
+    const result = await store.getOrLoad({ workspaceId: "ws-a", sessionId: "ses-a", limit: 10, directory: "C:/WORK/VESLO" });
+
+    expect(calls).toBe(2);
+    expect(result.messages).toEqual([{ id: "msg-2" }]);
+  });
+
   test("prioritizes clicked, selected, expanded, and loaded sessions in queue order", async () => {
     const store = createSessionTranscriptPrefetchStore({
       loadTranscript: async ({ workspaceId, sessionId }) => ({

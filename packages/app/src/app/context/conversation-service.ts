@@ -1362,7 +1362,11 @@ export function createConversationService<Client extends ConversationServiceClie
     return result;
   };
 
-  const resolveConversationRunForSession = (sessionId: string, workspaceIdHint?: string | null) => {
+  const resolveConversationRunForSession = (
+    sessionId: string,
+    workspaceIdHint?: string | null,
+    options?: { allowLatest?: boolean },
+  ) => {
     const normalizedSessionId = sessionId.trim();
     if (!normalizedSessionId) return null;
     const scope = deps.resolveSelectedSessionBrowseScope(normalizedSessionId);
@@ -1392,14 +1396,18 @@ export function createConversationService<Client extends ConversationServiceClie
       opencodeSessionId,
       uiSessionId: normalizedSessionId,
     });
-    if (!runId) return null;
+    const exactBrowseScope = Boolean(
+      scope?.workspaceId?.trim() &&
+      scope.conversationId?.trim(),
+    );
+    if (!runId && !(options?.allowLatest && exactBrowseScope)) return null;
     return {
       sessionId: normalizedSessionId,
       workspaceId,
       conversationId,
       opencodeSessionId,
       directory,
-      runId,
+      runId: runId || "latest",
     };
   };
 
@@ -1407,6 +1415,8 @@ export function createConversationService<Client extends ConversationServiceClie
     workspaceId: string;
     directory?: string | null;
     conversationId: string;
+    opencodeSessionId?: string | null;
+    sessionId?: string | null;
     runId: string;
   }) => {
     const serverClient = await resolvePassiveConversationReadClient({
@@ -1441,11 +1451,21 @@ export function createConversationService<Client extends ConversationServiceClie
       return null;
     }
     try {
-      return await serverClient.getConversationRunStatus(
+      const result = await serverClient.getConversationRunStatus(
         serverWorkspaceId,
         scope.conversationId,
         scope.runId,
       );
+      if (scope.runId === "latest" && result.runId?.trim()) {
+        deps.rememberLatestConversationLifecycleRunId({
+          workspaceId: scope.workspaceId,
+          conversationId: scope.conversationId,
+          opencodeSessionId: scope.opencodeSessionId,
+          uiSessionId: scope.sessionId,
+          runId: result.runId,
+        });
+      }
+      return result;
     } catch (error) {
       if (error instanceof VesloServerError && error.status === 404) {
         deps.recordSendTrace("readConversationRunStatus:not-found", {

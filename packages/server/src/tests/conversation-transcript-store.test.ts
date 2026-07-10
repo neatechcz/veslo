@@ -303,4 +303,22 @@ describe("conversation transcript store", () => {
 
     expect(result!.messages.map((message) => (message as { id: string }).id)).toEqual(["msg-legacy"]);
   });
+
+  test("keeps Windows directory casing and slash forms on one durable transcript key", async () => {
+    const store = await newStore();
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      directory: "C:\\Work\\Veslo",
+      engineSessionId: "ses-windows",
+      messages: [{ id: "msg-windows", payload: { id: "msg-windows" }, parts: [] }],
+    });
+
+    const result = await store.getTranscript({
+      workspaceId: "ws-a",
+      directory: "c:/work/veslo",
+      engineSessionId: "ses-windows",
+    });
+
+    expect(result!.messages.map((message) => (message as { id: string }).id)).toEqual(["msg-windows"]);
+  });
 });

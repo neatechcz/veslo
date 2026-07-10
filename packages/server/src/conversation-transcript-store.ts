@@ -2,7 +2,10 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { resolveConversationBindingDbPath } from "./conversation-binding-store.js";
+import {
+  normalizeConversationDirectoryKey,
+  resolveConversationBindingDbPath,
+} from "./conversation-binding-store.js";
 
 // Host-side transcript persistence (messages + parts). Lives in the same
 // `bindings.sqlite` as conversation summaries (host = the durable source of
@@ -274,7 +277,7 @@ export function createConversationTranscriptStore(options?: {
   return {
     async appendTranscript(input) {
       const workspaceId = normalizeText(input.workspaceId);
-      const directory = normalizeText(input.directory);
+      const directory = normalizeConversationDirectoryKey(input.directory);
       const engineSessionId = normalizeText(input.engineSessionId);
       const hasDeletedMessages = normalizeTextList(input.deletedMessageIds).length > 0;
       const hasDeletedParts = Object.values(input.deletedPartsByMessageId ?? {})
@@ -422,7 +425,7 @@ export function createConversationTranscriptStore(options?: {
 
     async getTranscript(input) {
       const workspaceId = normalizeText(input.workspaceId);
-      const directory = normalizeText(input.directory);
+      const directory = normalizeConversationDirectoryKey(input.directory);
       const engineSessionId = normalizeText(input.engineSessionId);
       if (!workspaceId || !engineSessionId) return null;
       const limit =
@@ -477,7 +480,32 @@ export function createConversationTranscriptStore(options?: {
           return { messages, partsByMessageId };
         };
 
-        return readScopedTranscript(directory) ?? (directory ? readScopedTranscript("") : null);
+        const direct = readScopedTranscript(directory);
+        if (direct) return direct;
+
+        // Rows written before directory-key normalization can still use a
+        // Windows casing or slash variant. Resolve one exact legacy row before
+        // the deliberate unscoped fallback, without weakening Unix directory
+        // isolation.
+        if (directory) {
+          const legacyDirectory = db
+            .query<{ directory: string }, [string, string]>(
+              `SELECT directory FROM conversation_message
+               WHERE workspace_id = ?1 AND engine_session_id = ?2
+               UNION
+               SELECT directory FROM conversation_transcript_empty
+               WHERE workspace_id = ?1 AND engine_session_id = ?2`,
+            )
+            .all(workspaceId, engineSessionId)
+            .map((row) => row.directory)
+            .find((storedDirectory) => normalizeConversationDirectoryKey(storedDirectory) === directory);
+          if (legacyDirectory) {
+            const legacy = readScopedTranscript(legacyDirectory);
+            if (legacy) return legacy;
+          }
+        }
+
+        return directory ? readScopedTranscript("") : null;
       });
     },
   };

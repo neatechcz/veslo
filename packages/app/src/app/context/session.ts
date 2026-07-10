@@ -31,13 +31,15 @@ import {
 } from "../lib/opencode-part-access";
 import {
   readSessionStatus,
-  scopedSessionStatusKey,
   withSessionStatus,
 } from "../lib/scoped-session-status";
 import {
   appendSessionErrorTurnModel,
   applyCommandDisplayAlias,
   formatSlashCommandDisplay,
+  readSessionErrorTurnsForScope,
+  scopedSessionAliasKeys,
+  sessionErrorTurnScopeKey,
   sortSessionsByActivity,
 } from "./session-store-model";
 import {
@@ -144,6 +146,7 @@ export function createSessionStore(options: {
   resolveConversationRunForSession?: (
     sessionID: string,
     workspaceIdHint?: string | null,
+    options?: { allowLatest?: boolean },
   ) => SessionLifecycleRecoveryScope | null;
   readConversationRunStatus?: (
     scope: SessionLifecycleRecoveryScope,
@@ -318,17 +321,11 @@ export function createSessionStore(options: {
 
   const conversationRunDiagnosticKeys = (scope: SessionLifecycleRecoveryScope) => {
     const workspaceId = statusWorkspaceId(scope.workspaceId);
-    const ids = [
+    return scopedSessionAliasKeys(workspaceId, [
       scope.sessionId,
       scope.opencodeSessionId,
       scope.conversationId,
-    ]
-      .map((value) => value?.trim() ?? "")
-      .filter(Boolean);
-    return [...new Set(ids.flatMap((id) => {
-      const scoped = scopedSessionStatusKey(workspaceId, id);
-      return scoped ? [scoped, id] : [id];
-    }))];
+    ]);
   };
 
   function updateConversationRunDiagnosticsForScope(
@@ -650,19 +647,35 @@ export function createSessionStore(options: {
     options.setError(addOpencodeCacheHint(message));
   };
 
-  const appendSessionErrorTurn = (sessionID: string, message: string | null) => {
+  const appendSessionErrorTurn = (
+    sessionID: string,
+    message: string | null,
+    appendOptions?: { durableRunId?: string | null; workspaceId?: string | null },
+  ) => {
     const text = message?.trim() ?? "";
     if (!sessionID || !text) return;
 
+    const workspaceId = appendOptions?.workspaceId?.trim() ||
+      options.resolveSessionWorkspaceId?.(sessionID)?.trim() ||
+      statusWorkspaceId();
+    const errorTurnKey = sessionErrorTurnScopeKey(workspaceId, sessionID);
     const list = store.messages[sessionID] ?? [];
-    setStore("sessionErrorTurns", sessionID, (current) =>
+    setStore("sessionErrorTurns", errorTurnKey, (current) =>
       appendSessionErrorTurnModel({
         current,
         sessionID,
         message: text,
         messages: list,
+        runId: appendOptions?.durableRunId,
       }),
     );
+  };
+
+  const sessionErrorTurnsForScope = (sessionID: string | null, workspaceId?: string | null) => {
+    const id = sessionID?.trim() ?? "";
+    if (!id) return [];
+    const resolvedWorkspaceId = workspaceId?.trim() || options.resolveSessionWorkspaceId?.(id)?.trim() || statusWorkspaceId();
+    return readSessionErrorTurnsForScope(store.sessionErrorTurns, resolvedWorkspaceId, id);
   };
 
   const setCommandDisplay = (messageID: string, name: string, args: string) => {
@@ -747,6 +760,13 @@ export function createSessionStore(options: {
           resolveConversationRunForSession: options.resolveConversationRunForSession,
           readConversationRunStatus: options.readConversationRunStatus,
           onConversationRunStatus: updateConversationRunDiagnosticsForScope,
+          onConversationRunTerminal: (scope, status) => {
+            if (status.status !== "failed" || status.stale) return;
+            appendSessionErrorTurn(scope.sessionId, status.error?.trim() || "Run failed", {
+              durableRunId: scope.runId,
+              workspaceId: scope.workspaceId,
+            });
+          },
           setSessionStatusForWorkspace,
           notifySessionBusy,
           scheduleTranscriptIngestion,
@@ -759,6 +779,10 @@ export function createSessionStore(options: {
   if (lifecycleRecoveryController) {
     createEffect(() => {
       lifecycleRecoveryController.reconcile();
+    });
+    createEffect(() => {
+      if (!options.selectedSessionId()) return;
+      void lifecycleRecoveryController.probeSelectedConversationLatestRun();
     });
     onCleanup(() => lifecycleRecoveryController.dispose());
   }
@@ -945,6 +969,8 @@ export function createSessionStore(options: {
     applySessionDirectoryOverride,
     resolveSessionDirectory,
     appendSessionErrorTurn,
+    onSessionLifecycleObservation: (sessionId, workspaceId, type) =>
+      lifecycleRecoveryController?.observeSessionLifecycleEvent(sessionId, workspaceId, type) === true,
     setCommandDisplay,
     recordSyntheticContinueDiagnostic,
     maybeMarkReloadRequired,
@@ -992,10 +1018,10 @@ export function createSessionStore(options: {
 
   return {
     sessions,
-    sessionErrorTurnsById: (sessionID: string | null) => (sessionID ? store.sessionErrorTurns[sessionID] ?? [] : []),
+    sessionErrorTurnsById: (sessionID: string | null) => sessionErrorTurnsForScope(sessionID),
     selectedSessionErrorTurns: createMemo(() => {
       const sessionID = options.selectedSessionId();
-      return sessionID ? store.sessionErrorTurns[sessionID] ?? [] : [];
+      return sessionErrorTurnsForScope(sessionID);
     }),
     sessionStatusById,
     conversationRunDiagnosticsBySessionKey,

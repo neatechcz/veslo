@@ -123,16 +123,16 @@ test("session renders a temporary submitted user message while footer indicator 
 
   assert.match(
     source,
-    /if \(!submittedDraftHasMessageInTranscript\(submitted\)\) return;[\s\S]*removePendingSubmittedDraftForKey\(current, submitted\.sessionKey, submitted\.id\)/,
-    "accepted handoff should clear the matching optimistic placeholder once the server transcript owns display",
+    /const adoption = decidePendingSubmittedTranscriptAdoption\(\{[\s\S]*if \(adoption\.kind !== "adopt"\) return;[\s\S]*removePendingSubmittedDraftForKey\(current, submitted\.sessionKey, submitted\.id\)/,
+    "only a deterministic canonical-adoption decision may clear the optimistic placeholder",
   );
 });
 
 test("session passes pending submit status to the rendered message list", () => {
   assert.match(
     source,
-    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{\s*const submitted = optimisticSubmittedDraft\(\);[\s\S]*if \(submitted\.state !== "error"\) return \{\};[\s\S]*return \{\s*\[submitted\.id\]: \{ state: submitted\.state, error: submitted\.error \},\s*\};\s*\}\);/s,
-    "session view should expose pending submit state only for failed handoffs, not while the assistant is responding",
+    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{[\s\S]*submitted\.state === "error"[\s\S]*\{ state: "sending" \}/s,
+    "session view should retain unresolved optimistic rows as visibly sending while failed rows remain editable",
   );
 
   assert.match(
@@ -156,7 +156,7 @@ test("failed pending submitted messages become editable only through explicit ac
   );
 });
 
-test("accepted handoff does not clear unrelated failed pending submitted messages", () => {
+test("accepted stale-navigation handoff retains its optimistic row until canonical adoption", () => {
   const handlerStart = 0;
   const acceptedBranchStart = flowSendImmediateSource.indexOf(
     "options.expectedSessionKey &&",
@@ -179,10 +179,10 @@ test("accepted handoff does not clear unrelated failed pending submitted message
     "conversation flow should wire successful pending submit cleanup through the helper",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     acceptedBranch,
-    /if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return submitResult;/,
-    "accepted stale-navigation handoff should only clear this send's pending submit",
+    /clearMatchingPendingSubmit\(\)/,
+    "accepted stale-navigation handoff must not delete a row before its scoped canonical message is observed",
   );
 
   assert.doesNotMatch(
