@@ -287,6 +287,7 @@ if (!window.__vesloGpt56SolThreeMessageStarted) {
       workspace: initialWorkspace,
       provider: aiAccess.provider,
       model: aiAccess.defaultModel,
+      variant: null,
       timings,
     };
     window.__vesloGpt56SolThreeMessageResult = result;
