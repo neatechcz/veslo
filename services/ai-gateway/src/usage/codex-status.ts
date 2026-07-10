@@ -72,6 +72,7 @@ type ProbeResult = {
 export type CachedCodexCredentialStatusProviderDeps = {
   loadCredentialAuthJson: (credentialId: string) => Promise<string | null>;
   saveCredentialAuthJson?: (credentialId: string, authJson: string) => Promise<void>;
+  model?: string;
   probe?: (input: {
     credentialId: string;
     credentialName: string;
@@ -109,6 +110,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     this.saveCredentialAuthJson = deps.saveCredentialAuthJson ?? null;
     this.ttlMs = deps.ttlMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_STATUS_TTL_MS, 5 * 60 * 1000);
     this.now = deps.now ?? (() => new Date());
+    const model = deps.model?.trim() || CODEX_DEFAULT_MODEL;
     this.probe =
       deps.probe ??
       ((input) =>
@@ -122,6 +124,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
             },
             workDir: deps.workDir?.trim() || process.env.AI_GATEWAY_CODEX_WORKDIR?.trim() || tmpdir(),
             timeoutMs: deps.timeoutMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_TIMEOUT_MS, 120000),
+            model,
             now: this.now,
           });
         });
@@ -438,6 +441,7 @@ async function runCodexExecRateLimitProbe(input: {
   command: CodexCliCommandSpec;
   workDir: string;
   timeoutMs: number;
+  model: string;
   now: () => Date;
 }): Promise<ProbeResult> {
   const checkedAt = input.now().toISOString();
@@ -459,7 +463,7 @@ async function runCodexExecRateLimitProbe(input: {
         "never",
         "exec",
         "--model",
-        CODEX_DEFAULT_MODEL,
+        input.model,
         "--cd",
         scratchDir,
         "--skip-git-repo-check",
