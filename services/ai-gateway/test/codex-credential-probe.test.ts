@@ -11,7 +11,11 @@ import {
   runCodexCredentialProbeCli,
   type CodexCredentialProbeCliRuntime,
 } from "../src/ops/probe-codex-credentials.js";
-import type { CodexCredentialStatusProvider, CodexUsageStatus } from "../src/usage/codex-status.js";
+import {
+  CachedCodexCredentialStatusProvider,
+  type CodexCredentialStatusProvider,
+  type CodexUsageStatus,
+} from "../src/usage/codex-status.js";
 
 const TARGET_MODEL = "gpt-5.6-sol";
 const CHECKED_AT = "2026-07-10T12:00:00.000Z";
@@ -151,6 +155,56 @@ test("credential coordinator classifies other unavailable statuses as probe fail
   assert.equal(results[0]?.outcome, "probe_failed");
 });
 
+test("credential coordinator distinguishes failed, unsupported, and exhausted probes that retain rate limits", async () => {
+  const credentials = [
+    credential({ id: "cred_unsupported", name: "Unsupported" }),
+    credential({ id: "cred_failed", name: "Failed" }),
+    credential({ id: "cred_exhausted", name: "Exhausted" }),
+  ];
+  const statusProvider = new CachedCodexCredentialStatusProvider({
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date(CHECKED_AT),
+    loadCredentialAuthJson: async () => JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: { refresh_token: "rt", account_id: "acct" },
+    }),
+    probe: async ({ credentialId }) => ({
+      checkedAt: CHECKED_AT,
+      rateLimits: {
+        primary: {
+          used_percent: credentialId === "cred_exhausted" ? 100 : 20,
+          window_minutes: 300,
+          resets_at: 1783692000,
+        },
+        secondary: null,
+        plan_type: "plus",
+      },
+      ok: false,
+      detail: credentialId === "cred_unsupported"
+        ? "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."
+        : "Codex subprocess exited before completing the requested probe.",
+    }),
+  });
+
+  const results = await runCodexCredentialProbe({
+    repository: repositoryWith(credentials),
+    statusProvider,
+    model: TARGET_MODEL,
+    now: () => new Date(CHECKED_AT),
+  });
+
+  assert.deepEqual(results.map((entry) => entry.credentialId), [
+    "cred_exhausted",
+    "cred_failed",
+    "cred_unsupported",
+  ]);
+  assert.deepEqual(results.map((entry) => entry.outcome), [
+    "usage_exhausted",
+    "probe_failed",
+    "unsupported_model",
+  ]);
+});
+
 test("probe CLI accepts exactly one optional pnpm separator and validates the model strictly", () => {
   assert.deepEqual(parseCredentialProbeCliArgs([]), { model: TARGET_MODEL });
   assert.deepEqual(parseCredentialProbeCliArgs(["--model", "gpt-5.6-sol.preview_1"]), {
@@ -284,6 +338,7 @@ function repositoryWith(credentials: AdminCredentialRecord[]): CodexCredentialPr
 function healthyStatus(): CodexUsageStatus {
   return {
     available: true,
+    probeSucceeded: true,
     source: "codex_exec_rate_limits",
     label: "Codex limits available",
     detail: null,

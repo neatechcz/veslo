@@ -83,7 +83,7 @@ function classifyProbeStatus(
   if (eligibility.state === "unavailable") {
     return "probe_failed";
   }
-  return status.available ? "ok" : "probe_failed";
+  return status.probeSucceeded === true ? "ok" : "probe_failed";
 }
 
 function isAuthenticationFailure(status: CodexUsageStatus): boolean {

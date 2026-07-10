@@ -863,6 +863,7 @@ test("CachedCodexCredentialStatusProvider reports healthy probes with unknown li
 
   assert.equal(status.available, true);
   assert.equal(status.source, "codex_exec_no_rate_limits");
+  assert.equal(status.probeSucceeded, true);
   assert.equal(status.label, "Codex OK, limits unknown");
   assert.equal(status.detail, "codex | OK | tokens used | 1,499");
   assert.equal(status.limits?.fiveHour, null);
@@ -888,10 +889,46 @@ test("CachedCodexCredentialStatusProvider keeps credentials available when one C
   });
 
   assert.equal(status.available, true);
+  assert.equal(status.probeSucceeded, false);
   assert.equal(status.source, "codex_exec_no_rate_limits");
   assert.equal(status.label, "Codex OK, limits unknown");
   assert.equal(status.detail, "The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.");
   assert.deepEqual(status.unsupportedModels, ["gpt-5.3-codex"]);
+});
+
+test("CachedCodexCredentialStatusProvider preserves rate limits and unsupported model metadata after a failed probe", async () => {
+  const provider = new CachedCodexCredentialStatusProvider({
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date("2026-07-10T12:00:00.000Z"),
+    loadCredentialAuthJson: async () => JSON.stringify({
+      auth_mode: "chatgpt",
+      tokens: { refresh_token: "rt", account_id: "acct" },
+    }),
+    probe: async () => ({
+      checkedAt: "2026-07-10T12:00:00.000Z",
+      rateLimits: {
+        primary: {
+          used_percent: 30,
+          window_minutes: 300,
+          resets_at: 1783692000,
+        },
+        secondary: null,
+        plan_type: "plus",
+      },
+      ok: false,
+      detail: "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+    }),
+  });
+
+  const status = await provider.getStatus({
+    credentialId: "cred_codex_unsupported",
+    credentialName: "Unsupported credential",
+  });
+
+  assert.equal(status.available, true);
+  assert.equal(status.probeSucceeded, false);
+  assert.equal(status.limits?.fiveHour?.usedPercent, 30);
+  assert.deepEqual(status.unsupportedModels, ["gpt-5.6-sol"]);
 });
 
 async function makeTreeWritable(root: string): Promise<void> {

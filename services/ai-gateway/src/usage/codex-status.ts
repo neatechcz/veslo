@@ -23,6 +23,7 @@ export type CodexUsageLimitWindow = {
 
 export type CodexUsageStatus = {
   available: boolean;
+  probeSucceeded?: boolean;
   source: CodexUsageStatusSource;
   label: string;
   detail?: string | null;
@@ -143,11 +144,11 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     }
 
     const refresh = (async () => {
-      let status = unavailableStatus("Credential is missing Codex auth.json.");
+      let status = withProbeResult(unavailableStatus("Credential is missing Codex auth.json."), false);
       try {
         const authJson = await this.loadCredentialAuthJson(input.credentialId);
         if (!authJson?.trim()) {
-          status = unavailableStatus("Credential is missing Codex auth.json.");
+          status = withProbeResult(unavailableStatus("Credential is missing Codex auth.json."), false);
         } else {
           const result = await this.probe({
             credentialId: input.credentialId,
@@ -159,18 +160,22 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
           const usageLimitStatus = result.rateLimits
             ? null
             : codexUsageStatusFromUsageLimitFailure(result.detail, result.checkedAt);
-          status = result.rateLimits
+          const resolvedStatus = result.rateLimits
             ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
             : usageLimitStatus
               ? usageLimitStatus
             : result.ok === true || unsupportedModels.length > 0
               ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail, unsupportedModels)
               : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
+          status = withProbeResult(resolvedStatus, result.ok === true, unsupportedModels);
         }
       } catch (error) {
-        status = unavailableStatus(
-          error instanceof Error && error.message ? error.message : "Codex probe failed.",
-          this.now().toISOString(),
+        status = withProbeResult(
+          unavailableStatus(
+            error instanceof Error && error.message ? error.message : "Codex probe failed.",
+            this.now().toISOString(),
+          ),
+          false,
         );
       }
 
@@ -201,6 +206,18 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
 
     await this.saveCredentialAuthJson(credentialId, nextAuthJson);
   }
+}
+
+function withProbeResult(
+  status: CodexUsageStatus,
+  probeSucceeded: boolean,
+  unsupportedModels: string[] = [],
+): CodexUsageStatus {
+  return {
+    ...status,
+    probeSucceeded,
+    ...(unsupportedModels.length > 0 ? { unsupportedModels } : {}),
+  };
 }
 
 export function parseCodexStatusText(
