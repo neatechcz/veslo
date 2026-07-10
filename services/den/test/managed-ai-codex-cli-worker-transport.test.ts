@@ -290,6 +290,96 @@ test("keeps Codex authentication failures as worker failures", async () => {
   )
 })
 
+test("keeps mixed requested-model authentication failures as worker failures", async () => {
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => ({
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      finalMessage: "",
+      stdout: "",
+      stderr: "Error: requested model gpt-5.6-sol; authentication token invalid, codex login required\n",
+    }),
+  })
+
+  await assert.rejects(
+    () =>
+      transport.chatCompletions({
+        body: {
+          model: "gpt-5.6-sol",
+          messages: [{ role: "user", content: "Say ok" }],
+        },
+      }),
+    (error) => {
+      assert(error instanceof ProviderTransportError)
+      assert.equal(error.message, "codex_worker_failed")
+      assert.deepEqual(error.body, {
+        error: "codex_worker_failed",
+        timedOut: false,
+        exitCode: 1,
+        stderrTail: "Error: requested model gpt-5.6-sol; authentication token invalid, codex login required",
+      })
+      return true
+    },
+  )
+})
+
+test("keeps explicit credential and token failures as worker failures", async () => {
+  const authenticationErrors = [
+    "Error: requested model gpt-5.6-sol; credentials invalid",
+    "Error: requested model gpt-5.6-sol; invalid_grant",
+    "Error: requested model gpt-5.6-sol; refresh-token invalid",
+  ]
+
+  for (const stderr of authenticationErrors) {
+    const transport = new CodexCliWorkerTransport({
+      spawnCodex: async () => ({
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        finalMessage: "",
+        stdout: "",
+        stderr,
+      }),
+    })
+
+    await assert.rejects(
+      () =>
+        transport.chatCompletions({
+          body: {
+            model: "gpt-5.6-sol",
+            messages: [{ role: "user", content: "Say ok" }],
+          },
+        }),
+      (error) => error instanceof ProviderTransportError && error.message === "codex_worker_failed",
+    )
+  }
+})
+
+test("keeps unrelated provider errors that mention the requested model as worker failures", async () => {
+  const transport = new CodexCliWorkerTransport({
+    spawnCodex: async () => ({
+      exitCode: 1,
+      signal: null,
+      timedOut: false,
+      finalMessage: "",
+      stdout: "",
+      stderr: "Error: requested model gpt-5.6-sol; provider request invalid\n",
+    }),
+  })
+
+  await assert.rejects(
+    () =>
+      transport.chatCompletions({
+        body: {
+          model: "gpt-5.6-sol",
+          messages: [{ role: "user", content: "Say ok" }],
+        },
+      }),
+    (error) => error instanceof ProviderTransportError && error.message === "codex_worker_failed",
+  )
+})
+
 test("returns an actionable runtime incompatibility error for an unsupported requested model", async () => {
   const transport = new CodexCliWorkerTransport({
     spawnCodex: async () => ({
