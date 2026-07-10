@@ -171,8 +171,8 @@ Write-Host "Using signtool: $signtoolPath"
 Write-Host "Using Azure dlib: $dlibPath"
 Write-Host "Using metadata: $metadataPath"
 
-$timeoutSeconds = Read-PositiveIntEnv -Name "VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS" -DefaultValue 300
-$maxAttempts = Read-PositiveIntEnv -Name "VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS" -DefaultValue 3
+$timeoutSeconds = Read-PositiveIntEnv -Name "VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS" -DefaultValue 120
+$maxAttempts = Read-PositiveIntEnv -Name "VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS" -DefaultValue 2
 
 $signArguments = @(
   "sign",

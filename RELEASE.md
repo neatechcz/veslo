@@ -64,7 +64,11 @@ Windows desktop builds are signed in GitHub Actions through Azure Artifact Signi
 
 The Azure principal behind `AZURE_CLIENT_ID` must have `Artifact Signing Certificate Profile Signer` on the certificate profile. Windows workflows install the Artifact Signing dlib package, call the Tauri Windows `signCommand`, then verify Authenticode signatures on the app executable and MSI before upload. The bundled `versions.json` sidecar manifest is intentionally skipped by the sign command because Tauri packages it through `externalBin` even though it is not an executable.
 
-Each Windows `signtool` invocation is bounded by `VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS` (default `300`) and retried up to `VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS` times (default `3`) so a stalled Azure Artifact Signing request fails or recovers without hanging the whole release indefinitely.
+Windows workflows authenticate with `azure/login` and keep `AzureCliCredential` as the only Artifact Signing credential provider. Their metadata lists every other `DefaultAzureCredential` provider in `ExcludeCredentials`, which makes credential selection deterministic and removes unnecessary provider probes.
+
+Each Windows workflow performs a real signed-executable preflight before starting the desktop bundle. Every `signtool` invocation is bounded by `VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS` (default `120`) and retried up to `VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS` times (default `2`), limiting an upstream stall to about four minutes per file instead of blocking a release for tens of minutes. Signing metadata includes the GitHub run attempt so reruns can be distinguished in diagnostics.
+
+If an Azure Artifact Signing request stops at `Submitting digest for signing...` without returning an `OperationId`, Azure did not create a signing operation visible to the client. Preserve the GitHub run, job, timestamps, and correlation ID. Use the Artifact Signing `SignTransactions` diagnostic category for service-side investigation; GitHub logs alone cannot identify the internal Azure failure after the request leaves `signtool`.
 
 ## macOS signing and notarization
 
