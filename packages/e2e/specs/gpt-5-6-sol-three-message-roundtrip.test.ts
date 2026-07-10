@@ -44,6 +44,9 @@ test('scenario sends three exact-response prompts in one workspace and records s
   assert.match(scenario, /firstAssistantVisibleMs/);
   assert.match(scenario, /settledMs/);
   assert.match(scenario, /value === token/);
+  assert.match(scenario, /const stopButton = Array\.from\(document\.querySelectorAll\("button"\)\)/);
+  assert.match(scenario, /return normalize\(nextComposer\.textContent\) === "" && !stopButton;/);
+  assert.doesNotMatch(scenario, /normalize\(nextComposer\.textContent\) === "" && Boolean\(findSendButton/);
 });
 
 test('scenario fails closed on known inference errors and never starts or inspects an engine directly', () => {

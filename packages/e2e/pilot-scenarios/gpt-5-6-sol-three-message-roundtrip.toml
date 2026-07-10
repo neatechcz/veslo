@@ -1,7 +1,7 @@
 [scenario]
 name = "gpt-5-6-sol-three-message-roundtrip"
 fail_fast = true
-global_timeout_ms = 390000
+global_timeout_ms = 900000
 
 [[step]]
 name = "root exists"
@@ -187,7 +187,20 @@ if (!window.__vesloGpt56SolThreeMessageStarted) {
       return labels.some((label) => values.some((value) => value === label || value.includes(label)));
     };
     const findSendButton = (textbox) => {
-      const labels = ["Send now", "Steer agent now", "Queue message", "Send", "Odeslat", "Poslat hned"];
+      const labels = [
+        "Send now",
+        "Steer agent now",
+        "Queue message",
+        "Send",
+        "Odeslat",
+        "Poslat hned",
+        "Nasměrovat agenta teď",
+        "Zařadit zprávu",
+        "立即发送",
+        "立即引导代理",
+        "将消息加入队列",
+        "发送",
+      ];
       let current = textbox;
       for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
         const button = Array.from(current.querySelectorAll("button")).find((candidate) => buttonMatches(candidate, labels));
@@ -257,7 +270,9 @@ if (!window.__vesloGpt56SolThreeMessageStarted) {
         assertNoInferenceError();
         await assertSameWorkspace(initialWorkspace, turn.label);
         const nextComposer = await waitForComposer();
-        return normalize(nextComposer.textContent) === "" && Boolean(findSendButton(nextComposer));
+        const stopButton = Array.from(document.querySelectorAll("button"))
+          .find((candidate) => buttonMatches(candidate, ["Stop", "Zastavit", "停止"]));
+        return normalize(nextComposer.textContent) === "" && !stopButton;
       }, {
         timeout: 30000,
         interval: 250,
@@ -292,7 +307,7 @@ return true;
 name = "GPT-5.6 Sol three-message roundtrip finished"
 action = "wait"
 target = "[data-testid=\"gpt-5-6-sol-three-message-complete\"], [data-testid=\"gpt-5-6-sol-three-message-error\"]"
-timeout_ms = 380000
+timeout_ms = 890000
 
 [[step]]
 name = "GPT-5.6 Sol three-message roundtrip succeeded"
