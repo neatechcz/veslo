@@ -277,6 +277,37 @@ test("all Windows desktop workflows route bundles through Azure Artifact Signing
   }
 });
 
+test("Windows workflows constrain Artifact Signing authentication to Azure CLI", () => {
+  const workflowPaths = [
+    "../../.github/workflows/build-desktop.yml",
+    "../../.github/workflows/build-windows-msi.yml",
+    "../../.github/workflows/build-staging-app.yml",
+    "../../.github/workflows/prerelease.yml",
+    "../../.github/workflows/release-macos-aarch64.yml",
+  ];
+  const excludedCredentials = [
+    "EnvironmentCredential",
+    "WorkloadIdentityCredential",
+    "ManagedIdentityCredential",
+    "SharedTokenCacheCredential",
+    "VisualStudioCredential",
+    "VisualStudioCodeCredential",
+    "AzurePowerShellCredential",
+    "AzureDeveloperCliCredential",
+    "InteractiveBrowserCredential",
+  ];
+
+  for (const workflowPath of workflowPaths) {
+    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath), "utf8");
+
+    assert.match(workflow, /ExcludeCredentials\s*=\s*@\(/, `${workflowPath} must restrict credential selection`);
+    for (const credential of excludedCredentials) {
+      assert.match(workflow, new RegExp(`"${credential}"`), `${workflowPath} must exclude ${credential}`);
+    }
+    assert.doesNotMatch(workflow, /"AzureCliCredential"/, `${workflowPath} must retain AzureCliCredential`);
+  }
+});
+
 test("Windows Tauri sign command uses explicit arguments for the signing script", () => {
   const configPath = resolve(
     import.meta.dirname,
@@ -331,6 +362,35 @@ test("Windows signing PowerShell script bounds Azure signing hangs and retries",
   assert.match(script, /Stop-Process/);
   assert.match(script, /timed out after \$timeoutSeconds seconds/);
   assert.match(script, /retrying/);
+  assert.match(script, /DefaultValue 120/);
+  assert.match(script, /DefaultValue 2/);
+});
+
+test("Windows workflows run a signed Artifact Signing preflight before bundling", () => {
+  const preflightPath = resolve(
+    import.meta.dirname,
+    "../../scripts/release/windows-signing-preflight.ps1",
+  );
+  const preflight = readFileSync(preflightPath, "utf8");
+  const workflowPaths = [
+    "../../.github/workflows/build-desktop.yml",
+    "../../.github/workflows/build-windows-msi.yml",
+    "../../.github/workflows/build-staging-app.yml",
+    "../../.github/workflows/prerelease.yml",
+    "../../.github/workflows/release-macos-aarch64.yml",
+  ];
+
+  assert.match(preflight, /dotnet publish/);
+  assert.match(preflight, /windows-sign\.ps1/);
+  assert.match(preflight, /Get-AuthenticodeSignature/);
+  assert.match(preflight, /Status -ne "Valid"/);
+
+  for (const workflowPath of workflowPaths) {
+    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath), "utf8");
+
+    assert.match(workflow, /Verify Artifact Signing service/);
+    assert.match(workflow, /windows-signing-preflight\.ps1/);
+  }
 });
 
 test("release checklist documents Windows signing timeout controls", () => {
@@ -340,6 +400,17 @@ test("release checklist documents Windows signing timeout controls", () => {
   assert.match(checklist, /VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS/);
   assert.match(checklist, /VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS/);
   assert.match(checklist, /Azure Artifact Signing request/);
+});
+
+test("release docs require Azure CLI as the only Windows signing credential", () => {
+  const docPaths = ["../../RELEASE.md", "../../docs/dev/release-skill.md"];
+
+  for (const docPath of docPaths) {
+    const doc = readFileSync(resolve(import.meta.dirname, docPath), "utf8");
+
+    assert.match(doc, /AzureCliCredential/);
+    assert.match(doc, /ExcludeCredentials/);
+  }
 });
 
 test("release docs require notarization and Developer ID certificate signing for every macOS release", () => {
@@ -395,27 +466,32 @@ test("all macOS release workflows require notarization before upload", () => {
   }
 });
 
-test("Windows signing workflows allow slow Azure signing responses", () => {
+test("Windows signing workflows fail fast on stalled Azure signing responses", () => {
   const workflowPaths = [
     {
       path: "../../.github/workflows/build-desktop.yml",
-      timeoutSeconds: 900,
+      timeoutSeconds: 120,
       maxAttempts: 2,
     },
     {
       path: "../../.github/workflows/build-windows-msi.yml",
-      timeoutSeconds: 900,
+      timeoutSeconds: 120,
+      maxAttempts: 2,
+    },
+    {
+      path: "../../.github/workflows/build-staging-app.yml",
+      timeoutSeconds: 120,
       maxAttempts: 2,
     },
     {
       path: "../../.github/workflows/prerelease.yml",
-      timeoutSeconds: 900,
+      timeoutSeconds: 120,
       maxAttempts: 2,
     },
     {
       path: "../../.github/workflows/release-macos-aarch64.yml",
-      timeoutSeconds: 1800,
-      maxAttempts: 3,
+      timeoutSeconds: 120,
+      maxAttempts: 2,
     },
   ];
 
@@ -430,6 +506,21 @@ test("Windows signing workflows allow slow Azure signing responses", () => {
       workflow,
       new RegExp(`VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS:\\s*${workflowPath.maxAttempts}`),
     );
+  }
+});
+
+test("Windows signing metadata distinguishes GitHub reruns", () => {
+  const workflowPaths = [
+    "../../.github/workflows/build-desktop.yml",
+    "../../.github/workflows/build-windows-msi.yml",
+    "../../.github/workflows/build-staging-app.yml",
+    "../../.github/workflows/prerelease.yml",
+    "../../.github/workflows/release-macos-aarch64.yml",
+  ];
+
+  for (const workflowPath of workflowPaths) {
+    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath), "utf8");
+    assert.match(workflow, /github\.run_attempt/);
   }
 });
 
