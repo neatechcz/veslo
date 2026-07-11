@@ -2047,10 +2047,10 @@ export default function Composer(props: ComposerProps) {
                               }}
                               class={`shrink-0 p-1.5 rounded-full ${
                                 sending()
-                                  ? "bg-[#1B29FF] text-white pointer-events-none"
+                                  ? "bg-dls-accent text-[#001932] pointer-events-none"
                                   : `transition-colors ${sendDisabled()
                                     ? "bg-gray-4 text-gray-10"
-                                    : "bg-[#1B29FF] text-white hover:bg-blue-10"}`
+                                    : "bg-dls-accent text-[#001932] hover:bg-[var(--dls-accent-hover)]"}`
                               }`}
                               title={translate("session.queue_message_label")}
                               aria-label={translate("session.queue_message_label")}
@@ -2092,8 +2092,8 @@ export default function Composer(props: ComposerProps) {
                                 void sendDraft({ sendNow: true, source: "button" });
                               }}
                               disabled={sendNowPending()}
-                              class={`shrink-0 p-1.5 rounded-full bg-[#1B29FF] text-white transition-colors ${
-                                sendNowPending() ? "opacity-70" : "hover:bg-blue-10"
+                              class={`shrink-0 p-1.5 rounded-full bg-dls-accent text-[#001932] transition-colors ${
+                                sendNowPending() ? "opacity-70" : "hover:bg-[var(--dls-accent-hover)]"
                               }`}
                               title={translate("session.send_now_title")}
                               aria-label={translate("session.send_now_label")}

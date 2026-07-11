@@ -8,8 +8,19 @@ safelist: [
   theme: {
     // OVERRIDE the base theme completely instead of extending it
     fontFamily: {
-      sans: ["var(--veslo-font-product)", "ui-sans-serif", "system-ui", "sans-serif"],
-      mono: ["var(--veslo-font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
+      sans: ["var(--veslo-font-product)", "DM Sans", "system-ui", "sans-serif"],
+      mono: ["var(--veslo-font-mono)", "DM Mono", "ui-monospace", "monospace"],
+    },
+    borderRadius: {
+      none: "0",
+      sm: "3px",
+      DEFAULT: "4px",
+      md: "4px",
+      lg: "5px",
+      xl: "6px",
+      "2xl": "8px",
+      "3xl": "10px",
+      full: "9999px",
     },
     colors: {
       ...radixColors,

@@ -37,7 +37,7 @@
         transition: opacity 0.5s ease, visibility 0.5s ease;
       }
       [data-theme="dark"] #splash {
-        background: #121212;
+        background: #001932;
       }
       #splash.splash-hidden {
         opacity: 0;
@@ -63,11 +63,14 @@
         animation: splash-fade-up 0.5s ease 0.7s forwards;
       }
       #splash-by span {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-family: "DM Sans Variable", "DM Sans", system-ui, sans-serif;
         font-size: 16px;
         font-weight: 400;
-        color: #9ca3af;
+        color: #0a0e14;
         letter-spacing: 0.05em;
+      }
+      [data-theme="dark"] #splash-by span {
+        color: rgba(255, 255, 255, 0.64);
       }
       #splash-by img {
         height: 52px;
@@ -105,7 +108,7 @@
     <div id="splash">
       <div id="splash-logo-wrap">
         <svg id="splash-logo" xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 512 512">
-          <rect width="512" height="512" fill="#00C4E8" rx="24"/>
+          <rect width="512" height="512" fill="#00A8C8" rx="24"/>
           <g transform="rotate(-15, 256, 256)">
             <rect x="246" y="32" width="20" height="270" rx="10" fill="#F8F8F8"/>
             <path d="M256 280 C236 284, 192 306, 188 370 C185 410, 200 448, 224 458 L288 458 C312 448, 327 410, 324 370 C320 306, 276 284, 256 280Z" fill="#F8F8F8"/>
