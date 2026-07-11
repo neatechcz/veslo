@@ -43,7 +43,6 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     assert.equal(typeof (client as { runConversation?: unknown }).runConversation, "function");
     assert.equal(typeof (client as { abortConversation?: unknown }).abortConversation, "function");
     assert.equal(typeof (client as { getSessionTranscript?: unknown }).getSessionTranscript, "function");
-    assert.equal(typeof (client as { appendSessionTranscript?: unknown }).appendSessionTranscript, "function");
     assert.equal(typeof (client as { getSessionLatestRunArtifacts?: unknown }).getSessionLatestRunArtifacts, "function");
 
     const prefetch = await (client as {
@@ -118,17 +117,11 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     const transcript = await (client as {
       getSessionTranscript: (workspaceId: string, sessionId: string, limit?: number, directory?: string) => Promise<unknown>;
     }).getSessionTranscript("ws 1", "sess/a", 12, "/tmp/work space");
-    const appendTranscript = await client.appendSessionTranscript("ws 1", "sess/a", {
-      directory: "/tmp/work space",
-      limit: 12,
-      messages: [{ id: "msg-1", sessionID: "sess/a", role: "user" } as any],
-      partsByMessageId: { "msg-1": [{ id: "part-1", type: "text", text: "Hello" } as any] },
-    });
     const latestArtifacts = await (client as {
       getSessionLatestRunArtifacts: (workspaceId: string, sessionId: string, directory?: string | null) => Promise<unknown>;
     }).getSessionLatestRunArtifacts("ws 1", "sess/a", "/tmp/work space");
 
-    assert.equal(calls.length, 7);
+    assert.equal(calls.length, 6);
 
     assert.equal(calls[0]?.url, "http://127.0.0.1:8787/workspace/ws%201/sessions/transcript-prefetch");
     assert.equal(calls[0]?.method, "POST");
@@ -185,27 +178,16 @@ test("veslo server client exposes transcript prefetch methods", async () => {
     assert.equal(calls[4]?.headers.get("authorization"), "Bearer token-123");
     assert.equal(calls[4]?.body, null);
 
-    assert.equal(calls[5]?.url, "http://127.0.0.1:8787/workspace/ws%201/sessions/sess%2Fa/transcript");
-    assert.equal(calls[5]?.method, "POST");
+    assert.equal(calls[5]?.url, "http://127.0.0.1:8787/workspace/ws%201/sessions/sess%2Fa/artifacts/latest-run?directory=%2Ftmp%2Fwork+space");
+    assert.equal(calls[5]?.method, "GET");
     assert.equal(calls[5]?.headers.get("authorization"), "Bearer token-123");
-    assert.deepEqual(JSON.parse(calls[5]?.body ?? "{}"), {
-      directory: "/tmp/work space",
-      limit: 12,
-      messages: [{ id: "msg-1", sessionID: "sess/a", role: "user" }],
-      partsByMessageId: { "msg-1": [{ id: "part-1", type: "text", text: "Hello" }] },
-    });
-
-    assert.equal(calls[6]?.url, "http://127.0.0.1:8787/workspace/ws%201/sessions/sess%2Fa/artifacts/latest-run?directory=%2Ftmp%2Fwork+space");
-    assert.equal(calls[6]?.method, "GET");
-    assert.equal(calls[6]?.headers.get("authorization"), "Bearer token-123");
-    assert.equal(calls[6]?.body, null);
+    assert.equal(calls[5]?.body, null);
 
     assert.equal(typeof prefetch, "object");
     assert.equal(typeof conversations, "object");
     assert.equal(typeof run, "object");
     assert.equal(typeof abort, "object");
     assert.equal(typeof transcript, "object");
-    assert.equal(typeof appendTranscript, "object");
     assert.equal(typeof latestArtifacts, "object");
   } finally {
     globalThis.fetch = previousFetch;

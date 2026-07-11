@@ -708,23 +708,13 @@ test("local workspace registration failure does not continue with fallback app w
         return result;
       },
     },
-    {
-      name: "append",
-      run: (service) => service.appendTranscriptSnapshot({
-        workspaceId: "app-ws",
-        sessionId: "sess-a",
-        directory: "/repo",
-        messages: [],
-        partsByMessageId: {},
-      }),
-    },
   ];
 
   for (const entry of cases) {
     const { service, calls } = createService({ failWorkspaceRegistration: true });
     await entry.run(service);
     assert.equal(
-      calls.some((call) => /(?:listConversations|importConversations|getSessionTranscript|createConversation|runConversation|abortConversation|getConversationRunStatus|appendSessionTranscript):app-ws(?::|$)/.test(call)),
+      calls.some((call) => /(?:listConversations|importConversations|getSessionTranscript|createConversation|runConversation|abortConversation|getConversationRunStatus):app-ws(?::|$)/.test(call)),
       false,
       `${entry.name} should not call a server API with fallback app workspace id; calls=${calls.join(",")}`,
     );
@@ -768,24 +758,6 @@ test("conversation transcript read preserves unavailable diagnostics at the app 
     1,
     "unavailable snapshots still carry identity sidecars that must be remembered",
   );
-});
-
-test("conversation transcript append forwards empty available snapshots", async () => {
-  const { service, calls } = createService();
-
-  await service.appendTranscriptSnapshot({
-    workspaceId: "app-ws",
-    sessionId: "open-empty",
-    directory: "/repo",
-    limit: 140,
-    reason: "live-recovery",
-    messages: [],
-    partsByMessageId: {},
-  });
-
-  assert.deepEqual(calls.filter((call) => call.startsWith("appendSessionTranscript")), [
-    "appendSessionTranscript:server-ws:open-empty:0",
-  ]);
 });
 
 test("passive browse reads do not start the local conversation server", async () => {

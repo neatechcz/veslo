@@ -15,9 +15,10 @@ import type {
   VesloConversationSubmitResult,
   VesloSessionArchiveRecord,
   VesloSessionLatestRunArtifacts,
-  VesloSessionTranscriptAppendInput,
   VesloSessionTranscriptPrefetchInput,
   VesloSessionTranscriptPrefetchResult,
+  VesloSessionTranscriptRecoveryInput,
+  VesloSessionTranscriptRecoveryResult,
   VesloSessionTranscriptSnapshot,
 } from "../veslo-server/types";
 import { VESLO_ACCOUNT_ID_HEADER, VESLO_SEND_TRACE_ID_HEADER } from "../veslo-server/header-profiles";
@@ -282,12 +283,13 @@ export function createConversationsClient(context: ConversationsClientContext) {
       );
     },
 
-    appendTranscript: (workspaceId: string, sessionId: string, input: VesloSessionTranscriptAppendInput) =>
-      requestJson<VesloSessionTranscriptSnapshot>(
+    recoverTranscript: (workspaceId: string, sessionId: string, input: VesloSessionTranscriptRecoveryInput) =>
+      requestJson<VesloSessionTranscriptRecoveryResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript/recover`,
         { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionTranscript },
       ),
+
   };
 }
 

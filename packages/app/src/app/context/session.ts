@@ -151,17 +151,12 @@ export function createSessionStore(options: {
   readConversationRunStatus?: (
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<SessionLifecycleRecoveryStatus | null>;
-  appendTranscriptSnapshot?: (input: {
+  recoverConversationTranscript?: (scope: {
     workspaceId: string;
     sessionId: string;
     directory?: string | null;
-    limit?: number;
-    messages: MessageInfo[];
-    partsByMessageId: Record<string, Part[]>;
-    deletedMessageIds?: string[];
-    deletedPartsByMessageId?: Record<string, string[]>;
-    reason?: string;
-  }) => Promise<void> | void;
+    expectedRunId?: string | null;
+  }) => Promise<unknown>;
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
@@ -715,7 +710,6 @@ export function createSessionStore(options: {
     setStore,
     routing: options.routing,
     activeWorkspaceRoot: options.activeWorkspaceRoot,
-    appendTranscriptSnapshot: options.appendTranscriptSnapshot,
     applySessionDirectoryOverride,
     resolveSessionDirectory,
     sessionWarn,
@@ -740,8 +734,6 @@ export function createSessionStore(options: {
     resolveSessionIdForMessage,
     recordPendingTranscriptMessageDeletion,
     recordPendingTranscriptPartDeletion,
-    scheduleTranscriptIngestion,
-    scheduleBackgroundTranscriptIngestion,
   } = transcriptController;
 
   const lifecycleRecoveryController =
@@ -751,6 +743,7 @@ export function createSessionStore(options: {
           selectedSessionId: options.selectedSessionId,
           resolveConversationRunForSession: options.resolveConversationRunForSession,
           readConversationRunStatus: options.readConversationRunStatus,
+          recoverConversationTranscript: options.recoverConversationTranscript,
           onConversationRunStatus: updateConversationRunDiagnosticsForScope,
           onConversationRunTerminal: (scope, status) => {
             if (status.status !== "failed" || status.stale) return;
@@ -761,7 +754,6 @@ export function createSessionStore(options: {
           },
           setSessionStatusForWorkspace,
           notifySessionBusy,
-          scheduleBackgroundTranscriptIngestion,
           trace: recordSessionStatusTrace,
         })
       : null;
@@ -810,6 +802,13 @@ export function createSessionStore(options: {
     setPendingQuestions,
   } = runtimePrompts;
 
+  const transcriptObservationVersionBySession = new Map<string, number>();
+  const noteTranscriptObserved = (sessionId: string) => {
+    const id = sessionId.trim();
+    if (!id) return;
+    transcriptObservationVersionBySession.set(id, (transcriptObservationVersionBySession.get(id) ?? 0) + 1);
+  };
+
   const selectionController = createSessionSelectionController({
     store,
     setStore,
@@ -820,7 +819,6 @@ export function createSessionStore(options: {
     directoryQueryPathMode: options.directoryQueryPathMode,
     conversationReader: options.conversationReader,
     loadOfflineTranscript: options.loadOfflineTranscript,
-    appendTranscriptSnapshot: options.appendTranscriptSnapshot,
     shouldBrowseSessionFromDb: options.shouldBrowseSessionFromDb,
     developerMode: options.developerMode,
     setError: options.setError,
@@ -840,6 +838,7 @@ export function createSessionStore(options: {
     workspaceSessionIds,
     setMessagesForSession,
     hydrateTranscriptSnapshot,
+    transcriptObservationVersion: (sessionId) => transcriptObservationVersionBySession.get(sessionId.trim()) ?? 0,
     messageLimitBySession,
     setMessageLimitBySession,
     messageCompleteBySession,
@@ -916,6 +915,7 @@ export function createSessionStore(options: {
     onReconnectNotice: options.onReconnectNotice,
     onReconnectState: options.onReconnectState,
     onAssistantResponseObserved: options.onAssistantResponseObserved,
+    onTranscriptObserved: noteTranscriptObserved,
     sessionDebugEnabled,
     sessionWarn,
     recordSessionStatusTrace,
@@ -937,8 +937,6 @@ export function createSessionStore(options: {
     resolveSessionIdForMessage,
     recordPendingTranscriptMessageDeletion,
     recordPendingTranscriptPartDeletion,
-    scheduleTranscriptIngestion,
-    scheduleBackgroundTranscriptIngestion,
     messageLimitBySession,
     setMessagesForSession,
     setMessageLimitBySession,

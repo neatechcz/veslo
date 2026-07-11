@@ -1348,14 +1348,17 @@ export type VesloSessionTranscriptPrefetchResult = {
   items: VesloSessionTranscriptSnapshot[];
 };
 
-export type VesloSessionTranscriptAppendInput = {
+export type VesloSessionTranscriptRecoveryInput = {
   directory?: string | null;
-  limit?: number;
-  reason?: string;
-  messages: MessageInfo[];
-  partsByMessageId: Record<string, Part[]>;
-  deletedMessageIds?: string[];
-  deletedPartsByMessageId?: Record<string, string[]>;
+  expectedRunId?: string | null;
+};
+
+export type VesloSessionTranscriptRecoveryResult = {
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  state: "persisted" | "unchanged" | "incomplete" | "exhausted";
+  generation: number;
 };
 
 export type VesloConversationList = {

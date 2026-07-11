@@ -3356,7 +3356,7 @@ describe("conversation routes", () => {
     expect(engineRequests).toEqual(["/session/sess-remote/prompt_async"]);
   });
 
-  test("POST /workspace/:id/sessions/:sessionId/transcript reconciles lifecycle and wakes queued runs", async () => {
+  test("POST /workspace/:id/sessions/:sessionId/transcript rejects retired client snapshot writes", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-transcript-reconcile-"));
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
@@ -3502,14 +3502,13 @@ describe("conversation routes", () => {
         }),
       },
     );
-    expect(appendResponse.status).toBe(200);
-
-    await waitForCondition(
-      () => latestRequests > 0 && engineSubmits.length > 0,
-      { timeoutMs: 1_000, message: "expected terminal transcript append to wake queued run before poll interval" },
-    );
-    expect(registerRequests).toHaveLength(1);
-    expect(engineSubmits).toEqual(["/session/sess-transcript-reconcile/prompt_async"]);
+    expect(appendResponse.status).toBe(410);
+    await expect(appendResponse.json()).resolves.toMatchObject({
+      code: "transcript_snapshot_write_retired",
+    });
+    expect(latestRequests).toBe(0);
+    expect(registerRequests).toEqual([]);
+    expect(engineSubmits).toEqual([]);
   });
 
   test("accepted run lifecycle watcher wakes queued runs after terminal status", async () => {

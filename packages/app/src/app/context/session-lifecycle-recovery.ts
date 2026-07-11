@@ -58,12 +58,12 @@ export type SessionLifecycleRecoveryControllerOptions = {
     workspaceId?: string | null,
   ) => void;
   notifySessionBusy: (sessionId: string, status: string, workspaceId?: string) => void;
-  scheduleBackgroundTranscriptIngestion: (
-    sessionId: string,
-    workspaceId: string,
-    reason: string,
-    delayMs?: number,
-  ) => void;
+  recoverConversationTranscript?: (scope: {
+    workspaceId: string;
+    sessionId: string;
+    directory?: string | null;
+    expectedRunId?: string | null;
+  }) => Promise<unknown>;
   trace?: (event: string, payload?: Record<string, unknown>) => void;
   initialDelayMs?: number;
   pollMs?: number;
@@ -183,17 +183,14 @@ export function createSessionLifecycleRecoveryController(
 
     const selectedSessionId = normalize(options.selectedSessionId());
     const selectedRun = Boolean(selectedSessionId && sessionIds.includes(selectedSessionId));
-    const transcriptSessionId =
-      (selectedRun ? selectedSessionId : "") || normalize(scope.opencodeSessionId) || normalize(scope.sessionId);
-    if (transcriptSessionId && workspaceId) {
-      // Normal selected runs already receive SSE and submitted-run catch-up. A latest-run
-      // probe happens after reload, where neither may have observed the terminal transcript;
-      // use the narrow transcript reader then, never selectSession or sidebar reads.
-      if (selectedRun && source === "latest-probe") {
-        options.scheduleBackgroundTranscriptIngestion(transcriptSessionId, workspaceId, "lifecycle latest recovery", 0);
-      } else if (!selectedRun) {
-        options.scheduleBackgroundTranscriptIngestion(transcriptSessionId, workspaceId, "lifecycle recovery", 0);
-      }
+    const transcriptSessionId = normalize(scope.opencodeSessionId) || normalize(scope.sessionId);
+    if (transcriptSessionId && workspaceId && (source === "latest-probe" || !selectedRun)) {
+      void options.recoverConversationTranscript?.({
+        workspaceId,
+        sessionId: transcriptSessionId,
+        directory: scope.directory,
+        expectedRunId: scope.runId,
+      }).catch(() => undefined);
     }
 
     trace("session-lifecycle-recovery:terminal", {

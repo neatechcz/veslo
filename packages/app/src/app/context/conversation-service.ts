@@ -12,7 +12,8 @@ import {
   type VesloConversationRunStatusResult,
   type VesloConversationSubmitRequest,
   type VesloConversationSubmitResult,
-  type VesloSessionTranscriptAppendInput,
+  type VesloSessionTranscriptRecoveryInput,
+  type VesloSessionTranscriptRecoveryResult,
   type VesloSessionTranscriptSnapshot,
 } from "../lib/veslo-server";
 import { normalizeDirectoryPath, safeStringify } from "../utils";
@@ -80,11 +81,11 @@ export type ConversationServiceClient = {
     conversationId: string,
     runId: string,
   ) => Promise<VesloConversationRunStatusResult>;
-  appendSessionTranscript: (
+  recoverSessionTranscript: (
     workspaceId: string,
     sessionId: string,
-    input: VesloSessionTranscriptAppendInput,
-  ) => Promise<VesloSessionTranscriptSnapshot>;
+    input: VesloSessionTranscriptRecoveryInput,
+  ) => Promise<VesloSessionTranscriptRecoveryResult>;
 };
 
 export type ConversationServiceWorkspace = {
@@ -1481,34 +1482,28 @@ export function createConversationService<Client extends ConversationServiceClie
     }
   };
 
-  const appendTranscriptSnapshot = async (input: {
+  const recoverConversationTranscript = async (scope: {
     workspaceId: string;
     sessionId: string;
     directory?: string | null;
-    limit?: number;
-    reason?: string;
-    messages: VesloSessionTranscriptAppendInput["messages"];
-    partsByMessageId: VesloSessionTranscriptAppendInput["partsByMessageId"];
-    deletedMessageIds?: string[];
-    deletedPartsByMessageId?: Record<string, string[]>;
+    expectedRunId?: string | null;
   }) => {
-    const workspaceId = input.workspaceId.trim();
-    const sessionId = input.sessionId.trim();
-    const directory = input.directory?.trim() || undefined;
-    if (!workspaceId || !sessionId) return;
+    const workspaceId = scope.workspaceId.trim();
+    const sessionId = scope.sessionId.trim();
+    const directory = scope.directory?.trim() || undefined;
+    if (!workspaceId || !sessionId) return null;
     const serverClient = deps.vesloServerClient();
-    if (!serverClient) return;
+    if (!serverClient) return null;
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
-    if (!serverWorkspaceId) return;
-    await serverClient.appendSessionTranscript(serverWorkspaceId, sessionId, {
+    if (!serverWorkspaceId) return null;
+    const recovery = await serverClient.recoverSessionTranscript(serverWorkspaceId, sessionId, {
       directory,
-      limit: input.limit,
-      reason: input.reason,
-      messages: input.messages,
-      partsByMessageId: input.partsByMessageId,
-      deletedMessageIds: input.deletedMessageIds,
-      deletedPartsByMessageId: input.deletedPartsByMessageId,
+      expectedRunId: scope.expectedRunId?.trim() || undefined,
     });
+    if (recovery.state === "persisted" || recovery.state === "unchanged") {
+      await serverClient.getSessionTranscript(serverWorkspaceId, sessionId, 140, directory);
+    }
+    return recovery;
   };
 
   return {
@@ -1527,6 +1522,6 @@ export function createConversationService<Client extends ConversationServiceClie
     abortConversationFromVesloWriteApi,
     resolveConversationRunForSession,
     readConversationRunStatus,
-    appendTranscriptSnapshot,
+    recoverConversationTranscript,
   };
 }

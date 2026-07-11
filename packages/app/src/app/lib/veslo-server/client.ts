@@ -139,7 +139,6 @@ import type {
   VesloSessionTranscriptSnapshot,
   VesloSessionTranscriptPrefetchInput,
   VesloSessionTranscriptPrefetchResult,
-  VesloSessionTranscriptAppendInput,
   VesloConversationList,
   VesloConversationCreateResult,
   VesloConversationImportInput,
@@ -539,7 +538,7 @@ export function createVesloServerClient(options: {
     prefetchSessionTranscripts: conversations.prefetchTranscripts,
     getSessionTranscript: (workspaceId: string, sessionId: string, limit = 140, directory?: string) =>
       conversations.getTranscript(workspaceId, sessionId, { limit, directory }),
-    appendSessionTranscript: conversations.appendTranscript,
+    recoverSessionTranscript: conversations.recoverTranscript,
     exportWorkspace: workspace.export,
     importWorkspace: workspace.import,
     provisionWorkspaceSystem: workspace.provisionSystem,

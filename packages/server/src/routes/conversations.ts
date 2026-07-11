@@ -87,6 +87,16 @@ type SessionTranscriptPrefetchSessionRef = {
   directory?: string | null;
 };
 
+type TranscriptIngestCoordinatorPort = {
+  request(input: {
+    workspaceId: string;
+    directory: string;
+    opencodeSessionId: string;
+    trigger: "terminal-lifecycle" | "recovery";
+    runId?: string | null;
+  }): Promise<{ kind: "persisted" | "unchanged" | "incomplete" | "exhausted"; generation: number }>;
+};
+
 type ResolveConversationReadDirectory = (
   workspace: WorkspaceInfo,
   requestedRaw: string | null,
@@ -109,6 +119,7 @@ type ResolveConversationExecutionTarget = (input: {
 export type ConversationSessionRouteDependencies = {
   conversationService: ConversationService;
   sessionTranscriptPrefetch: SessionTranscriptPrefetchPort;
+  transcriptIngestCoordinator: TranscriptIngestCoordinatorPort;
   conversationRunLifecycleController: ConversationRunLifecycleController;
   conversationRunQueueStore: ConversationRunQueueStore;
   conversationSubmitService: ConversationSubmitService;
@@ -244,45 +255,6 @@ function sessionRevertMessageId(session: unknown): string | null {
   const revert = isRecordLike(session.revert) ? session.revert : null;
   const messageId = typeof revert?.messageID === "string" ? revert.messageID.trim() : "";
   return messageId || null;
-}
-
-function readTranscriptMessageInfo(message: unknown): Record<string, unknown> | null {
-  if (!isRecordLike(message)) return null;
-  return isRecordLike(message.info) ? message.info : message;
-}
-
-function readTranscriptString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function readPositiveTranscriptNumber(value: unknown): number | null {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function transcriptAssistantMessageIsTerminal(info: Record<string, unknown>): boolean {
-  const time = isRecordLike(info.time) ? info.time : null;
-  if (time && readPositiveTranscriptNumber(time.completed) !== null) return true;
-  if (isRecordLike(info.error)) return true;
-  if (readTranscriptString(info.finish)) return true;
-  return false;
-}
-
-function transcriptLatestAssistantLooksTerminal(messages: unknown[]): boolean {
-  if (messages.length === 0) return false;
-  const latestInfo = readTranscriptMessageInfo(messages[messages.length - 1]);
-  if (!latestInfo) return false;
-  if (readTranscriptString(latestInfo.role) !== "assistant") return false;
-  return transcriptAssistantMessageIsTerminal(latestInfo);
-}
-
-function transcriptReasonSignalsIdle(reason: string): boolean {
-  const normalized = reason.trim().toLowerCase();
-  return normalized.includes("session.idle") || normalized.includes("session.error");
-}
-
-function shouldReconcileLifecycleAfterTranscriptAppend(messages: unknown[], reason: string): boolean {
-  return transcriptReasonSignalsIdle(reason) || transcriptLatestAssistantLooksTerminal(messages);
 }
 
 function resolveTranscriptMessageIdForArtifacts(message: Record<string, unknown>): string {
@@ -688,6 +660,7 @@ export function registerConversationSessionRoutes(
   const {
     conversationService,
     sessionTranscriptPrefetch,
+    transcriptIngestCoordinator,
     conversationRunLifecycleController,
     conversationRunQueueStore,
     conversationSubmitService,
@@ -1416,62 +1389,70 @@ export function registerConversationSessionRoutes(
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
+    throw new ApiError(
+      410,
+      "transcript_snapshot_write_retired",
+      "Client transcript snapshot writes have been retired; use transcript recovery instead",
+    );
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/transcript/recover", "client", async (ctx) => {
+    ensureWritable(ctx.config);
+    requireClientScope(ctx, "collaborator");
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
-    const sessionId = (ctx.params.sessionId ?? "").trim();
-    if (!sessionId) {
-      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    if (workspace.workspaceType === "remote") {
+      throw new ApiError(501, "transcript_recovery_unsupported", "Transcript recovery is not available for remote workspaces");
     }
-    const body = await readJsonBody(ctx.request);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) throw new ApiError(400, "invalid_payload", "sessionId is required");
+    const body = await readOptionalJsonBody(ctx.request);
     const directory = await resolveConversationReadDirectory(
       workspace,
       optionalBodyNullableString(body, "directory") ?? null,
     );
-    if (!directory) {
-      throw new ApiError(400, "invalid_directory", "Conversation directory is required");
-    }
+    if (!directory) throw new ApiError(400, "invalid_directory", "Conversation directory is required");
     const binding = await conversationService.resolveOpenCodeSessionForRead({
       workspaceId: workspace.id,
       workspace,
       directory,
       sessionOrConversationId: sessionId,
     });
-    if (!binding && isVesloConversationId(sessionId)) {
-      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+    if (!binding) throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+
+    const expectedRunId = optionalBodyString(body, "expectedRunId") ?? null;
+    if (expectedRunId) {
+      if (!lifecycleClient) {
+        throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is unavailable");
+      }
+      let latest;
+      try {
+        latest = await lifecycleClient.status(workspace.id, binding.conversationId, "latest");
+      } catch (error) {
+        if (error instanceof OrchestratorLifecycleRequestError) throw lifecycleRequestApiError(error);
+        throw error;
+      }
+      if (!latest || latest.runId !== expectedRunId) {
+        throw new ApiError(409, "transcript_recovery_run_mismatch", "The requested run is no longer current", {
+          expectedRunId,
+          actualRunId: latest?.runId ?? null,
+        });
+      }
     }
 
-    const messages = parseSessionTranscriptMessages(body.messages);
-    const partsByMessageId = parseSessionTranscriptParts(body.partsByMessageId);
-    const reason = optionalBodyString(body, "reason") ?? "";
-    const result = await conversationService.appendTranscript({
-      workspace,
-      sessionId,
-      directory,
-      limit: parseSessionTranscriptLimit(body.limit),
-      messages,
-      partsByMessageId,
-      deletedMessageIds: parseTranscriptStringArray(body.deletedMessageIds, "deletedMessageIds"),
-      deletedPartsByMessageId: parseSessionTranscriptDeletedParts(body.deletedPartsByMessageId),
-    });
-    sessionTranscriptPrefetch.invalidate({
+    const outcome = await transcriptIngestCoordinator.request({
       workspaceId: workspace.id,
-      sessionId: result.opencodeSessionId,
       directory,
+      opencodeSessionId: binding.engineSessionId,
+      trigger: "recovery",
+      runId: expectedRunId,
     });
-    if (result.conversationId) {
-      sessionTranscriptPrefetch.invalidate({
-        workspaceId: workspace.id,
-        sessionId: result.conversationId,
-        directory,
-      });
-    }
-    void conversationRunLifecycleController.handleTranscriptAppend({
-      workspace,
-      conversationId: result.conversationId ?? binding?.conversationId ?? sessionId,
-      sessionId: result.opencodeSessionId,
-      reason,
-      shouldReconcile: shouldReconcileLifecycleAfterTranscriptAppend(messages, reason),
+    return jsonResponse({
+      workspaceId: workspace.id,
+      conversationId: binding.conversationId,
+      opencodeSessionId: binding.engineSessionId,
+      state: outcome.kind,
+      generation: outcome.generation,
     });
-    return jsonResponse(result);
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {

@@ -172,12 +172,6 @@ function makeController(options: {
     resolveSessionIdForMessage: () => null,
     recordPendingTranscriptMessageDeletion: () => {},
     recordPendingTranscriptPartDeletion: () => {},
-    scheduleTranscriptIngestion: (sessionID, sourceWsId, reason, delayMs) => {
-      transcriptIngest.push({ sessionID, sourceWsId, reason, delayMs });
-    },
-    scheduleBackgroundTranscriptIngestion: (sessionID, workspaceId, reason, delayMs) => {
-      backgroundIngest.push({ sessionID, workspaceId, reason, delayMs });
-    },
     messageLimitBySession: () => ({}),
     setMessagesForSession: options.setMessagesForSession ?? (() => {}),
     setMessageLimitBySession: () => {},
@@ -605,7 +599,16 @@ test(
           (entry) => entry.event === "session-sse:chrome-mcp-tool-updated",
         );
         assert.equal(chromeToolTrace.length, 1);
-        const [{ schema: _schema, id: _id, at: _at, ts: _ts, perfMs: _perfMs, ...tracePayload }] = chromeToolTrace;
+        const [{
+          schema: _schema,
+          id: _id,
+          at: _at,
+          ts: _ts,
+          perfMs: _perfMs,
+          observedDurationMs,
+          ...tracePayload
+        }] = chromeToolTrace;
+        assert.equal(typeof observedDurationMs, "number");
         assert.deepEqual(tracePayload, {
           source: "session-sse",
           event: "session-sse:chrome-mcp-tool-updated",
@@ -614,11 +617,66 @@ test(
           messageID: "msg-assistant",
           partID: "part-chrome",
           tool: "chrome-devtools_new_page",
+          toolCallId: "part-chrome",
           status: "running",
           terminal: false,
           hasOutput: false,
           hasError: false,
+          errorKind: "none",
+          errorCode: null,
+          detailLength: 0,
+          errorFingerprint: null,
         });
+      } finally {
+        dispose();
+      }
+    });
+  }),
+);
+
+test(
+  "Chrome MCP error traces classify failures without leaking tool detail",
+  withSendWorkflowTraceWindow(async (traceWindow) => {
+    await createRoot(async (dispose) => {
+      try {
+        const { controller } = makeController({
+          workspaceSessionIds: new Set(["sess-a"]),
+        });
+        await controller.applyEvent(
+          {
+            type: "message.updated",
+            properties: { info: makeMessage("sess-a", "msg-assistant", "assistant") },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+        await controller.applyEvent(
+          {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "part-chrome-error",
+                sessionID: "sess-a",
+                messageID: "msg-assistant",
+                type: "tool",
+                tool: "chrome-devtools_navigate_page",
+                state: {
+                  status: "error",
+                  error: { code: "ECONNREFUSED", message: "connect ECONNREFUSED https://private.example" },
+                },
+              },
+            },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+
+        const trace = (traceWindow.__vesloSendWorkflowTrace ?? []).find(
+          (entry) => entry.event === "session-sse:chrome-mcp-tool-updated" && entry.partID === "part-chrome-error",
+        );
+        assert.ok(trace);
+        assert.equal(trace.errorKind, "connection");
+        assert.equal(trace.errorCode, "ECONNREFUSED");
+        assert.equal(typeof trace.errorFingerprint, "string");
+        assert.equal(JSON.stringify(trace).includes("private.example"), false);
       } finally {
         dispose();
       }

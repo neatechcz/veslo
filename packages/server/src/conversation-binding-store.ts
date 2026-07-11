@@ -118,7 +118,10 @@ function shouldUseWindowsDirectoryLookup(value: string): boolean {
 // mount equivalent. Keep caches and host-side transcript rows on one stable
 // key so a background miss cannot survive a subsequent canonical append.
 export function normalizeConversationDirectoryKey(value: string | null | undefined): string {
-  const normalized = normalizeText(value);
+  const raw = normalizeText(value);
+  const normalized = raw === "/" || /^[A-Za-z]:[\\/]$/.test(raw)
+    ? raw
+    : raw.replace(/[\\/]+$/, "");
   if (!normalized || !shouldUseWindowsDirectoryLookup(normalized)) return normalized;
 
   const withoutExtendedPrefix = normalizeWindowsExtendedPath(normalized);

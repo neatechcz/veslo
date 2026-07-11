@@ -43,6 +43,14 @@ export type ConversationTranscriptStore = {
     messages: TranscriptMessageInput[];
     deletedMessageIds?: string[];
     deletedPartsByMessageId?: Record<string, string[]>;
+    /** Internal-only: the input contains the complete canonical session scope. */
+    complete?: boolean;
+  }): Promise<void>;
+  reconcileCanonicalTranscript(input: {
+    workspaceId: string;
+    directory?: string | null;
+    engineSessionId: string;
+    messages: TranscriptMessageInput[];
   }): Promise<void>;
   getTranscript(input: {
     workspaceId: string;
@@ -274,7 +282,7 @@ export function createConversationTranscriptStore(options?: {
     }
   };
 
-  return {
+  const store: ConversationTranscriptStore = {
     async appendTranscript(input) {
       const workspaceId = normalizeText(input.workspaceId);
       const directory = normalizeConversationDirectoryKey(input.directory);
@@ -283,6 +291,9 @@ export function createConversationTranscriptStore(options?: {
       const hasDeletedParts = Object.values(input.deletedPartsByMessageId ?? {})
         .some((partIds) => normalizeTextList(partIds).length > 0);
       if (!workspaceId || !engineSessionId) return;
+      const incomingMessageIds = new Set(
+        input.messages.map((message) => normalizeText(message.id)).filter(Boolean),
+      );
 
       withDb((db) => {
         const seenAt = now();
@@ -335,6 +346,10 @@ export function createConversationTranscriptStore(options?: {
           `SELECT part_id FROM conversation_part
            WHERE workspace_id = ?1 AND directory = ?2 AND engine_session_id = ?3 AND message_id = ?4`,
         );
+        const listMessageIds = db.query<{ message_id: string }, [string, string, string]>(
+          `SELECT message_id FROM conversation_message
+           WHERE workspace_id = ?1 AND directory = ?2 AND engine_session_id = ?3`,
+        );
         const readPartPayload = db.query<PartPayloadRow, [string, string, string, string, string]>(
           `SELECT payload_json FROM conversation_part
            WHERE workspace_id = ?1 AND directory = ?2 AND engine_session_id = ?3 AND message_id = ?4 AND part_id = ?5
@@ -344,6 +359,12 @@ export function createConversationTranscriptStore(options?: {
         db.exec("BEGIN IMMEDIATE");
         try {
           if (input.messages.length === 0 && !hasDeletedMessages && !hasDeletedParts) {
+            if (input.complete === true) {
+              for (const row of listMessageIds.all(workspaceId, directory, engineSessionId)) {
+                deletePartsForMessage.run(workspaceId, directory, engineSessionId, row.message_id);
+                deleteMessage.run(workspaceId, directory, engineSessionId, row.message_id);
+              }
+            }
             upsertEmptyMarker.run(workspaceId, directory, engineSessionId, seenAt);
             db.exec("COMMIT");
             return;
@@ -411,6 +432,13 @@ export function createConversationTranscriptStore(options?: {
               );
             }
           }
+          if (input.complete === true) {
+            for (const row of listMessageIds.all(workspaceId, directory, engineSessionId)) {
+              if (incomingMessageIds.has(row.message_id)) continue;
+              deletePartsForMessage.run(workspaceId, directory, engineSessionId, row.message_id);
+              deleteMessage.run(workspaceId, directory, engineSessionId, row.message_id);
+            }
+          }
           db.exec("COMMIT");
         } catch (error) {
           try {
@@ -420,6 +448,17 @@ export function createConversationTranscriptStore(options?: {
           }
           throw error;
         }
+      });
+    },
+
+    async reconcileCanonicalTranscript(input) {
+      const workspaceId = normalizeText(input.workspaceId);
+      const directory = normalizeConversationDirectoryKey(input.directory);
+      const engineSessionId = normalizeText(input.engineSessionId);
+      if (!workspaceId || !engineSessionId) return;
+      await store.appendTranscript({
+        ...input,
+        complete: true,
       });
     },
 
@@ -509,4 +548,5 @@ export function createConversationTranscriptStore(options?: {
       });
     },
   };
+  return store;
 }

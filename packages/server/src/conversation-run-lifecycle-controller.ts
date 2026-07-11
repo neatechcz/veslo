@@ -119,6 +119,7 @@ export type ConversationRunLifecycleScheduleReconcileInput = {
   workspace: WorkspaceInfo;
   conversationId: string;
   runId: string;
+  directory?: string | null;
   opencodeSessionId?: string | null;
   reason: string;
   abortRequested?: boolean;
@@ -147,14 +148,6 @@ export type ConversationRunLifecycleSubmitResult = {
   payload: Record<string, unknown>;
 };
 
-export type ConversationRunLifecycleTranscriptAppendInput = {
-  workspace: WorkspaceInfo;
-  conversationId: string;
-  sessionId: string;
-  reason: string;
-  shouldReconcile: boolean;
-};
-
 export type ConversationRunLifecycleAbortInput = {
   workspace: WorkspaceInfo;
   target: ConversationRunLifecycleTarget;
@@ -180,6 +173,12 @@ export type ConversationRunLifecycleControllerOptions = {
   resolveLifecycleReconcileInitialDelayMs?: () => number;
   resolveLifecycleReconcilePollMs?: () => number;
   resolveLifecycleReconcileMaxAttempts?: () => number;
+  ingestTerminalTranscript?: (input: {
+    workspace: WorkspaceInfo;
+    directory: string;
+    opencodeSessionId: string;
+    runId: string;
+  }) => Promise<void>;
   timers?: Partial<ConversationRunLifecycleTimerPort>;
   trace?: ConversationRunLifecycleTracePort | null;
   diagnostics?: {
@@ -219,7 +218,6 @@ export type ConversationRunLifecycleController = {
   drainConversationQueue(workspaceId: string, conversationId: string): Promise<void>;
   scheduleLifecycleReconcile(input: ConversationRunLifecycleScheduleReconcileInput): void;
   reconcileConversationRunLifecycle(input: ConversationRunLifecycleScheduleReconcileInput): Promise<void>;
-  handleTranscriptAppend(input: ConversationRunLifecycleTranscriptAppendInput): Promise<void>;
   abortRun(input: ConversationRunLifecycleAbortInput): Promise<ConversationRunLifecycleAbortResult>;
   start(): void;
   stop(): void;
@@ -553,6 +551,7 @@ export function createConversationRunLifecycleController(
       workspace: input.workspace,
       conversationId: input.target.conversationId,
       runId: input.runId,
+      directory: input.target.directory,
       opencodeSessionId: input.target.opencodeSessionId,
       reason,
       delayMs,
@@ -924,6 +923,33 @@ export function createConversationRunLifecycleController(
             });
           });
         }
+        const directory = input.directory?.trim() ?? "";
+        const opencodeSessionId = input.opencodeSessionId?.trim() ?? "";
+        if (directory && opencodeSessionId && options.ingestTerminalTranscript) {
+          void options.ingestTerminalTranscript({
+              workspace: input.workspace,
+              directory,
+              opencodeSessionId,
+              runId,
+            }).then(() => {
+            recordTrace("server:conversation-run:terminal-transcript-ingest", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId,
+              opencodeSessionId,
+              status: status.status,
+            });
+          }).catch((error) => {
+            recordTrace("server:conversation-run:terminal-transcript-ingest-error", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId,
+              opencodeSessionId,
+              status: status.status,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
         scheduleQueueDrain(input.workspace.id, conversationId, 0);
         return;
       }
@@ -1157,39 +1183,6 @@ export function createConversationRunLifecycleController(
     }
   }
 
-  async function handleTranscriptAppend(input: ConversationRunLifecycleTranscriptAppendInput): Promise<void> {
-    if (!input.shouldReconcile) return;
-    const conversationId = input.conversationId.trim();
-    if (!conversationId) return;
-    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
-    if (!lifecycleOwner) return;
-
-    try {
-      const latest = await lifecycleOwner.status(input.workspace.id, conversationId, "latest");
-      recordTrace("server:conversation-run:transcript-reconcile", {
-        workspaceId: input.workspace.id,
-        conversationId,
-        sessionId: input.sessionId,
-        reason: input.reason || null,
-        runId: latest?.runId ?? null,
-        status: latest?.status ?? null,
-        stale: latest?.stale ?? null,
-        ...lifecycleStatusTraceFields(latest),
-      });
-      if (latest && !isActiveLifecycleStatus(latest.status)) {
-        scheduleQueueDrain(input.workspace.id, conversationId, 0);
-      }
-    } catch (error) {
-      recordTrace("server:conversation-run:transcript-reconcile-error", {
-        workspaceId: input.workspace.id,
-        conversationId,
-        sessionId: input.sessionId,
-        reason: input.reason || null,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   async function abortRun(input: ConversationRunLifecycleAbortInput): Promise<ConversationRunLifecycleAbortResult> {
     if (!options.abortOpenCode) {
       throw new Error("OpenCode abort port is required for conversation aborts");
@@ -1216,6 +1209,7 @@ export function createConversationRunLifecycleController(
         workspace: input.workspace,
         conversationId: input.target.conversationId,
         runId: input.runId,
+        directory: input.target.directory,
         opencodeSessionId: input.target.opencodeSessionId,
         reason: "abort-requested",
         abortRequested: true,
@@ -1454,7 +1448,6 @@ export function createConversationRunLifecycleController(
     drainConversationQueue,
     scheduleLifecycleReconcile,
     reconcileConversationRunLifecycle,
-    handleTranscriptAppend,
     abortRun,
     start() {
       if (started) return;

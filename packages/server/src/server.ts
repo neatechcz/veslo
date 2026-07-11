@@ -238,6 +238,7 @@ import type { AutomationTarget } from "./automations.js";
 import { createConversationReadStore } from "./conversation-read-store.js";
 import { createConversationBindingStore } from "./conversation-binding-store.js";
 import { createConversationTranscriptStore } from "./conversation-transcript-store.js";
+import { createTranscriptIngestCoordinator } from "./conversation-transcript-ingest-coordinator.js";
 import { createConversationService } from "./conversation-service.js";
 import { createConversationRunQueueStore } from "./conversation-run-queue-store.js";
 import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
@@ -3894,6 +3895,46 @@ function createRoutes(
       });
     },
   });
+  const transcriptIngestCoordinator = createTranscriptIngestCoordinator({
+    readCanonicalTranscript: async (identity) => {
+      const workspace = await resolveWorkspace(config, identity.workspaceId);
+      const snapshot = await conversationService.readCanonicalTranscript({
+        workspace,
+        sessionId: identity.opencodeSessionId,
+        directory: identity.directory,
+      });
+      return {
+        complete: snapshot.complete,
+        ...(snapshot.conversationId ? { conversationId: snapshot.conversationId } : {}),
+        messages: snapshot.messages,
+        partsByMessageId: snapshot.partsByMessageId,
+      };
+    },
+    persistCanonicalTranscript: async (identity, snapshot) => {
+      const workspace = await resolveWorkspace(config, identity.workspaceId);
+      await conversationService.persistCanonicalTranscript({
+        workspace,
+        directory: identity.directory,
+        opencodeSessionId: identity.opencodeSessionId,
+        messages: snapshot.messages,
+        partsByMessageId: snapshot.partsByMessageId,
+      });
+    },
+    invalidateTranscriptCaches: (identity, snapshot) => {
+      sessionTranscriptPrefetch.invalidate({
+        workspaceId: identity.workspaceId,
+        sessionId: identity.opencodeSessionId,
+        directory: identity.directory,
+      });
+      if (snapshot.conversationId) {
+        sessionTranscriptPrefetch.invalidate({
+          workspaceId: identity.workspaceId,
+          sessionId: snapshot.conversationId,
+          directory: identity.directory,
+        });
+      }
+    },
+  });
 
   const loadConversationTranscriptResponse = async (input: {
     workspace: WorkspaceInfo;
@@ -4081,6 +4122,15 @@ function createRoutes(
     resolveLifecycleReconcileInitialDelayMs: resolveConversationRunLifecycleReconcileInitialDelayMs,
     resolveLifecycleReconcilePollMs: resolveConversationRunLifecycleReconcilePollMs,
     resolveLifecycleReconcileMaxAttempts: resolveConversationRunLifecycleReconcileMaxAttempts,
+    ingestTerminalTranscript: async ({ workspace, directory, opencodeSessionId, runId }) => {
+      await transcriptIngestCoordinator.request({
+        workspaceId: workspace.id,
+        directory,
+        opencodeSessionId,
+        trigger: "terminal-lifecycle",
+        runId,
+      });
+    },
     trace: {
       record: (event, payload = {}) => recordSendWorkflowTrace("server", event, payload),
     },
@@ -4172,6 +4222,7 @@ function createRoutes(
   registerConversationSessionRoutes(routes, {
     conversationService,
     sessionTranscriptPrefetch,
+    transcriptIngestCoordinator,
     conversationRunLifecycleController,
     conversationRunQueueStore,
     conversationSubmitService,

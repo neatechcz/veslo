@@ -61,6 +61,16 @@ const createConversationServiceStub = (
     messages: [],
     partsByMessageId: {},
   }),
+  readCanonicalTranscript: async () => ({
+    workspaceId: "ws_1",
+    sessionId: "sess_1",
+    opencodeSessionId: "sess_1",
+    limit: 0,
+    messages: [],
+    partsByMessageId: {},
+    complete: true,
+  }),
+  persistCanonicalTranscript: async () => {},
   appendTranscript: async () => ({
     workspaceId: "ws_1",
     sessionId: "sess_1",
