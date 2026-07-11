@@ -72,11 +72,11 @@ export default function WorkspaceSwitchOverlay(props: {
         <div class="absolute inset-0">
           <div class="absolute inset-0 bg-[radial-gradient(circle_at_top,_var(--tw-gradient-stops))] from-gray-2 via-gray-1 to-gray-1 opacity-80" />
           <div
-            class="absolute -top-24 right-[-4rem] h-72 w-72 rounded-full bg-indigo-7/20 blur-3xl motion-safe:animate-pulse motion-reduce:opacity-40"
+            class="absolute -top-24 right-[-4rem] h-72 w-72 rounded-full bg-cyan-7/20 blur-3xl motion-safe:animate-pulse motion-reduce:opacity-40"
             style={{ "animation-duration": "6s" }}
           />
           <div
-            class="absolute -bottom-28 left-[-5rem] h-80 w-80 rounded-full bg-indigo-6/15 blur-3xl motion-safe:animate-pulse motion-reduce:opacity-40"
+            class="absolute -bottom-28 left-[-5rem] h-80 w-80 rounded-full bg-cyan-6/15 blur-3xl motion-safe:animate-pulse motion-reduce:opacity-40"
             style={{ "animation-duration": "8s" }}
           />
           <div class="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-gray-1 via-gray-1/40 to-transparent" />
@@ -112,15 +112,15 @@ export default function WorkspaceSwitchOverlay(props: {
               <div class="flex items-center gap-2 text-sm text-gray-11">
                 <span class="relative flex h-2.5 w-2.5">
                   <span
-                    class="absolute inline-flex h-full w-full rounded-full bg-indigo-7/40 motion-safe:animate-ping motion-reduce:opacity-40"
+                    class="absolute inline-flex h-full w-full rounded-full bg-dls-accent/40 motion-safe:animate-ping motion-reduce:opacity-40"
                     style={{ "animation-duration": "2.6s" }}
                   />
-                  <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-7/70" />
+                  <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-dls-accent/70" />
                 </span>
                 <span>{statusLine()}</span>
               </div>
               <div class="h-1 w-56 overflow-hidden rounded-full bg-gray-4/50">
-                <div class="h-full w-1/2 rounded-full bg-gradient-to-r from-transparent via-indigo-6/50 to-transparent animate-progress-shimmer" />
+                <div class="h-full w-1/2 rounded-full bg-gradient-to-r from-transparent via-cyan-6/50 to-transparent animate-progress-shimmer" />
               </div>
             </div>
 

@@ -774,7 +774,7 @@ export default function SoulView(props: SoulViewProps) {
               <button
                 type="button"
                 data-testid="soul-save-button"
-                class="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-8 bg-blue-9 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-10 disabled:border-gray-6 disabled:bg-gray-4 disabled:text-gray-9"
+                class="inline-flex items-center justify-center gap-2 rounded-lg border border-transparent bg-dls-accent px-4 py-2 text-sm font-medium text-[#001932] transition-colors hover:bg-[var(--dls-accent-hover)] disabled:border-gray-6 disabled:bg-gray-4 disabled:text-gray-9"
                 disabled={saveDisabled()}
                 onClick={saveSelectedSoul}
               >

@@ -738,10 +738,10 @@ export default function OnboardingView(props: OnboardingViewProps) {
             <div class="space-y-4">
               <button
                 onClick={() => props.onSelectStartup("local")}
-                class="group w-full relative bg-gray-2 hover:bg-gray-4 border border-gray-6 hover:border-gray-7 p-6 md:p-8 rounded-3xl text-left transition-all duration-300 hover:shadow-2xl hover:shadow-indigo-6/10 hover:-translate-y-0.5 flex items-start gap-6"
+                class="group w-full relative bg-gray-2 hover:bg-gray-4 border border-gray-6 hover:border-gray-7 p-6 md:p-8 rounded-3xl text-left transition-all duration-300 hover:shadow-2xl hover:shadow-cyan-6/10 hover:-translate-y-0.5 flex items-start gap-6"
               >
-                <div class="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-7/20 to-purple-7/20 flex items-center justify-center border border-indigo-7/20 group-hover:border-indigo-7/40 transition-colors">
-                  <Circle size={18} class="text-indigo-11" />
+                <div class="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-7/20 to-cyan-3/20 flex items-center justify-center border border-cyan-7/20 group-hover:border-cyan-7/40 transition-colors">
+                  <Circle size={18} class="text-cyan-11" />
                 </div>
                 <div>
                   <h3 class="text-xl font-medium text-gray-12 mb-2">{translate("onboarding.run_local")}</h3>
@@ -749,8 +749,8 @@ export default function OnboardingView(props: OnboardingViewProps) {
                       {translate("onboarding.run_local_description")}
                   </p>
                   <Show when={props.developerMode}>
-                    <div class="flex items-center gap-2 text-xs font-mono text-indigo-11/80 bg-indigo-2/10 w-fit px-2 py-1 rounded border border-indigo-7/10">
-                      <div class="w-1.5 h-1.5 rounded-full bg-indigo-8 animate-pulse" />
+                    <div class="flex items-center gap-2 text-xs font-mono text-cyan-11/80 bg-cyan-2/10 w-fit px-2 py-1 rounded border border-cyan-7/10">
+                      <div class="w-1.5 h-1.5 rounded-full bg-cyan-8 animate-pulse" />
                       {props.localHostLabel}
                     </div>
                   </Show>
@@ -801,7 +801,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   <div
                     class={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
                       props.rememberStartupChoice
-                        ? "bg-indigo-7 border-indigo-7 text-gray-12"
+                        ? "bg-dls-accent border-dls-accent text-[#001932]"
                         : "border-gray-7 bg-transparent group-hover:border-gray-7"
                     }`}
                   >

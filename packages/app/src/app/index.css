@@ -7,31 +7,31 @@
 :root {
   color-scheme: light;
   --dls-surface: #ffffff;
-  --dls-sidebar: #f9fafb;
-  --dls-border: #e2e8f0;
-  --dls-accent: #1b29ff;
-  --dls-accent-hover: #1d4ed8;
-  --dls-accent-rgb: 27 41 255;
-  --dls-text-primary: #111827;
-  --dls-text-secondary: #64748b;
-  --dls-hover: #f8fafc;
-  --dls-active: #eaebef;
-  --dls-radius: 8px;
-  --dls-radius-lg: 16px;
+  --dls-sidebar: #f6f8fb;
+  --dls-border: rgba(10, 14, 20, 0.08);
+  --dls-accent: #00a8c8;
+  --dls-accent-hover: #008eaa;
+  --dls-accent-rgb: 0 168 200;
+  --dls-text-primary: #0a0e14;
+  --dls-text-secondary: rgba(10, 14, 20, 0.68);
+  --dls-hover: #f6f8fb;
+  --dls-active: #eef1f5;
+  --dls-radius: 4px;
+  --dls-radius-lg: 6px;
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --dls-surface: #121212;
-  --dls-sidebar: #1a1a1a;
-  --dls-border: #262626;
-  --dls-accent: #3b82f6;
-  --dls-accent-hover: #2563eb;
-  --dls-accent-rgb: 59 130 246;
-  --dls-text-primary: #ededed;
-  --dls-text-secondary: #9ca3af;
-  --dls-hover: #1f1f1f;
-  --dls-active: #2d2d2d;
+  --dls-surface: #001932;
+  --dls-sidebar: #0a2440;
+  --dls-border: rgba(255, 255, 255, 0.1);
+  --dls-accent: #1dd7ee;
+  --dls-accent-hover: #54e3f2;
+  --dls-accent-rgb: 29 215 238;
+  --dls-text-primary: rgba(255, 255, 255, 0.92);
+  --dls-text-secondary: rgba(255, 255, 255, 0.64);
+  --dls-hover: #12304f;
+  --dls-active: #183753;
 }
 
 html,
@@ -106,22 +106,22 @@ select:disabled {
 /* Highlight animation for just-saved command */
 @keyframes command-highlight {
   0% {
-    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.6);
-    border-color: rgba(99, 102, 241, 0.8);
+    box-shadow: 0 0 0 0 rgb(var(--dls-accent-rgb) / 0.45);
+    border-color: rgb(var(--dls-accent-rgb) / 0.7);
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
-    border-color: rgba(99, 102, 241, 0.4);
+    box-shadow: 0 0 0 8px rgb(var(--dls-accent-rgb) / 0);
+    border-color: rgb(var(--dls-accent-rgb) / 0.35);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
-    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 0 0 rgb(var(--dls-accent-rgb) / 0);
+    border-color: var(--dls-border);
   }
 }
 
 .command-just-saved {
   animation: command-highlight 2s ease-out;
-  border-color: rgba(99, 102, 241, 0.8);
+  border-color: rgb(var(--dls-accent-rgb) / 0.7);
 }
 
 @keyframes progress-shimmer {

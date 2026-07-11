@@ -175,7 +175,7 @@ export default function QuestionModal(props: QuestionModalProps) {
                                         <span class="font-medium">{opt.description}</span>
                                         <Show when={isSelected()}>
                                             <div class="w-5 h-5 rounded-full bg-blue-9 flex items-center justify-center shadow-sm">
-                                                <Check size={12} class="text-white" strokeWidth={3} />
+                                                <Check size={12} class="text-[#001932]" strokeWidth={3} />
                                             </div>
                                         </Show>
                                     </button>

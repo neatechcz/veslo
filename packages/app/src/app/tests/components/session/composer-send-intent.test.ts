@@ -132,6 +132,22 @@ test("composer exposes button intents for queue and streaming send-now", () => {
     /finally \{[\s\S]*setActiveSendTraceId\(null\);[\s\S]*if \(options\.sendNow\) setSendNowPending\(false\);[\s\S]*\}/,
     "send-now pending state should reset after the onSend promise settles",
   );
+
+  assert.doesNotMatch(
+    composerSource,
+    /#1b29ff/i,
+    "composer primary actions should not bypass the shared cyan accent token",
+  );
+  assert.equal(
+    composerSource.match(/bg-dls-accent text-\[#001932\]/g)?.length ?? 0,
+    3,
+    "queued, pending, and send-now composer actions should use readable cyan token styling",
+  );
+  assert.match(
+    composerSource,
+    /hover:bg-\[var\(--dls-accent-hover\)\]/,
+    "enabled composer actions should use the shared accent hover token",
+  );
 });
 
 test("composer shows Escape confirmation on the streaming stop button", () => {
