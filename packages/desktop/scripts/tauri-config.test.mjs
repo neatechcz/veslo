@@ -11,6 +11,14 @@ const tauriConfigPath = resolve(__dirname, "../src-tauri/tauri.conf.json");
 const srcTauriDir = resolve(__dirname, "../src-tauri");
 const runtimePreferencesPath = resolve(srcTauriDir, "src/runtime_preferences.rs");
 
+test("desktop bundle ships the Node runtime beside Chrome DevTools MCP", () => {
+  const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+  const externalBin = config?.bundle?.externalBin;
+  assert.ok(Array.isArray(externalBin), "Expected Tauri externalBin configuration");
+  assert.ok(externalBin.includes("sidecars/chrome-devtools-mcp"));
+  assert.ok(externalBin.includes("sidecars/veslo-node"));
+});
+
 test("desktop window keeps Tauri native drag-drop disabled for HTML5 file drop", () => {
   const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
   const windows = Array.isArray(config?.app?.windows) ? config.app.windows : [];
