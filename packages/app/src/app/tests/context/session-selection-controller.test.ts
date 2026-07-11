@@ -94,6 +94,7 @@ function makeController(options: {
   appendTranscriptSnapshot?: (input: any) => Promise<void> | void;
   sessionWarn?: (label: string, payload?: unknown) => void;
   resolveSessionWorkspaceId?: (sessionID: string) => string | null;
+  transcriptObservationVersion?: (sessionID: string) => number;
 } = {}) {
   const [store, setStore] = createStore({
     sessions: [] as Session[],
@@ -108,6 +109,7 @@ function makeController(options: {
   const workspaceSessionIds = new Set<string>();
   const hydratedSnapshots: any[] = [];
   const messageWrites: Array<{ sessionID: string; messages: MessageWithParts[] }> = [];
+  const errors: unknown[] = [];
   const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
   let refreshPermissionCalls = 0;
   const activeClient = options.activeClient ?? null;
@@ -134,7 +136,6 @@ function makeController(options: {
     directoryQueryPathMode: () => "auto",
     conversationReader: options.conversationReader,
     loadOfflineTranscript: options.loadOfflineTranscript,
-    appendTranscriptSnapshot: options.appendTranscriptSnapshot,
     shouldBrowseSessionFromDb: options.shouldBrowseSessionFromDb,
     developerMode: () => false,
     setError: () => {},
@@ -142,7 +143,7 @@ function makeController(options: {
     sessionDebug: () => {},
     sessionWarn: options.sessionWarn ?? (() => {}),
     addError: (error) => {
-      throw error;
+      errors.push(error);
     },
     withTimeout: async (promise) => promise,
     isWorkspaceRuntimeReady: options.isWorkspaceRuntimeReady ?? (() => true),
@@ -189,6 +190,7 @@ function makeController(options: {
       hydratedSnapshots.push(snapshot);
       setStore("messages", snapshot.sessionId, snapshot.messages);
     },
+    transcriptObservationVersion: options.transcriptObservationVersion,
     messageLimitBySession: () => ({}),
     setMessageLimitBySession: () => {},
     messageCompleteBySession,
@@ -210,6 +212,7 @@ function makeController(options: {
     workspaceSessionIds,
     hydratedSnapshots,
     messageWrites,
+    errors,
     messageCompleteBySession,
     refreshPermissionCalls: () => refreshPermissionCalls,
   };
@@ -622,274 +625,6 @@ test("loadEarlierMessages continues active scoped unavailable history through li
   });
 });
 
-test("selectSession backfills active scoped live recovery under the OpenCode session id", async () => {
-  await createRoot(async (dispose) => {
-    try {
-      const backfills: any[] = [];
-      const liveMessage = makeMessage("open-backfill", "msg-live");
-      liveMessage.parts = [{ id: "prt-live", type: "text", text: "hello" } as any];
-      const { controller, store } = makeController({
-        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-backfill",
-        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-backfill" ? "ws-a" : null,
-        activeClient: {
-          session: {
-            messages: async () => ok([liveMessage]),
-          },
-        },
-        loadOfflineTranscript: async (sessionID) => ({
-          status: "unavailable",
-          scope: {
-            sessionId: sessionID,
-            workspaceId: "ws-a",
-            directory: "/repo",
-            conversationId: "conv-backfill",
-            opencodeSessionId: "open-backfill",
-          },
-          reason: "source-unavailable",
-        }),
-        appendTranscriptSnapshot: async (input) => {
-          backfills.push(input);
-        },
-      });
-
-      await controller.selectSession("conv-backfill");
-
-      assert.equal(store.messages["conv-backfill"]?.length, 1);
-      assert.equal(backfills.length, 1);
-      assert.equal(backfills[0]?.workspaceId, "ws-a");
-      assert.equal(backfills[0]?.sessionId, "open-backfill");
-      assert.equal(backfills[0]?.directory, "/repo");
-      assert.equal(backfills[0]?.limit, 140);
-      assert.equal(backfills[0]?.reason, "live-recovery");
-      assert.deepEqual(backfills[0]?.messages, [liveMessage.info]);
-      assert.deepEqual(backfills[0]?.partsByMessageId, { "msg-live": liveMessage.parts });
-    } finally {
-      dispose();
-    }
-  });
-});
-
-test("old scoped session recovery keeps UI identity while backfilling the OpenCode history id", async () => {
-  await createRoot(async (dispose) => {
-    try {
-      const offlineReads: any[] = [];
-      const liveReads: any[] = [];
-      const backfills: any[] = [];
-      const liveMessages = [makeMessage("open-legacy", "msg-legacy-live")];
-      const { controller, store } = makeController({
-        selectedSessionId: "conv-legacy",
-        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-legacy",
-        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-legacy" ? "ws-a" : null,
-        activeClient: {
-          session: {
-            messages: async (input: any) => {
-              liveReads.push(input);
-              return ok(liveMessages);
-            },
-          },
-        },
-        loadOfflineTranscript: async (sessionID, limit) => {
-          offlineReads.push({ sessionID, limit });
-          return {
-            status: "unavailable",
-            scope: {
-              sessionId: sessionID,
-              workspaceId: "ws-a",
-              workspaceRoot: "/repo",
-              directory: "/repo",
-              conversationId: "conv-legacy",
-              opencodeSessionId: "open-legacy",
-            },
-            reason: "source-unavailable",
-          };
-        },
-        appendTranscriptSnapshot: async (input) => {
-          backfills.push(input);
-        },
-      });
-
-      await controller.selectSession("conv-legacy");
-
-      assert.deepEqual(offlineReads, [{ sessionID: "conv-legacy", limit: 140 }]);
-      assert.deepEqual(liveReads, [{ sessionID: "open-legacy", limit: 140 }]);
-      assert.deepEqual(store.messages["conv-legacy"], liveMessages.map((message) => message.info));
-      assert.equal(store.messages["open-legacy"], undefined);
-      assert.equal(backfills.length, 1);
-      assert.equal(backfills[0]?.workspaceId, "ws-a");
-      assert.equal(backfills[0]?.sessionId, "open-legacy");
-      assert.equal(backfills[0]?.directory, "/repo");
-      assert.equal(backfills[0]?.reason, "live-recovery");
-      assert.deepEqual(backfills[0]?.messages, liveMessages.map((message) => message.info));
-      assert.equal(controller.selectedSessionHistoryUnavailable(), null);
-      assert.equal(controller.selectedSessionHasEarlierMessages(), false);
-    } finally {
-      dispose();
-    }
-  });
-});
-
-test("selectSession backfills empty active scoped live recovery", async () => {
-  await createRoot(async (dispose) => {
-    try {
-      const backfills: any[] = [];
-      const { controller, store } = makeController({
-        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-empty-backfill",
-        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-empty-backfill" ? "ws-a" : null,
-        activeClient: {
-          session: {
-            messages: async () => ok([]),
-          },
-        },
-        loadOfflineTranscript: async (sessionID) => ({
-          status: "unavailable",
-          scope: {
-            sessionId: sessionID,
-            workspaceId: "ws-a",
-            directory: "/repo",
-            conversationId: "conv-empty-backfill",
-            opencodeSessionId: "open-empty-backfill",
-          },
-          reason: "source-unavailable",
-        }),
-        appendTranscriptSnapshot: async (input) => {
-          backfills.push(input);
-        },
-      });
-
-      await controller.selectSession("conv-empty-backfill");
-
-      assert.deepEqual(store.messages["conv-empty-backfill"], []);
-      assert.equal(backfills.length, 1);
-      assert.equal(backfills[0]?.sessionId, "open-empty-backfill");
-      assert.equal(backfills[0]?.reason, "live-recovery");
-      assert.deepEqual(backfills[0]?.messages, []);
-      assert.deepEqual(backfills[0]?.partsByMessageId, {});
-    } finally {
-      dispose();
-    }
-  });
-});
-
-test("selectSession keeps recovered live messages visible when backfill fails", async () => {
-  await createRoot(async (dispose) => {
-    try {
-      const warnings: any[] = [];
-      const liveMessages = [makeMessage("open-backfill-fail", "msg-live")];
-      const { controller, store } = makeController({
-        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-backfill-fail",
-        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-backfill-fail" ? "ws-a" : null,
-        activeClient: {
-          session: {
-            messages: async () => ok(liveMessages),
-          },
-        },
-        loadOfflineTranscript: async (sessionID) => ({
-          status: "unavailable",
-          scope: {
-            sessionId: sessionID,
-            workspaceId: "ws-a",
-            directory: "/repo",
-            conversationId: "conv-backfill-fail",
-            opencodeSessionId: "open-backfill-fail",
-          },
-          reason: "source-unavailable",
-        }),
-        appendTranscriptSnapshot: async () => {
-          throw new Error("append failed");
-        },
-        sessionWarn: (label, payload) => warnings.push({ label, payload }),
-      });
-
-      await controller.selectSession("conv-backfill-fail");
-
-      assert.deepEqual(store.messages["conv-backfill-fail"], liveMessages.map((message) => message.info));
-      assert.equal(warnings.length, 1);
-      assert.equal(warnings[0]?.label, "live-recovery-backfill:failed");
-    } finally {
-      dispose();
-    }
-  });
-});
-
-test("selectSession can later load the backfilled host transcript without another live read", async () => {
-  await createRoot(async (dispose) => {
-    try {
-      let durableSnapshot: any = null;
-      let liveCalls = 0;
-      const liveMessages = [makeMessage("open-durable", "msg-live")];
-      const loadOfflineTranscript = async (sessionID: string, limit: number) => {
-        if (durableSnapshot) return { status: "loaded", snapshot: durableSnapshot };
-        return {
-          status: "unavailable",
-          scope: {
-            sessionId: sessionID,
-            workspaceId: "ws-a",
-            directory: "/repo",
-            conversationId: "conv-durable",
-            opencodeSessionId: "open-durable",
-          },
-          reason: "source-unavailable",
-        };
-      };
-      const appendTranscriptSnapshot = async (input: any) => {
-        durableSnapshot = {
-          workspaceId: input.workspaceId,
-          sessionId: input.sessionId,
-          directory: input.directory,
-          limit: input.limit,
-          fetchedAt: 2,
-          messages: input.messages,
-          partsByMessageId: input.partsByMessageId,
-          source: "sqlite",
-          conversationId: "conv-durable",
-          opencodeSessionId: "open-durable",
-        };
-      };
-
-      const first = makeController({
-        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-durable",
-        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-durable" ? "ws-a" : null,
-        activeClient: {
-          session: {
-            messages: async () => {
-              liveCalls += 1;
-              return ok(liveMessages);
-            },
-          },
-        },
-        loadOfflineTranscript,
-        appendTranscriptSnapshot,
-      });
-      await first.controller.selectSession("conv-durable");
-
-      const second = makeController({
-        shouldBrowseSessionFromDb: (sessionID) => sessionID === "conv-durable",
-        resolveSessionWorkspaceId: (sessionID) => sessionID === "conv-durable" ? "ws-a" : null,
-        activeClient: {
-          session: {
-            messages: async () => {
-              liveCalls += 1;
-              return ok([]);
-            },
-          },
-        },
-        loadOfflineTranscript,
-        appendTranscriptSnapshot,
-      });
-      await second.controller.selectSession("conv-durable");
-
-      assert.equal(liveCalls, 1);
-      assert.equal(second.hydratedSnapshots.length, 1);
-      assert.equal(second.hydratedSnapshots[0]?.sessionId, "conv-durable");
-      assert.equal(second.hydratedSnapshots[0]?.opencodeSessionId, "open-durable");
-      assert.deepEqual(second.store.messages["conv-durable"], liveMessages.map((message) => message.info));
-      assert.equal(second.store.messages["open-durable"], undefined);
-    } finally {
-      dispose();
-    }
-  });
-});
-
 test("selectSession falls back to offline transcript when live messages report not found", async () => {
   await createRoot(async (dispose) => {
     try {
@@ -924,6 +659,99 @@ test("selectSession falls back to offline transcript when live messages report n
       assert.equal(selectedSessionId(), "sess-404");
       assert.equal(offlineCalls, 1);
       assert.equal(hydratedSnapshots.length, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession does not hydrate an offline snapshot after live transcript activity", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let observationVersion = 0;
+      let resolveOffline: (snapshot: ReturnType<typeof makeTranscriptSnapshot>) => void = () => {};
+      const { controller, hydratedSnapshots } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "sess-race",
+        transcriptObservationVersion: () => observationVersion,
+        loadOfflineTranscript: () => new Promise((resolve) => {
+          resolveOffline = resolve;
+        }),
+      });
+
+      const selecting = controller.selectSession("sess-race");
+      await Promise.resolve();
+      observationVersion += 1;
+      resolveOffline(makeTranscriptSnapshot("sess-race", []));
+      await selecting;
+
+      assert.equal(hydratedSnapshots.length, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession exposes retryable unavailable history when the live transcript read fails", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const failure = new Error("transcript transport failed");
+      const { controller, errors, hydratedSnapshots, messageWrites } = makeController({
+        activeWorkspaceId: "ws-a",
+        activeClient: {
+          session: {
+            messages: async () => {
+              throw failure;
+            },
+          },
+        },
+        resolveSessionWorkspaceId: () => "ws-a",
+      });
+
+      await controller.selectSession("sess-failed-live-read");
+
+      assert.equal(hydratedSnapshots.length, 0);
+      assert.equal(messageWrites.length, 0);
+      assert.deepEqual(errors, [failure]);
+      assert.deepEqual(controller.selectedSessionHistoryUnavailable(), {
+        sessionId: "sess-failed-live-read",
+        workspaceId: "ws-a",
+        workspaceRoot: null,
+        directory: null,
+        conversationId: null,
+        opencodeSessionId: null,
+        reason: "live-transcript-read-failed",
+      });
+      assert.equal(controller.selectedSessionHasEarlierMessages(), false);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession exposes retryable unavailable history when the offline transcript reader throws", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const failure = new Error("offline transcript reader failed");
+      const { controller, errors, hydratedSnapshots } = makeController({
+        activeWorkspaceId: "ws-a",
+        shouldBrowseSessionFromDb: () => true,
+        resolveSessionWorkspaceId: () => "ws-a",
+        loadOfflineTranscript: async () => {
+          throw failure;
+        },
+      });
+
+      await controller.selectSession("sess-failed-offline-read");
+
+      assert.equal(hydratedSnapshots.length, 0);
+      assert.deepEqual(errors, [failure]);
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.sessionId, "sess-failed-offline-read");
+      assert.equal(controller.selectedSessionHistoryUnavailable()?.workspaceId, "ws-a");
+      assert.equal(
+        controller.selectedSessionHistoryUnavailable()?.reason,
+        "offline-transcript-read-failed",
+      );
+      assert.equal(controller.selectedSessionHasEarlierMessages(), false);
     } finally {
       dispose();
     }

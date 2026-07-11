@@ -473,7 +473,47 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         // A routed client that fails health is not ready; unknown probe failures recover once.
       }
     } else {
+      // A cold workspace can have completed native startup while its routed client is
+      // still being published by the regular workspace bootstrap. Join that owner
+      // before treating the missing client as a broken runtime: releasing the route
+      // here would turn a normal first-send race into a forced second startup.
       deps.recordSendTrace(`${reason}:runtime-missing-client`, tracePayload);
+      const joinedBootstrap = await deps.sendTraceStep(
+        `${reason}:runtime-bootstrap-join`,
+        () => deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
+          reason: `${reason}-runtime-bootstrap-join`,
+          loadSessions: false,
+        }),
+        {
+          ...(tracePayload ?? {}),
+          targetWorkspaceId: targetWorkspaceId || null,
+        },
+      );
+      const joinedClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
+      if (joinedBootstrap && joinedClient) {
+        deps.recordSendTrace(`${reason}:runtime-bootstrap-joined`, {
+          ...(tracePayload ?? {}),
+          targetWorkspaceId: targetWorkspaceId || null,
+        });
+        if (preflight) preflight.runtimeHealthOk = true;
+        if (preflight) preflight.forceRecovery = false;
+        if (targetIsActiveWorkspace) deps.setEngineReady(true);
+        return {
+          ok: true,
+          runtimeReady: true,
+          managedAiReady: false,
+          workspaceId: resultWorkspaceId,
+          activeWorkspace: targetIsActiveWorkspace,
+          recoveryAttempted: false,
+          reason: "runtime-health-ok",
+        };
+      }
+      deps.recordSendTrace(`${reason}:runtime-bootstrap-join-unavailable`, {
+        ...(tracePayload ?? {}),
+        targetWorkspaceId: targetWorkspaceId || null,
+        joinedBootstrap,
+        hasClient: Boolean(joinedClient),
+      });
     }
 
     deps.recordSendTrace(`${reason}:runtime-recovery-start`, tracePayload);

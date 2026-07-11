@@ -269,6 +269,7 @@ export type SessionErrorTurn = {
   text: string;
   afterMessageID: string | null;
   time: number;
+  durableRunId?: string | null;
 };
 
 export const SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX = "session-error:";

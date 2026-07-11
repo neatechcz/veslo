@@ -32,18 +32,6 @@ type TranscriptStoreState = {
   parts: Record<string, Part[]>;
 };
 
-type AppendTranscriptSnapshot = (input: {
-  workspaceId: string;
-  sessionId: string;
-  directory?: string | null;
-  limit?: number;
-  messages: MessageInfo[];
-  partsByMessageId: Record<string, Part[]>;
-  deletedMessageIds?: string[];
-  deletedPartsByMessageId?: Record<string, string[]>;
-  reason?: string;
-}) => Promise<void> | void;
-
 type TranscriptIngestScope = {
   directory?: string | null;
 };
@@ -53,7 +41,6 @@ export type SessionTranscriptControllerDeps = {
   setStore: SetStoreFunction<TranscriptStoreState>;
   routing: WorkspaceRouting;
   activeWorkspaceRoot: () => string;
-  appendTranscriptSnapshot?: AppendTranscriptSnapshot;
   applySessionDirectoryOverride: <T extends Session>(session: T) => T;
   resolveSessionDirectory: (session: Pick<Session, "id" | "directory">) => string;
   sessionWarn: (label: string, payload?: unknown) => void;
@@ -311,207 +298,6 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
     };
   };
 
-  const flushTranscriptIngestion = (
-    workspaceId: string,
-    sessionID: string,
-    reason: string,
-    scope?: TranscriptIngestScope,
-  ) => {
-    const key = transcriptIngestKey(workspaceId, sessionID);
-    const timer = transcriptIngestTimers.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      transcriptIngestTimers.delete(key);
-    }
-
-    const writer = deps.appendTranscriptSnapshot;
-    if (!writer) return undefined;
-    const payload = buildTranscriptIngestPayload(workspaceId, sessionID, reason, scope);
-    if (!payload) return undefined;
-    const messageCount = payload.messages.length;
-    const partCount = countPartsByMessageId(payload.partsByMessageId);
-    const deletedMessageCount = payload.deletedMessageIds?.length ?? 0;
-    const deletedPartCount = Object.values(payload.deletedPartsByMessageId ?? {})
-      .reduce((total, partIds) => total + partIds.length, 0);
-    recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-flush-start", {
-      workspaceId,
-      sessionID,
-      reason,
-      messageCount,
-      partCount,
-      deletedMessageCount,
-      deletedPartCount,
-    });
-
-    const previous = transcriptIngestInFlight.get(key) ?? Promise.resolve();
-    const run = previous
-      .catch(() => undefined)
-      .then(async () => {
-        await writer(payload);
-        clearPendingTranscriptDeletions(key, payload);
-        recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-flush-done", {
-          workspaceId,
-          sessionID,
-          reason,
-          messageCount,
-          partCount,
-          deletedMessageCount,
-          deletedPartCount,
-        });
-      })
-      .catch((error) => {
-        recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-flush-error", {
-          workspaceId,
-          sessionID,
-          reason,
-          messageCount,
-          partCount,
-          deletedMessageCount,
-          deletedPartCount,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        deps.sessionWarn("transcript-ingest:failed", {
-          workspaceId,
-          sessionID,
-          reason,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    const tracked = run.finally(() => {
-      if (transcriptIngestInFlight.get(key) === tracked) {
-        transcriptIngestInFlight.delete(key);
-      }
-    });
-    transcriptIngestInFlight.set(key, tracked);
-    return tracked;
-  };
-
-  const scheduleTranscriptIngestion = (
-    sessionID: string,
-    sourceWsId: string | undefined,
-    reason: string,
-    delayMs = TRANSCRIPT_INGEST_DEBOUNCE_MS,
-  ) => {
-    if (!deps.appendTranscriptSnapshot) return;
-    const workspaceId = resolveTranscriptIngestWorkspaceId(sourceWsId);
-    if (!workspaceId || !sessionID) return;
-    const key = transcriptIngestKey(workspaceId, sessionID);
-    const existing = transcriptIngestTimers.get(key);
-    if (existing) clearTimeout(existing);
-    const scope = captureTranscriptIngestScope(workspaceId, sessionID);
-    recordSendWorkflowTrace("session-transcript", "session-transcript:ingest-scheduled", {
-      workspaceId,
-      sessionID,
-      reason,
-      delayMs,
-      replacedExistingTimer: Boolean(existing),
-      directoryCaptured: Boolean(scope.directory),
-    });
-    transcriptIngestTimers.set(
-      key,
-      setTimeout(() => {
-        void flushTranscriptIngestion(workspaceId, sessionID, reason, scope);
-      }, delayMs),
-    );
-  };
-
-  const flushBackgroundTranscriptIngestion = async (
-    workspaceId: string,
-    sessionID: string,
-    reason: string,
-  ) => {
-    const key = transcriptIngestKey(workspaceId, sessionID);
-    const timer = backgroundTranscriptIngestTimers.get(key);
-    if (timer) {
-      clearTimeout(timer);
-      backgroundTranscriptIngestTimers.delete(key);
-    }
-
-    const writer = deps.appendTranscriptSnapshot;
-    if (!writer) return;
-    const c = deps.routing.client(workspaceId);
-    if (!c) return;
-
-    const previous = transcriptIngestInFlight.get(key) ?? Promise.resolve();
-    const run = previous
-      .catch(() => undefined)
-      .then(async () => {
-        const entry = deps.routing.entry(workspaceId);
-        const session = deps.applySessionDirectoryOverride(
-          unwrap(await deps.withTimeout(c.session.get({ sessionID }), 8_000, "background session.get")),
-        );
-        const directory =
-          deps.resolveSessionDirectory(session) ||
-          normalizeDirectoryPath(entry?.directory ?? "");
-        if (!directory) return;
-
-        const limit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);
-        const transcript = unwrap(
-          await deps.withTimeout(c.session.messages({ sessionID, limit }), 12_000, "background session.messages"),
-        ) as MessageWithParts[];
-        const messages = sortMessagesByActivity(
-          transcript
-            .map((message) => message.info)
-            .filter((info): info is MessageInfo => Boolean(info?.id)),
-        );
-        if (messages.length === 0) return;
-
-        const partsByMessageId: Record<string, Part[]> = {};
-        for (const message of transcript) {
-          if (!message.info?.id) continue;
-          partsByMessageId[message.info.id] = sortById(
-            message.parts.filter((part): part is Part => Boolean(part?.id)),
-          );
-        }
-
-        await writer({
-          workspaceId,
-          sessionId: sessionID,
-          directory,
-          limit: Math.max(limit, messages.length),
-          messages,
-          partsByMessageId,
-          reason,
-        });
-      })
-      .catch((error) => {
-        deps.sessionWarn("background-transcript-ingest:failed", {
-          workspaceId,
-          sessionID,
-          reason,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    const tracked = run.finally(() => {
-      if (transcriptIngestInFlight.get(key) === tracked) {
-        transcriptIngestInFlight.delete(key);
-      }
-    });
-    transcriptIngestInFlight.set(key, tracked);
-    await tracked;
-  };
-
-  const scheduleBackgroundTranscriptIngestion = (
-    sessionID: string,
-    workspaceId: string,
-    reason: string,
-    delayMs = BACKGROUND_TRANSCRIPT_INGEST_DEBOUNCE_MS,
-  ) => {
-    if (!deps.appendTranscriptSnapshot) return;
-    const normalizedWorkspaceId = workspaceId.trim();
-    const normalizedSessionId = sessionID.trim();
-    if (!normalizedWorkspaceId || !normalizedSessionId) return;
-    const key = transcriptIngestKey(normalizedWorkspaceId, normalizedSessionId);
-    const existing = backgroundTranscriptIngestTimers.get(key);
-    if (existing) clearTimeout(existing);
-    backgroundTranscriptIngestTimers.set(
-      key,
-      setTimeout(() => {
-        void flushBackgroundTranscriptIngestion(normalizedWorkspaceId, normalizedSessionId, reason);
-      }, delayMs),
-    );
-  };
-
   onCleanup(() => {
     for (const timer of transcriptIngestTimers.values()) clearTimeout(timer);
     transcriptIngestTimers.clear();
@@ -539,9 +325,5 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
     recordPendingTranscriptMessageDeletion,
     recordPendingTranscriptPartDeletion,
     buildTranscriptIngestPayload,
-    flushTranscriptIngestion,
-    scheduleTranscriptIngestion,
-    flushBackgroundTranscriptIngestion,
-    scheduleBackgroundTranscriptIngestion,
   };
 }

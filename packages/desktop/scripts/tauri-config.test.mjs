@@ -11,6 +11,14 @@ const tauriConfigPath = resolve(__dirname, "../src-tauri/tauri.conf.json");
 const srcTauriDir = resolve(__dirname, "../src-tauri");
 const runtimePreferencesPath = resolve(srcTauriDir, "src/runtime_preferences.rs");
 
+test("desktop bundle ships the Node runtime beside Chrome DevTools MCP", () => {
+  const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+  const externalBin = config?.bundle?.externalBin;
+  assert.ok(Array.isArray(externalBin), "Expected Tauri externalBin configuration");
+  assert.ok(externalBin.includes("sidecars/chrome-devtools-mcp"));
+  assert.ok(externalBin.includes("sidecars/veslo-node"));
+});
+
 test("desktop window keeps Tauri native drag-drop disabled for HTML5 file drop", () => {
   const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
   const windows = Array.isArray(config?.app?.windows) ? config.app.windows : [];
@@ -106,6 +114,17 @@ test("desktop sandbox environment command mirrors the server backend resolver", 
   assert.match(misc, /pub fn desktop_sandbox_environment\(\) -> DesktopSandboxEnvironment/);
   assert.match(misc, /crate::veslo_server::spawn::resolve_server_sandbox_backend\(\)/);
   assert.match(lib, /desktop_sandbox_environment/);
+});
+
+test("Tauri shutdown records the exit reason around managed service cleanup", () => {
+  const lib = readFileSync(resolve(srcTauriDir, "src/lib.rs"), "utf8");
+
+  assert.match(lib, /phase=before-cleanup reason=\{reason\}/);
+  assert.match(lib, /phase=after-cleanup reason=\{reason\}/);
+  assert.match(lib, /managed_pids=\{pids:\?\}/);
+  assert.match(lib, /stop_managed_services_for_exit\(&app_handle, "exit_requested"\)/);
+  assert.match(lib, /stop_managed_services_for_exit\(&app_handle, "exit"\)/);
+  assert.match(lib, /stop_managed_services_for_exit\(&app_handle, "window_close_requested"\)/);
 });
 
 test("Windows MSI uses Czech WiX localization", () => {

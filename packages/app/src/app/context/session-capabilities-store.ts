@@ -476,7 +476,13 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
       return;
     }
 
-    setSessionCapabilitiesStatus("loading");
+    const currentSnapshot = sessionCapabilitiesSnapshot();
+    const hasCurrentScopeSnapshot =
+      currentSnapshot?.directory === scope.directory;
+    // Keep already-rendered capabilities visible during a refresh. Replacing
+    // them with the generic loading state makes ordinary session updates look
+    // like a right-sidebar remount.
+    setSessionCapabilitiesStatus(hasCurrentScopeSnapshot ? "ready" : "loading");
     setSessionCapabilitiesError(null);
 
     const previousContext = scope.directory ? sessionCapabilitiesLoadContextByDirectory.get(scope.directory) : undefined;

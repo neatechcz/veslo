@@ -7,6 +7,12 @@ const composerSource = readFileSync(new URL("../../../components/session/compose
 test("composer disables send for global busy only outside streaming mode", () => {
   assert.match(
     composerSource,
+    /const submitLocked = createMemo\(\(\) => sending\(\) && !props\.isStreaming\);/,
+    "composer should stay editable while an active run admits a server-queued follow-up",
+  );
+
+  assert.match(
+    composerSource,
     /const sendDisabled = createMemo\(\(\) => !hasDraftContent\(\) \|\| \(props\.busy && !props\.isStreaming\)\);/,
     "composer should allow queueing while streaming/run-indicator mode owns the global busy state",
   );
@@ -19,8 +25,8 @@ test("composer disables send for global busy only outside streaming mode", () =>
 
   assert.match(
     composerSource,
-    /if \(sending\(\) \|\| \(props\.busy && !props\.isStreaming\)\) \{[\s\S]*recordSendTrace\("sendButton:blocked"/,
-    "send button click guard should only block local duplicate submits and non-streaming global busy",
+    /if \(\(sending\(\) && !props\.isStreaming\) \|\| \(props\.busy && !props\.isStreaming\)\) \{[\s\S]*recordSendTrace\("sendButton:blocked"/,
+    "send button click guard should only block pre-run submits and non-streaming global busy",
   );
 
   assert.doesNotMatch(

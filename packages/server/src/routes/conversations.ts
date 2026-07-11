@@ -1,6 +1,13 @@
 import type { ConversationService, ConversationTranscriptResult } from "../conversation-service.js";
 import type { ConversationRunLifecycleController } from "../conversation-run-lifecycle-controller.js";
-import type { ConversationRunQueueItem, ConversationRunQueueStore } from "../conversation-run-queue-store.js";
+import {
+  CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT,
+  CONVERSATION_RUN_QUEUE_READABLE_STATES,
+  type ConversationRunQueueCursor,
+  type ConversationRunQueueItem,
+  type ConversationRunQueueReadableState,
+  type ConversationRunQueueStore,
+} from "../conversation-run-queue-store.js";
 import type {
   ConversationSubmitResolvedRunSubmitter,
   ConversationSubmitService,
@@ -39,6 +46,7 @@ import { shortId } from "../utils.js";
 
 const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
 const SESSION_TRANSCRIPT_MAX_LIMIT = 200;
+const CONVERSATION_QUEUE_DEFAULT_LIMIT = 50;
 
 export type ConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
 
@@ -79,6 +87,16 @@ type SessionTranscriptPrefetchSessionRef = {
   directory?: string | null;
 };
 
+type TranscriptIngestCoordinatorPort = {
+  request(input: {
+    workspaceId: string;
+    directory: string;
+    opencodeSessionId: string;
+    trigger: "terminal-lifecycle" | "recovery";
+    runId?: string | null;
+  }): Promise<{ kind: "persisted" | "unchanged" | "incomplete" | "exhausted"; generation: number }>;
+};
+
 type ResolveConversationReadDirectory = (
   workspace: WorkspaceInfo,
   requestedRaw: string | null,
@@ -101,6 +119,7 @@ type ResolveConversationExecutionTarget = (input: {
 export type ConversationSessionRouteDependencies = {
   conversationService: ConversationService;
   sessionTranscriptPrefetch: SessionTranscriptPrefetchPort;
+  transcriptIngestCoordinator: TranscriptIngestCoordinatorPort;
   conversationRunLifecycleController: ConversationRunLifecycleController;
   conversationRunQueueStore: ConversationRunQueueStore;
   conversationSubmitService: ConversationSubmitService;
@@ -238,45 +257,6 @@ function sessionRevertMessageId(session: unknown): string | null {
   return messageId || null;
 }
 
-function readTranscriptMessageInfo(message: unknown): Record<string, unknown> | null {
-  if (!isRecordLike(message)) return null;
-  return isRecordLike(message.info) ? message.info : message;
-}
-
-function readTranscriptString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function readPositiveTranscriptNumber(value: unknown): number | null {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function transcriptAssistantMessageIsTerminal(info: Record<string, unknown>): boolean {
-  const time = isRecordLike(info.time) ? info.time : null;
-  if (time && readPositiveTranscriptNumber(time.completed) !== null) return true;
-  if (isRecordLike(info.error)) return true;
-  if (readTranscriptString(info.finish)) return true;
-  return false;
-}
-
-function transcriptLatestAssistantLooksTerminal(messages: unknown[]): boolean {
-  if (messages.length === 0) return false;
-  const latestInfo = readTranscriptMessageInfo(messages[messages.length - 1]);
-  if (!latestInfo) return false;
-  if (readTranscriptString(latestInfo.role) !== "assistant") return false;
-  return transcriptAssistantMessageIsTerminal(latestInfo);
-}
-
-function transcriptReasonSignalsIdle(reason: string): boolean {
-  const normalized = reason.trim().toLowerCase();
-  return normalized.includes("session.idle") || normalized.includes("session.error");
-}
-
-function shouldReconcileLifecycleAfterTranscriptAppend(messages: unknown[], reason: string): boolean {
-  return transcriptReasonSignalsIdle(reason) || transcriptLatestAssistantLooksTerminal(messages);
-}
-
 function resolveTranscriptMessageIdForArtifacts(message: Record<string, unknown>): string {
   const direct = typeof message.id === "string" ? message.id.trim() : "";
   if (direct) return direct;
@@ -345,6 +325,55 @@ function parseSessionDirectoryMap(input: unknown): Record<string, string> {
     result[sessionId] = directory;
   }
   return result;
+}
+
+function parseConversationQueueLimit(input: string | null): number {
+  if (input === null || input.trim() === "") return CONVERSATION_QUEUE_DEFAULT_LIMIT;
+  if (!/^\d+$/.test(input)) {
+    throw new ApiError(400, "invalid_payload", "limit must be a positive integer");
+  }
+  const limit = Number(input);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT) {
+    throw new ApiError(
+      400,
+      "invalid_payload",
+      `limit must be an integer from 1 to ${CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT}`,
+    );
+  }
+  return limit;
+}
+
+function parseConversationQueueStates(values: string[]): ConversationRunQueueReadableState[] {
+  const states = values.length > 0 ? values.map((value) => value.trim()) : [...CONVERSATION_RUN_QUEUE_READABLE_STATES];
+  if (states.length === 0 || states.some((state) => !CONVERSATION_RUN_QUEUE_READABLE_STATES.includes(state as ConversationRunQueueReadableState))) {
+    throw new ApiError(400, "invalid_payload", "status must be pending, starting, or failed");
+  }
+  return [...new Set(states)] as ConversationRunQueueReadableState[];
+}
+
+function parseConversationQueueCursor(value: string | null): ConversationRunQueueCursor | null {
+  if (value === null || value.trim() === "") return null;
+  try {
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    const parsed = JSON.parse(decoded) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid cursor");
+    const cursor = parsed as Record<string, unknown>;
+    if (
+      !Number.isSafeInteger(cursor.createdAt) ||
+      (cursor.createdAt as number) < 0 ||
+      typeof cursor.queueItemId !== "string" ||
+      !cursor.queueItemId.trim()
+    ) {
+      throw new Error("invalid cursor");
+    }
+    return { createdAt: cursor.createdAt as number, queueItemId: cursor.queueItemId.trim() };
+  } catch {
+    throw new ApiError(400, "invalid_payload", "cursor is invalid");
+  }
+}
+
+function encodeConversationQueueCursor(cursor: ConversationRunQueueCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
 }
 
 function parseSessionPrefetchRef(input: unknown, fieldName: string): SessionTranscriptPrefetchSessionRef | null {
@@ -504,7 +533,60 @@ function optionalSubmitDebugTrace(payload: Record<string, unknown>): {
   return debugTrace ? { debugTrace } : {};
 }
 
-function serializeConversationRunQueueStatus(item: ConversationRunQueueItem): Record<string, unknown> {
+function isSensitiveConversationRunErrorKey(key: string): boolean {
+  const normalized = key.trim().toLowerCase().replace(/[-\s]+/g, "_");
+  return normalized.includes("token") ||
+    normalized === "authorization" ||
+    normalized === "directory" ||
+    normalized === "body" ||
+    normalized === "request_body" ||
+    normalized === "prompt" ||
+    normalized === "prompt_text" ||
+    normalized === "parts" ||
+    normalized === "messages";
+}
+
+function redactStructuredConversationRunError(value: unknown, depth = 0): unknown {
+  if (depth > 8) return "[redacted]";
+  if (Array.isArray(value)) {
+    return value.map((item) => redactStructuredConversationRunError(item, depth + 1));
+  }
+  if (!isRecordLike(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    isSensitiveConversationRunErrorKey(key)
+      ? "[redacted]"
+      : redactStructuredConversationRunError(item, depth + 1),
+  ]));
+}
+
+function sanitizeConversationRunError(error: string | null): string | null {
+  const normalized = error?.replace(/\s+/g, " ").trim() ?? "";
+  if (!normalized) return null;
+  let sanitized = normalized;
+  try {
+    sanitized = JSON.stringify(redactStructuredConversationRunError(JSON.parse(normalized)));
+  } catch {
+    // Most lifecycle errors are plain text. Assignment redaction below handles those.
+  }
+  return sanitized
+    .replace(/\bBearer\s+[^\s,;}"']+/gi, "Bearer [redacted]")
+    .replace(
+      /(["'])([a-z_]*(?:token|authorization)[a-z_]*|directory|request_?body|body|prompt(?:_text)?)\1\s*:\s*(["'])[^"']*\3/gi,
+      (_match, keyQuote: string, key: string, valueQuote: string) =>
+        `${keyQuote}${key}${keyQuote}:${valueQuote}[redacted]${valueQuote}`,
+    )
+    .replace(
+      /\b([a-z_]*(?:token|authorization)[a-z_]*|directory|request_?body|body|prompt(?:_text)?)\b\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)/gi,
+      "$1=[redacted]",
+    )
+    .slice(0, 500);
+}
+
+function serializeConversationRunQueueStatus(
+  item: ConversationRunQueueItem,
+  queuePosition: number | null = null,
+): Record<string, unknown> {
   return {
     ok: true,
     workspaceId: item.workspaceId,
@@ -513,16 +595,37 @@ function serializeConversationRunQueueStatus(item: ConversationRunQueueItem): Re
     queueItemId: item.queueItemId,
     reservedRunId: item.reservedRunId,
     clientMessageId: item.clientMessageId,
-    origin: item.origin,
+    kind: parseConversationRunKind(item.kind),
     status: item.state,
-    activeRunId: item.activeRunId,
-    attempts: item.attempts,
+    queuePosition,
+    order: {
+      createdAt: item.createdAt,
+      queueItemId: item.queueItemId,
+    },
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     startedAt: item.startedAt,
-    submittedAt: item.submittedAt,
     completedAt: item.completedAt,
-    error: item.error,
+    error: sanitizeConversationRunError(item.error),
+  };
+}
+
+function serializeQueuedRunLifecycleStatus(item: ConversationRunQueueItem): Record<string, unknown> {
+  const terminalFailure = item.state === "failed";
+  const submittedWithoutLifecycle = item.state === "submitted";
+  return {
+    ok: true,
+    workspaceId: item.workspaceId,
+    conversationId: item.conversationId,
+    runId: item.reservedRunId,
+    status: terminalFailure ? "failed" : submittedWithoutLifecycle ? "submitted" : "queued",
+    stale: submittedWithoutLifecycle,
+    error: terminalFailure ? sanitizeConversationRunError(item.error) : null,
+    clientMessageId: item.clientMessageId,
+    activityKind: terminalFailure ? "idle" : "unknown",
+    waitReason: "none",
+    queueItemId: item.queueItemId,
+    queueState: item.state,
   };
 }
 
@@ -557,6 +660,7 @@ export function registerConversationSessionRoutes(
   const {
     conversationService,
     sessionTranscriptPrefetch,
+    transcriptIngestCoordinator,
     conversationRunLifecycleController,
     conversationRunQueueStore,
     conversationSubmitService,
@@ -1055,6 +1159,36 @@ export function registerConversationSessionRoutes(
     return jsonResponse(result.payload, result.httpStatus);
   });
 
+  addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/queue", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
+    if (workspace.workspaceType !== "local") {
+      throw new ApiError(404, "queue_not_found", "Queued runs are unavailable for this workspace");
+    }
+    const conversationId = (ctx.params.conversationId ?? "").trim();
+    if (!conversationId) {
+      throw new ApiError(400, "invalid_payload", "conversationId is required");
+    }
+    const cursorValues = ctx.url.searchParams.getAll("cursor");
+    if (cursorValues.length > 1) {
+      throw new ApiError(400, "invalid_payload", "cursor may be specified once");
+    }
+    const page = conversationRunQueueStore.listForConversation({
+      workspaceId: workspace.id,
+      conversationId,
+      states: parseConversationQueueStates(ctx.url.searchParams.getAll("status")),
+      cursor: parseConversationQueueCursor(cursorValues[0] ?? null),
+      limit: parseConversationQueueLimit(ctx.url.searchParams.get("limit")),
+    });
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      conversationId,
+      items: page.items.map(({ item, queuePosition }) => serializeConversationRunQueueStatus(item, queuePosition)),
+      nextCursor: page.nextCursor ? encodeConversationQueueCursor(page.nextCursor) : null,
+    });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/queue/:queueItemId", "client", async (ctx) => {
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
@@ -1163,6 +1297,8 @@ export function registerConversationSessionRoutes(
       throw error;
     }
     if (!status) {
+      const queued = conversationRunQueueStore.getForReservedRun(workspace.id, conversationId, runId);
+      if (queued) return jsonResponse(serializeQueuedRunLifecycleStatus(queued));
       throw new ApiError(404, "run_not_found", "Run was not found for this conversation");
     }
     return jsonResponse({
@@ -1172,6 +1308,8 @@ export function registerConversationSessionRoutes(
       runId: status.runId,
       status: status.status,
       stale: status.stale,
+      error: sanitizeConversationRunError(status.error ?? null),
+      clientMessageId: status.clientMessageId ?? null,
       activityKind: status.activityKind ?? null,
       waitReason: status.waitReason ?? null,
       lastUsefulProgressAt: status.lastUsefulProgressAt ?? null,
@@ -1251,62 +1389,70 @@ export function registerConversationSessionRoutes(
   addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {
     ensureWritable(ctx.config);
     requireClientScope(ctx, "collaborator");
+    throw new ApiError(
+      410,
+      "transcript_snapshot_write_retired",
+      "Client transcript snapshot writes have been retired; use transcript recovery instead",
+    );
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/sessions/:sessionId/transcript/recover", "client", async (ctx) => {
+    ensureWritable(ctx.config);
+    requireClientScope(ctx, "collaborator");
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
-    const sessionId = (ctx.params.sessionId ?? "").trim();
-    if (!sessionId) {
-      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    if (workspace.workspaceType === "remote") {
+      throw new ApiError(501, "transcript_recovery_unsupported", "Transcript recovery is not available for remote workspaces");
     }
-    const body = await readJsonBody(ctx.request);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) throw new ApiError(400, "invalid_payload", "sessionId is required");
+    const body = await readOptionalJsonBody(ctx.request);
     const directory = await resolveConversationReadDirectory(
       workspace,
       optionalBodyNullableString(body, "directory") ?? null,
     );
-    if (!directory) {
-      throw new ApiError(400, "invalid_directory", "Conversation directory is required");
-    }
+    if (!directory) throw new ApiError(400, "invalid_directory", "Conversation directory is required");
     const binding = await conversationService.resolveOpenCodeSessionForRead({
       workspaceId: workspace.id,
       workspace,
       directory,
       sessionOrConversationId: sessionId,
     });
-    if (!binding && isVesloConversationId(sessionId)) {
-      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+    if (!binding) throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+
+    const expectedRunId = optionalBodyString(body, "expectedRunId") ?? null;
+    if (expectedRunId) {
+      if (!lifecycleClient) {
+        throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is unavailable");
+      }
+      let latest;
+      try {
+        latest = await lifecycleClient.status(workspace.id, binding.conversationId, "latest");
+      } catch (error) {
+        if (error instanceof OrchestratorLifecycleRequestError) throw lifecycleRequestApiError(error);
+        throw error;
+      }
+      if (!latest || latest.runId !== expectedRunId) {
+        throw new ApiError(409, "transcript_recovery_run_mismatch", "The requested run is no longer current", {
+          expectedRunId,
+          actualRunId: latest?.runId ?? null,
+        });
+      }
     }
 
-    const messages = parseSessionTranscriptMessages(body.messages);
-    const partsByMessageId = parseSessionTranscriptParts(body.partsByMessageId);
-    const reason = optionalBodyString(body, "reason") ?? "";
-    const result = await conversationService.appendTranscript({
-      workspace,
-      sessionId,
-      directory,
-      limit: parseSessionTranscriptLimit(body.limit),
-      messages,
-      partsByMessageId,
-      deletedMessageIds: parseTranscriptStringArray(body.deletedMessageIds, "deletedMessageIds"),
-      deletedPartsByMessageId: parseSessionTranscriptDeletedParts(body.deletedPartsByMessageId),
-    });
-    sessionTranscriptPrefetch.invalidate({
+    const outcome = await transcriptIngestCoordinator.request({
       workspaceId: workspace.id,
-      sessionId: result.opencodeSessionId,
       directory,
+      opencodeSessionId: binding.engineSessionId,
+      trigger: "recovery",
+      runId: expectedRunId,
     });
-    if (result.conversationId) {
-      sessionTranscriptPrefetch.invalidate({
-        workspaceId: workspace.id,
-        sessionId: result.conversationId,
-        directory,
-      });
-    }
-    void conversationRunLifecycleController.handleTranscriptAppend({
-      workspace,
-      conversationId: result.conversationId ?? binding?.conversationId ?? sessionId,
-      sessionId: result.opencodeSessionId,
-      reason,
-      shouldReconcile: shouldReconcileLifecycleAfterTranscriptAppend(messages, reason),
+    return jsonResponse({
+      workspaceId: workspace.id,
+      conversationId: binding.conversationId,
+      opencodeSessionId: binding.engineSessionId,
+      state: outcome.kind,
+      generation: outcome.generation,
     });
-    return jsonResponse(result);
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/transcript", "client", async (ctx) => {

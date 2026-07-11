@@ -21,6 +21,10 @@ test("Chrome DevTools MCP shim uses the vendored package instead of npm exec", (
   assert.match(source, /pathToFileURL/);
   assert.match(source, /process\.execPath/);
   assert.match(source, /chrome-devtools-mcp-package/);
+  assert.match(source, /process\.versions\.bun/);
+  assert.match(source, /VESLO_CHROME_DEVTOOLS_MCP_NODE_PATH/);
+  assert.match(source, /veslo-node\.exe/);
+  assert.match(source, /stdio:\s*"inherit"/);
 });
 
 test("Chrome DevTools MCP shim honors a forwarded vendored watchdog entrypoint", () => {
@@ -92,4 +96,7 @@ test("prepare-sidecar vendors the Chrome DevTools MCP package with the sidecar",
   assert.match(prepareSidecarSource, /chrome-devtools-mcp-package/);
   assert.match(prepareSidecarSource, /require\.resolve\(["']chrome-devtools-mcp\/package\.json["']\)/);
   assert.match(prepareSidecarSource, /copyChromeDevtoolsMcpPackage/);
+  assert.match(prepareSidecarSource, /bundledNodeVersion/);
+  assert.match(prepareSidecarSource, /node-v\$\{bundledNodeVersion\}-win-x64\.zip/);
+  assert.match(prepareSidecarSource, /ensureBundledNodeRuntime/);
 });

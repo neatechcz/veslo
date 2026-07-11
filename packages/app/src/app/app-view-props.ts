@@ -28,7 +28,6 @@ import type {
   WorkspaceInfo,
 } from "./lib/tauri";
 import type {
-  VesloAuditEntry,
   VesloServerCapabilities,
   VesloServerClient,
   VesloServerDiagnostics,
@@ -332,9 +331,6 @@ export type AppViewPropsScope = {
   vesloServerHostInfo: Accessor<VesloServerInfo | null>;
   devtoolsCapabilities: Accessor<VesloServerCapabilities | null>;
   resolvedDevtoolsWorkspaceId: Accessor<string | null>;
-  vesloAuditEntries: Accessor<VesloAuditEntry[]>;
-  vesloAuditStatus: Accessor<"idle" | "loading" | "error">;
-  vesloAuditError: Accessor<string | null>;
   opencodeConnectStatus: Accessor<OpencodeConnectStatus | null>;
   orchestratorStatusState: Accessor<OrchestratorStatus | null>;
   opencodeRouterInfoState: Accessor<OpenCodeRouterInfo | null>;

@@ -44,6 +44,28 @@ test("collapses completed intermediate assistant activity between user and final
   assert.deepEqual(group.items.map((item) => item.kind), ["steps", "comment", "steps"]);
 });
 
+test("keeps attachment-only user history as a canonical message block", () => {
+  const blocks = buildProgressRenderBlocks({
+    messages: [
+      message("u-file", "user", [{
+        type: "file",
+        filename: "canonical-only.txt",
+        mime: "text/plain",
+        url: "data:text/plain;base64,Y2Fub25pY2Fs",
+      } as any]),
+    ],
+    isStreaming: false,
+    showThinking: false,
+    developerMode: false,
+  });
+
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0]?.kind, "message");
+  if (blocks[0]?.kind !== "message") return;
+  assert.equal(blocks[0].messageId, "u-file");
+  assert.deepEqual(blocks[0].groups, []);
+});
+
 test("keeps the latest assistant text live while streaming", () => {
   const blocks = buildProgressRenderBlocks({
     messages: [

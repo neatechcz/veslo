@@ -744,6 +744,9 @@ Verification-first
       expect(vesloAgent).toContain("VESLO_AGENT_INSTRUCTIONS_START");
       expect(vesloAgent).toContain("Response Style");
       expect(vesloAgent).toContain("Output Hygiene");
+      expect(vesloAgent).toContain("Reliable File and Browser Tools");
+      expect(vesloAgent).toContain("dot-prefixed workspace directory");
+      expect(vesloAgent).toContain("about:blank");
       expect(vesloAgent).toContain("Veslo Tools & Features");
       expect(vesloAgent).toContain("Skills");
       expect(vesloAgent).toContain("Scheduler");

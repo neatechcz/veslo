@@ -190,6 +190,7 @@ describe("conversation read store DB path resolution", () => {
       workspaceId: "ws-a",
       sessionId: "sess-a",
       limit: 10,
+      readMode: "complete",
       directory: workspaceRoot,
       workspace,
     });
@@ -276,6 +277,7 @@ describe("conversation read store DB path resolution", () => {
     });
 
     expect(transcript.source).toBe("sqlite");
+    expect(transcript.complete).toBe(false);
     expect(transcript.messages.map((message) => (message as { id?: string }).id)).toEqual(["msg-1"]);
     expect(transcript.partsByMessageId["msg-1"]?.map((part) => (part as { id?: string }).id)).toEqual(["part-1"]);
     expect(transcript.diagnostic).toEqual({

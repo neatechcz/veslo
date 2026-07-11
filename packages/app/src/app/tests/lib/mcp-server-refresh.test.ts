@@ -29,6 +29,7 @@ function createHarness(options: {
   entries?: () => McpServerEntry[];
 } = {}) {
   const scheduledRuntimeStatus: Array<{ projectDir: string; entries: McpServerEntry[] }> = [];
+  const serverUpdates: McpServerEntry[][] = [];
   const lastUpdatedAtUpdates: Array<number | null> = [];
   let servers: McpServerEntry[] = [];
   let statuses: McpStatusMap = { stale: { status: "connected" } };
@@ -56,6 +57,7 @@ function createHarness(options: {
       status = value;
     },
     setMcpServers: (value) => {
+      serverUpdates.push(value);
       servers = value;
     },
     setMcpStatuses: (value) => {
@@ -73,6 +75,7 @@ function createHarness(options: {
   return {
     refresh,
     scheduledRuntimeStatus,
+    serverUpdates,
     get servers() {
       return servers;
     },
@@ -167,6 +170,7 @@ test("MCP refresh only bumps session capability fingerprint when entries materia
   await harness.refresh();
 
   assert.equal(harness.lastUpdatedAtUpdates.length, 1);
+  assert.equal(harness.serverUpdates.length, 1);
   assert.deepEqual(harness.servers, [listedRemoteEntry]);
 });
 

@@ -246,7 +246,7 @@ test("session list clicks record browse scope before route navigation", () => {
   for (const source of [sessionPageSource, dashboardSource]) {
     const openSessionStart = source.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
     assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
-    const openSessionEnd = source.indexOf("  const resolveVesloWorkspaceId = (workspaceId: string) => {", openSessionStart);
+    const openSessionEnd = source.indexOf("  };", source.indexOf("sourceContext:", openSessionStart));
     assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
     const openSessionSource = source.slice(openSessionStart, openSessionEnd);
 
@@ -494,13 +494,13 @@ test("workspace snapshot effect preserves scoped browse session during send-time
 test("session run-state reset traces use concrete idle reasons", () => {
   assert.match(
     sessionPageSource,
-    /if \(props\.sessionStatus === "idle" && \(runHasBegun\(\) \|\| responseStarted\(\)\)\) \{\s*resetRunState\(currentSessionQueueKey\(\), "active-session-idle"\);/s,
-    "active idle reset should be tagged with a concrete reason",
+    /if \(!runStartedAt\(\)\) return;\s*if \(lifecycleKeepsRunPresentationActive\(activeRunDiagnostic\(\)\)\) return;\s*if \(props\.sessionStatus === "idle" && \(runHasBegun\(\) \|\| responseStarted\(\)\)\) \{\s*resetRunState\(currentSessionQueueKey\(\), "active-session-idle"\);/s,
+    "active idle reset should defer to fresh durable lifecycle truth and retain a concrete reason",
   );
   assert.match(
     sessionPageSource,
-    /!runHasBegun\(\) &&\s*!responseStarted\(\)\s*\) \{\s*resetRunState\(currentSessionQueueKey\(\), "idle-grace-expired"\);/s,
-    "idle grace reset should be tagged with a concrete reason",
+    /if \(runHasBegun\(\) \|\| responseStarted\(\)\) return;\s*if \(lifecycleKeepsRunPresentationActive\(activeRunDiagnostic\(\)\)\) return;[\s\S]*!responseStarted\(\) &&\s*!lifecycleKeepsRunPresentationActive\(activeRunDiagnostic\(\)\)[\s\S]*resetRunState\(currentSessionQueueKey\(\), "idle-grace-expired"\);/s,
+    "idle grace reset should wait for durable lifecycle truth before using its concrete reason",
   );
 });
 

@@ -361,7 +361,7 @@ test("send runtime readiness owner blocks managed AI bootstrap when runtime reco
       reason: "runtime-recovery-not-started",
     },
   );
-  assert.deepEqual(ensureEngineCalls, ["target", "target"]);
+  assert.deepEqual(ensureEngineCalls, ["target", "target", "target"]);
   assert.deepEqual(managedConfigChecks, []);
   assert.equal(preflight.enginePrepared, undefined);
   assert.equal(preflight.managedAiReady, undefined);
@@ -372,7 +372,7 @@ test("send runtime readiness retries foreground recovery after a shared warmup f
   const { readiness, clients, events, ensureEngineCalls } = createHarness({
     ensureEngineForWorkspace: async (workspaceId?: string) => {
       ensureEngineCalls.push(workspaceId);
-      if (ensureEngineCalls.length === 1) return false;
+      if (ensureEngineCalls.length <= 2) return false;
       clients.set("target", createClient("target-recovered"));
       return true;
     },
@@ -385,7 +385,7 @@ test("send runtime readiness retries foreground recovery after a shared warmup f
   };
 
   assert.equal(await readiness.ensureLocalRuntimeReachableForSend("sendPrompt", preflight), true);
-  assert.deepEqual(ensureEngineCalls, ["target", "target"]);
+  assert.deepEqual(ensureEngineCalls, ["target", "target", "target"]);
   assert.equal(preflight.runtimeHealthOk, true);
   assert.ok(events.some((entry) => entry.event === "sendPrompt:runtime-recovery-first-attempt-not-started"));
   assert.ok(events.some((entry) =>
@@ -522,6 +522,36 @@ test("local runtime readiness skips duplicate health probes when preflight is al
   assert.deepEqual(ensureEngineCalls, []);
   assert.deepEqual(engineReadyValues, []);
   assert.ok(events.some((entry) => entry.event === "createSessionAndOpen:runtime-health-skip"));
+});
+
+test("local runtime readiness joins cold bootstrap before forcing recovery for a missing client", async () => {
+  const ensureOptions: Array<{ workspaceId: string | undefined; options: unknown }> = [];
+  const { readiness, clients, events, ensureEngineCalls, routeReleaseCalls } = createHarness({
+    ensureEngineForWorkspace: async (workspaceId, options) => {
+      ensureEngineCalls.push(workspaceId);
+      ensureOptions.push({ workspaceId, options });
+      clients.set("target", createClient("target-after-bootstrap"));
+      return true;
+    },
+  });
+  clients.delete("target");
+
+  const preflight = {
+    traceId: "trace-bootstrap-join",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+    runtimeHealthOk: false,
+  };
+
+  assert.equal(await readiness.ensureLocalRuntimeReachableForSend("createSessionAndOpen", preflight), true);
+  assert.deepEqual(ensureEngineCalls, ["target"]);
+  assert.deepEqual(ensureOptions, [{
+    workspaceId: "target",
+    options: { reason: "createSessionAndOpen-runtime-bootstrap-join", loadSessions: false },
+  }]);
+  assert.deepEqual(routeReleaseCalls, []);
+  assert.equal(preflight.runtimeHealthOk, true);
+  assert.ok(events.some((entry) => entry.event === "createSessionAndOpen:runtime-bootstrap-joined"));
+  assert.ok(!events.some((entry) => entry.event === "createSessionAndOpen:runtime-recovery-start"));
 });
 
 test("local runtime readiness restarts the target workspace engine for dead endpoints", async () => {

@@ -57,7 +57,6 @@ import type {
   ConversationSendPreflightContext,
 } from "../context/conversation-service";
 import type { LiveTranscriptReadPolicyEvent } from "../context/live-transcript-read-policy";
-import type { SubmittedRunTranscriptCatchupTarget } from "../context/submitted-run-transcript-catchup";
 import type { UiScopeToken } from "../lib/ui-conversation-scope";
 import { deleteSessionComposerDraft } from "./session-composer-drafts";
 import type {
@@ -373,7 +372,6 @@ export type SessionSendWorkflowOptions = {
   releaseSendPromptInFlight?: () => void;
   removeSessionFromWorkspaceSidebar: (workspaceId: string, sessionId: string) => void;
   reportError: (error: unknown, context: string) => void;
-  scheduleSubmittedRunTranscriptCatchup?: (target: SubmittedRunTranscriptCatchupTarget) => void;
   resolveConversationAbortScope: (
     sessionId: string,
     target?: ConversationAbortTarget,
@@ -1577,28 +1575,59 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             origin: sendCorrelation.origin,
           },
         );
-      } catch (error) {
-        if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
-        const message = deps.messageFromUnknownError(error);
-        deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
-          sessionID: existingSessionId,
-          mode: resolvedDraft.mode,
-          command: commandName,
-          error: message,
-          serverSubmit: true,
-        });
-        deps.recordSendTrace("sendPrompt:server-submit-existing:error", {
+      } catch (firstError) {
+        // The request may already have crossed the server boundary. Replay the
+        // exact idempotent submit once with the same clientMessageId before
+        // classifying its outcome as unknown.
+        deps.recordSendTrace("sendPrompt:server-submit-existing:replay-after-transport-error", {
           traceId: sendTraceId,
           sessionID: existingSessionId,
           clientMessageId: sendCorrelation.clientMessageId,
           origin: sendCorrelation.origin,
-          message,
+          message: deps.messageFromUnknownError(firstError),
         });
-        reportServerSubmitError(message);
-        return sessionSubmitFailedResult({
-          code: "server_submit_failed",
-          message,
-        });
+        try {
+          result = await deps.sendTraceStep(
+            "sendPrompt:server-submit-existing:replay",
+            () => submitConversation(
+              workspaceId,
+              directory,
+              submitRequestValidation.value,
+              sendPreflight,
+            ),
+            {
+              traceId: sendTraceId,
+              sessionID: existingSessionId,
+              workspaceId,
+              directory,
+              clientMessageId: sendCorrelation.clientMessageId,
+              origin: sendCorrelation.origin,
+            },
+          );
+        } catch (error) {
+          if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+          const message = deps.messageFromUnknownError(error);
+          deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+            sessionID: existingSessionId,
+            mode: resolvedDraft.mode,
+            command: commandName,
+            error: message,
+            serverSubmit: true,
+          });
+          deps.recordSendTrace("sendPrompt:server-submit-existing:outcome-unknown", {
+            traceId: sendTraceId,
+            sessionID: existingSessionId,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
+            message,
+          });
+          reportServerSubmitError(message);
+          return sessionSubmitFailedResult({
+            code: "server_submit_outcome_unknown",
+            message,
+            draftDisposition: "keep",
+          });
+        }
       }
 
       if (!result) {
@@ -1741,14 +1770,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           workspaceId,
           sessionId: existingSessionId,
           traceId: sendTraceId,
-        });
-        deps.scheduleSubmittedRunTranscriptCatchup?.({
-          workspaceId,
-          sessionId: existingSessionId,
-          directory,
-          runId: result.runId,
-          traceId: sendTraceId,
-          reason: "sendPrompt:server-submit-existing-success",
         });
       }
       deps.holdVisibleRuntimeActivity(
@@ -2033,17 +2054,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           workspaceId: serverFirstSubmitResult.workspaceId,
           sessionId: sessionID,
           traceId: sendTraceId,
-        });
-        deps.scheduleSubmittedRunTranscriptCatchup?.({
-          workspaceId: serverFirstSubmitResult.workspaceId,
-          sessionId: sessionID,
-          directory:
-            sendTargetWorkspace?.directory?.trim() ||
-            sendTargetWorkspace?.workspaceRoot?.trim() ||
-            deps.workspace.activeWorkspaceRoot().trim(),
-          runId: serverFirstSubmitResult.runId,
-          traceId: sendTraceId,
-          reason: "sendPrompt:server-submit-first-success",
         });
       }
       await consumePendingDraftAfterAcceptedSend(true);

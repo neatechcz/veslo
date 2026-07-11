@@ -1348,14 +1348,17 @@ export type VesloSessionTranscriptPrefetchResult = {
   items: VesloSessionTranscriptSnapshot[];
 };
 
-export type VesloSessionTranscriptAppendInput = {
+export type VesloSessionTranscriptRecoveryInput = {
   directory?: string | null;
-  limit?: number;
-  reason?: string;
-  messages: MessageInfo[];
-  partsByMessageId: Record<string, Part[]>;
-  deletedMessageIds?: string[];
-  deletedPartsByMessageId?: Record<string, string[]>;
+  expectedRunId?: string | null;
+};
+
+export type VesloSessionTranscriptRecoveryResult = {
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  state: "persisted" | "unchanged" | "incomplete" | "exhausted";
+  generation: number;
 };
 
 export type VesloConversationList = {
@@ -1395,6 +1398,7 @@ export type VesloConversationImportResult = {
 
 export type VesloConversationRunKind = "prompt_async" | "command" | "shell" | "summarize";
 export type VesloConversationRunLifecycleStatus =
+  | "queued"
   | "submitted"
   | "running"
   | "blocked"
@@ -1644,11 +1648,44 @@ export type VesloConversationRunStatusResult = {
   runId: string;
   status: VesloConversationRunLifecycleStatus;
   stale: boolean;
+  error?: string | null;
+  clientMessageId?: string | null;
   activityKind?: VesloConversationRunActivityKind | null;
   waitReason?: VesloConversationRunWaitReason | null;
   lastUsefulProgressAt?: number | null;
   retrySince?: number | null;
   noProgressSeconds?: number | null;
+};
+
+export type VesloConversationQueueStatus = "pending" | "starting" | "failed";
+
+export type VesloConversationQueueItem = {
+  workspaceId: string;
+  conversationId: string;
+  opencodeSessionId: string;
+  queueItemId: string;
+  reservedRunId: string;
+  clientMessageId: string | null;
+  kind: VesloConversationRunKind;
+  status: VesloConversationQueueStatus;
+  queuePosition: number | null;
+  order: {
+    createdAt: number;
+    queueItemId: string;
+  };
+  createdAt: number;
+  updatedAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  error: string | null;
+};
+
+export type VesloConversationQueueList = {
+  ok: boolean;
+  workspaceId: string;
+  conversationId: string;
+  items: VesloConversationQueueItem[];
+  nextCursor: string | null;
 };
 
 export type VesloConversationAbortInput = {

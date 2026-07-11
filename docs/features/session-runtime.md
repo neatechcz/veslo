@@ -104,8 +104,10 @@ Submit behavior:
 - when a local workspace is in browsing mode, the OpenCode runtime warmup needed before a send must also stay outside the global app busy/navigation lock; the warmup may delay that send, but the rest of the app remains usable
 - remote skill registry/Den failures during local runtime warmup are degraded telemetry conditions, not prompt-send failures, as long as local materialized skill state can still be used safely
 - browsing-mode runtime warmup must preserve the currently selected session route even when the engine has to cold-start instead of reattaching to an existing runtime
-- the Composer clears immediately and remains available for a separate new draft, including while a new session is still being materialized
-- attachment staging, pending-session creation, and message handoff continue in the backend/session layer after the Composer releases the submitted draft
+- the Composer is the sole owner of its live editor value; each send snapshots one immutable draft revision
+- when a pending submitted row or local queued item accepts that snapshot, the Composer clears that exact revision immediately and remains available for a separate new draft, including while a new session is still being materialized
+- attachment staging, pending-session creation, and message handoff continue in the backend/session layer after that local ownership transfer; delayed results from the submitted revision cannot clear newer text
+- when no local owner accepts the snapshot, a typed submit result applies only while the same Composer revision is still current
 - after a pending chat is materialized into a real session, attachment staging must resolve the active workspace against the live Veslo server workspace list before opening a file session; for local desktop workspaces, a missing server workspace is recovered once by refreshing the local server/workspace state before the agent/model prompt starts
 - if handoff fails before a real message exists, the temporary user message stays in the timeline with failed status instead of being restored into the Composer automatically
 - failed pending submitted messages can be changed only through the explicit edit pencil, which removes that pending timeline message and loads that exact draft into the Composer
@@ -115,22 +117,81 @@ Submit behavior:
 Main source of truth:
 
 - `packages/app/src/app/components/session/composer.tsx`
+- `packages/app/src/app/components/session/composer-draft-handoff.ts`
+
+## Run Truth And Transcript Adoption
+
+After a server accepts a scoped conversation run, the durable lifecycle record owns its terminal
+truth. OpenCode SSE `session.error` and `session.idle` observations are immediate reconciliation
+signals: they can refresh local activity presentation and trigger a durable run-status read, but
+they cannot by themselves turn an admitted run into a failed terminal outcome.
+
+The visible run indicator, Stop control, and Escape stop shortcut use the same session-scoped
+projection. A non-stale lifecycle `running` result stays active even if a transient SSE observation
+has already made the engine session look idle. Failed, completed, and aborted lifecycle results have
+different visible outcomes: only a durable failed result creates one scoped red error turn; completed
+and aborted results settle idle without failed-run treatment. App-wide operational errors render in a
+separate neutral boundary and do not change an unrelated session's run phase or abortability.
+
+For an active `busy` engine session, lifecycle reconciliation reads the latest message parts before
+settling on a generic waiting label. A running tool therefore remains visible as local tool work
+instead of being collapsed into `assistant_message_open`. Chrome MCP tool transitions are recorded
+with identifiers, tool name, status, and output/error presence only; URLs, inputs, and tool output
+remain out of diagnostic traces. A terminal tool `error` or `failed` state is read after the engine
+is idle and only when no later assistant text recovered the step. Otherwise it is persisted as the
+fixed redacted reason
+`opencode_tool_execution_failed`; raw tool error text remains out of traces and run storage.
+
+Pending submissions immediately render a transient local echo while the canonical user transcript row
+is unavailable. This is presentation state, not optimistic server admission or durable transcript
+truth. Render replacement and durable cleanup are deliberately separate: the projection suppresses
+the echo in the same render that includes its canonical row, while pending state is removed only after
+confirmed canonical adoption, never merely because the server accepted the run.
+
+`clientMessageId` is used for server admission and idempotency; it is not
+forwarded as an OpenCode message id. Pending transcript adoption requires one
+scoped, post-baseline user candidate. Explicit compatible client metadata wins;
+otherwise the app uses a bounded text/mode/file fingerprint. Ambiguous matches
+remain visible rather than being guessed. Bounded catch-up is reserved for a
+missing assistant response, and only a failure known before admission is
+editable.
+
+If an existing-conversation server-submit transport loses its response, Veslo replays the same
+idempotent `clientMessageId` once. A second transport failure is shown as an unconfirmed-delivery
+warning, not as an editable retry with a fresh id. While any transient local submission remains
+unresolved, a new normal send stays in Composer and is not dispatched without its own local owner.
+
+Main source of truth:
+
+- lifecycle reconciliation: `packages/app/src/app/context/session-lifecycle-recovery.ts`
+- SSE arbitration: `packages/app/src/app/context/session-event-stream.ts`
+- run presentation: `packages/app/src/app/pages/session-run-presentation.ts`
+- pending-submission reconciliation: `packages/app/src/app/components/session/pending-submit-reconciliation.ts`
 
 ## Session Message Queue
 
-When a session is running or streaming, plain Enter and the queue send button add the draft to a session-local queue instead of interrupting the active run. Ctrl/Meta+Enter and send-now bypass the queue and submit immediately.
+There are two deliberately separate queue owners:
 
-Stopping a run pauses the current session queue before the abort can make the session idle. The queue resumes when the user sends a queued Enter draft or after an accepted send-now draft finishes. When a non-idle session returns to idle and the queue is not paused, Veslo drains the first queued or retryable queued draft.
+- A local queued draft is a pre-admission, editable SessionView item. It exists only for the lifetime of that view and is not restart-durable.
+- An accepted server queue item is a durable `conversation_run_queue` request. The app can show a read-only projection of it, but the server remains its only execution owner.
+
+While a session is running or streaming, plain Enter and the queue send button submit directly to server admission instead of first creating a local queue row. If the server accepts the request while another lifecycle run is active, it returns `status: "queued"`; the app immediately renders its server-owned projection. Ctrl/Meta+Enter and send-now still submit immediately. A draft becomes a local queued draft only when the local flow already owns an unsent draft, is paused after Stop, or is being edited before admission.
+
+Stop aborts the active lifecycle run and pauses only local pre-admission drafts before that abort can make the session idle. A server-accepted queue item is not paused or cancelled by Stop and may continue after the aborted run reaches a terminal state. When a non-idle session returns to idle and its local queue is not paused, Veslo drains the first local queued draft. A failed local head requires explicit Retry and blocks later local drafts until the user retries, edits/sends, or cancels it.
 
 Plain Escape while a run is active is a two-step stop shortcut. The first eligible Escape changes the streaming stop button from the square icon to `Esc` and does not abort the run. The next eligible Escape confirms the stop and uses the same abort path as the stop button. Escape used by command palette, search, side overlays, modals, or other handled UI must not arm or confirm the stop shortcut.
 
-Queued drafts can be edited, canceled, and reordered before they are sent. Saving an edited queued draft with Enter updates the queued item; saving with send-now submits it immediately.
+Local queued drafts can be edited, canceled, reordered, and—only for the failed head—retried before admission. Saving an edited local draft with Enter updates that local item; saving with send-now submits it immediately. Server projection rows are read-only: they do not expose Retry, Edit, Cancel, Move, Pause, or Resume controls, and their generic typed label intentionally contains no prompt text after reload.
 
-The app-owned queue remains the editable local affordance for drafts that have not yet been accepted by the Veslo server. Once a conversation run request reaches the server, the server is authoritative: if the orchestrator lifecycle reports an active run for that conversation, the server persists the request as a queued run and returns `status: "queued"` instead of surfacing `run_already_active` as a client error. The lifecycle active read reconciles stale rows against OpenCode before queueing. The server drains the durable queue after the active lifecycle run reaches a terminal state, including terminal states discovered from transcript/idle reconciliation. UI state may mirror this queue, but it must not be treated as the business invariant for whether another run can start.
+Once a conversation run request reaches the server, the server is authoritative: if the orchestrator lifecycle reports an active run for that conversation, the server persists the request as a queued run and returns `status: "queued"` instead of surfacing `run_already_active` as a client error. The lifecycle active read reconciles stale rows against OpenCode before queueing. The server drains the durable queue after the active lifecycle run reaches a terminal state, including terminal states discovered from transcript/idle reconciliation. The app hydrates pending, starting, and failed rows for the selected scoped conversation after activation, reconnect, return from a background session, and relevant lifecycle transitions. UI state may mirror this queue, but it must not be treated as the business invariant for whether another run can start.
+
+Queue status `submitted` means that queue processing handed the reserved run to the lifecycle; it is not a successful model response. At that point the waiting-row projection disappears, and subsequent lifecycle/transcript state keyed by `reservedRunId` owns run completion or failure. Queue-row retention and data classification are intentionally deferred to a separate decision; this behavior does not add a server mutation or acknowledgement API.
 
 After any server-accepted submit, the app must retain the scoped conversation identity across the UI session id, OpenCode session id, and conversation id aliases so follow-up stop, queue-drain, lifecycle, and transcript operations never infer workspace scope from the currently selected workspace.
 
 Local queued drafts are keyed by session id, or by the pending draft key before a real session exists. Queue sends capture their source session before awaiting asynchronous send setup so a draft queued in one session is not accidentally submitted to a different session after navigation. If a queued item is draining in a background session, Veslo avoids starting run UI for the newly selected session while still letting the original session queue continue after that session becomes idle.
+
+Legacy pending queue-key prefixes remain compatibility state. They must not be removed or silently reinterpreted without separate upgrade-state evidence.
 
 Workspace/session visibility is not the runtime boundary. A run in a non-visible workspace must keep using its workspace-scoped server/orchestrator/OpenCode runtime, including file writes and provider requests, and append to the same conversation transcript. The UI consumes background workspace SSE without merging message parts into the currently visible transcript: it updates the scoped status/busy marker, refreshes permission/question prompts, and persists background transcript snapshots through the Veslo server so returning to that workspace can hydrate from durable state. Destructive global actions such as update install, reset, or engine reload must include background `workspaceBusy` entries in their active-run guard instead of checking only the currently visible session list.
 
@@ -200,7 +261,7 @@ Current behavior:
 - switching between chat and workspace targets keeps the current text and attachments, updates the selected destination metadata, and never loads a destination-specific draft body
 - old per-workspace pending draft records are obsolete; they are ignored and are not migrated into the global draft
 - a real OpenCode session is materialized only when the pending draft is sent successfully
-- first send snapshots both the current global draft and the selected destination; successful handoff clears the global pending draft, while failed handoff keeps the draft and destination available for retry
+- first send snapshots both the current global draft and the selected destination; once pending submission state accepts local ownership, the Composer clears only that submitted revision, and a pre-admission failure remains as an explicit editable timeline row instead of being restored automatically over a newer draft
 - real OpenCode sessions keep the existing per-session composer draft behavior after materialization
 
 ## Titlebar Context

@@ -238,6 +238,7 @@ import type { AutomationTarget } from "./automations.js";
 import { createConversationReadStore } from "./conversation-read-store.js";
 import { createConversationBindingStore } from "./conversation-binding-store.js";
 import { createConversationTranscriptStore } from "./conversation-transcript-store.js";
+import { createTranscriptIngestCoordinator } from "./conversation-transcript-ingest-coordinator.js";
 import { createConversationService } from "./conversation-service.js";
 import { createConversationRunQueueStore } from "./conversation-run-queue-store.js";
 import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
@@ -3846,13 +3847,14 @@ function createRoutes(
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
     transcriptStore: conversationTranscriptStore,
-    createOpenCodeSession: async ({ workspace, directory, title, sendTraceId }) => {
+    createOpenCodeSession: async ({ workspace, directory, title, requestedOpenCodeSessionId, sendTraceId }) => {
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
       return await fetchOpencodeJsonWithOrchestratorFallback(config, scopedWorkspace, "/session", {
         method: "POST",
         timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
         sendTraceId,
         body: {
+          ...(requestedOpenCodeSessionId?.trim() ? { id: requestedOpenCodeSessionId.trim() } : {}),
           ...(directory ? { directory } : {}),
           ...(title?.trim() ? { title: title.trim() } : {}),
         },
@@ -3891,6 +3893,46 @@ function createRoutes(
         directory: resolvedDirectory,
         limit,
       });
+    },
+  });
+  const transcriptIngestCoordinator = createTranscriptIngestCoordinator({
+    readCanonicalTranscript: async (identity) => {
+      const workspace = await resolveWorkspace(config, identity.workspaceId);
+      const snapshot = await conversationService.readCanonicalTranscript({
+        workspace,
+        sessionId: identity.opencodeSessionId,
+        directory: identity.directory,
+      });
+      return {
+        complete: snapshot.complete,
+        ...(snapshot.conversationId ? { conversationId: snapshot.conversationId } : {}),
+        messages: snapshot.messages,
+        partsByMessageId: snapshot.partsByMessageId,
+      };
+    },
+    persistCanonicalTranscript: async (identity, snapshot) => {
+      const workspace = await resolveWorkspace(config, identity.workspaceId);
+      await conversationService.persistCanonicalTranscript({
+        workspace,
+        directory: identity.directory,
+        opencodeSessionId: identity.opencodeSessionId,
+        messages: snapshot.messages,
+        partsByMessageId: snapshot.partsByMessageId,
+      });
+    },
+    invalidateTranscriptCaches: (identity, snapshot) => {
+      sessionTranscriptPrefetch.invalidate({
+        workspaceId: identity.workspaceId,
+        sessionId: identity.opencodeSessionId,
+        directory: identity.directory,
+      });
+      if (snapshot.conversationId) {
+        sessionTranscriptPrefetch.invalidate({
+          workspaceId: identity.workspaceId,
+          sessionId: snapshot.conversationId,
+          directory: identity.directory,
+        });
+      }
     },
   });
 
@@ -4080,6 +4122,15 @@ function createRoutes(
     resolveLifecycleReconcileInitialDelayMs: resolveConversationRunLifecycleReconcileInitialDelayMs,
     resolveLifecycleReconcilePollMs: resolveConversationRunLifecycleReconcilePollMs,
     resolveLifecycleReconcileMaxAttempts: resolveConversationRunLifecycleReconcileMaxAttempts,
+    ingestTerminalTranscript: async ({ workspace, directory, opencodeSessionId, runId }) => {
+      await transcriptIngestCoordinator.request({
+        workspaceId: workspace.id,
+        directory,
+        opencodeSessionId,
+        trigger: "terminal-lifecycle",
+        runId,
+      });
+    },
     trace: {
       record: (event, payload = {}) => recordSendWorkflowTrace("server", event, payload),
     },
@@ -4171,6 +4222,7 @@ function createRoutes(
   registerConversationSessionRoutes(routes, {
     conversationService,
     sessionTranscriptPrefetch,
+    transcriptIngestCoordinator,
     conversationRunLifecycleController,
     conversationRunQueueStore,
     conversationSubmitService,

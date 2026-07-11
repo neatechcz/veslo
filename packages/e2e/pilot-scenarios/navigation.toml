@@ -9,6 +9,36 @@ target = "#root"
 timeout_ms = 15000
 
 [[step]]
+name = "complete isolated-profile onboarding before route assertions"
+action = "eval"
+timeout_ms = 15000
+script = """
+if (window.localStorage.getItem('veslo.onboardingComplete') !== '1') {
+  window.localStorage.setItem('veslo.onboardingComplete', '1');
+  const invoke = window.__TAURI_INTERNALS__?.invoke;
+  if (typeof invoke === 'function') {
+    const snapshot = await invoke('den_auth_snapshot_read').catch(() => null);
+    if (snapshot?.authJson) {
+      await invoke('den_auth_snapshot_write', {
+        authJson: snapshot.authJson,
+        keepSignedIn: snapshot.keepSignedIn !== false,
+        language: snapshot.language || 'en',
+        onboardingComplete: true,
+      });
+    }
+  }
+  window.location.reload();
+}
+true;
+"""
+
+[[step]]
+name = "app returned after onboarding bootstrap"
+action = "wait"
+target = "#root > *"
+timeout_ms = 30000
+
+[[step]]
 name = "navigate to settings hash"
 action = "eval"
 script = """

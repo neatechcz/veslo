@@ -10,6 +10,7 @@ import { VesloServerError } from "../../lib/veslo-server.js";
 import type {
   VesloConversationAbortInput,
   VesloConversationRunInput,
+  VesloConversationRunStatusResult,
   VesloConversationSubmitRequest,
   VesloSessionTranscriptSnapshot,
 } from "../../lib/veslo-server.js";
@@ -59,6 +60,7 @@ function createFakeClient(options: {
   addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
   failWorkspaceRegistration?: boolean | "invalid-host-token";
   runStatusError?: unknown;
+  runStatusResult?: Partial<VesloConversationRunStatusResult>;
 } = {}) {
   const calls: string[] = [];
   const submitConversationCalls: SubmitConversationCall[] = [];
@@ -204,6 +206,7 @@ function createFakeClient(options: {
         runId,
         status: "running" as const,
         stale: false,
+        ...options.runStatusResult,
       };
     },
     appendSessionTranscript: async (workspaceId: string, sessionId: string, input: { messages: unknown[]; partsByMessageId: Record<string, unknown[]> }) => {
@@ -241,6 +244,7 @@ function createService(options: {
   engineBaseWorkspaceId?: string;
   engineBaseUrl?: string | null;
   runStatusError?: unknown;
+  runStatusResult?: Partial<VesloConversationRunStatusResult>;
   managedAiAccess?: {
     providerId?: string | null;
     defaultModel?: { modelID?: string | null } | null;
@@ -255,12 +259,14 @@ function createService(options: {
     addLocalWorkspaceItems: options.addLocalWorkspaceItems,
     failWorkspaceRegistration: options.failWorkspaceRegistration,
     runStatusError: options.runStatusError,
+    runStatusResult: options.runStatusResult,
   });
   const refreshedFake = options.refreshClientOnEnsure
     ? createFakeClient({
         listWorkspaceItems: options.refreshedListWorkspaceItems ?? options.listWorkspaceItems,
         addLocalWorkspaceItems: options.refreshedAddLocalWorkspaceItems ?? options.addLocalWorkspaceItems,
         runStatusError: options.runStatusError,
+        runStatusResult: options.runStatusResult,
       })
     : null;
   let serverClient: ConversationServiceClient | null = options.startDisconnected ? null : client;
@@ -272,6 +278,13 @@ function createService(options: {
   const rememberedScopes: RememberedScope[] = [];
   const sendTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
   const rememberedRuns: Array<{
+    workspaceId: string;
+    conversationId?: string | null;
+    opencodeSessionId?: string | null;
+    uiSessionId?: string | null;
+    runId?: string | null;
+  }> = [];
+  const rememberedLifecycleRuns: Array<{
     workspaceId: string;
     conversationId?: string | null;
     opencodeSessionId?: string | null;
@@ -368,7 +381,10 @@ function createService(options: {
       rememberRunId(runIds, input);
     },
     resolveLatestConversationRunId: (input) => resolveRunId(runIds, input),
-    rememberLatestConversationLifecycleRunId: (input) => rememberRunId(lifecycleRunIds, input),
+    rememberLatestConversationLifecycleRunId: (input) => {
+      rememberedLifecycleRuns.push(input);
+      rememberRunId(lifecycleRunIds, input);
+    },
     resolveLatestConversationLifecycleRunId: (input) => resolveRunId(lifecycleRunIds, input),
     managedAiAccess: () => options.managedAiAccess ?? null,
     ensureManagedAiRuntimeAuthorizationForSend: async (targetWorkspace) => {
@@ -402,6 +418,7 @@ function createService(options: {
     ensureCalls,
     rememberedScopes,
     rememberedRuns,
+    rememberedLifecycleRuns,
     sendTraces,
     runtimeAuthorizationCalls,
     setRunConversationResult,
@@ -691,23 +708,13 @@ test("local workspace registration failure does not continue with fallback app w
         return result;
       },
     },
-    {
-      name: "append",
-      run: (service) => service.appendTranscriptSnapshot({
-        workspaceId: "app-ws",
-        sessionId: "sess-a",
-        directory: "/repo",
-        messages: [],
-        partsByMessageId: {},
-      }),
-    },
   ];
 
   for (const entry of cases) {
     const { service, calls } = createService({ failWorkspaceRegistration: true });
     await entry.run(service);
     assert.equal(
-      calls.some((call) => /(?:listConversations|importConversations|getSessionTranscript|createConversation|runConversation|abortConversation|getConversationRunStatus|appendSessionTranscript):app-ws(?::|$)/.test(call)),
+      calls.some((call) => /(?:listConversations|importConversations|getSessionTranscript|createConversation|runConversation|abortConversation|getConversationRunStatus):app-ws(?::|$)/.test(call)),
       false,
       `${entry.name} should not call a server API with fallback app workspace id; calls=${calls.join(",")}`,
     );
@@ -751,24 +758,6 @@ test("conversation transcript read preserves unavailable diagnostics at the app 
     1,
     "unavailable snapshots still carry identity sidecars that must be remembered",
   );
-});
-
-test("conversation transcript append forwards empty available snapshots", async () => {
-  const { service, calls } = createService();
-
-  await service.appendTranscriptSnapshot({
-    workspaceId: "app-ws",
-    sessionId: "open-empty",
-    directory: "/repo",
-    limit: 140,
-    reason: "live-recovery",
-    messages: [],
-    partsByMessageId: {},
-  });
-
-  assert.deepEqual(calls.filter((call) => call.startsWith("appendSessionTranscript")), [
-    "appendSessionTranscript:server-ws:open-empty:0",
-  ]);
 });
 
 test("passive browse reads do not start the local conversation server", async () => {
@@ -926,6 +915,62 @@ test("status polls trace 404 run misses before returning null", async () => {
   assert.equal(notFound.payload?.runId, "run-missing");
   assert.equal(notFound.payload?.status, 404);
   assert.equal(notFound.payload?.code, "run_not_found");
+});
+
+test("status polls preserve durable error and client correlation fields", async () => {
+  const { service } = createService({
+    runStatusResult: {
+      status: "failed",
+      clientMessageId: "msg-failed",
+      error: "sanitized durable failure",
+    },
+  });
+
+  const result = await service.readConversationRunStatus({
+    workspaceId: "app-ws",
+    directory: "/repo",
+    conversationId: "conv-a",
+    runId: "run-failed",
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    workspaceId: "server-ws",
+    conversationId: "conv-a",
+    runId: "run-failed",
+    status: "failed",
+    stale: false,
+    clientMessageId: "msg-failed",
+    error: "sanitized durable failure",
+  });
+});
+
+test("latest status reads remember the resolved durable lifecycle run", async () => {
+  const { service, rememberedLifecycleRuns } = createService({
+    runStatusResult: {
+      runId: "run-recovered",
+      status: "failed",
+      error: "restored failure",
+    },
+  });
+
+  const result = await service.readConversationRunStatus({
+    workspaceId: "app-ws",
+    directory: "/repo",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    sessionId: "sess-a",
+    runId: "latest",
+  });
+
+  assert.equal(result?.runId, "run-recovered");
+  assert.deepEqual(rememberedLifecycleRuns, [{
+    workspaceId: "app-ws",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    uiSessionId: "sess-a",
+    runId: "run-recovered",
+  }]);
 });
 
 test("conversation run remembers submitted run ids under Veslo and UI identities", async () => {

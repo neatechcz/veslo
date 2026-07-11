@@ -80,6 +80,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           <div class="flex items-center gap-2.5">
             <button
               type="button"
+              data-testid="session-toggle-left-sidebar"
               class={buttonClass(props.leftActive)}
               onClick={() => props.onToggleLeft()}
               aria-label={leftLabel()}
@@ -116,6 +117,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           {props.rightContent}
           <button
             type="button"
+            data-testid="session-toggle-right-sidebar"
             class={buttonClass(props.rightActive)}
             onClick={() => props.onToggleRight()}
             aria-label={__vesloT("ui.literal.toggle_right_menu_1n4xog", __vesloCurrentLocale())}

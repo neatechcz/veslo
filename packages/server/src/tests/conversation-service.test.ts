@@ -489,6 +489,7 @@ describe("conversation service", () => {
           },
           fetchedAt: 100,
           source: "sqlite",
+          complete: input.readMode === "complete",
         };
       },
     };
@@ -702,6 +703,7 @@ describe("conversation service", () => {
           },
           fetchedAt: 100,
           source: "sqlite",
+          complete: input.readMode === "complete",
         };
       },
     };
@@ -734,6 +736,30 @@ describe("conversation service", () => {
     expect(second.source).toBe("sqlite");
     expect(second.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-1", "msg-2"]);
     expect((second.partsByMessageId["msg-1"]?.[0] as { id: string }).id).toBe("prt-1");
+
+    const canonical = await service.readCanonicalTranscript({
+      workspace: workspaceFor(directory),
+      sessionId: "ses-1",
+      directory,
+    });
+    expect(sandboxTranscriptReads).toBe(2);
+    expect(canonical.complete).toBe(true);
+    expect(canonical.messages.map((m) => (m as { id: string }).id)).toEqual(["msg-1", "msg-2"]);
+
+    await service.persistCanonicalTranscript({
+      workspace: workspaceFor(directory),
+      directory,
+      opencodeSessionId: "ses-1",
+      messages: [{ id: "msg-1", role: "assistant", time: { created: 10, updated: 30 } }],
+      partsByMessageId: { "msg-1": [{ id: "prt-1", type: "text", text: "final" }] },
+    });
+    const reconciled = await transcriptStore.getTranscript({
+      workspaceId: "ws-a",
+      directory,
+      engineSessionId: "ses-1",
+    });
+    expect(reconciled?.messages.map((message) => (message as { id: string }).id)).toEqual(["msg-1"]);
+    expect((reconciled?.partsByMessageId["msg-1"]?.[0] as { text: string }).text).toBe("final");
   });
 
   test("appendTranscript persists live SSE snapshots into the host transcript store", async () => {
@@ -1043,12 +1069,20 @@ describe("conversation service", () => {
     tempDirs.push(dataDir);
     const directory = join(dataDir, "workspace-a");
     const bindingStore = createConversationBindingStore({ dataDir, now: () => 2_000 });
-    const createInputs: Array<{ directory: string | null; title?: string | null }> = [];
+    const createInputs: Array<{
+      directory: string | null;
+      title?: string | null;
+      requestedOpenCodeSessionId?: string | null;
+    }> = [];
     const service = createConversationService({
       readStore: fakeReadStore(directory),
       bindingStore,
       createOpenCodeSession: async (input) => {
-        createInputs.push({ directory: input.directory, title: input.title });
+        createInputs.push({
+          directory: input.directory,
+          title: input.title,
+          requestedOpenCodeSessionId: input.requestedOpenCodeSessionId,
+        });
         return {
           id: "sess-created",
           title: input.title,
@@ -1062,10 +1096,12 @@ describe("conversation service", () => {
       workspace: workspaceFor(directory),
       directory,
       title: "Created",
+      requestedOpenCodeSessionId: "ses_veslo_v1_requested",
     });
 
     expect(createInputs[0]?.directory).toBe(directory);
     expect(createInputs[0]?.title).toBe("Created");
+    expect(createInputs[0]?.requestedOpenCodeSessionId).toBe("ses_veslo_v1_requested");
     expect(result.id).toBe("sess-created");
     expect(result.opencodeSessionId).toBe("sess-created");
     expect(result.conversationId).toMatch(/^conv-/);

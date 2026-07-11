@@ -50,7 +50,7 @@ function RightSidebarContent(props: {
 function RightDockedSidebar(props: SessionRightSidebarProps) {
   return (
     <Show when={props.dockedVisible}>
-      <aside class="w-[280px] flex shrink-0 flex-col bg-dls-sidebar border-l border-gray-6/70 p-3 pt-12">
+      <aside data-testid="session-right-sidebar" data-sidebar-mode="docked" class="w-[280px] flex shrink-0 flex-col bg-dls-sidebar border-l border-gray-6/70 p-3 pt-12">
         <RightSidebarContent
           developerMode={props.developerMode}
           advancedNavProps={props.advancedNavProps}
@@ -67,6 +67,8 @@ function RightOverlaySidebar(props: SessionRightSidebarProps) {
     <Show when={props.overlayOpen}>
       <RightSidebarOverlayBackdrop onClose={props.onCloseOverlay} />
       <aside
+        data-testid="session-right-sidebar"
+        data-sidebar-mode="overlay"
         class={rightSidebarOverlayClass()}
         onClick={(event) => event.stopPropagation()}
       >

@@ -184,6 +184,7 @@ test("verifies bundled sidecars in a Windows target release directory", () => {
       "veslo-code-router",
       "veslo-orchestrator",
       "chrome-devtools-mcp",
+      "veslo-node",
     ]) {
       writeExecutable(join(fixtureRoot, `${name}-${targetTriple}.exe`));
     }
@@ -202,6 +203,7 @@ test("verifies bundled sidecars in a Windows target release directory", () => {
         "veslo-code-router",
         "veslo-orchestrator",
         "chrome-devtools-mcp",
+        "veslo-node",
         "opencode-managed-deps.json",
       ],
     );

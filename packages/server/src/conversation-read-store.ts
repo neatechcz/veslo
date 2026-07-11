@@ -66,10 +66,12 @@ export type ConversationReadStore = {
     workspaceId: string;
     sessionId: string;
     limit: number;
+    readMode?: "limited" | "complete";
     directory: string | null;
     workspace?: ConversationReadWorkspace | null;
   }): Promise<ConversationTranscriptSnapshot & {
     source: "sqlite" | "unavailable";
+    complete?: boolean;
     diagnostic?: ConversationReadDiagnostic;
   }>;
 };
@@ -464,6 +466,7 @@ export function createConversationReadStore(): ConversationReadStore {
       const sessionId = normalizeId(input.sessionId);
       const directory = input.directory?.trim() ?? "";
       const limit = Number.isFinite(input.limit) && input.limit > 0 ? Math.floor(input.limit) : 140;
+      const complete = input.readMode === "complete";
       const empty = {
         workspaceId,
         sessionId,
@@ -527,12 +530,19 @@ export function createConversationReadStore(): ConversationReadStore {
           };
         }
 
-        const messageRows = db
-          .query<MessageRow, [string, number]>(
-            "SELECT id, session_id, data FROM message " +
-              "WHERE session_id = ?1 ORDER BY id ASC LIMIT ?2",
-          )
-          .all(sessionId, limit);
+        const messageRows = complete
+          ? db
+              .query<MessageRow, [string]>(
+                "SELECT id, session_id, data FROM message " +
+                  "WHERE session_id = ?1 ORDER BY id ASC",
+              )
+              .all(sessionId)
+          : db
+              .query<MessageRow, [string, number]>(
+                "SELECT id, session_id, data FROM message " +
+                  "WHERE session_id = ?1 ORDER BY id ASC LIMIT ?2",
+              )
+              .all(sessionId, limit);
         const partRows = db
           .query<PartRow, [string]>(
             "SELECT id, message_id, session_id, data FROM part " +
@@ -570,6 +580,7 @@ export function createConversationReadStore(): ConversationReadStore {
           partsByMessageId,
           fetchedAt: Date.now(),
           source: "sqlite",
+          complete: complete && counters.invalidMessageJsonRows === 0 && counters.invalidPartJsonRows === 0,
           ...((counters.invalidMessageJsonRows > 0 || counters.invalidPartJsonRows > 0)
             ? {
                 diagnostic: {

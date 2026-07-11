@@ -108,3 +108,14 @@ test("release workflow exposes inputs required by production dispatch", () => {
 
   assert.doesNotThrow(() => assertWorkflowSupportsProductionDispatch(workflow));
 });
+
+test("release metadata reaches shell through environment variables", () => {
+  const workflow = readFileSync(resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml"), "utf8");
+
+  assert.match(workflow, /RELEASE_BODY:\s*\$\{\{ steps\.resolve\.outputs\.release_body \}\}/);
+  assert.match(workflow, /RELEASE_NAME:\s*\$\{\{ steps\.resolve\.outputs\.release_name \}\}/);
+  assert.match(workflow, /printf '%s\\n' "\$RELEASE_BODY"/);
+  assert.match(workflow, /--title "\$RELEASE_NAME"/);
+  assert.doesNotMatch(workflow, /printf '%s\\n' "\$\{\{ steps\.resolve\.outputs\.release_body \}\}"/);
+  assert.doesNotMatch(workflow, /--title "\$\{\{ steps\.resolve\.outputs\.release_name \}\}"/);
+});

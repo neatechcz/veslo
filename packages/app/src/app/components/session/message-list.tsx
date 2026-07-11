@@ -38,10 +38,15 @@ import {
 } from "./progress-grouping-model.js";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
 
-export type PendingMessageState = {
-  state: "error";
-  error?: string;
-};
+export type PendingMessageState =
+  | {
+      state: "error";
+      error?: string;
+    }
+  | {
+      state: "sync-warning";
+      reason: "ambiguous-legacy" | "delivery-unconfirmed";
+    };
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -307,6 +312,14 @@ export default function MessageList(props: MessageListProps) {
       ? `${tr("session.pending_submit_failed")}: ${tr("session.pending_submit_local_runtime_failed")}`
       : tr("session.pending_submit_failed");
   };
+
+  const pendingSubmitSyncWarningLabel = (
+    reason: Extract<PendingMessageState, { state: "sync-warning" }>["reason"] | undefined,
+  ) => reason === "ambiguous-legacy"
+    ? tr("session.pending_submit_sync_ambiguous")
+    : reason === "delivery-unconfirmed"
+      ? tr("session.pending_submit_delivery_unconfirmed")
+      : "";
 
   const timelineStatusLabel = (status?: TimelineRowModel["status"]) => {
     switch (status) {
@@ -1498,6 +1511,14 @@ export default function MessageList(props: MessageListProps) {
     const editableMessage = () =>
       props.editableUserMessage?.messageId === block.messageId ? props.editableUserMessage : null;
     const pendingMessageState = () => props.pendingMessageStateById?.[block.messageId] ?? null;
+    const pendingMessageError = () => {
+      const state = pendingMessageState();
+      return state?.state === "error" ? state : null;
+    };
+    const pendingMessageSyncWarning = () => {
+      const state = pendingMessageState();
+      return state?.state === "sync-warning" ? state : null;
+    };
 
     if (isSyntheticSessionError) {
       const messageText = block.renderableParts
@@ -1530,6 +1551,7 @@ export default function MessageList(props: MessageListProps) {
     return (
             <div
               class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+              data-testid="session-message-row"
               data-message-role={block.isUser ? "user" : "assistant"}
               data-message-id={block.messageId}
               style={blockPerfStyle(blockIndex)}
@@ -1599,14 +1621,23 @@ export default function MessageList(props: MessageListProps) {
                     isInline={true}
                   />
                 </Show>
-                <Show when={block.isUser && pendingMessageState()?.state === "error"}>
+                <Show when={block.isUser && pendingMessageError()}>
                   <div
                     class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-red-11"
-                    title={pendingMessageState()?.error ?? undefined}
+                    title={pendingMessageError()?.error ?? undefined}
                     role="status"
                   >
                     <CircleAlert size={12} />
-                    <span>{pendingSubmitFailureLabel(pendingMessageState()?.error)}</span>
+                    <span>{pendingSubmitFailureLabel(pendingMessageError()?.error)}</span>
+                  </div>
+                </Show>
+                <Show when={block.isUser && pendingMessageSyncWarning()}>
+                  <div
+                    class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-amber-11"
+                    role="status"
+                  >
+                    <CircleAlert size={12} />
+                    <span>{pendingSubmitSyncWarningLabel(pendingMessageSyncWarning()?.reason)}</span>
                   </div>
                 </Show>
                 <div class="absolute bottom-2 right-2 flex justify-end gap-1 opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">

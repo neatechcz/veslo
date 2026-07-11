@@ -156,6 +156,7 @@ class QueueHarness implements ConversationRunQueueStore {
   private nextId = 1;
   readonly items: ConversationRunQueueItem[] = [];
   readonly enqueueCalls: Array<Parameters<ConversationRunQueueStore["enqueue"]>[0]> = [];
+  lostClaimQueueItemId: string | null = null;
 
   enqueue(input: Parameters<ConversationRunQueueStore["enqueue"]>[0]) {
     this.enqueueCalls.push(input);
@@ -209,20 +210,25 @@ class QueueHarness implements ConversationRunQueueStore {
     ) ?? null;
   }
 
+  listForConversation(): ReturnType<ConversationRunQueueStore["listForConversation"]> {
+    return { items: [], nextCursor: null };
+  }
+
   markStarting(queueItemId: string): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item || item.state !== "pending") return item ?? null;
+    if (!item || item.state !== "pending") return null;
     item.state = "starting";
     item.attempts += 1;
     item.startedAt = Date.now();
     item.updatedAt = item.startedAt;
     item.error = null;
+    if (this.lostClaimQueueItemId === queueItemId) return null;
     return item;
   }
 
   markPending(queueItemId: string, activeRunId?: string | null): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item || item.state !== "starting") return item ?? null;
+    if (!item || item.state !== "starting") return null;
     item.state = "pending";
     item.activeRunId = activeRunId ?? null;
     item.startedAt = null;
@@ -232,7 +238,7 @@ class QueueHarness implements ConversationRunQueueStore {
 
   markSubmitted(queueItemId: string): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item) return null;
+    if (!item || item.state !== "starting") return null;
     const now = Date.now();
     item.state = "submitted";
     item.submittedAt = now;
@@ -243,7 +249,7 @@ class QueueHarness implements ConversationRunQueueStore {
 
   markFailed(queueItemId: string, error: string): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
-    if (!item) return null;
+    if (!item || item.state !== "starting") return null;
     const now = Date.now();
     item.state = "failed";
     item.error = error;
@@ -261,6 +267,18 @@ class QueueHarness implements ConversationRunQueueStore {
       item.workspaceId === workspaceId &&
       item.conversationId === conversationId &&
       item.queueItemId === queueItemId
+    ) ?? null;
+  }
+
+  getForReservedRun(
+    workspaceId: string,
+    conversationId: string,
+    reservedRunId: string,
+  ): ConversationRunQueueItem | null {
+    return this.items.find((item) =>
+      item.workspaceId === workspaceId &&
+      item.conversationId === conversationId &&
+      item.reservedRunId === reservedRunId
     ) ?? null;
   }
 
@@ -331,7 +349,7 @@ function submitInput(overrides: Partial<ConversationRunLifecycleSubmitInput> = {
   };
 }
 
-function controllerHarness() {
+function controllerHarness(options?: { ingestTerminalTranscript?: (input: { runId: string }) => Promise<void> }) {
   const lifecycle = new LifecycleHarness();
   const queue = new QueueHarness();
   const timers = new TimerHarness();
@@ -399,6 +417,9 @@ function controllerHarness() {
     queueDrainPollMs: 1_500,
     resolveLifecycleReconcilePollMs: () => 2_000,
     resolveLifecycleReconcileMaxAttempts: () => 3,
+    ingestTerminalTranscript: options?.ingestTerminalTranscript
+      ? async (input) => await options.ingestTerminalTranscript!({ runId: input.runId })
+      : undefined,
     trace: {
       record: (event, payload = {}) => {
         traceEntries.push({ event, ...payload });
@@ -597,9 +618,6 @@ test("server stop calls the lifecycle controller stop hook", async () => {
     },
     reconcileConversationRunLifecycle: async () => {
       throw new Error("reconcileConversationRunLifecycle should not be called by the shutdown fixture");
-    },
-    handleTranscriptAppend: async () => {
-      throw new Error("handleTranscriptAppend should not be called by the shutdown fixture");
     },
     start: () => {
       startCalls += 1;
@@ -983,6 +1001,23 @@ test("submitRun keeps active gateway context after provider start and clears it 
   });
 });
 
+test("terminal lifecycle reconcile requests one server-owned transcript ingest before queue drain", async () => {
+  const ingestedRunIds: string[] = [];
+  const { controller, lifecycle, timers } = controllerHarness({
+    ingestTerminalTranscript: async ({ runId }) => {
+      ingestedRunIds.push(runId);
+    },
+  });
+
+  await controller.submitRun(submitInput());
+  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  timers.fire(timers.activeTimers()[0]!.id);
+  await flushMicrotasks();
+
+  expect(ingestedRunIds).toEqual(["run-reserved"]);
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toContain(0);
+});
+
 test("submitRun tracks active gateway context for command runs when provider start is expected", async () => {
   const { controller, activeGatewayCalls, providerWatchCalls, reconcileCalls } = controllerHarness();
 
@@ -1146,6 +1181,17 @@ test("queue drain submits the next pending item after terminal latest lifecycle"
   ]);
 });
 
+test("queue drain does not submit when another controller wins the durable claim", async () => {
+  const { controller, queue, submitCalls } = controllerHarness();
+  const item = enqueuePendingRun(queue);
+  queue.lostClaimQueueItemId = item.queueItemId;
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(queue.items[0]?.state).toBe("starting");
+  expect(submitCalls).toEqual([]);
+});
+
 test("lifecycle reconcile marks missing aborted runs as aborted and wakes queue", async () => {
   const { controller, lifecycle, timers, workspaces } = controllerHarness();
   lifecycle.statusResult = null;
@@ -1246,91 +1292,6 @@ test("snapshot exposes pending lifecycle timer diagnostics", () => {
     inFlightQueueDrains: [],
     inFlightLifecycleReconciles: [],
   });
-});
-
-test("transcript wake-up reconciles latest lifecycle and wakes queue only when terminal", async () => {
-  const { controller, lifecycle, timers, workspaces } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-terminal", status: "completed", stale: false };
-
-  await controller.handleTranscriptAppend({
-    workspace: workspaces[0]!,
-    conversationId: " conv-a ",
-    sessionId: "sess-a",
-    reason: "session.idle",
-    shouldReconcile: true,
-  });
-
-  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest"]);
-  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
-});
-
-test("transcript wake-up does not mark terminal or wake queue while latest lifecycle is active", async () => {
-  const { controller, lifecycle, timers, workspaces } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-active", status: "running", stale: false };
-
-  await controller.handleTranscriptAppend({
-    workspace: workspaces[0]!,
-    conversationId: "conv-a",
-    sessionId: "sess-a",
-    reason: "assistant-finish",
-    shouldReconcile: true,
-  });
-
-  expect(lifecycle.calls).toEqual(["status:ws_1:conv-a:latest"]);
-  expect(lifecycle.calls.some((call) => call.startsWith("mark"))).toBe(false);
-  expect(timers.activeTimers()).toEqual([]);
-});
-
-test("transcript wake-up trace includes latest active run diagnostics", async () => {
-  const { controller, lifecycle, traceEntries, timers, workspaces } = controllerHarness();
-  lifecycle.statusResult = {
-    runId: "run-active",
-    status: "running",
-    stale: false,
-    clientMessageId: "msg-a",
-    origin: "session:normal",
-    activityKind: "unknown",
-    waitReason: "assistant_message_open",
-    noProgressSeconds: 19,
-  };
-
-  await controller.handleTranscriptAppend({
-    workspace: workspaces[0]!,
-    conversationId: "conv-a",
-    sessionId: "sess-a",
-    reason: "session.idle",
-    shouldReconcile: true,
-  });
-
-  expect(
-    traceEntries.find((entry) => entry.event === "server:conversation-run:transcript-reconcile"),
-  ).toMatchObject({
-    runId: "run-active",
-    status: "running",
-    stale: false,
-    clientMessageId: "msg-a",
-    origin: "session:normal",
-    activityKind: "unknown",
-    waitReason: "assistant_message_open",
-    noProgressSeconds: 19,
-  });
-  expect(timers.activeTimers()).toEqual([]);
-});
-
-test("transcript wake-up ignores non-terminal transcript signals", async () => {
-  const { controller, lifecycle, timers, workspaces } = controllerHarness();
-  lifecycle.statusResult = { runId: "run-terminal", status: "completed", stale: false };
-
-  await controller.handleTranscriptAppend({
-    workspace: workspaces[0]!,
-    conversationId: "conv-a",
-    sessionId: "sess-a",
-    reason: "message.append",
-    shouldReconcile: false,
-  });
-
-  expect(lifecycle.calls).toEqual([]);
-  expect(timers.activeTimers()).toEqual([]);
 });
 
 test("startup schedules queue drains for pending conversation keys", () => {

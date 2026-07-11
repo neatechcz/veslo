@@ -37,8 +37,13 @@ test("message list exposes a latest-user-message edit action next to copy", () =
   );
   assert.match(
     source,
-    /<Show when=\{block\.isUser && pendingMessageState\(\)\?\.state === "error"\}>[\s\S]*pendingSubmitFailureLabel\(pendingMessageState\(\)\?\.error\)/s,
+    /<Show when=\{block\.isUser && pendingMessageError\(\)\}>[\s\S]*pendingSubmitFailureLabel\(pendingMessageError\(\)\?\.error\)/s,
     "pending user messages should render only failed handoff status, not a sending/responding footnote",
+  );
+  assert.match(
+    source,
+    /<Show when=\{block\.isUser && pendingMessageSyncWarning\(\)\}>[\s\S]*pendingSubmitSyncWarningLabel\(pendingMessageSyncWarning\(\)\?\.reason\)/s,
+    "accepted submissions with unresolved transcript sync should render a neutral typed warning",
   );
   assert.match(
     source,
@@ -54,5 +59,10 @@ test("message list exposes a latest-user-message edit action next to copy", () =
     source,
     /<Show when=\{editableMessage\(\)\}>[\s\S]*title=\{tr\("session\.edit_message_title"\)\}[\s\S]*aria-label=\{tr\("session\.edit_message_title"\)\}[\s\S]*props\.onEditUserMessage\?\.\(editable\(\)\)[\s\S]*<Pencil size=\{12\}/,
     "edit button should render a pencil action that calls the edit callback",
+  );
+  assert.match(
+    source,
+    /<Show when=\{editableMessage\(\)\}>[\s\S]*<Pencil size=\{12\}/s,
+    "sync warnings must not gain an edit or resend affordance outside the existing editable model",
   );
 });

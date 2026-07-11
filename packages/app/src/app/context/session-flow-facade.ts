@@ -39,6 +39,7 @@ export type SessionViewFlowFacade = Pick<
   | "handleActiveSessionStatusChanged"
   | "handleCancelQueuedDraft"
   | "handleEditQueuedDraft"
+  | "handleRetryQueuedDraft"
   | "handleEditUserMessage"
   | "handleMoveQueuedDraft"
   | "handleSelectedSessionChanged"
@@ -62,6 +63,8 @@ export function createSessionViewFlowFacade(
       options.conversationFlow.handleCancelQueuedDraft(id),
     handleEditQueuedDraft: (id) =>
       options.conversationFlow.handleEditQueuedDraft(id),
+    handleRetryQueuedDraft: (id) =>
+      options.conversationFlow.handleRetryQueuedDraft(id),
     handleEditUserMessage: (editable) =>
       options.conversationFlow.handleEditUserMessage(editable),
     handleMoveQueuedDraft: (id, targetIndex) =>

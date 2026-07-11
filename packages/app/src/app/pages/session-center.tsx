@@ -14,7 +14,7 @@ type SessionCenterSlotProps = {
 
 function SessionCenterRoot(props: SessionCenterSlotProps) {
   return (
-    <main class="flex-1 flex flex-col overflow-hidden bg-gray-1 pt-12">
+    <main class="flex-1 min-w-0 flex flex-col overflow-hidden bg-gray-1 pt-12">
       {props.children}
     </main>
   );

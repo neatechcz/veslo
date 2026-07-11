@@ -7,7 +7,7 @@ source_audit: chat:2026-07-08-dev-runtime-shutdown-variants-5-6-7
 primary_trace: dev-specific/tauri-pilot/manual-runtime-20260707-235515-pnpm-dev/runtime-trace.ndjson
 send_trace_mirror: .tmp/send-workflow-trace.ndjson
 opencode_health_trace: dev-specific/tauri-pilot/manual-runtime-20260707-235515-pnpm-dev/opencode-health.ndjson
-srsh00_trace_exit_attribution_done: false
+srsh00_trace_exit_attribution_done: true
 srsh01_sse_upstream_close_nonfatal_done: true
 srsh02_event_stream_singleton_done: true
 srsh03_runtime_recovery_scope_review_done: true
@@ -167,7 +167,7 @@ done: false
 
 ## SRSH00: Add Minimal Exit Attribution
 
-done: false
+done: true
 
 The current trace is good for orchestrator and OpenCode, but weak for "why did
 the Tauri app/dev child exit?" Add small logging points before changing

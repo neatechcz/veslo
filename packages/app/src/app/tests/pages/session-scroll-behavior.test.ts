@@ -94,19 +94,19 @@ test("failed pending handoff restores the pending submit to its original pending
   );
 });
 
-test("session renders a temporary submitted user message while footer indicator owns responding state", () => {
-  const optimisticIndex = source.indexOf("const optimisticSubmittedMessage = createMemo<MessageWithParts | null>(() => {");
+test("session renders an immediate local echo and synchronously defers to canonical transcript", () => {
+  const localEchoIndex = source.indexOf("const localSubmittedMessage = createMemo<MessageWithParts | null>(() => {");
   const viewportControllerIndex = source.indexOf("const transcriptViewport = createSessionTranscriptViewport({");
 
   assert.ok(
-    optimisticIndex >= 0 && optimisticIndex < viewportControllerIndex,
-    "the optimistic submitted user memo must be defined before the transcript viewport controller reads it",
+    localEchoIndex >= 0 && localEchoIndex < viewportControllerIndex,
+    "the local echo must be defined before the transcript viewport controller reads it",
   );
 
   assert.match(
     source,
-    /pendingSubmittedDraftToMessage\(submitted, props\.activeWorkspaceRoot\)/,
-    "session should derive a synthetic user message from the pending submitted draft model",
+    /const localSubmittedMessage = createMemo<MessageWithParts \| null>\(\(\) => \{[\s\S]*if \(!submitted\) return null;[\s\S]*const renderReplacement = resolvePendingSubmittedRenderReplacement\([\s\S]*if \(renderReplacement\.kind === "show-canonical"\) return null;[\s\S]*pendingSubmittedDraftToMessage\(submitted, props\.activeWorkspaceRoot\)/s,
+    "the immediate local echo should disappear in the same render projection as a unique canonical message",
   );
 
   assert.doesNotMatch(
@@ -117,28 +117,28 @@ test("session renders a temporary submitted user message while footer indicator 
 
   assert.match(
     viewportSource,
-    /optimisticMessage \? \[\.\.\.messages, optimisticMessage\] : \[\.\.\.messages\]/,
-    "rendered transcript messages should append only the optimistic user message",
+    /localSubmittedMessage \? \[\.\.\.messages, localSubmittedMessage\] : \[\.\.\.messages\]/,
+    "rendered transcript messages should append the local submitted echo while canonical is absent",
   );
 
   assert.match(
     source,
-    /if \(!submittedDraftHasMessageInTranscript\(submitted\)\) return;[\s\S]*removePendingSubmittedDraftForKey\(current, submitted\.sessionKey, submitted\.id\)/,
-    "accepted handoff should clear the matching optimistic placeholder once the server transcript owns display",
+    /const adoption = decidePendingSubmittedTranscriptAdoption\(\{[\s\S]*if \(adoption\.kind !== "adopt"\) return;[\s\S]*removePendingSubmittedDraftForKey\(current, submitted\.sessionKey, submitted\.id\)/,
+    "only a deterministic canonical-adoption decision may clear hidden pending submission state",
   );
 });
 
-test("session passes pending submit status to the rendered message list", () => {
+test("session passes failure and delivery-uncertain state to the rendered message list", () => {
   assert.match(
     source,
-    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{\s*const submitted = optimisticSubmittedDraft\(\);[\s\S]*if \(submitted\.state !== "error"\) return \{\};[\s\S]*return \{\s*\[submitted\.id\]: \{ state: submitted\.state, error: submitted\.error \},\s*\};\s*\}\);/s,
-    "session view should expose pending submit state only for failed handoffs, not while the assistant is responding",
+    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{[\s\S]*submitted\.state === "error"[\s\S]*\[submitted\.id\]: \{ state: "error", error: submitted\.error \}[\s\S]*submitted\.state === "outcome-unknown"[\s\S]*state: "sync-warning"/s,
+    "session view should distinguish pre-admission failures from delivery-uncertain submissions",
   );
 
   assert.match(
     source,
     /<MessageList[\s\S]*pendingMessageStateById=\{pendingMessageStateById\(\)\}[\s\S]*editableUserMessage=\{editableUserMessage\(\)\}/,
-    "message list should receive pending submit state alongside editability",
+    "message list should receive typed local message state alongside independently derived editability",
   );
 });
 
@@ -156,7 +156,7 @@ test("failed pending submitted messages become editable only through explicit ac
   );
 });
 
-test("accepted handoff does not clear unrelated failed pending submitted messages", () => {
+test("accepted stale-navigation handoff retains pending submission state until canonical adoption", () => {
   const handlerStart = 0;
   const acceptedBranchStart = flowSendImmediateSource.indexOf(
     "options.expectedSessionKey &&",
@@ -179,10 +179,10 @@ test("accepted handoff does not clear unrelated failed pending submitted message
     "conversation flow should wire successful pending submit cleanup through the helper",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     acceptedBranch,
-    /if \(showOptimisticSubmit\) \{\s*clearMatchingPendingSubmit\(\);\s*\}\s*return submitResult;/,
-    "accepted stale-navigation handoff should only clear this send's pending submit",
+    /clearMatchingPendingSubmit\(\)/,
+    "accepted stale-navigation handoff must not delete a row before its scoped canonical message is observed",
   );
 
   assert.doesNotMatch(
@@ -329,7 +329,7 @@ test("jump-to-latest control is anchored to bottom-right and rendered as small d
 test("session main column reserves a top safe strip below titlebar toggles", () => {
   assert.match(
     centerSource,
-    /<main class="flex-1 flex flex-col overflow-hidden bg-gray-1 pt-12">/,
+    /<main class="flex-1 min-w-0 flex flex-col overflow-hidden bg-gray-1 pt-12">/,
     "session main column should keep the titlebar overlay area clear so streamed text does not render underneath the top menu",
   );
 });

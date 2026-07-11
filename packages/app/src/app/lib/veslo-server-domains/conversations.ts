@@ -8,13 +8,17 @@ import type {
   VesloConversationRunInput,
   VesloConversationRunResult,
   VesloConversationRunStatusResult,
+  VesloConversationQueueItem,
+  VesloConversationQueueList,
+  VesloConversationQueueStatus,
   VesloConversationSubmitRequest,
   VesloConversationSubmitResult,
   VesloSessionArchiveRecord,
   VesloSessionLatestRunArtifacts,
-  VesloSessionTranscriptAppendInput,
   VesloSessionTranscriptPrefetchInput,
   VesloSessionTranscriptPrefetchResult,
+  VesloSessionTranscriptRecoveryInput,
+  VesloSessionTranscriptRecoveryResult,
   VesloSessionTranscriptSnapshot,
 } from "../veslo-server/types";
 import { VESLO_ACCOUNT_ID_HEADER, VESLO_SEND_TRACE_ID_HEADER } from "../veslo-server/header-profiles";
@@ -224,6 +228,30 @@ export function createConversationsClient(context: ConversationsClientContext) {
         { token, hostToken, timeoutMs: timeouts.status },
       ),
 
+    listQueue: (
+      workspaceId: string,
+      conversationId: string,
+      options?: { status?: VesloConversationQueueStatus[]; cursor?: string | null; limit?: number },
+    ) => {
+      const search = new URLSearchParams();
+      for (const status of options?.status ?? ["pending", "starting", "failed"]) search.append("status", status);
+      const cursor = options?.cursor?.trim() ?? "";
+      if (cursor) search.set("cursor", cursor);
+      search.set("limit", String(options?.limit ?? 50));
+      return requestJson<VesloConversationQueueList>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/queue?${search.toString()}`,
+        { token, hostToken, timeoutMs: timeouts.status },
+      );
+    },
+
+    getQueueItem: (workspaceId: string, conversationId: string, queueItemId: string) =>
+      requestJson<VesloConversationQueueItem>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(queueItemId)}`,
+        { token, hostToken, timeoutMs: timeouts.status },
+      ),
+
     getLatestRunArtifacts: (workspaceId: string, sessionId: string, directory?: string | null) => {
       const search = new URLSearchParams();
       const directoryRaw = directory?.trim() ?? "";
@@ -255,12 +283,13 @@ export function createConversationsClient(context: ConversationsClientContext) {
       );
     },
 
-    appendTranscript: (workspaceId: string, sessionId: string, input: VesloSessionTranscriptAppendInput) =>
-      requestJson<VesloSessionTranscriptSnapshot>(
+    recoverTranscript: (workspaceId: string, sessionId: string, input: VesloSessionTranscriptRecoveryInput) =>
+      requestJson<VesloSessionTranscriptRecoveryResult>(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript/recover`,
         { token, hostToken, method: "POST", body: input, timeoutMs: timeouts.sessionTranscript },
       ),
+
   };
 }
 

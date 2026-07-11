@@ -47,6 +47,14 @@ test('e2e package exposes runnable tauri-pilot scripts used by root commands', (
   );
   assert.equal(packageJson.scripts['test:pilot:smoke'], 'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario smoke');
   assert.equal(
+    packageJson.scripts['test:pilot:session-render-stability'],
+    'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-render-stability',
+  );
+  assert.equal(
+    packageJson.scripts['test:pilot:session-run-truthfulness'],
+    'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-run-truthfulness',
+  );
+  assert.equal(
     packageJson.scripts['test:pilot:navigation'],
     'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation',
   );

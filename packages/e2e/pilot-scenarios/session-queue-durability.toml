@@ -1,0 +1,275 @@
+[scenario]
+name = "session-queue-durability"
+fail_fast = true
+global_timeout_ms = 240000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "exercise durable server queue and editable local queue separation"
+action = "eval"
+timeout_ms = 220000
+script = '''
+const completeSelector = '[data-testid="session-queue-durability-complete"]';
+const errorSelector = '[data-testid="session-queue-durability-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+if (!window.__sessionQueueDurabilityStarted) {
+window.__sessionQueueDurabilityStarted = true;
+window.__sessionQueueDurabilityPromise = (async () => {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const normalize = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 30000;
+  const interval = options.interval ?? 250;
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(`${options.message ?? 'condition was not met'}; latest=${JSON.stringify(latest)}`);
+};
+const invoke = async (command, payload = {}) => {
+  const bridge = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof bridge === 'function', 'Tauri invoke bridge is unavailable.');
+  return await bridge(command, payload);
+};
+const bodyText = () => document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 2500);
+const findVisible = (selector) => Array.from(document.querySelectorAll(selector)).find((node) => {
+  const rect = node.getBoundingClientRect();
+  return node instanceof HTMLElement && Boolean(node.offsetParent) && rect.width > 0 && rect.height > 0;
+}) || null;
+const findButton = (labels, root = document) => Array.from(root.querySelectorAll('button')).find((button) => {
+  const rect = button.getBoundingClientRect();
+  if (button.disabled || !button.offsetParent || rect.width <= 0 || rect.height <= 0) return false;
+  const values = [button.textContent, button.title, button.getAttribute('aria-label')].map(normalize);
+  return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+}) || null;
+const fillComposer = async (text) => {
+  const editor = await waitUntil(() => {
+    const candidate = findVisible('[role="textbox"][contenteditable]');
+    return candidate?.contentEditable === 'true' && candidate.getAttribute('aria-disabled') !== 'true'
+      ? candidate
+      : false;
+  }, {
+    message: `Composer is not visible. body=${bodyText()}`,
+  });
+  editor.focus();
+  editor.replaceChildren(document.createTextNode(text));
+  editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+  await waitUntil(() => normalize(editor.textContent) === text, { message: 'Composer did not accept the fixture draft.' });
+  return editor;
+};
+const submitComposerWithEnter = async (editor) => {
+  const traceOffset = Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.length : 0;
+  editor.focus();
+  editor.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'Enter',
+    code: 'Enter',
+    bubbles: true,
+    cancelable: true,
+  }));
+  await waitUntil(() => Array.isArray(window.__vesloSendTrace) && window.__vesloSendTrace
+    .slice(traceOffset)
+    .some((entry) => entry?.event === 'sendDraft:start' && entry?.source === 'enter'), {
+    message: `Running Enter did not reach the composer send handler. body=${bodyText()}`,
+  });
+};
+const localServer = await waitUntil(async () => {
+  const info = await invoke('veslo_server_info').catch(() => null);
+  const baseUrl = normalize(info?.baseUrl).replace(/\/+$/, '');
+  const token = normalize(info?.clientToken);
+  if (!info?.running || !baseUrl || !token) return false;
+  const health = await fetch(`${baseUrl}/health`).catch(() => null);
+  return health?.ok ? { baseUrl, token } : false;
+}, { timeout: 90000, interval: 500, message: 'Local Veslo server did not become ready.' });
+const serverJson = async (path, options = {}) => {
+  const response = await fetch(`${localServer.baseUrl}${path}`, {
+    ...options,
+    headers: {
+      authorization: `Bearer ${localServer.token}`,
+      accept: 'application/json',
+      ...(options.body ? { 'content-type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  const text = await response.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  return { ok: response.ok, status: response.status, body };
+};
+const appendError = (error) => {
+  if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
+  const marker = document.createElement('pre');
+  marker.dataset.testid = 'session-queue-durability-error';
+  marker.textContent = JSON.stringify({
+    message: error?.message || String(error),
+    body: bodyText(),
+    sendTrace: Array.isArray(window.__vesloSendTrace)
+      ? window.__vesloSendTrace.slice(-80).map((entry) => ({
+          event: entry?.event ?? null,
+          workspaceId: entry?.workspaceId ?? null,
+          conversationId: entry?.conversationId ?? null,
+          runId: entry?.runId ?? null,
+          queueItemId: entry?.queueItemId ?? null,
+          reservedRunId: entry?.reservedRunId ?? null,
+          clientMessageId: entry?.clientMessageId ?? null,
+        }))
+      : [],
+  }, null, 2);
+  document.body.append(marker);
+};
+
+try {
+  window.localStorage.setItem('veslo.onboardingComplete', '1');
+  window.localStorage.setItem('veslo.language', 'en');
+  const bootstrap = await invoke('workspace_bootstrap');
+  const activeWorkspace = bootstrap?.workspaces?.find((workspace) => workspace.id === bootstrap?.activeId) ?? bootstrap?.workspaces?.[0];
+  assert(normalize(activeWorkspace?.path), `Queue fixture local workspace is missing: ${JSON.stringify(activeWorkspace)}`);
+
+  const oldUrl = window.location.href;
+  window.location.hash = '/session';
+  window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: oldUrl, newURL: window.location.href }));
+
+  const firstDraft = `queue-first-${Date.now()}`;
+  await submitComposerWithEnter(await fillComposer(firstDraft));
+  await waitUntil(() => findVisible('[data-testid="session-run-indicator"]'), {
+    message: `Initial lifecycle run is not visible. body=${bodyText()}`,
+  });
+
+  const serverWorkspaces = await serverJson('/workspaces');
+  assert(serverWorkspaces.ok && Array.isArray(serverWorkspaces.body?.items), `Cannot read server workspaces: ${JSON.stringify(serverWorkspaces)}`);
+  const serverWorkspace = serverWorkspaces.body.items.find((workspace) => normalize(workspace.path) === normalize(activeWorkspace.path)) ?? serverWorkspaces.body.items[0];
+  assert(normalize(serverWorkspace?.id), `No server workspace matched the deterministic queue fixture: ${JSON.stringify(serverWorkspaces.body)}`);
+  const fixtureBaseUrl = normalize(serverWorkspace?.baseUrl).replace(/\/+$/, '');
+  assert(fixtureBaseUrl.startsWith('http://127.0.0.1:'), `Queue fixture base URL was not registered for the local workspace: ${JSON.stringify(serverWorkspace)}`);
+  const restartFixtureServer = async () => {
+    const restarted = await fetch(`${fixtureBaseUrl}/__session_queue_fixture/restart-veslo-server`, { method: 'POST' });
+    assert(restarted.ok, `Fixture Veslo server restart failed with ${restarted.status}.`);
+    await waitUntil(async () => {
+      const health = await serverJson('/health').catch(() => null);
+      return health?.ok ? health : false;
+    }, { timeout: 45000, interval: 250, message: 'Fixture Veslo server did not return after restart.' });
+  };
+  const conversation = await waitUntil(async () => {
+    const listed = await serverJson(`/workspace/${encodeURIComponent(serverWorkspace.id)}/conversations`);
+    const item = Array.isArray(listed.body?.items) ? listed.body.items.at(-1) : null;
+    return item?.conversationId && item?.opencodeSessionId ? item : false;
+  }, { message: 'Server conversation identity did not materialize.' });
+  const queuePath = `/workspace/${encodeURIComponent(serverWorkspace.id)}/conversations/${encodeURIComponent(conversation.conversationId)}/queue`;
+
+  const firstConversationButton = await waitUntil(() => findButton([firstDraft]), {
+    message: `Materialized first conversation was not visible in the workspace list. body=${bodyText()}`,
+  });
+  firstConversationButton.click();
+  await waitUntil(() => {
+    const editor = findVisible('[role="textbox"][contenteditable]');
+    return editor?.contentEditable === 'true' && editor.getAttribute('aria-disabled') !== 'true';
+  }, { message: `Materialized conversation was not reopened for a running follow-up. body=${bodyText()}` });
+
+  const secondDraft = `queue-server-${Date.now()}`;
+  await submitComposerWithEnter(await fillComposer(secondDraft));
+  const queuedBeforeRestart = await waitUntil(async () => {
+    const listed = await serverJson(queuePath);
+    return listed.ok && Array.isArray(listed.body?.items) && listed.body.items.length === 1 ? listed.body.items : false;
+  }, { message: 'Server queue did not contain exactly one accepted waiting item.' });
+  const acceptedQueueItem = queuedBeforeRestart[0];
+  assert(normalize(acceptedQueueItem.queueItemId) && normalize(acceptedQueueItem.reservedRunId) && normalize(acceptedQueueItem.clientMessageId), 'Accepted queue item omitted its durable identifiers.');
+  const serverProjection = await waitUntil(() => findVisible('[aria-label="Server queue (read-only)"]'), {
+    message: `Accepted server queue projection is not visible. body=${bodyText()}`,
+  });
+  assert(serverProjection.querySelectorAll('button').length === 0, 'Server queue projection exposed a local mutation button.');
+
+  await restartFixtureServer();
+  const reopenedConversationButton = await waitUntil(() => findButton([firstDraft]), {
+    message: `Conversation could not be reopened after server restart. body=${bodyText()}`,
+  });
+  reopenedConversationButton.click();
+  const hydratedProjection = await waitUntil(() => findVisible('[aria-label="Server queue (read-only)"]'), {
+    timeout: 45000,
+    message: `Server queue projection did not hydrate after restart. body=${bodyText()}`,
+  });
+  assert(hydratedProjection.children.length === 1, 'Restart hydration duplicated the accepted server queue row.');
+
+  await fetch(`${fixtureBaseUrl}/__session_queue_fixture/release`, { method: 'POST' });
+  const fixtureAfterRelease = await waitUntil(async () => {
+    const response = await fetch(`${fixtureBaseUrl}/__session_queue_fixture/state`);
+    const state = await response.json();
+    return state.promptCalls === 2 ? state : false;
+  }, { timeout: 45000, interval: 500, message: 'Stable queued request was not submitted exactly once after lifecycle release.' });
+  assert(fixtureAfterRelease.failedPromptCalls === 0, 'Stable queued request unexpectedly failed.');
+
+  await fetch(`${fixtureBaseUrl}/__session_queue_fixture/fail-next-prompt`, { method: 'POST' });
+  const forcedFailure = await serverJson(`/workspace/${encodeURIComponent(serverWorkspace.id)}/conversations/submit`, {
+    method: 'POST',
+    body: JSON.stringify({
+      clientMessageId: `queue-failure-${Date.now()}`,
+      origin: 'e2e:session-queue-durability',
+      source: 'enter',
+      target: {
+        conversationId: conversation.conversationId,
+        opencodeSessionId: conversation.opencodeSessionId,
+        directory: activeWorkspace.path || activeWorkspace.directory,
+      },
+      draft: { mode: 'prompt', text: 'fixture queue failure', parts: [] },
+      options: { submitQueuePolicy: 'server-queue-only' },
+    }),
+  });
+  assert(forcedFailure.ok && forcedFailure.body?.status === 'queued', `Failure fixture queue admission was rejected: ${JSON.stringify(forcedFailure)}`);
+  const releasedFailureHead = await fetch(`${fixtureBaseUrl}/__session_queue_fixture/release`, { method: 'POST' });
+  assert(releasedFailureHead.ok, `Could not release the queued run before the deterministic failure: ${releasedFailureHead.status}`);
+  const failedServerRow = await waitUntil(async () => {
+    const listed = await serverJson(queuePath);
+    return listed.ok && listed.body?.items?.find((item) => item.status === 'failed') || false;
+  }, { timeout: 45000, interval: 500, message: 'Deterministic server queue failure was not recorded.' });
+  assert(normalize(failedServerRow.error), 'Failed server queue row omitted its sanitized error.');
+
+  await restartFixtureServer();
+  const failedProjection = await waitUntil(() => {
+    const list = findVisible('[aria-label="Server queue (read-only)"]');
+    return list && normalize(list.textContent).includes(normalize(failedServerRow.error)) ? list : false;
+  }, { timeout: 45000, interval: 500, message: 'Failed server queue row did not hydrate into the read-only projection.' });
+  assert(failedProjection.querySelectorAll('button').length === 0, 'Failed server queue projection exposed Retry or another local control.');
+
+  const complete = document.createElement('div');
+  complete.dataset.testid = 'session-queue-durability-complete';
+  complete.textContent = JSON.stringify({
+    workspaceId: serverWorkspace.id,
+    conversationId: conversation.conversationId,
+    queueItemId: acceptedQueueItem.queueItemId,
+    reservedRunId: acceptedQueueItem.reservedRunId,
+    clientMessageId: acceptedQueueItem.clientMessageId,
+  });
+  document.body.append(complete);
+} catch (error) {
+  appendError(error);
+}
+})();
+}
+true;
+'''
+
+[[step]]
+name = "session queue durability flow finished"
+action = "wait"
+target = "[data-testid=\"session-queue-durability-complete\"], [data-testid=\"session-queue-durability-error\"]"
+timeout_ms = 230000
+
+[[step]]
+name = "session queue durability flow succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="session-queue-durability-error"]');
+if (error) throw new Error(`Session queue durability scenario failed: ${(error.textContent || '').slice(0, 6000)}`);
+true;
+'''

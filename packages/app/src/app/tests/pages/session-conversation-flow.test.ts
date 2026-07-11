@@ -48,6 +48,7 @@ import {
   sessionSubmitBlockedResult,
   sessionSubmitFailedResult,
   sessionSubmitQueuedResult,
+  sessionSubmitSubmittedResult,
   type SessionSubmitResult,
 } from "../../lib/session-send-contract.js";
 
@@ -264,7 +265,33 @@ test("conversation flow controller blocks before transport while preserving opti
     },
   });
 
-  const accepted = await controller.sendPromptImmediate(draft);
+  const transferredDraft = {
+    ...draft,
+    parts: [{ type: "file" as const, path: "/workspace/report.md", label: "report.md" }],
+    attachments: [{
+      id: "attachment-1",
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      size: 42,
+      kind: "file" as const,
+      dataUrl: "data:application/pdf;base64,JVBERi0=",
+    }],
+  };
+  let transferCount = 0;
+  const acceptedPromise = controller.sendPromptImmediate(transferredDraft, {
+    onDraftTransferred: () => {
+      transferCount += 1;
+    },
+  });
+
+  assert.equal(transferCount, 1, "local pending ownership should be acknowledged before awaiting transport");
+  assert.deepEqual(
+    pendingDrafts["pending-session:generated"]?.draft,
+    transferredDraft,
+    "the complete part and attachment snapshot must be stored before transfer acknowledgement",
+  );
+
+  const accepted = await acceptedPromise;
 
   assert.equal(accepted.accepted, false);
   assert.deepEqual(transportCalls, []);
@@ -279,10 +306,19 @@ test("conversation flow controller blocks before transport while preserving opti
   assert.equal(pendingDrafts["pending-session:generated"]?.error, "AI access blocked");
 });
 
+test("an occupied transient echo slot blocks transport before it can lose the second draft owner", () => {
+  assert.match(
+    sessionConversationFlowSource,
+    /pendingStored = result\.kind === "stored";[\s\S]*pendingSlotOccupied = result\.kind === "occupied";[\s\S]*if \(!pendingStored\) \{[\s\S]*code: pendingSlotOccupied \? "pending_submit_slot_occupied" : "pending_submit_slot_invalid",[\s\S]*draftDisposition: "restore",[\s\S]*\}[\s\S]*options\.onDraftTransferred\?\.\(\);[\s\S]*const aiAccessBlockedReason/s,
+    "a draft without a local pending owner must return before transport and remain in Composer",
+  );
+});
+
 test("conversation flow starts materialized first sends on the captured scoped session key", async () => {
   const mappings: Array<[string, string]> = [];
   const remaps: Array<{ pendingKey: string; sessionId: string; sessionKey: string | null | undefined }> = [];
   const startedRuns: string[] = [];
+  let pendingDrafts: PendingSubmittedDraftBySessionKey = {};
   let materializedSessionKeyCalls = 0;
 
   const controller = createSessionConversationFlow({
@@ -335,7 +371,9 @@ test("conversation flow starts materialized first sends on the captured scoped s
     pendingSubmitted: {
       optimisticSubmittedDraft: () => null,
       setOptimisticSubmittedDraft: () => undefined,
-      updatePendingSubmittedDrafts: () => undefined,
+      updatePendingSubmittedDrafts: (updater) => {
+        pendingDrafts = updater(pendingDrafts);
+      },
     },
     queue: {
       appendDraftToCurrentQueue: () => undefined,
@@ -427,6 +465,197 @@ test("conversation flow starts materialized first sends on the captured scoped s
   ]);
   assert.equal(materializedSessionKeyCalls, 0);
   assert.equal(mappings.at(-1)?.[1], scopedSessionKey);
+});
+
+test("conversation flow reuses one pending-session materialization for concurrent first sends", async () => {
+  const sendCalls: Array<{
+    clientMessageId: string;
+    targetSessionId: string | null | undefined;
+    hasPendingSession: boolean;
+  }> = [];
+  const remaps: Array<{ pendingKey: string; sessionId: string; sessionKey: string | null | undefined }> = [];
+  let currentSessionKey = "pending:base";
+  let pendingDrafts: PendingSubmittedDraftBySessionKey = {};
+  let firstTransferCount = 0;
+  let releaseFirstSubmit!: () => void;
+  const firstSubmitGate = new Promise<void>((resolve) => {
+    releaseFirstSubmit = resolve;
+  });
+
+  const controller = createSessionConversationFlow({
+    identity: {
+      createClientMessageId: () => "generated-client-id",
+      createPendingSessionInstanceId: () => "pending-session:generated",
+      now: () => 123,
+    },
+    sessionKeys: {
+      activeUiConversationWorkspaceId: () => "workspace-1",
+      activeWorkspaceId: () => "workspace-1",
+      currentSessionQueueKey: () => currentSessionKey,
+      pendingSessionQueueKey: () => "pending:base",
+      selectedSessionId: () => null,
+      sessionIdForQueueKey: () => null,
+      sessionQueueKeyForSessionId: (sessionId) => `session:${sessionId ?? ""}`,
+      workspaceIdForQueueKey: () => "workspace-1",
+    },
+    runtime: {
+      activePendingDraftKey: () => "draft-1",
+      aiAccessBlockedReason: () => null,
+      busyHint: () => null,
+      busyLabel: () => null,
+      error: () => null,
+    },
+    transcript: {
+      messageCount: () => 0,
+      messageIds: () => [],
+    },
+    pendingHandoff: {
+      clearPendingQueueKeyAwaitingSessionIdForBaseKey: () => undefined,
+      createPendingSidebarSessionWorkspaceId: () => "workspace-1",
+      createPendingSidebarSessionWorkspaceRoot: () => "/repo",
+      remapPendingQueueToSession: (pendingKey, sessionId, sessionKey) => {
+        remaps.push({ pendingKey, sessionId, sessionKey });
+      },
+      restoreMaterializedQueueToPending: () => undefined,
+      setPendingQueueKeyAwaitingSessionIdForBaseKey: (_baseKey, pendingKey) => {
+        currentSessionKey = pendingKey;
+      },
+    },
+    pendingSubmitted: {
+      optimisticSubmittedDraft: () => null,
+      setOptimisticSubmittedDraft: () => undefined,
+      updatePendingSubmittedDrafts: (updater) => {
+        pendingDrafts = updater(pendingDrafts);
+      },
+    },
+    queue: {
+      appendDraftToCurrentQueue: () => undefined,
+      editingQueuedDraftId: () => null,
+      queuePaused: () => false,
+      queuePausedForSessionKey: () => false,
+      queuedDrafts: () => [],
+      queuedDraftsBySessionKey: () => ({}),
+      resolveQueueKeyForQueuedDraft: (sessionKey) => sessionKey,
+      setEditingQueuedDraftId: () => undefined,
+      setQueuePausedForSessionKey: () => undefined,
+      updateCurrentQueue: () => undefined,
+      updateQueueForSessionKey: () => undefined,
+    },
+    composer: {
+      clearComposerDraftForSession: () => undefined,
+      currentDraftMode: () => "prompt",
+      setComposerDraft: () => undefined,
+    },
+    transcriptEdit: {
+      editableUserMessage: () => null,
+      editingTranscriptMessageId: () => null,
+      setEditingTranscriptMessageId: () => undefined,
+    },
+    runControl: {
+      abortBusy: () => false,
+      abortSession: async () => undefined,
+      lastPromptSent: () => "",
+      retryLastPrompt: () => undefined,
+      runPhase: () => "idle",
+      setAbortBusy: () => undefined,
+      setEscapeStopConfirmationPending: () => undefined,
+    },
+    runState: {
+      resetRunState: () => undefined,
+      showRunIndicator: () => false,
+      startRun: () => undefined,
+    },
+    viewport: {
+      scheduleScrollToLatest: () => undefined,
+      setStickToBottom: () => undefined,
+    },
+    transport: {
+      replaceUserMessageAsync: async () => {
+        throw new Error("replacement should not run for a first send");
+      },
+      sendPromptAsync: async (_sentDraft, options) => {
+        sendCalls.push({
+          clientMessageId: options.clientMessageId,
+          targetSessionId: options.targetSessionId,
+          hasPendingSession: Boolean(options.pendingSession),
+        });
+        if (!options.targetSessionId) {
+          await firstSubmitGate;
+          options.onMaterializedSessionId?.(createMaterializedSessionHandoff({
+            workspaceId: "workspace-1",
+            workspaceRoot: "/repo",
+            directory: "/repo",
+            pendingSessionKey: "pending-session:generated",
+            sessionId: "sess-first",
+            clientMessageId: options.clientMessageId,
+            conversationId: "conv-first",
+            opencodeSessionId: "sess-first",
+          }));
+        }
+        return sessionSubmitSubmittedResult({
+          runId: `run-${options.clientMessageId}`,
+          clientMessageId: options.clientMessageId,
+        });
+      },
+    },
+    feedback: {
+      setToastMessage: () => undefined,
+      tr: (key) => key,
+    },
+    trace: {
+      markTempRuntimeUiRenderSource: () => undefined,
+      recordSendTrace: () => undefined,
+      reportError: () => undefined,
+    },
+    effects: {
+      batch: (fn) => fn(),
+    },
+  });
+
+  const first = controller.sendPromptImmediate(draft, {
+    clientMessageId: "client-first",
+    onDraftTransferred: () => {
+      firstTransferCount += 1;
+    },
+  });
+  assert.equal(firstTransferCount, 1, "normal send should transfer before deferred transport settles");
+  await Promise.resolve();
+  const second = controller.sendPromptImmediate(
+    { ...draft, text: "follow-up", resolvedText: "follow-up" },
+    {
+      reason: "queue-drain",
+      clientMessageId: "client-second",
+      expectedSessionKey: "pending-session:generated",
+    },
+  );
+  await Promise.resolve();
+
+  assert.deepEqual(sendCalls, [
+    {
+      clientMessageId: "client-first",
+      targetSessionId: undefined,
+      hasPendingSession: true,
+    },
+  ]);
+
+  releaseFirstSubmit();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+
+  assert.equal(firstResult.accepted, true);
+  assert.equal(secondResult.accepted, true);
+  assert.deepEqual(sendCalls, [
+    {
+      clientMessageId: "client-first",
+      targetSessionId: undefined,
+      hasPendingSession: true,
+    },
+    {
+      clientMessageId: "client-second",
+      targetSessionId: "sess-first",
+      hasPendingSession: false,
+    },
+  ]);
+  assert.equal(remaps.every((entry) => entry.sessionId === "sess-first"), true);
 });
 
 test("conversation flow controller submits running Enter to the server queue", async () => {
@@ -712,11 +941,16 @@ test("conversation flow controller preserves running Enter drafts when server qu
 test("conversation flow controller drains one queued draft per captured session lock", async () => {
   let queues: Record<string, QueuedDraft[]> = {
     "session-a": [
-      { id: "queued-1", draft, createdAt: 1, updatedAt: 1, state: "queued" },
-      { id: "queued-2", draft: { ...draft, text: "second" }, createdAt: 2, updatedAt: 2, state: "queued" },
+      { id: "queued-1", clientMessageId: "msg-queued-1", implicitSkillCommandPolicy: "allow", draft, createdAt: 1, updatedAt: 1, state: "queued" },
+      { id: "queued-2", clientMessageId: "msg-queued-2", draft: { ...draft, text: "second" }, createdAt: 2, updatedAt: 2, state: "queued" },
     ],
   };
-  const sends: Array<{ text: string; expectedSessionKey: string | null }> = [];
+  const sends: Array<{
+    text: string;
+    expectedSessionKey: string | null;
+    clientMessageId: string;
+    implicitSkillCommandPolicy: string | undefined;
+  }> = [];
   const updates: Array<{ sessionKey: string; states: string[] }> = [];
   let sendReleaseArmed = false;
   let releaseSend: (accepted: SessionSubmitResult) => void = (_accepted) => {
@@ -831,6 +1065,8 @@ test("conversation flow controller drains one queued draft per captured session 
         sends.push({
           text: sentDraft.text,
           expectedSessionKey: options.targetSessionId ?? null,
+          clientMessageId: options.clientMessageId,
+          implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
         });
         return new Promise<SessionSubmitResult>((resolve) => {
           sendReleaseArmed = true;
@@ -856,7 +1092,12 @@ test("conversation flow controller drains one queued draft per captured session 
   await Promise.resolve();
   await controller.drainNextQueuedDraft("queue-drain", "session-a");
 
-  assert.deepEqual(sends, [{ text: "hello", expectedSessionKey: "session-a" }]);
+  assert.deepEqual(sends, [{
+    text: "hello",
+    expectedSessionKey: "session-a",
+    clientMessageId: "msg-queued-1",
+    implicitSkillCommandPolicy: "allow",
+  }]);
   assert.deepEqual(updates[0], {
     sessionKey: "session-a",
     states: ["queued-1:sending", "queued-2:queued"],
@@ -881,10 +1122,28 @@ test("conversation flow controller surfaces terminal server queue failure on que
   });
   let queues: Record<string, QueuedDraft[]> = {
     [sessionAKey]: [
-      { id: "queued-1", draft, createdAt: 1, updatedAt: 1, state: "queued" },
+      {
+        id: "queued-1",
+        clientMessageId: "msg-queued-failure",
+        implicitSkillCommandPolicy: "disable",
+        draft,
+        createdAt: 1,
+        updatedAt: 1,
+        state: "queued",
+      },
+      {
+        id: "queued-2",
+        clientMessageId: "msg-queued-later",
+        draft: { ...draft, text: "later" },
+        createdAt: 2,
+        updatedAt: 2,
+        state: "queued",
+      },
     ],
   };
   const updates: Array<{ sessionKey: string; states: string[] }> = [];
+  const sends: Array<{ clientMessageId: string; implicitSkillCommandPolicy: string | undefined }> = [];
+  let pendingDrafts: PendingSubmittedDraftBySessionKey = {};
 
   const controller = createSessionConversationFlow({
     identity: {
@@ -924,10 +1183,30 @@ test("conversation flow controller surfaces terminal server queue failure on que
     pendingSubmitted: {
       optimisticSubmittedDraft: () => null,
       setOptimisticSubmittedDraft: () => undefined,
-      updatePendingSubmittedDrafts: () => undefined,
+      updatePendingSubmittedDrafts: (updater) => {
+        pendingDrafts = updater(pendingDrafts);
+      },
     },
     queue: {
-      appendDraftToCurrentQueue: () => undefined,
+      appendDraftToCurrentQueue: (nextDraft, envelope) => {
+        queues = {
+          ...queues,
+          [sessionAKey]: [
+            ...(queues[sessionAKey] ?? []),
+            {
+              id: "queued-appended",
+              clientMessageId: envelope.clientMessageId,
+              ...(envelope.implicitSkillCommandPolicy
+                ? { implicitSkillCommandPolicy: envelope.implicitSkillCommandPolicy }
+                : {}),
+              draft: nextDraft,
+              createdAt: 3,
+              updatedAt: 3,
+              state: "queued",
+            },
+          ],
+        };
+      },
       editingQueuedDraftId: () => null,
       queuePaused: () => false,
       queuePausedForSessionKey: () => false,
@@ -985,15 +1264,20 @@ test("conversation flow controller surfaces terminal server queue failure on que
     },
     transport: {
       replaceUserMessageAsync: async () => acceptedSubmitResult(),
-      sendPromptAsync: async () =>
-        sessionSubmitFailedResult({
+      sendPromptAsync: async (_sentDraft, options) => {
+        sends.push({
+          clientMessageId: options.clientMessageId,
+          implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+        });
+        return sessionSubmitFailedResult({
           code: "queued_run_failed",
           message: "queued drain failed",
           queueItemId: "queue-1",
           reservedRunId: "run-1",
-          clientMessageId: "msg-queued-failed",
+          clientMessageId: options.clientMessageId,
           draftDisposition: "restore",
-        }),
+        });
+      },
     },
     feedback: {
       setToastMessage: () => undefined,
@@ -1013,21 +1297,63 @@ test("conversation flow controller surfaces terminal server queue failure on que
 
   assert.deepEqual(updates[0], {
     sessionKey: sessionAKey,
-    states: ["queued-1:sending:"],
+    states: ["queued-1:sending:", "queued-2:queued:"],
   });
   assert.deepEqual(updates.at(-1), {
     sessionKey: sessionAKey,
-    states: ["queued-1:error:queued drain failed"],
+    states: ["queued-1:error:queued drain failed", "queued-2:queued:"],
   });
+
+  controller.handleActiveSessionStatusChanged("idle", "busy");
+  controller.handleSessionStatusMapChanged({ [sessionAKey]: "idle" }, { [sessionAKey]: "busy" });
+  controller.handleSelectedSessionChanged({
+    sessionId: "session-a",
+    previousSessionId: null,
+    pendingBaseKey: "pending:base",
+    pendingKey: null,
+    sessionStatusById: { "session-a": "idle" },
+  });
+  await controller.handleSendPrompt({ ...draft, text: "appended", resolvedText: "appended" });
+  await Promise.resolve();
+
+  assert.deepEqual(sends, [{ clientMessageId: "msg-queued-failure", implicitSkillCommandPolicy: "disable" }]);
+  assert.deepEqual(
+    queues[sessionAKey]?.map((item) => `${item.id}:${item.state}`),
+    ["queued-1:error", "queued-2:queued", "queued-appended:queued"],
+    "status, selection, and later enqueue signals must not retry a failed head or bypass it",
+  );
+
+  assert.equal(controller.handleRetryQueuedDraft("queued-1"), true);
+  assert.equal(controller.handleRetryQueuedDraft("queued-1"), false, "the retry drain is already in flight");
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(sends, [
+    { clientMessageId: "msg-queued-failure", implicitSkillCommandPolicy: "disable" },
+    { clientMessageId: "msg-queued-failure", implicitSkillCommandPolicy: "disable" },
+  ]);
+
+  assert.equal(controller.handleCancelQueuedDraft("queued-1"), true);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(sends, [
+    { clientMessageId: "msg-queued-failure", implicitSkillCommandPolicy: "disable" },
+    { clientMessageId: "msg-queued-failure", implicitSkillCommandPolicy: "disable" },
+    { clientMessageId: "msg-queued-later", implicitSkillCommandPolicy: undefined },
+  ]);
 });
 
 test("conversation flow controller sends edited queued drafts now with remap-aware rejection", async () => {
   let queues: Record<string, QueuedDraft[]> = {
     "session-a": [
-      { id: "queued-1", draft: { ...draft, text: "original" }, createdAt: 1, updatedAt: 1, state: "editing" },
+      { id: "queued-1", clientMessageId: "msg-before-edit", implicitSkillCommandPolicy: "confirm", draft: { ...draft, text: "original" }, createdAt: 1, updatedAt: 1, state: "editing" },
     ],
   };
-  const sentDrafts: string[] = [];
+  const sentDrafts: Array<{
+    text: string;
+    clientMessageId: string;
+    implicitSkillCommandPolicy: string | undefined;
+  }> = [];
   const composerDrafts: string[] = [];
   const pauseWrites: Array<{ sessionKey: string; paused: boolean }> = [];
   const updates: Array<{ sessionKey: string; states: string[] }> = [];
@@ -1078,12 +1404,22 @@ test("conversation flow controller sends edited queued drafts now with remap-awa
       },
     },
     queue: {
-      appendDraftToCurrentQueue: (queuedDraft) => {
+      appendDraftToCurrentQueue: (queuedDraft, envelope) => {
         queues = {
           ...queues,
           "session-a": [
             ...(queues["session-a"] ?? []),
-            { id: `queued-${queues["session-a"]?.length ?? 0}`, draft: queuedDraft, createdAt: 1, updatedAt: 1, state: "queued" },
+            {
+              id: `queued-${queues["session-a"]?.length ?? 0}`,
+              clientMessageId: envelope.clientMessageId,
+              ...(envelope.implicitSkillCommandPolicy
+                ? { implicitSkillCommandPolicy: envelope.implicitSkillCommandPolicy }
+                : {}),
+              draft: queuedDraft,
+              createdAt: 1,
+              updatedAt: 1,
+              state: "queued",
+            },
           ],
         };
       },
@@ -1147,8 +1483,12 @@ test("conversation flow controller sends edited queued drafts now with remap-awa
     },
     transport: {
       replaceUserMessageAsync: async () => acceptedSubmitResult(),
-      sendPromptAsync: async (sentDraft) => {
-        sentDrafts.push(sentDraft.text);
+      sendPromptAsync: async (sentDraft, options) => {
+        sentDrafts.push({
+          text: sentDraft.text,
+          clientMessageId: options.clientMessageId,
+          implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+        });
         return blockedSubmitResult();
       },
     },
@@ -1166,14 +1506,27 @@ test("conversation flow controller sends edited queued drafts now with remap-awa
     },
   });
 
+  let transferCount = 0;
   const accepted = await controller.handleSendPrompt(
     { ...draft, text: "edited", resolvedText: "edited" },
-    { sendNow: true, sendTraceId: "trace-1" },
+    {
+      sendNow: true,
+      sendTraceId: "trace-1",
+      implicitSkillCommandPolicy: "disable",
+      onDraftTransferred: () => {
+        transferCount += 1;
+      },
+    },
   );
 
   assert.equal(accepted.accepted, false);
-  assert.deepEqual(sentDrafts, ["edited"]);
-  assert.deepEqual(composerDrafts, [""]);
+  assert.deepEqual(sentDrafts, [{
+    text: "edited",
+    clientMessageId: "submit-edited",
+    implicitSkillCommandPolicy: "disable",
+  }]);
+  assert.equal(transferCount, 1, "the queued edit snapshot should transfer exactly once before transport settles");
+  assert.deepEqual(composerDrafts, [], "conversation flow must not clear the live Composer directly");
   assert.deepEqual(pauseWrites, []);
   assert.equal(pendingDrafts["session-a"]?.state, "error");
   assert.deepEqual(updates[0], {
@@ -1184,16 +1537,21 @@ test("conversation flow controller sends edited queued drafts now with remap-awa
     sessionKey: "session-a",
     states: ["queued-1:error:send rejected"],
   });
+  assert.equal(queues["session-a"]?.[0]?.clientMessageId, "submit-edited");
+  assert.equal(queues["session-a"]?.[0]?.implicitSkillCommandPolicy, "disable");
 });
 
-test("conversation flow controller owns queued draft edit actions", () => {
+test("conversation flow controller owns queued draft edit actions", async () => {
   let queues: Record<string, QueuedDraft[]> = {
     "session-a": [
-      { id: "queued-1", draft: { ...draft, text: "first" }, createdAt: 1, updatedAt: 1, state: "queued" },
-      { id: "queued-2", draft: { ...draft, text: "second" }, createdAt: 2, updatedAt: 2, state: "queued" },
+      { id: "queued-1", clientMessageId: "msg-first", draft: { ...draft, text: "first" }, createdAt: 1, updatedAt: 1, state: "queued" },
+      { id: "queued-2", clientMessageId: "msg-second", draft: { ...draft, text: "second" }, createdAt: 2, updatedAt: 2, state: "queued" },
     ],
   };
   let editingId: string | null = null;
+  let queuePaused = false;
+  let runVisible = false;
+  let sentCount = 0;
   const composerDrafts: string[] = [];
 
   const controller = createSessionConversationFlow({
@@ -1239,15 +1597,17 @@ test("conversation flow controller owns queued draft edit actions", () => {
     queue: {
       appendDraftToCurrentQueue: () => undefined,
       editingQueuedDraftId: () => editingId,
-      queuePaused: () => false,
-      queuePausedForSessionKey: () => false,
+      queuePaused: () => queuePaused,
+      queuePausedForSessionKey: () => queuePaused,
       queuedDrafts: () => queues["session-a"] ?? [],
       queuedDraftsBySessionKey: () => queues,
       resolveQueueKeyForQueuedDraft: (sessionKey) => sessionKey,
       setEditingQueuedDraftId: (id) => {
         editingId = id;
       },
-      setQueuePausedForSessionKey: () => undefined,
+      setQueuePausedForSessionKey: (_sessionKey, paused) => {
+        queuePaused = paused;
+      },
       updateCurrentQueue: (updater) => {
         queues = { ...queues, "session-a": updater(queues["session-a"] ?? []) };
       },
@@ -1278,7 +1638,7 @@ test("conversation flow controller owns queued draft edit actions", () => {
     },
     runState: {
       resetRunState: () => undefined,
-      showRunIndicator: () => false,
+      showRunIndicator: () => runVisible,
       startRun: () => undefined,
     },
     viewport: {
@@ -1287,7 +1647,10 @@ test("conversation flow controller owns queued draft edit actions", () => {
     },
     transport: {
       replaceUserMessageAsync: async () => acceptedSubmitResult(),
-      sendPromptAsync: async () => acceptedSubmitResult(),
+      sendPromptAsync: async () => {
+        sentCount += 1;
+        return acceptedSubmitResult();
+      },
     },
     feedback: {
       setToastMessage: () => undefined,
@@ -1325,6 +1688,7 @@ test("conversation flow controller owns queued draft edit actions", () => {
   );
   assert.deepEqual(composerDrafts, ["second"]);
 
+  queuePaused = true;
   assert.equal(controller.handleCancelQueuedDraft("queued-2"), true);
   assert.equal(editingId, null);
   assert.deepEqual(
@@ -1332,6 +1696,48 @@ test("conversation flow controller owns queued draft edit actions", () => {
     ["queued-1:queued"],
   );
   assert.deepEqual(composerDrafts, ["second", ""]);
+  assert.equal(sentCount, 0, "cancelling a head while paused must not start the next drain");
+
+  queues = {
+    ...queues,
+    "session-a": (queues["session-a"] ?? []).map((item) => ({ ...item, state: "error" as const })),
+  };
+  assert.equal(controller.handleRetryQueuedDraft("queued-1"), true);
+  assert.equal(queues["session-a"]?.[0]?.state, "queued");
+  assert.equal(sentCount, 0, "retry while paused must not start a drain");
+
+  queues = {
+    ...queues,
+    "session-a": (queues["session-a"] ?? []).map((item) => ({ ...item, state: "error" as const })),
+  };
+  queuePaused = false;
+  runVisible = true;
+  assert.equal(controller.handleRetryQueuedDraft("queued-1"), true);
+  assert.equal(queues["session-a"]?.[0]?.state, "queued");
+  assert.equal(sentCount, 0, "retry while non-idle must not start a drain");
+
+  runVisible = false;
+  editingId = "queued-missing";
+  const queueBeforeStaleSave = queues["session-a"];
+  let transferCount = 0;
+  const staleSaveResult = await controller.handleSendPrompt(
+    { ...draft, text: "stale edited draft", resolvedText: "stale edited draft" },
+    {
+      onDraftTransferred: () => {
+        transferCount += 1;
+      },
+    },
+  );
+
+  assert.equal(staleSaveResult.accepted, false);
+  assert.equal(staleSaveResult.status, "blocked");
+  assert.equal(staleSaveResult.code, "queued_draft_missing");
+  assert.equal(staleSaveResult.draftDisposition, "restore");
+  assert.equal(transferCount, 0, "a missing queued item cannot accept ownership of the edited draft");
+  assert.equal(editingId, "queued-missing", "the stale edit must remain selected until the caller reconciles it");
+  assert.equal(queues["session-a"], queueBeforeStaleSave, "the stale save must not mutate the queue");
+  await Promise.resolve();
+  assert.equal(sentCount, 0, "the stale save must not drain another queued item");
 });
 
 test("conversation flow controller owns transcript edit recovery", () => {
@@ -1994,7 +2400,7 @@ test("conversation flow controller retries after best-effort abort failure", asy
 test("conversation flow controller restores edit state when sessions switch", () => {
   let queues: Record<string, QueuedDraft[]> = {
     "session-old": [
-      { id: "queued-1", draft: { ...draft, text: "editing" }, createdAt: 1, updatedAt: 1, state: "editing" },
+      { id: "queued-1", clientMessageId: "msg-editing", draft: { ...draft, text: "editing" }, createdAt: 1, updatedAt: 1, state: "editing" },
     ],
   };
   let editingQueuedDraftId: string | null = "queued-1";

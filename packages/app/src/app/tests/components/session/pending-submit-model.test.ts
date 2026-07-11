@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createPendingSubmittedDraft,
+  markPendingSubmittedAccepted,
   markPendingSubmittedFailed,
   pendingSubmittedDraftToEditable,
   pendingSubmittedDraftToMessage,
@@ -88,6 +89,51 @@ test("pending submit can be remapped to the real session id", () => {
 
   assert.equal(remapped.sessionId, "session-123");
   assert.equal(pendingSubmittedDraftToMessage(remapped, "/tmp/workspace").info.sessionID, "session-123");
+});
+
+test("pending-session remap preserves accepted admission metadata", () => {
+  const accepted = markPendingSubmittedAccepted(
+    createPendingSubmittedDraft({
+      id: "pending-submit-1",
+      clientMessageId: "msg-1",
+      sessionKey: "pending-draft:abc",
+      sessionId: null,
+      createdAt: 10,
+      draft: draft("hello"),
+    }),
+    { runId: "run-1", clientMessageId: "msg-1" },
+  );
+
+  const remapped = remapPendingSubmittedSession(accepted, "session-123");
+  assert.equal(remapped.admission, "accepted");
+  assert.equal(remapped.acceptedRunId, "run-1");
+  assert.equal(remapped.acceptedClientMessageId, "msg-1");
+});
+
+test("pending submit records accepted admission and fails closed on a mismatched client id", () => {
+  const pending = createPendingSubmittedDraft({
+    id: "pending-submit-1",
+    clientMessageId: "msg-local",
+    sessionKey: "session-key",
+    sessionId: "session-123",
+    createdAt: 10,
+    draft: draft("hello"),
+  });
+
+  const accepted = markPendingSubmittedAccepted(pending, {
+    runId: "run-accepted",
+    clientMessageId: "msg-local",
+  });
+  const mismatch = markPendingSubmittedAccepted(pending, {
+    runId: "run-foreign",
+    clientMessageId: "msg-foreign",
+  });
+
+  assert.equal(accepted.admission, "accepted");
+  assert.equal(accepted.acceptedRunId, "run-accepted");
+  assert.equal(accepted.acceptedClientMessageId, "msg-local");
+  assert.equal(mismatch.admission, "pending");
+  assert.equal(mismatch.admissionDiagnostic, "client-message-mismatch");
 });
 
 test("pending submit creates a renderable text placeholder for attachment-only drafts", () => {

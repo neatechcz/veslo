@@ -585,9 +585,9 @@ test("active visible transcript recovery opt-in stays scoped to selected-session
     "background latest-session hydration must remain passive and must not opt into server-start recovery",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /const submittedRunTranscriptCatchup = createSubmittedRunTranscriptCatchup[\s\S]*const visibleMessageCount = getCachedTranscriptMessages\(target\.sessionId\)\.length;[\s\S]*const catchupLimit = Math\.max\(140, visibleMessageCount \+ 20\);[\s\S]*getTranscriptFromVesloReadApi\([\s\S]*target\.workspaceId,[\s\S]*target\.sessionId,[\s\S]*catchupLimit,/s,
-    "submitted-run catch-up should request at least the visible transcript size so hydration is not discarded as a shorter stale snapshot",
+    /createSubmittedRunTranscriptCatchup|scheduleSubmittedRunTranscriptCatchup/,
+    "normal submit must not schedule a client transcript re-read that can overwrite live SSE state",
   );
 });

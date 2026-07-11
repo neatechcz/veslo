@@ -36,6 +36,14 @@ test('e2e package exposes only Tauri Pilot and Playwright scripts', () => {
     'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario visual-regression',
   );
   assert.equal(
+    packageJson.scripts['test:pilot:session-render-stability'],
+    'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-render-stability',
+  );
+  assert.equal(
+    packageJson.scripts['test:pilot:session-run-truthfulness'],
+    'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-run-truthfulness',
+  );
+  assert.equal(
     packageJson.scripts['test:pilot:feedback-youtrack-live'],
     'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario feedback-youtrack-live',
   );

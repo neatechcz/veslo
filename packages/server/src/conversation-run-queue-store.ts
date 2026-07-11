@@ -5,6 +5,24 @@ import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 
 export type ConversationRunQueueState = "pending" | "starting" | "submitted" | "failed" | "cancelled";
+export type ConversationRunQueueReadableState = Extract<ConversationRunQueueState, "pending" | "starting" | "failed">;
+
+export type ConversationRunQueueCursor = {
+  createdAt: number;
+  queueItemId: string;
+};
+
+export type ConversationRunQueuePage = {
+  items: Array<{
+    item: ConversationRunQueueItem;
+    queuePosition: number | null;
+  }>;
+  nextCursor: ConversationRunQueueCursor | null;
+};
+
+export const CONVERSATION_RUN_QUEUE_READABLE_STATES = ["pending", "starting", "failed"] as const;
+const conversationRunQueueReadableStateSet = new Set<string>(CONVERSATION_RUN_QUEUE_READABLE_STATES);
+export const CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT = 100;
 
 export type ConversationRunQueueItem = {
   queueItemId: string;
@@ -42,6 +60,13 @@ export type ConversationRunQueueStore = {
     activeRunId?: string | null;
   }): { item: ConversationRunQueueItem; inserted: boolean; queuePosition: number };
   nextPending(workspaceId: string, conversationId: string): ConversationRunQueueItem | null;
+  listForConversation(input: {
+    workspaceId: string;
+    conversationId: string;
+    states: ConversationRunQueueReadableState[];
+    cursor?: ConversationRunQueueCursor | null;
+    limit: number;
+  }): ConversationRunQueuePage;
   markStarting(queueItemId: string): ConversationRunQueueItem | null;
   markPending(queueItemId: string, activeRunId?: string | null): ConversationRunQueueItem | null;
   markSubmitted(queueItemId: string): ConversationRunQueueItem | null;
@@ -50,6 +75,11 @@ export type ConversationRunQueueStore = {
     workspaceId: string,
     conversationId: string,
     queueItemId: string,
+  ): ConversationRunQueueItem | null;
+  getForReservedRun(
+    workspaceId: string,
+    conversationId: string,
+    reservedRunId: string,
   ): ConversationRunQueueItem | null;
   recoverStarting(): Array<{ workspaceId: string; conversationId: string }>;
   pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }>;
@@ -134,6 +164,8 @@ function createDatabase(dbPath: string): Database {
     );
     CREATE INDEX IF NOT EXISTS conversation_run_queue_pending_idx
       ON conversation_run_queue (workspace_id, conversation_id, state, created_at, queue_item_id);
+    CREATE INDEX IF NOT EXISTS conversation_run_queue_reserved_run_idx
+      ON conversation_run_queue (workspace_id, conversation_id, reserved_run_id);
     CREATE UNIQUE INDEX IF NOT EXISTS conversation_run_queue_client_message_uidx
       ON conversation_run_queue (workspace_id, conversation_id, client_message_id)
       WHERE client_message_id IS NOT NULL AND client_message_id <> '';
@@ -346,10 +378,68 @@ export function createConversationRunQueueStore(options?: {
       });
     },
 
+    listForConversation(input) {
+      return withDb((db) => {
+        const workspaceId = normalizeText(input.workspaceId);
+        const conversationId = normalizeText(input.conversationId);
+        if (!workspaceId || !conversationId) {
+          throw new Error("workspaceId and conversationId are required");
+        }
+        const states = [...new Set(input.states.map((state) => normalizeText(state)))];
+        if (states.length === 0 || states.some((state) => !conversationRunQueueReadableStateSet.has(state))) {
+          throw new Error("states must contain only pending, starting, or failed");
+        }
+        if (!Number.isInteger(input.limit) || input.limit <= 0 || input.limit > CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT) {
+          throw new Error(`limit must be an integer from 1 to ${CONVERSATION_RUN_QUEUE_MAX_READ_LIMIT}`);
+        }
+        const cursor = input.cursor ?? null;
+        if (
+          cursor &&
+          (!Number.isSafeInteger(cursor.createdAt) || cursor.createdAt < 0 || !normalizeText(cursor.queueItemId))
+        ) {
+          throw new Error("cursor is invalid");
+        }
+
+        const parameters: Array<string | number> = [workspaceId, conversationId, ...states];
+        const cursorClause = cursor
+          ? " AND (created_at > ? OR (created_at = ? AND queue_item_id > ?))"
+          : "";
+        if (cursor) parameters.push(cursor.createdAt, cursor.createdAt, cursor.queueItemId);
+        parameters.push(input.limit + 1);
+        const statePlaceholders = states.map(() => "?").join(", ");
+        const rows = db.query<QueueRow, Array<string | number>>(
+          `SELECT * FROM conversation_run_queue
+           WHERE workspace_id = ?
+             AND conversation_id = ?
+             AND state IN (${statePlaceholders})${cursorClause}
+           ORDER BY created_at ASC, queue_item_id ASC
+           LIMIT ?`,
+        ).all(...parameters);
+        const hasMore = rows.length > input.limit;
+        const pageRows = hasMore ? rows.slice(0, input.limit) : rows;
+        const items = pageRows.map((row) => {
+          const item = rowToItem(row);
+          return {
+            item,
+            queuePosition: item.state === "pending" || item.state === "starting"
+              ? queuePositionSync(db, item)
+              : null,
+          };
+        });
+        const last = items.at(-1)?.item;
+        return {
+          items,
+          nextCursor: hasMore && last
+            ? { createdAt: last.createdAt, queueItemId: last.queueItemId }
+            : null,
+        };
+      });
+    },
+
     markStarting(queueItemId) {
       return withDb((db) => {
         const timestamp = now();
-        db.query(
+        const result = db.query(
           `UPDATE conversation_run_queue
            SET state = 'starting',
                attempts = attempts + 1,
@@ -358,6 +448,7 @@ export function createConversationRunQueueStore(options?: {
                error = NULL
            WHERE queue_item_id = ?1 AND state = 'pending'`,
         ).run(queueItemId, timestamp);
+        if (result.changes !== 1) return null;
         return getSync(db, queueItemId);
       });
     },
@@ -365,7 +456,7 @@ export function createConversationRunQueueStore(options?: {
     markPending(queueItemId, activeRunId) {
       return withDb((db) => {
         const timestamp = now();
-        db.query(
+        const result = db.query(
           `UPDATE conversation_run_queue
            SET state = 'pending',
                active_run_id = ?2,
@@ -373,6 +464,7 @@ export function createConversationRunQueueStore(options?: {
                updated_at = ?3
            WHERE queue_item_id = ?1 AND state = 'starting'`,
         ).run(queueItemId, normalizeText(activeRunId) || null, timestamp);
+        if (result.changes !== 1) return null;
         return getSync(db, queueItemId);
       });
     },
@@ -380,14 +472,15 @@ export function createConversationRunQueueStore(options?: {
     markSubmitted(queueItemId) {
       return withDb((db) => {
         const timestamp = now();
-        db.query(
+        const result = db.query(
           `UPDATE conversation_run_queue
            SET state = 'submitted',
                submitted_at = ?2,
                completed_at = ?2,
                updated_at = ?2
-           WHERE queue_item_id = ?1`,
+           WHERE queue_item_id = ?1 AND state = 'starting'`,
         ).run(queueItemId, timestamp);
+        if (result.changes !== 1) return null;
         return getSync(db, queueItemId);
       });
     },
@@ -395,14 +488,15 @@ export function createConversationRunQueueStore(options?: {
     markFailed(queueItemId, error) {
       return withDb((db) => {
         const timestamp = now();
-        db.query(
+        const result = db.query(
           `UPDATE conversation_run_queue
            SET state = 'failed',
                error = ?2,
                completed_at = ?3,
                updated_at = ?3
-           WHERE queue_item_id = ?1`,
+           WHERE queue_item_id = ?1 AND state = 'starting'`,
         ).run(queueItemId, normalizeText(error) || "queued run failed", timestamp);
+        if (result.changes !== 1) return null;
         return getSync(db, queueItemId);
       });
     },
@@ -419,6 +513,23 @@ export function createConversationRunQueueStore(options?: {
           normalizeText(workspaceId),
           normalizeText(conversationId),
           normalizeText(queueItemId),
+        );
+        return row ? rowToItem(row) : null;
+      });
+    },
+
+    getForReservedRun(workspaceId, conversationId, reservedRunId) {
+      return withDb((db) => {
+        const row = db.query<QueueRow, [string, string, string]>(
+          `SELECT * FROM conversation_run_queue
+           WHERE workspace_id = ?1
+             AND conversation_id = ?2
+             AND reserved_run_id = ?3
+           LIMIT 1`,
+        ).get(
+          normalizeText(workspaceId),
+          normalizeText(conversationId),
+          normalizeText(reservedRunId),
         );
         return row ? rowToItem(row) : null;
       });

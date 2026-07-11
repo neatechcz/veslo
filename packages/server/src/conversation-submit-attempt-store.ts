@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -7,6 +8,7 @@ import { resolveVesloDataDir } from "./audit.js";
 
 export type ConversationSubmitAttemptStatus =
   | "started"
+  | "materializing"
   | "materialized"
   | "completed"
   | "blocked"
@@ -68,6 +70,25 @@ type AttemptRow = {
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
 
 const normalizeNullableText = (value: string | null | undefined) => normalizeText(value) || null;
+
+export function deriveConversationSubmitOpenCodeSessionId(input: {
+  workspaceId: string;
+  clientMessageId: string;
+}): string {
+  const workspaceId = normalizeText(input.workspaceId);
+  const clientMessageId = normalizeText(input.clientMessageId);
+  if (!workspaceId || !clientMessageId) {
+    throw new Error("workspaceId and clientMessageId are required to derive an OpenCode session id");
+  }
+  const digest = createHash("sha256")
+    .update("veslo-conversation-submit-session:v1\u0000")
+    .update(workspaceId)
+    .update("\u0000")
+    .update(clientMessageId)
+    .digest("hex")
+    .slice(0, 32);
+  return `ses_veslo_v1_${digest}`;
+}
 
 function expandHome(path: string): string {
   if (path === "~") return homedir();

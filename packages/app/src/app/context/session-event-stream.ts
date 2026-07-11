@@ -4,6 +4,7 @@ import { produce, type SetStoreFunction } from "solid-js/store";
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
 
 import { engineSseSubscribe, isEngineSseAvailable } from "../lib/engine-sse";
+import { chromeMcpToolTraceDiagnostics } from "../lib/chrome-mcp-error";
 import { unwrap, type OpencodeAuth } from "../lib/opencode";
 import { perfNow, recordPerfLog } from "../lib/perf-log";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
@@ -180,6 +181,12 @@ export type SessionEventStreamControllerDeps = {
   onReconnectNotice?: (notice: ReconnectNotice) => void;
   onReconnectState?: (state: ReconnectState) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
+  onTranscriptObserved?: (sessionId: string) => void;
+  onSessionLifecycleObservation?: (
+    sessionId: string,
+    workspaceId: string | null | undefined,
+    type: "session.idle" | "session.error",
+  ) => boolean;
   sessionDebugEnabled: () => boolean;
   sessionWarn: (label: string, payload?: unknown) => void;
   recordSessionStatusTrace: (event: string, payload?: Record<string, unknown>) => void;
@@ -193,7 +200,7 @@ export type SessionEventStreamControllerDeps = {
   workspaceSessionIds: Set<string>;
   applySessionDirectoryOverride: <T extends Session>(session: T) => T;
   resolveSessionDirectory: (session: Pick<Session, "id" | "directory">) => string;
-  appendSessionErrorTurn: (sessionID: string, text: string) => void;
+  appendSessionErrorTurn: (sessionID: string, text: string, options?: { workspaceId?: string | null }) => void;
   setCommandDisplay: (messageID: string, name: string, args: string) => void;
   recordSyntheticContinueDiagnostic: (part: Part) => void;
   maybeMarkReloadRequired: (part: Part) => void;
@@ -211,18 +218,6 @@ export type SessionEventStreamControllerDeps = {
     sessionID: string,
     messageID: string,
     partID: string,
-  ) => void;
-  scheduleTranscriptIngestion: (
-    sessionID: string,
-    sourceWsId: string,
-    reason: string,
-    delayMs?: number,
-  ) => void;
-  scheduleBackgroundTranscriptIngestion: (
-    sessionID: string,
-    workspaceId: string,
-    reason: string,
-    delayMs?: number,
   ) => void;
   messageLimitBySession: () => Record<string, number>;
   setMessagesForSession: (sessionID: string, list: Array<{ info: MessageInfo; parts: Part[] }>) => void;
@@ -257,6 +252,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   >();
   const sseStreamReplacementCountsByWorkspace = new Map<string, number>();
   let nextSseStreamGeneration = 0;
+  const chromeMcpTraceSignatureByPart = new Map<string, string>();
+  const chromeMcpFirstObservedAtByPart = new Map<string, number>();
 
   const sseConnectionKey = (sourceWsId: string) => sourceWsId.trim() || "__active__";
   const sseBridgeConnectionKey = (sourceWsId: string) => `session-workspace:${sseConnectionKey(sourceWsId)}`;
@@ -367,6 +364,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     }
 
     if ((event.type === "session.idle" || event.type === "session.error") && sessionID) {
+      deps.onSessionLifecycleObservation?.(sessionID, workspaceId, event.type);
       deps.recordSessionStatusTrace("background-sse-session-idle", {
         sessionId: sessionID,
         status: "idle",
@@ -375,7 +373,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       });
       deps.setSessionStatusForWorkspace(sessionID, "idle", workspaceId);
       deps.notifySessionBusy(sessionID, "idle", workspaceId);
-      deps.scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, event.type, 0);
       return;
     }
 
@@ -386,7 +383,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       if ((info as { role?: string } | undefined)?.role === "assistant") {
         deps.onAssistantResponseObserved?.(targetSessionID);
       }
-      deps.scheduleBackgroundTranscriptIngestion(targetSessionID, workspaceId, "background message.updated");
       return;
     }
 
@@ -394,21 +390,14 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       const part = record.part as Part | undefined;
       const targetSessionID = part?.sessionID?.trim() || sessionID;
       if (!targetSessionID) return;
-      deps.scheduleBackgroundTranscriptIngestion(
-        targetSessionID,
-        workspaceId,
-        "background message.part.updated",
-      );
       return;
     }
 
     if (event.type === "message.removed" && sessionID) {
-      deps.scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "background message.removed", 0);
       return;
     }
 
     if (event.type === "message.part.removed" && sessionID) {
-      deps.scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "background message.part.removed", 0);
       return;
     }
 
@@ -537,6 +526,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
+          deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.idle");
           deps.recordSessionStatusTrace("sse-session-idle", {
             sessionId: sessionID,
             status: "idle",
@@ -545,27 +535,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           });
           deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
           deps.notifySessionBusy(sessionID, "idle", sourceWsId);
-          const c = sourceWsId
-            ? deps.routing.client(sourceWsId)
-            : null;
-          if (c) {
-            try {
-              const latest = deps.applySessionDirectoryOverride(unwrap(await c.session.get({ sessionID })));
-              deps.setStore("sessions", (current: Session[]) => upsertSession(current, latest));
-            } catch {
-              // ignore
-            }
-          } else if (sourceWsId) {
-            deps.recordSessionStatusTrace("sse-session-idle-live-refresh-skipped", {
-              sessionId: sessionID,
-              sourceWorkspaceId: sourceWsId,
-              reason: "missing-routed-client",
-            });
-          }
-          deps.scheduleTranscriptIngestion(sessionID, sourceWsId, "session.idle", 0);
           const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
           if (workspaceId) {
-            deps.scheduleBackgroundTranscriptIngestion(sessionID, workspaceId, "session.idle engine snapshot", 0);
           }
         }
       }
@@ -579,13 +550,16 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
+        const errorObj = record.error as Record<string, unknown> | undefined;
+        const errorName = typeof errorObj?.name === "string" ? errorObj.name : "UnknownError";
+        const lifecycleOwnsEvent = sessionID && errorName !== "MessageAbortedError"
+          ? deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.error") === true
+          : false;
         if (sessionID) {
           deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
           deps.notifySessionBusy(sessionID, "idle", sourceWsId);
         }
-        const errorObj = record.error as Record<string, unknown> | undefined;
         if (errorObj) {
-          const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
           if (errorName === "MessageAbortedError") {
             if (!sessionID) {
               deps.setError(null);
@@ -595,7 +569,9 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           const formattedError = addOpencodeCacheHint(formatSessionError(errorObj));
           const localInvalidBearer = isLocalVesloServerInvalidBearerError(errorObj);
           if (sessionID) {
-            deps.appendSessionErrorTurn(sessionID, formattedError);
+            if (!lifecycleOwnsEvent) {
+              deps.appendSessionErrorTurn(sessionID, formattedError, { workspaceId: sourceWsId });
+            }
           } else {
             deps.setError(formattedError);
           }
@@ -650,7 +626,9 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
         const fallback = truncateErrorField(record.error, 700) ?? "An unexpected error occurred";
         if (sessionID) {
-          deps.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback));
+          if (!lifecycleOwnsEvent) {
+            deps.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback), { workspaceId: sourceWsId });
+          }
         } else {
           deps.setError(addOpencodeCacheHint(fallback));
         }
@@ -666,6 +644,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           deps.setStore("messages", info.sessionID, (current: MessageInfo[] = []) =>
             upsertMessageInfo(current, info as MessageInfo),
           );
+          deps.onTranscriptObserved?.(info.sessionID);
           if ((info as { role?: string }).role === "assistant") {
             deps.onAssistantResponseObserved?.(info.sessionID);
             recordSendWorkflowTrace("session-sse", "session-sse:assistant-message-updated", {
@@ -675,7 +654,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               role: "assistant",
             });
           }
-          deps.scheduleTranscriptIngestion(info.sessionID, sourceWsId, "message.updated");
         }
       }
     }
@@ -700,8 +678,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               delete draft[messageID];
             }),
           );
+          deps.onTranscriptObserved?.(sessionID);
           if (workspaceId && isKnownSessionId(sessionID)) {
-            deps.scheduleTranscriptIngestion(sessionID, sourceWsId, "message.removed", 0);
           }
         }
       }
@@ -761,9 +739,38 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               draft.parts[part.messageID] = upsertPartInfo(parts, part);
             }),
           );
+          deps.onTranscriptObserved?.(part.sessionID);
           const resolvedPart =
             deps.store.parts[part.messageID]?.find((item) => item.id === part.id) ??
             part;
+          const chromeDiagnostics = chromeMcpToolTraceDiagnostics(resolvedPart);
+          if (chromeDiagnostics) {
+            const traceKey = `${part.messageID}:${part.id}`;
+            const traceSignature = [
+              chromeDiagnostics.status,
+              chromeDiagnostics.errorCode ?? "",
+              chromeDiagnostics.errorFingerprint ?? "",
+              chromeDiagnostics.hasOutput ? "output" : "",
+            ].join("\u0000");
+            const previousSignature = chromeMcpTraceSignatureByPart.get(traceKey);
+            if (previousSignature !== traceSignature) {
+              const firstObservedAt = chromeMcpFirstObservedAtByPart.get(traceKey) ?? Date.now();
+              chromeMcpFirstObservedAtByPart.set(traceKey, firstObservedAt);
+              recordSendWorkflowTrace("session-sse", "session-sse:chrome-mcp-tool-updated", {
+                workspaceId: sourceWsId || null,
+                sessionID: part.sessionID,
+                messageID: part.messageID,
+                partID: part.id,
+                ...chromeDiagnostics,
+                observedDurationMs: Math.max(0, Date.now() - firstObservedAt),
+              });
+              chromeMcpTraceSignatureByPart.set(traceKey, traceSignature);
+            }
+            if (chromeDiagnostics.terminal) {
+              chromeMcpTraceSignatureByPart.delete(traceKey);
+              chromeMcpFirstObservedAtByPart.delete(traceKey);
+            }
+          }
           const resolvedTextLength =
             resolvedPart.type === "text" && typeof (resolvedPart as { text?: unknown }).text === "string"
               ? String((resolvedPart as { text?: string }).text).length
@@ -797,7 +804,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           deps.maybeMarkReloadRequired(part);
           deps.maybeHandleInvalidToolError(part);
           deps.maybeHandleChromeMcpCompletedError(resolvedPart);
-          deps.scheduleTranscriptIngestion(part.sessionID, sourceWsId, "message.part.updated");
         }
       }
     }
@@ -816,7 +822,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           }
           deps.setStore("parts", messageID, (current: Part[] = []) => removePartInfo(current, partID));
           if (resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
-            deps.scheduleTranscriptIngestion(resolvedSessionID, sourceWsId, "message.part.removed");
           }
         }
       }
@@ -1000,6 +1005,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       });
 
       const isBackgroundCatchup = Boolean(sourceWsId && sourceWsId !== deps.routing.activeWorkspaceId());
+      let criticalFailureCount = 0;
+      let lastCriticalFailure: string | null = null;
       for (const sessionID of sessionIds) {
         if (!sessionID) continue;
 
@@ -1009,16 +1016,18 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           deps.setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
           deps.notifySessionBusy(sessionID, normalized, sourceWsId);
         } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          criticalFailureCount += 1;
+          lastCriticalFailure = message;
           deps.recordSessionStatusTrace("sse-reconnect-catchup-status-failed", {
             sessionId: sessionID,
             sourceWorkspaceId: sourceWsId || null,
-            message: error instanceof Error ? error.message : String(error),
+            message,
           });
           continue;
         }
 
         if (isBackgroundCatchup) {
-          deps.scheduleBackgroundTranscriptIngestion(sessionID, sourceWsId, "reconnect catch-up", 0);
           continue;
         }
 
@@ -1033,8 +1042,15 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             ...prev,
             [sessionID]: msgs.length < limit,
           }));
-        } catch {
-          // fail soft per session
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          criticalFailureCount += 1;
+          lastCriticalFailure = message;
+          deps.recordSessionStatusTrace("sse-reconnect-catchup-messages-failed", {
+            sessionId: sessionID,
+            sourceWorkspaceId: sourceWsId || null,
+            message,
+          });
         }
 
         try {
@@ -1055,6 +1071,20 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         await deps.withTimeout(deps.refreshPendingQuestions(), 6000, "question.list");
       } catch {
         // ignore
+      }
+
+      if (criticalFailureCount > 0) {
+        recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "catchup-incomplete", {
+          sessions: sessionIds.length,
+          criticalFailures: criticalFailureCount,
+          generation,
+        });
+        outageEpisode = clearOutageEpisode();
+        emitReconnectState("degraded", {
+          lastError: truncateErrorField(lastCriticalFailure ?? "Reconnect catch-up incomplete"),
+          messagesMayBeDelayed: true,
+        });
+        return;
       }
 
       if (shouldShowReconnected(outageEpisode)) {

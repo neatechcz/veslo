@@ -192,6 +192,29 @@ describe("run activity probe payload parsing", () => {
     ])).toMatchObject({ active: true, activityKind: "local_tool", waitReason: "running_tool" });
   });
 
+  test("assistant text after a tool error is a recovered result, not a run failure", () => {
+    expect(deriveRunActivityFromSessionMessages([
+      user(),
+      assistant({
+        parts: [
+          {
+            type: "tool",
+            tool: "chrome-devtools_new_page",
+            state: { status: "error", error: "navigation failed" },
+          },
+          {
+            type: "text",
+            text: "I could not open the page, but the session is still available.",
+          },
+        ],
+      }),
+    ])).toMatchObject({
+      active: true,
+      activityKind: "assistant_output",
+      waitReason: "assistant_message_open",
+    });
+  });
+
   test("assistant text part is assistant output progress", () => {
     expect(deriveRunActivityFromSessionMessages([
       user(),
@@ -232,7 +255,7 @@ describe("run activity probe HTTP behavior", () => {
     await expect(probe(record)).resolves.toEqual({ active: false });
   });
 
-  test("idle session status returns inactive without fetching messages", async () => {
+  test("idle session status checks transcript before returning completion", async () => {
     const urls: string[] = [];
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),
@@ -242,15 +265,43 @@ describe("run activity probe HTTP behavior", () => {
       }),
       fetchImpl: (async (input) => {
         urls.push(String(input));
-        return Response.json({ "sess-a": { type: "idle" } });
+        if (String(input).endsWith("/session/status")) {
+          return Response.json({ "sess-a": { type: "idle" } });
+        }
+        return Response.json([user(), assistant({ completed: 2_000 })]);
       }) as typeof fetch,
     });
 
     await expect(probe(record)).resolves.toMatchObject({ active: false, activityKind: "idle" });
-    expect(urls).toEqual(["http://engine/session/status"]);
+    expect(urls).toEqual([
+      "http://engine/session/status",
+      "http://engine/session/sess-a/message",
+    ]);
   });
 
-  test("busy session status returns active without fetching messages", async () => {
+  test("busy session yields to an explicitly completed assistant transcript", async () => {
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        if (String(input).endsWith("/session/status")) {
+          return Response.json({ "sess-a": { type: "busy" } });
+        }
+        return Response.json([user(), assistant({ completed: 2_000 })]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe(record)).resolves.toMatchObject({
+      active: false,
+      activityKind: "idle",
+      waitReason: "session_idle",
+    });
+  });
+
+  test("busy session status checks messages before returning a generic active state", async () => {
     const urls: string[] = [];
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),
@@ -259,13 +310,18 @@ describe("run activity probe HTTP behavior", () => {
         headers: {},
       }),
       fetchImpl: (async (input) => {
-        urls.push(String(input));
-        return Response.json({ "sess-a": { type: "busy" } });
+        const url = String(input);
+        urls.push(url);
+        if (url.endsWith("/session/status")) return Response.json({ "sess-a": { type: "busy" } });
+        return Response.json([user(), assistant({})]);
       }) as typeof fetch,
     });
 
     await expect(probe(record)).resolves.toMatchObject({ active: true, activityKind: "unknown" });
-    expect(urls).toEqual(["http://engine/session/status"]);
+    expect(urls).toEqual([
+      "http://engine/session/status",
+      "http://engine/session/sess-a/message",
+    ]);
   });
 
   test("retry session status fetches messages and reports no-output model retry", async () => {
@@ -328,6 +384,44 @@ describe("run activity probe HTTP behavior", () => {
       activityKind: "local_tool",
       waitReason: "running_tool",
     });
+  });
+
+  test("busy session with a running tool prefers transcript tool activity", async () => {
+    const urls: string[] = [];
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        const url = String(input);
+        urls.push(url);
+        if (url.endsWith("/session/status")) return Response.json({ "sess-a": { type: "busy" } });
+        return Response.json([
+          user(),
+          assistant({
+            parts: [
+              {
+                type: "tool",
+                tool: "chrome-devtools_new_page",
+                state: { status: "running" },
+              },
+            ],
+          }),
+        ]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe(record)).resolves.toMatchObject({
+      active: true,
+      activityKind: "local_tool",
+      waitReason: "running_tool",
+    });
+    expect(urls).toEqual([
+      "http://engine/session/status",
+      "http://engine/session/sess-a/message",
+    ]);
   });
 
   test("unknown status shape falls back to message transcript", async () => {
