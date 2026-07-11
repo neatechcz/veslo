@@ -6,6 +6,16 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["dev:web"],
       "port": 5173
+    },
+    {
+      "name": "ai-gateway-docker-attach",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "/private/tmp/claude-501/-Users-vaclavsoukup-AI-agent-projects-Veslo/0ad4e466-878e-447a-9749-7a6ff7d508db/scratchpad/tcp-proxy.py",
+        "64199",
+        "64149"
+      ],
+      "port": 64199
     }
   ]
 }
