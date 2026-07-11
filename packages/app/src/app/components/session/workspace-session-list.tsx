@@ -2373,13 +2373,16 @@ export default function WorkspaceSessionList(props: Props) {
   );
 
   const topRailButtonClass =
-    `inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-gray-6 bg-gray-1 px-2 text-[12px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
+    `inline-flex h-8 w-full min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-cyan-a7 bg-transparent px-2 text-[12px] font-medium text-dls-accent transition-colors hover:bg-cyan-a3 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
 
   const compactTopRailButtonClass =
-    `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
+    `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border-0 bg-transparent text-gray-a8 transition-colors hover:bg-cyan-a3 hover:text-dls-accent disabled:cursor-not-allowed disabled:opacity-60 ${sidebarControlTooltipClass}`;
 
   const projectCreateSessionButtonClass =
-    "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:border-gray-7 hover:bg-gray-2 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]";
+    "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border-0 bg-transparent text-gray-a8 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-cyan-a3 hover:text-dls-accent transition-colors transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]";
+
+  const chatCallToActionClass =
+    "inline-flex items-center justify-center gap-1.5 rounded-md border border-cyan-a7 bg-transparent font-medium text-dls-accent transition-colors hover:bg-cyan-a3 disabled:cursor-not-allowed disabled:opacity-60";
 
   const overflowActionClass = (active = false) =>
     `flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs transition-colors ${
@@ -2867,7 +2870,7 @@ export default function WorkspaceSessionList(props: Props) {
               >
                 <button
                   type="button"
-                  class="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:cursor-not-allowed disabled:opacity-60"
+                  class={`${chatCallToActionClass} h-8 min-w-0 flex-1 px-2 text-[11px]`}
                   onClick={startQuickChatFromCollapsed}
                   disabled={!props.onQuickNewSession || quickChatBusy()}
                   aria-label={tr("sidebar.new_chat")}
@@ -2882,7 +2885,7 @@ export default function WorkspaceSessionList(props: Props) {
                   type="button"
                   data-sidebar-chat-expand-button="true"
                   data-sidebar-chat-collapsed-resize-handle="true"
-                  class="inline-flex h-8 w-8 shrink-0 cursor-ns-resize items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+                  class="inline-flex h-8 w-8 shrink-0 cursor-ns-resize items-center justify-center rounded-md border-0 bg-transparent text-gray-a8 transition-colors hover:bg-cyan-a3 hover:text-dls-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)]"
                   style={{ cursor: "ns-resize" }}
                   onPointerDown={handleChatSidebarResizeStart}
                   onClick={expandChatSidebar}
@@ -2909,12 +2912,12 @@ export default function WorkspaceSessionList(props: Props) {
                   <span class="h-px w-full rounded-full bg-gray-6/70 transition-colors group-hover:bg-gray-8" />
                 </button>
                 <div class="mb-1 flex items-center justify-between gap-2 px-1.5">
-                  <span class="truncate text-[12px] font-semibold text-gray-10">
+                  <span class="truncate font-mono text-[10.5px] uppercase tracking-[0.12em] text-gray-a9">
                     {tr("sidebar.chats")}
                   </span>
                   <button
                     type="button"
-                    class="inline-flex h-7 items-center gap-1 rounded-full border border-gray-6 bg-gray-1 px-2 text-[11px] font-medium text-gray-11 shadow-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    class={`${chatCallToActionClass} h-7 px-2 text-[11px]`}
                     onClick={startQuickChat}
                     disabled={!props.onQuickNewSession || quickChatBusy()}
                     aria-label={tr("sidebar.new_chat")}

@@ -105,8 +105,8 @@ test("workspace session sidebar keeps the control rail ordered and compact-safe"
 
   assert.match(
     source,
-    /const compactTopRailButtonClass =[\s\S]*h-8 w-8[\s\S]*rounded-full/,
-    "overflow control should use a dedicated compact circular button class",
+    /const compactTopRailButtonClass =[\s\S]*h-8 w-8[\s\S]*rounded-md[\s\S]*border-0[\s\S]*bg-transparent[\s\S]*text-gray-a8[\s\S]*hover:bg-cyan-a3[\s\S]*hover:text-dls-accent/,
+    "overflow control should use a dedicated compact ghost rectangle style",
   );
 
   assert.doesNotMatch(
@@ -213,7 +213,7 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   assert.doesNotMatch(source, /cursor-row-resize/);
   assert.match(
     source,
-    /data-sidebar-chat-collapsed="true"[\s\S]*class="mt-2 flex h-11 w-full shrink-0 items-center justify-between gap-2 border-t border-gray-6\/70 px-1\.5 pt-2"[\s\S]*class="inline-flex h-8 min-w-0 flex-1[\s\S]*disabled:opacity-60"[\s\S]*onClick=\{startQuickChatFromCollapsed\}/,
+    /data-sidebar-chat-collapsed="true"[\s\S]*class="mt-2 flex h-11 w-full shrink-0 items-center justify-between gap-2 border-t border-gray-6\/70 px-1\.5 pt-2"[\s\S]*class=\{`\$\{chatCallToActionClass\} h-8 min-w-0 flex-1 px-2 text-\[11px\]`\}[\s\S]*onClick=\{startQuickChatFromCollapsed\}/,
     "collapsed Chats wrapper should reserve enough height for its h-8 controls",
   );
   assert.match(
@@ -272,21 +272,41 @@ test("by-project sidebar renders private chats as a bottom section", () => {
   assert.match(source, /showWorkspaceMenu: false/);
 });
 
-test("project create-session actions use visible button chrome", () => {
+test("sidebar controls use the veslo.work CTA, ghost, and kicker language", () => {
   assert.match(
     source,
-    /const projectCreateSessionButtonClass =[\s\S]*h-7 w-7[\s\S]*rounded-full[\s\S]*border border-gray-6[\s\S]*bg-gray-1[\s\S]*shadow-sm[\s\S]*hover:border-gray-7[\s\S]*hover:bg-gray-2[\s\S]*hover:text-gray-12[\s\S]*focus-visible:outline-none[\s\S]*focus-visible:ring-2[\s\S]*focus-visible:ring-\[rgba\(var\(--dls-accent-rgb\),0\.2\)\]/,
-    "project plus actions should use a shared button-like class",
+    /const topRailButtonClass =[\s\S]*rounded-md[\s\S]*border-cyan-a7[\s\S]*bg-transparent[\s\S]*font-medium[\s\S]*text-dls-accent[\s\S]*hover:bg-cyan-a3/,
+    "add-directory-or-project should be the bordered cyan CTA",
+  );
+  assert.match(
+    source,
+    /const projectCreateSessionButtonClass =[\s\S]*rounded-md[\s\S]*border-0[\s\S]*bg-transparent[\s\S]*text-gray-a8[\s\S]*opacity-0[\s\S]*group-hover:opacity-100[\s\S]*focus-visible:opacity-100[\s\S]*hover:bg-cyan-a3[\s\S]*hover:text-dls-accent/,
+    "project plus controls should be hover-revealed ghost buttons that remain keyboard discoverable",
+  );
+  assert.match(
+    source,
+    /const chatCallToActionClass =[\s\S]*rounded-md[\s\S]*border-cyan-a7[\s\S]*bg-transparent[\s\S]*font-medium[\s\S]*text-dls-accent[\s\S]*hover:bg-cyan-a3/,
+    "+ Chat should share the bordered cyan CTA language",
+  );
+  assert.match(
+    source,
+    /<span class="truncate font-mono text-\[10\.5px\] uppercase tracking-\[0\.12em\] text-gray-a9">\s*\{tr\("sidebar\.chats"\)\}\s*<\/span>/,
+    "Chats should render as a mono uppercase kicker",
+  );
+  assert.match(
+    source,
+    /data-sidebar-chat-expand-button="true"[\s\S]*class="inline-flex h-8 w-8[^"]*rounded-md border-0 bg-transparent text-gray-a8[^"]*hover:bg-cyan-a3 hover:text-dls-accent/,
+    "the collapsed Chats resize control should use the same ghost rectangle language",
   );
   assert.match(
     source,
     /class=\{projectCreateSessionButtonClass\}[\s\S]*aria-label=\{tr\("sidebar\.create_session_in_project"\)\}[\s\S]*<Plus size=\{14\} \/>/,
-    "project plus actions should render as the shared button",
+    "project plus actions should render as the shared ghost button",
   );
   assert.equal(
     (source.match(/class=\{projectCreateSessionButtonClass\}/g) ?? []).length,
     2,
-    "both project plus call sites should use the shared button class",
+    "both project plus call sites should use the shared ghost button class",
   );
   assert.doesNotMatch(
     source,

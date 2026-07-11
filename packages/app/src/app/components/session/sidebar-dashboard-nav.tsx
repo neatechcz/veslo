@@ -16,10 +16,10 @@ type SidebarDashboardNavProps = {
 };
 
 const buttonClass = (active: boolean) =>
-  `w-full h-7 flex items-center gap-1.5 px-2.5 rounded-lg font-product text-[12px] font-medium transition-colors ${
+  `w-full h-7 flex items-center gap-1.5 px-2.5 rounded-md font-product text-[12px] font-medium transition-colors ${
     active
-      ? "bg-gray-4 text-gray-12"
-      : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+      ? "bg-cyan-a3 text-dls-text font-medium"
+      : "text-gray-11 hover:bg-cyan-a3 hover:text-dls-text"
   }`;
 
 const isActiveTab = (currentTab: DashboardTab, tab: DashboardTab) =>
@@ -48,7 +48,10 @@ export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
             class={buttonClass(isActiveTab(props.currentTab, "scheduled"))}
             onClick={() => props.onSelect("scheduled")}
           >
-            <History size={18} />
+            <History
+              size={18}
+              class={isActiveTab(props.currentTab, "scheduled") ? "text-dls-accent" : "text-gray-a8"}
+            />
             {t("nav.automations", currentLocale())}
           </button>
           <button
@@ -56,7 +59,10 @@ export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
             class={buttonClass(isActiveTab(props.currentTab, "skills"))}
             onClick={() => props.onSelect("skills")}
           >
-            <Zap size={18} />
+            <Zap
+              size={18}
+              class={isActiveTab(props.currentTab, "skills") ? "text-dls-accent" : "text-gray-a8"}
+            />
             {t("nav.skills", currentLocale())}
           </button>
         </div>
@@ -65,7 +71,7 @@ export default function SidebarDashboardNav(props: SidebarDashboardNavProps) {
         <div class="border-t border-gray-6/70" />
         <button
           type="button"
-          class="absolute left-1/2 top-0 inline-flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-gray-6 bg-gray-1 text-gray-10 shadow-sm transition-colors hover:bg-gray-2 hover:text-gray-11"
+          class="absolute left-1/2 top-0 inline-flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border-0 bg-transparent text-gray-a8 transition-colors hover:bg-cyan-a3 hover:text-dls-accent"
           onClick={toggleCollapsed}
           title={collapseLabel()}
           aria-label={collapseLabel()}

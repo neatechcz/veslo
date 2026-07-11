@@ -115,11 +115,11 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
   };
 
   return (
-    <div class="mt-3 pt-3">
+    <div class="mt-3 border-t border-dls-border pt-3">
       <div class="flex items-center gap-2">
         <button
           type="button"
-          class="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-6 bg-gray-1 text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-11"
+          class="h-8 w-8 inline-flex items-center justify-center rounded-md border-0 bg-transparent text-gray-a8 transition-colors hover:bg-cyan-a3 hover:text-dls-accent"
           onClick={props.onOpenSettings}
           title={__vesloT("dashboard.settings", __vesloCurrentLocale())}
           aria-label={__vesloT("dashboard.settings", __vesloCurrentLocale())}
@@ -131,7 +131,7 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
           <button
             type="button"
             data-testid="sidebar-connection-status-button"
-            class="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-6 bg-gray-1 transition-colors hover:bg-gray-2"
+            class="h-8 w-8 inline-flex items-center justify-center rounded-md border-0 bg-transparent transition-colors hover:bg-cyan-a3"
             onClick={toggleStatusDetail}
             title={__vesloT("ui.literal.connection_status_1edemn", __vesloCurrentLocale())}
             aria-label={__vesloT("ui.literal.connection_status_1edemn", __vesloCurrentLocale())}
@@ -169,14 +169,14 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
         <div class="relative min-w-0 flex-1" ref={(el) => (accountControlRef = el)}>
           <button
             type="button"
-            class="w-full min-w-0 inline-flex items-center gap-1.5 rounded-lg border border-gray-6 bg-gray-1 px-2.5 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2 hover:text-gray-12"
+            class="w-full min-w-0 inline-flex items-center gap-1.5 rounded-md border-0 bg-transparent px-2.5 py-1.5 font-mono text-[11.5px] text-gray-a9 transition-colors hover:bg-cyan-a3 hover:text-dls-accent"
             title={accountButtonLabel()}
             aria-label={accountButtonLabel()}
             aria-haspopup="menu"
             aria-expanded={accountMenuOpen()}
             onClick={toggleAccountMenu}
           >
-            <User size={12} class="text-gray-9 shrink-0" />
+            <User size={12} class="shrink-0" />
             <span class="truncate">{authenticatedUserLabel()}</span>
           </button>
 
