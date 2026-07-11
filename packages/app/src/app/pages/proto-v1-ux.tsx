@@ -290,7 +290,7 @@ const CreateAutomationModal = (props: { open: boolean; onClose: () => void }) =>
               type="button"
               aria-label="Close modal"
               onClick={props.onClose}
-              class="rounded-full p-2 text-gray-8 transition-colors hover:bg-gray-2 hover:text-gray-12"
+              class="rounded-md p-2 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
             >
               <X size={18} />
             </button>
@@ -334,10 +334,10 @@ const CreateAutomationModal = (props: { open: boolean; onClose: () => void }) =>
               <div class="mb-3 flex items-center justify-between">
                 <label class="text-[11px] font-bold uppercase tracking-wider text-gray-8">Schedule</label>
                 <div class="flex rounded-full border border-gray-6 bg-gray-2/60 p-1">
-                  <button type="button" class="rounded-full bg-gray-12 px-3 py-1 text-[10px] font-bold text-gray-1">
+                  <button type="button" class="rounded-md border border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] px-3 py-1 text-[10px] font-medium text-dls-text">
                     Daily
                   </button>
-                  <button type="button" class="rounded-full px-3 py-1 text-[10px] font-bold text-gray-9">
+                  <button type="button" class="rounded-md border border-transparent px-3 py-1 text-[10px] font-medium text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent">
                     Interval
                   </button>
                 </div>
@@ -352,10 +352,10 @@ const CreateAutomationModal = (props: { open: boolean; onClose: () => void }) =>
                     {(day) => (
                       <button
                         type="button"
-                        class={`h-8 w-8 rounded-full text-[10px] font-bold ${
+                        class={`h-8 w-8 rounded-md border text-[10px] font-medium ${
                           day === "Sa" || day === "Su"
-                            ? "bg-gray-2 text-gray-9"
-                            : "bg-gray-12 text-gray-1"
+                            ? "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
+                            : "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
                         }`}
                       >
                         {day}
@@ -653,10 +653,10 @@ export default function ProtoV1UxView() {
                             type="button"
                             aria-label="Send"
                             disabled={!sendEnabled()}
-                            class={`rounded-full p-2 transition-colors ${
+                            class={`rounded-md border p-2 transition-colors ${
                               sendEnabled()
-                                ? "bg-gray-12 text-gray-1"
-                                : "bg-gray-3 text-gray-8"
+                                ? "border-transparent bg-dls-accent text-[#001932] hover:bg-[var(--dls-accent-hover)]"
+                                : "border-transparent bg-dls-accent text-[#001932] opacity-50"
                             }`}
                           >
                             <ArrowUp size={18} />

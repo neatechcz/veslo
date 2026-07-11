@@ -127,15 +127,15 @@ export default function ProtoWorkspacesView() {
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <div class="flex items-center gap-1 rounded-full border border-gray-6/70 bg-gray-2/50 p-1">
+            <div class="flex items-center gap-1 rounded-md border border-gray-6/70 bg-gray-2/50 p-1">
               <For each={("onboarding dashboard session".split(" ") as ProtoView[])}>
                 {(key) => (
                   <button
                     onClick={() => setView(key)}
-                    class={`rounded-full px-3 py-1 text-xs transition-colors ${
+                    class={`rounded-md border px-3 py-1 text-xs transition-colors ${
                       view() === key
-                        ? "bg-gray-12 text-gray-1"
-                        : "text-gray-10 hover:text-gray-12"
+                        ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                        : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                     }`}
                   >
                     {viewLabels[key]}
@@ -191,7 +191,7 @@ export default function ProtoWorkspacesView() {
                     <div class="mt-1 text-sm text-gray-12">Add a workspace folder or import one.</div>
                   </div>
                   <div class="flex gap-2">
-                    <Button variant="secondary" class="text-xs px-3 py-1.5">Pick folder</Button>
+                    <Button variant="outline" class="text-xs px-3 py-1.5">Pick folder</Button>
                     <Button variant="outline" class="text-xs px-3 py-1.5">Import config</Button>
                   </div>
                 </div>
@@ -240,7 +240,7 @@ export default function ProtoWorkspacesView() {
               </div>
 
               <div class="space-y-3">
-                <Button variant="secondary" class="w-full">Connect</Button>
+                <Button variant="outline" class="w-full">Connect</Button>
                 <Button variant="outline" class="w-full">Settings</Button>
               </div>
             </aside>
@@ -281,7 +281,7 @@ export default function ProtoWorkspacesView() {
                             placeholder="Draft a task to run..."
                             class="flex-1 bg-transparent border-none p-0 text-sm text-dls-text placeholder:text-dls-secondary focus:ring-0"
                           />
-                          <button class="rounded-xl bg-gray-12 px-3 py-1.5 text-xs font-semibold text-gray-1">Run</button>
+                          <button class="rounded-md border border-transparent bg-dls-accent px-3 py-1.5 text-xs font-medium text-[#001932] hover:bg-[var(--dls-accent-hover)]">Run</button>
                         </div>
                       </div>
                     </div>
@@ -295,7 +295,7 @@ export default function ProtoWorkspacesView() {
                       <Button variant="outline" class="text-xs h-8 px-3">
                         Share config
                       </Button>
-                      <Button variant="secondary" class="text-xs h-8 px-3">
+                      <Button variant="outline" class="text-xs h-8 px-3">
                         <Plus size={14} />
                         Add workspace
                       </Button>
@@ -367,7 +367,7 @@ export default function ProtoWorkspacesView() {
           <div class="h-[70vh] flex flex-col bg-gray-1 text-gray-12 relative rounded-3xl border border-gray-6 overflow-hidden">
             <header class="h-16 border-b border-gray-6 flex items-center justify-between px-6 bg-gray-1/80 backdrop-blur-md z-10 sticky top-0">
               <div class="flex items-center gap-3">
-                <Button variant="ghost" class="!p-2 rounded-full">
+                <Button variant="ghost" class="!p-2">
                   <ArrowLeft class="w-5 h-5" />
                 </Button>
                 <WorkspaceChip workspace={activeWorkspace()} onClick={() => undefined} />
@@ -440,7 +440,7 @@ export default function ProtoWorkspacesView() {
                   placeholder="Describe a task..."
                   class="flex-1 bg-transparent text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
                 />
-                <button class="rounded-xl bg-gray-12 px-3 py-1.5 text-xs font-semibold text-gray-1">Send</button>
+                <button class="rounded-md border border-transparent bg-dls-accent px-3 py-1.5 text-xs font-medium text-[#001932] hover:bg-[var(--dls-accent-hover)]">Send</button>
               </div>
             </div>
           </div>

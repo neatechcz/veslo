@@ -618,7 +618,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
             </div>
             <button
               type="button"
-              class="p-2 text-gray-11 hover:text-gray-12 hover:bg-gray-4 rounded-lg transition-colors"
+              class="rounded-md p-2 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
               onClick={handleClose}
             >
               <X size={20} />
@@ -719,7 +719,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                 <div class="flex flex-wrap gap-2 pt-1">
                   <Show when={props.onReloadEngine}>
                     <Button
-                      variant="secondary"
+                      variant="outline"
                       onClick={handleReloadAndRetry}
                       disabled={props.reloadBlocked}
                       title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
@@ -743,7 +743,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                   <div class="flex flex-wrap gap-2 pt-2">
                     <Show when={props.onReloadEngine}>
                       <Button
-                        variant="secondary"
+                        variant="outline"
                         onClick={handleReloadAndRetry}
                         disabled={props.reloadBlocked}
                         title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
@@ -771,7 +771,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     <p class="text-xs text-red-11">{translate("mcp.auth.invalid_refresh_token")}</p>
                     <Show when={!props.isRemoteWorkspace}>
                       <Show when={isTauriRuntime()}>
-                        <Button variant="secondary" onClick={handleCliReauth} disabled={cliAuthBusy()}>
+                        <Button variant="outline" onClick={handleCliReauth} disabled={cliAuthBusy()}>
                           <Show
                             when={cliAuthBusy()}
                             fallback={translate("mcp.auth.reauth_action")}
@@ -834,7 +834,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                 </div>
                 <div class="flex justify-end">
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     onClick={handleManualComplete}
                     disabled={manualAuthBusy() || !callbackInput().trim()}
                   >
@@ -923,7 +923,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
               <Button variant="ghost" onClick={handleClose}>
                 {translate("mcp.auth.cancel")}
               </Button>
-              <Button variant="secondary" onClick={handleComplete}>
+              <Button variant="outline" onClick={handleComplete}>
                 <CheckCircle2 size={16} />
                 {translate("mcp.auth.im_done")}
               </Button>

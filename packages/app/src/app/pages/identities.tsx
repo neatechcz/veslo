@@ -767,19 +767,19 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
         <div class="flex items-center gap-2 rounded-xl border border-gray-4 bg-gray-1 p-1">
           <button
-            class={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+            class={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition-colors ${
               activeTab() === "general"
-                ? "bg-gray-12 text-gray-1"
-                : "text-gray-10 hover:bg-gray-2"
+                ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
             }`}
             onClick={() => setActiveTab("general")}
           >
             {__vesloT("settings.general", __vesloCurrentLocale())}</button>
           <button
-            class={`flex-1 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+            class={`flex-1 rounded-md border px-3 py-2 text-xs font-medium transition-colors ${
               activeTab() === "advanced"
-                ? "bg-gray-12 text-gray-1"
-                : "text-gray-10 hover:bg-gray-2"
+                ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
             }`}
             onClick={() => setActiveTab("advanced")}
           >
@@ -1007,10 +1007,10 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                       <button
                         onClick={() => void upsertTelegram("public")}
                         disabled={telegramSaving() || !workspaceId() || !telegramToken().trim()}
-                        class={`flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                        class={`flex items-center justify-center gap-2 rounded-md border border-transparent bg-dls-accent px-4 py-2.5 text-sm font-medium text-[#001932] transition-colors ${
                           telegramSaving() || !workspaceId() || !telegramToken().trim()
-                            ? "cursor-not-allowed border-gray-5 bg-gray-3 text-gray-8"
-                            : "cursor-pointer border-gray-6 bg-gray-12 text-gray-1 hover:bg-gray-11"
+                            ? "cursor-not-allowed opacity-50"
+                            : "cursor-pointer hover:bg-[var(--dls-accent-hover)]"
                         }`}
                       >
                         <Show
@@ -1361,7 +1361,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                 {__vesloT("ui.literal.create_default_file_1c92xy", __vesloCurrentLocale())}</Button>
             </Show>
             <Button
-              variant="secondary"
+              variant="outline"
               class="h-8 px-3 text-xs"
               onClick={() => void saveAgentFile()}
               disabled={agentSaving() || !workspaceId() || !agentDirty()}
@@ -1445,7 +1445,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
           <div class="flex items-center gap-2">
             <Button
-              variant="secondary"
+              variant="outline"
               class="h-8 px-3 text-xs"
               onClick={() => void sendTestMessage()}
               disabled={sendBusy() || !workspaceId() || !sendText().trim()}

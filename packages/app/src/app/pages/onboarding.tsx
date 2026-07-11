@@ -172,7 +172,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
               <Show when={connectingFallbackVisible()}>
                 <div class="mt-5 flex items-center justify-center gap-2">
-                  <Button variant="secondary" onClick={props.onOpenSettings} disabled={props.busy}>
+                  <Button variant="outline" onClick={props.onOpenSettings} disabled={props.busy}>
                     {translate("onboarding.open_settings")}
                   </Button>
                   <Button variant="ghost" onClick={props.onBackToWelcome} disabled={props.busy}>
@@ -270,7 +270,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
               <Show when={props.authExchangeBusy}>
                 <Button
-                  variant="secondary"
+                  variant="outline"
                   class="w-full"
                   onClick={() => props.onResumeBrowserSignIn()}
                 >
@@ -312,30 +312,30 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 </div>
                 <div class="flex flex-wrap gap-2">
                   <button
-                    class={`font-product type-ui-xs px-3 py-1 rounded-full border transition-colors ${
+                    class={`font-product type-ui-xs rounded-[var(--dls-radius)] border px-3 py-1 transition-colors ${
                       props.themeMode === "system"
-                        ? "bg-gray-12/10 text-gray-12 border-gray-6/30"
-                        : "text-gray-10 border-gray-6 hover:text-gray-12"
+                        ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                        : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                     }`}
                     onClick={() => props.setThemeMode("system")}
                   >
                     {translate("onboarding.theme_system")}
                   </button>
                   <button
-                    class={`font-product type-ui-xs px-3 py-1 rounded-full border transition-colors ${
+                    class={`font-product type-ui-xs rounded-[var(--dls-radius)] border px-3 py-1 transition-colors ${
                       props.themeMode === "light"
-                        ? "bg-gray-12/10 text-gray-12 border-gray-6/30"
-                        : "text-gray-10 border-gray-6 hover:text-gray-12"
+                        ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                        : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                     }`}
                     onClick={() => props.setThemeMode("light")}
                   >
                     {translate("onboarding.theme_light")}
                   </button>
                   <button
-                    class={`font-product type-ui-xs px-3 py-1 rounded-full border transition-colors ${
+                    class={`font-product type-ui-xs rounded-[var(--dls-radius)] border px-3 py-1 transition-colors ${
                       props.themeMode === "dark"
-                        ? "bg-gray-12/10 text-gray-12 border-gray-6/30"
-                        : "text-gray-10 border-gray-6 hover:text-gray-12"
+                        ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                        : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                     }`}
                     onClick={() => props.setThemeMode("dark")}
                   >
@@ -358,7 +358,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     <div class="font-reading type-ui-sm text-gray-10">{__vesloT("ui.literal.imports_opencode_and_opencode_json_only_1m9ya6", __vesloCurrentLocale())}</div>
                   </div>
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     class="text-xs h-8 px-3 shrink-0"
                     onClick={props.onImportWorkspaceConfig}
                     disabled={props.importingWorkspaceConfig || props.busy}
@@ -440,7 +440,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                       </Button>
                     </Show>
                     <Button
-                      variant="secondary"
+                      variant="outline"
                       onClick={props.onAddAuthorizedDir}
                       disabled={!props.newAuthorizedDir.trim()}
                     >
@@ -457,7 +457,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                             <div class="min-w-0 text-xs font-mono text-gray-11 truncate">{dir}</div>
                             <Button
                               variant="ghost"
-                              class="!p-2 rounded-lg text-xs text-gray-11 hover:text-gray-12"
+                              class="!p-2 text-xs"
                               onClick={() => props.onRemoveAuthorizedDir(idx())}
                               disabled={props.busy}
                               title={translate("onboarding.remove")}
@@ -489,7 +489,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                         </div>
                       </div>
 
-                      <Button variant="secondary" onClick={props.onRefreshEngineDoctor} disabled={props.busy}>
+                      <Button variant="outline" onClick={props.onRefreshEngineDoctor} disabled={props.busy}>
                         {translate("onboarding.cli_recheck")}
                       </Button>
                     </div>
@@ -606,7 +606,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 <Show when={props.canRepairMigration}>
                   <div class="flex flex-wrap items-center gap-2">
                     <Button
-                      variant="secondary"
+                      variant="outline"
                       class="text-xs h-8 px-3"
                       onClick={props.onRepairMigration}
                       disabled={props.busy || props.migrationRepairBusy}
@@ -698,7 +698,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </Button>
 
               <Button
-                variant="secondary"
+                variant="outline"
                 onClick={props.onOpenSettings}
                 disabled={props.busy}
                 class="w-full"
@@ -768,7 +768,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                       </div>
                     </Show>
                   </div>
-                  <Button variant="secondary" onClick={props.onAttachHost} disabled={props.busy}>
+                  <Button variant="outline" onClick={props.onAttachHost} disabled={props.busy}>
                     {translate("onboarding.attach")}
                   </Button>
                 </div>

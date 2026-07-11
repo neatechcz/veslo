@@ -172,7 +172,7 @@ export default function SidebarContextMenu(props: SidebarContextMenuProps) {
                     <button
                       type="button"
                       role="menuitem"
-                      class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                      class="w-full rounded-md px-2 py-1.5 text-left text-sm text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                       classList={{
                         "text-red-11": Boolean(entry.danger),
                         "opacity-50": Boolean(entry.disabled),

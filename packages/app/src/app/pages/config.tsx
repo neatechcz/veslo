@@ -97,7 +97,7 @@ export default function ConfigView(props: ConfigViewProps) {
   const reloadButtonLabel = createMemo(() =>
     props.reloadBusy ? tr("reload.toast_reloading") : tr("reload.engine_button")
   );
-  const reloadButtonTone = createMemo(() => (props.anyActiveRuns ? "danger" : "secondary"));
+  const reloadButtonTone = createMemo(() => (props.anyActiveRuns ? "danger" : "outline"));
   const reloadButtonDisabled = createMemo(() => props.reloadBusy || Boolean(reloadAvailabilityReason()));
 
   const buildVesloSettings = () => ({
@@ -265,7 +265,7 @@ export default function ConfigView(props: ConfigViewProps) {
               <div class="text-xs text-gray-10">{__vesloT("ui.literal.copy_sanitized_runtime_state_for_debugging_m34nf7", __vesloCurrentLocale())}</div>
             </div>
             <Button
-              variant="secondary"
+              variant="outline"
               class="text-xs h-8 py-0 px-3 shrink-0"
               onClick={() => void handleCopy(diagnosticsBundleJson(), "debug-bundle")}
               disabled={props.busy}
@@ -388,7 +388,7 @@ export default function ConfigView(props: ConfigViewProps) {
 
         <div class="flex flex-wrap gap-2">
           <Button
-            variant="secondary"
+            variant="outline"
             onClick={async () => {
               if (vesloTestState() === "testing") return;
               const next = buildVesloSettings();

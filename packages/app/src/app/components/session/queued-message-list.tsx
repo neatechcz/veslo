@@ -174,7 +174,7 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
                     <Show when={isRetryable(item, index())}>
                       <Button
                         variant="ghost"
-                        class="h-7 w-7 rounded-md p-0 text-gray-10 hover:bg-gray-3 hover:text-gray-12"
+                        class="h-7 w-7 p-0"
                         title={tr("common.retry")}
                         aria-label={tr("common.retry")}
                         onClick={() => props.onRetry(item.id)}
@@ -184,7 +184,7 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
                     </Show>
                     <Button
                       variant="ghost"
-                      class="h-7 w-7 rounded-md p-0 text-gray-10 hover:bg-gray-3 hover:text-gray-12"
+                      class="h-7 w-7 p-0"
                       title={tr("common.edit")}
                       aria-label={tr("common.edit")}
                       disabled={isSending(item)}
@@ -197,7 +197,7 @@ export default function QueuedMessageList(props: QueuedMessageListProps) {
                     </Button>
                     <Button
                       variant="ghost"
-                      class="h-7 w-7 rounded-md p-0 text-gray-10 hover:bg-red-3/50 hover:text-red-11"
+                      class="h-7 w-7 p-0"
                       title={tr("session.cancel")}
                       aria-label={tr("session.cancel")}
                       disabled={isSending(item)}

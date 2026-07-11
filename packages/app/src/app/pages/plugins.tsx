@@ -189,10 +189,10 @@ export default function PluginsView(props: PluginsViewProps) {
           </div>
           <div class="flex items-center gap-2">
             <button
-              class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+              class={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
                 props.pluginScope === "project"
-                  ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-                  : "text-gray-10 border-gray-6 hover:text-gray-12"
+                  ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                  : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
               }`}
               onClick={() => {
                 props.setPluginScope("project");
@@ -202,10 +202,10 @@ export default function PluginsView(props: PluginsViewProps) {
               {__vesloT("plugins.scope_project", __vesloCurrentLocale())}</button>
             <button
               disabled={!props.canUseGlobalScope}
-              class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+              class={`rounded-md border px-3 py-1 text-xs font-medium transition-colors ${
                 props.pluginScope === "global"
-                  ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-                  : "text-gray-10 border-gray-6 hover:text-gray-12"
+                  ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                  : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
               } ${!props.canUseGlobalScope ? "opacity-40 cursor-not-allowed hover:text-gray-10" : ""}`}
               onClick={() => {
                 if (!props.canUseGlobalScope) return;
@@ -257,7 +257,7 @@ export default function PluginsView(props: PluginsViewProps) {
                             </Button>
                           </Show>
                           <Button
-                            variant={isInstalled() ? "outline" : "secondary"}
+                            variant="outline"
                             onClick={() => props.addPlugin(plugin.packageName)}
                             disabled={
                               props.busy ||
@@ -405,7 +405,7 @@ export default function PluginsView(props: PluginsViewProps) {
                               <Show when={removeVisible()}>
                                 <Button
                                   variant="ghost"
-                                  class="h-7 px-2 text-[11px] text-red-11 hover:text-red-12"
+                                  class="h-7 px-2 text-[11px]"
                                   data-testid="plugin-inventory-remove"
                                   onClick={() => removePluginInventoryCard(item)}
                                   disabled={props.busy || !props.canEditPlugins}
@@ -436,7 +436,7 @@ export default function PluginsView(props: PluginsViewProps) {
               />
             </div>
             <Button
-              variant="secondary"
+              variant="outline"
               onClick={() => props.addPlugin()}
               disabled={manualAddDisabled()}
               class="md:mt-6"

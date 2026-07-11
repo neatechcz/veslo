@@ -95,7 +95,7 @@ export default function AddMcpModal(props: AddMcpModalProps) {
         />
         <button
           type="button"
-          class="p-2 text-gray-11 hover:text-gray-12 hover:bg-gray-4 rounded-lg transition-colors"
+          class="rounded-md p-2 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
           onClick={handleClose}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -116,10 +116,10 @@ export default function AddMcpModal(props: AddMcpModalProps) {
           <div class="flex items-center gap-1.5">
             <button
               type="button"
-              class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              class={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
                 serverType() === "remote"
-                  ? "bg-dls-active text-dls-text"
-                  : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+                  ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                  : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
               }`}
               onClick={() => setServerType("remote")}
             >
@@ -128,10 +128,10 @@ export default function AddMcpModal(props: AddMcpModalProps) {
             <button
               type="button"
               disabled={props.isRemoteWorkspace}
-              class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              class={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
                 serverType() === "local"
-                  ? "bg-dls-active text-dls-text"
-                  : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+                  ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                  : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
               } ${props.isRemoteWorkspace ? "opacity-50 cursor-not-allowed" : ""}`}
               onClick={() => {
                 if (props.isRemoteWorkspace) return;
@@ -183,7 +183,7 @@ export default function AddMcpModal(props: AddMcpModalProps) {
         <Button variant="ghost" onClick={handleClose}>
           {tr("mcp.auth.cancel")}
         </Button>
-        <Button variant="secondary" onClick={handleSubmit} disabled={props.busy}>
+        <Button variant="outline" onClick={handleSubmit} disabled={props.busy}>
           <Show when={props.busy} fallback={<Plus size={16} />}>
             <Loader2 size={16} class="animate-spin" />
           </Show>

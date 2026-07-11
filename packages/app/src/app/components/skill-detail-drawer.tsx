@@ -227,10 +227,10 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                     <button
                       type="button"
                       classList={{
-                        "bg-gray-12 text-gray-1": activeTab() === tab.id,
-                        "text-dls-secondary hover:bg-dls-hover hover:text-dls-text": activeTab() !== tab.id,
+                        "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text": activeTab() === tab.id,
+                        "border-transparent bg-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent": activeTab() !== tab.id,
                       }}
-                      class="shrink-0 rounded-lg px-3 py-1.5 type-ui-sm font-medium"
+                      class="shrink-0 rounded-[var(--dls-radius)] border px-3 py-1.5 type-ui-sm font-medium"
                       aria-current={activeTab() === tab.id ? "page" : undefined}
                       onClick={() => selectTab(tab.id)}
                     >

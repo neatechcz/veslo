@@ -71,7 +71,7 @@ export default function DashboardTabRail(props: DashboardTabRailProps) {
   };
 
   return (
-    <div class="flex flex-wrap gap-2 rounded-2xl border border-gray-6/40 bg-gray-1/40 px-3 py-2">
+    <div class="flex flex-wrap gap-1 border border-gray-6/40 bg-gray-1/40 p-1">
       <For each={items()}>
         {(item) => (
           <button
@@ -79,10 +79,10 @@ export default function DashboardTabRail(props: DashboardTabRailProps) {
             data-settings-nav-kind={item.kind}
             data-settings-nav-tab={item.tab}
             aria-current={isActive(item) ? "page" : undefined}
-            class={`px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${
+            class={`rounded-[var(--dls-radius)] border px-3 py-2 text-xs font-medium transition-colors ${
               isActive(item)
-                ? "bg-gray-12/10 text-white border-gray-6/30"
-                : "text-gray-10 border-gray-6/50 hover:text-gray-12 hover:bg-gray-2/40"
+                ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                : "border-transparent bg-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
             }`}
             onClick={() => selectItem(item)}
           >

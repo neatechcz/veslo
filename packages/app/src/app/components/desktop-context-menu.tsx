@@ -168,7 +168,7 @@ export default function DesktopContextMenu() {
           >
             <button
               data-testid="app-copy-context-menu-copy"
-              class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm text-gray-12 transition-colors hover:bg-gray-2 focus:bg-gray-2 focus:outline-none"
+              class="flex h-8 w-full items-center gap-1.5 rounded-md px-2 text-left text-sm text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent focus:bg-[var(--dls-accent-tint)] focus:text-dls-accent focus:outline-none"
               role="menuitem"
               type="button"
               onClick={() => void handleCopy()}

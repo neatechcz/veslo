@@ -837,7 +837,7 @@ export default function DashboardView(props: DashboardViewProps) {
         rightContent={
           <button
             type="button"
-            class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-gray-10 transition-colors hover:bg-gray-3/70 hover:text-gray-12 focus:outline-none focus-visible:ring-0"
+            class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent focus:outline-none focus-visible:ring-0"
             onClick={props.onOpenFeedback}
             aria-label={feedbackButtonLabel()}
             title={feedbackButtonLabel()}
@@ -976,7 +976,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <Show when={showUpdatePill() && props.tab !== "settings"}>
               <button
                 type="button"
-                class={`md:hidden flex items-center gap-1.5 rounded-full border bg-dls-surface px-2.5 py-1 text-xs font-medium shadow-sm transition-colors active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillBorderTone()} ${updatePillButtonTone()}`}
+                class={`md:hidden flex items-center gap-1.5 rounded-md border bg-dls-surface px-2.5 py-1 text-xs font-medium shadow-sm transition-colors active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillBorderTone()} ${updatePillButtonTone()}`}
                 onClick={handleUpdatePillClick}
                 title={updatePillTitle()}
                 aria-label={updatePillTitle()}
@@ -1324,7 +1324,7 @@ export default function DashboardView(props: DashboardViewProps) {
               <Show when={props.developerMode}>
                 <div class="flex flex-wrap items-center gap-2">
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     class="text-xs h-8 py-0 px-3"
                     onClick={props.repairOpencodeCache}
                     disabled={props.cacheRepairBusy || !props.developerMode}

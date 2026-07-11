@@ -36,6 +36,31 @@ test("sidebar dashboard nav collapses from prefs and exposes a divider toggle", 
 
 test("sidebar dashboard nav uses the same product typography tokens as sidebar action buttons", () => {
   assert.match(source, /font-product/);
-  assert.match(source, /text-\[12px\]/);
+  assert.match(source, /text-\[12\.5px\]/);
   assert.match(source, /font-medium/);
+  assert.match(source, /w-full h-7 flex items-center gap-1\.5 px-2 rounded-md/);
+});
+
+test("active sidebar dashboard nav uses a cyan tint and icon with ink text", () => {
+  assert.match(source, /rounded-md/);
+  assert.match(
+    source,
+    /active\s*\? "bg-cyan-a3 text-dls-text font-medium"/,
+    "active navigation should use the accent tint with medium ink text",
+  );
+  assert.match(
+    source,
+    /class=\{isActiveTab\(props\.currentTab, "scheduled"\) \? "text-dls-accent" : "text-gray-a8"\}/,
+    "the Automations icon should turn cyan only while active",
+  );
+  assert.match(
+    source,
+    /class=\{isActiveTab\(props\.currentTab, "skills"\) \? "text-dls-accent" : "text-gray-a8"\}/,
+    "the Skills icon should turn cyan only while active",
+  );
+  assert.match(
+    source,
+    /class="absolute left-1\/2 top-0[^"]*rounded-md border-0 bg-transparent text-gray-a8[^"]*hover:bg-cyan-a3 hover:text-dls-accent"/,
+    "the nav divider toggle should be a ghost rectangle rather than a bordered circle",
+  );
 });

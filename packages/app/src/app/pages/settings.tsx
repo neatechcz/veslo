@@ -1048,10 +1048,10 @@ export default function SettingsView(props: SettingsViewProps) {
                     {(option) => (
                       <button
                         type="button"
-                        class={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        class={`rounded-[var(--dls-radius)] border px-3 py-1.5 text-xs font-medium transition-colors ${
                           props.modelVariant === option.value
-                            ? "bg-gray-12 text-gray-1"
-                            : "bg-gray-3 text-gray-11 hover:bg-gray-4 hover:text-gray-12"
+                            ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                            : "border-transparent bg-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                         }`}
                         onClick={() => props.setModelVariant(option.value)}
                         disabled={props.busy}
@@ -1102,7 +1102,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   aria-label="Toggle Sandbox"
                   class={`relative h-6 w-11 shrink-0 rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] ${
                     sandboxEnabled()
-                      ? "border-green-7/30 bg-green-9"
+                      ? "border-[var(--dls-accent-border)] bg-dls-accent"
                       : "border-gray-6 bg-gray-3 hover:bg-gray-4"
                   }`}
                   onClick={() => void handleToggleSandbox()}
@@ -1167,7 +1167,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     {(label) => (
                       <Button
                         variant="outline"
-                        class="text-xs h-8 py-0 px-3 rounded-full border-dls-border bg-dls-surface hover:bg-dls-hover"
+                        class="h-8 px-3 py-0 text-xs"
                         onClick={handleGeneralUpdateAction}
                         disabled={generalUpdateDisabled()}
                         title={updateState() === "ready" && props.anyActiveRuns ? translate("settings.stop_runs_to_update") : label()}
@@ -1186,7 +1186,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     <span class="min-w-0 whitespace-nowrap text-xs font-medium text-gray-12">{translate("settings.auto_update_label")}</span>
                     <span class={`relative h-4 w-8 shrink-0 rounded-full border transition-colors ${
                       props.updateAutoDownload
-                        ? "border-gray-12/20 bg-gray-12"
+                        ? "border-[var(--dls-accent-border)] bg-dls-accent"
                         : "border-gray-6 bg-gray-3"
                     }`}>
                       <span class={`absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-gray-1 shadow-sm transition-transform ${
@@ -1212,24 +1212,24 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="flex flex-wrap gap-2">
                 <Button
-                  variant={props.themeMode === "system" ? "secondary" : "outline"}
-                  class="text-xs h-8 py-0 px-3"
+                  variant="ghost"
+                  class={`h-8 px-3 py-0 text-xs ${props.themeMode === "system" ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : ""}`}
                   onClick={() => props.setThemeMode("system")}
                   disabled={props.busy}
                 >
                   {translate("settings.theme_system")}
                 </Button>
                 <Button
-                  variant={props.themeMode === "light" ? "secondary" : "outline"}
-                  class="text-xs h-8 py-0 px-3"
+                  variant="ghost"
+                  class={`h-8 px-3 py-0 text-xs ${props.themeMode === "light" ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : ""}`}
                   onClick={() => props.setThemeMode("light")}
                   disabled={props.busy}
                 >
                   {translate("settings.theme_light")}
                 </Button>
                 <Button
-                  variant={props.themeMode === "dark" ? "secondary" : "outline"}
-                  class="text-xs h-8 py-0 px-3"
+                  variant="ghost"
+                  class={`h-8 px-3 py-0 text-xs ${props.themeMode === "dark" ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : ""}`}
                   onClick={() => props.setThemeMode("dark")}
                   disabled={props.busy}
                 >
@@ -1244,8 +1244,8 @@ export default function SettingsView(props: SettingsViewProps) {
                   <For each={LANGUAGE_OPTIONS}>
                     {(option) => (
                       <Button
-                        variant={props.language === option.value ? "secondary" : "outline"}
-                        class="text-xs h-8 py-0 px-3"
+                        variant="ghost"
+                        class={`h-8 px-3 py-0 text-xs ${props.language === option.value ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : ""}`}
                         onClick={() => props.setLanguage(option.value)}
                         disabled={props.busy}
                       >
@@ -1449,7 +1449,7 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <Button
-                  variant="secondary"
+                  variant="outline"
                   class="text-xs h-8 py-0 px-3"
                   onClick={props.repairOpencodeMigration}
                   disabled={props.busy || props.migrationRepairBusy || !props.migrationRepairAvailable}
@@ -1505,7 +1505,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             <Show when={updateState() === "downloading" && props.updateAutoDownload}>
                               <Button
                                 variant="outline"
-                                class="h-8 rounded-full border-gray-6 px-3 py-0 text-xs"
+                                class="h-8 px-3 py-0 text-xs"
                                 onClick={props.toggleUpdateAutoDownload}
                               >
                                 {translate("settings.pause_update_download")}
@@ -1517,7 +1517,7 @@ export default function SettingsView(props: SettingsViewProps) {
                               aria-checked={props.updateAutoDownload}
                               class={`relative h-6 w-11 shrink-0 rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] ${
                                 props.updateAutoDownload
-                                  ? "border-gray-12/20 bg-gray-12"
+                                  ? "border-[var(--dls-accent-border)] bg-dls-accent"
                                   : "border-gray-6 bg-gray-3 hover:bg-gray-4"
                               }`}
                               onClick={props.toggleUpdateAutoDownload}
@@ -1672,7 +1672,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       <Button variant="outline" class="text-xs h-8 py-0 px-3" onClick={copyRuntimeDebugReport}>
                         <Copy size={13} class="mr-1.5" />
                         {__vesloT("ui.literal.copy_json_1rp9ci", __vesloCurrentLocale())}</Button>
-                      <Button variant="secondary" class="text-xs h-8 py-0 px-3" onClick={exportRuntimeDebugReport}>
+                      <Button variant="outline" class="text-xs h-8 py-0 px-3" onClick={exportRuntimeDebugReport}>
                         <Download size={13} class="mr-1.5" />
                         {__vesloT("ui.literal.export_1sh99l", __vesloCurrentLocale())}</Button>
                     </div>
@@ -1735,7 +1735,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     </Show>
                   </div>
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     class="text-xs h-8 py-0 px-3 shrink-0"
                     onClick={props.repairOpencodeCache}
                     disabled={props.cacheRepairBusy || !isTauriRuntime()}
@@ -1806,20 +1806,23 @@ export default function SettingsView(props: SettingsViewProps) {
                       <div class="text-xs text-gray-10">{__vesloT("settings.engine_source", __vesloCurrentLocale())}</div>
                       <div class={props.developerMode ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
                         <Button
-                          variant={props.engineSource === "sidecar" ? "secondary" : "outline"}
+                          variant="ghost"
+                          class={props.engineSource === "sidecar" ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : ""}
                           onClick={() => props.setEngineSource("sidecar")}
                           disabled={props.busy}
                         >
                           {__vesloT("ui.literal.bundled_recommended_yyqq91", __vesloCurrentLocale())}</Button>
                         <Button
-                          variant={props.engineSource === "path" ? "secondary" : "outline"}
+                          variant="ghost"
+                          class={props.engineSource === "path" ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : ""}
                           onClick={() => props.setEngineSource("path")}
                           disabled={props.busy}
                         >
                           {__vesloT("ui.literal.system_install_path_8clptf", __vesloCurrentLocale())}</Button>
                         <Show when={props.developerMode}>
                           <Button
-                            variant={props.engineSource === "custom" ? "secondary" : "outline"}
+                            variant="ghost"
+                            class={props.engineSource === "custom" ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : ""}
                             onClick={() => props.setEngineSource("custom")}
                             disabled={props.busy}
                           >
@@ -1866,13 +1869,15 @@ export default function SettingsView(props: SettingsViewProps) {
                         <div class="text-xs text-gray-10">{__vesloT("ui.literal.engine_runtime_d5h13b", __vesloCurrentLocale())}</div>
                         <div class="grid grid-cols-2 gap-2">
                           <Button
-                            variant={props.engineRuntime === "direct" ? "secondary" : "outline"}
+                            variant="ghost"
+                            class={props.engineRuntime === "direct" ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : ""}
                             onClick={() => props.setEngineRuntime("direct")}
                             disabled={props.busy}
                           >
                             {__vesloT("ui.literal.direct_opencode_1bn4g6", __vesloCurrentLocale())}</Button>
                           <Button
-                            variant={props.engineRuntime === "veslo-orchestrator" ? "secondary" : "outline"}
+                            variant="ghost"
+                            class={props.engineRuntime === "veslo-orchestrator" ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : ""}
                             onClick={() => props.setEngineRuntime("veslo-orchestrator")}
                             disabled={props.busy}
                           >
@@ -1937,7 +1942,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     </div>
                     <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
                       <Button
-                        variant="secondary"
+                        variant="outline"
                         onClick={handleRestartLocalServer}
                         disabled={props.busy || vesloRestartBusy() || !isTauriRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
@@ -1946,7 +1951,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         {vesloRestartBusy() ? translate("settings.restarting") : translate("settings.restart_orchestrator")}
                       </Button>
                       <Button
-                        variant="secondary"
+                        variant="outline"
                         onClick={handleOpenCodeRestart}
                         disabled={opencodeRestarting() || !isTauriRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
@@ -1955,7 +1960,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         {opencodeRestarting() ? translate("settings.restarting") : translate("settings.restart_opencode")}
                       </Button>
                       <Button
-                        variant="secondary"
+                        variant="outline"
                         onClick={handleVesloServerRestart}
                         disabled={vesloServerRestarting() || !isTauriRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
@@ -1964,7 +1969,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         {vesloServerRestarting() ? translate("settings.restarting") : translate("settings.restart_veslo_server")}
                       </Button>
                       <Button
-                        variant="secondary"
+                        variant="outline"
                         onClick={handleOpenCodeRouterRestart}
                         disabled={opencodeRouterRestarting() || !isTauriRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
@@ -2192,7 +2197,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       </div>
                       <div class="flex items-center gap-2">
                         <Button
-                          variant="secondary"
+                          variant="outline"
                           onClick={handleOpenCodeRouterRestart}
                           disabled={opencodeRouterRestarting() || !isTauriRuntime()}
                           class="text-xs px-3 py-1.5"

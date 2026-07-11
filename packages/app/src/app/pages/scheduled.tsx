@@ -636,8 +636,8 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
             type="button"
             onClick={openCreateModal}
             disabled={createModalDisabled()}
-            class={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-              createModalDisabled() ? "bg-gray-3 text-gray-8" : "bg-gray-12 text-gray-1 hover:bg-gray-11"
+            class={`flex items-center gap-1.5 rounded-md border border-transparent bg-dls-accent px-3 py-1.5 text-xs font-medium text-[#001932] transition-colors ${
+              createModalDisabled() ? "opacity-50" : "hover:bg-[var(--dls-accent-hover)]"
             }`}
           >
             <Plus size={14} />
@@ -722,10 +722,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
             <button
               type="button"
               onClick={() => setStatusFilter(item.id)}
-              class={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+              class={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
                 statusFilter() === item.id
-                  ? "border-gray-12 bg-gray-12 text-gray-1"
-                  : "border-gray-5 text-gray-9 hover:bg-gray-2 hover:text-gray-12"
+                  ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                  : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
               }`}
             >
               {item.label} <span class="opacity-70">{item.count}</span>
@@ -793,7 +793,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 <button
                   type="button"
                   onClick={() => setCreateModalOpen(false)}
-                  class="rounded-full p-1 text-gray-8 transition-colors hover:bg-gray-2 hover:text-gray-12"
+                  class="rounded-md p-1 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                 >
                   <X size={18} />
                 </button>
@@ -885,8 +885,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                           <button
                             type="button"
                             onClick={() => setScheduleMode(item.id)}
-                            class={`rounded-md px-3 py-1 text-[10px] font-bold transition-colors ${
-                              scheduleMode() === item.id ? "bg-gray-1 text-gray-12 shadow-sm" : "text-gray-9"
+                            class={`rounded-md border px-3 py-1 text-[10px] font-medium transition-colors ${
+                              scheduleMode() === item.id
+                                ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                                : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                             }`}
                           >
                             {item.label}
@@ -914,8 +916,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                               <button
                                 type="button"
                                 onClick={() => toggleDay(day.id)}
-                                class={`h-8 w-8 rounded-full text-[10px] font-bold transition-colors ${
-                                  scheduleDays().includes(day.id) ? "bg-gray-12 text-gray-1" : "bg-gray-3 text-gray-9"
+                                class={`h-8 w-8 rounded-md border text-[10px] font-medium transition-colors ${
+                                  scheduleDays().includes(day.id)
+                                    ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                                    : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                                 }`}
                               >
                                 {tr(day.labelKey)}
@@ -988,10 +992,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 type="button"
                 onClick={() => void handleCreateAutomation()}
                 disabled={!canCreateAutomation() || createAction.busy()}
-                class={`rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
+                class={`rounded-md border border-transparent bg-dls-accent px-4 py-2 text-xs font-medium text-[#001932] transition-colors ${
                   !canCreateAutomation() || createAction.busy()
-                    ? "cursor-not-allowed bg-gray-3 text-gray-8"
-                    : "bg-gray-12 text-gray-1 hover:bg-gray-11"
+                    ? "cursor-not-allowed opacity-50"
+                    : "hover:bg-[var(--dls-accent-hover)]"
                 }`}
               >
                 {createAction.busy() ? tr("scheduled.creating") : tr("scheduled.create")}
@@ -1019,7 +1023,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 <button
                   type="button"
                   onClick={() => setEditTarget(null)}
-                  class="rounded-full p-1 text-gray-8 transition-colors hover:bg-gray-2 hover:text-gray-12"
+                  class="rounded-md p-1 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                 >
                   <X size={18} />
                 </button>
@@ -1106,8 +1110,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                         <button
                           type="button"
                           onClick={() => setScheduleMode(item.id)}
-                          class={`rounded-md px-3 py-1 text-[10px] font-bold transition-colors ${
-                            scheduleMode() === item.id ? "bg-gray-1 text-gray-12 shadow-sm" : "text-gray-9"
+                          class={`rounded-md border px-3 py-1 text-[10px] font-medium transition-colors ${
+                            scheduleMode() === item.id
+                              ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                              : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                           }`}
                         >
                           {item.label}
@@ -1132,8 +1138,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                             <button
                               type="button"
                               onClick={() => toggleDay(day.id)}
-                              class={`h-8 w-8 rounded-full text-[10px] font-bold transition-colors ${
-                                scheduleDays().includes(day.id) ? "bg-gray-12 text-gray-1" : "bg-gray-3 text-gray-9"
+                              class={`h-8 w-8 rounded-md border text-[10px] font-medium transition-colors ${
+                                scheduleDays().includes(day.id)
+                                  ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                                  : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                               }`}
                             >
                               {tr(day.labelKey)}
