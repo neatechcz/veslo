@@ -1,4 +1,5 @@
 import type { ConversationReadDiagnostic } from "./conversation-read-store.js";
+import { normalizeConversationDirectoryKey } from "./conversation-binding-store.js";
 
 export type SessionTranscriptSnapshot = {
   workspaceId: string;
@@ -95,7 +96,8 @@ const normalizeId = (value: string | null | undefined) => value?.trim() ?? "";
 
 const nowMs = () => Date.now();
 
-const normalizeDirectory = (value: string | null | undefined) => value?.trim() ?? "";
+const normalizeDirectory = (value: string | null | undefined) =>
+  normalizeConversationDirectoryKey(value);
 
 const inFlightKey = (workspaceId: string, sessionId: string, directory?: string | null) =>
   `${workspaceId}:${normalizeDirectory(directory)}:${sessionId}`;

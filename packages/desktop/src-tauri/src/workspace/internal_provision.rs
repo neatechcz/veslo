@@ -149,6 +149,10 @@ fn managed_veslo_agent_instructions_block() -> String {
          - Before attaching a claimed PDF, validate bytes in the saved file: it should contain a PDF header ('%PDF-') and must not start as HTML/XML error content.\n\
          - If validation fails, do not attach the file. Continue with a short diagnostic note and request/choose a different document source.\n\
          \n\
+         ### Reliable File and Browser Tools\n\
+         - A \"No files found\" result under a dot-prefixed workspace directory such as `.opencode` or `.claude` is inconclusive. Read that directory directly before claiming it is empty; for discovery inside it, set that directory as the tool path and use `**/*` as the pattern.\n\
+         - For Chrome DevTools navigation, first create a new page at `about:blank`, then navigate the selected page to the external URL with a bounded timeout. Report a navigation error instead of leaving a browser action pending.\n\
+         \n\
          ### Veslo Tools & Features\n\
          - **Skills** - reusable workflows distributed through user, workspace, organization, and platform skill roots.\n\
          - **Scheduler** - recurring tasks (daily, weekly, interval). Mention when a task could be automated.\n\

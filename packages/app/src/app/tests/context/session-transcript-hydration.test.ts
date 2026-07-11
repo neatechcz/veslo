@@ -228,39 +228,6 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
     /rememberConversationScopeFromTranscript\(workspaceId,\s*directory,\s*snapshot\);/s,
     "direct transcript fetches should register conversation scope sidecars",
   );
-  assert.match(
-    source,
-    /appendTranscriptSnapshot:\s*async\s*\(input\)\s*=>/s,
-    "session store should receive a live transcript writer",
-  );
-  assert.match(
-    source,
-    /appendSessionTranscript\(serverWorkspaceId,\s*sessionId,\s*\{/s,
-    "live transcript writer should append to the host-side Veslo server transcript endpoint",
-  );
-  assert.match(
-    source,
-    /appendSessionTranscript:\s*async\s*\(workspaceId,\s*sessionId,\s*input\)\s*=>/s,
-    "hydrated Veslo client should wrap appendSessionTranscript",
-  );
-  assert.match(
-    source,
-    /appendSessionTranscript:\s*async\s*\(workspaceId,\s*sessionId,\s*input\)\s*=>[\s\S]*hydrateTranscriptSnapshot\(snapshot,\s*\{ allowShorter: true \}\);/s,
-    "authoritative append transcript snapshots should be allowed to apply shorter deletion results",
-  );
-  assert.match(
-    eventStreamSource,
-    /deps\.scheduleTranscriptIngestion\(info\.sessionID,\s*sourceWsId,\s*"message\.updated"\);/s,
-    "message updates should schedule live transcript ingestion",
-  );
-  assert.match(
-    eventStreamSource,
-    /deps\.scheduleTranscriptIngestion\(part\.sessionID,\s*sourceWsId,\s*"message\.part\.updated"\);/s,
-    "part updates should schedule live transcript ingestion",
-  );
-  assert.match(
-    eventStreamSource,
-    /deps\.scheduleTranscriptIngestion\(sessionID,\s*sourceWsId,\s*"session\.idle",\s*0\);/s,
-    "idle events should flush live transcript ingestion immediately",
-  );
+  assert.doesNotMatch(source, /appendTranscriptSnapshot|appendSessionTranscript/);
+  assert.doesNotMatch(eventStreamSource, /scheduleTranscriptIngestion|scheduleBackgroundTranscriptIngestion/);
 });

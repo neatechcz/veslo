@@ -114,12 +114,14 @@ export function createSessionCapabilitiesCache(
   loadFresh: (scope: SessionCapabilitiesScope) => Promise<Omit<SessionCapabilitiesSnapshot, "loadedAt">>,
 ) {
   const cache = new Map<string, SessionCapabilitiesSnapshot>();
+  const inFlight = new Map<string, Promise<SessionCapabilitiesSnapshot>>();
   const generations = new Map<string, number>();
   let nextGeneration = 0;
 
   return {
     clear() {
       cache.clear();
+      inFlight.clear();
       generations.clear();
       nextGeneration += 1;
     },
@@ -137,15 +139,29 @@ export function createSessionCapabilitiesCache(
         if (cached) return cached;
       }
 
+      // Several reactive inputs can invalidate the sidebar in the same turn.
+      // They still describe one directory, so they must share one runtime read.
+      const pending = inFlight.get(directory);
+      if (pending) return pending;
+
       const generation = nextGeneration + 1;
       nextGeneration = generation;
       generations.set(directory, generation);
-      const fresh = await loadFresh({ ...scope, directory });
-      const snapshot = { ...fresh, directory, loadedAt: Date.now() };
-      if (generations.get(directory) === generation) {
-        cache.set(directory, snapshot);
-      }
-      return snapshot;
+      const load = loadFresh({ ...scope, directory })
+        .then((fresh) => {
+          const snapshot = { ...fresh, directory, loadedAt: Date.now() };
+          if (generations.get(directory) === generation) {
+            cache.set(directory, snapshot);
+          }
+          return snapshot;
+        })
+        .finally(() => {
+          if (inFlight.get(directory) === load) {
+            inFlight.delete(directory);
+          }
+        });
+      inFlight.set(directory, load);
+      return load;
     },
   };
 }

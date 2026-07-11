@@ -14,6 +14,7 @@ export type LifecycleRunStatusResult = {
   runId: string;
   status: LifecycleRunStatus;
   stale: boolean;
+  error?: string | null;
   clientMessageId?: string | null;
   origin?: string | null;
   activityKind?: LifecycleRunActivityKind | null;
@@ -203,6 +204,7 @@ export function createOrchestratorLifecycleClient(options: {
       status: record.status as LifecycleRunStatus,
       stale: record.stale === true,
     };
+    if ("error" in record) result.error = typeof record.error === "string" ? record.error : null;
     if (typeof record.clientMessageId === "string") result.clientMessageId = record.clientMessageId;
     else if (record.clientMessageId === null) result.clientMessageId = null;
     if (typeof record.origin === "string") result.origin = record.origin;

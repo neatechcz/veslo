@@ -119,6 +119,7 @@ export type ConversationRunLifecycleScheduleReconcileInput = {
   workspace: WorkspaceInfo;
   conversationId: string;
   runId: string;
+  directory?: string | null;
   opencodeSessionId?: string | null;
   reason: string;
   abortRequested?: boolean;
@@ -147,14 +148,6 @@ export type ConversationRunLifecycleSubmitResult = {
   payload: Record<string, unknown>;
 };
 
-export type ConversationRunLifecycleTranscriptAppendInput = {
-  workspace: WorkspaceInfo;
-  conversationId: string;
-  sessionId: string;
-  reason: string;
-  shouldReconcile: boolean;
-};
-
 export type ConversationRunLifecycleAbortInput = {
   workspace: WorkspaceInfo;
   target: ConversationRunLifecycleTarget;
@@ -180,6 +173,12 @@ export type ConversationRunLifecycleControllerOptions = {
   resolveLifecycleReconcileInitialDelayMs?: () => number;
   resolveLifecycleReconcilePollMs?: () => number;
   resolveLifecycleReconcileMaxAttempts?: () => number;
+  ingestTerminalTranscript?: (input: {
+    workspace: WorkspaceInfo;
+    directory: string;
+    opencodeSessionId: string;
+    runId: string;
+  }) => Promise<void>;
   timers?: Partial<ConversationRunLifecycleTimerPort>;
   trace?: ConversationRunLifecycleTracePort | null;
   diagnostics?: {
@@ -219,7 +218,6 @@ export type ConversationRunLifecycleController = {
   drainConversationQueue(workspaceId: string, conversationId: string): Promise<void>;
   scheduleLifecycleReconcile(input: ConversationRunLifecycleScheduleReconcileInput): void;
   reconcileConversationRunLifecycle(input: ConversationRunLifecycleScheduleReconcileInput): Promise<void>;
-  handleTranscriptAppend(input: ConversationRunLifecycleTranscriptAppendInput): Promise<void>;
   abortRun(input: ConversationRunLifecycleAbortInput): Promise<ConversationRunLifecycleAbortResult>;
   start(): void;
   stop(): void;
@@ -553,6 +551,7 @@ export function createConversationRunLifecycleController(
       workspace: input.workspace,
       conversationId: input.target.conversationId,
       runId: input.runId,
+      directory: input.target.directory,
       opencodeSessionId: input.target.opencodeSessionId,
       reason,
       delayMs,
@@ -924,6 +923,33 @@ export function createConversationRunLifecycleController(
             });
           });
         }
+        const directory = input.directory?.trim() ?? "";
+        const opencodeSessionId = input.opencodeSessionId?.trim() ?? "";
+        if (directory && opencodeSessionId && options.ingestTerminalTranscript) {
+          void options.ingestTerminalTranscript({
+              workspace: input.workspace,
+              directory,
+              opencodeSessionId,
+              runId,
+            }).then(() => {
+            recordTrace("server:conversation-run:terminal-transcript-ingest", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId,
+              opencodeSessionId,
+              status: status.status,
+            });
+          }).catch((error) => {
+            recordTrace("server:conversation-run:terminal-transcript-ingest-error", {
+              workspaceId: input.workspace.id,
+              conversationId,
+              runId,
+              opencodeSessionId,
+              status: status.status,
+              message: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
         scheduleQueueDrain(input.workspace.id, conversationId, 0);
         return;
       }
@@ -952,11 +978,12 @@ export function createConversationRunLifecycleController(
     if (queueDrainInFlight.has(key)) return;
     queueDrainInFlight.add(key);
     let item = null as ReturnType<ConversationRunQueueStore["nextPending"]>;
+    let runTrace: ConversationRunLifecycleTracer | null = null;
     try {
       const workspace = options.resolveWorkspace?.(workspaceId) ?? null;
       if (!workspace) return;
       const lifecycleOwner = workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
-      const runTrace = options.createBackgroundRunTrace?.() ?? createNoopRunTrace();
+      runTrace = options.createBackgroundRunTrace?.() ?? createNoopRunTrace();
       if (lifecycleOwner) {
         try {
           const latest = await lifecycleOwner.status(workspace.id, normalizedConversationId, "latest");
@@ -968,7 +995,8 @@ export function createConversationRunLifecycleController(
             );
             if (shouldFailStaleActiveLifecycleRun(latest, reconcileMaxAttempts, reconcilePollMs)) {
               const activeRunId = latest.runId?.trim() || "latest";
-              runTrace.record("server:conversation-run:queue-drain-stale-active-failing", {
+              const activeRunTrace = runTrace;
+              activeRunTrace.record("server:conversation-run:queue-drain-stale-active-failing", {
                 workspaceId,
                 conversationId: normalizedConversationId,
                 runId: activeRunId,
@@ -981,14 +1009,14 @@ export function createConversationRunLifecycleController(
                 activeRunId,
                 "run lifecycle stale/no-progress while draining queued conversation runs",
               ).then(() => {
-                runTrace.record("server:conversation-run:queue-drain-stale-active-failed", {
+                activeRunTrace.record("server:conversation-run:queue-drain-stale-active-failed", {
                   workspaceId,
                   conversationId: normalizedConversationId,
                   runId: activeRunId,
                 });
                 scheduleQueueDrain(workspaceId, normalizedConversationId, 0);
               }).catch((error) => {
-                runTrace.record("server:conversation-run:queue-drain-stale-active-failed-error", {
+                activeRunTrace.record("server:conversation-run:queue-drain-stale-active-failed-error", {
                   workspaceId,
                   conversationId: normalizedConversationId,
                   runId: activeRunId,
@@ -1014,8 +1042,17 @@ export function createConversationRunLifecycleController(
 
       item = options.queueStore.nextPending(workspaceId, normalizedConversationId);
       if (!item) return;
-      item = options.queueStore.markStarting(item.queueItemId);
-      if (!item || item.state !== "starting") return;
+      const claimed = options.queueStore.markStarting(item.queueItemId);
+      if (!claimed || claimed.state !== "starting") {
+        runTrace.record("server:conversation-run:queue-drain-claim-lost", {
+          workspaceId,
+          conversationId: normalizedConversationId,
+          queueItemId: item.queueItemId,
+          state: claimed?.state ?? null,
+        });
+        return;
+      }
+      item = claimed;
 
       let body: Record<string, unknown>;
       try {
@@ -1025,7 +1062,18 @@ export function createConversationRunLifecycleController(
         }
         body = parsed as Record<string, unknown>;
       } catch (error) {
-        options.queueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+        const failed = options.queueStore.markFailed(
+          item.queueItemId,
+          error instanceof Error ? error.message : String(error),
+        );
+        if (!failed) {
+          runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
+            workspaceId,
+            conversationId: normalizedConversationId,
+            queueItemId: item.queueItemId,
+            transition: "failed",
+          });
+        }
         return;
       }
 
@@ -1064,11 +1112,31 @@ export function createConversationRunLifecycleController(
           );
         } catch (error) {
           if (error instanceof RunAlreadyActiveError) {
-            options.queueStore.markPending(item.queueItemId, error.activeRunId);
+            const pending = options.queueStore.markPending(item.queueItemId, error.activeRunId);
+            if (!pending) {
+              runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
+                workspaceId,
+                conversationId: normalizedConversationId,
+                queueItemId: item.queueItemId,
+                transition: "pending",
+              });
+              return;
+            }
             scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
             return;
           }
-          options.queueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+          const failed = options.queueStore.markFailed(
+            item.queueItemId,
+            error instanceof Error ? error.message : String(error),
+          );
+          if (!failed) {
+            runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
+              workspaceId,
+              conversationId: normalizedConversationId,
+              queueItemId: item.queueItemId,
+              transition: "failed",
+            });
+          }
           return;
         }
       }
@@ -1085,47 +1153,33 @@ export function createConversationRunLifecycleController(
         expectAiGatewayStart,
         runtimeAuthorizationActorTokenHash,
       }, lifecycleOwner);
-      options.queueStore.markSubmitted(item.queueItemId);
+      const submitted = options.queueStore.markSubmitted(item.queueItemId);
+      if (!submitted) {
+        runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
+          workspaceId,
+          conversationId: normalizedConversationId,
+          queueItemId: item.queueItemId,
+          transition: "submitted",
+        });
+      }
       scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
     } catch (error) {
       if (item) {
-        options.queueStore.markFailed(item.queueItemId, error instanceof Error ? error.message : String(error));
+        const failed = options.queueStore.markFailed(
+          item.queueItemId,
+          error instanceof Error ? error.message : String(error),
+        );
+        if (!failed) {
+          (runTrace ?? createNoopRunTrace()).record("server:conversation-run:queue-drain-terminal-transition-stale", {
+            workspaceId,
+            conversationId: normalizedConversationId,
+            queueItemId: item.queueItemId,
+            transition: "failed",
+          });
+        }
       }
     } finally {
       queueDrainInFlight.delete(key);
-    }
-  }
-
-  async function handleTranscriptAppend(input: ConversationRunLifecycleTranscriptAppendInput): Promise<void> {
-    if (!input.shouldReconcile) return;
-    const conversationId = input.conversationId.trim();
-    if (!conversationId) return;
-    const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
-    if (!lifecycleOwner) return;
-
-    try {
-      const latest = await lifecycleOwner.status(input.workspace.id, conversationId, "latest");
-      recordTrace("server:conversation-run:transcript-reconcile", {
-        workspaceId: input.workspace.id,
-        conversationId,
-        sessionId: input.sessionId,
-        reason: input.reason || null,
-        runId: latest?.runId ?? null,
-        status: latest?.status ?? null,
-        stale: latest?.stale ?? null,
-        ...lifecycleStatusTraceFields(latest),
-      });
-      if (latest && !isActiveLifecycleStatus(latest.status)) {
-        scheduleQueueDrain(input.workspace.id, conversationId, 0);
-      }
-    } catch (error) {
-      recordTrace("server:conversation-run:transcript-reconcile-error", {
-        workspaceId: input.workspace.id,
-        conversationId,
-        sessionId: input.sessionId,
-        reason: input.reason || null,
-        message: error instanceof Error ? error.message : String(error),
-      });
     }
   }
 
@@ -1155,6 +1209,7 @@ export function createConversationRunLifecycleController(
         workspace: input.workspace,
         conversationId: input.target.conversationId,
         runId: input.runId,
+        directory: input.target.directory,
         opencodeSessionId: input.target.opencodeSessionId,
         reason: "abort-requested",
         abortRequested: true,
@@ -1393,7 +1448,6 @@ export function createConversationRunLifecycleController(
     drainConversationQueue,
     scheduleLifecycleReconcile,
     reconcileConversationRunLifecycle,
-    handleTranscriptAppend,
     abortRun,
     start() {
       if (started) return;

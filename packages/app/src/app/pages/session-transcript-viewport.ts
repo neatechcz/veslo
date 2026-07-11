@@ -36,7 +36,7 @@ export type RecordTranscriptViewportPerfLog = (
 
 export type SessionTranscriptViewportControllerDeps = {
   messages: Accessor<MessageWithParts[]>;
-  optimisticSubmittedMessage: Accessor<MessageWithParts | null>;
+  localSubmittedMessage: Accessor<MessageWithParts | null>;
   searchActive: Accessor<boolean>;
   sessionStatus: Accessor<string>;
   developerMode: Accessor<boolean>;
@@ -72,7 +72,7 @@ export type SessionTranscriptViewportController = {
 
 export type ResolveRenderedTranscriptMessagesInput<T> = {
   messages: readonly T[];
-  optimisticMessage: T | null;
+  localSubmittedMessage: T | null;
   searchActive: boolean;
   windowExpanded: boolean;
   windowStart: number;
@@ -80,18 +80,18 @@ export type ResolveRenderedTranscriptMessagesInput<T> = {
 
 export const resolveTranscriptSourceMessages = <T,>({
   messages,
-  optimisticMessage,
-}: Pick<ResolveRenderedTranscriptMessagesInput<T>, "messages" | "optimisticMessage">): T[] =>
-  optimisticMessage ? [...messages, optimisticMessage] : [...messages];
+  localSubmittedMessage,
+}: Pick<ResolveRenderedTranscriptMessagesInput<T>, "messages" | "localSubmittedMessage">): T[] =>
+  localSubmittedMessage ? [...messages, localSubmittedMessage] : [...messages];
 
 export const resolveRenderedTranscriptMessages = <T,>({
   messages,
-  optimisticMessage,
+  localSubmittedMessage,
   searchActive,
   windowExpanded,
   windowStart,
 }: ResolveRenderedTranscriptMessagesInput<T>): T[] => {
-  const sourceMessages = resolveTranscriptSourceMessages({ messages, optimisticMessage });
+  const sourceMessages = resolveTranscriptSourceMessages({ messages, localSubmittedMessage });
   if (windowExpanded || searchActive) return sourceMessages;
   if (windowStart <= 0) return sourceMessages;
   if (windowStart >= sourceMessages.length) return [];
@@ -299,7 +299,7 @@ export function createSessionTranscriptViewport(
   const renderedMessages = createMemo(() =>
     resolveRenderedTranscriptMessages({
       messages: deps.messages(),
-      optimisticMessage: deps.optimisticSubmittedMessage(),
+      localSubmittedMessage: deps.localSubmittedMessage(),
       searchActive: deps.searchActive(),
       windowExpanded: messageWindowExpanded(),
       windowStart: messageWindowStart(),

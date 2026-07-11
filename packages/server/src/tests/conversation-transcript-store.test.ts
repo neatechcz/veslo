@@ -130,6 +130,47 @@ describe("conversation transcript store", () => {
     expect((result!.partsByMessageId["msg-1"][0] as { text: string }).text).toBe("final");
   });
 
+  test("complete canonical reconcile atomically removes messages absent from the canonical scope", async () => {
+    const store = await newStore();
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      engineSessionId: "ses-1",
+      messages: [
+        { id: "msg-stale", payload: { id: "msg-stale" }, parts: [{ id: "part-stale", payload: { id: "part-stale" } }] },
+        { id: "msg-current", payload: { id: "msg-current", text: "partial" }, parts: [{ id: "part-current", payload: { id: "part-current", text: "partial" } }] },
+      ],
+    });
+
+    await store.reconcileCanonicalTranscript({
+      workspaceId: "ws-a",
+      engineSessionId: "ses-1",
+      messages: [
+        { id: "msg-current", payload: { id: "msg-current", text: "final" }, parts: [{ id: "part-current", payload: { id: "part-current", text: "final" } }] },
+      ],
+    });
+
+    const result = await store.getTranscript({ workspaceId: "ws-a", engineSessionId: "ses-1" });
+    expect(result!.messages.map((message) => (message as { id: string }).id)).toEqual(["msg-current"]);
+    expect((result!.messages[0] as { text: string }).text).toBe("final");
+    expect(result!.partsByMessageId["msg-current"].map((part) => (part as { id: string }).id)).toEqual(["part-current"]);
+  });
+
+  test("complete canonical empty reconcile clears the scoped transcript before writing its empty marker", async () => {
+    const store = await newStore();
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      engineSessionId: "ses-1",
+      messages: [{ id: "msg-stale", payload: { id: "msg-stale" }, parts: [{ id: "part-stale", payload: { id: "part-stale" } }] }],
+    });
+
+    await store.reconcileCanonicalTranscript({ workspaceId: "ws-a", engineSessionId: "ses-1", messages: [] });
+
+    await expect(store.getTranscript({ workspaceId: "ws-a", engineSessionId: "ses-1" })).resolves.toEqual({
+      messages: [],
+      partsByMessageId: {},
+    });
+  });
+
   test("preserves completed text parts when a stale snapshot repeats the same part id empty", async () => {
     const store = await newStore();
     const base = {
@@ -302,5 +343,23 @@ describe("conversation transcript store", () => {
     });
 
     expect(result!.messages.map((message) => (message as { id: string }).id)).toEqual(["msg-legacy"]);
+  });
+
+  test("keeps Windows directory casing and slash forms on one durable transcript key", async () => {
+    const store = await newStore();
+    await store.appendTranscript({
+      workspaceId: "ws-a",
+      directory: "C:\\Work\\Veslo",
+      engineSessionId: "ses-windows",
+      messages: [{ id: "msg-windows", payload: { id: "msg-windows" }, parts: [] }],
+    });
+
+    const result = await store.getTranscript({
+      workspaceId: "ws-a",
+      directory: "c:/work/veslo",
+      engineSessionId: "ses-windows",
+    });
+
+    expect(result!.messages.map((message) => (message as { id: string }).id)).toEqual(["msg-windows"]);
   });
 });

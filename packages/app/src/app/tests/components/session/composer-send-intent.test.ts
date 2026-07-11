@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { createComposerDraftHandoffController } from "../../../components/session/composer-draft-handoff.js";
+
 const composerSource = readFileSync(new URL("../../../components/session/composer.tsx", import.meta.url), "utf8");
 const enSource = readFileSync(new URL("../../../../i18n/locales/en.ts", import.meta.url), "utf8");
 const csSource = readFileSync(new URL("../../../../i18n/locales/cs.ts", import.meta.url), "utf8");
@@ -10,7 +12,7 @@ const zhSource = readFileSync(new URL("../../../../i18n/locales/zh.ts", import.m
 test("composer exports send intent options and passes them to onSend", () => {
   assert.match(
     composerSource,
-    /export type ComposerSendOptions = \{\s*sendNow\?: boolean;\s*source\?: "button" \| "enter" \| "ctrl-enter";\s*sendTraceId\?: string;\s*implicitSkillCommandPolicy\?: "confirm" \| "allow" \| "disable";\s*\};/,
+    /export type ComposerSendOptions = \{\s*sendNow\?: boolean;\s*source\?: "button" \| "enter" \| "ctrl-enter";\s*sendTraceId\?: string;\s*implicitSkillCommandPolicy\?: "confirm" \| "allow" \| "disable";\s*onDraftTransferred\?: \(\) => void;\s*\};/,
     "composer should export the send intent options contract",
   );
 
@@ -22,7 +24,7 @@ test("composer exports send intent options and passes them to onSend", () => {
 
   const handlerStart = composerSource.indexOf("const sendDraft = async (");
   const submittedDraftIndex = composerSource.indexOf("const submittedDraft = draft;", handlerStart);
-  const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, options);", handlerStart);
+  const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, sendOptions);", handlerStart);
   const awaitIndex = composerSource.indexOf("sendResult = await sendPromise;", handlerStart);
   assert.notEqual(handlerStart, -1, "sendDraft should exist");
   assert.notEqual(submittedDraftIndex, -1, "sendDraft should capture the draft being submitted");
@@ -34,7 +36,7 @@ test("composer exports send intent options and passes them to onSend", () => {
 test("composer creates a trace id before parent send handoff", () => {
   const handlerStart = composerSource.indexOf("const sendDraft = async (");
   const traceIdIndex = composerSource.indexOf("makeComposerSendTraceId()", handlerStart);
-  const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, options);", handlerStart);
+  const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, sendOptions);", handlerStart);
 
   assert.notEqual(handlerStart, -1, "sendDraft should exist");
   assert.ok(traceIdIndex > handlerStart, "sendDraft should create a send trace id");
@@ -46,22 +48,48 @@ test("composer creates a trace id before parent send handoff", () => {
   );
 });
 
-test("composer clears the parent draft only after a clear disposition", () => {
+test("composer routes transfer and result clears through one revision guard", () => {
   const handlerStart = composerSource.indexOf("const sendDraft = async (");
-  const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, options);", handlerStart);
+  const onSendIndex = composerSource.indexOf("sendPromise = props.onSend(submittedDraft, sendOptions);", handlerStart);
   const awaitIndex = composerSource.indexOf("sendResult = await sendPromise;", handlerStart);
-  const dispositionIndex = composerSource.indexOf('sendResult.draftDisposition === "clear"', handlerStart);
-  const clearDraftIndex = composerSource.indexOf("props.onDraftChange({", handlerStart);
+  const transferIndex = composerSource.indexOf("draftHandoffController.acknowledgeTransfer", handlerStart);
+  const resultIndex = composerSource.indexOf("draftHandoffController.applyResult", handlerStart);
 
   assert.notEqual(handlerStart, -1, "sendDraft should exist");
   assert.notEqual(onSendIndex, -1, "sendDraft should call onSend");
   assert.notEqual(awaitIndex, -1, "sendDraft should await the typed send result");
-  assert.notEqual(dispositionIndex, -1, "sendDraft should branch on draftDisposition");
-  assert.notEqual(clearDraftIndex, -1, "sendDraft should still clear the parent draft on accepted clear results");
-  assert.ok(
-    onSendIndex < awaitIndex && awaitIndex < dispositionIndex && dispositionIndex < clearDraftIndex,
-    "sendDraft should clear only after the parent returns a clear draft disposition",
-  );
+  assert.ok(transferIndex < onSendIndex, "the transfer callback must be installed before onSend");
+  assert.ok(awaitIndex < resultIndex, "a non-transferred result must still pass through the revision guard");
+  assert.equal((composerSource.match(/const clearSubmittedDraft =/g) ?? []).length, 1);
+});
+
+test("draft transfer clears exactly once and delayed outcomes cannot clear a newer revision", () => {
+  const controller = createComposerDraftHandoffController();
+  const submission = controller.beginSubmission();
+  let clearCount = 0;
+
+  assert.equal(controller.acknowledgeTransfer(submission, () => { clearCount += 1; }), true);
+  assert.equal(controller.acknowledgeTransfer(submission, () => { clearCount += 1; }), false);
+  controller.markDraftChanged();
+  assert.equal(controller.applyResult(submission, "clear", () => { clearCount += 1; }), false);
+  assert.equal(controller.applyResult(submission, "mark-failed", () => { clearCount += 1; }), false);
+  assert.equal(clearCount, 1);
+});
+
+test("non-transferred clear results apply only to the submitted revision", () => {
+  const controller = createComposerDraftHandoffController();
+  const blockedSubmission = controller.beginSubmission();
+  let clearCount = 0;
+  assert.equal(controller.applyResult(blockedSubmission, "keep", () => { clearCount += 1; }), false);
+
+  const staleSubmission = controller.beginSubmission();
+  controller.markDraftChanged();
+
+  assert.equal(controller.applyResult(staleSubmission, "clear", () => { clearCount += 1; }), false);
+  const currentSubmission = controller.beginSubmission();
+  assert.equal(controller.applyResult(currentSubmission, "clear", () => { clearCount += 1; }), true);
+  assert.equal(controller.applyResult(currentSubmission, "clear", () => { clearCount += 1; }), false);
+  assert.equal(clearCount, 1);
 });
 
 test("composer distinguishes queued Enter sends from immediate Ctrl+Enter sends", () => {

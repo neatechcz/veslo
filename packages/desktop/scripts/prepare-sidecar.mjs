@@ -244,6 +244,15 @@ const chromeDevtoolsPackageSourceRoot = realpathSync(
   dirname(require.resolve("chrome-devtools-mcp/package.json")),
 );
 
+const bundledNodeVersion = process.env.VESLO_BUNDLED_NODE_VERSION?.trim() || "22.20.0";
+const bundledNodeBaseName = "veslo-node";
+const bundledNodeName = process.platform === "win32" ? `${bundledNodeBaseName}.exe` : bundledNodeBaseName;
+const bundledNodePath = join(sidecarDir, bundledNodeName);
+const bundledNodeTargetName = resolvedTargetTriple
+  ? `${bundledNodeBaseName}-${resolvedTargetTriple}${process.platform === "win32" ? ".exe" : ""}`
+  : null;
+const bundledNodeTargetPath = bundledNodeTargetName ? join(sidecarDir, bundledNodeTargetName) : null;
+
 const managedDepsManifestBaseName = "opencode-managed-deps.json";
 const managedDepsManifestPath = join(sidecarDir, managedDepsManifestBaseName);
 const managedDepsManifestTargetPath = resolvedTargetTriple
@@ -699,6 +708,37 @@ const copyExecutableSync = (source, target) => {
   }
 };
 
+const ensureBundledNodeRuntime = () => {
+  if (process.platform !== "win32" || !resolvedTargetTriple?.includes("windows")) {
+    return;
+  }
+
+  if (existsSync(bundledNodePath) && (!bundledNodeTargetPath || existsSync(bundledNodeTargetPath))) {
+    return;
+  }
+
+  const archiveName = `node-v${bundledNodeVersion}-win-x64.zip`;
+  const archivePath = join(tmpdir(), archiveName);
+  const extractionDir = join(tmpdir(), `veslo-node-${bundledNodeVersion}-win-x64`);
+  const sourcePath = join(extractionDir, `node-v${bundledNodeVersion}-win-x64`, "node.exe");
+  if (!existsSync(sourcePath)) {
+    const url = `https://nodejs.org/dist/v${bundledNodeVersion}/${archiveName}`;
+    const psQuote = (value) => `'${value.replace(/'/g, "''")}'`;
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      `Invoke-WebRequest -Uri ${psQuote(url)} -OutFile ${psQuote(archivePath)}`,
+      `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractionDir)} -Force`,
+    ].join("; ");
+    const result = spawnSync("powershell", hiddenPowerShellArgs(script), { stdio: "inherit", windowsHide: true });
+    if (result.status !== 0 || !existsSync(sourcePath)) {
+      throw new Error(`Unable to provision bundled Node.js ${bundledNodeVersion} runtime.`);
+    }
+  }
+  mkdirSync(sidecarDir, { recursive: true });
+  copyExecutableSync(sourcePath, bundledNodePath);
+  if (bundledNodeTargetPath) copyExecutableSync(sourcePath, bundledNodeTargetPath);
+};
+
 const parseChecksum = (content, assetName) => {
   const lines = content.split(/\r?\n/);
   for (const line of lines) {
@@ -1124,6 +1164,13 @@ try {
   }
 } catch (error) {
   console.error(`Failed to vendor Chrome DevTools MCP package: ${error}`);
+  process.exit(1);
+}
+
+try {
+  ensureBundledNodeRuntime();
+} catch (error) {
+  console.error(`Failed to provision bundled Node.js runtime: ${error}`);
   process.exit(1);
 }
 

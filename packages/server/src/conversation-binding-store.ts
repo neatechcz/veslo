@@ -113,6 +113,24 @@ function shouldUseWindowsDirectoryLookup(value: string): boolean {
     isWslMountPath(value);
 }
 
+// A durable conversation can be addressed through the same Windows path with
+// a different drive-letter case, slash form, extended prefix, or its WSL
+// mount equivalent. Keep caches and host-side transcript rows on one stable
+// key so a background miss cannot survive a subsequent canonical append.
+export function normalizeConversationDirectoryKey(value: string | null | undefined): string {
+  const raw = normalizeText(value);
+  const normalized = raw === "/" || /^[A-Za-z]:[\\/]$/.test(raw)
+    ? raw
+    : raw.replace(/[\\/]+$/, "");
+  if (!normalized || !shouldUseWindowsDirectoryLookup(normalized)) return normalized;
+
+  const withoutExtendedPrefix = normalizeWindowsExtendedPath(normalized);
+  const windowsPath = isWslMountPath(withoutExtendedPrefix)
+    ? wslMountPathToWindowsPath(withoutExtendedPrefix) ?? withoutExtendedPrefix
+    : withoutExtendedPrefix;
+  return windowsPath.replace(/\\/g, "/").toLowerCase();
+}
+
 function directoryLookupVariants(value: string, windowsLookup: boolean): string[] {
   const normalized = normalizeText(value);
   if (!normalized) return [];

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import {
   createConversationSubmitAttemptStore,
+  deriveConversationSubmitOpenCodeSessionId,
   resolveConversationSubmitAttemptDbPath,
 } from "../conversation-submit-attempt-store.js";
 
@@ -41,6 +42,32 @@ const createTempDbPath = async (prefix: string) => {
 };
 
 describe("conversation submit attempt store", () => {
+  test("derives an opaque versioned OpenCode session id from the attempt identity", () => {
+    const first = deriveConversationSubmitOpenCodeSessionId({
+      workspaceId: "ws_1",
+      clientMessageId: "msg_1",
+    });
+    const repeat = deriveConversationSubmitOpenCodeSessionId({
+      workspaceId: "ws_1",
+      clientMessageId: "msg_1",
+    });
+    const differentWorkspace = deriveConversationSubmitOpenCodeSessionId({
+      workspaceId: "ws_2",
+      clientMessageId: "msg_1",
+    });
+    const differentMessage = deriveConversationSubmitOpenCodeSessionId({
+      workspaceId: "ws_1",
+      clientMessageId: "msg_2",
+    });
+
+    expect(first).toMatch(/^ses_veslo_v1_[a-f0-9]{32}$/);
+    expect(repeat).toBe(first);
+    expect(differentWorkspace).not.toBe(first);
+    expect(differentMessage).not.toBe(first);
+    expect(first).not.toContain("ws_1");
+    expect(first).not.toContain("msg_1");
+  });
+
   test("claims a submit attempt idempotently by workspace and client message", async () => {
     const store = createConversationSubmitAttemptStore({ dbPath: await createTempDbPath("veslo-submit-attempt-claim-"), now: () => 1_000 });
 

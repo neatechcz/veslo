@@ -15,6 +15,12 @@ import {
 const LEFT_SIDEBAR_DOCKED_WIDTH = LEFT_SIDEBAR_WIDTH_DEFAULT;
 const RIGHT_SIDEBAR_DOCKED_WIDTH = 280;
 
+export const responsiveLayoutRootWidth = (rootWidth: number, viewportWidth?: number) => {
+  const candidates = [rootWidth, viewportWidth]
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+  return candidates.length > 0 ? Math.min(...candidates) : 0;
+};
+
 const effectiveDockedForWidth = (state: SidebarLayoutState) =>
   state.mode === "narrow" ? state.dockedPreference : state.docked;
 

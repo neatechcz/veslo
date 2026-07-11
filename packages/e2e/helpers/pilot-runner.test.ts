@@ -12,6 +12,7 @@ import {
   defaultPilotScenarios,
   pilotScenarioSuiteNames,
   pilotFailureDiagnosticCommands,
+  pilotSessionRenderSuccessArtifactCommands,
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolvePilotDenAuthJson,
@@ -25,6 +26,8 @@ import {
   scenarioSelectionNeedsModelStreamRetryFixture,
   scenarioSelectionDisablesDevAutostart,
   scenarioSelectionNeedsRelaunchReconnectCheck,
+  scenarioSelectionNeedsSessionQueueRuntimeFixture,
+  assertSessionQueueRuntimeFixtureProfileIsolation,
   scenarioSelectionNeedsNoWorkspaceProfile,
   scenarioSelectionNeedsPortContentionFixture,
   scenarioSelectionRequiresLiveManagedAiAuth,
@@ -443,6 +446,55 @@ test('runtime cold-start handoff pilot scenario disables debug dev autostart', (
     scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
+});
+
+test('session queue durability uses its isolated deterministic runtime fixture', () => {
+  const selected = ['/repo/packages/e2e/pilot-scenarios/session-queue-durability.toml'];
+  assert.equal(scenarioSelectionNeedsSessionQueueRuntimeFixture(selected), true);
+  assert.throws(
+    () => assertPilotScenarioSelectionIsolated([...selected, '/repo/packages/e2e/pilot-scenarios/smoke.toml']),
+    /session-queue-durability must run as a focused pilot scenario/,
+  );
+});
+
+test('session render stability reuses the isolated deterministic lifecycle fixture and captures width-specific artifacts', () => {
+  const selected = ['/repo/packages/e2e/pilot-scenarios/session-render-stability.toml'];
+  assert.equal(scenarioSelectionNeedsSessionQueueRuntimeFixture(selected), true);
+  assert.throws(
+    () => assertPilotScenarioSelectionIsolated([...selected, '/repo/packages/e2e/pilot-scenarios/smoke.toml']),
+    /session-queue-durability must run as a focused pilot scenario/,
+  );
+  const commands = pilotSessionRenderSuccessArtifactCommands('/tmp/session-render-artifacts');
+  assert.deepEqual(
+    commands.filter((command) => command.name.startsWith('screenshot-')).map((command) => command.args.at(-1)),
+    [
+      join('/tmp/session-render-artifacts', 'session-390x844.png'),
+      join('/tmp/session-render-artifacts', 'session-768x900.png'),
+      join('/tmp/session-render-artifacts', 'session-1440x1000.png'),
+    ],
+  );
+  assert.deepEqual(
+    commands.find((command) => command.name === 'session-center-snapshot')?.args,
+    ['--window', 'main', 'snapshot', '-i', '--selector', '[data-testid="session-center-pane"]', '--depth', '8'],
+  );
+});
+
+test('session run truthfulness reuses the focused deterministic lifecycle fixture', () => {
+  const selected = ['/repo/packages/e2e/pilot-scenarios/session-run-truthfulness.toml'];
+  assert.equal(scenarioSelectionNeedsSessionQueueRuntimeFixture(selected), true);
+  assert.throws(
+    () => assertSessionQueueRuntimeFixtureProfileIsolation(selected, { E2E_USE_EXISTING_PROFILE: '1' }),
+    /must not use E2E_USE_EXISTING_PROFILE=1/,
+  );
+});
+
+test('session queue durability rejects the shared existing-profile switch', () => {
+  const selected = ['/repo/packages/e2e/pilot-scenarios/session-queue-durability.toml'];
+  assert.throws(
+    () => assertSessionQueueRuntimeFixtureProfileIsolation(selected, { E2E_USE_EXISTING_PROFILE: '1' }),
+    /must not use E2E_USE_EXISTING_PROFILE=1/,
+  );
+  assert.doesNotThrow(() => assertSessionQueueRuntimeFixtureProfileIsolation(selected, {}));
 });
 
 test('resolvePilotDenAuthJson reads authJson from the production desktop snapshot path', () => {

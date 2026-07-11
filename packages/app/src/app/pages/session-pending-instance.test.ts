@@ -274,8 +274,65 @@ test("session switching preserves keyed run UI state until runtime idle", () => 
   );
   assert.match(
     source,
-    /for \(const \[sessionKey, runState\] of Object\.entries\(untrack\(runStateBySessionKey\)\)\) \{[\s\S]*const previousStatus = statusForQueueKey\(sessionKey, previousStatuses\);[\s\S]*const status = statusForQueueKey\(sessionKey, statuses\);[\s\S]*if \(!isActiveRunStatus\(previousStatus\) \|\| isActiveRunStatus\(status\)\) continue;[\s\S]*resetRunState\(sessionKey, "session-status-idle"\);[\s\S]*\}/,
-    "background scoped session status should reset preserved run UI state only after runtime idle",
+    /for \(const \[sessionKey, runState\] of Object\.entries\(untrack\(runStateBySessionKey\)\)\) \{[\s\S]*const previousStatus = statusForQueueKey\(sessionKey, previousStatuses\);[\s\S]*const status = statusForQueueKey\(sessionKey, statuses\);[\s\S]*if \(!isActiveRunStatus\(previousStatus\) \|\| isActiveRunStatus\(status\)\) continue;[\s\S]*if \(lifecycleKeepsRunPresentationActive\(runDiagnosticForQueueKey\(sessionKey\)\)\) continue;[\s\S]*resetRunState\(sessionKey, "session-status-idle"\);[\s\S]*\}/,
+    "background scoped session status should defer a preserved run reset while durable lifecycle truth remains active",
+  );
+});
+
+test("session send delegates draft clearing to the Composer transfer owner", () => {
+  const handleSendPromptStart = sessionSource.indexOf("const handleSendPrompt = async");
+  const handleSendPromptEnd = sessionSource.indexOf("const sendImplicitSkillAsPrompt", handleSendPromptStart);
+  assert.notEqual(handleSendPromptStart, -1, "session send handler should exist");
+  assert.notEqual(handleSendPromptEnd, -1, "session send handler should end before implicit skill handling");
+  const handleSendPromptSource = sessionSource.slice(handleSendPromptStart, handleSendPromptEnd);
+
+  assert.match(
+    handleSendPromptSource,
+    /sessionFlowFacade\.handleSendPrompt\(draft,[\s\S]*onDraftTransferred: options\.onDraftTransferred/,
+    "the session owner should forward the app-internal transfer acknowledgement",
+  );
+  assert.doesNotMatch(
+    handleSendPromptSource,
+    /props\.setComposerDraft\(/,
+    "SessionView must not race the Composer-owned clear with a delayed result",
+  );
+});
+
+test("implicit skill confirmation keeps an immutable snapshot scoped to its originating session", () => {
+  assert.match(
+    sessionSource,
+    /type ImplicitSkillConfirmationRequest = \{\s*sessionKey: string;/,
+    "the confirmation snapshot must retain its immutable session owner",
+  );
+  assert.match(
+    sessionSource,
+    /createSignal<Record<string, ImplicitSkillConfirmationRequest>>\(\{\}\)/,
+    "independent sessions must not overwrite each other's pending confirmation snapshots",
+  );
+  assert.match(
+    sessionSource,
+    /const submissionSessionKey = currentSessionQueueKey\(\);[\s\S]*const result = await sessionFlowFacade\.handleSendPrompt[\s\S]*\[submissionSessionKey\]: \{\s*sessionKey: submissionSessionKey,\s*draft: snapshotImplicitSkillConfirmationDraft\(draft\)/,
+    "a delayed confirmation result must be stored under the session captured before the await",
+  );
+  assert.match(
+    sessionSource,
+    /parts: draft\.parts\.map[\s\S]*attachments: draft\.attachments\.map[\s\S]*command: draft\.command \? \{ \.\.\.draft\.command \} : undefined/,
+    "the confirmation owner must clone mutable draft collections before Composer ownership is released",
+  );
+  assert.equal(
+    (sessionSource.match(/if \(pending\.sessionKey !== currentSessionQueueKey\(\)\) return;/g) ?? []).length,
+    2,
+    "confirm and cancel must both fail closed outside the originating session",
+  );
+  assert.equal(
+    (sessionSource.match(/removeImplicitSkillConfirmation\(pending\);\s*await handleSendPrompt/g) ?? []).length,
+    2,
+    "each explicit choice must consume only its scoped snapshot immediately before resubmission",
+  );
+  assert.match(
+    sessionSource,
+    /onCancel=\{\(\) => void sendImplicitSkillAsPrompt\(\)\}[\s\S]*onClose=\{\(\) => undefined\}/,
+    "closing the confirmation must keep its snapshot owner until the user explicitly chooses a send path",
   );
 });
 
@@ -467,7 +524,7 @@ test("pending handoffs materialize from the app callback with captured keys", ()
   );
   assert.match(
     sendImmediateSource,
-    /const materializePendingHandoffToSession = \([\s\S]*handoff: MaterializedSessionHandoff \| null \| undefined,[\s\S]*\) => \{[\s\S]*const materialization = resolvePendingSessionHandoffMaterialization\(\{[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*clientMessageId,[\s\S]*handoff,[\s\S]*\}\);[\s\S]*if \(materialization\.kind === "skip"\) return;[\s\S]*const materializedSessionKey = materializedSessionKeyFromHandoff\(handoff, materializedSessionId\);[\s\S]*deps\.effects\.batch\(\(\) => \{[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\(\s*pendingSessionBaseKey,[\s\S]*materializedSessionKey,[\s\S]*\);[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(\s*pendingSessionKey,\s*materializedSessionId,\s*materializedSessionKey,\s*\);[\s\S]*\}\);[\s\S]*\};/,
+    /const materializePendingHandoffToSession = \([\s\S]*handoff: MaterializedSessionHandoff \| null \| undefined,[\s\S]*materializationClientMessageId = clientMessageId,[\s\S]*\) => \{[\s\S]*const materialization = resolvePendingSessionHandoffMaterialization\(\{[\s\S]*pendingSessionBaseKeyBeforeHandoff,[\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*clientMessageId: materializationClientMessageId,[\s\S]*handoff,[\s\S]*\}\);[\s\S]*if \(materialization\.kind === "skip"\) return null;[\s\S]*const materializedSessionKey = materializedSessionKeyFromHandoff\(handoff, materializedSessionId\);[\s\S]*deps\.effects\.batch\(\(\) => \{[\s\S]*deps\.pendingHandoff\.setPendingQueueKeyAwaitingSessionIdForBaseKey\(\s*pendingSessionBaseKey,[\s\S]*materializedSessionKey,[\s\S]*\);[\s\S]*deps\.pendingHandoff\.remapPendingQueueToSession\(\s*pendingSessionKey,\s*materializedSessionId,\s*materializedSessionKey,\s*\);[\s\S]*\}\);[\s\S]*return materializedPendingSessionTarget\.current;/,
     "session view should wire materialization validation through the conversation-flow helper before applying remap effects",
   );
   assert.match(

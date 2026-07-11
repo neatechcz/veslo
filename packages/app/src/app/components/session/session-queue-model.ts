@@ -2,30 +2,43 @@ import type { ComposerDraft } from "../../types";
 
 export type QueuedDraftState = "queued" | "editing" | "sending" | "error";
 
-export type QueuedDraft = {
+export type QueuedDraftEnvelope = {
+  clientMessageId: string;
+  implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
+};
+
+export type QueuedDraft = QueuedDraftEnvelope & {
   id: string;
   draft: ComposerDraft;
   createdAt: number;
   updatedAt: number;
   state: QueuedDraftState;
+  stateBeforeEditing?: Exclude<QueuedDraftState, "editing">;
   error?: string;
 };
 
 const createQueueId = () => `queued-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const isDrainEligible = (item: QueuedDraft) => item.state === "queued" || item.state === "error";
+const isDrainEligible = (item: QueuedDraft) => item.state === "queued";
 
 export function appendQueuedDraft(
   queue: QueuedDraft[],
   draft: ComposerDraft,
+  envelope: QueuedDraftEnvelope,
   now = Date.now(),
   id = createQueueId(),
 ): QueuedDraft[] {
+  const clientMessageId = envelope.clientMessageId.trim();
+  if (!clientMessageId) throw new Error("Queued drafts require a clientMessageId");
   return [
     ...queue,
     {
       id,
       draft,
+      clientMessageId,
+      ...(envelope.implicitSkillCommandPolicy
+        ? { implicitSkillCommandPolicy: envelope.implicitSkillCommandPolicy }
+        : {}),
       createdAt: now,
       updatedAt: now,
       state: "queued",
@@ -34,7 +47,8 @@ export function appendQueuedDraft(
 }
 
 export function firstQueuedDraft(queue: QueuedDraft[]): QueuedDraft | null {
-  return queue.find(isDrainEligible) ?? null;
+  const head = queue[0];
+  return head && isDrainEligible(head) ? head : null;
 }
 
 export function resolveQueuedDraftSessionKey(
@@ -55,9 +69,23 @@ export function updateQueuedDraft(
   id: string,
   draft: ComposerDraft,
   now = Date.now(),
+  envelope?: QueuedDraftEnvelope,
 ): QueuedDraft[] {
   if (!queue.some((item) => item.id === id)) return queue;
-  return queue.map((item) => (item.id === id ? { ...item, draft, updatedAt: now } : item));
+  const clientMessageId = envelope?.clientMessageId.trim();
+  if (envelope && !clientMessageId) throw new Error("Queued drafts require a clientMessageId");
+  return queue.map((item) => {
+    if (item.id !== id) return item;
+    return {
+      ...item,
+      draft,
+      ...(clientMessageId ? { clientMessageId } : {}),
+      ...(envelope?.implicitSkillCommandPolicy
+        ? { implicitSkillCommandPolicy: envelope.implicitSkillCommandPolicy }
+        : {}),
+      updatedAt: now,
+    };
+  });
 }
 
 export function removeQueuedDraft(queue: QueuedDraft[], id: string): QueuedDraft[] {
@@ -66,19 +94,18 @@ export function removeQueuedDraft(queue: QueuedDraft[], id: string): QueuedDraft
 }
 
 export function moveQueuedDraft(queue: QueuedDraft[], id: string, targetIndex: number): QueuedDraft[] {
-  const movableItems = queue.filter(isDrainEligible);
-  const sourceIndex = movableItems.findIndex((item) => item.id === id);
+  if (!queue.every(isDrainEligible)) return queue;
+
+  const sourceIndex = queue.findIndex((item) => item.id === id);
   if (sourceIndex === -1) return queue;
 
-  const clampedTargetIndex = Math.max(0, Math.min(targetIndex, movableItems.length - 1));
+  const clampedTargetIndex = Math.max(0, Math.min(targetIndex, queue.length - 1));
   if (sourceIndex === clampedTargetIndex) return queue;
 
-  const reorderedItems = [...movableItems];
+  const reorderedItems = [...queue];
   const [moved] = reorderedItems.splice(sourceIndex, 1);
   reorderedItems.splice(clampedTargetIndex, 0, moved!);
-
-  let nextMovableIndex = 0;
-  return queue.map((item) => (isDrainEligible(item) ? reorderedItems[nextMovableIndex++]! : item));
+  return reorderedItems;
 }
 
 export function markQueuedDraftSending(
@@ -88,7 +115,9 @@ export function markQueuedDraftSending(
 ): QueuedDraft[] {
   if (!queue.some((item) => item.id === id)) return queue;
   return queue.map((item) =>
-    item.id === id ? { ...item, state: "sending", error: undefined, updatedAt: now } : item,
+    item.id === id
+      ? { ...item, state: "sending", stateBeforeEditing: undefined, error: undefined, updatedAt: now }
+      : item,
   );
 }
 
@@ -100,7 +129,9 @@ export function markQueuedDraftError(
 ): QueuedDraft[] {
   if (!queue.some((item) => item.id === id)) return queue;
   return queue.map((item) =>
-    item.id === id ? { ...item, state: "error", error, updatedAt: now } : item,
+    item.id === id
+      ? { ...item, state: "error", stateBeforeEditing: undefined, error, updatedAt: now }
+      : item,
   );
 }
 
@@ -111,7 +142,9 @@ export function markQueuedDraftQueued(
 ): QueuedDraft[] {
   if (!queue.some((item) => item.id === id)) return queue;
   return queue.map((item) =>
-    item.id === id ? { ...item, state: "queued", error: undefined, updatedAt: now } : item,
+    item.id === id
+      ? { ...item, state: "queued", stateBeforeEditing: undefined, error: undefined, updatedAt: now }
+      : item,
   );
 }
 
@@ -122,6 +155,32 @@ export function markQueuedDraftEditing(
 ): QueuedDraft[] {
   if (!queue.some((item) => item.id === id)) return queue;
   return queue.map((item) =>
-    item.id === id ? { ...item, state: "editing", error: undefined, updatedAt: now } : item,
+    item.id === id
+      ? {
+          ...item,
+          state: "editing",
+          stateBeforeEditing: item.state === "editing" ? item.stateBeforeEditing : item.state,
+          updatedAt: now,
+        }
+      : item,
   );
+}
+
+export function restoreQueuedDraftAfterEditing(
+  queue: QueuedDraft[],
+  id: string,
+  now = Date.now(),
+): QueuedDraft[] {
+  if (!queue.some((item) => item.id === id)) return queue;
+  return queue.map((item) => {
+    if (item.id !== id || item.state !== "editing") return item;
+    const restoredState = item.stateBeforeEditing ?? "queued";
+    return {
+      ...item,
+      state: restoredState,
+      stateBeforeEditing: undefined,
+      ...(restoredState === "error" ? {} : { error: undefined }),
+      updatedAt: now,
+    };
+  });
 }

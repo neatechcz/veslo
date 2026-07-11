@@ -1,0 +1,405 @@
+[scenario]
+name = "session-run-truthfulness"
+fail_fast = true
+global_timeout_ms = 300000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "exercise real SSE lifecycle arbitration and transcript adoption"
+action = "eval"
+timeout_ms = 250000
+script = '''
+const completeSelector = '[data-testid="session-run-truthfulness-ready-to-reload"]';
+const errorSelector = '[data-testid="session-run-truthfulness-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const normalize = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 30000;
+  const interval = options.interval ?? 150;
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(options.message ?? `condition was not met; latest=${JSON.stringify(latest)}`);
+};
+const invoke = async (command, payload = {}) => {
+  const bridge = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof bridge === 'function', 'Tauri invoke bridge is unavailable.');
+  return await bridge(command, payload);
+};
+const visible = (element) => element instanceof HTMLElement && Boolean(element.offsetParent) && element.getBoundingClientRect().width > 0;
+const appendFailure = (error) => {
+  if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
+  const marker = document.createElement('pre');
+  marker.dataset.testid = 'session-run-truthfulness-error';
+  marker.textContent = JSON.stringify({ message: String(error?.message ?? error).slice(0, 2200) });
+  document.body.append(marker);
+};
+
+if (!window.__sessionRunTruthfulnessStarted) {
+window.__sessionRunTruthfulnessStarted = true;
+window.__sessionRunTruthfulnessPromise = (async () => {
+let stage = 'bootstrap';
+try {
+  window.localStorage.setItem('veslo.onboardingComplete', '1');
+  window.localStorage.setItem('veslo.language', 'en');
+  window.localStorage.setItem('veslo.sendWorkflowTrace', '1');
+  const bootstrap = await invoke('workspace_bootstrap');
+  const workspace = bootstrap?.workspaces?.find((item) => item.id === bootstrap?.activeId) ?? bootstrap?.workspaces?.[0];
+  const workspacePath = normalize(workspace?.path || workspace?.directory);
+  assert(workspacePath, 'The isolated E2E workspace is unavailable.');
+  const localServer = await waitUntil(async () => {
+    const info = await invoke('veslo_server_info').catch(() => null);
+    const baseUrl = normalize(info?.baseUrl).replace(/\/+$/, '');
+    const token = normalize(info?.clientToken);
+    if (!info?.running || !baseUrl || !token) return false;
+    const health = await fetch(`${baseUrl}/health`).catch(() => null);
+    return health?.ok ? { baseUrl, token } : false;
+  }, { timeout: 90000, interval: 500, message: 'The local Veslo server did not become ready.' });
+  const serverJson = async (path, options = {}) => {
+    const response = await fetch(`${localServer.baseUrl}${path}`, {
+      ...options,
+      headers: {
+        authorization: `Bearer ${localServer.token}`,
+        accept: 'application/json',
+        ...(options.body ? { 'content-type': 'application/json' } : {}),
+        ...(options.headers || {}),
+      },
+    });
+    const text = await response.text();
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+    return { ok: response.ok, status: response.status, body };
+  };
+  const workspaces = await serverJson('/workspaces');
+  assert(workspaces.ok && Array.isArray(workspaces.body?.items), 'The local server did not expose workspace registrations.');
+  const serverWorkspace = workspaces.body.items.find((item) => normalize(item.path) === workspacePath) ?? workspaces.body.items[0];
+  const workspaceId = normalize(serverWorkspace?.id);
+  const fixtureBaseUrl = normalize(serverWorkspace?.baseUrl).replace(/\/+$/, '');
+  assert(workspaceId && fixtureBaseUrl.startsWith('http://127.0.0.1:'), 'The deterministic QF08 lifecycle fixture is not bound to this workspace.');
+  const fixtureState = async () => {
+    const response = await fetch(`${fixtureBaseUrl}/__session_queue_fixture/state`);
+    assert(response.ok, `The lifecycle fixture state read failed (${response.status}).`);
+    return await response.json();
+  };
+  const fixturePost = async (path, body = {}) => {
+    const response = await fetch(`${fixtureBaseUrl}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    assert(response.ok, `The lifecycle fixture transition failed (${response.status}).`);
+    return await response.json();
+  };
+  const openFixtureWorkspace = async () => {
+    const oldUrl = window.location.href;
+    window.location.hash = '/session';
+    window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: oldUrl, newURL: window.location.href }));
+    const picker = await waitUntil(() => {
+      const candidate = document.querySelector('[data-testid="composer-target-picker"]');
+      return visible(candidate) ? candidate : false;
+    }, { message: 'The user-visible workspace target picker did not appear for explicit activation.' });
+    picker.click();
+    const target = await waitUntil(() => Array.from(document.querySelectorAll('[data-testid="composer-target-option"]')).find((option) =>
+      visible(option) && normalize(option.textContent).includes('Visual Workspace'),
+    ) || false, { message: 'Visual Workspace was not an available user-selectable composer target.' });
+    target.click();
+  };
+  await openFixtureWorkspace();
+  const sessionId = 'ses-run-truthfulness';
+  const title = 'Session run truthfulness fixture';
+  await waitUntil(async () => (await fixtureState()).sseSubscriberCount > 0, { timeout: 45000, message: 'The real desktop SSE bridge did not subscribe before fixture session creation.' });
+  const created = await fetch(`${fixtureBaseUrl}/session`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: sessionId, title, directory: workspacePath }),
+  });
+  assert(created.ok, `The fixture OpenCode session could not be created (${created.status}).`);
+  await fixturePost('/__session_queue_fixture/emit-session-created', { sessionId });
+  const imported = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/conversations/import`, {
+    method: 'POST',
+    body: JSON.stringify({ directory: workspacePath, sessions: [{ id: sessionId, title, parentID: null, time: { created: 1000, updated: 1000 } }] }),
+  });
+  assert(imported.ok, `The host conversation import failed (${imported.status}).`);
+  const conversationId = normalize(imported.body?.items?.[0]?.conversationId);
+  assert(conversationId, 'The imported conversation did not receive a durable conversation id.');
+  const emptyTranscript = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`, {
+    method: 'POST',
+    body: JSON.stringify({ directory: workspacePath, messages: [], partsByMessageId: {} }),
+  });
+  assert(emptyTranscript.ok, `The host could not seed the imported session transcript marker (${emptyTranscript.status}).`);
+  await fixturePost('/__session_queue_fixture/append-session-transcript', { sessionId, messages: [], partsByMessageId: {} });
+  const oldUrl = window.location.href;
+  window.location.hash = '/session';
+  window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: oldUrl, newURL: window.location.href }));
+  const sessionButton = await waitUntil(() => Array.from(document.querySelectorAll('button')).find((button) => visible(button) && normalize(button.textContent).includes(title)) || null, {
+    message: 'The imported fixture session did not appear in the sidebar.',
+  });
+  sessionButton.click();
+  await waitUntil(() => window.location.hash.endsWith(`/session/${sessionId}`), {
+    message: 'The imported fixture session did not become the active conversation.',
+  });
+  const resolveEditor = async () => await waitUntil(() => {
+    const candidate = document.querySelector('[role="textbox"][contenteditable="true"]');
+    return visible(candidate) ? candidate : false;
+  }, { message: 'The selected fixture conversation did not expose an editable composer.' });
+  const submitVisibleComposer = async () => {
+    const button = await waitUntil(() => {
+      const composers = Array.from(document.querySelectorAll('[data-testid="session-composer"]'));
+      const center = document.querySelector('[data-testid="session-center-pane"]');
+      window.__sessionRunTruthfulnessComposerDebug = {
+        center: center ? { ...center.dataset } : null,
+        composers: composers.map((composer) => ({
+          visible: visible(composer),
+          editorText: normalize(composer.querySelector('[role="textbox"]')?.textContent),
+          editorDisabled: composer.querySelector('[role="textbox"]')?.getAttribute('aria-disabled') ?? null,
+          buttons: Array.from(composer.querySelectorAll('button')).map((candidate) => ({
+            ariaLabel: candidate.getAttribute('aria-label'),
+            disabled: candidate.disabled,
+            text: normalize(candidate.textContent),
+          })),
+        })),
+      };
+      return Array.from(document.querySelectorAll('[data-testid="session-composer"] button[aria-label="Queue message"]')).find((candidate) =>
+        visible(candidate) && !candidate.disabled,
+      ) || false;
+    }, { message: 'The active composer did not expose an enabled queue button.' });
+    button.click();
+  };
+
+  const submitText = async (text) => {
+    const editor = await resolveEditor();
+    editor.focus();
+    editor.replaceChildren(document.createTextNode(text));
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+    await waitUntil(() => normalize(editor.textContent) === text, { message: 'The composer did not accept the deterministic draft.' });
+    await submitVisibleComposer();
+  };
+  const nextRun = async (previousCount) => await waitUntil(async () => {
+    const state = await fixtureState();
+    window.__sessionRunTruthfulnessLastFixtureState = state;
+    const runs = state.runs.filter((run) => run.engineSessionId === sessionId);
+    return runs.length > previousCount ? runs.at(-1) : false;
+  }, { timeout: 45000, interval: 200, message: 'The accepted composer submission did not register a durable fixture run.' });
+  const runIndicator = () => document.querySelector('[data-testid="session-run-indicator"]');
+  const stopButton = () => Array.from(document.querySelectorAll('button')).find((button) => visible(button) && normalize(button.getAttribute('aria-label')) === 'Stop') || null;
+  const appendCanonicalText = async (id, text, createdAt) => {
+    const messages = [{ id, sessionID: sessionId, role: 'user', time: { created: createdAt } }];
+    const partsByMessageId = { [id]: [{ id: `${id}-part`, messageID: id, sessionID: sessionId, type: 'text', text }] };
+    const result = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`, {
+      method: 'POST',
+      body: JSON.stringify({
+        directory: workspacePath,
+        messages,
+        partsByMessageId,
+      }),
+    });
+    assert(result.ok, `The canonical text transcript append failed (${result.status}).`);
+    await fixturePost('/__session_queue_fixture/append-session-transcript', { sessionId, messages, partsByMessageId });
+  };
+
+  let knownRunCount = 0;
+  stage = 'failed-run-submit';
+  await submitText('truthfulness-running');
+  const failedRun = await nextRun(knownRunCount);
+  knownRunCount += 1;
+  await waitUntil(() => runIndicator() && stopButton(), { message: 'A running durable send did not expose both the run indicator and Stop.' });
+  stage = 'failed-run-transient-sse';
+  const beforeSseError = await fixtureState();
+  await fixturePost('/__session_queue_fixture/emit-session-error', { sessionId, message: 'Transient fixture SSE failure while durable lifecycle remains running.' });
+  await waitUntil(async () => (await fixtureState()).runStatusReads > beforeSseError.runStatusReads, {
+    message: 'The session.error SSE observation did not trigger an immediate durable lifecycle read.',
+  });
+  assert(runIndicator()?.getAttribute('data-run-phase') !== 'error', 'A transient SSE error changed the running durable presentation to failed.');
+  assert(Boolean(stopButton()), 'A transient SSE error removed Stop while the durable run remained active.');
+  assert(document.querySelectorAll('[role="alert"]').length === 0, 'A transient SSE error created a durable failure turn before terminal lifecycle truth.');
+
+  await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(failedRun.runId)}/failed`, {
+    error: 'Durable fixture failure: Bearer truthfulness-secret',
+  });
+  const beforeTerminalSse = await fixtureState();
+  await fixturePost('/__session_queue_fixture/emit-session-error', { sessionId, message: 'Terminal durable failure is ready for reconciliation.' });
+  await waitUntil(async () => (await fixtureState()).runStatusReads > beforeTerminalSse.runStatusReads, {
+    message: 'The terminal lifecycle transition was not re-read after SSE reconciliation.',
+  });
+  const errorTurn = await waitUntil(() => document.querySelector('[role="alert"]'), { timeout: 45000, message: 'The durable failed run did not render a red scoped error turn.' });
+  assert(!document.body.innerText.includes('truthfulness-secret'), 'The token-bearing fixture failure leaked to the rendered UI.');
+  assert(document.querySelectorAll('[role="alert"]').length === 1, 'The first durable failed run did not render exactly one error turn.');
+  await fixturePost('/__session_queue_fixture/emit-session-error', { sessionId, message: 'Repeat terminal reconciliation signal.' });
+  await waitUntil(() => document.querySelectorAll('[role="alert"]').length === 1, { message: 'Repeated terminal reconciliation duplicated the failure turn.' });
+  assert(!runIndicator(), 'The failed durable run remained visually active after terminal reconciliation.');
+  await appendCanonicalText('msg-truthfulness-failed-user', 'truthfulness-running', 6000);
+  await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
+  await waitUntil(() => document.querySelectorAll('[data-message-id="msg-truthfulness-failed-user"]').length === 1, { message: 'The failed-run canonical user transcript row did not hydrate.' });
+
+  stage = 'completed-run-submit';
+  await submitText('truthfulness-completed');
+  const completedRun = await nextRun(knownRunCount);
+  knownRunCount += 1;
+  await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(completedRun.runId)}/completed`);
+  await appendCanonicalText('msg-truthfulness-completed-user', 'truthfulness-completed', 7000);
+  await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
+  await waitUntil(() => !runIndicator(), { timeout: 45000, message: 'Completed durable run did not settle idle.' });
+  await waitUntil(() => document.querySelectorAll('[data-message-id="msg-truthfulness-completed-user"]').length === 1, { message: 'The completed-run canonical user transcript row did not hydrate.' });
+  assert(document.querySelectorAll('[role="alert"]').length === 1, 'Completed durable run received failed-run treatment.');
+
+  stage = 'aborted-run-submit';
+  await submitText('truthfulness-aborted');
+  const abortedRun = await nextRun(knownRunCount);
+  knownRunCount += 1;
+  await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(abortedRun.runId)}/aborted`);
+  await appendCanonicalText('msg-truthfulness-aborted-user', 'truthfulness-aborted', 8000);
+  await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
+  await waitUntil(() => !runIndicator(), { timeout: 45000, message: 'Aborted durable run did not settle idle.' });
+  await waitUntil(() => document.querySelectorAll('[data-message-id="msg-truthfulness-aborted-user"]').length === 1, { message: 'The aborted-run canonical user transcript row did not hydrate.' });
+  assert(document.querySelectorAll('[role="alert"]').length === 1, 'Aborted durable run received failed-run treatment.');
+
+  const input = document.querySelector('[data-testid="session-composer"] input[type="file"]');
+  assert(input, 'The attachment-only adoption fixture could not locate the composer file input.');
+  const transfer = new DataTransfer();
+  transfer.items.add(new File(['fixture attachment only'], 'adoption-only.txt', { type: 'text/plain' }));
+  Object.defineProperty(input, 'files', { configurable: true, value: transfer.files });
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  await waitUntil(() => document.querySelector('[data-testid="session-composer"]')?.textContent?.includes('adoption-only.txt'), {
+    message: 'The attachment-only draft was not accepted by the real composer.',
+  });
+  const attachmentRunBefore = knownRunCount;
+  stage = 'attachment-run-submit';
+  await submitVisibleComposer();
+  const attachmentRun = await nextRun(attachmentRunBefore);
+  knownRunCount += 1;
+  await waitUntil(() => document.querySelector('[data-testid="pending-submit-sending"]'), { message: 'The attachment-only submit did not remain visibly optimistic before canonical adoption.' });
+  const appended = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`, {
+    method: 'POST',
+    body: JSON.stringify({
+      directory: workspacePath,
+      messages: [{ id: 'msg-truthfulness-attachment', sessionID: sessionId, role: 'user', time: { created: 9000 } }],
+      partsByMessageId: {
+        'msg-truthfulness-attachment': [{ id: 'part-truthfulness-attachment', messageID: 'msg-truthfulness-attachment', sessionID: sessionId, type: 'file', filename: 'adoption-only.txt', mime: 'text/plain', url: 'data:text/plain;base64,Zml4dHVyZQ==' }],
+      },
+    }),
+  });
+  assert(appended.ok, `The canonical attachment transcript append failed (${appended.status}).`);
+  await fixturePost('/__session_queue_fixture/append-session-transcript', {
+    sessionId,
+    messages: [{ id: 'msg-truthfulness-attachment', sessionID: sessionId, role: 'user', time: { created: 9000 } }],
+    partsByMessageId: {
+      'msg-truthfulness-attachment': [{ id: 'part-truthfulness-attachment', messageID: 'msg-truthfulness-attachment', sessionID: sessionId, type: 'file', filename: 'adoption-only.txt', mime: 'text/plain', url: 'data:text/plain;base64,Zml4dHVyZQ==' }],
+    },
+  });
+  await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(attachmentRun.runId)}/completed`);
+  await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
+  await waitUntil(() => document.querySelectorAll('[data-message-id="msg-truthfulness-attachment"]').length === 1, {
+    timeout: 45000,
+    message: 'The canonical attachment-only transcript row did not hydrate.',
+  });
+  await waitUntil(() => !document.querySelector('[data-testid="pending-submit-sending"]'), {
+    timeout: 45000,
+    message: 'The attachment-only optimistic row was not uniquely adopted by the canonical transcript.',
+  });
+  assert(document.querySelectorAll('[data-message-role="user"]').length === 4, 'Attachment-only adoption left a duplicate user row.');
+
+  stage = 'operational-run-submit';
+  await submitText('truthfulness-operational-error');
+  const operationalRun = await nextRun(knownRunCount);
+  knownRunCount += 1;
+  await waitUntil(() => runIndicator() && stopButton(), { message: 'The second running durable run did not expose Stop.' });
+  await fixturePost('/__session_queue_fixture/emit-operational-error', { message: 'Unrelated fixture operational error.' });
+  await waitUntil(() => document.querySelector('[data-testid="session-operational-error"]'), { message: 'The unrelated operational error did not reach its neutral boundary.' });
+  assert(runIndicator()?.getAttribute('data-run-phase') !== 'error', 'An unrelated operational error changed the scoped running phase to error.');
+  assert(Boolean(stopButton()), 'An unrelated operational error removed Stop from a distinct active run.');
+  await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(operationalRun.runId)}/aborted`);
+  await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
+  await waitUntil(() => !runIndicator(), { timeout: 45000, message: 'Final fixture cleanup run did not settle idle.' });
+
+  window.localStorage.setItem('veslo.e2e.sessionRunTruthfulness', JSON.stringify({ title, sessionId, canonicalMessageId: 'msg-truthfulness-attachment' }));
+  const complete = document.createElement('div');
+  complete.dataset.testid = 'session-run-truthfulness-ready-to-reload';
+  complete.textContent = JSON.stringify({ workspaceId, conversationId, sessionId, failedRunId: failedRun.runId });
+  document.body.append(complete);
+} catch (error) {
+  const trace = window.__vesloDumpSendWorkflowTrace?.() ?? window.__vesloSendTrace ?? [];
+  const fixtureState = window.__sessionRunTruthfulnessLastFixtureState ?? null;
+  const composer = window.__sessionRunTruthfulnessComposerDebug ?? null;
+  const detail = new Error(`${String(error?.message ?? error)}; stage=${stage}; fixture=${JSON.stringify(fixtureState)?.slice(0, 1800)}; composer=${JSON.stringify(composer)?.slice(0, 1800)}; trace=${JSON.stringify(trace.slice(-40))?.slice(0, 5000)}`);
+  appendFailure(detail);
+}
+})();
+}
+true;
+'''
+
+[[step]]
+name = "lifecycle and message transition flow finished"
+action = "wait"
+target = "[data-testid=\"session-run-truthfulness-ready-to-reload\"], [data-testid=\"session-run-truthfulness-error\"]"
+timeout_ms = 260000
+
+[[step]]
+name = "lifecycle and message transition flow succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="session-run-truthfulness-error"]');
+if (error) throw new Error(`Session run truthfulness scenario failed: ${(error.textContent || '').slice(0, 3500)}`);
+true;
+'''
+
+[[step]]
+name = "reload the real desktop webview"
+action = "eval"
+script = '''
+window.setTimeout(() => window.location.reload(), 25);
+true;
+'''
+
+[[step]]
+name = "root returns after reload"
+action = "wait"
+target = "#root"
+timeout_ms = 45000
+
+[[step]]
+name = "canonical terminal state remains stable after reload"
+action = "eval"
+timeout_ms = 60000
+script = '''
+const raw = window.localStorage.getItem('veslo.e2e.sessionRunTruthfulness');
+if (!raw) throw new Error('The run-truthfulness reload fixture metadata is missing.');
+const fixture = JSON.parse(raw);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const waitUntil = async (predicate, timeout = 45000) => {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const value = await predicate();
+    if (value) return value;
+    await sleep(150);
+  }
+  throw new Error('Reload did not restore the canonical fixture transcript.');
+};
+const visible = (element) => element instanceof HTMLElement && Boolean(element.offsetParent);
+const existing = document.querySelector(`[data-message-id="${fixture.canonicalMessageId}"]`);
+if (!existing) {
+  const button = await waitUntil(() => Array.from(document.querySelectorAll('button')).find((candidate) => visible(candidate) && String(candidate.textContent || '').includes(fixture.title)) || null);
+  button.click();
+}
+await waitUntil(() => document.querySelectorAll(`[data-message-id="${fixture.canonicalMessageId}"]`).length === 1);
+if (document.querySelectorAll('[role="alert"]').length !== 1) throw new Error('Reload changed the durable terminal error-turn count.');
+if (document.querySelector('[data-testid="session-run-indicator"]')) throw new Error('Reload revived a terminal run as active.');
+const complete = document.createElement('div');
+complete.dataset.testid = 'session-run-truthfulness-complete';
+complete.textContent = JSON.stringify({ sessionId: fixture.sessionId, canonicalMessageId: fixture.canonicalMessageId });
+document.body.append(complete);
+true;
+'''
+
+[[step]]
+name = "reload contract succeeded"
+action = "wait"
+target = "[data-testid=\"session-run-truthfulness-complete\"]"
+timeout_ms = 60000

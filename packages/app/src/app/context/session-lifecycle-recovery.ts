@@ -17,6 +17,8 @@ export type SessionLifecycleRecoveryStatus = {
   runId?: string | null;
   status: VesloConversationRunLifecycleStatus;
   stale: boolean;
+  error?: string | null;
+  clientMessageId?: string | null;
   activityKind?: VesloConversationRunActivityKind | null;
   waitReason?: VesloConversationRunWaitReason | null;
   lastUsefulProgressAt?: number | null;
@@ -37,6 +39,7 @@ export type SessionLifecycleRecoveryControllerOptions = {
   resolveConversationRunForSession: (
     sessionId: string,
     workspaceIdHint?: string | null,
+    options?: { allowLatest?: boolean },
   ) => SessionLifecycleRecoveryScope | null;
   readConversationRunStatus: (
     scope: SessionLifecycleRecoveryScope,
@@ -45,29 +48,22 @@ export type SessionLifecycleRecoveryControllerOptions = {
     scope: SessionLifecycleRecoveryScope,
     status: SessionLifecycleRecoveryStatus | null,
   ) => void;
+  onConversationRunTerminal?: (
+    scope: SessionLifecycleRecoveryScope,
+    status: SessionLifecycleRecoveryStatus,
+  ) => void;
   setSessionStatusForWorkspace: (
     sessionId: string | null | undefined,
     status: string,
     workspaceId?: string | null,
   ) => void;
   notifySessionBusy: (sessionId: string, status: string, workspaceId?: string) => void;
-  scheduleTranscriptIngestion: (
-    sessionId: string,
-    workspaceId: string | undefined,
-    reason: string,
-    delayMs?: number,
-  ) => void;
-  scheduleBackgroundTranscriptIngestion: (
-    sessionId: string,
-    workspaceId: string,
-    reason: string,
-    delayMs?: number,
-  ) => void;
-  refreshSelectedSessionTranscript?: (
-    sessionId: string,
-    workspaceId: string,
-    reason: string,
-  ) => Promise<void> | void;
+  recoverConversationTranscript?: (scope: {
+    workspaceId: string;
+    sessionId: string;
+    directory?: string | null;
+    expectedRunId?: string | null;
+  }) => Promise<unknown>;
   trace?: (event: string, payload?: Record<string, unknown>) => void;
   initialDelayMs?: number;
   pollMs?: number;
@@ -142,17 +138,20 @@ export function createSessionLifecycleRecoveryController(
   };
 
   const watches = new Map<string, Watch>();
+  const latestProbeScopes = new Set<string>();
 
   const trace = (event: string, payload?: Record<string, unknown>) => {
     options.trace?.(event, payload);
   };
 
-  const clearWatch = (key: string) => {
+  const clearWatch = (key: string, clearOptions: { clearDiagnostic?: boolean } = {}) => {
     const watch = watches.get(key);
     if (!watch) return;
     if (watch.timer) clearTimer(watch.timer);
-    options.onConversationRunStatus?.(watch.scope, null);
     watches.delete(key);
+    if (clearOptions.clearDiagnostic !== false) {
+      options.onConversationRunStatus?.(watch.scope, null);
+    }
   };
 
   const scheduleWatch = (key: string, delayMs: number) => {
@@ -169,6 +168,7 @@ export function createSessionLifecycleRecoveryController(
   const recoverTerminalRun = (
     scope: SessionLifecycleRecoveryScope,
     status: VesloConversationRunLifecycleStatus,
+    source: "watch" | "latest-probe",
   ) => {
     const workspaceId = normalize(scope.workspaceId);
     const sessionIds = unique([
@@ -182,58 +182,15 @@ export function createSessionLifecycleRecoveryController(
     }
 
     const selectedSessionId = normalize(options.selectedSessionId());
-    const transcriptSessionId =
-      (selectedSessionId && sessionIds.includes(selectedSessionId) ? selectedSessionId : "") ||
-      normalize(scope.opencodeSessionId) ||
-      normalize(scope.sessionId);
-    if (transcriptSessionId && workspaceId) {
-      if (selectedSessionId && sessionIds.includes(selectedSessionId)) {
-        options.scheduleTranscriptIngestion(transcriptSessionId, workspaceId, "lifecycle recovery", 0);
-        if (options.refreshSelectedSessionTranscript) {
-          trace("session-lifecycle-recovery:refresh-selected-transcript:start", {
-            workspaceId,
-            conversationId: scope.conversationId,
-            runId: scope.runId,
-            sessionId: transcriptSessionId,
-            status,
-          });
-          try {
-            void Promise.resolve(
-              options.refreshSelectedSessionTranscript(transcriptSessionId, workspaceId, "lifecycle recovery"),
-            )
-              .then(() => {
-                trace("session-lifecycle-recovery:refresh-selected-transcript:done", {
-                  workspaceId,
-                  conversationId: scope.conversationId,
-                  runId: scope.runId,
-                  sessionId: transcriptSessionId,
-                  status,
-                });
-              })
-              .catch((error) => {
-                trace("session-lifecycle-recovery:refresh-selected-transcript:error", {
-                  workspaceId,
-                  conversationId: scope.conversationId,
-                  runId: scope.runId,
-                  sessionId: transcriptSessionId,
-                  status,
-                  message: error instanceof Error ? error.message : String(error),
-                });
-              });
-          } catch (error) {
-            trace("session-lifecycle-recovery:refresh-selected-transcript:error", {
-              workspaceId,
-              conversationId: scope.conversationId,
-              runId: scope.runId,
-              sessionId: transcriptSessionId,
-              status,
-              message: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
-      } else {
-        options.scheduleBackgroundTranscriptIngestion(transcriptSessionId, workspaceId, "lifecycle recovery", 0);
-      }
+    const selectedRun = Boolean(selectedSessionId && sessionIds.includes(selectedSessionId));
+    const transcriptSessionId = normalize(scope.opencodeSessionId) || normalize(scope.sessionId);
+    if (transcriptSessionId && workspaceId && (source === "latest-probe" || !selectedRun)) {
+      void options.recoverConversationTranscript?.({
+        workspaceId,
+        sessionId: transcriptSessionId,
+        directory: scope.directory,
+        expectedRunId: scope.runId,
+      }).catch(() => undefined);
     }
 
     trace("session-lifecycle-recovery:terminal", {
@@ -241,15 +198,38 @@ export function createSessionLifecycleRecoveryController(
       conversationId: scope.conversationId,
       runId: scope.runId,
       status,
+      source,
       sessionIds,
     });
   };
 
-  async function pollWatch(key: string): Promise<void> {
+  const retainQueuedRun = (scope: SessionLifecycleRecoveryScope) => {
+    const workspaceId = normalize(scope.workspaceId);
+    const sessionIds = unique([
+      scope.sessionId,
+      scope.opencodeSessionId,
+      scope.conversationId,
+    ]);
+    for (const sessionId of sessionIds) {
+      options.setSessionStatusForWorkspace(sessionId, "submitted", workspaceId);
+      options.notifySessionBusy(sessionId, "submitted", workspaceId);
+    }
+    trace("session-lifecycle-recovery:queued", {
+      workspaceId,
+      conversationId: scope.conversationId,
+      runId: scope.runId,
+      sessionIds,
+    });
+  };
+
+  async function pollWatch(key: string, immediate = false): Promise<void> {
     const watch = watches.get(key);
     if (!watch) return;
+    if (immediate && watch.timer) {
+      clearTimer(watch.timer);
+      watch.timer = null;
+    }
     if (watch.inFlight) {
-      scheduleWatch(key, pollMs);
       return;
     }
     watch.inFlight = true;
@@ -257,6 +237,16 @@ export function createSessionLifecycleRecoveryController(
     const pollStartedAt = Date.now();
     try {
       const status = await options.readConversationRunStatus(watch.scope);
+      if (watches.get(key) !== watch) {
+        trace("session-lifecycle-recovery:superseded-poll", {
+          workspaceId: watch.scope.workspaceId,
+          conversationId: watch.scope.conversationId,
+          runId: watch.scope.runId,
+          attempt: watch.attempts,
+          durationMs: Date.now() - pollStartedAt,
+        });
+        return;
+      }
       trace("session-lifecycle-recovery:poll", {
         workspaceId: watch.scope.workspaceId,
         conversationId: watch.scope.conversationId,
@@ -268,16 +258,17 @@ export function createSessionLifecycleRecoveryController(
         attempt: watch.attempts,
         durationMs: Date.now() - pollStartedAt,
       });
+      const terminal = Boolean(status && status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status));
       if (!status) {
-        options.onConversationRunStatus?.(watch.scope, null);
-      } else if (status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status)) {
         options.onConversationRunStatus?.(watch.scope, null);
       } else {
         options.onConversationRunStatus?.(watch.scope, status);
+        if (status.status === "queued") retainQueuedRun(watch.scope);
       }
-      if (status && status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status)) {
-        recoverTerminalRun(watch.scope, status.status);
-        clearWatch(key);
+      if (terminal && status) {
+        options.onConversationRunTerminal?.(watch.scope, status);
+        recoverTerminalRun(watch.scope, status.status, "watch");
+        clearWatch(key, { clearDiagnostic: false });
         return;
       }
     } catch (error) {
@@ -321,8 +312,13 @@ export function createSessionLifecycleRecoveryController(
       if (key) desired.set(key, scope);
     }
 
-    for (const key of [...watches.keys()]) {
-      if (!desired.has(key)) clearWatch(key);
+    for (const [key, watch] of watches) {
+      const replacement = [...desired.values()].some((next) =>
+        next.workspaceId === watch.scope.workspaceId &&
+        next.conversationId === watch.scope.conversationId &&
+        next.runId !== watch.scope.runId
+      );
+      if (replacement) clearWatch(key);
     }
 
     for (const [key, scope] of desired) {
@@ -347,8 +343,85 @@ export function createSessionLifecycleRecoveryController(
     }
   };
 
+  const probeSelectedConversationLatestRun = async (): Promise<boolean> => {
+    const sessionId = normalize(options.selectedSessionId());
+    if (!sessionId) return false;
+    const scope = options.resolveConversationRunForSession(sessionId, null, { allowLatest: true });
+    if (!scope || scope.runId !== "latest") return false;
+    const scopeKey = `${normalize(scope.workspaceId)}\0${normalize(scope.conversationId)}`;
+    if (!scopeKey || latestProbeScopes.has(scopeKey)) return false;
+    latestProbeScopes.add(scopeKey);
+    try {
+      const status = await options.readConversationRunStatus(scope);
+      if (!status) return true;
+      const runId = normalize(status.runId);
+      if (!runId) return true;
+      const resolvedScope = { ...scope, runId };
+      const terminal = status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status);
+      options.onConversationRunStatus?.(resolvedScope, status);
+      if (terminal) {
+        options.onConversationRunTerminal?.(resolvedScope, status);
+        recoverTerminalRun(resolvedScope, status.status, "latest-probe");
+        return true;
+      }
+      const key = recoveryKey(resolvedScope);
+      if (key && !watches.has(key)) {
+        watches.set(key, {
+          scope: resolvedScope,
+          attempts: 0,
+          inFlight: false,
+          timer: null,
+        });
+        scheduleWatch(key, pollMs);
+      }
+      return true;
+    } catch (error) {
+      trace("session-lifecycle-recovery:latest-probe-error", {
+        workspaceId: scope.workspaceId,
+        conversationId: scope.conversationId,
+        sessionId: scope.sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return true;
+    }
+  };
+
   return {
     reconcile,
+    probeSelectedConversationLatestRun,
+    observeSessionLifecycleEvent(
+      sessionId: string,
+      workspaceId?: string | null,
+      eventType?: "session.idle" | "session.error",
+    ) {
+      const scope = options.resolveConversationRunForSession(sessionId, workspaceId);
+      const key = scope ? recoveryKey(scope) : "";
+      if (!scope || !key) return false;
+      if (!watches.has(key)) {
+        watches.set(key, {
+          scope,
+          attempts: 0,
+          inFlight: false,
+          timer: null,
+        });
+        trace("session-lifecycle-recovery:watch", {
+          workspaceId: scope.workspaceId,
+          conversationId: scope.conversationId,
+          runId: scope.runId,
+          sessionId: scope.sessionId,
+          source: eventType ?? "observation",
+        });
+      }
+      trace("session-lifecycle-recovery:observation", {
+        workspaceId: scope.workspaceId,
+        conversationId: scope.conversationId,
+        runId: scope.runId,
+        sessionId: scope.sessionId,
+        eventType: eventType ?? null,
+      });
+      void pollWatch(key, true);
+      return true;
+    },
     dispose() {
       for (const key of [...watches.keys()]) clearWatch(key);
     },

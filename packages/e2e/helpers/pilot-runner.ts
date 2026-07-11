@@ -11,6 +11,11 @@ import {
   startApp,
   stopApp,
 } from './app-launcher.js';
+import {
+  startSessionQueueRuntimeFixture,
+  type SessionQueueRuntimeFixture,
+} from './session-queue-runtime-fixture.js';
+import { createSessionRenderArtifactManifest } from './session-render-fixture.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -114,6 +119,16 @@ type PortContentionFixture = {
   server: Server;
   previousE2ePort: string | undefined;
 };
+
+type PilotSuccessArtifactCommand = PilotFailureDiagnosticCommand;
+
+const SESSION_RENDER_ARTIFACT_VIEWPORTS = [
+  { width: 390, height: 844 },
+  { width: 768, height: 900 },
+  { width: 1440, height: 1000 },
+] as const;
+
+type EnvironmentRestore = () => void;
 
 type DenAuthSummary = {
   denApiBase: string | null;
@@ -317,6 +332,47 @@ export function scenarioSelectionDisablesDevAutostart(scenarios: string[]): bool
   });
 }
 
+export function pilotSessionRenderSuccessArtifactCommands(outputDir: string): PilotSuccessArtifactCommand[] {
+  const commands: PilotSuccessArtifactCommand[] = [];
+  for (const viewport of SESSION_RENDER_ARTIFACT_VIEWPORTS) {
+    const name = `${viewport.width}x${viewport.height}`;
+    commands.push(
+      {
+        name: `position-${name}`,
+        args: [
+          '--window',
+          'main',
+          'ipc',
+          'e2e_position_main_window',
+          '--args',
+          JSON.stringify({ width: viewport.width, height: viewport.height, x: 32, y: 32 }),
+          '--json',
+        ],
+        outputFile: `position-${name}.json`,
+      },
+      {
+        name: `settle-${name}`,
+        args: ['--window', 'main', 'watch', '--selector', '[data-testid="session-center-pane"]', '--stable', '250', '--timeout', '10000'],
+        outputFile: `settle-${name}.txt`,
+        timeoutMs: 15_000,
+      },
+      {
+        name: `screenshot-${name}`,
+        args: ['--window', 'main', 'screenshot', join(outputDir, `session-${name}.png`)],
+        outputFile: `screenshot-${name}.txt`,
+        timeoutMs: 15_000,
+      },
+    );
+  }
+  commands.push({
+    name: 'session-center-snapshot',
+    args: ['--window', 'main', 'snapshot', '-i', '--selector', '[data-testid="session-center-pane"]', '--depth', '8'],
+    outputFile: 'session-center.snapshot.txt',
+    timeoutMs: 15_000,
+  });
+  return commands;
+}
+
 export function scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml'),
@@ -329,12 +385,62 @@ export function scenarioSelectionNeedsRelaunchReconnectCheck(scenarios: string[]
   );
 }
 
+export function scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    [
+      'session-queue-durability',
+      'session-render-stability',
+      'session-run-truthfulness',
+    ].some((name) => scenario.replaceAll('\\', '/').endsWith(`/pilot-scenarios/${name}.toml`)),
+  );
+}
+
+export function scenarioSelectionRequiresExplicitSessionRuntimeActivation(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    ['session-render-stability', 'session-run-truthfulness']
+      .some((name) => scenario.replaceAll('\\', '/').endsWith(`/pilot-scenarios/${name}.toml`)),
+  );
+}
+
 export function assertPilotScenarioSelectionIsolated(scenarios: string[]): void {
   if (scenarioSelectionNeedsModelStreamRetryFixture(scenarios) && scenarios.length > 1) {
     throw new Error(
       'model-stream-retry-no-progress must run as a focused pilot scenario because it enables a global orchestrator probe fixture.',
     );
   }
+  if (scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios) && scenarios.length > 1) {
+    throw new Error(
+      'session-queue-durability must run as a focused pilot scenario because it owns a deterministic OpenCode and lifecycle fixture.',
+    );
+  }
+}
+
+export function assertSessionQueueRuntimeFixtureProfileIsolation(
+  scenarios: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (
+    scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios) &&
+    env.E2E_USE_EXISTING_PROFILE?.trim() === '1'
+  ) {
+    throw new Error(
+      'session queue deterministic acceptance coverage must not use E2E_USE_EXISTING_PROFILE=1. Use the manual live-user Pilot smoke path separately.',
+    );
+  }
+}
+
+function setEnvironmentForFixture(values: Record<string, string>): EnvironmentRestore {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, process.env[key]);
+    process.env[key] = value;
+  }
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
 }
 
 export function scenarioSelectionNeedsNoWorkspaceProfile(scenarios: string[]): boolean {
@@ -691,6 +797,46 @@ async function collectPilotFailureDiagnostics(options: {
   console.error(`[e2e] Pilot failure diagnostics captured: ${outputDir}`);
 }
 
+async function collectSessionRenderSuccessArtifacts(options: {
+  binary: string;
+  socket: string;
+  cwd: string;
+  e2eRoot: string;
+  timeoutMs: number;
+}): Promise<void> {
+  const outputDir = join(options.e2eRoot, 'tauri-pilot-artifacts', `session-render-stability-${Date.now()}`);
+  mkdirSync(outputDir, { recursive: true });
+  const commands = pilotSessionRenderSuccessArtifactCommands(outputDir);
+  const results: Array<{ name: string; outputFile: string; command: string; args: string[] }> = [];
+
+  for (const artifact of commands) {
+    const result = await runPilotCommandCapture({
+      binary: options.binary,
+      socket: options.socket,
+      cwd: options.cwd,
+      args: artifact.args,
+      timeoutMs: artifact.timeoutMs ?? Math.min(15_000, Math.max(1_000, options.timeoutMs)),
+    });
+    const body = [
+      result.stdout.trim() ? result.stdout.trim() : null,
+      result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : null,
+      result.error ? `error:\n${result.error}` : null,
+      result.exitCode === 0 && !result.timedOut ? null : `status: exit=${result.exitCode ?? 'null'} signal=${result.signal ?? 'null'} timedOut=${result.timedOut}`,
+    ].filter(Boolean).join('\n\n');
+    writeFileSync(join(outputDir, artifact.outputFile), body ? `${body}\n` : '', 'utf8');
+    if (result.exitCode !== 0 || result.timedOut || result.error) {
+      throw new Error(`Could not capture session-render-stability artifact ${artifact.name}: ${body || 'tauri-pilot returned no detail'}`);
+    }
+    results.push({ name: artifact.name, outputFile: artifact.outputFile, command: result.command, args: result.args });
+  }
+
+  const manifest = createSessionRenderArtifactManifest({
+    widths: SESSION_RENDER_ARTIFACT_VIEWPORTS.map((viewport) => viewport.width),
+  });
+  writeFileSync(join(outputDir, 'manifest.json'), JSON.stringify({ ...manifest, commands: results }, null, 2), 'utf8');
+  console.log(`[e2e] Session render artifacts captured: ${outputDir}`);
+}
+
 export async function ensurePilotReady(options: Omit<RunPilotCommandOptions, 'args'> = {}): Promise<void> {
   const timeoutMs = options.timeoutMs ?? Math.min(10_000, resolveLaunchTimeout());
   const deadline = Date.now() + timeoutMs;
@@ -744,6 +890,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     }
   }
   assertPilotScenarioSelectionIsolated(scenarios);
+  assertSessionQueueRuntimeFixtureProfileIsolation(scenarios);
   assertLiveManagedAiAuthForScenarioSelection(scenarios);
 
   if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
@@ -785,13 +932,45 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     process.env.E2E_SKIP_DEFAULT_WORKSPACE_STATE ||= '1';
   }
   let portContentionFixture: PortContentionFixture | null = null;
+  let sessionQueueRuntimeFixture: SessionQueueRuntimeFixture | null = null;
+  let restoreSessionQueueFixtureEnvironment: EnvironmentRestore | null = null;
 
   try {
     if (scenarioSelectionNeedsPortContentionFixture(scenarios)) {
       portContentionFixture = await startPortContentionFixture();
     }
+    if (scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios)) {
+      sessionQueueRuntimeFixture = await startSessionQueueRuntimeFixture();
+      restoreSessionQueueFixtureEnvironment = setEnvironmentForFixture({
+        E2E_SESSION_QUEUE_FIXTURE_BASE_URL: sessionQueueRuntimeFixture.baseUrl,
+        E2E_SESSION_QUEUE_VESLO_SERVER_URL: sessionQueueRuntimeFixture.vesloServerBaseUrl,
+        E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN: sessionQueueRuntimeFixture.vesloServerToken,
+        E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID: sessionQueueRuntimeFixture.vesloWorkspaceId,
+        VESLO_DEV_SERVER_URL: sessionQueueRuntimeFixture.vesloServerBaseUrl,
+        VESLO_DEV_SERVER_TOKEN: sessionQueueRuntimeFixture.vesloServerToken,
+        ...(scenarioSelectionRequiresExplicitSessionRuntimeActivation(scenarios)
+          ? { E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION: '1' }
+          : {}),
+        VESLO_E2E_DEN_AUTH_JSON: '{}',
+        VESLO_DISABLE_DEV_AUTOSTART: '1',
+      });
+      console.log(`[e2e] Session queue runtime fixture: ${sessionQueueRuntimeFixture.baseUrl}`);
+    }
 
-    await startApp();
+    const queueRuntimeFixtureForLaunch = sessionQueueRuntimeFixture;
+    await startApp(queueRuntimeFixtureForLaunch
+      ? {
+          beforeLaunch: async ({ profileRoot, opencodeHome }) => {
+            if (!profileRoot || !opencodeHome) {
+              throw new Error('Session queue fixture requires the isolated E2E profile and OPENCODE_HOME.');
+            }
+            await queueRuntimeFixtureForLaunch.startVesloServer({
+              workspacePath: join(profileRoot, 'workspaces', 'visual-workspace'),
+              dataDir: join(opencodeHome, '.veslo', 'session-queue-server'),
+            });
+          },
+        }
+      : undefined);
     await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
     await seedPilotDenAuthIfConfigured({ binary, socket, cwd: e2eRoot, timeoutMs });
     for (const scenario of scenarios) {
@@ -805,6 +984,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
           timeoutMs: scenarioCommandTimeoutMs,
           inheritStdio: true,
         });
+        if (scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/session-render-stability.toml')) {
+          await collectSessionRenderSuccessArtifacts({ binary, socket, cwd: e2eRoot, e2eRoot, timeoutMs });
+        }
       } catch (error) {
         await collectPilotFailureDiagnostics({ binary, socket, cwd: e2eRoot, e2eRoot, scenario, error, timeoutMs });
         throw error;
@@ -845,6 +1027,8 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   } finally {
     await stopApp();
     await stopPortContentionFixture(portContentionFixture);
+    await sessionQueueRuntimeFixture?.stop();
+    restoreSessionQueueFixtureEnvironment?.();
   }
 }
 

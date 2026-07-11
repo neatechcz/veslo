@@ -164,7 +164,7 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   Prompt, shell, command, retry, pending-draft, managed-AI preflight, queue, trace, and
   conversation-run send orchestration.
 - `packages/app/src/app/pages/session-creation-workflow.ts`
-  New-session creation, directory/workspace targeting, optimistic handoff, and route opening.
+  New-session creation, directory/workspace targeting, pending handoff, and route opening.
 - `packages/app/src/app/pages/session-mutation-workflow.ts`
   Retry/replace/undo/redo/rename/delete/list-agents/list-commands/export session mutations.
 - `packages/app/src/app/context/session-archive-store.ts`

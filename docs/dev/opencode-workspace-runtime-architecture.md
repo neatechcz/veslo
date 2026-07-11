@@ -284,19 +284,51 @@ Do not build a separate conversation model only for sandboxed execution.
 ## First Message Flow
 
 1. The user writes a message in a new or existing conversation.
-2. The app records the prepared message locally.
+2. The app records pending submission state locally, shows run progress, and
+   renders a transient local echo of the user's message. The echo is not a
+   durable transcript record or proof of admission. Render replacement and
+   confirmed pending cleanup remain separate decisions.
 3. The app sends a Veslo intent to the workspace-scoped server API.
 4. Veslo server validates the workspace and directory.
 5. Veslo server creates the conversation when needed.
 6. Veslo server ensures orchestrator workspace registration when the effective
    OpenCode route uses the orchestrator workspace mount.
 7. Veslo server creates or resolves the bound OpenCode session.
-8. Veslo server creates the run record.
+8. Veslo server creates the run record and derives a stable canonical user-message
+   id from the workspace and `clientMessageId`. The derived id is distinct from
+   the raw client id; run and queue ids remain separate.
 9. The orchestrator resolves the execution target.
-10. OpenCode receives the prompt for the bound session and directory. Fresh
-    prompt and command submits omit caller-provided `messageID`; Veslo
-    `clientMessageId` remains only the app/server idempotency key.
+10. OpenCode receives the request for the bound session and directory. Veslo
+    keeps its client admission identity out of the OpenCode request body.
 11. Events and transcript data are mirrored back to the conversation and run.
+
+When several sends share the same unmaterialized pending chat, the app keeps
+one in-flight materialization for that pending-session key. Followers wait for
+the first submit's server-owned handoff, then submit against the resulting
+session. They must not each create an independent conversation.
+
+Composer is the only owner of the live editor value. It snapshots one immutable
+revision per send. When pending submission state or a local queued item accepts
+that snapshot, Composer clears the exact revision immediately, including before
+runtime warmup or server admission completes. If no local owner accepts it, a
+typed result may change the editor only while that submitted revision is still
+current. Session flow does not independently clear a newly mounted or newer
+Composer draft.
+
+For new responses, `clientMessageId` remains an app/server idempotency field.
+The app adopts a local echo only when one scoped post-baseline user transcript
+candidate is unambiguous. Compatible client metadata wins; otherwise normalized
+text and attachment/file identity are used. The render projection may replace
+local echo with that transcript content before pending cleanup runs.
+
+Run presentation may not reset from a transient scoped `idle` observation while
+the same session has fresh durable lifecycle evidence of `submitted`, `running`,
+or `blocked`; terminal or stale lifecycle evidence releases that guard.
+
+The session capabilities sidebar projects the app-owned shared skill inventory;
+it never triggers its own filesystem scan. The app shell loads that inventory
+for an active local workspace so a first opened session can show global and
+workspace skills immediately.
 
 If any step fails, store the failure at the narrowest correct level:
 

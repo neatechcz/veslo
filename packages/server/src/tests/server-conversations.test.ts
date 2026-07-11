@@ -241,6 +241,76 @@ const startTestServer = (input: {
 };
 
 describe("conversation routes", () => {
+  test("mounted OpenCode session create accepts and reuses a caller-supplied id", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-session-id-contract-"));
+    tempDirs.push(workspaceRoot);
+    const requestedSessionId = "ses_veslo_v1_0123456789abcdef0123456789abcdef";
+    const upstreamSessions = new Map<string, Record<string, unknown>>();
+    const receivedBodies: Array<Record<string, unknown>> = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        if (request.method !== "POST" || url.pathname !== "/session" || typeof body?.id !== "string") {
+          return Response.json({ error: "unexpected upstream route" }, { status: 404 });
+        }
+        receivedBodies.push(body);
+        const id = body.id;
+        const existing = upstreamSessions.get(id);
+        const session = existing ?? {
+          id,
+          title: typeof body.title === "string" ? body.title : id,
+          directory: typeof body.directory === "string" ? body.directory : workspaceRoot,
+          parentID: null,
+          time: { created: 100, updated: 100 },
+        };
+        upstreamSessions.set(id, session);
+        return Response.json(session);
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+    const create = () => fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/opencode/session`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: requestedSessionId,
+          directory: workspaceRoot,
+          title: "Idempotent requested session",
+        }),
+      },
+    );
+
+    const first = await create();
+    const second = await create();
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect((await first.json() as { id?: string }).id).toBe(requestedSessionId);
+    expect((await second.json() as { id?: string }).id).toBe(requestedSessionId);
+    expect(receivedBodies).toEqual([
+      {
+        id: requestedSessionId,
+        directory: workspaceRoot,
+        title: "Idempotent requested session",
+      },
+      {
+        id: requestedSessionId,
+        directory: workspaceRoot,
+        title: "Idempotent requested session",
+      },
+    ]);
+    expect([...upstreamSessions]).toHaveLength(1);
+  });
+
   test("POST /workspace/:id/conversations/submit returns a dry-run result without contacting OpenCode", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-dry-run-"));
@@ -434,15 +504,16 @@ describe("conversation routes", () => {
           body,
         });
         if (request.method === "POST" && url.pathname === "/session") {
+          const id = typeof body?.id === "string" ? body.id : "sess-submit-created";
           return Response.json({
-            id: "sess-submit-created",
+            id,
             title: body?.title ?? "First submit",
             directory: body?.directory ?? workspaceRoot,
             parentID: null,
             time: { created: 100, updated: 100 },
           });
         }
-        if (request.method === "POST" && url.pathname === "/session/sess-submit-created/prompt_async") {
+        if (request.method === "POST" && /^\/session\/[^/]+\/prompt_async$/.test(url.pathname)) {
           return Response.json({ ok: true });
         }
         return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
@@ -493,23 +564,24 @@ describe("conversation routes", () => {
     expect(firstPayload.status).toBe("submitted");
     expect(firstPayload.workspaceId).toBe("ws_1");
     expect(firstPayload.conversationId).toMatch(/^conv-/);
-    expect(firstPayload.opencodeSessionId).toBe("sess-submit-created");
+    expect(firstPayload.opencodeSessionId).toMatch(/^ses_veslo_v1_[a-f0-9]{32}$/);
     expect(firstPayload.runId).toMatch(/^[a-z0-9_-]+$/i);
     expect(firstPayload.clientMessageId).toBe("msg-submit-materialize");
     expect(firstPayload.pendingClientSessionId).toBeUndefined();
     expect(firstPayload.draftDisposition).toBe("clear");
-    expect(firstPayload.materializedSession?.id).toBe("sess-submit-created");
+    expect(firstPayload.materializedSession?.id).toBe(firstPayload.opencodeSessionId);
     expect(firstPayload.materializedSession?.title).toBe("Create from submit");
     expect(firstPayload.materializedSession?.conversationId).toBe(firstPayload.conversationId);
-    expect(firstPayload.materializedSession?.opencodeSessionId).toBe("sess-submit-created");
+    expect(firstPayload.materializedSession?.opencodeSessionId).toBe(firstPayload.opencodeSessionId);
     expect(upstreamRequests).toHaveLength(2);
     expect(upstreamRequests[0]?.path).toBe("/session");
     expect(upstreamRequests[0]?.traceId).toBe("submit-materialize-trace");
     expect(upstreamRequests[0]?.body).toMatchObject({
+      id: firstPayload.opencodeSessionId,
       directory: workspaceRoot,
       title: "Create from submit",
     });
-    expect(upstreamRequests[1]?.path).toBe("/session/sess-submit-created/prompt_async");
+    expect(upstreamRequests[1]?.path).toBe(`/session/${firstPayload.opencodeSessionId}/prompt_async`);
     expect(upstreamRequests[1]?.traceId).toBe("submit-materialize-trace");
     expect(upstreamRequests[1]?.body?.messageID).toBeUndefined();
     expect(upstreamRequests[1]?.body?.parts).toEqual([{ type: "text", text: "Create from submit" }]);
@@ -2204,8 +2276,136 @@ describe("conversation routes", () => {
       error: null,
     });
 
-    createConversationRunQueueStore({ dataDir: vesloDataDir })
-      .markFailed(payload.queueItemId!, "queued drain failed");
+    const queuedRunStatusResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${created.conversationId}/runs/${payload.reservedRunId}`,
+      {
+        headers: {
+          Authorization: "Bearer client-token",
+        },
+      },
+    );
+    expect(queuedRunStatusResponse.status).toBe(200);
+    const queuedRunStatusPayload = await queuedRunStatusResponse.json() as Record<string, unknown>;
+    expect(queuedRunStatusPayload).toMatchObject({
+      ok: true,
+      workspaceId: "ws_1",
+      conversationId: created.conversationId,
+      runId: payload.reservedRunId,
+      status: "queued",
+      stale: false,
+      clientMessageId: "msg-submit-send-now-queued",
+      queueItemId: payload.queueItemId,
+      queueState: "pending",
+    });
+
+    const listConversationId = "conv-queue-read";
+    const listStore = createConversationRunQueueStore({ dataDir: vesloDataDir, now: () => 2_000 });
+    const enqueueListItem = (clientMessageId: string) => listStore.enqueue({
+      workspaceId: "ws_1",
+      conversationId: listConversationId,
+      opencodeSessionId: "sess-queue-read",
+      directory: "/private/queue-directory",
+      reservedRunId: `run-${clientMessageId}`,
+      clientMessageId,
+      origin: "session:queue-drain",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({
+        kind: "prompt_async",
+        text: "private queued prompt body",
+        runtimeAuthorizationActorTokenHash: "runtime-auth-secret",
+      }),
+    }).item;
+    const listPending = enqueueListItem("list-pending");
+    const listStarting = enqueueListItem("list-starting");
+    const listFailed = enqueueListItem("list-failed");
+    const listSubmitted = enqueueListItem("list-submitted");
+    listStore.markStarting(listStarting.queueItemId);
+    listStore.markStarting(listFailed.queueItemId);
+    listStore.markFailed(listFailed.queueItemId, "Bearer queue-token authorization=raw-secret");
+    listStore.markStarting(listSubmitted.queueItemId);
+    listStore.markSubmitted(listSubmitted.queueItemId);
+
+    const listBaseUrl = `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${listConversationId}/queue?status=pending&status=starting&status=failed`;
+    const fullListResponse = await fetch(`${listBaseUrl}&limit=100`, {
+      headers: { Authorization: "Bearer client-token" },
+    });
+    expect(fullListResponse.status).toBe(200);
+    const fullListPayload = await fullListResponse.json() as {
+      items?: Array<Record<string, unknown>>;
+      nextCursor?: string | null;
+    };
+    expect(fullListPayload.nextCursor).toBeNull();
+    expect(fullListPayload.items).toHaveLength(3);
+    expect(fullListPayload.items?.map((item) => item.queueItemId)).not.toContain(listSubmitted.queueItemId);
+    expect(fullListPayload.items?.map((item) => item.status).sort()).toEqual(["failed", "pending", "starting"]);
+    const failedListItem = fullListPayload.items?.find((item) => item.queueItemId === listFailed.queueItemId);
+    expect(failedListItem).toMatchObject({
+      workspaceId: "ws_1",
+      conversationId: listConversationId,
+      opencodeSessionId: "sess-queue-read",
+      reservedRunId: "run-list-failed",
+      clientMessageId: "list-failed",
+      kind: "prompt_async",
+      status: "failed",
+      queuePosition: null,
+      error: "Bearer [redacted] authorization=[redacted]",
+    });
+    for (const item of fullListPayload.items ?? []) {
+      for (const forbidden of [
+        "bodyJson",
+        "directory",
+        "requestHash",
+        "runtimeAuthorizationActorTokenHash",
+        "origin",
+        "activeRunId",
+        "attempts",
+      ]) {
+        expect(item).not.toHaveProperty(forbidden);
+      }
+      expect(JSON.stringify(item)).not.toContain("private queued prompt body");
+      expect(JSON.stringify(item)).not.toContain("queue-token");
+      expect(JSON.stringify(item)).not.toContain("raw-secret");
+    }
+
+    const firstPageResponse = await fetch(`${listBaseUrl}&limit=2`, {
+      headers: { Authorization: "Bearer client-token" },
+    });
+    const firstPagePayload = await firstPageResponse.json() as {
+      items?: Array<Record<string, unknown>>;
+      nextCursor?: string | null;
+    };
+    expect(firstPageResponse.status).toBe(200);
+    expect(firstPagePayload.items).toHaveLength(2);
+    expect(firstPagePayload.nextCursor).toEqual(expect.any(String));
+    const secondPageResponse = await fetch(`${listBaseUrl}&limit=2&cursor=${encodeURIComponent(firstPagePayload.nextCursor!)}`, {
+      headers: { Authorization: "Bearer client-token" },
+    });
+    const secondPagePayload = await secondPageResponse.json() as { items?: Array<Record<string, unknown>>; nextCursor?: string | null };
+    expect(secondPageResponse.status).toBe(200);
+    expect(secondPagePayload.nextCursor).toBeNull();
+    expect([
+      ...(firstPagePayload.items ?? []).map((item) => item.queueItemId),
+      ...(secondPagePayload.items ?? []).map((item) => item.queueItemId),
+    ]).toEqual((fullListPayload.items ?? []).map((item) => item.queueItemId));
+
+    for (const invalidUrl of [
+      `${listBaseUrl}&status=submitted`,
+      `${listBaseUrl}&limit=101`,
+      `${listBaseUrl}&cursor=not-a-queue-cursor`,
+    ]) {
+      const invalidResponse = await fetch(invalidUrl, { headers: { Authorization: "Bearer client-token" } });
+      expect(invalidResponse.status).toBe(400);
+    }
+    const foreignConversationResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/conv-queue-foreign/queue?limit=10`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    expect(foreignConversationResponse.status).toBe(200);
+    expect((await foreignConversationResponse.json() as { items?: unknown[] }).items).toEqual([]);
+
+    const queueStore = createConversationRunQueueStore({ dataDir: vesloDataDir });
+    queueStore.markStarting(payload.queueItemId!);
+    queueStore.markFailed(payload.queueItemId!, "queued drain failed");
     const failedQueueStatusResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${created.conversationId}/queue/${payload.queueItemId}`,
       {
@@ -2546,6 +2746,12 @@ describe("conversation routes", () => {
     expect(payload.draftDisposition).toBe("restore");
     expect(payload.recoverable).toBe(true);
     expect(upstreamRequests).toEqual([]);
+
+    const queueReadResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_remote/conversations/conv-remote/queue?limit=10`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    expect(queueReadResponse.status).toBe(404);
   });
 
   test("POST /workspace/:id/conversations/import backfills live OpenCode sessions for passive reads", async () => {
@@ -3150,7 +3356,7 @@ describe("conversation routes", () => {
     expect(engineRequests).toEqual(["/session/sess-remote/prompt_async"]);
   });
 
-  test("POST /workspace/:id/sessions/:sessionId/transcript reconciles lifecycle and wakes queued runs", async () => {
+  test("POST /workspace/:id/sessions/:sessionId/transcript rejects retired client snapshot writes", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-transcript-reconcile-"));
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
@@ -3296,14 +3502,13 @@ describe("conversation routes", () => {
         }),
       },
     );
-    expect(appendResponse.status).toBe(200);
-
-    await waitForCondition(
-      () => latestRequests > 0 && engineSubmits.length > 0,
-      { timeoutMs: 1_000, message: "expected terminal transcript append to wake queued run before poll interval" },
-    );
-    expect(registerRequests).toHaveLength(1);
-    expect(engineSubmits).toEqual(["/session/sess-transcript-reconcile/prompt_async"]);
+    expect(appendResponse.status).toBe(410);
+    await expect(appendResponse.json()).resolves.toMatchObject({
+      code: "transcript_snapshot_write_retired",
+    });
+    expect(latestRequests).toBe(0);
+    expect(registerRequests).toEqual([]);
+    expect(engineSubmits).toEqual([]);
   });
 
   test("accepted run lifecycle watcher wakes queued runs after terminal status", async () => {
@@ -4288,6 +4493,8 @@ describe("conversation routes", () => {
     let runIdFromRegister = "";
     let conversationIdFromRegister = "";
     let activeRunAvailable = false;
+    let lifecycleStatus = "running";
+    let lifecycleError: string | null = null;
     const orchestratorRequests: Array<{
       method: string;
       pathname: string;
@@ -4397,8 +4604,10 @@ describe("conversation routes", () => {
             workspaceId: "ws_1",
             conversationId: conversationIdFromRegister,
             runId: runIdFromRegister,
-            status: "running",
+            status: lifecycleStatus,
             stale: false,
+            clientMessageId: "msg-lifecycle",
+            error: lifecycleError,
             activityKind: "model_retry",
             waitReason: "model_retry_no_output",
             lastUsefulProgressAt: 1_000,
@@ -4524,6 +4733,46 @@ describe("conversation routes", () => {
     expect(statusPayload.lastUsefulProgressAt).toBe(1_000);
     expect(statusPayload.retrySince).toBe(2_000);
     expect(statusPayload.noProgressSeconds).toBe(12);
+
+    lifecycleStatus = "failed";
+    lifecycleError = `Bearer secret-token authorization=secret-authorization ${"detail ".repeat(100)}`;
+    const failedStatusResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/latest`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    expect(failedStatusResponse.status).toBe(200);
+    const failedStatusPayload = await failedStatusResponse.json() as Record<string, unknown>;
+    expect(failedStatusPayload).toMatchObject({
+      runId: runIdFromRegister,
+      status: "failed",
+      clientMessageId: "msg-lifecycle",
+    });
+    expect(String(failedStatusPayload.error)).toStartWith("Bearer [redacted] authorization=[redacted]");
+    expect(String(failedStatusPayload.error).length).toBeLessThanOrEqual(500);
+    expect(failedStatusPayload).not.toHaveProperty("origin");
+    expect(failedStatusPayload).not.toHaveProperty("directory");
+    expect(failedStatusPayload).not.toHaveProperty("body");
+    expect(failedStatusPayload).not.toHaveProperty("runtimeAuthorizationActorTokenHash");
+
+    lifecycleError = JSON.stringify({
+      authorization: "json-authorization-secret",
+      access_token: "json-token-secret",
+      directory: workspaceRoot,
+      body: { prompt: "private prompt", parts: [{ type: "text", text: "private body" }] },
+      detail: "actionable failure detail",
+    });
+    const structuredFailureResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/latest`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    const structuredFailurePayload = await structuredFailureResponse.json() as { error?: string | null };
+    expect(structuredFailureResponse.status).toBe(200);
+    expect(structuredFailurePayload.error).toContain("actionable failure detail");
+    expect(structuredFailurePayload.error).not.toContain("json-authorization-secret");
+    expect(structuredFailurePayload.error).not.toContain("json-token-secret");
+    expect(structuredFailurePayload.error).not.toContain(workspaceRoot);
+    expect(structuredFailurePayload.error).not.toContain("private prompt");
+    expect(structuredFailurePayload.error).not.toContain("private body");
 
     activeRunAvailable = true;
     const activeAbortResponse = await fetch(

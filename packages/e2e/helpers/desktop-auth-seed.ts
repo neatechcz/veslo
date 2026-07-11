@@ -84,7 +84,17 @@ export function resolveDesktopAuthSeedFromEnv(
     env.VESLO_DEN_AUTH_SNAPSHOT_PATH,
   );
   if (snapshotFile) {
-    return parseSnapshotFile(readFileSync(snapshotFile, 'utf8'));
+    const snapshot = parseSnapshotFile(readFileSync(snapshotFile, 'utf8'));
+    return {
+      ...snapshot,
+      keepSignedIn:
+        firstOptionalBoolean(env.VESLO_E2E_DEN_KEEP_SIGNED_IN, env.E2E_DEN_KEEP_SIGNED_IN) ??
+        snapshot.keepSignedIn,
+      language: firstOptionalText(env.VESLO_E2E_LANGUAGE, env.E2E_LANGUAGE) ?? snapshot.language,
+      onboardingComplete:
+        firstOptionalBoolean(env.VESLO_E2E_ONBOARDING_COMPLETE, env.E2E_ONBOARDING_COMPLETE) ??
+        snapshot.onboardingComplete,
+    };
   }
 
   const authJson = firstOptionalText(env.VESLO_E2E_DEN_AUTH_JSON, env.E2E_DEN_AUTH_JSON);

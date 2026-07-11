@@ -31,13 +31,15 @@ import {
 } from "../lib/opencode-part-access";
 import {
   readSessionStatus,
-  scopedSessionStatusKey,
   withSessionStatus,
 } from "../lib/scoped-session-status";
 import {
   appendSessionErrorTurnModel,
   applyCommandDisplayAlias,
   formatSlashCommandDisplay,
+  readSessionErrorTurnsForScope,
+  scopedSessionAliasKeys,
+  sessionErrorTurnScopeKey,
   sortSessionsByActivity,
 } from "./session-store-model";
 import {
@@ -144,21 +146,17 @@ export function createSessionStore(options: {
   resolveConversationRunForSession?: (
     sessionID: string,
     workspaceIdHint?: string | null,
+    options?: { allowLatest?: boolean },
   ) => SessionLifecycleRecoveryScope | null;
   readConversationRunStatus?: (
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<SessionLifecycleRecoveryStatus | null>;
-  appendTranscriptSnapshot?: (input: {
+  recoverConversationTranscript?: (scope: {
     workspaceId: string;
     sessionId: string;
     directory?: string | null;
-    limit?: number;
-    messages: MessageInfo[];
-    partsByMessageId: Record<string, Part[]>;
-    deletedMessageIds?: string[];
-    deletedPartsByMessageId?: Record<string, string[]>;
-    reason?: string;
-  }) => Promise<void> | void;
+    expectedRunId?: string | null;
+  }) => Promise<unknown>;
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
@@ -318,17 +316,11 @@ export function createSessionStore(options: {
 
   const conversationRunDiagnosticKeys = (scope: SessionLifecycleRecoveryScope) => {
     const workspaceId = statusWorkspaceId(scope.workspaceId);
-    const ids = [
+    return scopedSessionAliasKeys(workspaceId, [
       scope.sessionId,
       scope.opencodeSessionId,
       scope.conversationId,
-    ]
-      .map((value) => value?.trim() ?? "")
-      .filter(Boolean);
-    return [...new Set(ids.flatMap((id) => {
-      const scoped = scopedSessionStatusKey(workspaceId, id);
-      return scoped ? [scoped, id] : [id];
-    }))];
+    ]);
   };
 
   function updateConversationRunDiagnosticsForScope(
@@ -650,19 +642,35 @@ export function createSessionStore(options: {
     options.setError(addOpencodeCacheHint(message));
   };
 
-  const appendSessionErrorTurn = (sessionID: string, message: string | null) => {
+  const appendSessionErrorTurn = (
+    sessionID: string,
+    message: string | null,
+    appendOptions?: { durableRunId?: string | null; workspaceId?: string | null },
+  ) => {
     const text = message?.trim() ?? "";
     if (!sessionID || !text) return;
 
+    const workspaceId = appendOptions?.workspaceId?.trim() ||
+      options.resolveSessionWorkspaceId?.(sessionID)?.trim() ||
+      statusWorkspaceId();
+    const errorTurnKey = sessionErrorTurnScopeKey(workspaceId, sessionID);
     const list = store.messages[sessionID] ?? [];
-    setStore("sessionErrorTurns", sessionID, (current) =>
+    setStore("sessionErrorTurns", errorTurnKey, (current) =>
       appendSessionErrorTurnModel({
         current,
         sessionID,
         message: text,
         messages: list,
+        runId: appendOptions?.durableRunId,
       }),
     );
+  };
+
+  const sessionErrorTurnsForScope = (sessionID: string | null, workspaceId?: string | null) => {
+    const id = sessionID?.trim() ?? "";
+    if (!id) return [];
+    const resolvedWorkspaceId = workspaceId?.trim() || options.resolveSessionWorkspaceId?.(id)?.trim() || statusWorkspaceId();
+    return readSessionErrorTurnsForScope(store.sessionErrorTurns, resolvedWorkspaceId, id);
   };
 
   const setCommandDisplay = (messageID: string, name: string, args: string) => {
@@ -702,7 +710,6 @@ export function createSessionStore(options: {
     setStore,
     routing: options.routing,
     activeWorkspaceRoot: options.activeWorkspaceRoot,
-    appendTranscriptSnapshot: options.appendTranscriptSnapshot,
     applySessionDirectoryOverride,
     resolveSessionDirectory,
     sessionWarn,
@@ -727,17 +734,7 @@ export function createSessionStore(options: {
     resolveSessionIdForMessage,
     recordPendingTranscriptMessageDeletion,
     recordPendingTranscriptPartDeletion,
-    scheduleTranscriptIngestion,
-    scheduleBackgroundTranscriptIngestion,
   } = transcriptController;
-
-  const countAssistantMessagesForSession = (sessionID: string) =>
-    (store.messages[sessionID] ?? [])
-      .filter((message) => (message as { role?: string }).role === "assistant")
-      .length;
-  let refreshSelectedSessionTranscriptAfterLifecycle:
-    | ((sessionID: string, workspaceId: string, reason: string) => Promise<void> | void)
-    | null = null;
 
   const lifecycleRecoveryController =
     options.resolveConversationRunForSession && options.readConversationRunStatus
@@ -746,19 +743,27 @@ export function createSessionStore(options: {
           selectedSessionId: options.selectedSessionId,
           resolveConversationRunForSession: options.resolveConversationRunForSession,
           readConversationRunStatus: options.readConversationRunStatus,
+          recoverConversationTranscript: options.recoverConversationTranscript,
           onConversationRunStatus: updateConversationRunDiagnosticsForScope,
+          onConversationRunTerminal: (scope, status) => {
+            if (status.status !== "failed" || status.stale) return;
+            appendSessionErrorTurn(scope.sessionId, status.error?.trim() || "Run failed", {
+              durableRunId: scope.runId,
+              workspaceId: scope.workspaceId,
+            });
+          },
           setSessionStatusForWorkspace,
           notifySessionBusy,
-          scheduleTranscriptIngestion,
-          scheduleBackgroundTranscriptIngestion,
-          refreshSelectedSessionTranscript: (sessionID, workspaceId, reason) =>
-            refreshSelectedSessionTranscriptAfterLifecycle?.(sessionID, workspaceId, reason),
           trace: recordSessionStatusTrace,
         })
       : null;
   if (lifecycleRecoveryController) {
     createEffect(() => {
       lifecycleRecoveryController.reconcile();
+    });
+    createEffect(() => {
+      if (!options.selectedSessionId()) return;
+      void lifecycleRecoveryController.probeSelectedConversationLatestRun();
     });
     onCleanup(() => lifecycleRecoveryController.dispose());
   }
@@ -797,6 +802,13 @@ export function createSessionStore(options: {
     setPendingQuestions,
   } = runtimePrompts;
 
+  const transcriptObservationVersionBySession = new Map<string, number>();
+  const noteTranscriptObserved = (sessionId: string) => {
+    const id = sessionId.trim();
+    if (!id) return;
+    transcriptObservationVersionBySession.set(id, (transcriptObservationVersionBySession.get(id) ?? 0) + 1);
+  };
+
   const selectionController = createSessionSelectionController({
     store,
     setStore,
@@ -807,7 +819,6 @@ export function createSessionStore(options: {
     directoryQueryPathMode: options.directoryQueryPathMode,
     conversationReader: options.conversationReader,
     loadOfflineTranscript: options.loadOfflineTranscript,
-    appendTranscriptSnapshot: options.appendTranscriptSnapshot,
     shouldBrowseSessionFromDb: options.shouldBrowseSessionFromDb,
     developerMode: options.developerMode,
     setError: options.setError,
@@ -827,6 +838,7 @@ export function createSessionStore(options: {
     workspaceSessionIds,
     setMessagesForSession,
     hydrateTranscriptSnapshot,
+    transcriptObservationVersion: (sessionId) => transcriptObservationVersionBySession.get(sessionId.trim()) ?? 0,
     messageLimitBySession,
     setMessageLimitBySession,
     messageCompleteBySession,
@@ -848,38 +860,6 @@ export function createSessionStore(options: {
     selectSession,
     loadEarlierMessages,
   } = selectionController;
-  refreshSelectedSessionTranscriptAfterLifecycle = async (sessionID, workspaceId, reason) => {
-    const normalizedSessionId = sessionID.trim();
-    const selectedSessionId = options.selectedSessionId()?.trim() ?? "";
-    if (!normalizedSessionId || selectedSessionId !== normalizedSessionId) {
-      recordSessionStatusTrace("lifecycle-refresh-selected-transcript:skip", {
-        sessionId: normalizedSessionId || null,
-        selectedSessionId: selectedSessionId || null,
-        workspaceId: workspaceId || null,
-        reason,
-      });
-      return;
-    }
-
-    const beforeMessages = store.messages[normalizedSessionId] ?? [];
-    recordSessionStatusTrace("lifecycle-refresh-selected-transcript:start", {
-      sessionId: normalizedSessionId,
-      workspaceId: workspaceId || null,
-      reason,
-      beforeMessageCount: beforeMessages.length,
-      beforeAssistantCount: countAssistantMessagesForSession(normalizedSessionId),
-    });
-    await selectSession(normalizedSessionId);
-    const afterMessages = store.messages[normalizedSessionId] ?? [];
-    recordSessionStatusTrace("lifecycle-refresh-selected-transcript:done", {
-      sessionId: normalizedSessionId,
-      workspaceId: workspaceId || null,
-      reason,
-      afterMessageCount: afterMessages.length,
-      afterAssistantCount: countAssistantMessagesForSession(normalizedSessionId),
-    });
-  };
-
   const sessionStatusById = () => store.sessionStatus;
   const conversationRunDiagnosticsBySessionKey = () => store.conversationRunDiagnosticsBySessionKey;
   const events = () => store.events;
@@ -935,6 +915,7 @@ export function createSessionStore(options: {
     onReconnectNotice: options.onReconnectNotice,
     onReconnectState: options.onReconnectState,
     onAssistantResponseObserved: options.onAssistantResponseObserved,
+    onTranscriptObserved: noteTranscriptObserved,
     sessionDebugEnabled,
     sessionWarn,
     recordSessionStatusTrace,
@@ -945,6 +926,8 @@ export function createSessionStore(options: {
     applySessionDirectoryOverride,
     resolveSessionDirectory,
     appendSessionErrorTurn,
+    onSessionLifecycleObservation: (sessionId, workspaceId, type) =>
+      lifecycleRecoveryController?.observeSessionLifecycleEvent(sessionId, workspaceId, type) === true,
     setCommandDisplay,
     recordSyntheticContinueDiagnostic,
     maybeMarkReloadRequired,
@@ -954,8 +937,6 @@ export function createSessionStore(options: {
     resolveSessionIdForMessage,
     recordPendingTranscriptMessageDeletion,
     recordPendingTranscriptPartDeletion,
-    scheduleTranscriptIngestion,
-    scheduleBackgroundTranscriptIngestion,
     messageLimitBySession,
     setMessagesForSession,
     setMessageLimitBySession,
@@ -992,10 +973,10 @@ export function createSessionStore(options: {
 
   return {
     sessions,
-    sessionErrorTurnsById: (sessionID: string | null) => (sessionID ? store.sessionErrorTurns[sessionID] ?? [] : []),
+    sessionErrorTurnsById: (sessionID: string | null) => sessionErrorTurnsForScope(sessionID),
     selectedSessionErrorTurns: createMemo(() => {
       const sessionID = options.selectedSessionId();
-      return sessionID ? store.sessionErrorTurns[sessionID] ?? [] : [];
+      return sessionErrorTurnsForScope(sessionID);
     }),
     sessionStatusById,
     conversationRunDiagnosticsBySessionKey,

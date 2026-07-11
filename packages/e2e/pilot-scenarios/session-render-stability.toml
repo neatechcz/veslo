@@ -1,0 +1,318 @@
+[scenario]
+name = "session-render-stability"
+fail_fast = true
+global_timeout_ms = 240000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "seed host transcript and prove session geometry at every desktop width"
+action = "eval"
+timeout_ms = 220000
+script = '''
+const completeSelector = '[data-testid="session-render-stability-complete"]';
+const errorSelector = '[data-testid="session-render-stability-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const normalize = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 30000;
+  const interval = options.interval ?? 150;
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(options.message ?? `condition was not met; latest=${JSON.stringify(latest)}`);
+};
+const invoke = async (command, payload = {}) => {
+  const bridge = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof bridge === 'function', 'Tauri invoke bridge is unavailable.');
+  return await bridge(command, payload);
+};
+const rect = (element) => {
+  const value = element.getBoundingClientRect();
+  return { left: value.left, top: value.top, right: value.right, bottom: value.bottom, width: value.width, height: value.height };
+};
+const overlaps = (left, right) => left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+const visible = (element) => element instanceof HTMLElement && Boolean(element.offsetParent) && element.getBoundingClientRect().width > 0 && element.getBoundingClientRect().height > 0;
+const findButton = (text) => Array.from(document.querySelectorAll('button')).find((button) =>
+  visible(button) && normalize(button.textContent).includes(text),
+) || null;
+const messageIds = () => Array.from(document.querySelectorAll('[data-testid="session-message-row"]'))
+  .map((element) => element.getAttribute('data-message-id'));
+const canonicalIds = ['msg-render-user-text', 'msg-render-user-file', 'msg-render-user-long', 'msg-render-assistant'];
+const failure = (error) => {
+  if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
+  const marker = document.createElement('pre');
+  marker.dataset.testid = 'session-render-stability-error';
+  marker.textContent = JSON.stringify({
+    message: String(error?.message ?? error).slice(0, 1800),
+    renderedMessages: Array.from(document.querySelectorAll('[data-message-id]')).map((element) => ({
+      id: element.getAttribute('data-message-id'),
+      role: element.getAttribute('data-message-role'),
+      testId: element.getAttribute('data-testid'),
+      text: normalize(element.textContent).slice(0, 220),
+    })).slice(-24),
+  });
+  document.body.append(marker);
+};
+
+if (!window.__sessionRenderStabilityStarted) {
+window.__sessionRenderStabilityStarted = true;
+window.__sessionRenderStabilityPromise = (async () => {
+try {
+  window.localStorage.setItem('veslo.onboardingComplete', '1');
+  window.localStorage.setItem('veslo.language', 'en');
+  const bootstrap = await invoke('workspace_bootstrap');
+  const workspace = bootstrap?.workspaces?.find((item) => item.id === bootstrap?.activeId) ?? bootstrap?.workspaces?.[0];
+  const workspacePath = normalize(workspace?.path || workspace?.directory);
+  assert(workspacePath, 'The isolated E2E workspace is unavailable.');
+  const localServer = await waitUntil(async () => {
+    const info = await invoke('veslo_server_info').catch(() => null);
+    const baseUrl = normalize(info?.baseUrl).replace(/\/+$/, '');
+    const token = normalize(info?.clientToken);
+    if (!info?.running || !baseUrl || !token) return false;
+    const health = await fetch(`${baseUrl}/health`).catch(() => null);
+    return health?.ok ? { baseUrl, token } : false;
+  }, { timeout: 90000, interval: 500, message: 'The local Veslo server did not become ready.' });
+  const serverJson = async (path, options = {}) => {
+    const response = await fetch(`${localServer.baseUrl}${path}`, {
+      ...options,
+      headers: {
+        authorization: `Bearer ${localServer.token}`,
+        accept: 'application/json',
+        ...(options.body ? { 'content-type': 'application/json' } : {}),
+        ...(options.headers || {}),
+      },
+    });
+    const text = await response.text();
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+    return { ok: response.ok, status: response.status, body };
+  };
+  const workspaces = await serverJson('/workspaces');
+  assert(workspaces.ok && Array.isArray(workspaces.body?.items), 'The local server did not expose workspace registrations.');
+  const serverWorkspace = workspaces.body.items.find((item) => normalize(item.path) === workspacePath) ?? workspaces.body.items[0];
+  const workspaceId = normalize(serverWorkspace?.id);
+  const fixtureBaseUrl = normalize(serverWorkspace?.baseUrl).replace(/\/+$/, '');
+  assert(workspaceId && fixtureBaseUrl.startsWith('http://127.0.0.1:'), 'The deterministic QF08 lifecycle fixture is not bound to the isolated workspace.');
+  const openFixtureWorkspace = async () => {
+    const oldUrl = window.location.href;
+    window.location.hash = '/session';
+    window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: oldUrl, newURL: window.location.href }));
+    const picker = await waitUntil(() => {
+      const candidate = document.querySelector('[data-testid="composer-target-picker"]');
+      return visible(candidate) ? candidate : false;
+    }, { message: 'The user-visible workspace target picker did not appear for explicit activation.' });
+    picker.click();
+    const target = await waitUntil(() => Array.from(document.querySelectorAll('[data-testid="composer-target-option"]')).find((option) =>
+      visible(option) && normalize(option.textContent).includes('Visual Workspace'),
+    ) || false, { message: 'Visual Workspace was not an available user-selectable composer target.' });
+    target.click();
+  };
+  await openFixtureWorkspace();
+  await waitUntil(async () => {
+    const state = await fetch(`${fixtureBaseUrl}/__session_queue_fixture/state`).then((response) => response.ok ? response.json() : null).catch(() => null);
+    return state?.sseSubscriberCount > 0;
+  }, { timeout: 45000, message: 'The real desktop SSE bridge did not subscribe before fixture session creation.' });
+
+  const sessionId = 'ses-render-stability';
+  const title = 'Session render stability fixture';
+  const fixtureSession = await fetch(`${fixtureBaseUrl}/session`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: sessionId, title, directory: workspacePath }),
+  });
+  assert(fixtureSession.ok, `The deterministic fixture could not create the OpenCode session (${fixtureSession.status}).`);
+  const sessionCreatedEvent = await fetch(`${fixtureBaseUrl}/__session_queue_fixture/emit-session-created`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }),
+  });
+  assert(sessionCreatedEvent.ok, `The fixture could not emit session.created (${sessionCreatedEvent.status}).`);
+  const imported = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/conversations/import`, {
+    method: 'POST',
+    body: JSON.stringify({
+      directory: workspacePath,
+      sessions: [{ id: sessionId, title, parentID: null, time: { created: 1000, updated: 4000 } }],
+    }),
+  });
+  assert(imported.ok, `The host conversation import failed (${imported.status}).`);
+
+  const messages = [
+    { id: 'msg-render-user-text', sessionID: sessionId, role: 'user', time: { created: 1000 } },
+    { id: 'msg-render-user-file', sessionID: sessionId, role: 'user', time: { created: 2000 } },
+    { id: 'msg-render-user-long', sessionID: sessionId, role: 'user', time: { created: 3000 } },
+    { id: 'msg-render-assistant', sessionID: sessionId, role: 'assistant', time: { created: 4000, completed: 5000 } },
+  ];
+  const partsByMessageId = {
+    'msg-render-user-text': [{ id: 'part-render-user-text', messageID: 'msg-render-user-text', sessionID: sessionId, type: 'text', text: 'Render fixture text message.' }],
+    'msg-render-user-file': [{ id: 'part-render-user-file', messageID: 'msg-render-user-file', sessionID: sessionId, type: 'file', filename: 'fixture-only.txt', mime: 'text/plain', url: 'data:text/plain;base64,cmVuZGVyLWZpeHR1cmU=' }],
+    'msg-render-user-long': [{ id: 'part-render-user-long', messageID: 'msg-render-user-long', sessionID: sessionId, type: 'text', text: `C:/fixture/${'unbroken-render-identifier-'.repeat(22)}tail` }],
+    'msg-render-assistant': [
+      { id: 'part-render-assistant-text', messageID: 'msg-render-assistant', sessionID: sessionId, type: 'text', text: 'Assistant transcript response for the geometry fixture.' },
+      { id: 'part-render-reasoning', messageID: 'msg-render-assistant', sessionID: sessionId, type: 'reasoning', text: 'Reasoning fixture progress.' },
+      { id: 'part-render-tool', messageID: 'msg-render-assistant', sessionID: sessionId, type: 'tool', tool: 'read', state: { status: 'error', input: { path: `C:/fixture/${'long-tool-path-'.repeat(18)}tail.txt` }, error: `tool-detail-${'x'.repeat(900)}` } },
+    ],
+  };
+  const appended = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`, {
+    method: 'POST',
+    body: JSON.stringify({
+      directory: workspacePath,
+      messages,
+      partsByMessageId,
+    }),
+  });
+  assert(appended.ok, `The host transcript append failed (${appended.status}).`);
+  const fixtureTranscript = await fetch(`${fixtureBaseUrl}/__session_queue_fixture/append-session-transcript`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId, messages, partsByMessageId }),
+  });
+  assert(fixtureTranscript.ok, `The OpenCode transcript fixture did not retain the canonical host transcript (${fixtureTranscript.status}).`);
+
+  const runId = 'run-render-stability';
+  const registered = await fetch(`${fixtureBaseUrl}/workspace/${encodeURIComponent(workspaceId)}/runs/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ conversationId: imported.body?.items?.[0]?.conversationId || imported.body?.conversationId, runId, engineSessionId: sessionId, clientMessageId: 'client-render-stability', origin: 'e2e:session-render-stability' }),
+  });
+  assert(registered.ok, `The fixture run registration failed (${registered.status}).`);
+  const failed = await fetch(`${fixtureBaseUrl}/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(runId)}/failed`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ error: 'Render fixture terminal failure: Bearer session-render-secret' }),
+  });
+  assert(failed.ok, `The fixture run did not become terminal failed (${failed.status}).`);
+
+  const oldUrl = window.location.href;
+  window.location.hash = '/session';
+  window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: oldUrl, newURL: window.location.href }));
+  const sessionButton = await waitUntil(() => findButton(title), { message: 'The imported fixture conversation did not appear in the session sidebar.' });
+  sessionButton.click();
+  await waitUntil(() => canonicalIds.every((id) => document.querySelectorAll(`[data-message-id="${id}"]`).length === 1), {
+    timeout: 45000,
+    message: 'Host-first transcript hydration did not render the exact canonical messages.',
+  });
+  await waitUntil(() => document.querySelector('[role="alert"]'), {
+    timeout: 45000,
+    message: 'The passive latest-run probe did not render the durable failed run.',
+  });
+  assert(!document.body.innerText.includes('session-render-secret'), 'The fixture token leaked into rendered error content.');
+
+  const assertSemanticAndGeometry = async (width, height) => {
+    await invoke('e2e_position_main_window', { width, height, x: 32, y: 32 });
+    await waitUntil(() => window.innerWidth <= width + 2 && window.innerWidth >= width - 2, { message: `WebView did not resize to ${width}px.` });
+    const center = await waitUntil(() => {
+      const candidate = document.querySelector('[data-testid="session-center-pane"]');
+      if (!candidate) return false;
+      const candidateRect = rect(candidate);
+      return candidateRect.width > 0 && candidateRect.height > 0 ? candidate : false;
+    }, { timeout: 5000, message: `Session center pane did not settle with positive geometry at ${width}px.` });
+    const transcript = document.querySelector('[data-testid="session-transcript-viewport"]');
+    const composer = document.querySelector('[data-testid="session-composer"]');
+    assert(transcript && composer, 'Transcript viewport or composer is missing.');
+    assert(canonicalIds.every((id) => document.querySelectorAll(`[data-message-id="${id}"]`).length === 1), 'A canonical transcript row is missing or duplicated.');
+    assert(document.querySelectorAll('[data-message-role="user"]').length === 3, 'The rendered user transcript contains an unexpected duplicate row.');
+    assert(!document.querySelector('[data-testid="pending-submit-sending"]'), 'An optimistic pending row remained beside the canonical transcript.');
+    const root = rect(document.documentElement);
+    const centerRect = rect(center);
+    const composerRect = rect(composer);
+    assert(centerRect.width > 0 && centerRect.height > 0, 'The center conversation pane has no positive geometry.');
+    assert(root.right <= window.innerWidth + 2, 'The rendered page overflows horizontally.');
+    assert(composerRect.top >= -2 && composerRect.bottom <= window.innerHeight + 2, 'The composer is outside the viewport.');
+    const rows = Array.from(document.querySelectorAll('[data-testid="session-message-row"]'));
+    assert(rows.every((row) => {
+      const rowRect = rect(row);
+      return rowRect.left >= centerRect.left - 2 && rowRect.right <= centerRect.right + 2;
+    }), 'A message row escapes the center column.');
+    const longRow = document.querySelector('[data-message-id="msg-render-user-long"]');
+    assert(longRow, 'The long identifier message is absent.');
+    let scrollParent = longRow.parentElement;
+    let allowsScroll = false;
+    while (scrollParent) {
+      const overflowX = getComputedStyle(scrollParent).overflowX;
+      if (overflowX === 'auto' || overflowX === 'scroll') allowsScroll = true;
+      scrollParent = scrollParent.parentElement;
+    }
+    assert(longRow.scrollWidth <= longRow.clientWidth + 2 || allowsScroll, 'Long identifier content neither wraps nor has an intentional local scroller.');
+    const overlays = [
+      document.querySelector('[data-testid="session-run-indicator"]'),
+      document.querySelector('[data-testid="session-operational-error"]'),
+      document.querySelector('[aria-label="Jump to latest"]'),
+    ].filter(Boolean).map(rect);
+    assert(overlays.every((overlay) => !overlaps(overlay, composerRect)), 'A run, operational, or latest-message control covers the composer.');
+    const beforeIds = messageIds();
+    const beforeScrollTop = transcript.scrollTop;
+    if (width < 740) {
+      assert(!document.querySelector('[data-testid="session-left-sidebar"][data-sidebar-mode="docked"]'), 'Narrow mode kept the left sidebar docked.');
+      assert(!document.querySelector('[data-testid="session-right-sidebar"][data-sidebar-mode="docked"]'), 'Narrow mode kept the right sidebar docked.');
+      for (const [toggle, selector] of [
+        ['session-toggle-left-sidebar', '[data-testid="session-left-sidebar"][data-sidebar-mode="overlay"]'],
+        ['session-toggle-right-sidebar', '[data-testid="session-right-sidebar"][data-sidebar-mode="overlay"]'],
+      ]) {
+        document.querySelector(`[data-testid="${toggle}"]`).click();
+        await waitUntil(() => document.querySelector(selector), { message: `Narrow ${toggle} did not open an overlay.` });
+        document.querySelector(`[data-testid="${toggle}"]`).click();
+        await waitUntil(() => !document.querySelector(selector), { message: `Narrow ${toggle} did not close its overlay.` });
+      }
+      // Return to the initial left-sidebar preference before the medium-width
+      // assertion; overlay controls intentionally remember the last side.
+      document.querySelector('[data-testid="session-toggle-left-sidebar"]').click();
+      await waitUntil(() => document.querySelector('[data-testid="session-left-sidebar"][data-sidebar-mode="overlay"]'), { message: 'Narrow left sidebar did not restore after the right-sidebar check.' });
+      document.querySelector('[data-testid="session-toggle-left-sidebar"]').click();
+      await waitUntil(() => !document.querySelector('[data-testid="session-left-sidebar"][data-sidebar-mode="overlay"]'), { message: 'Narrow left sidebar did not close after preference reset.' });
+    } else if (width < 1100) {
+      assert(document.querySelector('[data-testid="session-left-sidebar"][data-sidebar-mode="docked"]'), 'Medium mode did not retain the left docked sidebar.');
+      assert(!document.querySelector('[data-testid="session-right-sidebar"][data-sidebar-mode="docked"]'), 'Medium mode did not collapse the right sidebar before narrowing the center column.');
+      assert(centerRect.width >= 360, 'Medium mode shrank the center below its layout minimum.');
+      // A real medium-width toggle retains the user's two-sidebar preference
+      // while the geometry policy keeps the right rail collapsed until 1440px.
+      document.querySelector('[data-testid="session-toggle-right-sidebar"]').click();
+      await sleep(0);
+    } else {
+      assert(document.querySelector('[data-testid="session-left-sidebar"][data-sidebar-mode="docked"]'), 'Wide mode did not restore the left docked sidebar.');
+      assert(document.querySelector('[data-testid="session-right-sidebar"][data-sidebar-mode="docked"]'), 'Wide mode did not restore the right docked sidebar.');
+      assert(centerRect.width >= 740, 'Wide mode shrank the center below its layout minimum.');
+    }
+    assert(JSON.stringify(messageIds()) === JSON.stringify(beforeIds), 'Sidebar interaction changed transcript message order.');
+    assert(Math.abs(transcript.scrollTop - beforeScrollTop) <= 2, 'Sidebar interaction reset the transcript viewport.');
+  };
+
+  for (const viewport of [{ width: 390, height: 844 }, { width: 768, height: 900 }, { width: 1440, height: 1000 }]) {
+    await assertSemanticAndGeometry(viewport.width, viewport.height);
+  }
+  const complete = document.createElement('div');
+  complete.dataset.testid = 'session-render-stability-complete';
+  complete.textContent = JSON.stringify({ workspaceId, sessionId, runId, widths: [390, 768, 1440] });
+  document.body.append(complete);
+} catch (error) {
+  failure(error);
+}
+})();
+}
+true;
+'''
+
+[[step]]
+name = "render and geometry flow finished"
+action = "wait"
+target = "[data-testid=\"session-render-stability-complete\"], [data-testid=\"session-render-stability-error\"]"
+timeout_ms = 230000
+
+[[step]]
+name = "render and geometry flow succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="session-render-stability-error"]');
+if (error) throw new Error(`Session render stability scenario failed: ${(error.textContent || '').slice(0, 3000)}`);
+true;
+'''

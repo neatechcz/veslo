@@ -11,6 +11,9 @@ const REQUIRED_EXECUTABLE_SIDECARS = [
   "chrome-devtools-mcp",
 ];
 
+const requiredExecutableSidecars = (targetTriple) =>
+  targetTriple?.includes("windows") ? [...REQUIRED_EXECUTABLE_SIDECARS, "veslo-node"] : REQUIRED_EXECUTABLE_SIDECARS;
+
 const REQUIRED_DATA_SIDECARS = ["opencode-managed-deps.json"];
 
 const REQUIRED_MANIFEST_ENTRIES = [
@@ -148,7 +151,7 @@ export const verifyBundledSidecars = (extractRoot, { targetTriple } = {}) => {
   const manifest = readVersionsManifest(manifestPath);
   assertVersionsManifestEntries(manifestPath, manifest);
 
-  const executables = REQUIRED_EXECUTABLE_SIDECARS.map((name) => {
+  const executables = requiredExecutableSidecars(targetTriple).map((name) => {
     const path = findRequiredSidecar(appPath, targetTriple, name);
     assertExecutableSidecar(path);
     return { name, path };

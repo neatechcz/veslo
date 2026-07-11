@@ -13,6 +13,7 @@ import {
   removePendingSubmittedDraftForKey,
   selectPendingSubmittedDraft,
   setPendingSubmittedDraftForKey,
+  trySetPendingSubmittedDraftForKey,
   type PendingSubmittedDraftBySessionKey,
 } from "./pending-session-instance-model.js";
 import { createPendingSubmittedDraft } from "./pending-submit-model.js";
@@ -110,6 +111,53 @@ test("two pending sessions in the same workspace keep separate submitted drafts"
   assert.equal(selectPendingSubmittedDraft(submitted, second.sessionKey)?.draft.text, "second message");
 });
 
+test("a second submitted draft cannot overwrite an unresolved session slot", () => {
+  const first = createPendingSubmittedDraft({
+    id: "optimistic:first",
+    clientMessageId: "client:first",
+    sessionKey: "session-a",
+    sessionId: "session-a",
+    createdAt: 100,
+    draft: draft("first message"),
+  });
+  const second = createPendingSubmittedDraft({
+    id: "optimistic:second",
+    clientMessageId: "client:second",
+    sessionKey: "session-a",
+    sessionId: "session-a",
+    createdAt: 101,
+    draft: draft("second message"),
+  });
+  const current = { "session-a": first };
+
+  const result = trySetPendingSubmittedDraftForKey(current, "session-a", second);
+
+  assert.equal(result.kind, "occupied");
+  assert.equal(result.pending.id, first.id);
+  assert.equal(result.draftsBySessionKey, current);
+  assert.equal(setPendingSubmittedDraftForKey(current, "session-a", second), current);
+  assert.equal(selectPendingSubmittedDraft(result.draftsBySessionKey, "session-a")?.draft.text, "first message");
+});
+
+test("the same submitted id may update its existing session slot", () => {
+  const first = createPendingSubmittedDraft({
+    id: "optimistic:first",
+    clientMessageId: "client:first",
+    sessionKey: "session-a",
+    sessionId: "session-a",
+    createdAt: 100,
+    draft: draft("first message"),
+  });
+  const updated = { ...first, state: "error" as const, error: "failed" };
+
+  const result = trySetPendingSubmittedDraftForKey({ "session-a": first }, "session-a", updated);
+
+  assert.equal(result.kind, "stored");
+  assert.equal(result.pending.id, first.id);
+  assert.equal(result.pending.state, "error");
+  assert.equal(selectPendingSubmittedDraft(result.draftsBySessionKey, "session-a")?.error, "failed");
+});
+
 test("materializing one pending session remaps only its submitted draft", () => {
   let submitted: PendingSubmittedDraftBySessionKey = {};
   submitted = setPendingSubmittedDraftForKey(
@@ -144,9 +192,44 @@ test("materializing one pending session remaps only its submitted draft", () => 
   });
 
   assert.equal(selectPendingSubmittedDraft(remapped, "session-real-first")?.draft.text, "first message");
+  assert.equal(selectPendingSubmittedDraft(remapped, "session-real-first")?.id, "optimistic:first");
+  assert.equal(selectPendingSubmittedDraft(remapped, "session-real-first")?.clientMessageId, "optimistic:first");
   assert.equal(selectPendingSubmittedDraft(remapped, "session-real-first")?.sessionId, "session-real-first");
   assert.equal(selectPendingSubmittedDraft(remapped, "pending-session:first"), null);
   assert.equal(selectPendingSubmittedDraft(remapped, "pending-session:second")?.draft.text, "second message");
+});
+
+test("materialization does not overwrite an occupied real-session slot", () => {
+  const pending = createPendingSubmittedDraft({
+    id: "optimistic:pending",
+    clientMessageId: "client:pending",
+    sessionKey: "pending-session:first",
+    sessionId: null,
+    createdAt: 100,
+    draft: draft("pending message"),
+  });
+  const existing = createPendingSubmittedDraft({
+    id: "optimistic:existing",
+    clientMessageId: "client:existing",
+    sessionKey: "session-real-first",
+    sessionId: "session-real-first",
+    createdAt: 101,
+    draft: draft("existing message"),
+  });
+  const current = {
+    "pending-session:first": pending,
+    "session-real-first": existing,
+  };
+
+  const remapped = materializePendingSessionInstance(current, {
+    pendingSessionKey: "pending-session:first",
+    realSessionKey: "session-real-first",
+    realSessionId: "session-real-first",
+  });
+
+  assert.equal(remapped, current);
+  assert.equal(selectPendingSubmittedDraft(remapped, "pending-session:first")?.id, pending.id);
+  assert.equal(selectPendingSubmittedDraft(remapped, "session-real-first")?.id, existing.id);
 });
 
 test("materializing a scoped pending session key preserves optimistic draft across workspace handoff", () => {

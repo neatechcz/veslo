@@ -6,6 +6,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
   onMount,
   untrack,
@@ -84,7 +85,6 @@ import {
 } from "./context/managed-ai-runtime-config";
 import { createConversationService } from "./context/conversation-service";
 import { createLiveTranscriptReadPolicy } from "./context/live-transcript-read-policy";
-import { createSubmittedRunTranscriptCatchup } from "./context/submitted-run-transcript-catchup";
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
 import { createSessionFlowFacade } from "./context/session-flow-facade";
 import { createSessionFlowProgressPresenter } from "./context/session-flow-progress-presenter";
@@ -573,12 +573,6 @@ export default function App() {
     orchestratorStatusState,
     orchestratorEnginesState,
     readyEngineWorkspaceIds,
-    vesloAuditEntries,
-    setVesloAuditEntries,
-    vesloAuditStatus,
-    setVesloAuditStatus,
-    vesloAuditError,
-    setVesloAuditError,
     devtoolsWorkspaceId,
     setDevtoolsWorkspaceId,
     activeVesloServerHostInfo,
@@ -1019,6 +1013,7 @@ export default function App() {
     abortConversationFromVesloWriteApi,
     resolveConversationRunForSession,
     readConversationRunStatus,
+    recoverConversationTranscript,
   } = conversationService;
   const sessionStore = createSessionStore({
     client,
@@ -1126,25 +1121,7 @@ export default function App() {
     },
     resolveConversationRunForSession,
     readConversationRunStatus,
-    appendTranscriptSnapshot: async (input) => {
-      const workspaceId = input.workspaceId.trim();
-      const sessionId = input.sessionId.trim();
-      const directory = input.directory?.trim() || undefined;
-      if (!workspaceId || !sessionId) return;
-      const serverClient = hydratedVesloServerClient();
-      if (!serverClient) return;
-      const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
-      if (!serverWorkspaceId) return;
-      await serverClient.appendSessionTranscript(serverWorkspaceId, sessionId, {
-        directory,
-        limit: input.limit,
-        reason: input.reason,
-        messages: input.messages,
-        partsByMessageId: input.partsByMessageId,
-        deletedMessageIds: input.deletedMessageIds,
-        deletedPartsByMessageId: input.deletedPartsByMessageId,
-      });
-    },
+    recoverConversationTranscript,
     // VSLO-86 — selectSession uses this for active-workspace
     // runtime readiness and live recovery decisions. Ordinary browse/live
     // transcript policy is gated by shouldBrowseSessionFromDb and
@@ -1199,34 +1176,6 @@ export default function App() {
     hasWarmTranscript,
     getCachedTranscriptMessages,
   } = sessionStore;
-
-  const submittedRunTranscriptCatchup = createSubmittedRunTranscriptCatchup<VesloSessionTranscriptSnapshot>({
-    selectedSessionId,
-    resolveSelectedSessionWorkspaceId: (sessionId) => {
-      const scopedWorkspaceId = resolveSelectedSessionBrowseScope(sessionId)?.workspaceId?.trim() ?? "";
-      return scopedWorkspaceId || workspaceStore.activeWorkspaceId().trim() || null;
-    },
-    assistantObservationVersion: (sessionId) =>
-      assistantResponseObservationVersionBySession.get(sessionId.trim()) ?? 0,
-    assistantMessageCount: (sessionId) =>
-      getCachedTranscriptMessages(sessionId.trim())
-        .filter((message) => message.role === "assistant")
-        .length,
-    loadTranscript: (target) => {
-      const visibleMessageCount = getCachedTranscriptMessages(target.sessionId).length;
-      const catchupLimit = Math.max(140, visibleMessageCount + 20);
-      return getTranscriptFromVesloReadApi(
-        target.workspaceId,
-        target.sessionId,
-        catchupLimit,
-        target.directory?.trim() || undefined,
-        { activeVisibleSelectedSession: selectedSessionId()?.trim() === target.sessionId },
-      );
-    },
-    hydrateTranscriptSnapshot,
-    trace: recordSendTrace,
-  });
-  onCleanup(() => submittedRunTranscriptCatchup.dispose());
 
   const [e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds] = createSignal<Set<string>>(
     new Set(),
@@ -1400,12 +1349,6 @@ export default function App() {
         const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit, directory);
         rememberConversationScopeFromTranscript(workspaceId, directory, snapshot);
         hydrateTranscriptSnapshot(snapshot);
-        return snapshot;
-      },
-      appendSessionTranscript: async (workspaceId, sessionId, input) => {
-        const snapshot = await client.appendSessionTranscript(workspaceId, sessionId, input);
-        rememberConversationScopeFromTranscript(workspaceId, input.directory ?? undefined, snapshot);
-        hydrateTranscriptSnapshot(snapshot, { allowShorter: true });
         return snapshot;
       },
     };
@@ -1720,7 +1663,6 @@ export default function App() {
     registerPendingSidebarSession: (pendingSession) => registerPendingSidebarSession(pendingSession),
     removeSessionFromWorkspaceSidebar: (workspaceId, sessionId) => removeSessionFromWorkspaceSidebar(workspaceId, sessionId),
     reportError,
-    scheduleSubmittedRunTranscriptCatchup: (target) => submittedRunTranscriptCatchup.schedule(target),
     resolveConversationAbortScope,
     resolveRuntimeSandboxStateForTarget: (target) =>
       resolveRuntimeSandboxStateForTarget(target as SendRuntimePreflightTargetWorkspace | null),
@@ -1801,7 +1743,6 @@ export default function App() {
     workspaceProjectDir: () => workspaceProjectDir(),
     resolveSelectedSessionBrowseScope,
     submitConversationFromVesloWriteApi,
-    scheduleSubmittedRunTranscriptCatchup: (target) => submittedRunTranscriptCatchup.schedule(target),
     messageFromUnknownError: (error) => messageFromUnknownError(error),
     safeStringify,
     renameSession,
@@ -2545,6 +2486,23 @@ export default function App() {
   });
   lateWorkspaceStore.bind(workspaceStore);
 
+  const activeLocalSkillInventoryContext = createMemo(() => {
+    const workspaceId = workspaceStore.activeWorkspaceId().trim();
+    const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+    const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
+    return workspaceType === "local" && workspaceId && workspaceRoot
+      ? `${workspaceId}\u0000${workspaceRoot}`
+      : null;
+  });
+  createEffect(
+    on(activeLocalSkillInventoryContext, (context) => {
+      if (!context) return;
+      void refreshSkillInventory().catch((error: unknown) =>
+        reportError(error, "skills.refreshInventory.bootstrap"),
+      );
+    }),
+  );
+
   let e2eFolderAccessPromptRoot: E2EFolderAccessPromptRoot | null = null;
   let e2eFolderAccessPromptHookCancelled = false;
 
@@ -3192,47 +3150,6 @@ export default function App() {
   createEffect(() => {
     void developerMode();
     setDevtoolsWorkspaceId(null);
-  });
-
-  createEffect(() => {
-    const client = vesloServerClient();
-    const workspaceId = vesloServerWorkspaceId();
-    if (!client || !workspaceId) {
-      setVesloAuditEntries([]);
-      setVesloAuditStatus("idle");
-      setVesloAuditError(null);
-      return;
-    }
-
-    let active = true;
-    let busy = false;
-
-    const run = async () => {
-      if (busy) return;
-      busy = true;
-      setVesloAuditStatus("loading");
-      setVesloAuditError(null);
-      try {
-        const result = await client.listAudit(workspaceId, 50);
-        if (!active) return;
-        setVesloAuditEntries(Array.isArray(result.items) ? result.items : []);
-        setVesloAuditStatus("idle");
-      } catch (error) {
-        if (!active) return;
-        setVesloAuditEntries([]);
-        setVesloAuditStatus("error");
-        setVesloAuditError(error instanceof Error ? error.message : "Failed to load audit log.");
-      } finally {
-        busy = false;
-      }
-    };
-
-    run();
-    const interval = window.setInterval(run, 15_000);
-    onCleanup(() => {
-      active = false;
-      window.clearInterval(interval);
-    });
   });
 
   createEffect(() => {
@@ -4646,9 +4563,6 @@ export default function App() {
     vesloServerHostInfo,
     devtoolsCapabilities,
     resolvedDevtoolsWorkspaceId,
-    vesloAuditEntries,
-    vesloAuditStatus,
-    vesloAuditError,
     opencodeConnectStatus,
     orchestratorStatusState,
     opencodeRouterInfoState,
@@ -4919,7 +4833,10 @@ export default function App() {
           <OnboardingView {...appViewProps.onboardingProps()} />
         </Match>
         <Match when={currentView() === "session"}>
-          <SessionView {...appViewProps.sessionProps()} onOpenFeedback={feedbackWorkflow.openFeedbackModal} />
+          <SessionView
+            {...appViewProps.sessionProps()}
+            onOpenFeedback={feedbackWorkflow.openFeedbackModal}
+          />
         </Match>
         <Match when={true}>
           <DashboardView

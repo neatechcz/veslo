@@ -21,6 +21,7 @@ type OpenCodeSessionCreateInput = {
   workspace: WorkspaceInfo;
   directory: string | null;
   title?: string | null;
+  requestedOpenCodeSessionId?: string | null;
   sendTraceId?: string | null;
 };
 
@@ -59,6 +60,10 @@ export type ConversationTranscriptResult = {
   diagnostic?: ConversationReadDiagnostic;
 };
 
+export type ConversationCanonicalTranscriptResult = ConversationTranscriptResult & {
+  complete: boolean;
+};
+
 export type ConversationService = {
   listConversations(input: {
     workspace: WorkspaceInfo;
@@ -85,6 +90,20 @@ export type ConversationService = {
     directory: string | null;
   }): Promise<ConversationTranscriptResult>;
 
+  readCanonicalTranscript(input: {
+    workspace: WorkspaceInfo;
+    sessionId: string;
+    directory: string | null;
+  }): Promise<ConversationCanonicalTranscriptResult>;
+
+  persistCanonicalTranscript(input: {
+    workspace: WorkspaceInfo;
+    directory: string | null;
+    opencodeSessionId: string;
+    messages: unknown[];
+    partsByMessageId: Record<string, unknown[]>;
+  }): Promise<void>;
+
   appendTranscript(input: {
     workspace: WorkspaceInfo;
     sessionId: string;
@@ -100,6 +119,7 @@ export type ConversationService = {
     workspace: WorkspaceInfo;
     directory: string | null;
     title?: string | null;
+    requestedOpenCodeSessionId?: string | null;
     sendTraceId?: string | null;
   }): Promise<ConversationCreateResult>;
 
@@ -598,6 +618,64 @@ export function createConversationService(options: {
       };
     },
 
+    async readCanonicalTranscript(input) {
+      const binding = await resolveOpenCodeSessionForRead({
+        workspaceId: input.workspace.id,
+        workspace: input.workspace,
+        directory: input.directory,
+        sessionOrConversationId: input.sessionId,
+      });
+      const requestedSessionId = normalizeText(input.sessionId);
+      const directory = normalizeText(input.directory);
+      if (!binding && isVesloConversationId(requestedSessionId)) {
+        throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+      }
+      if (!binding && !directory) {
+        throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+      }
+
+      const opencodeSessionId = binding?.engineSessionId ?? requestedSessionId;
+      const snapshot = await options.readStore.getTranscript({
+        workspaceId: input.workspace.id,
+        sessionId: opencodeSessionId,
+        limit: Number.MAX_SAFE_INTEGER,
+        readMode: "complete",
+        directory: input.directory,
+        workspace: input.workspace,
+      });
+      return {
+        workspaceId: input.workspace.id,
+        sessionId: opencodeSessionId,
+        ...(binding?.conversationId ? { conversationId: binding.conversationId } : {}),
+        opencodeSessionId,
+        limit: snapshot.limit,
+        messages: snapshot.messages,
+        partsByMessageId: snapshot.partsByMessageId,
+        fetchedAt: snapshot.fetchedAt,
+        source: snapshot.source,
+        ...(snapshot.diagnostic ? { diagnostic: snapshot.diagnostic } : {}),
+        complete: snapshot.source === "sqlite" && snapshot.complete === true,
+      };
+    },
+
+    async persistCanonicalTranscript(input) {
+      if (!options.transcriptStore) {
+        throw new ApiError(503, "transcript_store_unavailable", "Conversation transcript store is unavailable");
+      }
+      const workspaceId = normalizeText(input.workspace.id);
+      const directory = normalizeText(input.directory);
+      const engineSessionId = normalizeText(input.opencodeSessionId);
+      if (!workspaceId || !directory || !engineSessionId) {
+        throw new ApiError(400, "invalid_payload", "workspace, directory, and opencodeSessionId are required");
+      }
+      await options.transcriptStore.reconcileCanonicalTranscript({
+        workspaceId,
+        directory,
+        engineSessionId,
+        messages: snapshotToTranscriptMessages(input.messages, input.partsByMessageId),
+      });
+    },
+
     async appendTranscript(input) {
       if (!options.transcriptStore) {
         throw new ApiError(503, "transcript_store_unavailable", "Conversation transcript store is unavailable");
@@ -666,6 +744,7 @@ export function createConversationService(options: {
         workspace: input.workspace,
         directory,
         title: input.title,
+        requestedOpenCodeSessionId: input.requestedOpenCodeSessionId ?? null,
         sendTraceId: input.sendTraceId ?? null,
       });
       const record = isRecord(created) ? created : {};

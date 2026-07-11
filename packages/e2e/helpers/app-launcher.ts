@@ -94,8 +94,15 @@ type ResolvePilotSocketPathOptions = ResolvePilotRuntimeDirOptions & {
   runtimeDir?: string;
 };
 
-type StartAppOptions = {
+export type StartAppProfileContext = {
+  profileRoot: string | null;
+  opencodeHome: string | null;
+  env: NodeJS.ProcessEnv;
+};
+
+export type StartAppOptions = {
   preserveIsolatedProfile?: boolean;
+  beforeLaunch?: (context: StartAppProfileContext) => Promise<void> | void;
 };
 
 export function resolvePilotIdentifier(env: Record<string, string | undefined> = process.env): string {
@@ -542,6 +549,18 @@ function seedSkillEnableInventoryFixture(input: {
 
 export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv): void {
   const workspacePath = join(root, 'workspaces', 'visual-workspace');
+  const sessionQueueFixtureBaseUrl = env.E2E_SESSION_QUEUE_FIXTURE_BASE_URL?.trim() || null;
+  const sessionQueueVesloServerUrl = env.E2E_SESSION_QUEUE_VESLO_SERVER_URL?.trim().replace(/\/+$/, '') || null;
+  const sessionQueueVesloServerToken = env.E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN?.trim() || null;
+  const sessionQueueVesloWorkspaceId = env.E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID?.trim() || null;
+  const sessionQueueUsesVesloWorkspace = Boolean(
+    sessionQueueFixtureBaseUrl &&
+    sessionQueueVesloServerUrl &&
+    sessionQueueVesloServerToken &&
+    sessionQueueVesloWorkspaceId,
+  );
+  const sessionRuntimeRequiresExplicitActivation =
+    sessionQueueUsesVesloWorkspace && env.E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION?.trim() === '1';
   mkdirSync(workspacePath, { recursive: true });
   const opencodePath = join(workspacePath, '.opencode');
   mkdirSync(opencodePath, { recursive: true });
@@ -564,12 +583,39 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
     name: 'Visual Workspace',
     path: workspacePath,
     preset: 'starter',
-    workspaceType: 'local',
-    remoteType: 'opencode',
-    baseUrl: null,
-    directory: null,
+    workspaceType: sessionQueueUsesVesloWorkspace ? 'remote' : 'local',
+    remoteType: sessionQueueUsesVesloWorkspace ? 'veslo' : 'opencode',
+    baseUrl: sessionQueueUsesVesloWorkspace
+      ? `${sessionQueueVesloServerUrl}/w/${encodeURIComponent(sessionQueueVesloWorkspaceId!)}/opencode`
+      : null,
+    directory: sessionQueueUsesVesloWorkspace ? workspacePath : null,
     displayName: 'Visual Workspace',
+    ...(sessionQueueUsesVesloWorkspace
+      ? {
+          vesloHostUrl: sessionQueueVesloServerUrl,
+          vesloToken: sessionQueueVesloServerToken,
+          vesloWorkspaceId: sessionQueueVesloWorkspaceId,
+          vesloWorkspaceName: 'Visual Workspace',
+        }
+      : {}),
   }];
+
+  // Remote workspaces deliberately lazy-boot. These lifecycle scenarios must
+  // exercise the same user click that connects a pre-selected workspace, so
+  // start them on a harmless remote entry instead of pre-activating the target.
+  if (sessionRuntimeRequiresExplicitActivation) {
+    workspaces.push({
+      id: 'e2e-session-runtime-decoy',
+      name: 'E2E activation decoy',
+      path: workspacePath,
+      preset: 'remote',
+      workspaceType: 'remote',
+      remoteType: 'opencode',
+      baseUrl: 'http://127.0.0.1:9/e2e-activation-decoy',
+      directory: workspacePath,
+      displayName: 'E2E activation decoy',
+    });
+  }
 
   if (shouldSeedAutomationsSecondaryWorkspace(env)) {
     mkdirSync(secondaryAutomationWorkspacePath, { recursive: true });
@@ -588,7 +634,9 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
 
   const workspaceState = {
     version: 4,
-    activeId: 'e2e-visual-workspace',
+    activeId: sessionRuntimeRequiresExplicitActivation
+      ? 'e2e-session-runtime-decoy'
+      : 'e2e-visual-workspace',
     workspaces,
   };
 
@@ -733,8 +781,10 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
   const tmpDir = join(resolveDesktopRoot(), '..', 'e2e', '.tmp-opencode-home');
   const vesloServerPort = await resolveVesloServerPortForLaunch();
   let env: NodeJS.ProcessEnv;
+  let profileRoot: string | null = null;
 
   if (CUSTOM_OPENCODE_HOME) {
+    profileRoot = CUSTOM_OPENCODE_HOME;
     const snapshotPath = prepareDesktopAuthSeed(CUSTOM_OPENCODE_HOME, seedEnv, {
       preserveExisting: true,
     });
@@ -749,6 +799,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     }
     console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
   } else if (!REAL_PROFILE_ENV) {
+    profileRoot = ISOLATED_PROFILE_ROOT;
     const preserveIsolatedProfile =
       options.preserveIsolatedProfile === true ||
       process.env.E2E_PRESERVE_ISOLATED_PROFILE?.trim() === '1';
@@ -788,6 +839,12 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     console.log('[e2e] Using the app\'s existing profile and OPENCODE_HOME.');
   }
   console.log(`[e2e] Veslo server port: ${vesloServerPort}`);
+
+  await options.beforeLaunch?.({
+    profileRoot,
+    opencodeHome: env.OPENCODE_HOME?.trim() || null,
+    env,
+  });
 
   const appLogRoot = env.OPENCODE_HOME
     ? join(env.OPENCODE_HOME, '.veslo', 'e2e-logs')

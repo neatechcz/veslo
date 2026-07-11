@@ -569,6 +569,9 @@ child.once("error", (error) => {
 
 child.once("exit", (code, signal) => {
   exiting = true;
+  console.info(
+    `[veslo:dev-runtime] tauri-child-exit timestamp=${new Date().toISOString()} code=${code ?? "null"} signal=${signal ?? "none"}`,
+  );
   if (signal) {
     process.exit(0);
   }

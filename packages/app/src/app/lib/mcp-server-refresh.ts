@@ -79,8 +79,8 @@ export function createMcpServersRefresher(options: McpServersRefresherOptions) {
     });
     const entriesChanged = refreshFingerprint !== lastAppliedEntriesFingerprint;
     lastAppliedEntriesFingerprint = refreshFingerprint;
-    options.setMcpServers(entries);
     if (entriesChanged) {
+      options.setMcpServers(entries);
       options.setMcpLastUpdatedAt(Date.now());
     } else {
       recordPerfLog(options.developerMode(), "workspace.mcp", "refresh-entries-unchanged", {

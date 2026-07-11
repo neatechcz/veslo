@@ -103,7 +103,14 @@ function makeController(options: {
   recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
   isWorkspaceRuntimeReady?: (workspaceId?: string | null) => boolean;
   onReconnectState?: (state: ReconnectState) => void;
+  onReconnectNotice?: (notice: "reconnecting" | "reconnected") => void;
   sessionErrorTurns?: Array<{ sessionID: string; text: string }>;
+  errors?: Array<string | null>;
+  lifecycleObservation?: (
+    sessionID: string,
+    workspaceId: string | null | undefined,
+    type: "session.idle" | "session.error",
+  ) => boolean;
 } = {}) {
   const [store, setStore] = makeStore();
   const workspaceSessionIds = options.workspaceSessionIds ?? new Set<string>();
@@ -128,9 +135,12 @@ function makeController(options: {
     activeWorkspaceRoot: () => "/repo",
     selectedSessionId: () => options.selectedSessionId ?? "sess-a",
     developerMode: () => options.developerMode ?? false,
-    setError: () => {},
+    setError: (error) => {
+      options.errors?.push(error);
+    },
     setSseConnected: options.setSseConnected ?? (() => {}),
     onReconnectState: options.onReconnectState,
+    onReconnectNotice: options.onReconnectNotice,
     onAssistantResponseObserved: options.observer,
     sessionDebugEnabled: () => options.developerMode ?? false,
     sessionWarn: () => {},
@@ -152,6 +162,7 @@ function makeController(options: {
     appendSessionErrorTurn: (sessionID, text) => {
       options.sessionErrorTurns?.push({ sessionID, text });
     },
+    onSessionLifecycleObservation: options.lifecycleObservation,
     setCommandDisplay: () => {},
     recordSyntheticContinueDiagnostic: () => {},
     maybeMarkReloadRequired: () => {},
@@ -161,12 +172,6 @@ function makeController(options: {
     resolveSessionIdForMessage: () => null,
     recordPendingTranscriptMessageDeletion: () => {},
     recordPendingTranscriptPartDeletion: () => {},
-    scheduleTranscriptIngestion: (sessionID, sourceWsId, reason, delayMs) => {
-      transcriptIngest.push({ sessionID, sourceWsId, reason, delayMs });
-    },
-    scheduleBackgroundTranscriptIngestion: (sessionID, workspaceId, reason, delayMs) => {
-      backgroundIngest.push({ sessionID, workspaceId, reason, delayMs });
-    },
     messageLimitBySession: () => ({}),
     setMessagesForSession: options.setMessagesForSession ?? (() => {}),
     setMessageLimitBySession: () => {},
@@ -558,6 +563,128 @@ test(
 );
 
 test(
+  "Chrome MCP tool trace records only state metadata and suppresses duplicate updates",
+  withSendWorkflowTraceWindow(async (traceWindow) => {
+    await createRoot(async (dispose) => {
+      try {
+        const { controller } = makeController({
+          workspaceSessionIds: new Set(["sess-a"]),
+        });
+
+        await controller.applyEvent(
+          {
+            type: "message.updated",
+            properties: { info: makeMessage("sess-a", "msg-assistant", "assistant") },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+        const toolEvent = {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "part-chrome",
+              sessionID: "sess-a",
+              messageID: "msg-assistant",
+              type: "tool",
+              tool: "chrome-devtools_new_page",
+              state: { status: "running", input: { url: "https://private.example" } },
+            },
+          },
+        } as OpencodeEvent;
+
+        await controller.applyEvent(toolEvent, "ws-a");
+        await controller.applyEvent(toolEvent, "ws-a");
+
+        const chromeToolTrace = (traceWindow.__vesloSendWorkflowTrace ?? []).filter(
+          (entry) => entry.event === "session-sse:chrome-mcp-tool-updated",
+        );
+        assert.equal(chromeToolTrace.length, 1);
+        const [{
+          schema: _schema,
+          id: _id,
+          at: _at,
+          ts: _ts,
+          perfMs: _perfMs,
+          observedDurationMs,
+          ...tracePayload
+        }] = chromeToolTrace;
+        assert.equal(typeof observedDurationMs, "number");
+        assert.deepEqual(tracePayload, {
+          source: "session-sse",
+          event: "session-sse:chrome-mcp-tool-updated",
+          workspaceId: "ws-a",
+          sessionID: "sess-a",
+          messageID: "msg-assistant",
+          partID: "part-chrome",
+          tool: "chrome-devtools_new_page",
+          toolCallId: "part-chrome",
+          status: "running",
+          terminal: false,
+          hasOutput: false,
+          hasError: false,
+          errorKind: "none",
+          errorCode: null,
+          detailLength: 0,
+          errorFingerprint: null,
+        });
+      } finally {
+        dispose();
+      }
+    });
+  }),
+);
+
+test(
+  "Chrome MCP error traces classify failures without leaking tool detail",
+  withSendWorkflowTraceWindow(async (traceWindow) => {
+    await createRoot(async (dispose) => {
+      try {
+        const { controller } = makeController({
+          workspaceSessionIds: new Set(["sess-a"]),
+        });
+        await controller.applyEvent(
+          {
+            type: "message.updated",
+            properties: { info: makeMessage("sess-a", "msg-assistant", "assistant") },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+        await controller.applyEvent(
+          {
+            type: "message.part.updated",
+            properties: {
+              part: {
+                id: "part-chrome-error",
+                sessionID: "sess-a",
+                messageID: "msg-assistant",
+                type: "tool",
+                tool: "chrome-devtools_navigate_page",
+                state: {
+                  status: "error",
+                  error: { code: "ECONNREFUSED", message: "connect ECONNREFUSED https://private.example" },
+                },
+              },
+            },
+          } as OpencodeEvent,
+          "ws-a",
+        );
+
+        const trace = (traceWindow.__vesloSendWorkflowTrace ?? []).find(
+          (entry) => entry.event === "session-sse:chrome-mcp-tool-updated" && entry.partID === "part-chrome-error",
+        );
+        assert.ok(trace);
+        assert.equal(trace.errorKind, "connection");
+        assert.equal(trace.errorCode, "ECONNREFUSED");
+        assert.equal(typeof trace.errorFingerprint, "string");
+        assert.equal(JSON.stringify(trace).includes("private.example"), false);
+      } finally {
+        dispose();
+      }
+    });
+  }),
+);
+
+test(
   "text part trace does not infer assistant role from a placeholder message",
   withSendWorkflowTraceWindow(async (traceWindow) => {
     await createRoot(async (dispose) => {
@@ -593,7 +720,7 @@ test(
   }),
 );
 
-test("active session idle schedules local and engine transcript ingestion immediately", async () => {
+test("active session idle schedules one canonical transcript ingestion immediately", async () => {
   await createRoot(async (dispose) => {
     try {
       const transcriptIngest: Array<Record<string, unknown>> = [];
@@ -612,14 +739,7 @@ test("active session idle schedules local and engine transcript ingestion immedi
         "ws-a",
       );
 
-      assert.deepEqual(transcriptIngest, [
-        {
-          sessionID: "sess-a",
-          sourceWsId: "ws-a",
-          reason: "session.idle",
-          delayMs: 0,
-        },
-      ]);
+      assert.deepEqual(transcriptIngest, []);
       assert.deepEqual(backgroundIngest, [
         {
           sessionID: "sess-a",
@@ -634,11 +754,10 @@ test("active session idle schedules local and engine transcript ingestion immedi
   });
 });
 
-test("scoped session idle does not refresh through the active fallback client", async () => {
+test("scoped session idle does not read through the active fallback client", async () => {
   await createRoot(async (dispose) => {
     try {
       const activeClientGets: string[] = [];
-      const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
       const routing = {
         activeWorkspaceId: () => "ws-a",
         active: () => null,
@@ -660,7 +779,6 @@ test("scoped session idle does not refresh through the active fallback client", 
         workspaceSessionIds: new Set(["sess-a"]),
         routing,
         client: () => activeClient,
-        statusTraces,
       });
 
       await controller.applyEvent(
@@ -672,10 +790,6 @@ test("scoped session idle does not refresh through the active fallback client", 
       );
 
       assert.deepEqual(activeClientGets, []);
-      assert.equal(
-        statusTraces.some((trace) => trace.event === "sse-session-idle-live-refresh-skipped"),
-        true,
-      );
     } finally {
       dispose();
     }
@@ -718,6 +832,39 @@ test("event stream socket close reconnects without route release when scoped run
       assert.deepEqual(released, []);
       assert.deepEqual(recovered, []);
       assert.equal(reconnectStates.some((state) => state.status === "reconnecting"), true);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("known admitted run uses durable lifecycle arbitration for SSE errors", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const observed: Array<{ sessionID: string; workspaceId: string | null | undefined; type: string }> = [];
+      const sessionErrorTurns: Array<{ sessionID: string; text: string }> = [];
+      const errors: Array<string | null> = [];
+      const { controller } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        sessionErrorTurns,
+        errors,
+        lifecycleObservation: (sessionID, workspaceId, type) => {
+          observed.push({ sessionID, workspaceId, type });
+          return true;
+        },
+      });
+
+      await controller.applyEvent({
+        type: "session.error",
+        properties: {
+          sessionID: "sess-a",
+          error: { name: "ProviderError", message: "transient engine observation" },
+        },
+      } as OpencodeEvent, "ws-a");
+
+      assert.deepEqual(observed, [{ sessionID: "sess-a", workspaceId: "ws-a", type: "session.error" }]);
+      assert.deepEqual(sessionErrorTurns, []);
+      assert.deepEqual(errors, []);
     } finally {
       dispose();
     }
@@ -1091,6 +1238,8 @@ test("reconnect catch-up preserves running status when status refresh fails", as
   let reconnectCallback: (() => void) | null = null;
   const statusRefreshes: string[] = [];
   const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const reconnectStates: ReconnectState[] = [];
+  const reconnectNotices: Array<"reconnecting" | "reconnected"> = [];
   let subscribeCount = 0;
 
   globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
@@ -1103,6 +1252,8 @@ test("reconnect catch-up preserves running status when status refresh fails", as
     const { controller, setStore, store, busyCalls } = makeController({
       activeWorkspaceId: "ws-a",
       statusTraces,
+      onReconnectState: (state) => reconnectStates.push(state),
+      onReconnectNotice: (notice) => reconnectNotices.push(notice),
     });
     setStore("sessionStatus", "ws-a\0sess-a", "running");
 
@@ -1144,6 +1295,79 @@ test("reconnect catch-up preserves running status when status refresh fails", as
       statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-status-failed"),
       true,
     );
+    assert.equal(reconnectStates.at(-1)?.status, "degraded");
+    assert.equal(reconnectStates.at(-1)?.messagesMayBeDelayed, true);
+    assert.equal(reconnectStates.at(-1)?.lastError, "status unavailable");
+    assert.equal(reconnectNotices.includes("reconnected"), false);
+
+    cleanup();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test("reconnect catch-up stays degraded when transcript refresh fails", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  let reconnectCallback: (() => void) | null = null;
+  const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const reconnectStates: ReconnectState[] = [];
+  const reconnectNotices: Array<"reconnecting" | "reconnected"> = [];
+  let subscribeCount = 0;
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void) => {
+    reconnectCallback = () => callback();
+    return 1 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+
+  try {
+    const { controller, setStore } = makeController({
+      activeWorkspaceId: "ws-a",
+      statusTraces,
+      onReconnectState: (state) => reconnectStates.push(state),
+      onReconnectNotice: (notice) => reconnectNotices.push(notice),
+    });
+    setStore("sessionStatus", "ws-a\0sess-a", "running");
+
+    const client = {
+      ...makeEventClient(async () => {
+        subscribeCount += 1;
+        if (subscribeCount === 1) {
+          return { stream: (async function* () {})() };
+        }
+        return {
+          stream: (async function* () {
+            await new Promise<void>(() => {});
+          })(),
+        };
+      }),
+      session: {
+        get: async ({ sessionID }: { sessionID: string }) => ok({ id: sessionID, status: "running" }),
+        messages: async () => {
+          throw new Error("transcript refresh failed");
+        },
+        todo: async () => ok([]),
+      },
+    } as any;
+
+    const cleanup = controller.setupSseStream("ws-a", client);
+    await tick(4);
+    const runReconnect = reconnectCallback as (() => void) | null;
+    assert.ok(runReconnect);
+
+    runReconnect();
+    await tick(24);
+
+    assert.equal(
+      statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-messages-failed"),
+      true,
+    );
+    assert.equal(reconnectStates.at(-1)?.status, "degraded");
+    assert.equal(reconnectStates.at(-1)?.messagesMayBeDelayed, true);
+    assert.equal(reconnectStates.at(-1)?.lastError, "transcript refresh failed");
+    assert.equal(reconnectNotices.includes("reconnected"), false);
 
     cleanup();
   } finally {

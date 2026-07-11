@@ -18,6 +18,22 @@ export type PendingSessionInstance = {
 
 export type PendingSubmittedDraftBySessionKey = Record<string, PendingSubmittedDraft>;
 
+export type PendingSubmittedDraftSlotWriteResult =
+  | {
+      kind: "stored";
+      draftsBySessionKey: PendingSubmittedDraftBySessionKey;
+      pending: PendingSubmittedDraft;
+    }
+  | {
+      kind: "occupied";
+      draftsBySessionKey: PendingSubmittedDraftBySessionKey;
+      pending: PendingSubmittedDraft;
+    }
+  | {
+      kind: "invalid-session-key";
+      draftsBySessionKey: PendingSubmittedDraftBySessionKey;
+    };
+
 const sanitizePendingSessionInstanceSuffix = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "");
 
 const createDefaultPendingSessionInstanceSuffix = () =>
@@ -89,14 +105,31 @@ export function selectPendingSubmittedDraft(
   return key ? current[key] ?? null : null;
 }
 
+export function trySetPendingSubmittedDraftForKey(
+  current: PendingSubmittedDraftBySessionKey,
+  sessionKey: string,
+  draft: PendingSubmittedDraft,
+): PendingSubmittedDraftSlotWriteResult {
+  const key = sessionKey.trim();
+  if (!key) return { kind: "invalid-session-key", draftsBySessionKey: current };
+  const existing = current[key];
+  if (existing && existing.id !== draft.id) {
+    return { kind: "occupied", draftsBySessionKey: current, pending: existing };
+  }
+  const pending = { ...draft, sessionKey: key };
+  return {
+    kind: "stored",
+    draftsBySessionKey: { ...current, [key]: pending },
+    pending,
+  };
+}
+
 export function setPendingSubmittedDraftForKey(
   current: PendingSubmittedDraftBySessionKey,
   sessionKey: string,
   draft: PendingSubmittedDraft,
 ): PendingSubmittedDraftBySessionKey {
-  const key = sessionKey.trim();
-  if (!key) return current;
-  return { ...current, [key]: { ...draft, sessionKey: key } };
+  return trySetPendingSubmittedDraftForKey(current, sessionKey, draft).draftsBySessionKey;
 }
 
 export function removePendingSubmittedDraftForKey(
@@ -128,6 +161,8 @@ export function materializePendingSessionInstance(
 
   const pending = current[pendingKey];
   if (!pending) return current;
+  const existing = current[realKey];
+  if (existing && existing.id !== pending.id) return current;
 
   const { [pendingKey]: _removed, ...rest } = current;
   return {

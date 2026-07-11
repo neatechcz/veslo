@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { availableChatWidthForLayout, reconcileSidebarLayoutForRootWidth } from "../../pages/session-layout-width.js";
+import {
+  availableChatWidthForLayout,
+  reconcileSidebarLayoutForRootWidth,
+  responsiveLayoutRootWidth,
+} from "../../pages/session-layout-width.js";
 import {
   applyAvailableWidth,
   createInitialSidebarLayoutState,
@@ -19,6 +23,12 @@ test("narrow mode keeps using docked preference for width decisions to avoid wid
   };
 
   assert.equal(availableChatWidthForLayout(500, state), 0);
+});
+
+test("viewport width wins when flex overflow prevents the layout root from shrinking", () => {
+  assert.equal(responsiveLayoutRootWidth(1120, 390), 390);
+  assert.equal(responsiveLayoutRootWidth(768, 1440), 768);
+  assert.equal(responsiveLayoutRootWidth(0, 390), 390);
 });
 
 test("wide mode uses currently docked sidebars for width decisions", () => {

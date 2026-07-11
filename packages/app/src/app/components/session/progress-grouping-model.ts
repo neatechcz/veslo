@@ -82,6 +82,12 @@ function renderablePartsForProgressMessage(
   });
 }
 
+function isRenderableAttachment(part: Part) {
+  if (part.type !== "file") return false;
+  const url = (part as { url?: unknown }).url;
+  return typeof url === "string" && !url.startsWith("file://");
+}
+
 function messageBlock(
   message: MessageWithParts,
   groups: MessageGroup[],
@@ -112,7 +118,11 @@ function messageBlockFromMessage(
   if (!renderableParts.length) return null;
   const messageId = messageIdFor(message, `idx:${index}`);
   const groups = groupMessageParts(renderableParts, messageId, { showThinking: options.showThinking });
-  if (!groups.length) return null;
+  // A safe attachment intentionally does not become a text group, but the
+  // message row still owns its visual attachment chip. Keep attachment-only
+  // user messages in the render model instead of dropping canonical history.
+  const hasRenderableAttachment = renderableParts.some(isRenderableAttachment);
+  if (!groups.length && !hasRenderableAttachment) return null;
   return messageBlock(message, groups, messageId, (message.info as { role?: unknown }).role === "user");
 }
 
