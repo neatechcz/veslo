@@ -1000,7 +1000,7 @@ export default function SkillsView(props: SkillsViewProps) {
         disabled={disabled()}
         class={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
           checked()
-            ? "border-[rgba(var(--dls-accent-rgb),0.45)] bg-[rgba(var(--dls-accent-rgb),0.28)]"
+            ? "border-[var(--dls-accent-border)] bg-dls-accent"
             : "border-dls-border bg-dls-hover"
         }`}
         onClick={(event) => {
@@ -2039,8 +2039,10 @@ export default function SkillsView(props: SkillsViewProps) {
         <div class="flex rounded-lg border border-dls-border bg-dls-surface p-0.5">
           <button
             type="button"
-            class={`inline-flex h-7 items-center gap-1 rounded-md px-2 type-ui-xs ${
-              inventoryViewMode() === "cards" ? "bg-dls-active text-dls-text" : "text-dls-secondary hover:text-dls-text"
+            class={`inline-flex h-7 items-center gap-1 rounded-md border px-2 type-ui-xs ${
+              inventoryViewMode() === "cards"
+                ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
             }`}
             aria-pressed={inventoryViewMode() === "cards"}
             onClick={() => setInventoryViewMode("cards")}
@@ -2050,8 +2052,10 @@ export default function SkillsView(props: SkillsViewProps) {
           </button>
           <button
             type="button"
-            class={`inline-flex h-7 items-center gap-1 rounded-md px-2 type-ui-xs ${
-              inventoryViewMode() === "table" ? "bg-dls-active text-dls-text" : "text-dls-secondary hover:text-dls-text"
+            class={`inline-flex h-7 items-center gap-1 rounded-md border px-2 type-ui-xs ${
+              inventoryViewMode() === "table"
+                ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text"
+                : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
             }`}
             aria-pressed={inventoryViewMode() === "table"}
             onClick={() => setInventoryViewMode("table")}
@@ -2670,7 +2674,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   {translate("common.cancel")}
                 </Button>
                 <Button
-                  variant="secondary"
+                  variant="outline"
                   onClick={confirmSkillImport}
                   disabled={skillImportBusy() || selectedImportableSkillIds().length === 0}
                 >
@@ -2783,7 +2787,7 @@ export default function SkillsView(props: SkillsViewProps) {
                     {translate("common.cancel")}
                   </Button>
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     onClick={confirmHubInstallTarget}
                     disabled={props.busy || Boolean(installingHubSkill()) || !installTargetCanSubmit()}
                   >
@@ -2906,7 +2910,7 @@ export default function SkillsView(props: SkillsViewProps) {
                     {translate("common.cancel")}
                   </Button>
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     data-testid="skill-install-workspace-confirm"
                     onClick={() => void confirmWorkspaceInstallTarget()}
                     disabled={workspaceInstallBusy() || !workspaceInstallCanSubmit()}
@@ -2931,10 +2935,10 @@ export default function SkillsView(props: SkillsViewProps) {
               <div class="flex items-center gap-2">
                 <button
                   type="button"
-                  class={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                  class={`rounded-md border border-transparent px-3 py-1.5 text-xs font-medium transition-colors ${
                     selectedDirty() && !props.busy
-                      ? "bg-dls-text text-dls-surface hover:opacity-90"
-                      : "bg-dls-active text-dls-secondary"
+                      ? "bg-dls-accent text-[#001932] hover:bg-[var(--dls-accent-hover)]"
+                      : "bg-dls-accent text-[#001932] opacity-50"
                   }`}
                   disabled={!selectedDirty() || props.busy}
                   onClick={() => void saveSelectedSkill()}
@@ -2943,7 +2947,7 @@ export default function SkillsView(props: SkillsViewProps) {
                 </button>
                 <button
                   type="button"
-                  class="px-3 py-1.5 text-xs font-medium rounded-lg bg-dls-hover text-dls-text hover:bg-dls-active transition-colors"
+                  class="rounded-md border border-transparent bg-transparent px-3 py-1.5 text-xs font-medium text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                   onClick={closeSkill}
                 >
                   {translate("skills.close")}
@@ -3233,7 +3237,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         when={activeWorkspaceConflict}
                         fallback={
                           <Button
-                            variant="secondary"
+                            variant="outline"
                             onClick={() => void installFromPreview(globalOnlyConflict ? "keep-both" : "overwrite")}
                             disabled={installLinkBusy()}
                           >
@@ -3252,7 +3256,7 @@ export default function SkillsView(props: SkillsViewProps) {
                             {installLinkBusy() ? translate("skills.installing_skill_creator").replace("...", "…") : translate("skills.keep_both")}
                           </Button>
                           <Button
-                            variant="secondary"
+                            variant="outline"
                             onClick={() => void installFromPreview("overwrite")}
                             disabled={installLinkBusy()}
                           >

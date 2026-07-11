@@ -36,8 +36,9 @@ test("sidebar dashboard nav collapses from prefs and exposes a divider toggle", 
 
 test("sidebar dashboard nav uses the same product typography tokens as sidebar action buttons", () => {
   assert.match(source, /font-product/);
-  assert.match(source, /text-\[12px\]/);
+  assert.match(source, /text-\[12\.5px\]/);
   assert.match(source, /font-medium/);
+  assert.match(source, /w-full h-7 flex items-center gap-1\.5 px-2 rounded-md/);
 });
 
 test("active sidebar dashboard nav uses a cyan tint and icon with ink text", () => {

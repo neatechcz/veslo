@@ -87,7 +87,7 @@ export default function ShareWorkspaceModal(props: {
           <div class="px-6 pt-6 pb-4 relative border-b border-transparent shrink-0">
             <button
               onClick={props.onClose}
-              class="absolute top-6 right-6 p-1.5 text-gray-9 hover:text-gray-12 hover:bg-gray-4 rounded-lg transition-all"
+              class="absolute right-6 top-6 rounded-md p-1.5 text-[var(--dls-button-ghost)] transition-all hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
               aria-label={__vesloT("common.close", __vesloCurrentLocale())}
               title={__vesloT("common.close", __vesloCurrentLocale())}
             >
@@ -249,7 +249,7 @@ export default function ShareWorkspaceModal(props: {
                       <button
                         onClick={() => props.onShareWorkspaceProfile?.()}
                         disabled={Boolean(props.shareWorkspaceProfileDisabledReason) || !props.onShareWorkspaceProfile || props.shareWorkspaceProfileBusy}
-                        class="w-full py-2.5 bg-gray-12 hover:bg-gray-11 text-gray-1 text-[13px] font-bold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50"
+                        class="w-full rounded-md border border-transparent bg-dls-accent py-2.5 text-[13px] font-medium text-[#001932] transition-all hover:bg-[var(--dls-accent-hover)] active:scale-[0.98] disabled:opacity-50"
                       >
                         {props.shareWorkspaceProfileBusy ? __vesloT("share.publishing", __vesloCurrentLocale()) : __vesloT("share.create_public_link", __vesloCurrentLocale())}
                       </button>
@@ -264,7 +264,7 @@ export default function ShareWorkspaceModal(props: {
                       />
                       <button
                         onClick={() => handleCopy(props.shareWorkspaceProfileUrl ?? "", "share-workspace-profile")}
-                        class="p-2 bg-gray-12 text-gray-1 rounded-lg hover:bg-gray-11 transition-colors"
+                        class="rounded-md border border-transparent bg-transparent p-2 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                       >
                         <Show when={copiedKey() === "share-workspace-profile"} fallback={<Copy size={16} />}>
                           <Check size={16} />
@@ -274,7 +274,7 @@ export default function ShareWorkspaceModal(props: {
                     <button
                       onClick={() => props.onShareWorkspaceProfile?.()}
                       disabled={props.shareWorkspaceProfileBusy}
-                      class="mt-3 w-full py-2 bg-gray-2 hover:bg-gray-3 text-gray-11 hover:text-gray-12 text-[12px] font-bold rounded-lg transition-all"
+                      class="mt-3 w-full rounded-md border border-[var(--dls-accent-border)] bg-transparent py-2 text-[12px] font-medium text-dls-accent transition-all hover:bg-[var(--dls-accent-tint)]"
                     >
                       {props.shareWorkspaceProfileBusy ? __vesloT("share.publishing", __vesloCurrentLocale()) : __vesloT("share.regenerate_link", __vesloCurrentLocale())}
                     </button>

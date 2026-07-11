@@ -39,8 +39,8 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
   const buttonClass = (active: boolean) =>
     `h-6 w-6 flex items-center justify-center bg-transparent transition-colors focus:outline-none focus-visible:ring-0 ${
       active
-        ? "text-gray-12"
-        : "text-gray-9 hover:text-gray-12"
+        ? "bg-[var(--dls-accent-tint)] text-dls-accent"
+        : "text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
     }`;
   const leftLabel = () => props.leftLabel ?? __vesloT("sidebar.toggle_left_menu", __vesloCurrentLocale());
 
@@ -65,7 +65,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
     });
   };
   const windowControlButtonClass =
-    "inline-flex h-9 w-11 items-center justify-center bg-transparent text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-12 focus:outline-none focus-visible:ring-0";
+    "inline-flex h-9 w-11 items-center justify-center bg-transparent text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent focus:outline-none focus-visible:ring-0";
 
   return (
     <>

@@ -489,7 +489,7 @@ export default function SoulView(props: SoulViewProps) {
                   ? "soul-user-source-open"
                   : `${source.testId}-open`
             }
-            class="rounded-lg border border-dls-border px-2.5 py-1 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            class="rounded-md border border-[var(--dls-accent-border)] bg-transparent px-2.5 py-1 text-xs font-medium text-dls-accent transition-colors hover:bg-[var(--dls-accent-tint)]"
             onClick={() => openSoulModal(source.key)}
           >
             {translate("soul.open_source")}
@@ -511,10 +511,10 @@ export default function SoulView(props: SoulViewProps) {
         </div>
         <button
           type="button"
-          class={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+          class={`inline-flex items-center gap-1.5 rounded-md border border-[var(--dls-accent-border)] bg-transparent px-3 py-1.5 text-xs font-medium text-dls-accent transition-colors hover:bg-[var(--dls-accent-tint)] ${
             props.soulOverviewBusy
-              ? "border-gray-6 text-gray-8"
-              : "border-dls-border text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
+              ? "opacity-50"
+              : ""
           }`}
           disabled={props.soulOverviewBusy}
           onClick={() => props.refresh({ force: true })}
@@ -591,7 +591,7 @@ export default function SoulView(props: SoulViewProps) {
                           <button
                             type="button"
                             data-testid={`${source.testId}-open`}
-                            class="rounded-lg border border-dls-border px-2.5 py-1 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+                            class="rounded-md border border-[var(--dls-accent-border)] bg-transparent px-2.5 py-1 text-xs font-medium text-dls-accent transition-colors hover:bg-[var(--dls-accent-tint)]"
                             onClick={() => openSoulModal(source.key)}
                           >
                             {openSourceKey() === source.key ? translate("soul.selected") : translate("soul.open_source")}
@@ -628,7 +628,7 @@ export default function SoulView(props: SoulViewProps) {
                 <button
                   type="button"
                   data-testid="soul-source-modal-close"
-                  class="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-dls-border text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+                  class="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                   aria-label={translate("common.close")}
                   onClick={closeSoulModal}
                 >
@@ -737,7 +737,7 @@ export default function SoulView(props: SoulViewProps) {
                 <button
                   type="button"
                   data-testid="soul-workspace-heartbeat-toggle"
-                  class="inline-flex items-center gap-2 rounded-lg border border-dls-border px-3 py-1.5 text-xs font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:border-gray-6 disabled:text-gray-8"
+                  class="inline-flex items-center gap-1.5 rounded-md border border-[var(--dls-accent-border)] bg-transparent px-3 py-1.5 text-xs font-medium text-dls-accent transition-colors hover:bg-[var(--dls-accent-tint)] disabled:opacity-50"
                   disabled={!props.client || !props.serverConnected || heartbeatPendingSourceKey() === selectedSourceKey()}
                   onClick={toggleWorkspaceHeartbeat}
                 >
@@ -822,10 +822,10 @@ export default function SoulView(props: SoulViewProps) {
                     return (
                       <button
                         type="button"
-                        class={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
+                        class={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
                           selected()
-                            ? "border-blue-8 bg-blue-3/30"
-                            : "border-dls-border bg-dls-surface hover:border-blue-7/50 hover:bg-dls-hover/40"
+                            ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)]"
+                            : "border-transparent bg-transparent hover:bg-[var(--dls-accent-tint)]"
                         }`}
                         onClick={() => previewVersion(version.id)}
                       >
@@ -902,7 +902,7 @@ export default function SoulView(props: SoulViewProps) {
                 <button
                   type="button"
                   data-testid="soul-restore-selected-version"
-                  class="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-dls-border px-3 py-2 text-sm font-medium text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text disabled:border-gray-6 disabled:text-gray-8"
+                  class="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-[var(--dls-accent-border)] bg-transparent px-3 py-2 text-sm font-medium text-dls-accent transition-colors hover:bg-[var(--dls-accent-tint)] disabled:opacity-50"
                   disabled={restoreDisabled()}
                   onClick={() => {
                     const versionId = selectedVersionId();

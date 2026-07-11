@@ -130,13 +130,13 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
           <div class="flex items-center gap-2 shrink-0 pl-2 border-l border-gray-5/50">
              <button 
               onClick={() => props.onDismiss()}
-              class="px-2 py-1.5 text-xs font-medium text-gray-10 hover:text-gray-12 transition-colors"
+              class="rounded-md border border-transparent bg-transparent px-2 py-1.5 text-xs font-medium text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
             >
               {props.dismissLabel}
             </button>
             <Button
               variant={props.hasActiveRuns ? "danger" : "primary"}
-              class="h-7 px-3 text-xs rounded-full font-medium"
+              class="h-7 px-3 text-xs"
               onClick={() => props.onReload()}
               disabled={props.busy || !props.canReload}
             >

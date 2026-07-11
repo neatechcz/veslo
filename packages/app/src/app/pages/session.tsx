@@ -3617,7 +3617,7 @@ export default function SessionView(props: SessionViewProps) {
         rightContent={
           <button
             type="button"
-            class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-gray-10 transition-colors hover:bg-gray-3/70 hover:text-gray-12 focus:outline-none focus-visible:ring-0"
+            class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent focus:outline-none focus-visible:ring-0"
             onClick={props.onOpenFeedback}
             aria-label={feedbackButtonLabel()}
             title={feedbackButtonLabel()}
@@ -3859,7 +3859,7 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="mt-6 flex justify-center">
                   <button
                     type="button"
-                    class="font-product type-ui-md inline-flex items-center gap-2 rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 font-semibold text-gray-1 transition-colors hover:bg-gray-11 disabled:cursor-not-allowed disabled:opacity-70"
+                    class="font-product type-ui-md inline-flex items-center gap-1.5 rounded-md border border-transparent bg-dls-accent px-4 py-3 font-medium text-[#001932] transition-colors hover:bg-[var(--dls-accent-hover)] disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={newSessionBusy()}
                     onClick={() => {
                       void openNewSessionFromEmptyState();
@@ -3984,7 +3984,7 @@ export default function SessionView(props: SessionViewProps) {
             <div class="mb-4 flex justify-center">
               <button
                 type="button"
-                class="rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
+                class="rounded-md border border-[var(--dls-accent-border)] bg-transparent px-3 py-1 text-xs text-dls-accent transition-colors hover:bg-[var(--dls-accent-tint)]"
                 onClick={() => {
                   void revealEarlierMessages();
                 }}
@@ -4068,7 +4068,7 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-gray-6 bg-gray-1/95 p-1 shadow-lg shadow-gray-12/5 backdrop-blur-md">
                   <button
                     type="button"
-                    class="h-7 w-7 rounded-full p-0 text-gray-11 hover:bg-gray-3 transition-colors flex items-center justify-center"
+                    class="flex h-7 w-7 items-center justify-center rounded-md p-0 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                     onClick={() => jumpToLatest("smooth")}
                     aria-label={tr("session.jump_to_latest")}
                     title={tr("session.jump_to_latest")}
@@ -4480,7 +4480,7 @@ export default function SessionView(props: SessionViewProps) {
               <div class="grid grid-cols-2 gap-3">
                 <Button
                   variant="outline"
-                  class="w-full border-red-7/20 text-red-11 hover:bg-red-1/30"
+                  class="w-full"
                   onClick={() =>
                     props.activePermission && props.respondPermission(props.activePermission.id, "reject")
                   }
@@ -4490,7 +4490,7 @@ export default function SessionView(props: SessionViewProps) {
                 </Button>
                 <div class="grid grid-cols-2 gap-2">
                   <Button
-                    variant="secondary"
+                    variant="outline"
                     class="text-xs"
                     onClick={() => props.activePermission && props.respondPermission(props.activePermission.id, "once")}
                     disabled={props.permissionReplyBusy}
@@ -4499,7 +4499,7 @@ export default function SessionView(props: SessionViewProps) {
                   </Button>
                   <Button
                     variant="primary"
-                    class="text-xs font-bold bg-amber-7 hover:bg-amber-8 text-gray-12 border-none shadow-amber-6/20"
+                    class="text-xs"
                     onClick={() =>
                       props.activePermission &&
                       props.respondPermissionAndRemember(props.activePermission.id, "always")

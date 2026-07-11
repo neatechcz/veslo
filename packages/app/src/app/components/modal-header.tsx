@@ -37,7 +37,7 @@ export default function ModalHeader(props: ModalHeaderProps) {
       <Show when={showClose() && props.onClose}>
         <Button
           variant="ghost"
-          class="!p-2 rounded-full shrink-0"
+          class="shrink-0 !p-2"
           onClick={props.onClose}
           disabled={props.closeDisabled}
         >

@@ -99,7 +99,7 @@ export default function Minimap(props: MinimapProps) {
               type="button"
               aria-label={`${roleLabel()} ${t("session.message_label", currentLocale())} ${idx() + 1}`}
               aria-current={isActive() ? "true" : undefined}
-              class={`absolute left-1/2 -translate-x-1/2 rounded-full transition-all duration-300 ease-out cursor-pointer appearance-none border-none p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-12/70
+              class={`absolute left-1/2 -translate-x-1/2 rounded-md transition-all duration-300 ease-out cursor-pointer appearance-none border-none p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-12/70
                 ${
                   isActive()
                     ? "w-4 h-1.5 opacity-100 z-20 bg-gray-12 shadow-sm"

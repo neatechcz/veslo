@@ -270,7 +270,7 @@ export default function McpView(props: McpViewProps) {
             </div>
           </div>
           <Button
-            variant="secondary"
+            variant="outline"
             onClick={() => props.reloadMcpEngine()}
             disabled={props.reloadBlocked}
             title={props.reloadBlocked ? tr("mcp.reload_banner_blocked_hint") : undefined}
@@ -357,7 +357,7 @@ export default function McpView(props: McpViewProps) {
                       </p>
                       <Show when={!connected() && !connecting()}>
                         <Button
-                          variant="primary"
+                          variant="outline"
                           class="mt-3 !px-3 !py-1.5 !text-xs"
                           data-testid="mcp-install-quick-connect-button"
                           data-mcp-name={entry.name}
@@ -370,7 +370,7 @@ export default function McpView(props: McpViewProps) {
                       </Show>
                       <Show when={!connected() && connecting()}>
                         <Button
-                          variant="primary"
+                          variant="outline"
                           class="mt-3 !px-3 !py-1.5 !text-xs"
                           data-testid="mcp-install-quick-connect-button"
                           data-mcp-name={entry.name}
@@ -440,7 +440,7 @@ export default function McpView(props: McpViewProps) {
                       </p>
                       <Show when={!connected()}>
                         <Button
-                          variant="primary"
+                          variant="outline"
                           class="mt-3 !px-3 !py-1.5 !text-xs"
                           data-testid="mcp-install-hub-button"
                           data-mcp-name={entry.name}
@@ -589,7 +589,7 @@ export default function McpView(props: McpViewProps) {
                               {tr("mcp.logout_label")}
                             </div>
                             <Button
-                              variant="secondary"
+                              variant="outline"
                               class="px-3 py-1.5 text-xs"
                               data-testid="mcp-login-button"
                               data-mcp-name={entry.name}
@@ -683,7 +683,7 @@ export default function McpView(props: McpViewProps) {
       />
 
       <div class="flex justify-end">
-        <Button variant="secondary" onClick={() => setAddMcpModalOpen(true)}>
+        <Button variant="outline" onClick={() => setAddMcpModalOpen(true)}>
           <Plus size={14} />
           {tr("mcp.add_modal_title")}
         </Button>

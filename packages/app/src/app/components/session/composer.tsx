@@ -1790,7 +1790,7 @@ export default function Composer(props: ComposerProps) {
                         return (
                           <button
                             type="button"
-                            class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${active() ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2"
+                            class={`flex w-full items-center gap-1.5 rounded-md border px-3 py-2 text-left transition-colors ${active() ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                               }`}
                             onMouseDown={(event: MouseEvent) => {
                               event.preventDefault();
@@ -1844,7 +1844,7 @@ export default function Composer(props: ComposerProps) {
                         return (
                           <button
                             type="button"
-                            class={`w-full flex items-center justify-between gap-4 rounded-xl px-3 py-2 text-left transition-colors ${active() ? "bg-gray-3 text-gray-12" : "text-gray-11 hover:bg-gray-2"
+                            class={`flex w-full items-center justify-between gap-4 rounded-md border px-3 py-2 text-left transition-colors ${active() ? "border-[var(--dls-accent-border)] bg-[var(--dls-accent-tint)] text-dls-text" : "border-transparent text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                               }`}
                             onMouseDown={(event: MouseEvent) => {
                               event.preventDefault();
@@ -1907,7 +1907,7 @@ export default function Composer(props: ComposerProps) {
                       </div>
                       <button
                         type="button"
-                        class="ml-1 rounded-full p-1 text-gray-10 hover:text-gray-11 hover:bg-gray-4"
+                        class="ml-1 rounded-md p-1 text-[var(--dls-button-ghost)] hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                         onClick={() => {
                           if (submitLocked()) return;
                           setAttachments((current: ComposerAttachment[]) =>
@@ -1971,7 +1971,7 @@ export default function Composer(props: ComposerProps) {
                           />
                           <button
                             type="button"
-                            class={`p-1.5 hover:bg-gray-3 rounded-md text-gray-10 transition-colors ${attachmentsDisabled() || submitLocked() ? "cursor-not-allowed" : ""
+                            class={`rounded-md p-1.5 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent ${attachmentsDisabled() || submitLocked() ? "cursor-not-allowed" : ""
                               }`}
                             onClick={() => {
                               if (submitLocked()) return;
@@ -2045,11 +2045,11 @@ export default function Composer(props: ComposerProps) {
                                 }
                                 void sendDraft({ sendNow: false, source: "button" });
                               }}
-                              class={`shrink-0 p-1.5 rounded-full ${
+                              class={`shrink-0 rounded-md border border-transparent p-1.5 ${
                                 sending()
                                   ? "bg-dls-accent text-[#001932] pointer-events-none"
                                   : `transition-colors ${sendDisabled()
-                                    ? "bg-gray-4 text-gray-10"
+                                    ? "bg-dls-accent text-[#001932] opacity-50"
                                     : "bg-dls-accent text-[#001932] hover:bg-[var(--dls-accent-hover)]"}`
                               }`}
                               title={translate("session.queue_message_label")}
@@ -2065,7 +2065,7 @@ export default function Composer(props: ComposerProps) {
                           <button
                             type="button"
                             onClick={() => props.onStop()}
-                            class="inline-flex h-8 w-10 shrink-0 items-center justify-center rounded-full bg-gray-12 text-gray-1 transition-colors hover:bg-gray-11"
+                            class="inline-flex h-8 w-10 shrink-0 items-center justify-center rounded-md border border-[var(--dls-accent-border)] bg-transparent text-dls-accent transition-colors hover:bg-[var(--dls-accent-tint)]"
                             title={
                               props.stopShortcutConfirmPending
                                 ? translate("session.stop_escape_confirm_label")
@@ -2092,7 +2092,7 @@ export default function Composer(props: ComposerProps) {
                                 void sendDraft({ sendNow: true, source: "button" });
                               }}
                               disabled={sendNowPending()}
-                              class={`shrink-0 p-1.5 rounded-full bg-dls-accent text-[#001932] transition-colors ${
+                              class={`shrink-0 rounded-md border border-transparent bg-dls-accent p-1.5 text-[#001932] transition-colors ${
                                 sendNowPending() ? "opacity-70" : "hover:bg-[var(--dls-accent-hover)]"
                               }`}
                               title={translate("session.send_now_title")}

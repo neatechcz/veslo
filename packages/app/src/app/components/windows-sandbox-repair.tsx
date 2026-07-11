@@ -208,7 +208,7 @@ export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
                 <div class="mt-1 text-xs text-gray-10">{translate("settings.windows_sandbox_hint")}</div>
               </div>
               <Button
-                variant="secondary"
+                variant="outline"
                 class="h-8 shrink-0 px-3 py-0 text-xs"
                 onClick={() => void prepareSandbox(false)}
                 disabled={busy()}

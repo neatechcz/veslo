@@ -12,6 +12,9 @@
   --dls-accent: #00a8c8;
   --dls-accent-hover: #008eaa;
   --dls-accent-rgb: 0 168 200;
+  --dls-accent-border: rgba(0, 196, 232, 0.35);
+  --dls-accent-tint: rgba(0, 168, 200, 0.1);
+  --dls-button-ghost: rgba(10, 14, 20, 0.52);
   --dls-text-primary: #0a0e14;
   --dls-text-secondary: rgba(10, 14, 20, 0.68);
   --dls-hover: #f6f8fb;
@@ -28,6 +31,9 @@
   --dls-accent: #1dd7ee;
   --dls-accent-hover: #54e3f2;
   --dls-accent-rgb: 29 215 238;
+  --dls-accent-border: rgba(29, 215, 238, 0.35);
+  --dls-accent-tint: rgba(29, 215, 238, 0.12);
+  --dls-button-ghost: rgba(255, 255, 255, 0.56);
   --dls-text-primary: rgba(255, 255, 255, 0.92);
   --dls-text-secondary: rgba(255, 255, 255, 0.64);
   --dls-hover: #12304f;
@@ -37,6 +43,12 @@
 html,
 body {
   height: 100%;
+}
+
+:where(button:not([role="switch"])) {
+  border-radius: var(--dls-radius);
+  font-family: var(--veslo-font-product);
+  font-weight: 500;
 }
 
 html {

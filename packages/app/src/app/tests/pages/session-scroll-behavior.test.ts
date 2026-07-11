@@ -309,7 +309,7 @@ test("jump-to-latest control is anchored to bottom-right and rendered as small d
 
   assert.match(
     source,
-    /class="[^"]*h-7 w-7 rounded-full p-0[^"]*"/,
+    /class="[^"]*h-7 w-7[^"]*rounded-md p-0[^"]*"/,
     "jump-to-latest should be a compact icon-sized button",
   );
 

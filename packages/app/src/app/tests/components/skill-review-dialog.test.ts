@@ -155,7 +155,8 @@ test("skill review dialog uses operational button actions for request and review
   assert.match(source, /translate\("skills\.review_reject_organization_version"\)/);
   assert.match(source, /translate\("skills\.review_approve_system_version"\)/);
   assert.match(source, /translate\("skills\.review_reject_system_version"\)/);
-  assert.match(source, /variant="danger"/);
+  assert.match(source, /<Button variant="danger"[^>]*disabled=\{rejectDisabled\(\)\}/);
+  assert.match(source, /<Button variant="primary"[^>]*disabled=\{approveDisabled\(\)\}/);
   assert.match(source, /onSaveDraft\?: \(input: SkillReviewActionInput\) => void/);
   assert.match(source, /props\.onSaveDraft\?\.\(actionInput\(\)\)/);
   assert.match(source, /translate\("skills\.review_save_draft"\)/);

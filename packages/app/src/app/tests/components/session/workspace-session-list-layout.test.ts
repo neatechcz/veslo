@@ -49,15 +49,30 @@ test("workspace session sidebar keeps controls pinned while only session rows sc
 
   assert.match(
     source,
-    /<div[\s\S]*class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3"[^>]*>[\s\S]*<div class="space-y-(?:2\.5|1\.5) mb-(?:3|2)">/,
+    /<div[\s\S]*class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3"[^>]*>[\s\S]*<div class="mb-1 space-y-0\.5">/,
     "session rows container should own vertical scroll and shift scrollbar toward the sidebar edge",
   );
 
   assert.doesNotMatch(
     source,
-    /<div class="space-y-(?:2\.5|1\.5) mb-(?:3|2)">[\s\S]*<div[\s\S]*class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3"/,
+    /<div class="mb-1 space-y-0\.5">[\s\S]*<div[\s\S]*class="min-h-0 flex-1 overflow-y-auto -mr-3 pr-3"/,
     "session rows should not wrap the scroll container that contains them",
   );
+});
+
+test("workspace project and chat rows use the compact 26-28px density contract", () => {
+  assert.match(
+    source,
+    /const sessionRowClass[\s\S]*h-7[\s\S]*gap-1\.5[\s\S]*rounded-md[\s\S]*px-2[\s\S]*text-\[12\.5px\]/,
+    "chat rows should be 28px high with compact spacing and legible labels",
+  );
+  assert.match(
+    source,
+    /class="h-7 min-w-0 flex-1 appearance-none border-none bg-transparent p-0 text-left text-inherit"[\s\S]*data-project-collapse-toggle="true"[\s\S]*<span class="flex min-w-0 items-center gap-1\.5">/,
+    "directory headers should share the compact row height and icon gap",
+  );
+  assert.match(source, /innerClass="pl-4 pt-0\.5 space-y-0"/, "nested chats should use the smaller project indent");
+  assert.match(source, /const projectCreateSessionButtonClass =[\s\S]*h-7 w-7[\s\S]*opacity-0 group-hover:opacity-100/);
 });
 
 test("workspace session sidebar keeps the control rail ordered and compact-safe", () => {
@@ -167,7 +182,7 @@ test("by-project rows keep the title wrapper without a branch toggle button", ()
 
   assert.match(
     source,
-    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-12 truncate"/,
+    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[12\.5px\] text-gray-12 truncate"/,
     "by-project rows should keep the title line structure after removing the dedicated toggle",
   );
 
@@ -179,13 +194,13 @@ test("by-project rows keep the title wrapper without a branch toggle button", ()
 
   assert.doesNotMatch(
     source,
-    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate font-medium"/,
+    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[12\.5px\] text-gray-11 truncate font-medium"/,
     "by-project row titles should no longer force a medium font weight",
   );
 
   assert.doesNotMatch(
     source,
-    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate"/,
+    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[12\.5px\] text-gray-11 truncate"/,
     "by-project row titles should no longer use the muted gray-11 text tone",
   );
 

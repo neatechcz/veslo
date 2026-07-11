@@ -277,7 +277,7 @@ const sidebarControlTooltipClass =
 
 const sessionRowClass = (isSelected: boolean, extraClass?: string) => {
   const base =
-    "relative w-full appearance-none border-none bg-transparent flex items-center rounded-xl px-3 py-1 text-left transition-colors focus-visible:outline-none";
+    "relative flex h-7 w-full appearance-none items-center gap-1.5 rounded-md border-none bg-transparent px-2 py-0 text-left text-[12.5px] transition-colors focus-visible:outline-none";
   const state = isSelected
     ? "bg-gray-5 text-gray-12 before:content-[''] before:absolute before:left-1 before:top-1 before:bottom-1 before:w-0.5 before:rounded-full before:bg-dls-accent"
     : "hover:bg-gray-3/70 text-gray-12";
@@ -2036,7 +2036,7 @@ export default function WorkspaceSessionList(props: Props) {
         <button
           type="button"
           data-session-sidebar-row="true"
-          class={sessionRowClass(isSelected(), "gap-2 pr-12")}
+          class={sessionRowClass(isSelected(), "pr-12")}
           aria-current={isSelected() ? "page" : undefined}
           style={rowIndentStyle(row)}
           onMouseUp={(event) => handleSessionRowMouseUp(event, row, hasChildren)}
@@ -2048,7 +2048,7 @@ export default function WorkspaceSessionList(props: Props) {
                 <Loader2 size={11} class="shrink-0 animate-spin text-amber-10" />
               </Show>
               <span
-                class="text-[13px] text-gray-12 truncate"
+                class="text-[12.5px] text-gray-12 truncate"
                 classList={{ "font-bold": isUnread() }}
                 title={label().tooltip}
               >
@@ -2162,7 +2162,7 @@ export default function WorkspaceSessionList(props: Props) {
                 <Loader2 size={11} class="shrink-0 animate-spin text-amber-10" />
               </Show>
               <span
-                class="text-[13px] text-gray-12 truncate"
+                class="text-[12.5px] text-gray-12 truncate"
                 classList={{ "font-bold": isUnread() }}
                 title={sessionLabelTitle(row)}
               >
@@ -2501,7 +2501,7 @@ export default function WorkspaceSessionList(props: Props) {
         onScroll={handleRecentScroll}
         onContextMenu={handleSidebarBackgroundContextMenu}
       >
-        <div class="space-y-1.5 mb-2">
+        <div class="mb-1 space-y-0.5">
           <Show when={hasVisibleRows()} fallback={emptyState}>
             <Show when={sidebarMode() === "by-project"} fallback={
               <>
@@ -2518,14 +2518,14 @@ export default function WorkspaceSessionList(props: Props) {
                         const taskLoadError = () => taskLoadErrorFor(workspace(), project.error);
 
                         return (
-                          <div class="group relative rounded-lg transition-colors" data-project-key={project.key}>
+                          <div class="group relative rounded-md transition-colors" data-project-key={project.key}>
                             <div
-                              class="relative flex items-start gap-2"
+                              class="relative flex items-center gap-1"
                               onContextMenu={(event) => handleProjectHeaderContextMenu(event, workspace().id)}
                             >
                               <button
                                 type="button"
-                                class={`min-w-0 flex-1 rounded-lg px-1.5 py-1 text-left transition-colors ${
+                                class={`h-7 min-w-0 flex-1 rounded-md px-1.5 py-0 text-left transition-colors ${
                                   isActiveWorkspace()
                                     ? "text-gray-12"
                                     : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/70"
@@ -2536,9 +2536,9 @@ export default function WorkspaceSessionList(props: Props) {
                                   : tr("sidebar.open_project")}
                                 onClick={() => props.onOpenPendingDirectoryDraftInWorkspace(workspace().id)}
                               >
-                                <div class="flex items-center gap-2 min-w-0">
+                                <div class="flex min-w-0 items-center gap-1.5">
                                   <Folder size={13} class="shrink-0 text-gray-8" />
-                                  <span class="truncate text-[12px] font-semibold text-gray-10">
+                                  <span class="truncate text-[12.5px] font-medium text-gray-10">
                                     {project.projectLabel || workspaceLabel(workspace())}
                                   </span>
                                   <Show when={workspace().workspaceType === "remote"}>
@@ -2663,7 +2663,7 @@ export default function WorkspaceSessionList(props: Props) {
 
                 return (
                   <div
-                    class={`group relative rounded-lg transition-colors ${
+                    class={`group relative rounded-md transition-colors ${
                       isProjectDragOver() ? "bg-gray-2/70" : ""
                     } ${isDraggedProject() ? "opacity-70" : ""}
                     `}
@@ -2679,7 +2679,7 @@ export default function WorkspaceSessionList(props: Props) {
                       <div class="pointer-events-none absolute left-2 right-2 bottom-0 h-[2px] rounded-full bg-dls-accent/80" />
                     </Show>
                     <div
-                      class="relative flex items-start gap-2"
+                      class="relative flex items-center gap-1"
                       onContextMenu={(event) => handleProjectHeaderContextMenu(event, workspace().id)}
                     >
                       <div
@@ -2690,7 +2690,7 @@ export default function WorkspaceSessionList(props: Props) {
                         onDragEnd={handleProjectDragEnd}
                       >
                         <div
-                          class={`w-full rounded-lg px-1.5 py-1 transition-colors ${
+                          class={`h-7 w-full rounded-md px-1 py-0 transition-colors ${
                             isActiveWorkspace()
                               ? "text-gray-12"
                               : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/70"
@@ -2698,10 +2698,10 @@ export default function WorkspaceSessionList(props: Props) {
                           title={project.projectTitle}
                           onPointerDown={(event) => handleProjectPointerDown(event, project.key, projectDragLabel())}
                         >
-                          <div class="flex items-center gap-1 min-w-0">
+                          <div class="flex min-w-0 items-center gap-0.5">
                             <button
                               type="button"
-                              class="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md text-gray-8 transition-colors hover:bg-gray-3 hover:text-gray-11"
+                              class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-gray-8 transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
                               data-sidebar-project-toggle={project.key}
                               aria-expanded={!drawerCollapsed()}
                               aria-label={
@@ -2721,7 +2721,7 @@ export default function WorkspaceSessionList(props: Props) {
                             </button>
                             <button
                               type="button"
-                              class="min-w-0 flex-1 appearance-none border-none bg-transparent p-0 text-left text-inherit"
+                              class="h-7 min-w-0 flex-1 appearance-none border-none bg-transparent p-0 text-left text-inherit"
                               data-project-collapse-toggle="true"
                               aria-expanded={!drawerCollapsed()}
                               aria-label={
@@ -2731,9 +2731,9 @@ export default function WorkspaceSessionList(props: Props) {
                               }
                               onClick={() => handleProjectOpenClick(project.key)}
                             >
-                              <span class="flex items-center gap-2 min-w-0">
+                              <span class="flex min-w-0 items-center gap-1.5">
                                 <Folder size={13} class="shrink-0 text-gray-8" />
-                                <span class="truncate text-[12px] font-semibold text-gray-10">
+                                <span class="truncate text-[12.5px] font-medium text-gray-10">
                                   {project.projectLabel}
                                 </span>
                                 <Show when={props.readyEngineWorkspaceIds?.has(workspace().id)}>
@@ -2796,7 +2796,7 @@ export default function WorkspaceSessionList(props: Props) {
                     <AnimatedCollapse
                       open={!drawerCollapsed()}
                       region="project"
-                      innerClass="pl-5 pt-0.5 space-y-0"
+                      innerClass="pl-4 pt-0.5 space-y-0"
                     >
                       <>
                         {renderSessionTreeRows(() => visibleRows(), hasChildren, {})}
@@ -2829,7 +2829,7 @@ export default function WorkspaceSessionList(props: Props) {
                       </>
                     </AnimatedCollapse>
                     <Show when={drawerCollapsed() && forcedVisibleRows().length > 0}>
-                      <div class="pl-5 pt-0.5 space-y-0">
+                      <div class="pl-4 pt-0.5 space-y-0">
                         {renderSessionTreeRows(() => forcedVisibleRows(), hasChildren, {})}
                       </div>
                     </Show>
