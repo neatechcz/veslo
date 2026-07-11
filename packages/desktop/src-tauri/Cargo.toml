@@ -1,6 +1,6 @@
 [package]
 name = "veslo"
-version = "2026.7.8"
+version = "2026.7.9"
 description = "Veslo"
 authors = ["Neatech"]
 edition = "2021"
