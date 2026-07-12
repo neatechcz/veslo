@@ -92,6 +92,9 @@ export class OpenAiCompatibleTransport implements OpenAiCompatibleProviderTransp
 
   async listModels(input: OpenAiCompatibleModelsTransportInput): Promise<OpenAiCompatibleModelsTransportResponse> {
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort();
+    if (input.signal?.aborted) controller.abort();
+    else input.signal?.addEventListener("abort", abortFromCaller, { once: true });
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     timeout.unref();
     try {
@@ -157,6 +160,7 @@ export class OpenAiCompatibleTransport implements OpenAiCompatibleProviderTransp
       throw error;
     } finally {
       clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", abortFromCaller);
     }
   }
 }

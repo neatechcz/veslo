@@ -25,6 +25,7 @@ export type OpenAiCompatibleTransportInput = {
 export type OpenAiCompatibleModelsTransportInput = {
   apiKey: string;
   baseUrl: string;
+  signal?: AbortSignal;
 };
 
 export type OpenAiCompatibleModelsTransportResponse = {

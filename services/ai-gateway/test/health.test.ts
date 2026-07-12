@@ -54,9 +54,13 @@ test("GET /readiness reports unavailable when provider reachability fails", asyn
         },
       },
       modelCapabilities: {
+        async checkHealthyCredentialForModel() {
+          return { status: "supported", credentialId: "cred_ready_1" };
+        },
         async hasHealthyCredentialForModel() {
           return true;
         },
+        invalidateCredential() {},
       },
     },
   } as never);

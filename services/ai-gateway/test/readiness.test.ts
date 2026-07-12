@@ -24,9 +24,13 @@ function createReadyDependencies() {
       },
     },
     modelCapabilities: {
+      async checkHealthyCredentialForModel() {
+        return { status: "supported" as const, credentialId: "cred_ready_1" };
+      },
       async hasHealthyCredentialForModel() {
         return true;
       },
+      invalidateCredential() {},
     },
     now: () => new Date("2026-07-12T10:00:00.000Z"),
   };
@@ -96,10 +100,10 @@ test("readiness keeps capability lookup failures behind the stable compatibility
       },
     },
     modelCapabilities: {
-      async hasHealthyCredentialForModel() {
+      async checkHealthyCredentialForModel() {
         throw new Error("upstream included secret material");
       },
-    },
+    } as never,
   });
 
   assert.deepEqual(payload.checks.credentials, {
