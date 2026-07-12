@@ -7,6 +7,7 @@ import type { PlatformModelRef } from "./repository.js";
 
 export type PlatformModelCapabilityVerifier = {
   checkHealthyCredentialForModel(model: PlatformModelRef): Promise<ModelCapabilityCheckResult>;
+  checkCredentialForModel(credentialId: string, model: PlatformModelRef): Promise<ModelCapabilityCheckResult>;
   hasHealthyCredentialForModel(model: PlatformModelRef): Promise<boolean>;
   invalidateCredential(credentialId?: string): void;
 };
@@ -96,6 +97,45 @@ export function createPlatformModelCapabilityVerifier(deps: {
     },
     async hasHealthyCredentialForModel(model) {
       return (await verifier.checkHealthyCredentialForModel(model)).status === "supported";
+    },
+    async checkCredentialForModel(credentialId, model) {
+      const listAdminCredentials = deps.credentials.listAdminCredentials;
+      if (!listAdminCredentials) return { status: "transient", reason: "credential_lookup_unavailable" };
+      let credentials;
+      try {
+        credentials = await listAdminCredentials.call(deps.credentials);
+      } catch {
+        return { status: "transient", reason: "credential_lookup_failed" };
+      }
+      const credential = credentials.find((candidate) =>
+        candidate.id === credentialId
+        && candidate.provider === model.provider
+        && candidate.state === "healthy"
+        && !candidate.deletedAt
+      );
+      if (!credential) return { status: "unsupported" };
+      if (model.provider === "openai" || model.provider === "anthropic") {
+        return { status: "supported", credentialId };
+      }
+
+      const controller = new AbortController();
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, overallTimeoutMs);
+      try {
+        const check = checkCredential(credential.id, credential.name, model, controller.signal);
+        const deadline = new Promise<null>((resolve) => {
+          controller.signal.addEventListener("abort", () => resolve(null), { once: true });
+        });
+        const result = await Promise.race([check, deadline]);
+        return timedOut || result === null
+          ? { status: "transient", reason: "capability_check_timeout" }
+          : result;
+      } finally {
+        clearTimeout(timeout);
+      }
     },
     invalidateCredential(credentialId) {
       if (!credentialId) {
