@@ -173,7 +173,7 @@ async function checkCredentials(
   let compatible = ids.length > 0;
   if (activeModel && compatible) {
     try {
-      compatible = await modelCapabilities.hasHealthyCredentialForModel(activeModel);
+      compatible = (await modelCapabilities.checkHealthyCredentialForModel(activeModel)).status === "supported";
     } catch {
       compatible = false;
     }

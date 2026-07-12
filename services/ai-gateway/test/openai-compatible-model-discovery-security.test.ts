@@ -33,6 +33,39 @@ test("model discovery aborts at its bounded timeout", async () => {
   );
 });
 
+test("model discovery propagates caller cancellation and closes the pinned dispatcher", async () => {
+  let closeCalls = 0;
+  let markFetchStarted!: () => void;
+  const fetchStarted = new Promise<void>((resolve) => { markFetchStarted = resolve; });
+  const caller = new AbortController();
+  const transport = new OpenAiCompatibleTransport({
+    timeoutMs: 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    createPinnedDispatcher() {
+      return {
+        dispatcher: {} as never,
+        async close() { closeCalls += 1; },
+      };
+    },
+    fetchImpl: ((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        markFetchStarted();
+        init?.signal?.addEventListener("abort", () => {
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        }, { once: true });
+      })) as typeof fetch,
+  });
+
+  const pending = transport.listModels({ ...INPUT, signal: caller.signal });
+  await fetchStarted;
+  caller.abort();
+  await assert.rejects(
+    pending,
+    (error) => assertTransportError(error, "openai_compatible_models_timeout", 504),
+  );
+  assert.equal(closeCalls, 1);
+});
+
 test("model discovery rejects oversized response bodies before JSON parsing", async () => {
   const transport = new OpenAiCompatibleTransport({
     maxModelResponseBytes: 32,

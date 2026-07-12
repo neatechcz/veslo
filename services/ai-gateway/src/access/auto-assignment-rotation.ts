@@ -29,10 +29,29 @@ type RotationCandidate = {
   activeLeases: number;
 };
 
+type CurrentCredentialAssessment = {
+  shouldRotate: boolean;
+  supportsActiveModel: boolean | null;
+  unavailable: boolean;
+};
+
+type ReplacementAssessment = {
+  replacement: RotationCandidate | null;
+  hasCompatibleCredential: boolean;
+  hasTransientFailure: boolean;
+};
+
 export class AssignedCredentialModelIncompatibleError extends Error {
   constructor() {
     super("assigned_credential_model_incompatible");
     this.name = "AssignedCredentialModelIncompatibleError";
+  }
+}
+
+export class AssignedCredentialUnavailableError extends Error {
+  constructor() {
+    super("assigned_credential_unavailable");
+    this.name = "AssignedCredentialUnavailableError";
   }
 }
 
@@ -53,17 +72,21 @@ export function createAutoAssignedCodexCredentialRotationService(
         return aiAccess;
       }
 
-      const shouldRotate = await shouldRotateCurrentCredential(currentCredentialId, input.activeModel);
-      if (!shouldRotate) {
+      const current = await assessCurrentCredential(currentCredentialId, input.activeModel);
+      if (!current.shouldRotate) {
         return aiAccess;
       }
 
-      const replacement = await selectReplacementCredential(currentCredentialId, input.activeModel);
+      const replacements = await assessReplacementCredentials(currentCredentialId, input.activeModel);
+      const replacement = replacements.replacement;
       if (!replacement) {
-        if (input.activeModel?.provider === "codex_oauth"
-          && !(await credentialSupportsActiveModel(currentCredentialId, input.activeModel))) {
-          throw new AssignedCredentialModelIncompatibleError();
+        if (current.unavailable) return aiAccess;
+        if (current.supportsActiveModel === true) return aiAccess;
+        if (replacements.hasCompatibleCredential) {
+          throw new Error("no_eligible_codex_credentials:all_codex_credentials_exhausted");
         }
+        if (replacements.hasTransientFailure) throw new AssignedCredentialUnavailableError();
+        if (input.activeModel?.provider === "codex_oauth") throw new AssignedCredentialModelIncompatibleError();
         return aiAccess;
       }
       const modelPolicy = resolveCodexModelPolicy({
@@ -92,14 +115,17 @@ export function createAutoAssignedCodexCredentialRotationService(
     },
   };
 
-  async function shouldRotateCurrentCredential(credentialId: string, activeModel?: PlatformModelRef): Promise<boolean> {
+  async function assessCurrentCredential(
+    credentialId: string,
+    activeModel?: PlatformModelRef,
+  ): Promise<CurrentCredentialAssessment> {
     const credential = await deps.credentials.getCredentialRecordById(credentialId);
     if (!credential || credential.provider !== "codex_oauth") {
-      return true;
+      return { shouldRotate: true, supportsActiveModel: null, unavailable: true };
     }
 
     if (credential.state !== "healthy") {
-      return true;
+      return { shouldRotate: true, supportsActiveModel: null, unavailable: true };
     }
 
     try {
@@ -107,42 +133,39 @@ export function createAutoAssignedCodexCredentialRotationService(
         credentialId: credential.id,
         credentialName: credential.name ?? credential.id,
       });
-      return !evaluateCodexCredentialEligibility(status, now()).eligible
-        || (activeModel?.provider === "codex_oauth" && !codexStatusSupportsModel(status, activeModel.model));
+      if (activeModel?.provider === "codex_oauth" && status.available !== true) {
+        throw new AssignedCredentialUnavailableError();
+      }
+      const supportsActiveModel = activeModel?.provider === "codex_oauth"
+        ? codexStatusSupportsModel(status, activeModel.model)
+        : true;
+      const eligible = evaluateCodexCredentialEligibility(status, now()).eligible;
+      return {
+        shouldRotate: !eligible || !supportsActiveModel,
+        supportsActiveModel,
+        unavailable: false,
+      };
     } catch {
       if (activeModel?.provider === "codex_oauth") {
-        throw new AssignedCredentialModelIncompatibleError();
+        throw new AssignedCredentialUnavailableError();
       }
-      return false;
+      return { shouldRotate: false, supportsActiveModel: null, unavailable: false };
     }
   }
 
-  async function credentialSupportsActiveModel(
-    credentialId: string,
-    activeModel: PlatformModelRef,
-  ): Promise<boolean> {
-    const credential = await deps.credentials.getCredentialRecordById(credentialId);
-    if (!credential || credential.provider !== "codex_oauth" || credential.state !== "healthy") return false;
-    try {
-      const status = await deps.codexStatusProvider.getStatus({
-        credentialId,
-        credentialName: credential.name ?? credential.id,
-      });
-      return evaluateCodexCredentialEligibility(status, now()).eligible
-        && codexStatusSupportsModel(status, activeModel.model);
-    } catch {
-      return false;
-    }
-  }
-
-  async function selectReplacementCredential(excludedCredentialId: string, activeModel?: PlatformModelRef): Promise<RotationCandidate | null> {
+  async function assessReplacementCredentials(
+    excludedCredentialId: string,
+    activeModel?: PlatformModelRef,
+  ): Promise<ReplacementAssessment> {
     const listAdminCredentials = deps.credentials.listAdminCredentials;
     if (!listAdminCredentials) {
-      return null;
+      return { replacement: null, hasCompatibleCredential: false, hasTransientFailure: false };
     }
 
     const credentials = await listAdminCredentials.call(deps.credentials);
     const eligible: RotationCandidate[] = [];
+    let hasCompatibleCredential = false;
+    let hasTransientFailure = false;
 
     for (const credential of credentials) {
       if (
@@ -158,11 +181,19 @@ export function createAutoAssignedCodexCredentialRotationService(
           credentialId: credential.id,
           credentialName: credential.name,
         });
-        if (!evaluateCodexCredentialEligibility(status, now()).eligible
-          || (activeModel?.provider === "codex_oauth" && !codexStatusSupportsModel(status, activeModel.model))) {
+        if (activeModel?.provider === "codex_oauth" && status.available !== true) {
+          hasTransientFailure = true;
           continue;
         }
+        const supportsActiveModel = activeModel?.provider !== "codex_oauth"
+          || codexStatusSupportsModel(status, activeModel.model);
+        if (!supportsActiveModel) {
+          continue;
+        }
+        hasCompatibleCredential = true;
+        if (!evaluateCodexCredentialEligibility(status, now()).eligible) continue;
       } catch {
+        hasTransientFailure = true;
         continue;
       }
 
@@ -187,7 +218,11 @@ export function createAutoAssignedCodexCredentialRotationService(
       return left.credentialId.localeCompare(right.credentialId);
     });
 
-    return eligible[0] ?? null;
+    return {
+      replacement: eligible[0] ?? null,
+      hasCompatibleCredential,
+      hasTransientFailure,
+    };
   }
 
   async function recordRotationAudit(input: {

@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto"
 import { Router, type Response } from "express"
 
 import type { UserAiAccessPolicyRecord } from "../../access/repository.js"
-import { AssignedCredentialModelIncompatibleError } from "../../access/auto-assignment-rotation.js"
+import {
+  AssignedCredentialModelIncompatibleError,
+  AssignedCredentialUnavailableError,
+} from "../../access/auto-assignment-rotation.js"
 import type { GatewaySession } from "../../auth/gateway-session.js"
 import type { CredentialBinding } from "../../credentials/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js"
@@ -50,24 +53,6 @@ export function createCodexOAuthProxyRouter(
 
     const sessionId = normalizeGatewaySessionId(rawSessionId, gatewaySession.user.id, "codex_oauth")
 
-    let gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined
-    if (gatewayAiAccess && deps.autoAssignedCodexCredentialRotation) {
-      try {
-        gatewayAiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
-          aiAccess: gatewayAiAccess,
-          activeModel: res.locals.gatewayActiveModel as PlatformModelRef,
-          reason: "codex_proxy_request",
-        })
-        res.locals.gatewayAiAccess = gatewayAiAccess
-      } catch (error) {
-        if (error instanceof AssignedCredentialModelIncompatibleError) {
-          res.status(503).json({ error: error.message })
-          return
-        }
-        console.error("codex_auto_assignment_repair_failed", error)
-      }
-    }
-
     const activeModel = res.locals.gatewayActiveModel as PlatformModelRef
     const policyResult = applyPlatformModelPolicy({
       routeProvider: "codex_oauth",
@@ -77,6 +62,36 @@ export function createCodexOAuthProxyRouter(
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error })
       return
+    }
+
+    let gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined
+    if (gatewayAiAccess && deps.autoAssignedCodexCredentialRotation) {
+      try {
+        gatewayAiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
+          aiAccess: gatewayAiAccess,
+          activeModel,
+          reason: "codex_proxy_request",
+        })
+        res.locals.gatewayAiAccess = gatewayAiAccess
+      } catch (error) {
+        if (error instanceof AssignedCredentialModelIncompatibleError
+          || error instanceof AssignedCredentialUnavailableError) {
+          res.status(503).json({ error: error.message })
+          return
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.startsWith("no_eligible_codex_credentials")) {
+          res.status(503).json({
+            error: "no_eligible_codex_credentials",
+            reason: message.includes("all_codex_credentials_exhausted")
+              ? "all_codex_credentials_exhausted"
+              : "no_eligible_binding",
+            provider: "codex_oauth",
+          })
+          return
+        }
+        console.error("codex_auto_assignment_repair_failed", error)
+      }
     }
 
     const assignedBinding = gatewayAiAccess
