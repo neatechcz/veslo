@@ -10,6 +10,7 @@ import type {
 } from "./repository.js";
 
 const PLATFORM_POLICY_ID = "platform" as const;
+const MODEL_STORAGE_LENGTH = 128;
 
 export class MySqlPlatformModelPolicyRepository implements PlatformModelPolicyRepository {
   constructor(private readonly db: AiGatewayDb) {}
@@ -47,20 +48,27 @@ export class MySqlPlatformModelPolicyRepository implements PlatformModelPolicyRe
       updated_at: now,
     };
 
-    await this.db
-      .insert(platformModelPolicyTable)
-      .values({
-        id: PLATFORM_POLICY_ID,
-        ...replacement,
-        created_at: now,
-      })
-      .onDuplicateKeyUpdate({ set: replacement });
+    return this.db.transaction(async (tx) => {
+      await tx
+        .insert(platformModelPolicyTable)
+        .values({
+          id: PLATFORM_POLICY_ID,
+          ...replacement,
+          created_at: now,
+        })
+        .onDuplicateKeyUpdate({ set: replacement });
 
-    const policy = await this.getPolicy();
-    if (!policy) {
-      throw new Error("Platform model policy was not persisted");
-    }
-    return policy;
+      const rows = await tx
+        .select()
+        .from(platformModelPolicyTable)
+        .where(eq(platformModelPolicyTable.id, PLATFORM_POLICY_ID))
+        .limit(1);
+      const row = rows[0];
+      if (!row) {
+        throw new Error("Platform model policy was not persisted");
+      }
+      return mapPlatformModelPolicy(row);
+    });
   }
 }
 
@@ -79,8 +87,8 @@ function mapPlatformModelPolicy(row: typeof platformModelPolicyTable.$inferSelec
     id: PLATFORM_POLICY_ID,
     enabledModels,
     activeModel,
-    createdAt: asDate(row.created_at),
-    updatedAt: asDate(row.updated_at),
+    createdAt: asStoredDate(row.created_at, "created_at"),
+    updatedAt: asStoredDate(row.updated_at, "updated_at"),
   };
 }
 
@@ -96,7 +104,7 @@ function parseEnabledModelsJson(value: string): PlatformModelRef[] {
     throw new Error("Stored platform enabled models must be an array");
   }
 
-  const enabledModels = normalizeModelRefs(parsed as PlatformModelRef[]);
+  const enabledModels = normalizeStoredModelRefs(parsed);
   if (enabledModels.length === 0) {
     throw new Error("Stored platform model policy requires at least one enabled model");
   }
@@ -126,13 +134,54 @@ function normalizeModelRef(value: PlatformModelRef): PlatformModelRef | null {
   }
 
   const model = typeof value?.model === "string" ? value.model.trim() : "";
-  return model ? { provider, model } : null;
+  if (!model) return null;
+  validateModelStorageLength(model);
+  return { provider, model };
+}
+
+function normalizeStoredModelRefs(values: unknown[]): PlatformModelRef[] {
+  const normalized: PlatformModelRef[] = [];
+  const seen = new Set<string>();
+
+  for (const [index, value] of values.entries()) {
+    if (!value || typeof value !== "object") {
+      throw new Error(`Stored platform enabled model at index ${index} is invalid`);
+    }
+
+    let modelRef: PlatformModelRef | null;
+    try {
+      modelRef = normalizeModelRef(value as PlatformModelRef);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Stored platform enabled model at index ${index} is invalid: ${message}`);
+    }
+    if (!modelRef) {
+      throw new Error(`Stored platform enabled model at index ${index} is invalid`);
+    }
+
+    const key = `${modelRef.provider}\u0000${modelRef.model}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(modelRef);
+  }
+
+  return normalized;
+}
+
+function validateModelStorageLength(model: string) {
+  if (Array.from(model).length > MODEL_STORAGE_LENGTH) {
+    throw new Error(`Platform model identifier must be at most ${MODEL_STORAGE_LENGTH} characters`);
+  }
 }
 
 function modelRefsEqual(left: PlatformModelRef, right: PlatformModelRef) {
   return left.provider === right.provider && left.model === right.model;
 }
 
-function asDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
+function asStoredDate(value: Date | string, column: "created_at" | "updated_at"): Date {
+  const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error(`Stored platform model policy ${column} timestamp is invalid`);
+  }
+  return date;
 }
