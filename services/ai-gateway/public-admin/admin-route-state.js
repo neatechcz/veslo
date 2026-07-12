@@ -157,6 +157,86 @@ export function canAccessAdminRoute(route, access) {
   return Array.isArray(access?.organizationIds) && access.organizationIds.includes(route.organizationId);
 }
 
+export function adminUserRoutePermissions(route, access) {
+  const platformUsers = route?.area === "platform"
+    && route.page === "platform-users"
+    && access?.platformAdmin === true;
+  const organizationRouteAllowed = route?.area === "organization"
+    && canAccessAdminRoute(route, access);
+  const managedAiAccess = Array.isArray(access?.capabilities)
+    && access.capabilities.includes("managedAiUserAccess");
+  return {
+    createUser: platformUsers,
+    editProfile: platformUsers,
+    editMembership: platformUsers || (organizationRouteAllowed && route.page === "members"),
+    editAiAccess: managedAiAccess && (platformUsers || (organizationRouteAllowed && route.page === "ai-access")),
+    setPlatformAdmin: platformUsers,
+    disableUser: platformUsers,
+    deleteUser: platformUsers,
+  };
+}
+
+const USER_ACTION_PERMISSION = Object.freeze({
+  "create-user": "createUser",
+  "edit-user-profile": "editProfile",
+  "edit-membership": "editMembership",
+  "edit-ai-access": "editAiAccess",
+  "set-platform-admin": "setPlatformAdmin",
+  "disable-user": "disableUser",
+  "delete-user": "deleteUser",
+});
+
+export function canPerformAdminRouteAction(route, access, action) {
+  if (route?.area === "organization" && canAccessAdminRoute(route, access)) {
+    if (action === "edit-organization-profile") return route.page === "overview";
+    if (action === "manage-organization-domains" || action === "manage-organization-invites") {
+      return route.page === "domains-invites";
+    }
+  }
+  const permission = USER_ACTION_PERMISSION[action];
+  return Boolean(permission && adminUserRoutePermissions(route, access)[permission]);
+}
+
+export function buildAdminUserUpdatePayload(route, access, payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const permissions = adminUserRoutePermissions(route, access);
+  if (permissions.editProfile && permissions.setPlatformAdmin && permissions.editMembership) {
+    return {
+      name: payload.name,
+      platformAdmin: payload.platformAdmin,
+      orgId: payload.orgId,
+      orgRole: payload.orgRole,
+    };
+  }
+  if (permissions.editMembership) {
+    return {
+      orgId: route.organizationId,
+      orgRole: payload.orgRole,
+    };
+  }
+  return null;
+}
+
+export function createAdminMutationState() {
+  return { generations: Object.create(null) };
+}
+
+export function beginAdminRouteMutation(state, key, route) {
+  if (!state || typeof key !== "string" || !key || !formatAdminRoute(route)) return null;
+  const generation = (state.generations[key] || 0) + 1;
+  state.generations[key] = generation;
+  return { key, generation, route: { ...route } };
+}
+
+export function isAdminRouteMutationCurrent(state, mutation, route) {
+  return Boolean(
+    state
+    && mutation
+    && state.generations[mutation.key] === mutation.generation
+    && routeDescriptorsEqual(mutation.route, route),
+  );
+}
+
 export function createOrganizationLoadState() {
   return { requestId: 0, organizationId: null, organization: null, loading: false, error: "" };
 }

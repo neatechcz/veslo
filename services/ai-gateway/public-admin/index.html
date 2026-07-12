@@ -731,36 +731,36 @@
           <button id="user-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close user editor">Close</button>
         </div>
         <form class="editor-form user-editor">
-          <label>
+          <label data-user-global-control>
             <span>Name</span>
             <input id="user-name" class="input" value="" />
           </label>
-          <label>
+          <label data-user-global-control>
             <span>Email</span>
             <input id="user-email" class="input" value="" />
           </label>
-          <label>
+          <label data-user-membership-control>
             <span>Organization</span>
             <select id="user-org" class="input">
               <option>Personal</option>
             </select>
           </label>
-          <label>
+          <label data-user-membership-control>
             <span>Organization role</span>
             <select id="user-role" class="input">
               <option value="organization_admin">Organization admin</option>
               <option value="member">Member</option>
             </select>
           </label>
-          <label class="switch-row" data-platform-admin-control>
+          <label class="switch-row" data-platform-admin-control data-user-global-control>
             <span>Platform admin</span>
             <input id="user-platform-admin" type="checkbox" />
           </label>
-          <label class="switch-row">
+          <label class="switch-row" data-user-global-control>
             <span>Send invite email immediately</span>
             <input id="user-send-invite" type="checkbox" checked />
           </label>
-          <section class="editor-section" data-ai-access-control>
+          <section class="editor-section" data-ai-access-control data-user-ai-access-control>
             <div>
               <p class="eyebrow">AI access</p>
               <h4>Admin-managed AI access</h4>
@@ -790,8 +790,8 @@
           </section>
         </form>
         <div class="button-row modal-actions">
-          <button id="user-disable-button" class="button button-secondary" type="button">Disable user</button>
-          <button id="user-delete-button" class="button button-secondary" type="button">Delete user</button>
+          <button id="user-disable-button" class="button button-secondary" type="button" data-user-global-control data-user-global-action>Disable user</button>
+          <button id="user-delete-button" class="button button-secondary" type="button" data-user-global-control data-user-global-action>Delete user</button>
           <button id="user-save-button" class="button button-primary" type="button">Save changes</button>
         </div>
         <p id="user-save-status" class="editor-note muted">Create or edit a user, then save to apply the directory change.</p>

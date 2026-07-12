@@ -145,3 +145,106 @@ test("stale organization loads cannot replace a newer routed organization", () =
   assert.equal(routes.completeOrganizationLoad(state, second, { id: "org_b", name: "B" }), true);
   assert.deepEqual(state.organization, { id: "org_b", name: "B" });
 });
+
+test("platform authority does not grant global user actions inside organization routes", () => {
+  assert.equal(typeof routes.adminUserRoutePermissions, "function");
+  assert.equal(typeof routes.canPerformAdminRouteAction, "function");
+  const access = {
+    platformAdmin: true,
+    organizationIds: ["org_1"],
+    capabilities: ["managedAiUserAccess"],
+  };
+  const members = { area: "organization", page: "members", organizationId: "org_1" };
+  const aiAccess = { area: "organization", page: "ai-access", organizationId: "org_1" };
+
+  assert.deepEqual(routes.adminUserRoutePermissions(members, access), {
+    createUser: false,
+    editProfile: false,
+    editMembership: true,
+    editAiAccess: false,
+    setPlatformAdmin: false,
+    disableUser: false,
+    deleteUser: false,
+  });
+  assert.deepEqual(routes.adminUserRoutePermissions(aiAccess, access), {
+    createUser: false,
+    editProfile: false,
+    editMembership: false,
+    editAiAccess: true,
+    setPlatformAdmin: false,
+    disableUser: false,
+    deleteUser: false,
+  });
+  assert.deepEqual(
+    routes.adminUserRoutePermissions(aiAccess, {
+      platformAdmin: false,
+      organizationIds: ["org_1"],
+      capabilities: ["organization", "users"],
+    }),
+    {
+      createUser: false,
+      editProfile: false,
+      editMembership: false,
+      editAiAccess: false,
+      setPlatformAdmin: false,
+      disableUser: false,
+      deleteUser: false,
+    },
+  );
+  for (const action of ["create-user", "edit-user-profile", "set-platform-admin", "disable-user", "delete-user"]) {
+    assert.equal(routes.canPerformAdminRouteAction(members, access, action), false, action);
+    assert.equal(routes.canPerformAdminRouteAction(aiAccess, access, action), false, action);
+  }
+  assert.equal(routes.canPerformAdminRouteAction(members, access, "edit-membership"), true);
+  assert.equal(routes.canPerformAdminRouteAction(aiAccess, access, "edit-ai-access"), true);
+  assert.equal(routes.canPerformAdminRouteAction(
+    { area: "organization", page: "overview", organizationId: "org_1" },
+    access,
+    "edit-organization-profile",
+  ), true);
+  assert.equal(routes.canPerformAdminRouteAction(
+    { area: "organization", page: "domains-invites", organizationId: "org_1" },
+    access,
+    "manage-organization-domains",
+  ), true);
+});
+
+test("user update payloads contain only fields authorized by the canonical route", () => {
+  assert.equal(typeof routes.buildAdminUserUpdatePayload, "function");
+  const input = {
+    name: "Global Name",
+    platformAdmin: true,
+    orgId: "org_wrong",
+    orgRole: "organization_admin",
+  };
+  const platform = { area: "platform", page: "platform-users", organizationId: null };
+  const members = { area: "organization", page: "members", organizationId: "org_1" };
+  const aiAccess = { area: "organization", page: "ai-access", organizationId: "org_1" };
+  const platformAccess = { platformAdmin: true, organizationIds: ["org_1"], capabilities: ["managedAiUserAccess"] };
+
+  assert.deepEqual(routes.buildAdminUserUpdatePayload(platform, platformAccess, input), input);
+  assert.deepEqual(
+    routes.buildAdminUserUpdatePayload(members, platformAccess, input),
+    { orgId: "org_1", orgRole: "organization_admin" },
+  );
+  assert.equal(routes.buildAdminUserUpdatePayload(aiAccess, platformAccess, input), null);
+});
+
+test("route mutation tokens reject pending success and error after switching organizations", () => {
+  assert.equal(typeof routes.createAdminMutationState, "function");
+  assert.equal(typeof routes.beginAdminRouteMutation, "function");
+  assert.equal(typeof routes.isAdminRouteMutationCurrent, "function");
+  const mutations = routes.createAdminMutationState();
+  const orgA = { area: "organization", page: "members", organizationId: "org_a" };
+  const orgB = { area: "organization", page: "members", organizationId: "org_b" };
+
+  const pendingSuccess = routes.beginAdminRouteMutation(mutations, "member-save", orgA);
+  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingSuccess, orgB), false);
+
+  const pendingError = routes.beginAdminRouteMutation(mutations, "member-save", orgA);
+  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingError, orgB), false);
+
+  const current = routes.beginAdminRouteMutation(mutations, "member-save", orgB);
+  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingError, orgA), false);
+  assert.equal(routes.isAdminRouteMutationCurrent(mutations, current, orgB), true);
+});
