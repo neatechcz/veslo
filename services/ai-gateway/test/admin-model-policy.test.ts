@@ -14,6 +14,8 @@ import type {
   PlatformModelRef,
 } from "../src/model-policy/repository.js";
 import type { CodexUsageStatus } from "../src/usage/codex-status.js";
+import * as modelPolicyMysql from "../src/model-policy/mysql-repository.js";
+import { ProviderTransportError } from "../src/providers/transport.js";
 
 const ADMIN_COOKIE = "veslo.ai-gateway.admin.token=admin-token";
 const NOW = new Date("2026-07-12T00:00:00.000Z");
@@ -97,11 +99,19 @@ function createHarness(input: {
   openAiCompatibleModels?: string[];
   secret?: StoredSecret;
   failAudit?: boolean;
+  secretLookupError?: Error;
+  modelDiscoveryError?: Error;
 } = {}) {
   const modelPolicy = new MemoryModelPolicyRepository(input.policy ?? null);
   const auditEvents: RecordAuditEventInput[] = [];
   const auditAttempts: RecordAuditEventInput[] = [];
   const credentials = input.credentials ?? [credential({ id: "cred_codex", provider: "codex_oauth" })];
+  const mutationCalls: Array<{
+    actorUserId: string;
+    enabledModels: PlatformModelRef[];
+    activeModel: PlatformModelRef;
+  }> = [];
+  let modelDiscoveryCalls = 0;
   const auditRepository: AuditRepository = {
     async recordEvent(event) {
       auditAttempts.push(event);
@@ -125,6 +135,7 @@ function createHarness(input: {
     },
     credentialSecretLookupRepository: {
       async getCredentialRecordById(credentialId: string) {
+        if (input.secretLookupError) throw input.secretLookupError;
         const match = credentials.find((entry) => entry.id === credentialId);
         return match
           ? { provider: match.provider, secretRef: `secret_${credentialId}`, name: match.name }
@@ -161,15 +172,95 @@ function createHarness(input: {
         throw new Error("unused");
       },
       async listModels() {
+        modelDiscoveryCalls += 1;
+        if (input.modelDiscoveryError) throw input.modelDiscoveryError;
         return { models: input.openAiCompatibleModels ?? ["custom/model-v1"] };
+      },
+    },
+    modelPolicyMutation: {
+      async replacePolicyWithAudit(mutationInput: {
+        actorUserId: string;
+        enabledModels: PlatformModelRef[];
+        activeModel: PlatformModelRef;
+      }) {
+        mutationCalls.push(mutationInput);
+        const previous = modelPolicy.current;
+        const saved = policyRecord({
+          enabledModels: mutationInput.enabledModels,
+          activeModel: mutationInput.activeModel,
+        });
+        const summaryFormatter = (modelPolicyMysql as unknown as {
+          formatPlatformModelPolicyAuditSummary?: (
+            before: PlatformModelPolicyRecord | null,
+            after: PlatformModelPolicyRecord,
+          ) => string;
+        }).formatPlatformModelPolicyAuditSummary;
+        const event = {
+          actorUserId: mutationInput.actorUserId,
+          action: "platform.model_policy.update",
+          entityType: "platform_model_policy",
+          entityId: "platform",
+          result: "ok" as const,
+          summary: summaryFormatter
+            ? summaryFormatter(previous, saved)
+            : "model policy summary unavailable",
+        };
+        auditAttempts.push(event);
+        if (modelPolicy.failReplace) throw new Error("model_policy_write_down");
+        if (input.failAudit) {
+          throw Object.assign(new Error("model_policy_audit_store_down"), {
+            code: "model_policy_audit_failed",
+          });
+        }
+        modelPolicy.current = saved;
+        auditEvents.push(event);
+        return saved;
       },
     },
     auditRepository,
     now: () => NOW,
   });
 
-  return { service, modelPolicy, auditEvents, auditAttempts };
+  return {
+    service,
+    modelPolicy,
+    auditEvents,
+    auditAttempts,
+    mutationCalls,
+    get modelDiscoveryCalls() {
+      return modelDiscoveryCalls;
+    },
+  };
 }
+
+test("model policy audit summary deterministically preserves active and enabled before/after refs", () => {
+  const formatSummary = (modelPolicyMysql as unknown as {
+    formatPlatformModelPolicyAuditSummary?: (
+      before: PlatformModelPolicyRecord | null,
+      after: PlatformModelPolicyRecord,
+    ) => string;
+  }).formatPlatformModelPolicyAuditSummary;
+  assert.equal(typeof formatSummary, "function");
+
+  const before = policyRecord({
+    enabledModels: [
+      { provider: "codex_oauth", model: "gpt-5.4" },
+      { provider: "openai_compatible", model: "custom/model-v2" },
+    ],
+    activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
+  });
+  const after = policyRecord({
+    enabledModels: [
+      { provider: "openai_compatible", model: "custom/model-v1" },
+      { provider: "codex_oauth", model: "gpt-5.5" },
+    ],
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+  });
+  assert.equal(
+    formatSummary!(before, after),
+    "Updated platform model policy: active codex_oauth/gpt-5.4 -> codex_oauth/gpt-5.5; enabled [codex_oauth/gpt-5.4, openai_compatible/custom/model-v2] -> [codex_oauth/gpt-5.5, openai_compatible/custom/model-v1].",
+  );
+});
 
 test("getPlatformModelPolicy returns null or the current serialized policy", async () => {
   const empty = createHarness({ policy: null });
@@ -197,7 +288,7 @@ test("replacePlatformModelPolicy normalizes duplicates and writes the global aud
     enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
     activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
   });
-  const { service, modelPolicy, auditEvents } = createHarness({ policy: previous });
+  const { service, auditEvents, mutationCalls } = createHarness({ policy: previous });
 
   const response = await service.replacePlatformModelPolicy("admin-token", {
     enabledModels: [
@@ -206,7 +297,7 @@ test("replacePlatformModelPolicy normalizes duplicates and writes the global aud
       { provider: "codex_oauth", model: "gpt-5.4" },
     ],
     activeModel: { provider: "codex_oauth", model: " gpt-5.5 " },
-  });
+  }, "user_platform_admin");
 
   const expectedPolicy = {
     enabledModels: [
@@ -217,17 +308,18 @@ test("replacePlatformModelPolicy normalizes duplicates and writes the global aud
     updatedAt: NOW.toISOString(),
   };
   assert.deepEqual(response, { policy: expectedPolicy });
-  assert.deepEqual(modelPolicy.replaceCalls, [{
-    enabledModels: expectedPolicy.enabledModels,
-    activeModel: expectedPolicy.activeModel,
-  }]);
   assert.deepEqual(auditEvents, [{
-    actorUserId: "admin-ui",
+    actorUserId: "user_platform_admin",
     action: "platform.model_policy.update",
     entityType: "platform_model_policy",
     entityId: "platform",
     result: "ok",
-    summary: "Updated platform model policy active model from codex_oauth/gpt-5.4 to codex_oauth/gpt-5.5.",
+    summary: "Updated platform model policy: active codex_oauth/gpt-5.4 -> codex_oauth/gpt-5.5; enabled [codex_oauth/gpt-5.4] -> [codex_oauth/gpt-5.4, codex_oauth/gpt-5.5].",
+  }]);
+  assert.deepEqual(mutationCalls, [{
+    actorUserId: "user_platform_admin",
+    enabledModels: expectedPolicy.enabledModels,
+    activeModel: expectedPolicy.activeModel,
   }]);
   assert.doesNotMatch(JSON.stringify(auditEvents), /test-key|secret_/);
 });
@@ -243,7 +335,7 @@ test("replacePlatformModelPolicy rejects empty enabled models before persistence
     service.replacePlatformModelPolicy("admin-token", {
       enabledModels: [],
       activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
-    }),
+    }, "user_platform_admin"),
     (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_enabled_models_required"
       && (error as { status?: number }).status === 400,
   );
@@ -263,7 +355,7 @@ test("replacePlatformModelPolicy requires the active model to be enabled", async
     service.replacePlatformModelPolicy("admin-token", {
       enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
       activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
-    }),
+    }, "user_platform_admin"),
     (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_active_model_not_enabled"
       && (error as { status?: number }).status === 400,
   );
@@ -280,7 +372,7 @@ test("activation requires a healthy credential and positive Codex capability evi
     unhealthy.service.replacePlatformModelPolicy("admin-token", {
       enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
       activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
-    }),
+    }, "user_platform_admin"),
     (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_active_model_has_no_healthy_credential"
       && (error as { status?: number }).status === 422,
   );
@@ -297,15 +389,50 @@ test("activation requires a healthy credential and positive Codex capability evi
     unavailable.service.replacePlatformModelPolicy("admin-token", {
       enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
       activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
-    }),
-    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_active_model_capability_unverified"
-      && (error as { status?: number }).status === 422,
+    }, "user_platform_admin"),
+    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_capability_evidence_unavailable"
+      && (error as { status?: number }).status === 503,
   );
 
   assert.equal(unhealthy.modelPolicy.replaceCalls.length, 0);
   assert.equal(unavailable.modelPolicy.replaceCalls.length, 0);
   assert.deepEqual(unhealthy.auditEvents, []);
   assert.deepEqual(unavailable.auditEvents, []);
+});
+
+test("every enabled model requires authoritative capability evidence", async () => {
+  const unsupportedCodex = createHarness();
+  await assert.rejects(
+    unsupportedCodex.service.replacePlatformModelPolicy("admin-token", {
+      enabledModels: [
+        { provider: "codex_oauth", model: "gpt-5.5" },
+        { provider: "codex_oauth", model: "invented-model" },
+      ],
+      activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+    }, "user_platform_admin"),
+    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_enabled_model_unsupported"
+      && (error as { status?: number }).status === 422,
+  );
+  assert.equal(unsupportedCodex.mutationCalls.length, 0);
+
+  const unverifiableNonActive = createHarness({
+    credentials: [
+      credential({ id: "cred_codex", provider: "codex_oauth" }),
+      credential({ id: "cred_openai", provider: "openai" }),
+    ],
+  });
+  await assert.rejects(
+    unverifiableNonActive.service.replacePlatformModelPolicy("admin-token", {
+      enabledModels: [
+        { provider: "codex_oauth", model: "gpt-5.5" },
+        { provider: "openai", model: "client-claimed-model" },
+      ],
+      activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+    }, "user_platform_admin"),
+    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_activation_not_verifiable_for_provider"
+      && (error as { status?: number }).status === 422,
+  );
+  assert.equal(unverifiableNonActive.mutationCalls.length, 0);
 });
 
 test("OpenAI-compatible activation uses credential model discovery as capability evidence", async () => {
@@ -316,7 +443,7 @@ test("OpenAI-compatible activation uses credential model discovery as capability
   const result = await supported.service.replacePlatformModelPolicy("admin-token", {
     enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
     activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
-  });
+  }, "user_platform_admin");
   assert.equal(result.policy?.activeModel.model, "custom/model-v1");
 
   const unsupported = createHarness({
@@ -327,12 +454,77 @@ test("OpenAI-compatible activation uses credential model discovery as capability
     unsupported.service.replacePlatformModelPolicy("admin-token", {
       enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
       activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
-    }),
-    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_active_model_capability_unverified"
+    }, "user_platform_admin"),
+    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_enabled_model_unsupported"
       && (error as { status?: number }).status === 422,
   );
   assert.equal(unsupported.modelPolicy.replaceCalls.length, 0);
   assert.deepEqual(unsupported.auditEvents, []);
+});
+
+test("OpenAI-compatible validation discovers once per credential for multiple enabled models", async () => {
+  const harness = createHarness({
+    credentials: [credential({ id: "cred_custom", provider: "openai_compatible" })],
+    openAiCompatibleModels: ["custom/model-v1", "custom/model-v2"],
+  });
+
+  const result = await harness.service.replacePlatformModelPolicy("admin-token", {
+    enabledModels: [
+      { provider: "openai_compatible", model: "custom/model-v1" },
+      { provider: "openai_compatible", model: "custom/model-v2" },
+    ],
+    activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+  }, "user_platform_admin");
+
+  assert.equal(result.policy.enabledModels.length, 2);
+  assert.equal(harness.modelDiscoveryCalls, 1);
+});
+
+test("OpenAI-compatible validation preserves transient secret and provider failures", async () => {
+  const secretFailure = createHarness({
+    credentials: [credential({ id: "cred_custom", provider: "openai_compatible" })],
+    secretLookupError: new Error("secret store unavailable"),
+  });
+  await assert.rejects(
+    secretFailure.service.replacePlatformModelPolicy("admin-token", {
+      enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+      activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+    }, "user_platform_admin"),
+    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_credential_lookup_failed"
+      && (error as { status?: number }).status === 503,
+  );
+
+  const timeoutFailure = createHarness({
+    credentials: [credential({ id: "cred_custom", provider: "openai_compatible" })],
+    modelDiscoveryError: new ProviderTransportError("timeout", {
+      code: "openai_compatible_models_timeout",
+      statusCode: 504,
+    }),
+  });
+  await assert.rejects(
+    timeoutFailure.service.replacePlatformModelPolicy("admin-token", {
+      enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+      activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+    }, "user_platform_admin"),
+    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_model_discovery_timeout"
+      && (error as { status?: number }).status === 504,
+  );
+
+  const providerFailure = createHarness({
+    credentials: [credential({ id: "cred_custom", provider: "openai_compatible" })],
+    modelDiscoveryError: new ProviderTransportError("upstream unavailable", {
+      code: "openai_compatible_request_failed",
+      statusCode: 502,
+    }),
+  });
+  await assert.rejects(
+    providerFailure.service.replacePlatformModelPolicy("admin-token", {
+      enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+      activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+    }, "user_platform_admin"),
+    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_model_discovery_failed"
+      && (error as { status?: number }).status === 502,
+  );
 });
 
 test("raw OpenAI and Anthropic activation is rejected when provider capability cannot be verified", async () => {
@@ -342,7 +534,7 @@ test("raw OpenAI and Anthropic activation is rejected when provider capability c
       harness.service.replacePlatformModelPolicy("admin-token", {
         enabledModels: [{ provider, model: "claimed-model" }],
         activeModel: { provider, model: "claimed-model" },
-      }),
+      }, "user_platform_admin"),
       (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_activation_not_verifiable_for_provider"
         && (error as { status?: number }).status === 422,
     );
@@ -363,7 +555,7 @@ test("failed model policy replacement preserves the previous policy and records 
     harness.service.replacePlatformModelPolicy("admin-token", {
       enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
       activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
-    }),
+    }, "user_platform_admin"),
     /model_policy_write_down/,
   );
   assert.equal(harness.modelPolicy.current, previous);
@@ -371,7 +563,11 @@ test("failed model policy replacement preserves the previous policy and records 
 });
 
 test("PUT does not report success when required model policy audit persistence fails", async () => {
-  const harness = createHarness({ failAudit: true });
+  const previous = policyRecord({
+    enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
+    activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
+  });
+  const harness = createHarness({ policy: previous, failAudit: true });
   const app = createApp({ admin: harness.service });
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -394,10 +590,7 @@ test("PUT does not report success when required model policy audit persistence f
     assert.deepEqual(await response.json(), { error: "model_policy_audit_failed" });
     assert.deepEqual(harness.auditEvents, []);
     assert.equal(harness.auditAttempts.length, 1);
-    assert.deepEqual(harness.modelPolicy.current?.activeModel, {
-      provider: "codex_oauth",
-      model: "gpt-5.5",
-    });
+    assert.equal(harness.modelPolicy.current, previous);
   } finally {
     server.close();
     await once(server, "close");
@@ -434,6 +627,7 @@ test("model policy routes return payloads and stable read/write errors", async (
         updatedAt: NOW.toISOString(),
       },
     });
+    assert.equal(harness.mutationCalls[0]?.actorUserId, "user_platform_admin");
 
     harness.modelPolicy.failRead = true;
     const readFailure = await fetch(baseUrl, { headers: { cookie: ADMIN_COOKIE } });

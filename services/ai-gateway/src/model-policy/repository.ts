@@ -20,3 +20,15 @@ export interface PlatformModelPolicyRepository {
     activeModel: PlatformModelRef;
   }): Promise<PlatformModelPolicyRecord>;
 }
+
+export type ReplacePlatformModelPolicyWithAuditInput = {
+  actorUserId: string;
+  enabledModels: PlatformModelRef[];
+  activeModel: PlatformModelRef;
+};
+
+export interface PlatformModelPolicyMutation {
+  replacePolicyWithAudit(
+    input: ReplacePlatformModelPolicyWithAuditInput,
+  ): Promise<PlatformModelPolicyRecord>;
+}

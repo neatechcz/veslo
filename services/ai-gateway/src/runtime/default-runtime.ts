@@ -15,6 +15,7 @@ import type { CredentialRepository } from "../credentials/repository.js";
 import type { SecretStore } from "../credentials/secret-store.js";
 import { createDb, type AiGatewayDb } from "../db/index.js";
 import { env } from "../env.js";
+import type { AdminServiceDependencies } from "../http/admin.js";
 import type { ProxyDependencies } from "../http/proxy.js";
 import type { ReadinessDependencies } from "../http/readiness.js";
 import type { UserCredentialDependencies } from "../http/user-credentials.js";
@@ -22,8 +23,8 @@ import { DefaultBindingSelector } from "../leases/binding-selector.js";
 import { LeaseBroker } from "../leases/lease-broker.js";
 import { MySqlLeaseRepository } from "../leases/mysql-repository.js";
 import type { LeaseRepository } from "../leases/repository.js";
-import { MySqlPlatformModelPolicyRepository } from "../model-policy/mysql-repository.js";
-import type { PlatformModelPolicyRepository } from "../model-policy/repository.js";
+import { MySqlPlatformModelPolicyMutation, MySqlPlatformModelPolicyRepository } from "../model-policy/mysql-repository.js";
+import type { PlatformModelPolicyMutation, PlatformModelPolicyRepository } from "../model-policy/repository.js";
 import { AnthropicTransport } from "../providers/anthropic-transport.js";
 import { CodexOAuthInferenceProxyTransport } from "../providers/codex-oauth-inference-proxy-transport.js";
 import { CachedCodexCredentialStatusProvider } from "../usage/codex-status.js";
@@ -40,6 +41,7 @@ export type RuntimeState = {
   secrets: SecretStore;
   leases: LeaseRepository;
   modelPolicy: PlatformModelPolicyRepository;
+  modelPolicyMutation: PlatformModelPolicyMutation;
   usage: UsageRepository;
 };
 
@@ -61,7 +63,17 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
     secrets: new MySqlSecretStore(db, secretKey),
     leases: new MySqlLeaseRepository(db),
     modelPolicy: new MySqlPlatformModelPolicyRepository(db),
+    modelPolicyMutation: new MySqlPlatformModelPolicyMutation(db),
     usage: new MySqlUsageRepository(db),
+  };
+}
+
+export function createDefaultAdminDependencies(
+  runtime: RuntimeState,
+): Pick<AdminServiceDependencies, "modelPolicyRepository" | "modelPolicyMutation"> {
+  return {
+    modelPolicyRepository: runtime.modelPolicy,
+    modelPolicyMutation: runtime.modelPolicyMutation,
   };
 }
 
