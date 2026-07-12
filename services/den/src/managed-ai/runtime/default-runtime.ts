@@ -9,7 +9,7 @@ import {
   type AutoAssignedCodexCredentialRotationService,
 } from "../access/auto-assignment-rotation.js"
 import { MySqlAiAccessRepository } from "../access/mysql-repository.js"
-import type { AiAccessRepository } from "../access/repository.js"
+import type { AiAccessProvider, AiAccessRepository } from "../access/repository.js"
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js"
 import type { AlertRepository } from "../alerts/repository.js"
 import { MySqlAuditRepository } from "../audit/mysql-repository.js"
@@ -36,6 +36,9 @@ import type { CodexOAuthProviderTransport } from "../providers/transport.js"
 import { CachedCodexCredentialStatusProvider, type CodexCredentialStatusProvider } from "../usage/codex-status.js"
 import { MySqlUsageRepository } from "../usage/mysql-repository.js"
 import type { UsageRepository } from "../usage/repository.js"
+import type { ProxyDependencies } from "../http/proxy-dependencies.js"
+
+export type { ProxyDependencies } from "../http/proxy-dependencies.js"
 
 export type RuntimeState = {
   aiAccess: AiAccessRepository
@@ -99,26 +102,6 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
   }
 }
 
-export type ProxyDependencies = {
-  aiAccess: AiAccessRepository
-  autoAssignedCodexCredentialRotation: AutoAssignedCodexCredentialRotationService
-  gatewaySessions: DenGatewaySessionResolver
-  organizationAccess: {
-    listUserOrganizations: typeof resolveActiveUserOrganizations
-    findUserOrganization: typeof findUserOrganization
-  }
-  organizationBilling: OrganizationBillingRepository
-  credentials: CredentialRepository
-  secrets: SecretStore
-  usageRepository: UsageRepository
-  leaseBroker: LeaseBroker
-  tokenBroker: DefaultTokenBroker
-  openAiTransport: OpenAiTransport
-  anthropicTransport: AnthropicTransport
-  codexOAuthTransport: CodexOAuthProviderTransport
-  openAiCompatibleTransport: OpenAiCompatibleTransport
-}
-
 export function createDefaultProxyDependencies(
   runtime: RuntimeState,
   overrides: Partial<Pick<ProxyDependencies, "gatewaySessions" | "openAiTransport" | "anthropicTransport" | "codexOAuthTransport" | "openAiCompatibleTransport">> & {
@@ -132,6 +115,7 @@ export function createDefaultProxyDependencies(
   const openAiOAuth = overrides.openAiOAuth ?? createDefaultOpenAiOAuthClient()
 
   return {
+    denInferenceMode: "retired",
     aiAccess: runtime.aiAccess,
     autoAssignedCodexCredentialRotation: createAutoAssignedCodexCredentialRotationService({
       aiAccess: runtime.aiAccess,
@@ -178,22 +162,21 @@ export function createDefaultProxyDependencies(
 export type UserCredentialDependencies = {
   sessionResolver: UserSessionResolver
   aiAccess: AiAccessRepository
-  autoAssignedCodexCredentialRotation: AutoAssignedCodexCredentialRotationService
+  modelPolicy?: {
+    getPolicy(): Promise<{
+      activeModel: { provider: AiAccessProvider; model: string }
+    } | null>
+  }
 }
 
 export function createDefaultUserCredentialDependencies(
   runtime: RuntimeState,
-  overrides: Partial<Pick<UserCredentialDependencies, "sessionResolver">> = {},
+  overrides: Partial<Pick<UserCredentialDependencies, "sessionResolver" | "modelPolicy">> = {},
 ): UserCredentialDependencies {
   return {
     sessionResolver: overrides.sessionResolver ?? new DenUserSessionResolver(),
     aiAccess: runtime.aiAccess,
-    autoAssignedCodexCredentialRotation: createAutoAssignedCodexCredentialRotationService({
-      aiAccess: runtime.aiAccess,
-      credentials: runtime.credentials,
-      codexStatusProvider: runtime.codexStatusProvider,
-      audit: runtime.audit,
-    }),
+    modelPolicy: overrides.modelPolicy,
   }
 }
 

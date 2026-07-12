@@ -57,8 +57,6 @@ export function createAutoAssignedCodexCredentialRotationService(
         enabled: aiAccess.enabled,
         provider: "codex_oauth",
         credentialId: replacement.credentialId,
-        defaultModel: aiAccess.defaultModel,
-        allowedModels: aiAccess.allowedModels,
         assignmentOrigin: aiAccess.assignmentOrigin,
       })
 

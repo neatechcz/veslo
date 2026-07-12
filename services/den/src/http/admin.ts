@@ -83,8 +83,6 @@ export type AdminUserAiAccessRecord = {
   enabled: boolean
   provider: ManagedAiProvider | null
   credentialId: string | null
-  defaultModel: string | null
-  allowedModels: string[]
   updatedAt: string
 }
 

@@ -28,7 +28,6 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
   async upsertUserAiAccess(input: UpsertUserAiAccessPolicyInput): Promise<UserAiAccessPolicyRecord> {
     const existing = await this.getUserAiAccess(input.userId)
     const now = new Date()
-    const allowedModelsJson = JSON.stringify(normalizeAllowedModels(input.allowedModels))
     const assignmentOrigin = parseAssignmentOrigin(input.assignmentOrigin)
 
     if (existing) {
@@ -38,8 +37,6 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
           enabled: input.enabled ? 1 : 0,
           provider: input.provider,
           credential_id: input.credentialId,
-          default_model: input.defaultModel,
-          allowed_models_json: allowedModelsJson,
           assignment_origin: assignmentOrigin,
           updated_at: now,
         })
@@ -50,8 +47,6 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
         enabled: input.enabled,
         provider: input.provider,
         credentialId: input.credentialId,
-        defaultModel: input.defaultModel,
-        allowedModels: normalizeAllowedModels(input.allowedModels),
         assignmentOrigin,
         updatedAt: now,
       }
@@ -64,8 +59,8 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
       enabled: input.enabled ? 1 : 0,
       provider: input.provider,
       credential_id: input.credentialId,
-      default_model: input.defaultModel,
-      allowed_models_json: allowedModelsJson,
+      default_model: null,
+      allowed_models_json: "[]",
       assignment_origin: assignmentOrigin,
       created_at: now,
       updated_at: now,
@@ -77,8 +72,8 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
       enabled: input.enabled,
       provider: input.provider,
       credentialId: input.credentialId,
-      defaultModel: input.defaultModel,
-      allowedModels: normalizeAllowedModels(input.allowedModels),
+      defaultModel: null,
+      allowedModels: [],
       assignmentOrigin,
       createdAt: now,
       updatedAt: now,

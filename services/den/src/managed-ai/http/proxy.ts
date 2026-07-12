@@ -24,6 +24,18 @@ const defaultOrganizationAccess = {
 export function createProxyRouter(deps: ProxyDependencies) {
   const router = Router()
 
+  router.use("/providers", (_req, res, next) => {
+    if (deps.denInferenceMode === "legacy_rollback") {
+      next()
+      return
+    }
+
+    res.status(410).json({
+      error: "den_managed_ai_inference_retired",
+      message: "Managed AI inference has moved to the canonical AI Gateway.",
+    })
+  })
+
   router.use("/providers", async (req, res, next) => {
     const token = readBearerToken(req.header("authorization"))
     if (!token) {

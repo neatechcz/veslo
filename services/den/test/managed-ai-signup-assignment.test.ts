@@ -1,11 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { createManagedAiSignupAssignmentService, DEFAULT_CODEX_AUTO_ASSIGN_MODEL } from "../src/managed-ai/signup-assignment.js"
-
-test("signup assignment default model is gpt-5.5", () => {
-  assert.equal(DEFAULT_CODEX_AUTO_ASSIGN_MODEL, "gpt-5.5")
-})
+import { createManagedAiSignupAssignmentService } from "../src/managed-ai/signup-assignment.js"
 
 function createCredential(
   id: string,
@@ -32,6 +28,9 @@ test("new user gets the least-loaded healthy eligible Codex credential", async (
   const upserts: unknown[] = []
   const statusChecks: string[] = []
   const service = createManagedAiSignupAssignmentService({
+    async getActiveModelProvider() {
+      return "codex_oauth"
+    },
     aiAccess: {
       async getUserAiAccess() {
         return null
@@ -44,8 +43,8 @@ test("new user gets the least-loaded healthy eligible Codex credential", async (
           enabled: input.enabled,
           provider: input.provider,
           credentialId: input.credentialId,
-          defaultModel: input.defaultModel,
-          allowedModels: input.allowedModels,
+          defaultModel: null,
+          allowedModels: [],
           createdAt: new Date("2026-04-27T12:00:00.000Z"),
           updatedAt: new Date("2026-04-27T12:00:00.000Z"),
         }
@@ -86,8 +85,6 @@ test("new user gets the least-loaded healthy eligible Codex credential", async (
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_codex_2",
-      defaultModel: DEFAULT_CODEX_AUTO_ASSIGN_MODEL,
-      allowedModels: [DEFAULT_CODEX_AUTO_ASSIGN_MODEL],
       assignmentOrigin: "auto_assigned",
     },
   ])
@@ -105,8 +102,8 @@ test("existing ai access is preserved", async () => {
           enabled: true,
           provider: "codex_oauth",
           credentialId: "cred_codex_1",
-          defaultModel: DEFAULT_CODEX_AUTO_ASSIGN_MODEL,
-          allowedModels: [DEFAULT_CODEX_AUTO_ASSIGN_MODEL],
+          defaultModel: "legacy-model-that-must-not-be-rewritten",
+          allowedModels: ["legacy-model-that-must-not-be-rewritten"],
           createdAt: new Date("2026-04-27T12:00:00.000Z"),
           updatedAt: new Date("2026-04-27T12:00:00.000Z"),
         }
@@ -147,6 +144,9 @@ test("existing ai access is preserved", async () => {
 test("assignment skips when no eligible codex credential exists", async () => {
   const upserts: unknown[] = []
   const service = createManagedAiSignupAssignmentService({
+    async getActiveModelProvider() {
+      return "codex_oauth"
+    },
     aiAccess: {
       async getUserAiAccess() {
         return null
@@ -180,6 +180,121 @@ test("assignment skips when no eligible codex credential exists", async () => {
 
   assert.equal(assigned, false)
   assert.deepEqual(upserts, [])
+})
+
+test("assignment skips when the gateway active provider is not codex_oauth", async () => {
+  const upserts: unknown[] = []
+  const service = createManagedAiSignupAssignmentService({
+    async getActiveModelProvider() {
+      return "openai"
+    },
+    aiAccess: {
+      async getUserAiAccess() {
+        return null
+      },
+      async upsertUserAiAccess(input) {
+        upserts.push(input)
+        throw new Error("should_not_write")
+      },
+    } as any,
+    credentials: {
+      async listAdminCredentials() {
+        return [createCredential("cred_codex_1")]
+      },
+    } as any,
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_rate_limits",
+          label: "Codex limits available",
+          detail: null,
+          checkedAt: "2026-04-27T12:00:00.000Z",
+        }
+      },
+    },
+  })
+
+  const assigned = await service.maybeAssignDefaultCodexAccessForNewUser("user_1")
+
+  assert.equal(assigned, false)
+  assert.deepEqual(upserts, [])
+})
+
+test("missing gateway model policy skips assignment without breaking account creation", async () => {
+  const upserts: unknown[] = []
+  const service = createManagedAiSignupAssignmentService({
+    async getActiveModelProvider() {
+      return null
+    },
+    aiAccess: {
+      async getUserAiAccess() {
+        return null
+      },
+      async upsertUserAiAccess(input) {
+        upserts.push(input)
+        throw new Error("should_not_write")
+      },
+    } as any,
+    credentials: {
+      async listAdminCredentials() {
+        return [createCredential("cred_codex_1")]
+      },
+    } as any,
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_rate_limits",
+          label: "Codex limits available",
+          detail: null,
+          checkedAt: "2026-04-27T12:00:00.000Z",
+        }
+      },
+    },
+  })
+
+  const assigned = await service.maybeAssignDefaultCodexAccessForNewUser("user_1")
+
+  assert.equal(assigned, false)
+  assert.deepEqual(upserts, [])
+})
+
+test("gateway active-provider lookup failures are logged and do not break account creation", async () => {
+  const logs: Array<{ message: string; error: unknown }> = []
+  const service = createManagedAiSignupAssignmentService({
+    async getActiveModelProvider() {
+      throw new Error("gateway_policy_unavailable")
+    },
+    aiAccess: {
+      async getUserAiAccess() {
+        return null
+      },
+      async upsertUserAiAccess() {
+        throw new Error("should_not_write")
+      },
+    } as any,
+    credentials: {
+      async listAdminCredentials() {
+        throw new Error("should_not_list_credentials")
+      },
+    } as any,
+    codexStatusProvider: {
+      async getStatus() {
+        throw new Error("should_not_check_status")
+      },
+    },
+    logger(message, error) {
+      logs.push({ message, error })
+    },
+  })
+
+  const assigned = await service.maybeAssignDefaultCodexAccessForNewUser("user_1")
+
+  assert.equal(assigned, false)
+  assert.equal(logs.length, 1)
+  assert.equal(logs[0]?.message, "managed ai active provider lookup failed")
+  assert.match(String(logs[0]?.error), /gateway_policy_unavailable/)
 })
 
 test("assignment failures are logged but do not throw", async () => {

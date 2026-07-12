@@ -16,6 +16,8 @@ import type {
 import type { UsageRepository } from "../usage/repository.js"
 
 export type ProxyDependencies = {
+  /** Production is retired. legacy_rollback is an explicit rollback-only mode. */
+  denInferenceMode: "retired" | "legacy_rollback"
   aiAccess?: AiAccessRepository
   autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService
   gatewaySessions: GatewaySessionResolver
