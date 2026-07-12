@@ -74,6 +74,11 @@ test("startup storage keeps desktop baseUrl ephemeral and migrates model variant
     /if \(!deps\.isTauriRuntime\(\)\) \{[\s\S]*?const storedBaseUrl = window\.localStorage\.getItem\("veslo\.baseUrl"\);[\s\S]*?deps\.setBaseUrl\(storedBaseUrl\);[\s\S]*?\}/s,
     "desktop startup must not restore stale localStorage baseUrl",
   );
+  assert.doesNotMatch(
+    storageRestore,
+    /MODEL_PREF_KEY|veslo\.defaultModel/,
+    "startup must ignore stale user model authority from local storage",
+  );
   assert.match(
     storageRestore,
     /resolveStartupModelVariant\(\{[\s\S]*?storedVariant: window\.localStorage\.getItem\(VARIANT_PREF_KEY\),[\s\S]*?storedMigrationVersion: window\.localStorage\.getItem\(MODEL_VARIANT_DEFAULT_MIGRATION_KEY\),[\s\S]*?\}\)/s,
@@ -101,6 +106,11 @@ test("persistent preference effects keep desktop baseUrl out of storage and gate
     persistence,
     /if \(!deps\.updatePreferencesReady\(\)\) return;[\s\S]*?window\.localStorage\.setItem\(\s*"veslo\.updateAutoCheck"/,
     "auto-check persistence should wait for startup preference hydration",
+  );
+  assert.doesNotMatch(
+    persistence,
+    /MODEL_PREF_KEY|veslo\.defaultModel/,
+    "preference effects must not recreate stale user model authority",
   );
   assert.match(
     persistence,

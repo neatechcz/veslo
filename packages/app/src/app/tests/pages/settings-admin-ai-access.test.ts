@@ -13,4 +13,6 @@ test("settings shows admin-managed ai access only in developer mode", () => {
   assert.doesNotMatch(source, /Connect provider/);
   assert.doesNotMatch(source, /activeTab\(\)\s*===\s*"model"/);
   assert.doesNotMatch(source, /openDefaultModelPicker/);
+  assert.doesNotMatch(source, /aiAccessAllowedModels|allowed_models_tnz56v|default_model_463spj/);
+  assert.match(source, /translate\("settings\.effective_model"\)/);
 });

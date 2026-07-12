@@ -18,7 +18,6 @@ import {
   HIDE_TITLEBAR_PREF_KEY,
   IDLE_SUSPEND_MS_PREF_KEY,
   MAX_ENGINES_PREF_KEY,
-  MODEL_PREF_KEY,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
 } from "../constants";
@@ -54,12 +53,7 @@ import {
   type UpdateStatus,
 } from "./updater";
 import { hydrateDenAuthFromDesktopSnapshot } from "../lib/den-auth";
-import {
-  clearStartupPreference,
-  formatModelRef,
-  parseModelRef,
-  readStartupPreference,
-} from "../utils";
+import { clearStartupPreference, readStartupPreference } from "../utils";
 import { createStartupGuard } from "../utils/startup-guard";
 import {
   applyThemeMode,
@@ -348,23 +342,8 @@ function hydrateLocalStoragePreferences(deps: AppStartupHydrationDeps) {
       deps.setEngineRuntime(storedEngineRuntime);
     }
 
-    const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
-    const parsedDefaultModel = parseModelRef(storedDefaultModel);
-    if (parsedDefaultModel) {
-      deps.setDefaultModel(parsedDefaultModel);
-      deps.setLegacyDefaultModel(parsedDefaultModel);
-    } else {
-      deps.setDefaultModel(DEFAULT_MODEL);
-      deps.setLegacyDefaultModel(DEFAULT_MODEL);
-      try {
-        window.localStorage.setItem(
-          MODEL_PREF_KEY,
-          formatModelRef(DEFAULT_MODEL),
-        );
-      } catch {
-        // ignore
-      }
-    }
+    deps.setDefaultModel(DEFAULT_MODEL);
+    deps.setLegacyDefaultModel(DEFAULT_MODEL);
 
     const storedThinking = window.localStorage.getItem(THINKING_PREF_KEY);
     if (storedThinking != null) {
@@ -674,18 +653,6 @@ function createPersistentPreferenceEffects(deps: AppStartupHydrationDeps) {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem("veslo.engineRuntime", deps.engineRuntime());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        MODEL_PREF_KEY,
-        formatModelRef(deps.defaultModel()),
-      );
     } catch {
       // ignore
     }

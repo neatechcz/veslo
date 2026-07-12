@@ -200,7 +200,6 @@ import {
   HIDE_TITLEBAR_PREF_KEY,
   LANGUAGE_PREF_KEY,
   MCP_QUICK_CONNECT,
-  MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   MAX_ENGINES_PREF_KEY,
@@ -256,7 +255,6 @@ import {
   isMacPlatform,
   isTauriRuntime,
   isWindowsPlatform,
-  lastUserModelFromMessages,
   modelEquals,
   normalizeDirectoryPath,
   normalizeDirectoryQueryPath,
@@ -2239,7 +2237,7 @@ export default function App() {
     denGatewayAccessToken,
     managedAiAccessMessage,
     managedAiAccessProviderLabel,
-    managedAiAccessDefaultModelLabel,
+    managedAiAccessEffectiveModelLabel,
     managedAiAccessBlockedReason,
   } = managedAiAccessStore;
   let lastNewSessionDisabledDiagnosticKey = "";
@@ -4087,19 +4085,10 @@ export default function App() {
     return agentForSession(id);
   });
 
-  function modelForSession(sessionId: string | null | undefined): ModelRef {
+  function modelForSession(_sessionId: string | null | undefined): ModelRef {
     const globalDefault = resolveGlobalRuntimeModel(defaultModel());
     const managedModel = managedAiAccessModel();
     if (managedModel) return managedModel;
-
-    const id = sessionId?.trim() ?? "";
-    if (!id) return globalDefault;
-
-    if (id === selectedSessionId()) {
-      const fromMessages = lastUserModelFromMessages(messages());
-      if (fromMessages) return fromMessages;
-    }
-
     return globalDefault;
   }
 
@@ -4648,7 +4637,7 @@ export default function App() {
     managedAiAccess,
     managedAiAccessMessage,
     managedAiAccessProviderLabel,
-    managedAiAccessDefaultModelLabel,
+    managedAiAccessEffectiveModelLabel,
     showThinking,
     setShowThinking,
     hideTitlebar,

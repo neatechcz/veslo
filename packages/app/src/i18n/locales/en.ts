@@ -843,6 +843,7 @@ export default {
   "settings.model_variant": "Model variant",
   "settings.edit": "Edit",
   "settings.default_model": "Global model",
+  "settings.effective_model": "Effective model",
   "settings.session_model": "Global model",
   "settings.model_description_default": "Choose from your configured providers. This model is used for all sessions.",
   "settings.model_description_session": "Choose from your configured providers. Changing it updates the global model for all sessions.",

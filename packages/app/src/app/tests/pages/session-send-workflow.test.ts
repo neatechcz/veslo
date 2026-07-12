@@ -316,7 +316,7 @@ function createHarness(
 }
 
 test("app modelForSession keeps the send workflow contract without dead per-session model maps", () => {
-  const helperStart = appSource.indexOf("function modelForSession(sessionId: string | null | undefined): ModelRef {");
+  const helperStart = appSource.indexOf("function modelForSession(_sessionId: string | null | undefined): ModelRef {");
   assert.ok(helperStart >= 0, "app.tsx should expose modelForSession for the send workflow");
   const helperEnd = appSource.indexOf("\n  function agentForSession", helperStart);
   assert.ok(helperEnd > helperStart, "modelForSession should end before agentForSession");
@@ -332,15 +332,11 @@ test("app modelForSession keeps the send workflow contract without dead per-sess
     /const managedModel = managedAiAccessModel\(\);\s+if \(managedModel\) return managedModel;/,
     "managed AI access should still override the global default model",
   );
-  assert.match(
+  assert.match(helperSource, /return globalDefault;/, "sessions should fall back to the runtime default");
+  assert.doesNotMatch(
     helperSource,
-    /const id = sessionId\?\.trim\(\) \?\? "";\s+if \(!id\) return globalDefault;/,
-    "missing session ids should still fall back to the global default model",
-  );
-  assert.match(
-    helperSource,
-    /if \(id === selectedSessionId\(\)\) \{[\s\S]*?const fromMessages = lastUserModelFromMessages\(messages\(\)\);[\s\S]*?if \(fromMessages\) return fromMessages;[\s\S]*?\}/,
-    "selected sessions should still reuse the last user-message model when available",
+    /lastUserModelFromMessages|selectedSessionId\(\)|messages\(\)/,
+    "stale transcript metadata must not restore per-session user model authority",
   );
 });
 
@@ -914,7 +910,6 @@ test("session send workflow submits an existing local prompt through server subm
       attachments: [],
     },
     options: {
-      model: { providerID: "openai", modelID: "gpt-4.1" },
       agent: null,
       variant: null,
       submitQueuePolicy: "normal",
@@ -2098,7 +2093,7 @@ test("session send workflow emits live transcript policy event after successful 
   assert.deepEqual(harness.liveTranscriptPolicyEvents.map((event) => event.reason), ["sendPrompt:success"]);
 });
 
-test("session send workflow sends the initial model snapshot with first server submit", async () => {
+test("session send workflow omits a model override from first server submit", async () => {
   const modelSessionIds: Array<string | null | undefined> = [];
   const createOptions: Array<Parameters<SessionSendWorkflowOptions["createSessionAndOpen"]>[1]> = [];
   const harness = createHarness({
@@ -2141,11 +2136,8 @@ test("session send workflow sends the initial model snapshot with first server s
   });
 
   assert.equal(sent.accepted, true);
-  assert.deepEqual(modelSessionIds, [null]);
-  assert.deepEqual(createOptions[0]?.submitOptions?.model, {
-    providerID: "openai",
-    modelID: "gpt-4.1-default",
-  });
+  assert.deepEqual(modelSessionIds, []);
+  assert.equal(createOptions[0]?.submitOptions?.model, undefined);
   assert.equal(createOptions[0]?.clientMessageId, "client-created-model");
   assert.equal(createOptions[0]?.submitOrigin, "session:normal");
   assert.equal(createOptions[0]?.submitDraft?.mode, "prompt");
@@ -2180,7 +2172,7 @@ test("session send workflow uses OpenCode variant instead of raw reasoning effor
   assert.equal(runInputs.length, 1);
   const input = runInputs[0]?.input;
   assert.equal(input?.kind, "prompt_async");
-  assert.deepEqual(input?.model, { providerID: "codex_oauth", modelID: "gpt-5.5" });
+  assert.equal(input?.model, undefined);
   assert.equal(input?.variant, "xhigh");
   assert.equal("reasoning_effort" in (input ?? {}), false);
 });

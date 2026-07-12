@@ -326,7 +326,6 @@ test("session mutation workflow compact submits through server submit when local
       attachments: [],
     },
     options: {
-      model: { providerID: "openai", modelID: "gpt-5" },
       variant: null,
       submitQueuePolicy: "normal",
     },
@@ -416,7 +415,6 @@ test("session mutation workflow replaces a user message through server-owned sub
     },
     options: {
       replaceMessageId: "msg_1",
-      model: { providerID: "openai", modelID: "gpt-5" },
       variant: null,
       submitQueuePolicy: "normal",
     },

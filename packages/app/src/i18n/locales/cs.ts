@@ -840,6 +840,7 @@ export default {
   "settings.model_variant": "Varianta modelu",
   "settings.edit": "Upravit",
   "settings.default_model": "Globální model",
+  "settings.effective_model": "Použitý model",
   "settings.session_model": "Globální model",
   "settings.model_description_default": "Vyberte z nakonfigurovaných poskytovatelů. Tento model se používá pro všechny relace.",
   "settings.model_description_session": "Vyberte z nakonfigurovaných poskytovatelů. Změna aktualizuje globální model pro všechny relace.",

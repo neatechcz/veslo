@@ -242,10 +242,7 @@ function managedAiAccessConfigFingerprint(profile: ManagedAiAccessProfile | null
   if (!profile) return "";
   return JSON.stringify({
     providerId: profile.providerId,
-    defaultModel: formatModelRef(profile.defaultModel),
-    allowedModels: Array.from(
-      new Set(profile.allowedModels.map((value) => value.trim()).filter(Boolean)),
-    ).sort((a, b) => a.localeCompare(b)),
+    effectiveModel: formatModelRef(profile.effectiveModel),
   });
 }
 
@@ -790,7 +787,7 @@ export function createManagedAiRuntimeConfigSync(
           ...routing.tracePayload,
           ok: true,
           providerId: profile.providerId,
-          defaultModelId: profile.defaultModel.modelID,
+          effectiveModelId: profile.effectiveModel.modelID,
           gatewayAccessTokenPresent: Boolean(gatewayAccessToken),
         });
         return true;
@@ -884,8 +881,7 @@ export function createManagedAiRuntimeConfigSync(
       workspaceRoot: root || null,
       vesloWorkspaceId: vesloWorkspaceId || null,
       managedProviderId: managedProfile?.providerId ?? null,
-      managedDefaultModelId: managedProfile?.defaultModel.modelID ?? null,
-      managedAllowedModelCount: managedProfile?.allowedModels.length ?? 0,
+      managedEffectiveModelId: managedProfile?.effectiveModel.modelID ?? null,
       providerRoutingReady,
       providerRoutingRequiresEngineBaseUrl: routing.providerRoutingRequiresEngineBaseUrl,
       configuredSandboxBackend: routing.runtimeSandboxState.configuredBackend,

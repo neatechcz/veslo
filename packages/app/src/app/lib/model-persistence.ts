@@ -1,5 +1,5 @@
 import { parse } from "jsonc-parser";
-import { SESSION_MODEL_PREF_KEY } from "../constants";
+import { MODEL_PREF_KEY, SESSION_MODEL_PREF_KEY } from "../constants";
 import type { ModelRef } from "../types";
 import { formatModelRef, parseModelRef } from "../utils";
 
@@ -18,7 +18,11 @@ export const collectLegacySessionModelStorageKeys = (storage: StorageKeyReader) 
   const keys: string[] = [];
   for (let index = 0; index < storage.length; index += 1) {
     const key = storage.key(index);
-    if (!key?.startsWith(LEGACY_SESSION_MODEL_STORAGE_PREFIX)) continue;
+    if (
+      key !== MODEL_PREF_KEY
+      && key !== SESSION_MODEL_PREF_KEY
+      && !key?.startsWith(LEGACY_SESSION_MODEL_STORAGE_PREFIX)
+    ) continue;
     keys.push(key);
   }
   return keys;

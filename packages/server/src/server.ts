@@ -1411,10 +1411,6 @@ async function postAutomationPrompt(
   if (agent) {
     body.agent = agent;
   }
-  const model = typeof target.model === "string" ? target.model.trim() : "";
-  if (model) {
-    body.model = model;
-  }
   const variant = typeof target.variant === "string" ? target.variant.trim() : "";
   if (variant) {
     body.variant = variant;

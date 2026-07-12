@@ -1926,8 +1926,13 @@ export type VesloUserAiAccess = {
   userId: string;
   enabled: boolean;
   provider: VesloGatewayProvider | null;
-  defaultModel: string | null;
-  allowedModels: string[];
+  effectiveModel: {
+    provider: VesloGatewayProvider;
+    model: string;
+  } | null;
+  /** Legacy response fields are accepted structurally but never used as model authority. */
+  defaultModel?: string | null;
+  allowedModels?: string[];
   updatedAt: string | null;
 };
 

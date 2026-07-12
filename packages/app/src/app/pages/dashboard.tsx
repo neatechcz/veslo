@@ -318,8 +318,7 @@ export type DashboardViewProps = {
   aiAccessConfigured: boolean;
   aiAccessMessage: string;
   aiAccessProviderLabel: string | null;
-  aiAccessDefaultModelLabel: string | null;
-  aiAccessAllowedModels: string[];
+  aiAccessEffectiveModelLabel: string | null;
   showThinking: boolean;
   toggleShowThinking: () => void;
   hideTitlebar: boolean;
@@ -1252,8 +1251,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   aiAccessConfigured={props.aiAccessConfigured}
                   aiAccessMessage={props.aiAccessMessage}
                   aiAccessProviderLabel={props.aiAccessProviderLabel}
-                  aiAccessDefaultModelLabel={props.aiAccessDefaultModelLabel}
-                  aiAccessAllowedModels={props.aiAccessAllowedModels}
+                  aiAccessEffectiveModelLabel={props.aiAccessEffectiveModelLabel}
                   showThinking={props.showThinking}
                   toggleShowThinking={props.toggleShowThinking}
                   hideTitlebar={props.hideTitlebar}

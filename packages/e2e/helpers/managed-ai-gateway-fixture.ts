@@ -188,8 +188,7 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
             userId: E2E_MANAGED_AI_USER_ID,
             enabled: true,
             provider: 'codex_oauth',
-            defaultModel: 'gpt-5.4',
-            allowedModels: ['gpt-5.4'],
+            effectiveModel: { provider: 'codex_oauth', model: 'gpt-5.4' },
             updatedAt: new Date(0).toISOString(),
           },
         });

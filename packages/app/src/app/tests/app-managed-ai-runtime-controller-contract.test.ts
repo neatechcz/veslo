@@ -62,7 +62,7 @@ test("desktop managed AI proof cache stores policy metadata without gateway toke
 
   assert.match(
     cacheWriterSource,
-    /void resolved\.proofCache\?\.write\?\.\(\{[\s\S]*cacheKey,[\s\S]*proof: \{[\s\S]*providerId: profile\.providerId,[\s\S]*defaultModel: profile\.defaultModel,[\s\S]*allowedModels: profile\.allowedModels,[\s\S]*updatedAt: profile\.updatedAt,[\s\S]*\},[\s\S]*\}\)/,
+    /void resolved\.proofCache\?\.write\?\.\(\{[\s\S]*cacheKey,[\s\S]*proof: \{[\s\S]*providerId: profile\.providerId,[\s\S]*effectiveModel: profile\.effectiveModel,[\s\S]*updatedAt: profile\.updatedAt,[\s\S]*\},[\s\S]*\}\)/,
     "desktop proof cache should write only profile metadata",
   );
   assert.doesNotMatch(

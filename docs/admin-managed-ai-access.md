@@ -7,14 +7,12 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - The canonical managed-AI admin UI is AI Gateway admin at `/admin` on the derived AI Gateway origin: `https://ai.veslo.work/admin` in production, or `https://ai.staging.veslo.work/admin` when `VESLO_DEPLOYMENT_DOMAIN=staging.veslo.work`.
 - When documentation, YouTrack tasks, or implementation notes say "admin" for VSLO-201 managed-AI operations, they mean the AI Gateway admin and its `/admin` subpages.
 - There is no separate DEN admin UI for managed-AI operations. DEN can still own backend APIs and storage for auth, users, organizations, domains, invites, memberships, platform roles, and seat limits.
-- DEN owns the effective AI access policy for each signed-in Den user.
-- The policy is stored in the DEN-managed managed-AI policy tables and keyed by the Den `userId`.
-- The policy controls:
+- The standalone AI Gateway owns effective AI access for each signed-in Den user.
+- User assignment controls:
   - `enabled`
   - `provider`
   - `credentialId` for providers that require a specific assigned credential
-  - `defaultModel`
-  - `allowedModels`
+- The global platform model policy separately controls the enabled backend models and exactly one active model.
 
 ## Runtime flow
 
@@ -44,8 +42,8 @@ wired through `packages/server/src/server.ts`.
 
 - The AI Gateway admin `Users` page includes an `AI access` editor.
 - The AI Gateway admin `Organization` page is shared by Platform Admins and Organization Admins. Platform Admins can switch the edited organization with the searchable organization selector on that page; Organization Admins only see their active organization and do not see the selector or seat-limit controls.
-- Platform admins can enable/disable access, pick the assigned provider, set the default model, and optionally restrict allowed models.
-- New DEN sign-ups are auto-assigned to Codex / ChatGPT inference with `gpt-5.5` when at least one eligible Codex OAuth inference credential exists. These rows are marked `auto_assigned`. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
+- Platform admins can enable/disable user access, pick the assigned provider and credential, and manage the global enabled/active model policy under AI Infrastructure. User assignments contain no model fields.
+- New DEN sign-ups may be auto-assigned to Codex / ChatGPT inference when at least one eligible Codex OAuth inference credential exists. These rows are marked `auto_assigned`. The active platform model applies to them like every other managed-AI user.
 - Admin edits are marked `admin_assigned`. Non-Codex admin assignments remain explicit credential choices.
 - Assigned Codex access is lazily repaired on the next Codex request, including both `auto_assigned` and `admin_assigned` rows. If the assigned credential is missing, no longer healthy, revoked, permanently unavailable, or currently exhausted, DEN selects another healthy eligible Codex credential and updates the user's policy before routing the request. If no replacement exists, the request fails explicitly and the existing assignment is kept.
 - Codex credential assignment options only include credentials whose provider is `codex_oauth`, whose stored state is `healthy`, and whose latest upstream status probe reports OK. A successful `codex | OK` probe is eligible even when rate-limit windows cannot be parsed; revoked, draining, unhealthy, invalid-grant, or probe-failing credentials are hidden from assignment.
@@ -56,7 +54,7 @@ wired through `packages/server/src/server.ts`.
 - Codex OAuth credentials should use a dedicated server/runtime ChatGPT account. Do not reuse the same login material in another long-running runtime. If the Codex status probe reports that a refresh token was already used, the admin service marks that credential unhealthy so it is hidden from new assignments and eligible users can fail over to another healthy Codex credential.
 - OpenAI-compatible credentials require a display name, custom HTTP(S) `/v1` base URL, and bearer API key. Local `http://localhost`, `http://127.0.0.1`, and `http://[::1]` URLs are allowed for development; hosted/non-loopback URLs must use HTTPS.
 - OpenAI-compatible user access requires assigning a healthy `openai_compatible` credential. DEN does not automatically pick from a mixed custom-provider pool because the assigned credential determines the upstream base URL.
-- When an OpenAI-compatible credential is selected in the user AI access editor, the admin UI asks that credential's `/models` endpoint for available model IDs and uses the result as suggestions for the default model field. Admins can still type a model manually when discovery fails or the upstream returns an empty list.
+- OpenAI-compatible credential model discovery is infrastructure evidence for the global platform model catalog and compatibility checks; it is not exposed as a user-assignment model field.
 - The hosted admin `Usage` page shows recorded usage for every credential, including credentials with zero recorded traffic.
 - The hosted admin `Usage` and `Credentials` pages show best-effort Codex upstream status for inference credentials. The Codex status probe runs the gateway's default Codex model so it does not inherit an unsupported CLI default model from the bundled Codex runtime. When the Codex probe returns parseable 5h and weekly windows, both pages show those windows and reset times. When the probe succeeds but no windows are parsed, both pages show `Codex OK, limits unknown` without making the credential ineligible. Any healthy Codex credential with unknown or unavailable limits creates a Codex capacity visibility alert so admins are notified even when other credentials still report measurable limits. Authentication failures such as `invalid_grant`, reused refresh tokens, or 401 responses remain visible as unavailable upstream status and require reconnecting or rotating the credential.
 - If a Codex probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains usable and the unsupported model is removed from that credential's admin model choices. Admins should assign another listed Codex model for that credential instead of reconnecting it.
@@ -114,21 +112,21 @@ Use these commands when verifying the admin-managed flow locally or against the 
 - Assign a live user to OpenAI before a live OpenAI desktop roundtrip:
 
   ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai --default-model gpt-4o-mini --allowed-model gpt-4o-mini
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=gpt-4o-mini pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 
 - Assign a live user to Anthropic before a live Anthropic desktop roundtrip:
 
   ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider anthropic --default-model claude-3-7-sonnet-latest --allowed-model claude-3-7-sonnet-latest
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider anthropic
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=anthropic VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=claude-3-7-sonnet-latest pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 
 - Assign a live user to an OpenAI-compatible credential before a live custom-provider desktop roundtrip:
 
   ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai_compatible --credential-id <credential-id> --default-model <custom-model> --allowed-model <custom-model>
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai_compatible --credential-id <credential-id>
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai_compatible VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=<custom-model> pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 

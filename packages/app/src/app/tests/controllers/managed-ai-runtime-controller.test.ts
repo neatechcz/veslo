@@ -11,8 +11,7 @@ import {
 const profile: ManagedAiRuntimeAccessProfile = {
   userId: "user-a",
   providerId: "codex_oauth",
-  defaultModel: { providerID: "codex_oauth", modelID: "gpt-5.4" },
-  allowedModels: ["gpt-5.4"],
+  effectiveModel: { providerID: "codex_oauth", modelID: "gpt-5.4" },
   updatedAt: null,
 };
 
