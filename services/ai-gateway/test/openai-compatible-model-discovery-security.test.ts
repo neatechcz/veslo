@@ -95,9 +95,24 @@ test("model discovery rejects literal and DNS-resolved private or reserved targe
   assert.equal(fetchCalls, 0);
 });
 
-test("model discovery allows the existing explicit development loopback path", async () => {
+test("model discovery denies loopback by default", async () => {
+  const transport = new OpenAiCompatibleTransport({
+    fetchImpl: (async () => assert.fail("default loopback policy must reject before fetch")) as typeof fetch,
+  });
+
+  await assert.rejects(
+    transport.listModels({
+      apiKey: "local-key",
+      baseUrl: "http://127.0.0.1:11434/v1",
+    }),
+    (error) => assertTransportError(error, "openai_compatible_models_target_not_allowed", 400),
+  );
+});
+
+test("model discovery allows loopback only when explicitly enabled for development", async () => {
   let resolverCalls = 0;
   const transport = new OpenAiCompatibleTransport({
+    allowDevelopmentLoopback: true,
     resolveHostname: async () => {
       resolverCalls += 1;
       return ["127.0.0.1"];
@@ -114,6 +129,39 @@ test("model discovery allows the existing explicit development loopback path", a
     baseUrl: "http://127.0.0.1:11434/v1",
   }), { models: ["local/model"] });
   assert.equal(resolverCalls, 0);
+});
+
+test("model discovery pins the connection to the validated public address and closes it", async () => {
+  let resolverCalls = 0;
+  let closeCalls = 0;
+  const dispatcher = { kind: "pinned-dispatcher" };
+  const pins: Array<{ hostname: string; address: string; port: number }> = [];
+  const transport = new OpenAiCompatibleTransport({
+    resolveHostname: async () => {
+      resolverCalls += 1;
+      return resolverCalls === 1 ? ["93.184.216.34"] : ["10.20.30.40"];
+    },
+    createPinnedDispatcher(input: { hostname: string; address: string; port: number }) {
+      pins.push(input);
+      return {
+        dispatcher,
+        async close() {
+          closeCalls += 1;
+        },
+      };
+    },
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit & { dispatcher?: unknown }) => {
+      assert.equal(init?.dispatcher, dispatcher);
+      return new Response(JSON.stringify({ data: [{ id: "pinned/model" }] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch,
+  });
+
+  assert.deepEqual(await transport.listModels(INPUT), { models: ["pinned/model"] });
+  assert.equal(resolverCalls, 1, "ordinary fetch must not perform a second unpinned resolution");
+  assert.deepEqual(pins, [{ hostname: "models.example.test", address: "93.184.216.34", port: 443 }]);
+  assert.equal(closeCalls, 1);
 });
 
 test("model discovery preserves transient DNS failures as service unavailable", async () => {

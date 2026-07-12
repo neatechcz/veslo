@@ -373,7 +373,7 @@ test("activation requires a healthy credential and positive Codex capability evi
       enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
       activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
     }, "user_platform_admin"),
-    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_active_model_has_no_healthy_credential"
+    (error: unknown) => (error as { message?: string; status?: number }).message === "model_policy_enabled_model_has_no_healthy_credential:codex_oauth/gpt-5.5"
       && (error as { status?: number }).status === 422,
   );
 

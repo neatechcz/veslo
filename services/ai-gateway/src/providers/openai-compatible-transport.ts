@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { Agent, type Dispatcher } from "undici";
 
 import {
   headersToRecord,
@@ -14,8 +15,27 @@ import {
 type OpenAiCompatibleTransportDependencies = {
   fetchImpl?: typeof fetch;
   resolveHostname?: (hostname: string) => Promise<string[]>;
+  createPinnedDispatcher?: (input: PinnedDispatcherInput) => PinnedDispatcherHandle;
+  allowDevelopmentLoopback?: boolean;
   timeoutMs?: number;
   maxModelResponseBytes?: number;
+};
+
+type PinnedDispatcherInput = {
+  hostname: string;
+  address: string;
+  port: number;
+};
+
+type PinnedDispatcherHandle = {
+  dispatcher: Dispatcher;
+  close(): Promise<void>;
+};
+
+type UndiciRequestInit = RequestInit & { dispatcher: Dispatcher };
+
+type ValidatedModelDiscoveryTarget = PinnedDispatcherInput & {
+  baseUrl: string;
 };
 
 const DEFAULT_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
@@ -24,6 +44,8 @@ const DEFAULT_MODEL_RESPONSE_BYTES = 1024 * 1024;
 export class OpenAiCompatibleTransport implements OpenAiCompatibleProviderTransport {
   private readonly fetchImpl: typeof fetch;
   private readonly resolveHostname: (hostname: string) => Promise<string[]>;
+  private readonly createPinnedDispatcher: (input: PinnedDispatcherInput) => PinnedDispatcherHandle;
+  private readonly allowDevelopmentLoopback: boolean;
   private readonly timeoutMs: number;
   private readonly maxModelResponseBytes: number;
 
@@ -31,6 +53,8 @@ export class OpenAiCompatibleTransport implements OpenAiCompatibleProviderTransp
     const deps = typeof input === "function" ? { fetchImpl: input } : input;
     this.fetchImpl = deps.fetchImpl ?? fetch;
     this.resolveHostname = deps.resolveHostname ?? resolveHostname;
+    this.createPinnedDispatcher = deps.createPinnedDispatcher ?? createUndiciPinnedDispatcher;
+    this.allowDevelopmentLoopback = deps.allowDevelopmentLoopback === true;
     this.timeoutMs = normalizePositiveInteger(deps.timeoutMs, DEFAULT_MODEL_DISCOVERY_TIMEOUT_MS);
     this.maxModelResponseBytes = normalizePositiveInteger(
       deps.maxModelResponseBytes,
@@ -66,50 +90,61 @@ export class OpenAiCompatibleTransport implements OpenAiCompatibleProviderTransp
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     timeout.unref();
     try {
-      const baseUrl = await validateModelDiscoveryBaseUrl(
+      const target = await validateModelDiscoveryBaseUrl(
         input.baseUrl,
         this.resolveHostname,
         controller.signal,
+        this.allowDevelopmentLoopback,
       );
-      let response: Response;
+      const pinned = this.createPinnedDispatcher({
+        hostname: target.hostname,
+        address: target.address,
+        port: target.port,
+      });
       try {
-        response = await this.fetchImpl(`${baseUrl}/models`, {
-          method: "GET",
-          headers: openAiCompatibleHeaders(input.apiKey, false),
-          redirect: "manual",
-          signal: controller.signal,
-        });
-      } catch (error) {
-        if (controller.signal.aborted || isAbortError(error)) {
-          throw modelDiscoveryTimeoutError();
+        let response: Response;
+        try {
+          response = await this.fetchImpl(`${target.baseUrl}/models`, {
+            method: "GET",
+            headers: openAiCompatibleHeaders(input.apiKey, false),
+            redirect: "manual",
+            signal: controller.signal,
+            dispatcher: pinned.dispatcher,
+          } as UndiciRequestInit);
+        } catch (error) {
+          if (controller.signal.aborted || isAbortError(error)) {
+            throw modelDiscoveryTimeoutError();
+          }
+          throw requestFailedError(error);
         }
-        throw requestFailedError(error);
-      }
 
-      if (response.status >= 300 && response.status < 400) {
-        throw new ProviderTransportError("openai_compatible_models_redirect_blocked", {
-          statusCode: 502,
-          code: "openai_compatible_models_redirect_blocked",
-        });
-      }
+        if (response.status >= 300 && response.status < 400) {
+          throw new ProviderTransportError("openai_compatible_models_redirect_blocked", {
+            statusCode: 502,
+            code: "openai_compatible_models_redirect_blocked",
+          });
+        }
 
-      const body = await readBoundedOpenAiCompatibleResponseBody(
-        response,
-        this.maxModelResponseBytes,
-        controller.signal,
-      );
-      const headers = headersToRecord(response.headers);
-      if (!response.ok) {
-        throw new ProviderTransportError(`openai_compatible_models_upstream_${response.status}`, {
-          statusCode: response.status,
-          body,
-          headers,
-        });
-      }
+        const body = await readBoundedOpenAiCompatibleResponseBody(
+          response,
+          this.maxModelResponseBytes,
+          controller.signal,
+        );
+        const headers = headersToRecord(response.headers);
+        if (!response.ok) {
+          throw new ProviderTransportError(`openai_compatible_models_upstream_${response.status}`, {
+            statusCode: response.status,
+            body,
+            headers,
+          });
+        }
 
-      return {
-        models: readModelIds(body),
-      };
+        return {
+          models: readModelIds(body),
+        };
+      } finally {
+        await pinned.close();
+      }
     } catch (error) {
       if (controller.signal.aborted && !(error instanceof ProviderTransportError)) {
         throw modelDiscoveryTimeoutError();
@@ -130,7 +165,8 @@ async function validateModelDiscoveryBaseUrl(
   input: string,
   resolver: (hostname: string) => Promise<string[]>,
   signal: AbortSignal,
-): Promise<string> {
+  allowDevelopmentLoopback: boolean,
+): Promise<ValidatedModelDiscoveryTarget> {
   let parsed: URL;
   try {
     parsed = new URL(input);
@@ -143,10 +179,15 @@ async function validateModelDiscoveryBaseUrl(
 
   const hostname = parsed.hostname.toLowerCase();
   if (isExplicitLoopback(hostname)) {
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    if (!allowDevelopmentLoopback || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
       throw modelDiscoveryTargetError();
     }
-    return input.replace(/\/+$/, "");
+    return {
+      baseUrl: input.replace(/\/+$/, ""),
+      hostname: stripIpv6Brackets(hostname),
+      address: loopbackAddress(hostname),
+      port: readTargetPort(parsed),
+    };
   }
   if (parsed.protocol !== "https:" || isIP(hostname) !== 0) {
     throw modelDiscoveryTargetError();
@@ -171,7 +212,42 @@ async function validateModelDiscoveryBaseUrl(
   if (addresses.some((address) => !isPublicAddress(address))) {
     throw modelDiscoveryTargetError();
   }
-  return input.replace(/\/+$/, "");
+  return {
+    baseUrl: input.replace(/\/+$/, ""),
+    hostname,
+    address: addresses[0]!,
+    port: readTargetPort(parsed),
+  };
+}
+
+function createUndiciPinnedDispatcher(input: PinnedDispatcherInput): PinnedDispatcherHandle {
+  const dispatcher = new Agent({
+    connect: {
+      servername: input.hostname,
+      lookup(_hostname, _options, callback) {
+        callback(null, input.address, isIP(input.address));
+      },
+    },
+  });
+  return {
+    dispatcher,
+    async close() {
+      await dispatcher.close();
+    },
+  };
+}
+
+function readTargetPort(url: URL): number {
+  if (url.port) return Number(url.port);
+  return url.protocol === "https:" ? 443 : 80;
+}
+
+function loopbackAddress(hostname: string): string {
+  return hostname === "::1" || hostname === "[::1]" ? "::1" : "127.0.0.1";
+}
+
+function stripIpv6Brackets(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
 }
 
 function modelDiscoveryTargetError(): ProviderTransportError {
@@ -299,15 +375,19 @@ async function readBoundedOpenAiCompatibleResponseBody(
   if (!reader) return parseOpenAiCompatibleResponseText(response, "");
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
-  while (true) {
-    const { done, value } = await abortable(reader.read(), signal);
-    if (done) break;
-    totalBytes += value.byteLength;
-    if (totalBytes > maxBytes) {
-      await reader.cancel().catch(() => undefined);
-      throw modelDiscoveryResponseTooLargeError();
+  try {
+    while (true) {
+      const { done, value } = await abortable(reader.read(), signal);
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        throw modelDiscoveryResponseTooLargeError();
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
   }
   const bytes = new Uint8Array(totalBytes);
   let offset = 0;

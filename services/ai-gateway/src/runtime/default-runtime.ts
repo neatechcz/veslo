@@ -15,7 +15,12 @@ import type { CredentialRepository } from "../credentials/repository.js";
 import type { SecretStore } from "../credentials/secret-store.js";
 import { createDb, type AiGatewayDb } from "../db/index.js";
 import { env } from "../env.js";
-import type { AdminServiceDependencies } from "../http/admin.js";
+import {
+  MySqlAdminCredentialActionRepository,
+  MySqlAdminCredentialReadRepository,
+  MySqlAdminSessionReadRepository,
+  type AdminServiceDependencies,
+} from "../http/admin.js";
 import type { ProxyDependencies } from "../http/proxy.js";
 import type { ReadinessDependencies } from "../http/readiness.js";
 import type { UserCredentialDependencies } from "../http/user-credentials.js";
@@ -34,6 +39,7 @@ import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import type { UsageRepository } from "../usage/repository.js";
 
 export type RuntimeState = {
+  db: AiGatewayDb;
   aiAccess: AiAccessRepository;
   alerts: AlertRepository;
   audit: AuditRepository;
@@ -56,6 +62,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
   const secretKey = options.secretKey ?? env.secretKey;
 
   return {
+    db,
     aiAccess: new MySqlAiAccessRepository(db),
     alerts: new MySqlAlertRepository(db),
     audit: new MySqlAuditRepository(db),
@@ -70,8 +77,18 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
 
 export function createDefaultAdminDependencies(
   runtime: RuntimeState,
-): Pick<AdminServiceDependencies, "modelPolicyRepository" | "modelPolicyMutation"> {
+): AdminServiceDependencies {
   return {
+    credentialReadRepository: new MySqlAdminCredentialReadRepository(runtime.db),
+    credentialActionRepository: new MySqlAdminCredentialActionRepository(runtime.db),
+    credentialWriteRepository: runtime.credentials as NonNullable<AdminServiceDependencies["credentialWriteRepository"]>,
+    credentialSecretLookupRepository: runtime.credentials,
+    sessionReadRepository: new MySqlAdminSessionReadRepository(runtime.db),
+    aiAccessRepository: runtime.aiAccess,
+    alertRepository: runtime.alerts,
+    usageRepository: runtime.usage,
+    auditRepository: runtime.audit,
+    secretStore: runtime.secrets,
     modelPolicyRepository: runtime.modelPolicy,
     modelPolicyMutation: runtime.modelPolicyMutation,
   };
