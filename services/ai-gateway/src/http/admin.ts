@@ -32,9 +32,10 @@ import { credentialBindingTable, credentialHealthEventTable, credentialRecordTab
 import { sendAdminAlertEmail, type AdminAlertEmailInput } from "../email/admin-alert-mailer.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
-import { MySqlPlatformModelPolicyRepository } from "../model-policy/mysql-repository.js";
+import { PlatformModelPolicyAuditPersistenceError } from "../model-policy/mysql-repository.js";
 import type {
   PlatformModelPolicyRecord,
+  PlatformModelPolicyMutation,
   PlatformModelPolicyRepository,
   PlatformModelRef,
 } from "../model-policy/repository.js";
@@ -393,7 +394,7 @@ export interface AdminService {
   listCredentials(_token: string, input?: ListCredentialsInput): Promise<{ credentials: CredentialRecord[] }>;
   listCredentialModels(_token: string, credentialId: string): Promise<{ credentialId: string; models: string[]; defaultModel?: string }>;
   getPlatformModelPolicy(token: string): Promise<{ policy: AdminPlatformModelPolicy | null }>;
-  replacePlatformModelPolicy(token: string, input: ReplacePlatformModelPolicyInput): Promise<{ policy: AdminPlatformModelPolicy }>;
+  replacePlatformModelPolicy(token: string, input: ReplacePlatformModelPolicyInput, actorUserId: string): Promise<{ policy: AdminPlatformModelPolicy }>;
   createCredential(_token: string, input: CreateCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   renameCredential(_token: string, credentialId: string, input: RenameCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   createCodexAuthUploadSession(_token: string, credentialId: string, input: CreateCodexAuthUploadSessionInput, actorUserId: string | null): Promise<CodexAuthUploadSessionResponse>;
@@ -516,7 +517,7 @@ type CredentialSecretLookupRepository = {
   ): Promise<(Pick<GatewayCredentialRecord, "provider" | "secretRef"> & { name?: string | null }) | null>;
 };
 
-type AdminReadModelDependencies = {
+export type AdminServiceDependencies = {
   denClient?: DenAdminApi;
   credentialReadRepository?: AdminCredentialReadRepository;
   credentialActionRepository?: AdminCredentialActionRepository;
@@ -532,6 +533,7 @@ type AdminReadModelDependencies = {
   secretStore?: SecretStore;
   openAiCompatibleTransport?: OpenAiCompatibleProviderTransport;
   modelPolicyRepository?: PlatformModelPolicyRepository;
+  modelPolicyMutation?: PlatformModelPolicyMutation;
   alertEmailRecipients?: string[];
   sendAlertEmail?: (input: AdminAlertEmailInput) => Promise<void>;
   now?: () => Date;
@@ -844,7 +846,6 @@ function createDefaultAdminReadRepositories() {
         alertRepository: AlertRepository;
         usageRepository: UsageRepository;
         auditRepository: AuditRepository;
-        modelPolicyRepository: PlatformModelPolicyRepository;
         secretStore: SecretStore;
       }
     | null = null;
@@ -866,7 +867,6 @@ function createDefaultAdminReadRepositories() {
       alertRepository: new MySqlAlertRepository(handle.db),
       usageRepository: new MySqlUsageRepository(handle.db),
       auditRepository: new MySqlAuditRepository(handle.db),
-      modelPolicyRepository: new MySqlPlatformModelPolicyRepository(handle.db),
       secretStore: new MySqlSecretStore(handle.db, env.secretKey),
     };
 
@@ -1297,7 +1297,7 @@ class DenAdminClient {
 
 export function createDefaultAdminService(
   denApiBase: string,
-  deps: AdminReadModelDependencies = {},
+  deps: AdminServiceDependencies = {},
 ): AdminService {
   const denClient = deps.denClient ?? new DenAdminClient(denApiBase);
   const getDefaultRepositories = createDefaultAdminReadRepositories();
@@ -1319,8 +1319,18 @@ export function createDefaultAdminService(
     deps.usageRepository ?? getDefaultRepositories().usageRepository;
   const getAuditRepository = () =>
     deps.auditRepository ?? getDefaultRepositories().auditRepository;
-  const getModelPolicyRepository = () =>
-    deps.modelPolicyRepository ?? getDefaultRepositories().modelPolicyRepository;
+  const getModelPolicyRepository = () => {
+    if (!deps.modelPolicyRepository) {
+      throw new HttpError("model_policy_store_unavailable", 503);
+    }
+    return deps.modelPolicyRepository;
+  };
+  const getModelPolicyMutation = () => {
+    if (!deps.modelPolicyMutation) {
+      throw new HttpError("model_policy_store_unavailable", 503);
+    }
+    return deps.modelPolicyMutation;
+  };
   const getSecretStore = () =>
     deps.secretStore ?? getDefaultRepositories().secretStore;
   const openAiCompatibleTransport = deps.openAiCompatibleTransport ?? new OpenAiCompatibleTransport();
@@ -2097,24 +2107,25 @@ export function createDefaultAdminService(
         policy: toAdminPlatformModelPolicy(await getModelPolicyRepository().getPolicy()),
       };
     },
-    async replacePlatformModelPolicy(_token, input) {
+    async replacePlatformModelPolicy(_token, input, actorUserId) {
       const validated = validatePlatformModelPolicyInput(input);
-      await assertActiveModelCapability(validated.activeModel);
-      const previous = await getModelPolicyRepository().getPolicy();
-      const saved = await getModelPolicyRepository().replacePolicy(validated);
+      await assertEnabledModelCapabilities(validated.enabledModels);
       try {
-        await getAuditRepository().recordEvent({
-          actorUserId: "admin-ui",
-          action: "platform.model_policy.update",
-          entityType: "platform_model_policy",
-          entityId: "platform",
-          result: "ok",
-          summary: `Updated platform model policy active model from ${formatModelRef(previous?.activeModel)} to ${formatModelRef(saved.activeModel)}.`,
+        const saved = await getModelPolicyMutation().replacePolicyWithAudit({
+          actorUserId,
+          enabledModels: validated.enabledModels,
+          activeModel: validated.activeModel,
         });
-      } catch {
-        throw new HttpError("model_policy_audit_failed", 502);
+        return { policy: toAdminPlatformModelPolicy(saved)! };
+      } catch (error) {
+        if (
+          error instanceof PlatformModelPolicyAuditPersistenceError
+          || (error && typeof error === "object" && (error as { code?: unknown }).code === "model_policy_audit_failed")
+        ) {
+          throw new HttpError("model_policy_audit_failed", 502);
+        }
+        throw error;
       }
-      return { policy: toAdminPlatformModelPolicy(saved)! };
     },
     async createCredential(_token, input, actorUserId) {
       const validated = validateCreateCredentialInput(input);
@@ -2472,58 +2483,141 @@ export function createDefaultAdminService(
     },
   };
 
-  async function assertActiveModelCapability(activeModel: PlatformModelRef): Promise<void> {
-    if (activeModel.provider === "openai" || activeModel.provider === "anthropic") {
-      throw new HttpError("model_policy_activation_not_verifiable_for_provider", 422);
+  async function assertEnabledModelCapabilities(enabledModels: PlatformModelRef[]): Promise<void> {
+    const requestedByProvider = new Map<PlatformModelRef["provider"], string[]>();
+    for (const modelRef of enabledModels) {
+      if (modelRef.provider === "openai" || modelRef.provider === "anthropic") {
+        throw new HttpError("model_policy_activation_not_verifiable_for_provider", 422);
+      }
+      const models = requestedByProvider.get(modelRef.provider) ?? [];
+      models.push(modelRef.model);
+      requestedByProvider.set(modelRef.provider, models);
     }
 
-    const credentials = (await getCredentialReadRepository().listAdminCredentials())
-      .filter((credential) =>
-        credential.provider === activeModel.provider
+    let allCredentials: CredentialRecord[];
+    try {
+      allCredentials = await getCredentialReadRepository().listAdminCredentials();
+    } catch {
+      throw new HttpError("model_policy_credential_lookup_failed", 503);
+    }
+
+    for (const [provider, requestedModels] of requestedByProvider) {
+      const credentials = allCredentials.filter((credential) =>
+        credential.provider === provider
         && credential.state === "healthy"
         && !credential.deletedAt
       );
-    if (credentials.length === 0) {
-      throw new HttpError("model_policy_active_model_has_no_healthy_credential", 422);
-    }
+      if (credentials.length === 0) {
+        throw new HttpError("model_policy_active_model_has_no_healthy_credential", 422);
+      }
 
-    if (activeModel.provider === "codex_oauth") {
-      for (const credential of credentials) {
+      if (provider === "codex_oauth") {
+        await assertCodexModelCapabilities(credentials, requestedModels);
+      } else {
+        await assertOpenAiCompatibleModelCapabilities(credentials, requestedModels);
+      }
+    }
+  }
+
+  async function assertCodexModelCapabilities(
+    credentials: CredentialRecord[],
+    requestedModels: string[],
+  ): Promise<void> {
+    const evidence: Set<string>[] = [];
+    let evidenceUnavailable = false;
+    for (const credential of credentials) {
+      try {
         const status = await codexStatusProvider.getStatus({
           credentialId: credential.id,
           credentialName: credential.name,
-        }).catch(() => null);
-        if (
-          status?.available === true
-          && filterUnsupportedCodexModels(listCodexModelCatalog(), status).includes(activeModel.model)
-        ) {
-          return;
+        });
+        if (status.available !== true) {
+          evidenceUnavailable = true;
+          continue;
         }
+        evidence.push(new Set(filterUnsupportedCodexModels(listCodexModelCatalog(), status)));
+      } catch {
+        evidenceUnavailable = true;
       }
-      throw new HttpError("model_policy_active_model_capability_unverified", 422);
     }
 
+    const unsupported = requestedModels.filter((model) => !evidence.some((models) => models.has(model)));
+    if (unsupported.length === 0) return;
+    if (evidenceUnavailable || evidence.length === 0) {
+      throw new HttpError("model_policy_capability_evidence_unavailable", 503);
+    }
+    throw new HttpError("model_policy_enabled_model_unsupported", 422);
+  }
+
+  async function assertOpenAiCompatibleModelCapabilities(
+    credentials: CredentialRecord[],
+    requestedModels: string[],
+  ): Promise<void> {
+    if (!openAiCompatibleTransport.listModels) {
+      throw new HttpError("model_policy_model_discovery_unavailable", 503);
+    }
+
+    const evidence: Set<string>[] = [];
+    let transientError: HttpError | null = null;
     for (const credential of credentials) {
-      const record = await getCredentialSecretLookupRepository()
-        .getCredentialRecordById(credential.id)
-        .catch(() => null);
+      let record: Awaited<ReturnType<CredentialSecretLookupRepository["getCredentialRecordById"]>>;
+      try {
+        record = await getCredentialSecretLookupRepository().getCredentialRecordById(credential.id);
+      } catch {
+        transientError ??= new HttpError("model_policy_credential_lookup_failed", 503);
+        continue;
+      }
       if (!record || record.provider !== "openai_compatible") {
+        transientError ??= new HttpError("model_policy_credential_lookup_failed", 503);
         continue;
       }
-      const secret = await getSecretStore().get(record.secretRef).catch(() => null);
-      if (!secret || secret.kind !== "openai_compatible_api_key" || !openAiCompatibleTransport.listModels) {
+
+      let secret: StoredSecret;
+      try {
+        secret = await getSecretStore().get(record.secretRef);
+      } catch {
+        transientError ??= new HttpError("model_policy_credential_lookup_failed", 503);
         continue;
       }
-      const discovery = await openAiCompatibleTransport.listModels({
-        apiKey: secret.apiKey,
-        baseUrl: secret.baseUrl,
-      }).catch(() => null);
-      if (normalizeDiscoveredModels(discovery?.models).includes(activeModel.model)) {
-        return;
+      if (secret.kind !== "openai_compatible_api_key") {
+        transientError ??= new HttpError("model_policy_credential_lookup_failed", 503);
+        continue;
+      }
+
+      try {
+        const discovery = await openAiCompatibleTransport.listModels({
+          apiKey: secret.apiKey,
+          baseUrl: secret.baseUrl,
+        });
+        evidence.push(new Set(normalizeDiscoveredModels(discovery.models)));
+      } catch (error) {
+        transientError ??= mapModelPolicyDiscoveryError(error);
       }
     }
-    throw new HttpError("model_policy_active_model_capability_unverified", 422);
+
+    const unsupported = requestedModels.filter((model) => !evidence.some((models) => models.has(model)));
+    if (unsupported.length === 0) return;
+    if (transientError) throw transientError;
+    if (evidence.length === 0) {
+      throw new HttpError("model_policy_model_discovery_unavailable", 503);
+    }
+    throw new HttpError("model_policy_enabled_model_unsupported", 422);
   }
+}
+
+function mapModelPolicyDiscoveryError(error: unknown): HttpError {
+  if (error instanceof ProviderTransportError) {
+    if (error.statusCode === 504 || error.code === "openai_compatible_models_timeout") {
+      return new HttpError("model_policy_model_discovery_timeout", 504);
+    }
+    if (error.statusCode === 503 || error.code === "openai_compatible_models_dns_failed") {
+      return new HttpError("model_policy_model_discovery_unavailable", 503);
+    }
+    if (error.statusCode === 400 || error.code === "openai_compatible_models_target_not_allowed") {
+      return new HttpError("model_policy_model_discovery_target_not_allowed", 400);
+    }
+  }
+  return new HttpError("model_policy_model_discovery_failed", 502);
 }
 
 function validatePlatformModelPolicyInput(input: ReplacePlatformModelPolicyInput): ReplacePlatformModelPolicyInput {
@@ -2574,10 +2668,6 @@ function toAdminPlatformModelPolicy(policy: PlatformModelPolicyRecord | null): A
     activeModel: policy.activeModel,
     updatedAt: policy.updatedAt.toISOString(),
   };
-}
-
-function formatModelRef(model: PlatformModelRef | null | undefined) {
-  return model ? `${model.provider}/${model.model}` : "none";
 }
 
 function validateCreateCredentialInput(input: CreateCredentialInput): {
@@ -3410,6 +3500,7 @@ export function createAdminRouter(adminService: AdminService) {
       const payload = await adminService.replacePlatformModelPolicy(
         res.locals.adminToken as string,
         req.body as ReplacePlatformModelPolicyInput,
+        (res.locals.adminSession as AdminSessionSnapshot).user.id,
       );
       res.json(payload);
     } catch (error) {

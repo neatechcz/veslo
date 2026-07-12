@@ -1,12 +1,16 @@
+import { randomUUID } from "node:crypto";
+
 import { eq } from "drizzle-orm";
 
 import type { AiGatewayDb } from "../db/index.js";
-import { platformModelPolicyTable } from "../db/schema.js";
+import { auditEventTable, platformModelPolicyTable } from "../db/schema.js";
 import { isAiGatewayProvider } from "../providers/ids.js";
 import type {
   PlatformModelPolicyRecord,
+  PlatformModelPolicyMutation,
   PlatformModelPolicyRepository,
   PlatformModelRef,
+  ReplacePlatformModelPolicyWithAuditInput,
 } from "./repository.js";
 
 const PLATFORM_POLICY_ID = "platform" as const;
@@ -70,6 +74,108 @@ export class MySqlPlatformModelPolicyRepository implements PlatformModelPolicyRe
       return mapPlatformModelPolicy(row);
     });
   }
+}
+
+export class PlatformModelPolicyAuditPersistenceError extends Error {
+  readonly code = "model_policy_audit_failed";
+
+  constructor(cause: unknown) {
+    super("model_policy_audit_failed", { cause });
+    this.name = "PlatformModelPolicyAuditPersistenceError";
+  }
+}
+
+export class MySqlPlatformModelPolicyMutation implements PlatformModelPolicyMutation {
+  constructor(private readonly db: AiGatewayDb) {}
+
+  async replacePolicyWithAudit(
+    input: ReplacePlatformModelPolicyWithAuditInput,
+  ): Promise<PlatformModelPolicyRecord> {
+    const enabledModels = normalizeModelRefs(input.enabledModels);
+    if (enabledModels.length === 0) {
+      throw new Error("Platform model policy requires at least one enabled model");
+    }
+    const activeModel = normalizeModelRef(input.activeModel);
+    if (!activeModel || !enabledModels.some((model) => modelRefsEqual(model, activeModel))) {
+      throw new Error("Platform active model must be enabled");
+    }
+
+    return this.db.transaction(async (tx) => {
+      const previousRows = await tx
+        .select()
+        .from(platformModelPolicyTable)
+        .where(eq(platformModelPolicyTable.id, PLATFORM_POLICY_ID))
+        .limit(1)
+        .for("update");
+      const previous = previousRows[0] ? mapPlatformModelPolicy(previousRows[0]) : null;
+      const now = new Date();
+      const replacement = {
+        enabled_models_json: JSON.stringify(enabledModels),
+        active_provider: activeModel.provider,
+        active_model: activeModel.model,
+        updated_at: now,
+      };
+
+      await tx
+        .insert(platformModelPolicyTable)
+        .values({
+          id: PLATFORM_POLICY_ID,
+          ...replacement,
+          created_at: now,
+        })
+        .onDuplicateKeyUpdate({ set: replacement });
+
+      const savedRows = await tx
+        .select()
+        .from(platformModelPolicyTable)
+        .where(eq(platformModelPolicyTable.id, PLATFORM_POLICY_ID))
+        .limit(1);
+      const savedRow = savedRows[0];
+      if (!savedRow) {
+        throw new Error("Platform model policy was not persisted");
+      }
+      const saved = mapPlatformModelPolicy(savedRow);
+
+      try {
+        await tx.insert(auditEventTable).values({
+          id: `audit_${randomUUID()}`,
+          actor_user_id: input.actorUserId,
+          entity_type: "platform_model_policy",
+          entity_id: PLATFORM_POLICY_ID,
+          action: "platform.model_policy.update",
+          result: "ok",
+          summary: formatPlatformModelPolicyAuditSummary(previous, saved),
+          created_at: now,
+        });
+      } catch (error) {
+        throw new PlatformModelPolicyAuditPersistenceError(error);
+      }
+
+      return saved;
+    }, { isolationLevel: "serializable" });
+  }
+}
+
+export function formatPlatformModelPolicyAuditSummary(
+  before: PlatformModelPolicyRecord | null,
+  after: PlatformModelPolicyRecord,
+): string {
+  return `Updated platform model policy: active ${formatModelRef(before?.activeModel)} -> ${formatModelRef(after.activeModel)}; enabled [${formatModelRefs(before?.enabledModels ?? [])}] -> [${formatModelRefs(after.enabledModels)}].`;
+}
+
+function formatModelRefs(models: PlatformModelRef[]): string {
+  return [...models]
+    .sort((left, right) => modelRefKey(left).localeCompare(modelRefKey(right)))
+    .map(formatModelRef)
+    .join(", ");
+}
+
+function formatModelRef(model: PlatformModelRef | null | undefined): string {
+  return model ? `${model.provider}/${model.model}` : "none";
+}
+
+function modelRefKey(model: PlatformModelRef): string {
+  return `${model.provider}\u0000${model.model}`;
 }
 
 function mapPlatformModelPolicy(row: typeof platformModelPolicyTable.$inferSelect): PlatformModelPolicyRecord {

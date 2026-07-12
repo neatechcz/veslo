@@ -15,6 +15,8 @@ import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import { MySqlLeaseRepository } from "../src/leases/mysql-repository.js";
 import { MySqlPlatformModelPolicyRepository } from "../src/model-policy/mysql-repository.js";
 import type { PlatformModelPolicyRepository } from "../src/model-policy/repository.js";
+import * as modelPolicyMysql from "../src/model-policy/mysql-repository.js";
+import * as defaultRuntime from "../src/runtime/default-runtime.js";
 import type {
   CreateSessionLeaseInput,
   LeaseRepository,
@@ -248,6 +250,11 @@ function createPersistentRuntime() {
         throw new Error("unused");
       },
     } satisfies PlatformModelPolicyRepository,
+    modelPolicyMutation: {
+      async replacePolicyWithAudit() {
+        throw new Error("unused");
+      },
+    },
     usage: {
       async recordUsage() {},
     } satisfies UsageRepository,
@@ -321,6 +328,26 @@ test("createDefaultRuntimeState uses MySQL-backed runtime stores", () => {
   assert.ok(runtime.secrets instanceof MySqlSecretStore);
   assert.ok(runtime.leases instanceof MySqlLeaseRepository);
   assert.ok(runtime.modelPolicy instanceof MySqlPlatformModelPolicyRepository);
+  const MutationConstructor = (modelPolicyMysql as unknown as {
+    MySqlPlatformModelPolicyMutation?: new (...args: never[]) => unknown;
+  }).MySqlPlatformModelPolicyMutation;
+  assert.equal(typeof MutationConstructor, "function");
+  assert.ok(runtime.modelPolicyMutation instanceof MutationConstructor!);
+});
+
+test("default admin dependencies reuse the shared runtime model policy stores", () => {
+  const runtime = createPersistentRuntime();
+  const createDependencies = (defaultRuntime as unknown as {
+    createDefaultAdminDependencies?: (state: RuntimeState) => {
+      modelPolicyRepository: unknown;
+      modelPolicyMutation: unknown;
+    };
+  }).createDefaultAdminDependencies;
+
+  assert.equal(typeof createDependencies, "function");
+  const dependencies = createDependencies!(runtime);
+  assert.equal(dependencies.modelPolicyRepository, runtime.modelPolicy);
+  assert.equal(dependencies.modelPolicyMutation, runtime.modelPolicyMutation);
 });
 
 test("default runtime credential repository exposes admin credential listing for Codex rotation", () => {
