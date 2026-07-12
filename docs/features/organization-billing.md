@@ -14,6 +14,8 @@ Organization admins can use Den Admin Billing to:
 
 Platform admins can also set manual access, local-model billing metadata, billing status, and per-organization tier allowlists.
 
+The standalone AI Gateway admin exposes these controls through organization-scoped facades backed by Den's canonical admin billing API. It forwards the signed-in Den token and preserves Den's response status and body, including validation details. Stripe configuration and mutations remain owned by Den; the gateway does not store Stripe secrets or duplicate Stripe logic. Self-service billing actions are available to an authorized administrator of that organization, while manual/platform billing controls are both hidden from organization admins and rejected server-side unless the caller is a platform admin.
+
 ## Platform Trials
 
 Platform trials are temporary platform-admin grants for organizations that need free Managed AI access before or outside Stripe billing. In Den Admin Billing, platform admins use the same Basic and Extended license quantity controls as checkout, choose a trial end date, and click `Create trial`.

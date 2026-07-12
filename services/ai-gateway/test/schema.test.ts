@@ -77,6 +77,12 @@ test("platform model policy schema stores one active model and the enabled model
   assert.ok(columns.updated_at);
 });
 
+test("audit schema stores nullable organization scope", () => {
+  const columns = getTableColumns(auditEventTable);
+  assert.ok(columns.organization_id);
+  assert.equal(columns.organization_id.notNull, false);
+});
+
 test("exports db factory", () => {
   assert.equal(typeof createDb, "function");
 });

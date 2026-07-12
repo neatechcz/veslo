@@ -31,6 +31,8 @@ test("ensureAiGatewaySchema repairs managed AI tables and columns for live datab
   assert.match(sql, /CREATE INDEX `user_ai_access_policy_provider` ON `user_ai_access_policy` \(`provider`\)/);
   assert.match(sql, /ALTER TABLE `user_ai_access_policy` ADD COLUMN `credential_id` varchar\(64\)/);
   assert.match(sql, /ALTER TABLE `credential_record` ADD COLUMN `name` varchar\(255\)/);
+  assert.match(sql, /ALTER TABLE `ai_gateway_audit_event` ADD COLUMN `organization_id` varchar\(64\)/);
+  assert.match(sql, /CREATE INDEX `audit_event_organization_created` ON `ai_gateway_audit_event` \(`organization_id`, `created_at`\)/);
 });
 
 test("ensureAiGatewaySchema creates credential tables before repairing columns", async () => {

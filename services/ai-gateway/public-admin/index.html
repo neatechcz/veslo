@@ -197,15 +197,40 @@
           </section>
 
           <section class="panel page hidden" data-page="organization-placeholder">
-            <article id="organization-billing-placeholder" class="detail-card honest-placeholder hidden" data-honest-placeholder data-organization-placeholder="billing">
+            <article id="organization-billing-content" class="stack hidden" data-organization-placeholder="billing">
               <p class="eyebrow">Organization billing</p>
-              <h2>Billing data is not available yet</h2>
-              <p class="muted">This workspace route is reserved for the organization-scoped billing facade delivered in Task 7. No platform-wide or fabricated billing data is shown here.</p>
+              <h2>Plan and access</h2>
+              <p id="organization-billing-status" class="editor-note muted" role="status" aria-live="polite">Loading billing...</p>
+              <div id="organization-billing-summary" class="hero-metrics"></div>
+              <section class="detail-card" data-organization-billing-control>
+                <div class="toolbar">
+                  <select id="organization-billing-interval" class="input"><option value="monthly">Monthly</option><option value="annual">Annual</option></select>
+                  <input id="organization-billing-basic" class="input" type="number" min="0" value="0" aria-label="Basic licenses" />
+                  <input id="organization-billing-extended" class="input" type="number" min="0" value="0" aria-label="Extended licenses" />
+                </div>
+                <div class="button-row">
+                  <button id="organization-billing-checkout" class="button button-primary" type="button">Start checkout</button>
+                  <button id="organization-billing-plan-save" class="button button-secondary" type="button">Update plan</button>
+                  <button id="organization-billing-portal" class="button button-secondary" type="button">Open billing portal</button>
+                  <button id="organization-billing-cancel" class="button button-secondary" type="button">Cancel at period end</button>
+                </div>
+              </section>
+              <section id="organization-billing-platform-controls" class="detail-card" data-platform-admin-control>
+                <p class="eyebrow">Platform-only billing controls</p>
+                <div class="toolbar">
+                  <select id="organization-billing-platform-mode" class="input"><option value="none">None</option><option value="managed_ai">Managed AI</option><option value="local_models">Local Models</option><option value="manual_access">Manual access</option></select>
+                  <select id="organization-billing-platform-status" class="input"><option value="none">None</option><option value="active">Active</option><option value="trialing">Trialing</option><option value="past_due">Past due</option><option value="unpaid">Unpaid</option><option value="incomplete">Incomplete</option><option value="canceled">Canceled</option></select>
+                  <label><input id="organization-billing-manual-enabled" type="checkbox" /> Manual access enabled</label>
+                  <label><span>Manual access expires</span><input id="organization-billing-manual-expires" class="input" type="datetime-local" /></label>
+                  <button id="organization-billing-platform-save" class="button button-secondary" type="button">Save platform billing</button>
+                </div>
+              </section>
             </article>
-            <article id="organization-audit-placeholder" class="detail-card honest-placeholder hidden" data-honest-placeholder data-organization-placeholder="audit">
+            <article id="organization-audit-content" class="stack hidden" data-organization-placeholder="audit">
               <p class="eyebrow">Organization audit</p>
-              <h2>Scoped audit data is not available yet</h2>
-              <p class="muted">This workspace route is reserved for the organization-scoped audit facade delivered in Task 7. Global audit events are not reused here.</p>
+              <h2>Scoped activity</h2>
+              <p id="organization-audit-status" class="editor-note muted" role="status" aria-live="polite">Loading organization audit...</p>
+              <div id="organization-audit-list" class="list-cards"></div>
             </article>
           </section>
 

@@ -248,3 +248,19 @@ test("route mutation tokens reject pending success and error after switching org
   assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingError, orgA), false);
   assert.equal(routes.isAdminRouteMutationCurrent(mutations, current, orgB), true);
 });
+
+test("billing actions are organization scoped and manual controls remain platform only", () => {
+  const billing = { area: "organization", page: "billing", organizationId: "org_1" };
+  const orgAdmin = { platformAdmin: false, organizationIds: ["org_1"], organizationAdminIds: ["org_1"], capabilities: ["organization", "users"] };
+  const orgMember = { platformAdmin: false, organizationIds: ["org_1"], organizationAdminIds: [], capabilities: ["organization", "users"] };
+  const platformAdmin = { platformAdmin: true, organizationIds: [], capabilities: ["organization"] };
+  assert.equal(routes.canPerformAdminRouteAction(billing, orgAdmin, "manage-organization-billing"), true);
+  assert.equal(routes.canPerformAdminRouteAction(billing, orgMember, "manage-organization-billing"), false);
+  assert.equal(routes.canPerformAdminRouteAction(billing, orgAdmin, "manage-platform-billing"), false);
+  assert.equal(routes.canPerformAdminRouteAction(billing, platformAdmin, "manage-platform-billing"), true);
+  assert.equal(routes.canPerformAdminRouteAction(
+    { area: "organization", page: "overview", organizationId: "org_1" },
+    platformAdmin,
+    "manage-organization-billing",
+  ), false);
+});

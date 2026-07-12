@@ -665,8 +665,8 @@ test("GET /admin shell separates platform administration from organization works
     for (const page of ["overview", "members", "domains-invites", "billing", "ai-access", "audit"]) {
       assert.match(html, new RegExp(`data-organization-route="${page}"`))
     }
-    assert.match(html, /id="organization-billing-placeholder"[^>]*data-honest-placeholder/)
-    assert.match(html, /id="organization-audit-placeholder"[^>]*data-honest-placeholder/)
+    assert.match(html, /id="organization-billing-content"/)
+    assert.match(html, /id="organization-audit-content"/)
     assert.match(html, /id="model-policy-panel"[^>]*data-platform-admin-control/)
     assert.doesNotMatch(html, /href="\/admin\/(organization|credentials|users|usage|alerts)"/)
 
@@ -778,6 +778,39 @@ test("GET /admin app guards organization mutation completions and marks active n
         functionName,
       )
     }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("organization billing and audit routes render real scoped loaders and actions", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  try {
+    const { port } = server.address() as AddressInfo
+    const shell = await fetch(`http://127.0.0.1:${port}/admin`, { headers: { cookie: ADMIN_COOKIE } })
+    const html = await shell.text()
+    assert.match(html, /id="organization-billing-content"/)
+    assert.match(html, /id="organization-billing-checkout"/)
+    assert.match(html, /id="organization-billing-portal"/)
+    assert.match(html, /id="organization-billing-plan-save"/)
+    assert.match(html, /id="organization-billing-cancel"/)
+    assert.match(html, /id="organization-billing-platform-controls"[^>]*data-platform-admin-control/)
+    assert.match(html, /id="organization-billing-manual-enabled"/)
+    assert.match(html, /id="organization-billing-manual-expires"/)
+    assert.match(html, /id="organization-audit-list"/)
+    assert.match(html, /id="organization-audit-status"[^>]*aria-live="polite"/)
+    assert.doesNotMatch(html, /organization-billing-placeholder|organization-audit-placeholder|data-honest-placeholder/)
+
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    assert.match(script, /fetchJson\(`\/organizations\/\$\{encodeURIComponent\(organizationId\)\}\/billing`\)/)
+    assert.match(script, /fetchJson\(`\/organizations\/\$\{encodeURIComponent\(organizationId\)\}\/audit`\)/)
+    assert.match(script, /beginAdminRouteMutation\(state\.mutations, "organization-billing-load", route\)/)
+    assert.match(script, /beginAdminRouteMutation\(state\.mutations, "organization-audit-load", route\)/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "manage-platform-billing"\)/)
+    assert.doesNotMatch(script, /will be connected in Task 7/)
   } finally {
     server.close()
     await once(server, "close")
