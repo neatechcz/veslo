@@ -42,7 +42,21 @@ const state = {
   userMode: "edit",
   userAiAccessByUserId: {},
   userAiAccessAvailableCredentialsByUserId: {},
-  userAiAccessModelsByCredentialId: {},
+  modelPolicy: {
+    saved: null,
+    draftEnabledModels: [],
+    draftActiveModel: null,
+    dirty: false,
+    loading: false,
+    saving: false,
+    error: "",
+  },
+  modelDiscovery: {
+    credentialId: "",
+    models: [],
+    loading: false,
+    error: "",
+  },
 };
 
 const els = {
@@ -107,6 +121,14 @@ const els = {
   credentialStateFilter: document.getElementById("credential-state-filter"),
   credentialsShowDeleted: document.getElementById("credentials-show-deleted"),
   credentialsTableBody: document.getElementById("credentials-table-body"),
+  modelPolicyPanel: document.getElementById("model-policy-panel"),
+  modelPolicyList: document.getElementById("model-policy-list"),
+  modelPolicyCredential: document.getElementById("model-policy-credential"),
+  modelPolicyDiscoveredModel: document.getElementById("model-policy-discovered-model"),
+  modelPolicyDiscoverButton: document.getElementById("model-policy-discover-button"),
+  modelPolicyAddButton: document.getElementById("model-policy-add-button"),
+  modelPolicySaveButton: document.getElementById("model-policy-save-button"),
+  modelPolicyStatus: document.getElementById("model-policy-status"),
   credentialDetailModal: document.getElementById("credential-detail-modal"),
   credentialDetailModalClose: document.getElementById("credential-detail-modal-close"),
   credentialDetail: document.getElementById("credential-detail"),
@@ -147,9 +169,6 @@ const els = {
   userAiAccessEnabled: document.getElementById("user-ai-access-enabled"),
   userAiAccessProvider: document.getElementById("user-ai-access-provider"),
   userAiAccessCredential: document.getElementById("user-ai-access-credential"),
-  userAiAccessDefaultModel: document.getElementById("user-ai-access-default-model"),
-  userAiAccessModelOptions: document.getElementById("user-ai-access-model-options"),
-  userAiAccessAllowedModels: document.getElementById("user-ai-access-allowed-models"),
   userAiAccessStatus: document.getElementById("user-ai-access-status"),
   userEditorModal: document.getElementById("user-editor-modal"),
   userModalClose: document.getElementById("user-modal-close"),
@@ -557,15 +576,9 @@ function normalizeAiAccess(payload) {
       enabled: false,
       credentialId: null,
       provider: "",
-      defaultModel: "",
-      allowedModels: [],
       updatedAt: null,
     };
   }
-
-  const allowedModels = Array.isArray(payload.allowedModels)
-    ? payload.allowedModels.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean)
-    : [];
 
   return {
     id: typeof payload.id === "string" ? payload.id : "",
@@ -573,8 +586,6 @@ function normalizeAiAccess(payload) {
     enabled: payload.enabled === true,
     credentialId: typeof payload.credentialId === "string" ? payload.credentialId : null,
     provider: typeof payload.provider === "string" ? payload.provider : "",
-    defaultModel: typeof payload.defaultModel === "string" ? payload.defaultModel : "",
-    allowedModels,
     updatedAt: typeof payload.updatedAt === "string" ? payload.updatedAt : null,
   };
 }
@@ -608,65 +619,10 @@ function currentUserAiAccessAvailableCredentials(userId, provider = "") {
     .filter((entry) => !provider || entry.provider === provider);
 }
 
-function selectedAiAccessCredentialId() {
-  return els.userAiAccessCredential.value.trim();
-}
-
-function isAiAccessModelCatalogProvider(provider) {
-  return provider === "codex_oauth" || provider === "openai_compatible";
-}
-
-function setAiAccessModelOptions(models) {
-  const normalized = Array.isArray(models)
-    ? Array.from(new Set(models.map((entry) => typeof entry === "string" ? entry.trim() : "").filter(Boolean)))
-    : [];
-  els.userAiAccessModelOptions.innerHTML = normalized
-    .map((model) => `<option value="${escapeHtml(model)}"></option>`)
-    .join("");
-}
-
-async function loadAiAccessModelsForCredential(credentialId) {
-  if (!credentialId) {
-    setAiAccessModelOptions([]);
-    return { models: [], defaultModel: "" };
-  }
-
-  const cached = state.userAiAccessModelsByCredentialId[credentialId];
-  if (cached && Array.isArray(cached.models)) {
-    setAiAccessModelOptions(cached.models);
-    return cached;
-  }
-
-  const payload = await fetchJson(`/credentials/${encodeURIComponent(credentialId)}/models`);
-  const models = Array.isArray(payload?.models)
-    ? payload.models.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean)
-    : [];
-  const result = {
-    models,
-    defaultModel: typeof payload?.defaultModel === "string" ? payload.defaultModel.trim() : "",
-  };
-  state.userAiAccessModelsByCredentialId[credentialId] = result;
-  setAiAccessModelOptions(models);
-  return result;
-}
-
-function formatAllowedModels(models) {
-  return (models || []).join("\n");
-}
-
-function parseAllowedModelsInput(value) {
-  return value
-    .split(/[\n,]/g)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
 function readAiAccessFormValue() {
   return {
     enabled: els.userAiAccessEnabled.checked,
     provider: els.userAiAccessProvider.value || null,
-    defaultModel: els.userAiAccessDefaultModel.value.trim() || null,
-    allowedModels: parseAllowedModelsInput(els.userAiAccessAllowedModels.value),
   };
 }
 
@@ -680,6 +636,293 @@ function readAiAccessCredentialValue() {
   const user = currentUser();
   const currentAiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
   return currentAiAccess.provider === selectedProvider ? currentAiAccess.credentialId : null;
+}
+
+function normalizeModelRef(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const provider = typeof value.provider === "string" ? value.provider.trim() : "";
+  const model = typeof value.model === "string" ? value.model.trim() : "";
+  return provider && model ? { provider, model } : null;
+}
+
+function modelRefsEqual(left, right) {
+  return left?.provider === right?.provider && left?.model === right?.model;
+}
+
+function normalizeModelRefs(values) {
+  const refs = Array.isArray(values) ? values.map(normalizeModelRef).filter(Boolean) : [];
+  return refs.filter((entry, index) =>
+    refs.findIndex((candidate) => modelRefsEqual(candidate, entry)) === index
+  );
+}
+
+function normalizeModelPolicy(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const enabledModels = normalizeModelRefs(value.enabledModels);
+  const activeModel = normalizeModelRef(value.activeModel);
+  if (!activeModel || !enabledModels.some((entry) => modelRefsEqual(entry, activeModel))) {
+    return null;
+  }
+  return {
+    enabledModels,
+    activeModel,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+  };
+}
+
+function healthyModelDiscoveryCredentials() {
+  return state.credentials.filter((credential) =>
+    credential.state === "healthy" &&
+    !credential.deletedAt &&
+    (credential.provider === "codex_oauth" || credential.provider === "openai_compatible")
+  );
+}
+
+function setModelPolicyStatus(message, tone = "neutral") {
+  els.modelPolicyStatus.textContent = message;
+  if (tone === "neutral") {
+    delete els.modelPolicyStatus.dataset.tone;
+    return;
+  }
+  els.modelPolicyStatus.dataset.tone = tone;
+}
+
+function renderModelDiscoveryControls() {
+  const credentials = healthyModelDiscoveryCredentials();
+  const selectedId = credentials.some((entry) => entry.id === state.modelDiscovery.credentialId)
+    ? state.modelDiscovery.credentialId
+    : "";
+  state.modelDiscovery.credentialId = selectedId;
+  els.modelPolicyCredential.innerHTML = [
+    `<option value="">Select credential</option>`,
+    ...credentials.map((credential) =>
+      `<option value="${escapeHtml(credential.id)}">${escapeHtml(`${credential.name || credential.id} · ${credential.provider}`)}</option>`
+    ),
+  ].join("");
+  els.modelPolicyCredential.value = selectedId;
+  els.modelPolicyCredential.disabled = state.modelPolicy.loading || state.modelPolicy.saving;
+
+  els.modelPolicyDiscoveredModel.innerHTML = state.modelDiscovery.models.length > 0
+    ? `<option value="">Select discovered model</option>${state.modelDiscovery.models
+        .map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`)
+        .join("")}`
+    : `<option value="">Discover models first</option>`;
+  els.modelPolicyDiscoveredModel.disabled = state.modelDiscovery.models.length === 0 || state.modelDiscovery.loading;
+  els.modelPolicyDiscoverButton.disabled = !selectedId || state.modelDiscovery.loading || state.modelPolicy.saving;
+  els.modelPolicyDiscoverButton.textContent = state.modelDiscovery.loading ? "Discovering..." : "Discover models";
+  els.modelPolicyAddButton.disabled = !els.modelPolicyDiscoveredModel.value || state.modelPolicy.saving;
+}
+
+function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+
+  const rows = state.modelPolicy.draftEnabledModels.map((entry) => {
+    const active = modelRefsEqual(entry, state.modelPolicy.draftActiveModel);
+    return `
+      <article class="model-policy-row${active ? " active" : ""}">
+        <label class="model-policy-active-control">
+          <input type="radio" name="model-policy-active" data-model-policy-active-provider="${escapeHtml(entry.provider)}" data-model-policy-active-model="${escapeHtml(entry.model)}"${active ? " checked" : ""} />
+          <span>${active ? "Active" : "Set active"}</span>
+        </label>
+        <div class="model-policy-ref">
+          <strong>${escapeHtml(entry.model)}</strong>
+          <span>${escapeHtml(entry.provider)}</span>
+        </div>
+        <button class="button button-secondary" type="button" data-model-policy-remove-provider="${escapeHtml(entry.provider)}" data-model-policy-remove-model="${escapeHtml(entry.model)}"${active ? " disabled title=\"Select a replacement active model before removing this model.\"" : ""}>Remove</button>
+      </article>`;
+  }).join("");
+
+  els.modelPolicyList.innerHTML = state.modelPolicy.loading
+    ? `<article class="model-policy-empty">Loading platform model policy...</article>`
+    : rows || `<article class="model-policy-empty">No platform model policy configured. Discover and add a model to create one.</article>`;
+  els.modelPolicySaveButton.disabled =
+    state.modelPolicy.loading ||
+    state.modelPolicy.saving ||
+    !state.modelPolicy.dirty ||
+    !state.modelPolicy.draftActiveModel;
+  els.modelPolicySaveButton.textContent = state.modelPolicy.saving ? "Saving..." : "Save model policy";
+  renderModelDiscoveryControls();
+
+  if (statusMessage) {
+    setModelPolicyStatus(statusMessage, statusTone);
+  } else if (state.modelPolicy.error) {
+    setModelPolicyStatus(`Unable to update model policy: ${state.modelPolicy.error}`, "error");
+  } else if (state.modelPolicy.loading) {
+    setModelPolicyStatus("Loading platform model policy...", "pending");
+  } else if (state.modelPolicy.saving) {
+    setModelPolicyStatus("Saving platform model policy...", "pending");
+  } else if (state.modelPolicy.dirty) {
+    setModelPolicyStatus("Unsaved model policy changes.", "pending");
+  } else if (state.modelPolicy.saved) {
+    setModelPolicyStatus(`Policy saved${state.modelPolicy.saved.updatedAt ? ` ${formatDate(state.modelPolicy.saved.updatedAt)}` : ""}.`);
+  } else {
+    setModelPolicyStatus("No platform model policy configured. Add a discovered model, select it as active, then save.");
+  }
+}
+
+async function loadModelPolicy() {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+  state.modelPolicy.loading = true;
+  state.modelPolicy.error = "";
+  renderModelPolicy();
+  try {
+    const payload = await fetchJson("/ai-infrastructure/model-policy");
+    const policy = normalizeModelPolicy(payload?.policy);
+    state.modelPolicy.saved = policy;
+    state.modelPolicy.draftEnabledModels = policy ? normalizeModelRefs(policy.enabledModels) : [];
+    state.modelPolicy.draftActiveModel = policy ? normalizeModelRef(policy.activeModel) : null;
+    state.modelPolicy.dirty = false;
+  } catch (error) {
+    state.modelPolicy.error = error instanceof Error ? error.message : "unknown_error";
+  } finally {
+    state.modelPolicy.loading = false;
+    renderModelPolicy();
+  }
+}
+
+async function saveModelPolicy() {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+  const enabledModels = normalizeModelRefs(state.modelPolicy.draftEnabledModels);
+  const activeModel = normalizeModelRef(state.modelPolicy.draftActiveModel);
+  if (!activeModel || !enabledModels.some((entry) => modelRefsEqual(entry, activeModel))) {
+    state.modelPolicy.error = "Select one enabled model as active before saving.";
+    renderModelPolicy();
+    return;
+  }
+
+  state.modelPolicy.saving = true;
+  state.modelPolicy.error = "";
+  renderModelPolicy();
+  let savedSuccessfully = false;
+  try {
+    const saved = await fetchJson("/ai-infrastructure/model-policy", {
+      method: "PUT",
+      body: JSON.stringify({
+        enabledModels: normalizeModelRefs(state.modelPolicy.draftEnabledModels),
+        activeModel: normalizeModelRef(state.modelPolicy.draftActiveModel),
+      }),
+    });
+    const normalizedSaved = normalizeModelPolicy(saved?.policy);
+    if (!normalizedSaved) {
+      throw new Error("invalid_model_policy_response");
+    }
+    state.modelPolicy.saved = normalizedSaved;
+    state.modelPolicy.draftEnabledModels = normalizeModelRefs(state.modelPolicy.saved.enabledModels);
+    state.modelPolicy.draftActiveModel = normalizeModelRef(state.modelPolicy.saved.activeModel);
+    state.modelPolicy.dirty = false;
+    savedSuccessfully = true;
+  } catch (error) {
+    state.modelPolicy.error = error instanceof Error ? error.message : "unknown_error";
+  } finally {
+    state.modelPolicy.saving = false;
+    renderModelPolicy(savedSuccessfully ? "Model policy saved." : "", savedSuccessfully ? "success" : "neutral");
+  }
+}
+
+async function discoverModelsForPolicy() {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+  const credential = healthyModelDiscoveryCredentials()
+    .find((entry) => entry.id === els.modelPolicyCredential.value);
+  if (!credential) {
+    state.modelDiscovery.error = "Select a healthy compatible credential.";
+    renderModelPolicy(state.modelDiscovery.error, "error");
+    return;
+  }
+
+  state.modelDiscovery.credentialId = credential.id;
+  state.modelDiscovery.models = [];
+  state.modelDiscovery.loading = true;
+  state.modelDiscovery.error = "";
+  renderModelPolicy();
+  try {
+    const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/models`);
+    state.modelDiscovery.models = Array.isArray(payload?.models)
+      ? Array.from(new Set(payload.models
+          .filter((model) => typeof model === "string")
+          .map((model) => model.trim())
+          .filter(Boolean)))
+      : [];
+    if (state.modelDiscovery.models.length === 0) {
+      state.modelDiscovery.error = "This credential did not report any models.";
+    }
+  } catch (error) {
+    state.modelDiscovery.error = error instanceof Error ? error.message : "unknown_error";
+  } finally {
+    state.modelDiscovery.loading = false;
+    renderModelPolicy(
+      state.modelDiscovery.error || `Discovered ${state.modelDiscovery.models.length} models from ${credential.name || credential.id}.`,
+      state.modelDiscovery.error ? "error" : "success",
+    );
+  }
+}
+
+function addDiscoveredModel() {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+  const credential = healthyModelDiscoveryCredentials()
+    .find((entry) => entry.id === state.modelDiscovery.credentialId);
+  const model = els.modelPolicyDiscoveredModel.value.trim();
+  if (!credential || !state.modelDiscovery.models.includes(model)) {
+    return;
+  }
+  const target = { provider: credential.provider, model };
+  state.modelPolicy.draftEnabledModels = normalizeModelRefs([
+    ...state.modelPolicy.draftEnabledModels,
+    target,
+  ]);
+  if (!state.modelPolicy.draftActiveModel) {
+    state.modelPolicy.draftActiveModel = target;
+  }
+  state.modelPolicy.dirty = true;
+  state.modelPolicy.error = "";
+  renderModelPolicy();
+}
+
+function selectDraftActiveModel(provider, model) {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+  const target = normalizeModelRef({ provider, model });
+  if (!target || !state.modelPolicy.draftEnabledModels.some((entry) => modelRefsEqual(entry, target))) {
+    return;
+  }
+  state.modelPolicy.draftActiveModel = target;
+  state.modelPolicy.dirty = true;
+  state.modelPolicy.error = "";
+  renderModelPolicy();
+}
+
+function removeDraftModel(provider, model) {
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+  const target = normalizeModelRef({ provider, model });
+  if (!target) {
+    return;
+  }
+  if (modelRefsEqual(state.modelPolicy.draftActiveModel, target)) {
+    state.modelPolicy.error = "Select a replacement active model before removing this model.";
+    renderModelPolicy();
+    return;
+  }
+  state.modelPolicy.draftEnabledModels = state.modelPolicy.draftEnabledModels
+    .filter((entry) => !modelRefsEqual(entry, target));
+  state.modelPolicy.dirty = true;
+  state.modelPolicy.error = "";
+  renderModelPolicy();
 }
 
 function summarizeUser(user) {
@@ -795,7 +1038,7 @@ function setActivePage(page) {
   const titles = {
     overview: ["AI Gateway control plane", "Overview", "Inspect credentials, usage, alerts, users, and audit events from one place."],
     organization: ["AI Gateway control plane", "Organization", "Manage organization details, domains, and pending invites."],
-    credentials: ["AI Gateway control plane", "Credentials", "Inspect provider keys, linked alerts, and rotation state."],
+    credentials: ["AI Gateway control plane", "AI Infrastructure", "Manage the global model policy and inspect provider credentials."],
     usage: ["AI Gateway control plane", "Usage", "Watch Codex capacity first, then break usage down by credential, user, or org."],
     alerts: ["AI Gateway control plane", "Alerts", "Triage credential failures, usage spikes, and routing anomalies."],
     users: ["AI Gateway control plane", "Users", "Create, edit, disable, or remove users from the directory."],
@@ -1040,6 +1283,16 @@ async function signOut() {
   state.selectedUserId = null;
   state.selectedOrganizationId = null;
   state.userMode = "edit";
+  state.modelPolicy = {
+    saved: null,
+    draftEnabledModels: [],
+    draftActiveModel: null,
+    dirty: false,
+    loading: false,
+    saving: false,
+    error: "",
+  };
+  state.modelDiscovery = { credentialId: "", models: [], loading: false, error: "" };
   localStorage.removeItem(STORAGE_KEY);
   window.location.assign("/admin");
 }
@@ -1185,7 +1438,7 @@ async function loadAllData() {
   await Promise.all([
     loadReadiness(),
     runAllowedLoad("organization", loadOrganization),
-    runAllowedLoad("credentials", loadCredentials),
+    runAllowedLoad("credentials", loadAiInfrastructure),
     runAllowedLoad("alerts", loadAlerts),
     runAllowedLoad("users", loadUsers),
     runAllowedLoad("audit", loadAudit),
@@ -1238,9 +1491,20 @@ async function loadCredentials() {
       state.selectedCredentialId = state.credentials[0]?.id || null;
     }
     renderCredentials();
+    if (state.session?.platformAdmin === true) {
+      renderModelPolicy();
+    }
   } catch (error) {
     console.error("loadCredentials failed", error);
   }
+}
+
+async function loadAiInfrastructure() {
+  await loadCredentials();
+  if (state.session?.platformAdmin !== true) {
+    return;
+  }
+  await loadModelPolicy();
 }
 
 async function loadAlerts() {
@@ -1302,8 +1566,6 @@ async function saveUserAiAccess(userId, input = null) {
     ? {
         enabled: input.enabled === true,
         provider: typeof input.provider === "string" ? input.provider : null,
-        defaultModel: typeof input.defaultModel === "string" ? input.defaultModel : null,
-        allowedModels: Array.isArray(input.allowedModels) ? input.allowedModels : [],
         credentialId: typeof input.credentialId === "string" ? input.credentialId : null,
       }
     : {
@@ -1901,7 +2163,7 @@ function renderAiAccessCredentialOptions(user, aiAccess) {
 
 function updateAiAccessStatusText(user, aiAccess) {
   if (state.userMode === "create") {
-    els.userAiAccessStatus.textContent = "Create the user first, then assign provider and models.";
+    els.userAiAccessStatus.textContent = "Create the user first, then assign access to the platform-managed model.";
     return;
   }
 
@@ -1917,8 +2179,8 @@ function updateAiAccessStatusText(user, aiAccess) {
   }
 
   els.userAiAccessStatus.textContent = aiAccess.updatedAt
-    ? `Assignments updated ${formatDate(aiAccess.updatedAt)}.`
-    : "Assignments are enforced by the gateway for this signed-in user.";
+    ? `Assignment updated ${formatDate(aiAccess.updatedAt)}. The model is managed in AI Infrastructure.`
+    : "The assignment is enforced by the gateway; the model is managed in AI Infrastructure.";
 }
 
 function populateUserEditor(user) {
@@ -1957,16 +2219,7 @@ function populateUserEditor(user) {
     els.userAiAccessProvider.value = aiAccess.provider || "";
     els.userAiAccessProvider.disabled = isCreate || !user;
     renderAiAccessCredentialOptions(user, aiAccess);
-    els.userAiAccessDefaultModel.value = aiAccess.defaultModel || "";
-    els.userAiAccessDefaultModel.disabled = isCreate || !user;
-    els.userAiAccessAllowedModels.value = formatAllowedModels(aiAccess.allowedModels);
-    els.userAiAccessAllowedModels.disabled = isCreate || !user;
     updateAiAccessStatusText(user, aiAccess);
-  }
-  if (hasCapability("managedAiUserAccess") && !isCreate && isAiAccessModelCatalogProvider(aiAccess.provider) && aiAccess.credentialId) {
-    void refreshSelectedAiAccessModels();
-  } else {
-    setAiAccessModelOptions([]);
   }
   applyAdminCapabilities();
 }
@@ -2065,37 +2318,6 @@ async function refreshSelectedUserAiAccessOptions() {
   const user = currentUser();
   if (user) {
     populateUserEditor(user);
-  }
-}
-
-async function refreshSelectedAiAccessModels() {
-  if (!hasCapability("managedAiUserAccess")) {
-    return;
-  }
-
-  const selectedProvider = els.userAiAccessProvider.value || "";
-  const credentialId = selectedAiAccessCredentialId();
-  if ((selectedProvider !== "codex_oauth" && selectedProvider !== "openai_compatible") || !credentialId) {
-    setAiAccessModelOptions([]);
-    return;
-  }
-
-  els.userAiAccessStatus.textContent = "Loading models from the assigned credential...";
-  try {
-    const payload = await loadAiAccessModelsForCredential(credentialId);
-    if (!els.userAiAccessDefaultModel.value.trim() && payload.defaultModel) {
-      els.userAiAccessDefaultModel.value = payload.defaultModel;
-      if (!els.userAiAccessAllowedModels.value.trim()) {
-        els.userAiAccessAllowedModels.value = payload.defaultModel;
-      }
-    }
-    els.userAiAccessStatus.textContent = payload.models.length > 0
-      ? `Loaded ${payload.models.length} models from the assigned credential.`
-      : "No models were returned by this credential. Enter a model manually.";
-  } catch (error) {
-    setAiAccessModelOptions([]);
-    els.userAiAccessStatus.textContent =
-      `Unable to load models: ${error instanceof Error ? error.message : "unknown_error"}. Enter a model manually.`;
   }
 }
 
@@ -2774,6 +2996,28 @@ function bindActions() {
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
   els.credentialCreateCodexUpload.addEventListener("click", () => void prepareNewCodexCredentialUpload());
   els.credentialCreateCodexCopy.addEventListener("click", () => void copyNewCodexCredentialUploadCommand());
+  els.modelPolicySaveButton.addEventListener("click", () => void saveModelPolicy());
+  els.modelPolicyCredential.addEventListener("change", () => {
+    state.modelDiscovery.credentialId = els.modelPolicyCredential.value;
+    state.modelDiscovery.models = [];
+    state.modelDiscovery.error = "";
+    renderModelPolicy();
+  });
+  els.modelPolicyDiscoverButton.addEventListener("click", () => void discoverModelsForPolicy());
+  els.modelPolicyDiscoveredModel.addEventListener("change", () => {
+    els.modelPolicyAddButton.disabled = !els.modelPolicyDiscoveredModel.value;
+  });
+  els.modelPolicyAddButton.addEventListener("click", addDiscoveredModel);
+  els.modelPolicyList.addEventListener("change", (event) => {
+    const active = event.target.closest("[data-model-policy-active-provider]");
+    if (!active) return;
+    selectDraftActiveModel(active.dataset.modelPolicyActiveProvider, active.dataset.modelPolicyActiveModel);
+  });
+  els.modelPolicyList.addEventListener("click", (event) => {
+    const remove = event.target.closest("[data-model-policy-remove-provider]");
+    if (!remove) return;
+    removeDraftModel(remove.dataset.modelPolicyRemoveProvider, remove.dataset.modelPolicyRemoveModel);
+  });
   els.credentialsShowDeleted.addEventListener("change", () => {
     state.showDeletedCredentials = els.credentialsShowDeleted.checked;
     void loadCredentials();
@@ -2925,13 +3169,6 @@ function bindActions() {
     const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
     renderAiAccessCredentialOptions(user, aiAccess);
     updateAiAccessStatusText(user, aiAccess);
-    void refreshSelectedAiAccessModels();
-  });
-  els.userAiAccessCredential.addEventListener("change", () => {
-    if (!hasCapability("managedAiUserAccess")) {
-      return;
-    }
-    void refreshSelectedAiAccessModels();
   });
   els.auditSearch.addEventListener("input", renderAudit);
   els.auditActorFilter.addEventListener("change", renderAudit);

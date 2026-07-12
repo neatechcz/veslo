@@ -26,7 +26,7 @@
         <nav class="nav" aria-label="Admin sections">
           <a href="/admin" data-route="overview" class="nav-item">Overview</a>
           <a href="/admin/organization" data-route="organization" class="nav-item">Organization</a>
-          <a href="/admin/credentials" data-route="credentials" class="nav-item">Credentials</a>
+          <a href="/admin/credentials" data-route="credentials" class="nav-item">AI Infrastructure</a>
           <a href="/admin/usage" data-route="usage" class="nav-item">Usage</a>
           <a href="/admin/alerts" data-route="alerts" class="nav-item">Alerts</a>
           <a href="/admin/users" data-route="users" class="nav-item">Users</a>
@@ -171,11 +171,45 @@
           <section class="panel page page-credentials" data-page="credentials">
             <div class="section-head">
               <div>
-                <p class="eyebrow">Credentials</p>
-                <h2>Credential inventory</h2>
+                <p class="eyebrow">Platform AI</p>
+                <h2>AI Infrastructure</h2>
               </div>
               <div class="section-actions">
                 <span class="status-chip">Admin managed</span>
+              </div>
+            </div>
+            <section id="model-policy-panel" class="detail-card model-policy-card" data-platform-admin-control>
+              <div class="section-head compact">
+                <div>
+                  <p class="eyebrow">Global model policy</p>
+                  <h3>Enabled models and active routing</h3>
+                  <p class="editor-note muted">The active model applies to every managed user. Models can only be added from a healthy credential's authoritative discovery response.</p>
+                </div>
+                <button id="model-policy-save-button" class="button button-primary" type="button">Save model policy</button>
+              </div>
+              <div id="model-policy-list" class="model-policy-list" aria-live="polite"></div>
+              <div class="model-policy-discovery">
+                <label>
+                  <span>Healthy credential</span>
+                  <select id="model-policy-credential" class="input">
+                    <option value="">Select credential</option>
+                  </select>
+                </label>
+                <button id="model-policy-discover-button" class="button button-secondary" type="button">Discover models</button>
+                <label>
+                  <span>Discovered model</span>
+                  <select id="model-policy-discovered-model" class="input" disabled>
+                    <option value="">Discover models first</option>
+                  </select>
+                </label>
+                <button id="model-policy-add-button" class="button button-secondary" type="button" disabled>Add enabled model</button>
+              </div>
+              <p id="model-policy-status" class="editor-note muted">Loading platform model policy...</p>
+            </section>
+            <div class="section-head compact credential-inventory-head">
+              <div>
+                <p class="eyebrow">Provider access</p>
+                <h3>Credential inventory</h3>
               </div>
             </div>
             <div class="toolbar credentials-toolbar">
@@ -710,15 +744,7 @@
                 <option value="">Select assigned credential</option>
               </select>
             </label>
-            <label>
-              <span>Default model</span>
-              <input id="user-ai-access-default-model" class="input" list="user-ai-access-model-options" placeholder="gpt-4o-mini" />
-              <datalist id="user-ai-access-model-options"></datalist>
-            </label>
-            <label>
-              <span>Allowed models</span>
-              <textarea id="user-ai-access-allowed-models" class="input ai-access-textarea" placeholder="One model per line or comma-separated"></textarea>
-            </label>
+            <p class="editor-note muted">Models are managed centrally in AI Infrastructure. User access only controls whether this user can use the platform model and which compatible credential is assigned.</p>
             <p id="user-ai-access-status" class="editor-note muted">Assignments are enforced by the gateway for this signed-in user, including Codex OAuth inference proxying.</p>
           </section>
         </form>
