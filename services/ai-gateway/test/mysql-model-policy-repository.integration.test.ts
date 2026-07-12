@@ -190,6 +190,7 @@ async function createMutationTables(client: ReturnType<typeof createDb>["client"
     CREATE TABLE ai_gateway_audit_event (
       id varchar(64) NOT NULL PRIMARY KEY,
       actor_user_id varchar(64),
+      organization_id varchar(64),
       entity_type varchar(64) NOT NULL,
       entity_id varchar(64) NOT NULL,
       action varchar(64) NOT NULL,

@@ -25,6 +25,7 @@ use crate::veslo_server::{
 use crate::workspace::server_client::reconcile_server_workspaces;
 use serde::Serialize;
 use serde_json::json;
+use std::sync::MutexGuard;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -106,6 +107,19 @@ fn current_or_new_veslo_client_token(manager: &VesloServerManager) -> String {
                 .map(ToOwned::to_owned)
         })
         .unwrap_or_else(|| Uuid::new_v4().to_string())
+}
+
+fn try_reserve_dev_autostart(manager: &EngineManager) -> Option<MutexGuard<'_, ()>> {
+    let permit = manager.start_queue.try_lock().ok()?;
+    let explicit_runtime_running = manager
+        .inner
+        .lock()
+        .ok()
+        .is_some_and(|state| state.base_url.is_some());
+    if explicit_runtime_running {
+        return None;
+    }
+    Some(permit)
 }
 
 #[derive(Default)]
@@ -347,16 +361,10 @@ pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
         thread::sleep(Duration::from_millis(1500));
 
         let engine_manager = app.state::<EngineManager>();
-        let already_running = engine_manager
-            .inner
-            .lock()
-            .ok()
-            .map(|state| state.base_url.is_some())
-            .unwrap_or(false);
-        if already_running {
-            eprintln!("[dev-autostart] engine already running — skipping");
+        let Some(_start_permit) = try_reserve_dev_autostart(&engine_manager) else {
+            eprintln!("[dev-autostart] explicit engine startup active or ready — skipping");
             return;
-        }
+        };
 
         let scratch_root = crate::paths::app_local_data_dir_override()
             .or_else(|| app.path().app_local_data_dir().ok())
@@ -379,7 +387,7 @@ pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
         // PATH and picks /opt/homebrew/bin/opencode (typically 1.3.2),
         // incompatible with the bundled orchestrator (expects 1.17.13).
         // Engine spawns then silently time out.
-        let result = engine_start(
+        let result = engine_start_reserved(
             app.clone(),
             app.state::<EngineManager>(),
             app.state::<OrchestratorManager>(),
@@ -626,6 +634,40 @@ pub async fn runtime_prepare_workspace(
     max_engines: Option<u32>,
     idle_suspend_ms: Option<u64>,
 ) -> Result<WorkspaceRuntimePrepareResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        runtime_prepare_workspace_blocking(
+            app,
+            project_dir,
+            workspace_id,
+            workspace_name,
+            reason,
+            force_fresh_runtime,
+            prefer_sidecar,
+            opencode_bin_path,
+            runtime,
+            workspace_paths,
+            max_engines,
+            idle_suspend_ms,
+        )
+    })
+    .await
+    .map_err(|error| format!("runtime_prepare_workspace join error: {error}"))?
+}
+
+fn runtime_prepare_workspace_blocking(
+    app: AppHandle,
+    project_dir: String,
+    workspace_id: Option<String>,
+    workspace_name: Option<String>,
+    reason: Option<String>,
+    force_fresh_runtime: Option<bool>,
+    prefer_sidecar: Option<bool>,
+    opencode_bin_path: Option<String>,
+    runtime: Option<EngineRuntime>,
+    workspace_paths: Option<Vec<String>>,
+    max_engines: Option<u32>,
+    idle_suspend_ms: Option<u64>,
+) -> Result<WorkspaceRuntimePrepareResult, String> {
     let project_dir = project_dir.trim().to_string();
     if project_dir.is_empty() {
         return Err("projectDir is required".to_string());
@@ -641,17 +683,19 @@ pub async fn runtime_prepare_workspace(
     let requested_action =
         workspace_runtime_prepare_action(&runtime, &reason, force_fresh_runtime.unwrap_or(false));
     let mut action = requested_action;
+    let start_queue = app.state::<EngineManager>().start_queue.clone();
+    let _start_permit = start_queue
+        .lock()
+        .map_err(|_| "engine start queue mutex poisoned".to_string())?;
 
     if action == WorkspaceRuntimePrepareAction::OrchestratorActivate {
-        match crate::commands::orchestrator::orchestrator_workspace_activate(
-            app.clone(),
-            app.state::<OrchestratorManager>(),
+        match crate::commands::orchestrator::orchestrator_workspace_activate_blocking(
+            &app,
+            &app.state::<OrchestratorManager>(),
             project_dir.clone(),
             workspace_id.clone(),
             workspace_name.clone(),
-        )
-        .await
-        {
+        ) {
             Ok(_) => {
                 let engine = engine_info(
                     app.state::<EngineManager>(),
@@ -670,7 +714,7 @@ pub async fn runtime_prepare_workspace(
         }
     }
 
-    let engine = engine_start(
+    let engine = engine_start_reserved(
         app.clone(),
         app.state::<EngineManager>(),
         app.state::<OrchestratorManager>(),
@@ -687,14 +731,13 @@ pub async fn runtime_prepare_workspace(
 
     let engine = if runtime == EngineRuntime::Orchestrator {
         // Fresh orchestrator start only boots the daemon; activate spawns the workspace engine.
-        crate::commands::orchestrator::orchestrator_workspace_activate(
-            app.clone(),
-            app.state::<OrchestratorManager>(),
+        crate::commands::orchestrator::orchestrator_workspace_activate_blocking(
+            &app,
+            &app.state::<OrchestratorManager>(),
             project_dir.clone(),
             workspace_id.clone(),
             workspace_name.clone(),
-        )
-        .await?;
+        )?;
         engine_info(
             app.state::<EngineManager>(),
             app.state::<OrchestratorManager>(),
@@ -885,6 +928,40 @@ pub fn engine_start(
     runtime: Option<EngineRuntime>,
     workspace_paths: Option<Vec<String>>,
     // VSLO-171 F3Ú9: Settings Performance panel passes pool tuning.
+    max_engines: Option<u32>,
+    idle_suspend_ms: Option<u64>,
+) -> Result<EngineInfo, String> {
+    let start_queue = manager.start_queue.clone();
+    let _start_permit = start_queue
+        .lock()
+        .map_err(|_| "engine start queue mutex poisoned".to_string())?;
+    engine_start_reserved(
+        app,
+        manager,
+        orchestrator_manager,
+        veslo_manager,
+        opencode_router_manager,
+        project_dir,
+        prefer_sidecar,
+        opencode_bin_path,
+        runtime,
+        workspace_paths,
+        max_engines,
+        idle_suspend_ms,
+    )
+}
+
+fn engine_start_reserved(
+    app: AppHandle,
+    manager: State<EngineManager>,
+    orchestrator_manager: State<OrchestratorManager>,
+    veslo_manager: State<VesloServerManager>,
+    opencode_router_manager: State<OpenCodeRouterManager>,
+    project_dir: String,
+    prefer_sidecar: Option<bool>,
+    opencode_bin_path: Option<String>,
+    runtime: Option<EngineRuntime>,
+    workspace_paths: Option<Vec<String>>,
     max_engines: Option<u32>,
     idle_suspend_ms: Option<u64>,
 ) -> Result<EngineInfo, String> {
@@ -1589,8 +1666,9 @@ mod tests {
         dev_autostart_disabled_from_env, format_orchestrator_start_error,
         orchestrator_opencode_base_url, resolve_opencode_bind_host_from_env,
         resolve_orchestrator_proxy_workspace_id, should_retry_orchestrator_start,
-        workspace_runtime_prepare_action, WorkspaceRuntimePrepareAction,
+        try_reserve_dev_autostart, workspace_runtime_prepare_action, WorkspaceRuntimePrepareAction,
     };
+    use crate::engine::manager::EngineManager;
     use crate::types::{
         EngineRuntime, OrchestratorSharedEngineSnapshot, OrchestratorStatus, OrchestratorWorkspace,
         RuntimeEngineState,
@@ -1668,6 +1746,26 @@ mod tests {
         assert!(dev_autostart_disabled_from_env(Some(" TRUE ")));
         assert!(dev_autostart_disabled_from_env(Some("yes")));
         assert!(dev_autostart_disabled_from_env(Some("on")));
+    }
+
+    #[test]
+    fn dev_autostart_does_not_race_an_explicit_engine_start() {
+        let manager = EngineManager::default();
+        let explicit_start = manager
+            .start_queue
+            .lock()
+            .expect("engine start queue mutex poisoned");
+
+        assert!(try_reserve_dev_autostart(&manager).is_none());
+        drop(explicit_start);
+
+        assert!(try_reserve_dev_autostart(&manager).is_some());
+        manager
+            .inner
+            .lock()
+            .expect("engine mutex poisoned")
+            .base_url = Some("http://127.0.0.1:12345".to_string());
+        assert!(try_reserve_dev_autostart(&manager).is_none());
     }
 
     #[test]

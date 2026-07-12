@@ -632,19 +632,8 @@ pub async fn orchestrator_workspace_activate(
     workspace_id: Option<String>,
     name: Option<String>,
 ) -> Result<OrchestratorWorkspace, String> {
-    let workspace_path =
-        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
-            .to_string_lossy()
-            .to_string();
-    let registered_identity = workspace_identity_for_registered_path(&app, &workspace_path);
-    let workspace_id = workspace_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(ToOwned::to_owned)
-        .or(registered_identity.app_workspace_id);
-    let server_workspace_id = registered_identity.server_workspace_id;
-    let base_url = resolve_base_url(&manager)?;
+    let (base_url, workspace_path, workspace_id, server_workspace_id) =
+        resolve_workspace_activation(&app, &manager, &workspace_path, workspace_id)?;
 
     // VSLO-86 — push the blocking ureq calls onto a dedicated thread so the
     // Tauri command runtime stays responsive. Otherwise consecutive sidebar
@@ -652,63 +641,122 @@ pub async fn orchestrator_workspace_activate(
     // user sees "kolečko se točí" for 30s+ on every second click while
     // browser.execute / other Tauri invokes wait for their turn.
     tauri::async_runtime::spawn_blocking(move || {
-        let added =
-            register_workspace_with_orchestrator(
-                &base_url,
-                &workspace_path,
-                workspace_id.as_deref(),
-                server_workspace_id.as_deref(),
-                name.as_deref(),
-            )?;
-        let activate_url = format!(
-            "{}/workspaces/{}/activate",
-            base_url.trim_end_matches('/'),
-            added.id
-        );
-        crate::flow_log!(
-            "[veslo:http] OUT POST {activate_url} (orchestrator.activate) wsId={:?}",
-            added.id
-        );
-        let agent = ureq::AgentBuilder::new()
-            .timeout(Duration::from_millis(
-                ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS,
-            ))
-            .build();
-        let started = Instant::now();
-        match agent
-            .post(&activate_url)
-            .set("Content-Type", "application/json")
-            .send_string("")
-        {
-            Ok(r) => {
-                crate::flow_log!(
-                    "[veslo:http] IN  {} ({}ms) {activate_url} (orchestrator.activate)",
-                    r.status(),
-                    started.elapsed().as_millis()
-                );
-            }
-            Err(ureq::Error::Status(code, response)) => {
-                let body = response.into_string().unwrap_or_default();
-                let excerpt: String = body.chars().take(500).collect();
-                crate::flow_log!(
-                    "[veslo:http] IN  {code} ({}ms) {activate_url} (orchestrator.activate) body={excerpt:?}",
-                    started.elapsed().as_millis()
-                );
-                return Err(format!("Failed to activate workspace: status {code}: {excerpt}"));
-            }
-            Err(ureq::Error::Transport(t)) => {
-                crate::flow_log!(
-                    "[veslo:http] IN  ERR ({}ms) {activate_url} (orchestrator.activate) transport={:?}",
-                    started.elapsed().as_millis(),
-                    t.to_string()
-                );
-                return Err(format!("Failed to activate workspace: transport error: {t}"));
-            }
-        }
-        Ok::<_, String>(added)
+        activate_workspace_blocking(
+            &base_url,
+            &workspace_path,
+            workspace_id.as_deref(),
+            server_workspace_id.as_deref(),
+            name.as_deref(),
+        )
     })
     .await
     .map_err(|e| format!("orchestrator_workspace_activate join error: {e}"))?
+}
+
+fn resolve_workspace_activation(
+    app: &AppHandle,
+    manager: &OrchestratorManager,
+    workspace_path: &str,
+    workspace_id: Option<String>,
+) -> Result<(String, String, Option<String>, Option<String>), String> {
+    let workspace_path =
+        validate_workspace_path(app, workspace_path, ValidationMode::IsRegisteredWorkspace)?
+            .to_string_lossy()
+            .to_string();
+    let registered_identity = workspace_identity_for_registered_path(app, &workspace_path);
+    let workspace_id = workspace_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(ToOwned::to_owned)
+        .or(registered_identity.app_workspace_id);
+    let server_workspace_id = registered_identity.server_workspace_id;
+    let base_url = resolve_base_url(manager)?;
+    Ok((base_url, workspace_path, workspace_id, server_workspace_id))
+}
+
+fn activate_workspace_blocking(
+    base_url: &str,
+    workspace_path: &str,
+    workspace_id: Option<&str>,
+    server_workspace_id: Option<&str>,
+    name: Option<&str>,
+) -> Result<OrchestratorWorkspace, String> {
+    let added = register_workspace_with_orchestrator(
+        base_url,
+        workspace_path,
+        workspace_id,
+        server_workspace_id,
+        name,
+    )?;
+    let activate_url = format!(
+        "{}/workspaces/{}/activate",
+        base_url.trim_end_matches('/'),
+        added.id
+    );
+    crate::flow_log!(
+        "[veslo:http] OUT POST {activate_url} (orchestrator.activate) wsId={:?}",
+        added.id
+    );
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_millis(
+            ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS,
+        ))
+        .build();
+    let started = Instant::now();
+    match agent
+        .post(&activate_url)
+        .set("Content-Type", "application/json")
+        .send_string("")
+    {
+        Ok(r) => {
+            crate::flow_log!(
+                "[veslo:http] IN  {} ({}ms) {activate_url} (orchestrator.activate)",
+                r.status(),
+                started.elapsed().as_millis()
+            );
+        }
+        Err(ureq::Error::Status(code, response)) => {
+            let body = response.into_string().unwrap_or_default();
+            let excerpt: String = body.chars().take(500).collect();
+            crate::flow_log!(
+                "[veslo:http] IN  {code} ({}ms) {activate_url} (orchestrator.activate) body={excerpt:?}",
+                started.elapsed().as_millis()
+            );
+            return Err(format!(
+                "Failed to activate workspace: status {code}: {excerpt}"
+            ));
+        }
+        Err(ureq::Error::Transport(t)) => {
+            crate::flow_log!(
+                "[veslo:http] IN  ERR ({}ms) {activate_url} (orchestrator.activate) transport={:?}",
+                started.elapsed().as_millis(),
+                t.to_string()
+            );
+            return Err(format!(
+                "Failed to activate workspace: transport error: {t}"
+            ));
+        }
+    }
+    Ok(added)
+}
+
+pub fn orchestrator_workspace_activate_blocking(
+    app: &AppHandle,
+    manager: &OrchestratorManager,
+    workspace_path: String,
+    workspace_id: Option<String>,
+    name: Option<String>,
+) -> Result<OrchestratorWorkspace, String> {
+    let (base_url, workspace_path, workspace_id, server_workspace_id) =
+        resolve_workspace_activation(app, manager, &workspace_path, workspace_id)?;
+    activate_workspace_blocking(
+        &base_url,
+        &workspace_path,
+        workspace_id.as_deref(),
+        server_workspace_id.as_deref(),
+        name.as_deref(),
+    )
 }
 
 #[tauri::command]
