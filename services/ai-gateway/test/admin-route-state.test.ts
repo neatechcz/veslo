@@ -83,6 +83,46 @@ test("navigation and popstate replace the complete descriptor without stale orga
   assert.deepEqual(state.route, { area: "organization", page: "ai-access", organizationId: "org_b" });
 });
 
+test("history planning canonicalizes same-path stale query and hash context", () => {
+  assert.equal(typeof routes.planAdminHistoryUpdate, "function");
+  const platformOverview = routes.toPlatformRoute("overview");
+
+  assert.deepEqual(
+    routes.planAdminHistoryUpdate(platformOverview, {
+      pathname: "/admin",
+      search: "?organizationId=org_stale&groupBy=org",
+      hash: "#organization",
+    }, "push"),
+    { method: "push", pathname: "/admin" },
+  );
+  assert.deepEqual(
+    routes.planAdminHistoryUpdate(platformOverview, {
+      pathname: "/admin",
+      search: "?organizationId=org_stale",
+      hash: "",
+    }, "replace"),
+    { method: "replace", pathname: "/admin" },
+  );
+  assert.deepEqual(
+    routes.planAdminHistoryUpdate(platformOverview, { pathname: "/admin", search: "", hash: "" }, "push"),
+    { method: null, pathname: "/admin" },
+  );
+});
+
+test("popstate route planning replaces noncanonical URL context before loading", () => {
+  assert.equal(typeof routes.planAdminHistoryUpdate, "function");
+  const state = routes.createAdminNavigationState(routes.toPlatformRoute("organizations"));
+  assert.equal(routes.applyAdminPopState(state, "/admin"), true);
+  assert.deepEqual(
+    routes.planAdminHistoryUpdate(
+      state.route,
+      { pathname: "/admin", search: "?organizationId=org_old", hash: "#members" },
+      "replace",
+    ),
+    { method: "replace", pathname: "/admin" },
+  );
+});
+
 test("organization admins cannot access platform routes or unauthorized organizations", () => {
   assert.equal(typeof routes.canAccessAdminRoute, "function");
   const orgAdmin = { platformAdmin: false, organizationIds: ["org_1"] };

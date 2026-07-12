@@ -3064,7 +3064,43 @@ function errorStatus(error: unknown): number | null {
     : null;
 }
 
-function adminShellHtml() {
+function escapeAdminShellHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+export function adminFallbackShellHtml(session: AdminSessionSnapshot) {
+  const platformNavigation = session.platformAdmin
+    ? `<nav aria-label="Platform administration" data-nav-group="platform">
+        <h2>Platform administration</h2>
+        <a href="/admin">Overview</a>
+        <a href="/admin/organizations">Organizations</a>
+        <a href="/admin/ai-infrastructure">AI Infrastructure</a>
+        <a href="/admin/ai-infrastructure/usage">Usage</a>
+        <a href="/admin/ai-infrastructure/alerts">Alerts</a>
+        <a href="/admin/platform-users">Platform Users</a>
+        <a href="/admin/audit">Global Audit</a>
+      </nav>`
+    : "";
+  const organizationNavigation = session.organizations.map((organization) => {
+    const organizationId = encodeURIComponent(organization.id);
+    const organizationLabel = escapeAdminShellHtml(organization.name || organization.slug || organization.id);
+    return `<section data-organization-workspace="${escapeAdminShellHtml(organization.id)}">
+          <h3>${organizationLabel}</h3>
+          <nav aria-label="${organizationLabel} organization workspace">
+            <a href="/admin/organizations/${organizationId}/overview">Overview</a>
+            <a href="/admin/organizations/${organizationId}/members">Members</a>
+            <a href="/admin/organizations/${organizationId}/domains-invites">Domains &amp; invites</a>
+            <a href="/admin/organizations/${organizationId}/billing">Billing</a>
+            <a href="/admin/organizations/${organizationId}/ai-access">AI access</a>
+            <a href="/admin/organizations/${organizationId}/audit">Audit</a>
+          </nav>
+        </section>`;
+  }).join("\n");
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -3077,18 +3113,14 @@ function adminShellHtml() {
     <div id="app">
       <header>
         <h1>AI Gateway Admin</h1>
-        <p>Loading control plane...</p>
+        <p>The full admin shell is unavailable. Use a canonical workspace link to retry safely.</p>
       </header>
-      <nav aria-label="Primary">
-        <a href="/admin/organization">Organization</a>
-        <a href="/admin/credentials">Credentials</a>
-        <a href="/admin/usage">Usage</a>
-        <a href="/admin/alerts">Alerts</a>
-        <a href="/admin/users">Users</a>
-        <a href="/admin/audit">Audit</a>
-      </nav>
+      ${platformNavigation}
+      <section aria-labelledby="organization-workspaces-title">
+        <h2 id="organization-workspaces-title">Organization workspaces</h2>
+        ${organizationNavigation || "<p>No authorized organization workspace is available.</p>"}
+      </section>
     </div>
-    <script type="module" src="/admin/app.js"></script>
   </body>
 </html>`;
 }
@@ -4253,7 +4285,7 @@ export function createAdminRouter(adminService: AdminService) {
       res.sendFile(indexPath);
       return;
     }
-    res.type("html").send(adminShellHtml());
+    res.type("html").send(adminFallbackShellHtml(res.locals.adminSession as AdminSessionSnapshot));
   };
 
   const redirectToAdminLogin = async (req: express.Request, res: express.Response) => {

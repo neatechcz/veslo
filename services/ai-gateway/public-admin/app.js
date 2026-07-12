@@ -26,6 +26,7 @@ import {
   navigateAdminRoute,
   organizationIdForRoute,
   parseAdminRoute,
+  planAdminHistoryUpdate,
   switchOrganizationRoute,
   toPlatformRoute,
 } from "./admin-route-state.js";
@@ -1100,9 +1101,10 @@ async function setAdminRoute(route, { historyMode = "push", load = true } = {}) 
     state.organizationDomains = [];
     state.organizationInvites = [];
   }
-  if (historyMode === "push" && location.pathname !== pathname) {
+  const historyUpdate = planAdminHistoryUpdate(state.route, location, historyMode);
+  if (historyUpdate?.method === "push") {
     history.pushState(null, "", pathname);
-  } else if (historyMode === "replace" && location.pathname !== pathname) {
+  } else if (historyUpdate?.method === "replace") {
     history.replaceState(null, "", pathname);
   }
   renderRoute();
@@ -3368,8 +3370,7 @@ window.addEventListener("popstate", () => {
     return;
   }
   state.route = route;
-  renderRoute();
-  void loadRouteData(route);
+  void setAdminRoute(route, { historyMode: "replace" });
 });
 
 bindNavigation();
