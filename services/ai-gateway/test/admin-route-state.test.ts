@@ -264,3 +264,19 @@ test("billing actions are organization scoped and manual controls remain platfor
     "manage-organization-billing",
   ), false);
 });
+
+test("manual billing expiry round-trips through datetime-local in Europe/Prague", () => {
+  assert.equal(typeof routes.toAdminDateTimeLocalValue, "function");
+  assert.equal(typeof routes.fromAdminDateTimeLocalValue, "function");
+  const previousTimezone = process.env.TZ;
+  process.env.TZ = "Europe/Prague";
+  try {
+    for (const iso of ["2026-01-15T12:30:00.000Z", "2026-07-15T12:30:00.000Z"]) {
+      const localValue = routes.toAdminDateTimeLocalValue(iso);
+      assert.equal(routes.fromAdminDateTimeLocalValue(localValue), iso);
+    }
+  } finally {
+    if (previousTimezone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTimezone;
+  }
+});
