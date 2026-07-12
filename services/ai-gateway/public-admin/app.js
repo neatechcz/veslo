@@ -1,3 +1,20 @@
+import {
+  beginModelDiscovery,
+  beginModelPolicySave,
+  completeModelDiscovery,
+  completeModelPolicySave,
+  createModelDiscoveryState,
+  createModelPolicyState,
+  failModelDiscovery,
+  failModelPolicySave,
+  loadModelPolicyState,
+  modelRefsEqual,
+  normalizeModelRef,
+  normalizeModelRefs,
+  replaceModelPolicyDraft,
+  selectModelDiscoveryCredential,
+} from "./model-policy-editor-state.js";
+
 const STORAGE_KEY = "veslo.ai-gateway.admin.token";
 const BROWSER_AUTH_STORAGE_KEY = "veslo.ai-gateway.admin.browser-auth";
 const DEFAULT_PAGES = ["organization", "credentials", "usage", "alerts", "users", "audit"];
@@ -42,21 +59,8 @@ const state = {
   userMode: "edit",
   userAiAccessByUserId: {},
   userAiAccessAvailableCredentialsByUserId: {},
-  modelPolicy: {
-    saved: null,
-    draftEnabledModels: [],
-    draftActiveModel: null,
-    dirty: false,
-    loading: false,
-    saving: false,
-    error: "",
-  },
-  modelDiscovery: {
-    credentialId: "",
-    models: [],
-    loading: false,
-    error: "",
-  },
+  modelPolicy: createModelPolicyState(),
+  modelDiscovery: createModelDiscoveryState(),
 };
 
 const els = {
@@ -192,6 +196,7 @@ const els = {
 
 let pendingAdminRequests = 0;
 let backendConnectionHideTimer = 0;
+let modelDiscoveryAbortController = null;
 
 function normalizePage(pathname) {
   const path = pathname.replace(/\/+$/, "");
@@ -638,42 +643,6 @@ function readAiAccessCredentialValue() {
   return currentAiAccess.provider === selectedProvider ? currentAiAccess.credentialId : null;
 }
 
-function normalizeModelRef(value) {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const provider = typeof value.provider === "string" ? value.provider.trim() : "";
-  const model = typeof value.model === "string" ? value.model.trim() : "";
-  return provider && model ? { provider, model } : null;
-}
-
-function modelRefsEqual(left, right) {
-  return left?.provider === right?.provider && left?.model === right?.model;
-}
-
-function normalizeModelRefs(values) {
-  const refs = Array.isArray(values) ? values.map(normalizeModelRef).filter(Boolean) : [];
-  return refs.filter((entry, index) =>
-    refs.findIndex((candidate) => modelRefsEqual(candidate, entry)) === index
-  );
-}
-
-function normalizeModelPolicy(value) {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const enabledModels = normalizeModelRefs(value.enabledModels);
-  const activeModel = normalizeModelRef(value.activeModel);
-  if (!activeModel || !enabledModels.some((entry) => modelRefsEqual(entry, activeModel))) {
-    return null;
-  }
-  return {
-    enabledModels,
-    activeModel,
-    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
-  };
-}
-
 function healthyModelDiscoveryCredentials() {
   return state.credentials.filter((credential) =>
     credential.state === "healthy" &&
@@ -684,6 +653,8 @@ function healthyModelDiscoveryCredentials() {
 
 function setModelPolicyStatus(message, tone = "neutral") {
   els.modelPolicyStatus.textContent = message;
+  els.modelPolicyStatus.setAttribute("role", tone === "error" ? "alert" : "status");
+  els.modelPolicyStatus.setAttribute("aria-live", tone === "error" ? "assertive" : "polite");
   if (tone === "neutral") {
     delete els.modelPolicyStatus.dataset.tone;
     return;
@@ -696,7 +667,12 @@ function renderModelDiscoveryControls() {
   const selectedId = credentials.some((entry) => entry.id === state.modelDiscovery.credentialId)
     ? state.modelDiscovery.credentialId
     : "";
-  state.modelDiscovery.credentialId = selectedId;
+  if (selectedId !== state.modelDiscovery.credentialId) {
+    modelDiscoveryAbortController?.abort();
+    modelDiscoveryAbortController = null;
+    selectModelDiscoveryCredential(state.modelDiscovery, selectedId);
+  }
+  const busy = state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
   els.modelPolicyCredential.innerHTML = [
     `<option value="">Select credential</option>`,
     ...credentials.map((credential) =>
@@ -704,17 +680,17 @@ function renderModelDiscoveryControls() {
     ),
   ].join("");
   els.modelPolicyCredential.value = selectedId;
-  els.modelPolicyCredential.disabled = state.modelPolicy.loading || state.modelPolicy.saving;
+  els.modelPolicyCredential.disabled = busy;
 
   els.modelPolicyDiscoveredModel.innerHTML = state.modelDiscovery.models.length > 0
     ? `<option value="">Select discovered model</option>${state.modelDiscovery.models
         .map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`)
         .join("")}`
     : `<option value="">Discover models first</option>`;
-  els.modelPolicyDiscoveredModel.disabled = state.modelDiscovery.models.length === 0 || state.modelDiscovery.loading;
-  els.modelPolicyDiscoverButton.disabled = !selectedId || state.modelDiscovery.loading || state.modelPolicy.saving;
+  els.modelPolicyDiscoveredModel.disabled = busy || state.modelDiscovery.models.length === 0;
+  els.modelPolicyDiscoverButton.disabled = busy || !selectedId;
   els.modelPolicyDiscoverButton.textContent = state.modelDiscovery.loading ? "Discovering..." : "Discover models";
-  els.modelPolicyAddButton.disabled = !els.modelPolicyDiscoveredModel.value || state.modelPolicy.saving;
+  els.modelPolicyAddButton.disabled = busy || !els.modelPolicyDiscoveredModel.value;
 }
 
 function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
@@ -724,17 +700,18 @@ function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
 
   const rows = state.modelPolicy.draftEnabledModels.map((entry) => {
     const active = modelRefsEqual(entry, state.modelPolicy.draftActiveModel);
+    const removeDisabled = active || state.modelPolicy.saving;
     return `
       <article class="model-policy-row${active ? " active" : ""}">
         <label class="model-policy-active-control">
-          <input type="radio" name="model-policy-active" data-model-policy-active-provider="${escapeHtml(entry.provider)}" data-model-policy-active-model="${escapeHtml(entry.model)}"${active ? " checked" : ""} />
+          <input type="radio" name="model-policy-active" data-model-policy-active-provider="${escapeHtml(entry.provider)}" data-model-policy-active-model="${escapeHtml(entry.model)}"${active ? " checked" : ""}${state.modelPolicy.saving ? " disabled" : ""} />
           <span>${active ? "Active" : "Set active"}</span>
         </label>
         <div class="model-policy-ref">
           <strong>${escapeHtml(entry.model)}</strong>
           <span>${escapeHtml(entry.provider)}</span>
         </div>
-        <button class="button button-secondary" type="button" data-model-policy-remove-provider="${escapeHtml(entry.provider)}" data-model-policy-remove-model="${escapeHtml(entry.model)}"${active ? " disabled title=\"Select a replacement active model before removing this model.\"" : ""}>Remove</button>
+        <button class="button button-secondary" type="button" data-model-policy-remove-provider="${escapeHtml(entry.provider)}" data-model-policy-remove-model="${escapeHtml(entry.model)}"${removeDisabled ? " disabled" : ""}${active ? " title=\"Select a replacement active model before removing this model.\"" : ""}>Remove</button>
       </article>`;
   }).join("");
 
@@ -747,6 +724,9 @@ function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
     !state.modelPolicy.dirty ||
     !state.modelPolicy.draftActiveModel;
   els.modelPolicySaveButton.textContent = state.modelPolicy.saving ? "Saving..." : "Save model policy";
+  const busy = state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
+  els.modelPolicyPanel.setAttribute("aria-busy", String(busy));
+  els.modelPolicyList.setAttribute("aria-disabled", String(state.modelPolicy.saving));
   renderModelDiscoveryControls();
 
   if (statusMessage) {
@@ -757,6 +737,8 @@ function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
     setModelPolicyStatus("Loading platform model policy...", "pending");
   } else if (state.modelPolicy.saving) {
     setModelPolicyStatus("Saving platform model policy...", "pending");
+  } else if (state.modelDiscovery.loading) {
+    setModelPolicyStatus("Discovering models from the selected credential...", "pending");
   } else if (state.modelPolicy.dirty) {
     setModelPolicyStatus("Unsaved model policy changes.", "pending");
   } else if (state.modelPolicy.saved) {
@@ -775,11 +757,7 @@ async function loadModelPolicy() {
   renderModelPolicy();
   try {
     const payload = await fetchJson("/ai-infrastructure/model-policy");
-    const policy = normalizeModelPolicy(payload?.policy);
-    state.modelPolicy.saved = policy;
-    state.modelPolicy.draftEnabledModels = policy ? normalizeModelRefs(policy.enabledModels) : [];
-    state.modelPolicy.draftActiveModel = policy ? normalizeModelRef(policy.activeModel) : null;
-    state.modelPolicy.dirty = false;
+    loadModelPolicyState(state.modelPolicy, payload?.policy);
   } catch (error) {
     state.modelPolicy.error = error instanceof Error ? error.message : "unknown_error";
   } finally {
@@ -792,40 +770,37 @@ async function saveModelPolicy() {
   if (state.session?.platformAdmin !== true) {
     return;
   }
-  const enabledModels = normalizeModelRefs(state.modelPolicy.draftEnabledModels);
-  const activeModel = normalizeModelRef(state.modelPolicy.draftActiveModel);
-  if (!activeModel || !enabledModels.some((entry) => modelRefsEqual(entry, activeModel))) {
+  const submission = beginModelPolicySave(state.modelPolicy);
+  if (!submission) {
     state.modelPolicy.error = "Select one enabled model as active before saving.";
     renderModelPolicy();
     return;
   }
 
-  state.modelPolicy.saving = true;
-  state.modelPolicy.error = "";
   renderModelPolicy();
   let savedSuccessfully = false;
   try {
     const saved = await fetchJson("/ai-infrastructure/model-policy", {
       method: "PUT",
       body: JSON.stringify({
-        enabledModels: normalizeModelRefs(state.modelPolicy.draftEnabledModels),
-        activeModel: normalizeModelRef(state.modelPolicy.draftActiveModel),
+        enabledModels: submission.enabledModels,
+        activeModel: submission.activeModel,
       }),
     });
-    const normalizedSaved = normalizeModelPolicy(saved?.policy);
-    if (!normalizedSaved) {
-      throw new Error("invalid_model_policy_response");
-    }
-    state.modelPolicy.saved = normalizedSaved;
-    state.modelPolicy.draftEnabledModels = normalizeModelRefs(state.modelPolicy.saved.enabledModels);
-    state.modelPolicy.draftActiveModel = normalizeModelRef(state.modelPolicy.saved.activeModel);
-    state.modelPolicy.dirty = false;
-    savedSuccessfully = true;
+    savedSuccessfully = completeModelPolicySave(state.modelPolicy, submission, saved?.policy);
   } catch (error) {
-    state.modelPolicy.error = error instanceof Error ? error.message : "unknown_error";
+    failModelPolicySave(
+      state.modelPolicy,
+      submission,
+      error instanceof Error ? error.message : "unknown_error",
+    );
   } finally {
-    state.modelPolicy.saving = false;
-    renderModelPolicy(savedSuccessfully ? "Model policy saved." : "", savedSuccessfully ? "success" : "neutral");
+    const message = savedSuccessfully
+      ? state.modelPolicy.dirty
+        ? "Submitted policy saved. Newer draft changes remain unsaved."
+        : "Model policy saved."
+      : "";
+    renderModelPolicy(message, savedSuccessfully ? "success" : "neutral");
   }
 }
 
@@ -841,35 +816,52 @@ async function discoverModelsForPolicy() {
     return;
   }
 
-  state.modelDiscovery.credentialId = credential.id;
-  state.modelDiscovery.models = [];
-  state.modelDiscovery.loading = true;
-  state.modelDiscovery.error = "";
+  if (state.modelDiscovery.credentialId !== credential.id) {
+    selectModelDiscoveryCredential(state.modelDiscovery, credential.id);
+  }
+  const request = beginModelDiscovery(state.modelDiscovery);
+  if (!request) {
+    return;
+  }
+  modelDiscoveryAbortController?.abort();
+  const controller = new AbortController();
+  modelDiscoveryAbortController = controller;
   renderModelPolicy();
+  let shouldAnnounce = false;
   try {
-    const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/models`);
-    state.modelDiscovery.models = Array.isArray(payload?.models)
-      ? Array.from(new Set(payload.models
-          .filter((model) => typeof model === "string")
-          .map((model) => model.trim())
-          .filter(Boolean)))
-      : [];
-    if (state.modelDiscovery.models.length === 0) {
+    const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/models`, {
+      signal: modelDiscoveryAbortController.signal,
+    });
+    shouldAnnounce = completeModelDiscovery(state.modelDiscovery, request, payload?.models);
+    if (shouldAnnounce && state.modelDiscovery.models.length === 0) {
       state.modelDiscovery.error = "This credential did not report any models.";
     }
   } catch (error) {
-    state.modelDiscovery.error = error instanceof Error ? error.message : "unknown_error";
-  } finally {
-    state.modelDiscovery.loading = false;
-    renderModelPolicy(
-      state.modelDiscovery.error || `Discovered ${state.modelDiscovery.models.length} models from ${credential.name || credential.id}.`,
-      state.modelDiscovery.error ? "error" : "success",
+    shouldAnnounce = failModelDiscovery(
+      state.modelDiscovery,
+      request,
+      error instanceof Error ? error.message : "unknown_error",
     );
+  } finally {
+    if (modelDiscoveryAbortController === controller) {
+      modelDiscoveryAbortController = null;
+    }
+    if (shouldAnnounce) {
+      renderModelPolicy(
+        state.modelDiscovery.error || `Discovered ${state.modelDiscovery.models.length} models from ${credential.name || credential.id}.`,
+        state.modelDiscovery.error ? "error" : "success",
+      );
+    } else {
+      renderModelPolicy();
+    }
   }
 }
 
 function addDiscoveredModel() {
   if (state.session?.platformAdmin !== true) {
+    return;
+  }
+  if (state.modelPolicy.saving) {
     return;
   }
   const credential = healthyModelDiscoveryCredentials()
@@ -879,14 +871,11 @@ function addDiscoveredModel() {
     return;
   }
   const target = { provider: credential.provider, model };
-  state.modelPolicy.draftEnabledModels = normalizeModelRefs([
-    ...state.modelPolicy.draftEnabledModels,
-    target,
-  ]);
-  if (!state.modelPolicy.draftActiveModel) {
-    state.modelPolicy.draftActiveModel = target;
-  }
-  state.modelPolicy.dirty = true;
+  replaceModelPolicyDraft(
+    state.modelPolicy,
+    [...state.modelPolicy.draftEnabledModels, target],
+    state.modelPolicy.draftActiveModel || target,
+  );
   state.modelPolicy.error = "";
   renderModelPolicy();
 }
@@ -895,18 +884,23 @@ function selectDraftActiveModel(provider, model) {
   if (state.session?.platformAdmin !== true) {
     return;
   }
+  if (state.modelPolicy.saving) {
+    return;
+  }
   const target = normalizeModelRef({ provider, model });
   if (!target || !state.modelPolicy.draftEnabledModels.some((entry) => modelRefsEqual(entry, target))) {
     return;
   }
-  state.modelPolicy.draftActiveModel = target;
-  state.modelPolicy.dirty = true;
+  replaceModelPolicyDraft(state.modelPolicy, state.modelPolicy.draftEnabledModels, target);
   state.modelPolicy.error = "";
   renderModelPolicy();
 }
 
 function removeDraftModel(provider, model) {
   if (state.session?.platformAdmin !== true) {
+    return;
+  }
+  if (state.modelPolicy.saving) {
     return;
   }
   const target = normalizeModelRef({ provider, model });
@@ -918,9 +912,11 @@ function removeDraftModel(provider, model) {
     renderModelPolicy();
     return;
   }
-  state.modelPolicy.draftEnabledModels = state.modelPolicy.draftEnabledModels
-    .filter((entry) => !modelRefsEqual(entry, target));
-  state.modelPolicy.dirty = true;
+  replaceModelPolicyDraft(
+    state.modelPolicy,
+    state.modelPolicy.draftEnabledModels.filter((entry) => !modelRefsEqual(entry, target)),
+    state.modelPolicy.draftActiveModel,
+  );
   state.modelPolicy.error = "";
   renderModelPolicy();
 }
@@ -1283,16 +1279,10 @@ async function signOut() {
   state.selectedUserId = null;
   state.selectedOrganizationId = null;
   state.userMode = "edit";
-  state.modelPolicy = {
-    saved: null,
-    draftEnabledModels: [],
-    draftActiveModel: null,
-    dirty: false,
-    loading: false,
-    saving: false,
-    error: "",
-  };
-  state.modelDiscovery = { credentialId: "", models: [], loading: false, error: "" };
+  modelDiscoveryAbortController?.abort();
+  modelDiscoveryAbortController = null;
+  state.modelPolicy = createModelPolicyState();
+  state.modelDiscovery = createModelDiscoveryState();
   localStorage.removeItem(STORAGE_KEY);
   window.location.assign("/admin");
 }
@@ -2998,14 +2988,17 @@ function bindActions() {
   els.credentialCreateCodexCopy.addEventListener("click", () => void copyNewCodexCredentialUploadCommand());
   els.modelPolicySaveButton.addEventListener("click", () => void saveModelPolicy());
   els.modelPolicyCredential.addEventListener("change", () => {
-    state.modelDiscovery.credentialId = els.modelPolicyCredential.value;
-    state.modelDiscovery.models = [];
-    state.modelDiscovery.error = "";
+    modelDiscoveryAbortController?.abort();
+    modelDiscoveryAbortController = null;
+    selectModelDiscoveryCredential(state.modelDiscovery, els.modelPolicyCredential.value);
     renderModelPolicy();
   });
   els.modelPolicyDiscoverButton.addEventListener("click", () => void discoverModelsForPolicy());
   els.modelPolicyDiscoveredModel.addEventListener("change", () => {
-    els.modelPolicyAddButton.disabled = !els.modelPolicyDiscoveredModel.value;
+    els.modelPolicyAddButton.disabled =
+      state.modelPolicy.saving ||
+      state.modelDiscovery.loading ||
+      !els.modelPolicyDiscoveredModel.value;
   });
   els.modelPolicyAddButton.addEventListener("click", addDiscoveredModel);
   els.modelPolicyList.addEventListener("change", (event) => {

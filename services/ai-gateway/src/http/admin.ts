@@ -3052,7 +3052,9 @@ function readAdminAuthCallback(req: express.Request): { code: string; sessionId:
 }
 
 function adminAssetRequest(pathname: string): boolean {
-  return pathname === "/admin/app.js" || pathname === "/admin/app.css";
+  return pathname === "/admin/app.js"
+    || pathname === "/admin/app.css"
+    || pathname === "/admin/model-policy-editor-state.js";
 }
 
 function errorStatus(error: unknown): number | null {
