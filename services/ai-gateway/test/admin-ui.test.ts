@@ -718,6 +718,72 @@ test("GET /admin/app.js uses typed route descriptors and clears organization con
   }
 })
 
+test("GET /admin user editor scopes visibility, payloads, and actions to the canonical route", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const shellResponse = await fetch(`http://127.0.0.1:${port}/admin`, { headers: { cookie: ADMIN_COOKIE } })
+    assert.equal(shellResponse.status, 200)
+    const html = await shellResponse.text()
+    assert.match(html, /data-user-global-control[^>]*>[\s\S]*id="user-name"/)
+    assert.match(html, /data-user-membership-control[^>]*>[\s\S]*id="user-org"/)
+    assert.match(html, /data-user-ai-access-control/)
+    assert.match(html, /id="user-disable-button"[^>]*data-user-global-action/)
+    assert.match(html, /id="user-delete-button"[^>]*data-user-global-action/)
+
+    const scriptResponse = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+    assert.equal(scriptResponse.status, 200)
+    const script = await scriptResponse.text()
+    assert.match(script, /adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
+    assert.match(script, /buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload\)/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "create-user"\)/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "disable-user"\)/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "delete-user"\)/)
+    assert.doesNotMatch(script, /state\.page !== "users" \|\| state\.session\?\.platformAdmin !== true/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin app guards organization mutation completions and marks active navigation accessibly", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /beginAdminRouteMutation\(state\.mutations,/)
+    assert.match(script, /isAdminRouteMutationCurrent\(state\.mutations, mutation, state\.route\)/)
+    assert.match(script, /item\.setAttribute\("aria-current", "page"\)/)
+    assert.match(script, /item\.removeAttribute\("aria-current"\)/)
+    for (const functionName of [
+      "saveOrganization",
+      "saveOrganizationDomainModal",
+      "deleteOrganizationDomain",
+      "createOrganizationInvite",
+      "resendOrganizationInvite",
+      "revokeOrganizationInvite",
+      "saveUser",
+    ]) {
+      assert.match(
+        script,
+        new RegExp(`async function ${functionName}\\([^)]*\\) \\{[\\s\\S]*beginAdminRouteMutation[\\s\\S]*isAdminRouteMutationCurrent`),
+        functionName,
+      )
+    }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.css keeps the organization context responsive and keyboard visible", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
@@ -1022,8 +1088,7 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
     assert.match(script, /String\(state\.credentials\.filter\(\(entry\) => !entry\.deletedAt\)\.length\)/)
     assert.match(script, /String\(state\.credentials\.filter\(\(entry\) => !entry\.deletedAt && entry\.state !== "healthy"\)\.length\)/)
     assert.doesNotMatch(script, /String\(state\.credentials\.length\)/)
-    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return null/)
-    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return;/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "edit-ai-access"\)/)
     assert.match(script, /const authorizedRoute = requestedRoute && canAccessAdminRoute/)
     assert.match(script, /firstAuthorizedRoute\(\)/)
   } finally {
@@ -1134,20 +1199,20 @@ test("GET /admin/app.js saves organization membership changes only from the user
     assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
     assert.match(script, /function buildUserUpdatePayload\(payload\)/)
     assert.match(script, /function buildUserRoleFilterOptions\(\)/)
-    assert.match(script, /const canManagePlatform = state\.session\?\.platformAdmin === true/)
-    assert.match(script, /els\.userName\.disabled = !canManagePlatform/)
-    assert.match(script, /els\.userEmail\.disabled = !isCreate \|\| !canManagePlatform/)
+    assert.match(script, /const permissions = adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
+    assert.match(script, /els\.userName\.disabled = !permissions\.editProfile/)
+    assert.match(script, /els\.userEmail\.disabled = !isCreate \|\| !permissions\.createUser/)
     assert.match(script, /data-invite-resend/)
     assert.match(script, /async function resendOrganizationInvite\(card\)/)
     assert.match(script, /\/invites\/\$\{encodeURIComponent\(inviteId\)\}\/resend/)
     assert.match(script, /event\.target\.closest\("\[data-invite-resend\]"\)/)
     assert.match(
       script,
-      /if \(state\.session\?\.platformAdmin !== true\) \{[\s\S]*return \{[\s\S]*orgId: payload\.orgId,[\s\S]*orgRole: payload\.orgRole,[\s\S]*\}/,
+      /return buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload\)/,
     )
     assert.match(
       script,
-      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(user\.id\)\}`,[\s\S]*body: JSON\.stringify\(buildUserUpdatePayload\(payload\)\)/,
+      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(targetUser\.id\)\}`,[\s\S]*body: JSON\.stringify\(updatePayload\)/,
     )
     assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
     assert.match(script, /createUserButtonInline[\s\S]*data-platform-only/)
@@ -1827,11 +1892,11 @@ test("GET /admin/app.js saves user ai access without per-user model authority", 
     )
     assert.match(
       script,
-      /async function saveUser\(\) \{[\s\S]*const aiAccessInput = \{\s*\.\.\.readAiAccessFormValue\(\),\s*credentialId: readAiAccessCredentialValue\(\),\s*}\s*;[\s\S]*await loadUsers\(\);[\s\S]*await saveUserAiAccess\(selectedUser\.id,\s*aiAccessInput\)/,
+      /async function saveUser\(\) \{[\s\S]*const canEditAiAccess = permissions\.editAiAccess && !wasCreating;[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput\)/,
     )
     assert.match(
       script,
-      /if \(!wasCreating && selectedUser\?\.id\) \{[\s\S]*await saveUserAiAccess\(selectedUser\.id,\s*aiAccessInput\)/,
+      /if \(canEditAiAccess\) \{[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput\)/,
     )
   } finally {
     server.close()
