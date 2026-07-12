@@ -50,6 +50,24 @@ export function createProxyRouter(deps: ProxyDependencies) {
       }
       res.locals.gatewayAiAccess = aiAccess;
     }
+
+    try {
+      const modelPolicy = await deps.modelPolicy.getPolicy();
+      if (!modelPolicy) {
+        res.status(503).json({ error: "platform_model_policy_not_configured" });
+        return;
+      }
+      const aiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined;
+      if (aiAccess && aiAccess.provider !== modelPolicy.activeModel.provider) {
+        res.status(403).json({ error: "provider_not_assigned" });
+        return;
+      }
+      res.locals.gatewayActiveModel = modelPolicy.activeModel;
+    } catch (error) {
+      console.error("platform_model_policy_lookup_failed", error);
+      res.status(502).json({ error: "platform_model_policy_lookup_failed" });
+      return;
+    }
     next();
   }));
 

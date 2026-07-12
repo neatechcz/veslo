@@ -1,16 +1,20 @@
-import type { UserAiAccessPolicyRecord } from "../../access/repository.js";
 import type { LeaseProvider } from "../../leases/repository.js";
+import type { PlatformModelRef } from "../../model-policy/repository.js";
 
-export function applyAiAccessPolicy(input: {
+export type PlatformModelPolicyResult =
+  | { ok: true; body: Record<string, unknown> }
+  | { ok: false; status: number; error: string };
+
+export function applyPlatformModelPolicy(input: {
   routeProvider: LeaseProvider;
-  aiAccess: UserAiAccessPolicyRecord;
+  activeModel: PlatformModelRef;
   body: unknown;
-}): { ok: true; body: Record<string, unknown> } | { ok: false; status: number; error: string } {
-  if (input.aiAccess.provider !== input.routeProvider) {
+}): PlatformModelPolicyResult {
+  if (input.routeProvider !== input.activeModel.provider) {
     return {
       ok: false,
       status: 403,
-      error: "provider_not_assigned",
+      error: "active_model_provider_mismatch",
     };
   }
 
@@ -23,56 +27,18 @@ export function applyAiAccessPolicy(input: {
   }
 
   const requestBody = { ...(input.body as Record<string, unknown>) };
-  const requestedModel = normalizeManagedModelRef(
-    typeof requestBody.model === "string" ? requestBody.model : "",
-    input.routeProvider,
-  );
-  const defaultModel = normalizeManagedModelRef(
-    typeof input.aiAccess.defaultModel === "string" ? input.aiAccess.defaultModel : "",
-    input.routeProvider,
-  );
-  const effectiveModel = requestedModel || defaultModel;
-
-  if (!effectiveModel) {
+  const requestedModel = typeof requestBody.model === "string" ? requestBody.model : "";
+  if (requestedModel && requestedModel !== input.activeModel.model) {
     return {
       ok: false,
       status: 403,
-      error: "ai_access_default_model_missing",
+      error: "model_override_not_allowed",
     };
   }
 
-  const allowedModels = input.aiAccess.allowedModels.length > 0
-    ? input.aiAccess.allowedModels.map((value) => normalizeManagedModelRef(value, input.routeProvider)).filter(Boolean)
-    : defaultModel
-      ? [defaultModel]
-      : [];
-
-  if (allowedModels.length > 0 && !allowedModels.includes(effectiveModel)) {
-    return {
-      ok: false,
-      status: 403,
-      error: "model_not_allowed",
-    };
-  }
-
-  requestBody.model = effectiveModel;
+  requestBody.model = input.activeModel.model;
   return {
     ok: true,
     body: requestBody,
   };
-}
-
-function normalizeManagedModelRef(model: string, routeProvider: LeaseProvider): string {
-  const trimmed = model.trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  const prefix = `${routeProvider}/`;
-  if (!trimmed.startsWith(prefix)) {
-    return trimmed;
-  }
-
-  const normalized = trimmed.slice(prefix.length).trim();
-  return normalized || trimmed;
 }

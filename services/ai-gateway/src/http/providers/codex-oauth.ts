@@ -7,10 +7,11 @@ import type { GatewaySession } from "../../auth/gateway-session.js"
 import type { CredentialBinding } from "../../credentials/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js"
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js"
+import type { PlatformModelRef } from "../../model-policy/repository.js"
 import type { ProviderTransportResponse } from "../../providers/transport.js"
 import { ProviderTransportError } from "../../providers/transport.js"
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js"
-import { applyAiAccessPolicy } from "./access-policy.js"
+import { applyPlatformModelPolicy } from "./access-policy.js"
 import {
   recordProviderCredentialFailureAlert,
   recordProviderProxyFailureAlert,
@@ -61,13 +62,12 @@ export function createCodexOAuthProxyRouter(
       }
     }
 
-    const policyResult = gatewayAiAccess
-      ? applyAiAccessPolicy({
-          routeProvider: "codex_oauth",
-          aiAccess: gatewayAiAccess,
-          body: req.body,
-        })
-      : { ok: true as const, body: req.body as Record<string, unknown> }
+    const activeModel = res.locals.gatewayActiveModel as PlatformModelRef
+    const policyResult = applyPlatformModelPolicy({
+      routeProvider: "codex_oauth",
+      activeModel,
+      body: req.body,
+    })
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error })
       return

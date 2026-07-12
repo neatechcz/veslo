@@ -39,6 +39,23 @@ function createAiAccess(): UserAiAccessPolicyRecord {
   }
 }
 
+function createModelPolicy(model = "gpt-5.4") {
+  return {
+    async getPolicy() {
+      return {
+        id: "platform" as const,
+        enabledModels: [{ provider: "codex_oauth" as const, model }],
+        activeModel: { provider: "codex_oauth" as const, model },
+        createdAt: new Date("2026-07-12T08:00:00.000Z"),
+        updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+      }
+    },
+    async replacePolicy() {
+      throw new Error("unused")
+    },
+  }
+}
+
 function createCredentialBinding(): CredentialBinding {
   return {
     id: "binding_codex_primary",
@@ -88,6 +105,7 @@ test("codex_oauth proxy forwards through the configured transport with a sticky 
 
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -269,6 +287,7 @@ test("codex_oauth proxy records usage metadata from streaming transport response
 
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -430,6 +449,7 @@ test("codex_oauth proxy rewrites unresolved opencode session placeholders to a u
 
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -581,6 +601,7 @@ test("codex_oauth proxy rewrites unresolved opencode session placeholders to a u
 test("codex_oauth proxy returns structured runtime incompatibility failures for authenticated callers", async () => {
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy("gpt-5.5"),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -729,6 +750,7 @@ test("codex_oauth proxy preserves transport failures with colliding exhaustion m
   const recordProviderFailureCalls: unknown[] = []
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -879,6 +901,7 @@ test("codex_oauth proxy preserves transport failures with colliding exhaustion m
 test("codex_oauth proxy returns structured failure when assigned binding lookup throws", async () => {
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -988,6 +1011,7 @@ test("codex_oauth proxy returns structured failure when assigned binding lookup 
 test("codex_oauth proxy returns no eligible credential when the assigned credential is exhausted", async () => {
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -1106,6 +1130,7 @@ test("codex_oauth proxy returns no eligible credential when the assigned credent
 test("codex_oauth proxy returns all credentials exhausted when auto-selectable credentials are exhausted", async () => {
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")

@@ -147,6 +147,7 @@ export function createDefaultProxyDependencies(
         now: overrides.now,
       }),
     ),
+    modelPolicy: runtime.modelPolicy,
     tokenBroker: new DefaultTokenBroker({
       credentials: runtime.credentials,
       secrets: runtime.secrets,
@@ -169,6 +170,7 @@ export function createDefaultReadinessDependencies(runtime: RuntimeState): Readi
   return {
     credentials: runtime.credentials,
     aiAccess: runtime.aiAccess,
+    modelPolicy: runtime.modelPolicy,
   };
 }
 

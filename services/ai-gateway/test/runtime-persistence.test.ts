@@ -245,7 +245,13 @@ function createPersistentRuntime() {
     leases: new PersistentLeaseRepository(),
     modelPolicy: {
       async getPolicy() {
-        return null;
+        return {
+          id: "platform",
+          enabledModels: [{ provider: "anthropic", model: "claude-runtime" }],
+          activeModel: { provider: "anthropic", model: "claude-runtime" },
+          createdAt: new Date("2026-07-12T08:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+        };
       },
       async replacePolicy() {
         throw new Error("unused");
