@@ -2611,143 +2611,57 @@ export function createDefaultAdminService(
   };
 
   async function assertEnabledModelCapabilities(enabledModels: PlatformModelRef[]): Promise<void> {
-    const requestedByProvider = new Map<PlatformModelRef["provider"], string[]>();
     for (const modelRef of enabledModels) {
       if (modelRef.provider === "openai" || modelRef.provider === "anthropic") {
         throw new HttpError("model_policy_activation_not_verifiable_for_provider", 422);
       }
-      const models = requestedByProvider.get(modelRef.provider) ?? [];
-      models.push(modelRef.model);
-      requestedByProvider.set(modelRef.provider, models);
     }
 
-    let allCredentials: CredentialRecord[];
-    try {
-      allCredentials = await getCredentialReadRepository().listAdminCredentials();
-    } catch {
-      throw new HttpError("model_policy_credential_lookup_failed", 503);
-    }
-
-    for (const [provider, requestedModels] of requestedByProvider) {
-      const credentials = allCredentials.filter((credential) =>
-        credential.provider === provider
-        && credential.state === "healthy"
-        && !credential.deletedAt
-      );
-      if (credentials.length === 0) {
-        throw new HttpError(
-          `model_policy_enabled_model_has_no_healthy_credential:${provider}/${requestedModels[0]}`,
-          422,
-        );
-      }
-
-      if (provider === "codex_oauth") {
-        await assertCodexModelCapabilities(credentials, requestedModels);
-      } else {
-        await assertOpenAiCompatibleModelCapabilities(credentials, requestedModels);
-      }
-    }
-  }
-
-  async function assertCodexModelCapabilities(
-    credentials: CredentialRecord[],
-    requestedModels: string[],
-  ): Promise<void> {
-    const evidence: Set<string>[] = [];
-    let evidenceUnavailable = false;
-    for (const credential of credentials) {
-      try {
-        const status = await codexStatusProvider.getStatus({
-          credentialId: credential.id,
-          credentialName: credential.name,
-        });
-        if (status.available !== true) {
-          evidenceUnavailable = true;
-          continue;
-        }
-        evidence.push(new Set(filterUnsupportedCodexModels(listCodexModelCatalog(), status)));
-      } catch {
-        evidenceUnavailable = true;
-      }
-    }
-
-    const unsupported = requestedModels.filter((model) => !evidence.some((models) => models.has(model)));
-    if (unsupported.length === 0) return;
-    if (evidenceUnavailable || evidence.length === 0) {
+    const results = await getModelCapabilities().checkHealthyCredentialsForModels(enabledModels);
+    if (results.length !== enabledModels.length) {
       throw new HttpError("model_policy_capability_evidence_unavailable", 503);
     }
-    throw new HttpError("model_policy_enabled_model_unsupported", 422);
-  }
 
-  async function assertOpenAiCompatibleModelCapabilities(
-    credentials: CredentialRecord[],
-    requestedModels: string[],
-  ): Promise<void> {
-    if (!openAiCompatibleTransport.listModels) {
-      throw new HttpError("model_policy_model_discovery_unavailable", 503);
+    for (const [index, result] of results.entries()) {
+      const expected = enabledModels[index]!;
+      if (result.model.provider !== expected.provider || result.model.model !== expected.model) {
+        throw new HttpError("model_policy_capability_evidence_unavailable", 503);
+      }
+      if (result.status === "supported") continue;
+      if (result.status === "unsupported") {
+        if (result.reason === "no_healthy_credential") {
+          throw new HttpError(
+            `model_policy_enabled_model_has_no_healthy_credential:${expected.provider}/${expected.model}`,
+            422,
+          );
+        }
+        throw new HttpError("model_policy_enabled_model_unsupported", 422);
+      }
+      throw mapModelPolicyCapabilityError(result.reason);
     }
-
-    const evidence: Set<string>[] = [];
-    let transientError: HttpError | null = null;
-    for (const credential of credentials) {
-      let record: Awaited<ReturnType<CredentialSecretLookupRepository["getCredentialRecordById"]>>;
-      try {
-        record = await getCredentialSecretLookupRepository().getCredentialRecordById(credential.id);
-      } catch {
-        transientError ??= new HttpError("model_policy_credential_lookup_failed", 503);
-        continue;
-      }
-      if (!record || record.provider !== "openai_compatible") {
-        transientError ??= new HttpError("model_policy_credential_lookup_failed", 503);
-        continue;
-      }
-
-      let secret: StoredSecret;
-      try {
-        secret = await getSecretStore().get(record.secretRef);
-      } catch {
-        transientError ??= new HttpError("model_policy_credential_lookup_failed", 503);
-        continue;
-      }
-      if (secret.kind !== "openai_compatible_api_key") {
-        transientError ??= new HttpError("model_policy_credential_lookup_failed", 503);
-        continue;
-      }
-
-      try {
-        const discovery = await openAiCompatibleTransport.listModels({
-          apiKey: secret.apiKey,
-          baseUrl: secret.baseUrl,
-        });
-        evidence.push(new Set(normalizeDiscoveredModels(discovery.models)));
-      } catch (error) {
-        transientError ??= mapModelPolicyDiscoveryError(error);
-      }
-    }
-
-    const unsupported = requestedModels.filter((model) => !evidence.some((models) => models.has(model)));
-    if (unsupported.length === 0) return;
-    if (transientError) throw transientError;
-    if (evidence.length === 0) {
-      throw new HttpError("model_policy_model_discovery_unavailable", 503);
-    }
-    throw new HttpError("model_policy_enabled_model_unsupported", 422);
   }
 }
 
-function mapModelPolicyDiscoveryError(error: unknown): HttpError {
-  if (error instanceof ProviderTransportError) {
-    if (error.statusCode === 504 || error.code === "openai_compatible_models_timeout") {
-      return new HttpError("model_policy_model_discovery_timeout", 504);
-    }
-    if (error.statusCode === 503 || error.code === "openai_compatible_models_dns_failed") {
-      return new HttpError("model_policy_model_discovery_unavailable", 503);
-    }
-    if (error.statusCode === 400 || error.code === "openai_compatible_models_target_not_allowed") {
-      return new HttpError("model_policy_model_discovery_target_not_allowed", 400);
-    }
+function mapModelPolicyCapabilityError(reason: string): HttpError {
+  if (reason === "capability_check_timeout") {
+    return new HttpError("model_policy_capability_check_timeout", 504);
   }
-  return new HttpError("model_policy_model_discovery_failed", 502);
+  if (reason === "model_discovery_timeout") {
+    return new HttpError("model_policy_model_discovery_timeout", 504);
+  }
+  if (reason === "model_discovery_unavailable") {
+    return new HttpError("model_policy_model_discovery_unavailable", 503);
+  }
+  if (reason === "model_discovery_target_not_allowed") {
+    return new HttpError("model_policy_model_discovery_target_not_allowed", 400);
+  }
+  if (reason === "model_discovery_failed") {
+    return new HttpError("model_policy_model_discovery_failed", 502);
+  }
+  if (reason === "credential_lookup_failed" || reason === "credential_lookup_unavailable") {
+    return new HttpError("model_policy_credential_lookup_failed", 503);
+  }
+  return new HttpError("model_policy_capability_evidence_unavailable", 503);
 }
 
 function validatePlatformModelPolicyInput(input: ReplacePlatformModelPolicyInput): ReplacePlatformModelPolicyInput {
