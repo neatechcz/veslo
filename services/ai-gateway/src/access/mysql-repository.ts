@@ -2,15 +2,110 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import type { AiGatewayDb } from "../db/index.js";
-import { userAiAccessPolicyTable } from "../db/schema.js";
+import { auditEventTable, userAiAccessPolicyTable } from "../db/schema.js";
 import { isAiGatewayProvider } from "../providers/ids.js";
 import type {
   AiAccessAssignmentOrigin,
   AiAccessProvider,
+  AiAccessMutation,
   AiAccessRepository,
   UpsertUserAiAccessPolicyInput,
+  UpsertUserAiAccessWithAuditInput,
   UserAiAccessPolicyRecord,
 } from "./repository.js";
+
+export class AiAccessAuditPersistenceError extends Error {
+  readonly code = "user_ai_access_audit_failed";
+
+  constructor(cause: unknown) {
+    super("user_ai_access_audit_failed", { cause });
+    this.name = "AiAccessAuditPersistenceError";
+  }
+}
+
+export class MySqlAiAccessMutation implements AiAccessMutation {
+  constructor(private readonly db: AiGatewayDb) {}
+
+  async upsertUserAiAccessWithAudit(
+    input: UpsertUserAiAccessWithAuditInput,
+  ): Promise<UserAiAccessPolicyRecord> {
+    return this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(userAiAccessPolicyTable)
+        .where(eq(userAiAccessPolicyTable.user_id, input.userId))
+        .limit(1)
+        .for("update");
+      const existing = rows[0] ? mapUserAiAccessPolicy(rows[0]) : null;
+      const now = new Date();
+      const assignmentOrigin = parseAssignmentOrigin(input.assignmentOrigin);
+      let saved: UserAiAccessPolicyRecord;
+
+      if (existing) {
+        await tx
+          .update(userAiAccessPolicyTable)
+          .set({
+            enabled: input.enabled ? 1 : 0,
+            provider: input.provider,
+            credential_id: input.credentialId,
+            assignment_origin: assignmentOrigin,
+            updated_at: now,
+          })
+          .where(eq(userAiAccessPolicyTable.user_id, input.userId));
+        saved = {
+          ...existing,
+          enabled: input.enabled,
+          provider: input.provider,
+          credentialId: input.credentialId,
+          assignmentOrigin,
+          updatedAt: now,
+        };
+      } else {
+        const id = `ai_access_${randomUUID()}`;
+        await tx.insert(userAiAccessPolicyTable).values({
+          id,
+          user_id: input.userId,
+          enabled: input.enabled ? 1 : 0,
+          provider: input.provider,
+          credential_id: input.credentialId,
+          default_model: null,
+          allowed_models_json: "[]",
+          assignment_origin: assignmentOrigin,
+          created_at: now,
+          updated_at: now,
+        });
+        saved = {
+          id,
+          userId: input.userId,
+          enabled: input.enabled,
+          provider: input.provider,
+          credentialId: input.credentialId,
+          assignmentOrigin,
+          createdAt: now,
+          updatedAt: now,
+        };
+      }
+
+      try {
+        await tx.insert(auditEventTable).values({
+          id: `audit_${randomUUID()}`,
+          actor_user_id: input.actorUserId,
+          organization_id: input.organizationId,
+          entity_type: "user",
+          entity_id: input.userId,
+          action: "user.ai_access.update",
+          result: "ok",
+          summary: `Updated AI access for user ${input.userId}.`,
+          created_at: now,
+        });
+      } catch (error) {
+        throw new AiAccessAuditPersistenceError(error);
+      }
+
+      return saved;
+    }, { isolationLevel: "serializable" });
+  }
+}
 
 export class MySqlAiAccessRepository implements AiAccessRepository {
   constructor(private readonly db: AiGatewayDb) {}

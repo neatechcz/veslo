@@ -1419,7 +1419,7 @@ test("createDefaultAdminService enriches credential payloads with unresolved lin
   });
 });
 
-test("createDefaultAdminService keeps user creation successful when audit persistence fails", async () => {
+test("createDefaultAdminService does not duplicate DEN-owned user creation audit", async () => {
   const createdUser: AdminUserRecord = {
     id: "user_created",
     name: "Created User",
@@ -1496,18 +1496,8 @@ test("createDefaultAdminService keeps user creation successful when audit persis
     });
 
     assert.deepEqual(result, createdUser);
-    assert.deepEqual(auditCalls, [
-      {
-        actorUserId: "admin-ui",
-        action: "user.create",
-        entityType: "user",
-        entityId: createdUser.id,
-        result: "ok",
-        summary: `Created user ${createdUser.email}.`,
-      },
-    ]);
-    assert.equal(consoleErrors.length, 1);
-    assert.match(String(consoleErrors[0]?.[0] ?? ""), /admin audit event failed/i);
+    assert.deepEqual(auditCalls, []);
+    assert.deepEqual(consoleErrors, []);
   } finally {
     console.error = originalConsoleError;
   }
@@ -1931,6 +1921,7 @@ test("default admin service rejects enabled codex_oauth access without credentia
       body: JSON.stringify({
         enabled: true,
         provider: "codex_oauth",
+        organizationId: "org_1",
       }),
     });
 
@@ -2093,22 +2084,26 @@ test("organization audit route authorizes and requests a server-scoped audit lis
   const { service, session } = createAdminServiceSpy();
   session.platformAdmin = false;
   session.organizations = [{ id: "org_1", name: "Acme", slug: "acme", ownerUserId: session.user.id, role: "organization_admin" }];
-  const calls: string[] = [];
-  service.listOrganizationAudit = async (_token, orgId) => {
-    calls.push(orgId);
+  const calls: Array<{ orgId: string; limit: number | undefined }> = [];
+  service.listOrganizationAudit = async (_token, orgId, limit) => {
+    calls.push({ orgId, limit });
     return {
-      events: [{
-        id: "audit_org_1",
-        timestamp: "2026-07-12T12:00:00.000Z",
-        actor: "admin@example.test",
-        action: "organization.member.update",
-        entityType: "user",
-        entityId: "user_1",
-        result: "ok",
-        summary: "Membership updated.",
-        changedFields: [],
-        organizationId: orgId,
-      }],
+      status: 200,
+      body: {
+        events: [{
+          id: "den:audit_org_1",
+          timestamp: "2026-07-12T12:00:00.000Z",
+          actor: "admin@example.test",
+          action: "organization.member.update",
+          entityType: "user",
+          entityId: "user_1",
+          result: "ok",
+          summary: "Membership updated.",
+          changedFields: [],
+          organizationId: orgId,
+          source: "den",
+        }],
+      },
     };
   };
   const app = createApp({ admin: service });
@@ -2116,12 +2111,12 @@ test("organization audit route authorizes and requests a server-scoped audit lis
   await once(server, "listening");
   try {
     const { port } = server.address() as AddressInfo;
-    const allowed = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/audit`, { headers: AUTHORIZATION });
+    const allowed = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/audit?limit=25`, { headers: AUTHORIZATION });
     assert.equal(allowed.status, 200);
     assert.equal((await allowed.json()).events[0].organizationId, "org_1");
     const denied = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_2/audit`, { headers: AUTHORIZATION });
     assert.equal(denied.status, 403);
-    assert.deepEqual(calls, ["org_1"]);
+    assert.deepEqual(calls, [{ orgId: "org_1", limit: 25 }]);
   } finally {
     server.close();
     await once(server, "close");

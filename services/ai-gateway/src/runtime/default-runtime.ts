@@ -1,6 +1,6 @@
-import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
+import { MySqlAiAccessMutation, MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { createAutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
-import type { AiAccessRepository } from "../access/repository.js";
+import type { AiAccessMutation, AiAccessRepository } from "../access/repository.js";
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
 import type { AlertRepository } from "../alerts/repository.js";
 import { MySqlAuditRepository } from "../audit/mysql-repository.js";
@@ -43,6 +43,7 @@ import type { UsageRepository } from "../usage/repository.js";
 export type RuntimeState = {
   db: AiGatewayDb;
   aiAccess: AiAccessRepository;
+  aiAccessMutation: AiAccessMutation;
   alerts: AlertRepository;
   audit: AuditRepository;
   credentials: CredentialRepository;
@@ -66,6 +67,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
   return {
     db,
     aiAccess: new MySqlAiAccessRepository(db),
+    aiAccessMutation: new MySqlAiAccessMutation(db),
     alerts: new MySqlAlertRepository(db),
     audit: new MySqlAuditRepository(db),
     credentials: new MySqlCredentialRepository(db),
@@ -89,6 +91,7 @@ export function createDefaultAdminDependencies(
     credentialSecretLookupRepository: runtime.credentials,
     sessionReadRepository: new MySqlAdminSessionReadRepository(runtime.db),
     aiAccessRepository: runtime.aiAccess,
+    aiAccessMutation: runtime.aiAccessMutation,
     alertRepository: runtime.alerts,
     usageRepository: runtime.usage,
     auditRepository: runtime.audit,

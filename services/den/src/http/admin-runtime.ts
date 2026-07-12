@@ -1,5 +1,5 @@
 import express from "express"
-import { and, eq, gt, inArray, isNull, or, sql } from "drizzle-orm"
+import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm"
 import { randomBytes, randomUUID } from "node:crypto"
 
 import { recordAuditEvent } from "../audit.js"
@@ -8,6 +8,7 @@ import type { DebugLogService } from "../debug-logs/repository.js"
 import type { DebugLogLevel, DebugLogSearchFilters } from "../debug-logs/types.js"
 import {
   AdminUserStateTable,
+  AuditEventTable,
   AuthAccountTable,
   AuthSessionTable,
   AuthUserTable,
@@ -35,6 +36,7 @@ import {
   getDefaultAdminCapabilities,
   type AdminOrganizationBillingAccountRecord,
   type AdminOrganizationBillingResponse,
+  type AdminAuditRecord,
   type AdminOrganizationDomainRecord,
   type AdminOrganizationInviteRecord,
   type AdminOrganizationMemberRecord,
@@ -2643,6 +2645,83 @@ export type CreateAdminRuntimeRouterOptions = {
   debugLogs?: DebugLogService | null
 }
 
+type OrganizationAuditStoreEvent = {
+  id: string
+  organizationId: string
+  actorUserId: string
+  action: string
+  createdAt: Date | string
+}
+
+type OrganizationAuditStore = {
+  listEvents(input: { organizationId: string; limit: number }): Promise<OrganizationAuditStoreEvent[]>
+}
+
+const ORGANIZATION_AUDIT_DEFAULT_LIMIT = 100
+const ORGANIZATION_AUDIT_MAX_LIMIT = 100
+
+function readOrganizationAuditLimit(value: unknown) {
+  const raw = readQueryString(value)
+  if (!raw) return ORGANIZATION_AUDIT_DEFAULT_LIMIT
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(Math.floor(parsed), ORGANIZATION_AUDIT_MAX_LIMIT)
+    : ORGANIZATION_AUDIT_DEFAULT_LIMIT
+}
+
+export function createOrganizationAuditAdminRouteDeps(input: {
+  requireOrganizationAccess: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<Pick<AdminOrganizationAccessContext, "organization"> | null>
+  store: OrganizationAuditStore
+}): Pick<AdminRouteDeps, "listOrganizationAudit"> {
+  return {
+    async listOrganizationAudit(req, res) {
+      const context = await input.requireOrganizationAccess(req, res)
+      if (!context) return null
+      const organizationId = context.organization.id
+      const rows = await input.store.listEvents({
+        organizationId,
+        limit: readOrganizationAuditLimit(req.query.limit),
+      })
+      return {
+        events: rows.map((row): AdminAuditRecord => ({
+          id: row.id,
+          timestamp: row.createdAt instanceof Date ? row.createdAt.toISOString() : new Date(row.createdAt).toISOString(),
+          actor: row.actorUserId,
+          action: row.action,
+          entityType: "organization",
+          entityId: organizationId,
+          result: "ok",
+          summary: row.action,
+          changedFields: [],
+        })),
+      }
+    },
+  }
+}
+
+function createDrizzleOrganizationAuditStore(): OrganizationAuditStore {
+  return {
+    async listEvents(input) {
+      const rows = await db
+        .select({
+          id: AuditEventTable.id,
+          organizationId: AuditEventTable.org_id,
+          actorUserId: AuditEventTable.actor_user_id,
+          action: AuditEventTable.action,
+          createdAt: AuditEventTable.created_at,
+        })
+        .from(AuditEventTable)
+        .where(eq(AuditEventTable.org_id, input.organizationId))
+        .orderBy(desc(AuditEventTable.created_at), desc(AuditEventTable.id))
+        .limit(input.limit)
+      return rows
+    },
+  }
+}
+
 function readQueryString(value: unknown) {
   if (typeof value === "string" && value.trim().length > 0) {
     return value.trim()
@@ -2795,6 +2874,10 @@ export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOption
     enableUser: enableAdminUser,
     deleteUser: deleteAdminUser,
     ...createOrganizationBillingRuntimeDeps(),
+    ...createOrganizationAuditAdminRouteDeps({
+      requireOrganizationAccess: requireAdminOrganizationAccess,
+      store: createDrizzleOrganizationAuditStore(),
+    }),
     ...createDebugLogAdminRouteDeps(options.debugLogs),
   }
 

@@ -198,6 +198,11 @@ test("platform authority does not grant global user actions inside organization 
   assert.equal(routes.canPerformAdminRouteAction(members, access, "edit-membership"), true);
   assert.equal(routes.canPerformAdminRouteAction(aiAccess, access, "edit-ai-access"), true);
   assert.equal(routes.canPerformAdminRouteAction(
+    { area: "platform", page: "platform-users", organizationId: null },
+    access,
+    "edit-ai-access",
+  ), false);
+  assert.equal(routes.canPerformAdminRouteAction(
     { area: "organization", page: "overview", organizationId: "org_1" },
     access,
     "edit-organization-profile",
@@ -263,6 +268,30 @@ test("billing actions are organization scoped and manual controls remain platfor
     platformAdmin,
     "manage-organization-billing",
   ), false);
+});
+
+test("AI access organization resolution requires the canonical organization AI Access route", () => {
+  const targetUser = {
+    id: "target_user",
+    memberships: [
+      { orgId: "org_target", orgName: "Target Org" },
+      { orgId: "org_second", orgName: "Second Org" },
+    ],
+  };
+
+  assert.equal(
+    routes.resolveAiAccessOrganizationId({ area: "platform", page: "platform-users", organizationId: null }, targetUser, ""),
+    null,
+    "Platform Users must not infer a multi-org target from membership order",
+  );
+  assert.equal(
+    routes.resolveAiAccessOrganizationId({ area: "platform", page: "platform-users", organizationId: null }, targetUser, "org_second"),
+    null,
+  );
+  assert.equal(
+    routes.resolveAiAccessOrganizationId({ area: "organization", page: "ai-access", organizationId: "org_routed" }, targetUser, "org_second"),
+    "org_routed",
+  );
 });
 
 test("manual billing expiry round-trips through datetime-local in Europe/Prague", () => {
