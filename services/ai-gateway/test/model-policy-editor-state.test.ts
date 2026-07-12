@@ -107,3 +107,66 @@ test("dirty state is canonical and clears after a semantic revert", () => {
   editorState.replaceModelPolicyDraft(state, savedPolicy.enabledModels, savedPolicy.activeModel);
   assert.equal(state.dirty, false);
 });
+
+test("stale model policy loads cannot replace a newer load", () => {
+  assert.equal(typeof editorState.beginModelPolicyLoad, "function");
+  assert.equal(typeof editorState.completeModelPolicyLoad, "function");
+
+  const state = editorState.createModelPolicyState(savedPolicy);
+  const older = editorState.beginModelPolicyLoad(state);
+  const newer = editorState.beginModelPolicyLoad(state);
+  const newerPolicy = {
+    ...savedPolicy,
+    activeModel: savedPolicy.enabledModels[1],
+    updatedAt: "2026-07-12T12:00:00.000Z",
+  };
+
+  assert.equal(editorState.completeModelPolicyLoad(state, older, savedPolicy), false);
+  assert.equal(state.loading, true);
+  assert.equal(editorState.completeModelPolicyLoad(state, newer, newerPolicy), true);
+  assert.deepEqual(state.saved.activeModel, savedPolicy.enabledModels[1]);
+  assert.equal(state.loading, false);
+});
+
+test("a model policy load cannot replace a draft edited while it was pending", () => {
+  assert.equal(typeof editorState.beginModelPolicyLoad, "function");
+  assert.equal(typeof editorState.completeModelPolicyLoad, "function");
+
+  const state = editorState.createModelPolicyState(savedPolicy);
+  const request = editorState.beginModelPolicyLoad(state);
+  editorState.replaceModelPolicyDraft(
+    state,
+    [...savedPolicy.enabledModels, { provider: "codex_oauth", model: "gpt-5.5" }],
+    { provider: "codex_oauth", model: "gpt-5.5" },
+  );
+  const dirtyDraft = structuredClone(state.draftEnabledModels);
+
+  assert.equal(editorState.completeModelPolicyLoad(state, request, savedPolicy), false);
+  assert.deepEqual(state.draftEnabledModels, dirtyDraft);
+  assert.equal(state.dirty, true);
+  assert.equal(state.loading, false);
+});
+
+test("invalidating a model policy load makes its completion inert", () => {
+  assert.equal(typeof editorState.invalidateModelPolicyLoad, "function");
+  const state = editorState.createModelPolicyState(savedPolicy);
+  const request = editorState.beginModelPolicyLoad(state);
+
+  editorState.invalidateModelPolicyLoad(state);
+
+  assert.equal(editorState.completeModelPolicyLoad(state, request, savedPolicy), false);
+  assert.equal(state.loading, false);
+});
+
+test("only the current unchanged model policy load may publish an error", () => {
+  assert.equal(typeof editorState.failModelPolicyLoad, "function");
+  const state = editorState.createModelPolicyState(savedPolicy);
+  const stale = editorState.beginModelPolicyLoad(state);
+  const current = editorState.beginModelPolicyLoad(state);
+
+  assert.equal(editorState.failModelPolicyLoad(state, stale, "stale_error"), false);
+  assert.equal(state.error, "");
+  assert.equal(editorState.failModelPolicyLoad(state, current, "current_error"), true);
+  assert.equal(state.error, "current_error");
+  assert.equal(state.loading, false);
+});

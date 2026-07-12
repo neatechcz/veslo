@@ -1,13 +1,16 @@
 import {
   beginModelDiscovery,
+  beginModelPolicyLoad,
   beginModelPolicySave,
   completeModelDiscovery,
+  completeModelPolicyLoad,
   completeModelPolicySave,
   createModelDiscoveryState,
   createModelPolicyState,
   failModelDiscovery,
+  failModelPolicyLoad,
   failModelPolicySave,
-  loadModelPolicyState,
+  invalidateModelPolicyLoad,
   modelRefsEqual,
   normalizeModelRef,
   normalizeModelRefs,
@@ -33,6 +36,7 @@ import {
   organizationIdForRoute,
   parseAdminRoute,
   planAdminHistoryUpdate,
+  resolveAiAccessOrganizationId,
   isAdminRouteMutationCurrent,
   switchOrganizationRoute,
   toAdminDateTimeLocalValue,
@@ -253,6 +257,7 @@ const els = {
 let pendingAdminRequests = 0;
 let backendConnectionHideTimer = 0;
 let modelDiscoveryAbortController = null;
+let modelPolicyLoadAbortController = null;
 let organizationLoadAbortController = null;
 
 function openModal(modal) {
@@ -805,18 +810,42 @@ async function loadModelPolicy() {
   if (state.session?.platformAdmin !== true) {
     return;
   }
-  state.modelPolicy.loading = true;
-  state.modelPolicy.error = "";
+  modelPolicyLoadAbortController?.abort();
+  const controller = new AbortController();
+  modelPolicyLoadAbortController = controller;
+  const request = beginModelPolicyLoad(state.modelPolicy);
   renderModelPolicy();
   try {
-    const payload = await fetchJson("/ai-infrastructure/model-policy");
-    loadModelPolicyState(state.modelPolicy, payload?.policy);
+    const payload = await fetchJson("/ai-infrastructure/model-policy", { signal: controller.signal });
+    if (!isModelPolicyRouteCurrent()) {
+      invalidatePendingModelPolicyLoad();
+      return;
+    }
+    completeModelPolicyLoad(state.modelPolicy, request, payload?.policy);
   } catch (error) {
-    state.modelPolicy.error = error instanceof Error ? error.message : "unknown_error";
+    if (!controller.signal.aborted) {
+      failModelPolicyLoad(
+        state.modelPolicy,
+        request,
+        error instanceof Error ? error.message : "unknown_error",
+      );
+    }
   } finally {
-    state.modelPolicy.loading = false;
+    if (modelPolicyLoadAbortController === controller) {
+      modelPolicyLoadAbortController = null;
+    }
     renderModelPolicy();
   }
+}
+
+function isModelPolicyRouteCurrent() {
+  return state.route?.area === "platform" && state.route.page === "ai-infrastructure";
+}
+
+function invalidatePendingModelPolicyLoad() {
+  modelPolicyLoadAbortController?.abort();
+  modelPolicyLoadAbortController = null;
+  invalidateModelPolicyLoad(state.modelPolicy);
 }
 
 async function saveModelPolicy() {
@@ -1161,6 +1190,9 @@ async function setAdminRoute(route, { historyMode = "push", load = true } = {}) 
   const pathname = navigateAdminRoute(state.navigation, route);
   if (!pathname) return false;
   state.route = state.navigation.route;
+  if (!isModelPolicyRouteCurrent()) {
+    invalidatePendingModelPolicyLoad();
+  }
   if (
     (state.route.area !== "platform" || state.route.page !== "platform-users")
     && state.userMode === "create"
@@ -1213,11 +1245,13 @@ async function api(path, options = {}) {
     }
     return { response, payload };
   } catch (error) {
-    setBackendConnectionStatus(
-      "offline",
-      "Still trying to connect to AI Gateway.",
-      "The admin page cannot reach the backend yet. Check your internet connection or wait for the server.",
-    );
+    if (error?.name !== "AbortError") {
+      setBackendConnectionStatus(
+        "offline",
+        "Still trying to connect to AI Gateway.",
+        "The admin page cannot reach the backend yet. Check your internet connection or wait for the server.",
+      );
+    }
     throw error;
   } finally {
     finishBackendConnectionRequest();
@@ -1414,6 +1448,7 @@ async function clearServerAdminSession() {
 }
 
 async function signOut() {
+  invalidatePendingModelPolicyLoad();
   await clearServerAdminSession();
   state.token = "";
   state.session = null;
@@ -1657,7 +1692,7 @@ function renderOrganizationBilling() {
 function renderOrganizationAudit() {
   els.organizationAuditList.innerHTML = state.organizationAudit.map((entry) => `
     <article class="list-card">
-      <div><strong>${escapeHtml(entry.action)}</strong><p>${escapeHtml(entry.summary || `${entry.entityType}:${entry.entityId}`)}</p></div>
+      <div><strong>${escapeHtml(entry.action)}</strong><p>${escapeHtml(entry.summary || `${entry.entityType}:${entry.entityId}`)}</p><span class="metric-note">${escapeHtml(entry.source === "den" ? "DEN" : "AI Gateway")} · ${escapeHtml(entry.actor || "unknown actor")}</span></div>
       <span>${escapeHtml(formatDate(entry.timestamp))}</span>
     </article>
   `).join("") || `<article class="list-card active"><div><strong>No organization events</strong><p>Legacy global events without organization scope are intentionally absent.</p></div></article>`;
@@ -1852,13 +1887,18 @@ async function saveUserAiAccess(userId, input = null) {
     method: "PUT",
     body: JSON.stringify({
       ...aiAccessInput,
-      organizationId: organizationIdForRoute(state.route),
+      organizationId: aiAccessOrganizationIdForUser(resolvedUserId),
     }),
   });
   state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
     saved?.availableCredentials,
   );
   state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
+}
+
+function aiAccessOrganizationIdForUser(userId) {
+  const user = state.users.find((entry) => entry.id === userId);
+  return resolveAiAccessOrganizationId(state.route, user, els.userOrg.value);
 }
 
 async function loadUsers() {

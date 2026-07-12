@@ -73,8 +73,49 @@ export function createModelPolicyState(savedValue = null) {
     saving: false,
     error: "",
     draftVersion: 0,
+    loadRequestId: 0,
     saveRequestId: 0,
   };
+}
+
+export function beginModelPolicyLoad(state) {
+  state.loadRequestId += 1;
+  state.loading = true;
+  state.error = "";
+  return {
+    requestId: state.loadRequestId,
+    draftVersion: state.draftVersion,
+  };
+}
+
+export function completeModelPolicyLoad(state, request, policyValue) {
+  if (!request || request.requestId !== state.loadRequestId || !state.loading) {
+    return false;
+  }
+  if (state.dirty || state.draftVersion !== request.draftVersion) {
+    state.loading = false;
+    return false;
+  }
+  loadModelPolicyState(state, policyValue);
+  state.loading = false;
+  return true;
+}
+
+export function invalidateModelPolicyLoad(state) {
+  state.loadRequestId += 1;
+  state.loading = false;
+}
+
+export function failModelPolicyLoad(state, request, error) {
+  if (!request || request.requestId !== state.loadRequestId || !state.loading) {
+    return false;
+  }
+  state.loading = false;
+  if (state.dirty || state.draftVersion !== request.draftVersion) {
+    return false;
+  }
+  state.error = typeof error === "string" && error ? error : "unknown_error";
+  return true;
 }
 
 export function loadModelPolicyState(state, policyValue) {

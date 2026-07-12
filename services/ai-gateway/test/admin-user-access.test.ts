@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 
 import { createDefaultAdminService, type CredentialRecord } from "../src/http/admin.js";
+import { AiAccessAuditPersistenceError } from "../src/access/mysql-repository.js";
 import { createApp } from "../src/index.js";
 import { createPlatformModelCapabilityVerifier } from "../src/model-policy/capability-verifier.js";
 
@@ -26,6 +27,7 @@ const AVAILABLE_CREDENTIALS = [
 
 let adminUserAccessUpsertCalls = 0;
 let adminUserAccessOrganizationId: string | null | undefined;
+let adminUserAccessActorUserId: string | null | undefined;
 
 function createCredential(
   id: string,
@@ -72,9 +74,10 @@ function createSupportedModelCapabilities() {
   };
 }
 
-function createAdminUserAccessApp() {
+function createAdminUserAccessApp(options: { upsertError?: Error } = {}) {
   adminUserAccessUpsertCalls = 0;
   adminUserAccessOrganizationId = undefined;
+  adminUserAccessActorUserId = undefined;
   let currentAiAccess = {
     ...AI_ACCESS_PAYLOAD,
   };
@@ -165,9 +168,11 @@ function createAdminUserAccessApp() {
           availableCredentials: AVAILABLE_CREDENTIALS,
         };
       },
-      async upsertUserAiAccess(_token: string, userId: string, input: Record<string, unknown>, organizationId?: string | null) {
+      async upsertUserAiAccess(_token: string, userId: string, input: Record<string, unknown>, organizationId?: string | null, actorUserId?: string | null) {
+        if (options.upsertError) throw options.upsertError;
         adminUserAccessUpsertCalls += 1;
         adminUserAccessOrganizationId = organizationId;
+        adminUserAccessActorUserId = actorUserId;
         currentAiAccess = {
           id: currentAiAccess.id,
           updatedAt: currentAiAccess.updatedAt,
@@ -295,7 +300,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects legacy user model fields wi
   }
 });
 
-test("PUT /admin/api/users/:userId/ai-access forwards authorized organization audit scope", async () => {
+test("PUT /admin/api/users/:userId/ai-access forwards authorized organization scope and real actor", async () => {
   const app = createAdminUserAccessApp();
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -313,10 +318,223 @@ test("PUT /admin/api/users/:userId/ai-access forwards authorized organization au
     });
     assert.equal(response.status, 200);
     assert.equal(adminUserAccessOrganizationId, "org_1");
+    assert.equal(adminUserAccessActorUserId, "user_admin");
   } finally {
     server.close();
     await once(server, "close");
   }
+});
+
+test("PUT /admin/api/users/:userId/ai-access rejects a missing organization scope before writing", async () => {
+  const app = createAdminUserAccessApp();
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
+      body: JSON.stringify({ enabled: false, provider: null, credentialId: null }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "organization_context_required" });
+    assert.equal(adminUserAccessUpsertCalls, 0);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("PUT /admin/api/users/:userId/ai-access reports audit persistence failure without success", async () => {
+  const app = createAdminUserAccessApp({
+    upsertError: new AiAccessAuditPersistenceError(new Error("audit unavailable")),
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
+      body: JSON.stringify({
+        enabled: false,
+        provider: null,
+        credentialId: null,
+        organizationId: "org_1",
+      }),
+    });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: "user_ai_access_audit_failed" });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("default admin AI-access write uses the audit-coupled mutation with real actor and organization", async () => {
+  const mutationInputs: unknown[] = [];
+  let targetOrganizationId = "org_1";
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: {
+      async listUsers() {
+        return [{
+          id: "user_123",
+          name: "Target User",
+          email: "target@example.test",
+          emailVerified: true,
+          platformAdmin: false,
+          disabled: false,
+          memberships: [{
+            membershipId: "membership_123",
+            orgId: targetOrganizationId,
+            orgName: "Acme",
+            orgSlug: "acme",
+            role: "member",
+          }],
+        }];
+      },
+    },
+    aiAccessRepository: {
+      async getUserAiAccess() { return null; },
+      async upsertUserAiAccess() { throw new Error("plain repository write must not be used"); },
+    },
+    aiAccessMutation: {
+      async upsertUserAiAccessWithAudit(input: Record<string, unknown>) {
+        mutationInputs.push(input);
+        return {
+          id: "ai_access_user_123",
+          userId: "user_123",
+          enabled: true,
+          provider: "codex_oauth",
+          credentialId: "cred_codex_123",
+          assignmentOrigin: "admin_assigned",
+          createdAt: new Date("2026-07-12T12:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T12:00:00.000Z"),
+        };
+      },
+    },
+    modelPolicyRepository: createCodexModelPolicyRepository(),
+    modelCapabilities: createSupportedModelCapabilities(),
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [createCredential("cred_codex_123")];
+      },
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_no_rate_limits",
+          label: "Codex OK",
+          checkedAt: "2026-07-12T12:00:00.000Z",
+        } as const;
+      },
+    },
+  } as any);
+
+  await service.upsertUserAiAccess("admin-token", "user_123", {
+    enabled: true,
+    provider: "codex_oauth",
+    credentialId: "cred_codex_123",
+  }, "org_1", "user_admin");
+
+  assert.deepEqual(mutationInputs, [{
+    actorUserId: "user_admin",
+    organizationId: "org_1",
+    userId: "user_123",
+    enabled: true,
+    provider: "codex_oauth",
+    credentialId: "cred_codex_123",
+    assignmentOrigin: "admin_assigned",
+  }]);
+
+  targetOrganizationId = "org_2";
+  await assert.rejects(
+    service.upsertUserAiAccess("admin-token", "user_123", {
+      enabled: false,
+      provider: null,
+      credentialId: null,
+    }, "org_1", "user_admin"),
+    /user_not_in_organization/,
+  );
+  assert.equal(mutationInputs.length, 1);
+});
+
+test("default admin AI-access write prepares fallible response data before committing", async () => {
+  let mutationCalls = 0;
+  let capabilityCalls = 0;
+  const credential = createCredential("cred_custom", { provider: "openai_compatible" });
+  const service = createDefaultAdminService("http://den.example.test", {
+    denClient: {
+      async listUsers() {
+        return [{
+          id: "user_123",
+          name: "Target User",
+          email: "target@example.test",
+          emailVerified: true,
+          platformAdmin: false,
+          disabled: false,
+          memberships: [{
+            membershipId: "membership_123",
+            orgId: "org_1",
+            orgName: "Acme",
+            orgSlug: "acme",
+            role: "member",
+          }],
+        }];
+      },
+    } as never,
+    aiAccessRepository: {
+      async getUserAiAccess() { return null; },
+      async upsertUserAiAccess() { throw new Error("plain repository write must not be used"); },
+    },
+    aiAccessMutation: {
+      async upsertUserAiAccessWithAudit() {
+        mutationCalls += 1;
+        throw new Error("mutation must not start after response preparation fails");
+      },
+    },
+    modelPolicyRepository: {
+      async getPolicy() {
+        return {
+          id: "platform",
+          enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+          activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+          createdAt: new Date("2026-07-12T08:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+        };
+      },
+      async replacePolicy() { throw new Error("unused"); },
+    },
+    credentialReadRepository: {
+      async listAdminCredentials() { return [credential]; },
+    },
+    modelCapabilities: {
+      async checkCredentialForModel(credentialId: string) {
+        capabilityCalls += 1;
+        return capabilityCalls === 1
+          ? { status: "supported", credentialId }
+          : { status: "transient", reason: "capability_evidence_unavailable" };
+      },
+      async checkHealthyCredentialForModel() { return { status: "transient", reason: "unused" }; },
+      async checkHealthyCredentialsForModels() { return []; },
+      async hasHealthyCredentialForModel() { return false; },
+      invalidateCredential() {},
+    },
+  } as any);
+
+  await assert.rejects(
+    service.upsertUserAiAccess("admin-token", "user_123", {
+      enabled: true,
+      provider: "openai_compatible",
+      credentialId: credential.id,
+    }, "org_1", "user_admin"),
+    /ai_access_credential_capability_unavailable/,
+  );
+  assert.equal(capabilityCalls, 2);
+  assert.equal(mutationCalls, 0);
 });
 
 test("admin user access rejects a provider that differs from the platform active model", async () => {
@@ -912,6 +1130,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects ineligible codex credential
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_unavailable",
+        organizationId: "org_1",
       }),
     });
 
@@ -943,6 +1162,7 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
         enabled: true,
         provider: "anthropic",
         credentialId: "cred_openai_123",
+        organizationId: "org_1",
       }),
     });
 
@@ -980,6 +1200,7 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_123",
+        organizationId: "org_1",
       }),
     });
 
@@ -1041,6 +1262,7 @@ test("admin ai access updates flow through to the signed-in user's effective pol
         enabled: false,
         provider: "anthropic",
         credentialId: "cred_openai_123",
+        organizationId: "org_1",
       }),
     });
 

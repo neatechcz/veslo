@@ -470,6 +470,10 @@ export type AdminRouteDeps = {
     req: express.Request,
     res: express.Response,
   ) => Promise<{ events: AdminAuditRecord[] } | null>
+  listOrganizationAudit?: (
+    req: express.Request,
+    res: express.Response,
+  ) => Promise<{ events: AdminAuditRecord[] } | null>
   listDebugLogs?: (
     req: express.Request,
     res: express.Response,
@@ -593,6 +597,20 @@ export function createAdminRouter(deps: AdminRouteDeps) {
     }
 
     const payload = await deps.getOrganizationBilling(req, res)
+    if (!payload) {
+      return
+    }
+
+    res.json(payload)
+  })
+
+  route.get("/organizations/:orgId/audit", async (req, res) => {
+    if (!deps.listOrganizationAudit) {
+      res.status(501).json({ error: "not_implemented" })
+      return
+    }
+
+    const payload = await deps.listOrganizationAudit(req, res)
     if (!payload) {
       return
     }

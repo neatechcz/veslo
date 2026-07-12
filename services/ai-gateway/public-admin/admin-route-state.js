@@ -81,6 +81,13 @@ export function organizationIdForRoute(route) {
     : null;
 }
 
+export function resolveAiAccessOrganizationId(route, user, selectedOrganizationId = "") {
+  const routedOrganizationId = organizationIdForRoute(route);
+  return route?.area === "organization" && route.page === "ai-access"
+    ? routedOrganizationId
+    : null;
+}
+
 export function toAdminDateTimeLocalValue(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -183,7 +190,7 @@ export function adminUserRoutePermissions(route, access) {
     createUser: platformUsers,
     editProfile: platformUsers,
     editMembership: platformUsers || (organizationRouteAllowed && route.page === "members"),
-    editAiAccess: managedAiAccess && (platformUsers || (organizationRouteAllowed && route.page === "ai-access")),
+    editAiAccess: managedAiAccess && organizationRouteAllowed && route.page === "ai-access",
     setPlatformAdmin: platformUsers,
     disableUser: platformUsers,
     deleteUser: platformUsers,
