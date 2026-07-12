@@ -101,6 +101,108 @@ test("capability verifier bounds concurrency and cancels slow discovery at the a
   assert.ok(aborted > 0, "outstanding discovery was not aborted");
 });
 
+test("batch capability verification returns one deterministic result per enabled model under one deadline", async () => {
+  let active = 0;
+  let maxActive = 0;
+  let aborted = 0;
+  const verifier = createPlatformModelCapabilityVerifier({
+    credentials: {
+      async listAdminCredentials() {
+        return Array.from({ length: 6 }, (_, index) => adminCredential(`cred_${index}`, "codex_oauth"));
+      },
+    } as never,
+    secrets: {} as never,
+    codexStatusProvider: {
+      async getStatus(input) {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        try {
+          await new Promise<void>((resolve) => {
+            const fallback = setTimeout(resolve, 250);
+            input.signal?.addEventListener("abort", () => {
+              aborted += 1;
+              clearTimeout(fallback);
+              resolve();
+            }, { once: true });
+          });
+          return { ...healthyCodexStatus, available: false as const };
+        } finally {
+          active -= 1;
+        }
+      },
+    },
+    openAiCompatibleTransport: {} as never,
+    concurrency: 2,
+    overallTimeoutMs: 35,
+  });
+  const models = [
+    { provider: "codex_oauth" as const, model: "gpt-5.5" },
+    { provider: "codex_oauth" as const, model: "gpt-5.3-codex" },
+  ];
+
+  const startedAt = Date.now();
+  const results = await verifier.checkHealthyCredentialsForModels(models);
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.deepEqual(results, models.map((model) => ({
+    model,
+    status: "transient",
+    reason: "capability_check_timeout",
+  })));
+  assert.ok(elapsedMs < 150, `batch verification took ${elapsedMs}ms`);
+  assert.ok(maxActive <= 2, `observed aggregate concurrency ${maxActive}`);
+  assert.ok(aborted > 0, "stalled probes did not observe cancellation");
+  assert.equal(active, 0, "stalled probes remained active after batch verification returned");
+});
+
+test("batch capability verification validates every enabled model from authoritative evidence", async () => {
+  let probes = 0;
+  const verifier = createPlatformModelCapabilityVerifier({
+    credentials: {
+      async listAdminCredentials() {
+        return [adminCredential("cred_custom", "openai_compatible")];
+      },
+      async getCredentialRecordById(id: string) {
+        return {
+          id,
+          name: id,
+          ownerUserId: "platform:openai_compatible",
+          provider: "openai_compatible",
+          credentialType: "api_key",
+          state: "healthy",
+          secretRef: `secret_${id}`,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      },
+    } as never,
+    secrets: {
+      async get() {
+        return { kind: "openai_compatible_api_key", apiKey: "test-key", baseUrl: "https://models.example.test/v1" };
+      },
+    } as never,
+    codexStatusProvider: {} as never,
+    openAiCompatibleTransport: {
+      async chatCompletions() { throw new Error("unused"); },
+      async listModels() {
+        probes += 1;
+        return { models: ["custom/model-v1", "custom/model-v2"] };
+      },
+    },
+  });
+  const models = [
+    { provider: "openai_compatible" as const, model: "custom/model-v1" },
+    { provider: "openai_compatible" as const, model: "custom/model-v2" },
+  ];
+
+  assert.deepEqual(await verifier.checkHealthyCredentialsForModels(models), models.map((model) => ({
+    model,
+    status: "supported",
+    credentialId: "cred_custom",
+  })));
+  assert.equal(probes, 1, "one credential discovery should validate all requested models");
+});
+
 test("capability verifier aborts hanging Codex probes at the aggregate deadline", async () => {
   let active = 0;
   let aborted = 0;

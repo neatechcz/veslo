@@ -13,6 +13,7 @@ import type {
   PlatformModelPolicyRepository,
   PlatformModelRef,
 } from "../src/model-policy/repository.js";
+import { createPlatformModelCapabilityVerifier } from "../src/model-policy/capability-verifier.js";
 import type { CodexUsageStatus } from "../src/usage/codex-status.js";
 import * as modelPolicyMysql from "../src/model-policy/mysql-repository.js";
 import { ProviderTransportError } from "../src/providers/transport.js";
@@ -101,6 +102,13 @@ function createHarness(input: {
   failAudit?: boolean;
   secretLookupError?: Error;
   modelDiscoveryError?: Error;
+  codexStatusResolver?: (input: {
+    credentialId: string;
+    credentialName: string;
+    signal?: AbortSignal;
+  }) => Promise<CodexUsageStatus>;
+  capabilityConcurrency?: number;
+  capabilityTimeoutMs?: number;
 } = {}) {
   const modelPolicy = new MemoryModelPolicyRepository(input.policy ?? null);
   const auditEvents: RecordAuditEventInput[] = [];
@@ -121,6 +129,69 @@ function createHarness(input: {
       auditEvents.push(event);
     },
   };
+  const credentialRepository = {
+    async listAdminCredentials() {
+      return credentials;
+    },
+    async getCredentialRecordById(credentialId: string) {
+      if (input.secretLookupError) throw input.secretLookupError;
+      const match = credentials.find((entry) => entry.id === credentialId);
+      return match
+        ? {
+            id: match.id,
+            name: match.name,
+            ownerUserId: match.scope,
+            provider: match.provider,
+            credentialType: match.type,
+            state: match.state,
+            secretRef: `secret_${credentialId}`,
+            createdAt: NOW,
+            updatedAt: NOW,
+            deletedAt: match.deletedAt ? new Date(match.deletedAt) : null,
+          }
+        : null;
+    },
+  };
+  const secretStore = {
+    async put() {
+      throw new Error("unused");
+    },
+    async get() {
+      return input.secret ?? {
+        kind: "openai_compatible_api_key" as const,
+        apiKey: "test-key",
+        baseUrl: "https://models.example.test/v1",
+      };
+    },
+    async replace() {
+      throw new Error("unused");
+    },
+  };
+  const codexStatusProvider = {
+    async getStatus(statusInput: {
+      credentialId: string;
+      credentialName: string;
+      signal?: AbortSignal;
+    }) {
+      if (input.codexStatusResolver) return input.codexStatusResolver(statusInput);
+      return input.codexStatus ?? {
+        available: true,
+        source: "codex_status" as const,
+        label: "Codex available",
+        checkedAt: NOW.toISOString(),
+      };
+    },
+  };
+  const openAiCompatibleTransport = {
+    async chatCompletions() {
+      throw new Error("unused");
+    },
+    async listModels() {
+      modelDiscoveryCalls += 1;
+      if (input.modelDiscoveryError) throw input.modelDiscoveryError;
+      return { models: input.openAiCompatibleModels ?? ["custom/model-v1"] };
+    },
+  };
   const service = createDefaultAdminService("https://den.example.test", {
     denClient: {
       async getSession() {
@@ -133,50 +204,18 @@ function createHarness(input: {
         return credentials;
       },
     },
-    credentialSecretLookupRepository: {
-      async getCredentialRecordById(credentialId: string) {
-        if (input.secretLookupError) throw input.secretLookupError;
-        const match = credentials.find((entry) => entry.id === credentialId);
-        return match
-          ? { provider: match.provider, secretRef: `secret_${credentialId}`, name: match.name }
-          : null;
-      },
-    },
-    codexStatusProvider: {
-      async getStatus() {
-        return input.codexStatus ?? {
-          available: true,
-          source: "codex_status",
-          label: "Codex available",
-          checkedAt: NOW.toISOString(),
-        };
-      },
-    },
-    secretStore: {
-      async put() {
-        throw new Error("unused");
-      },
-      async get() {
-        return input.secret ?? {
-          kind: "openai_compatible_api_key",
-          apiKey: "test-key",
-          baseUrl: "https://models.example.test/v1",
-        };
-      },
-      async replace() {
-        throw new Error("unused");
-      },
-    },
-    openAiCompatibleTransport: {
-      async chatCompletions() {
-        throw new Error("unused");
-      },
-      async listModels() {
-        modelDiscoveryCalls += 1;
-        if (input.modelDiscoveryError) throw input.modelDiscoveryError;
-        return { models: input.openAiCompatibleModels ?? ["custom/model-v1"] };
-      },
-    },
+    credentialSecretLookupRepository: credentialRepository,
+    codexStatusProvider,
+    secretStore,
+    openAiCompatibleTransport,
+    modelCapabilities: createPlatformModelCapabilityVerifier({
+      credentials: credentialRepository as never,
+      secrets: secretStore as never,
+      codexStatusProvider,
+      openAiCompatibleTransport,
+      concurrency: input.capabilityConcurrency,
+      overallTimeoutMs: input.capabilityTimeoutMs,
+    }),
     modelPolicyMutation: {
       async replacePolicyWithAudit(mutationInput: {
         actorUserId: string;
@@ -433,6 +472,82 @@ test("every enabled model requires authoritative capability evidence", async () 
       && (error as { status?: number }).status === 422,
   );
   assert.equal(unverifiableNonActive.mutationCalls.length, 0);
+});
+
+test("policy PUT bounds and cancels aggregate capability probes before mutating policy or audit", async () => {
+  let active = 0;
+  let maxActive = 0;
+  let aborted = 0;
+  const previous = policyRecord({
+    enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
+    activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
+  });
+  const harness = createHarness({
+    policy: previous,
+    credentials: Array.from({ length: 8 }, (_, index) =>
+      credential({ id: `cred_stalled_${index}`, provider: "codex_oauth" })
+    ),
+    capabilityConcurrency: 2,
+    capabilityTimeoutMs: 35,
+    async codexStatusResolver({ signal }) {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      try {
+        await new Promise<void>((resolve) => {
+          const fallback = setTimeout(resolve, 250);
+          signal?.addEventListener("abort", () => {
+            aborted += 1;
+            clearTimeout(fallback);
+            resolve();
+          }, { once: true });
+        });
+        return {
+          available: false,
+          source: "unavailable",
+          label: "Unavailable",
+          checkedAt: NOW.toISOString(),
+        };
+      } finally {
+        active -= 1;
+      }
+    },
+  });
+  const app = createApp({ admin: harness.service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const startedAt = Date.now();
+    const response = await Promise.race([
+      fetch(`http://127.0.0.1:${port}/admin/api/ai-infrastructure/model-policy`, {
+        method: "PUT",
+        headers: { cookie: ADMIN_COOKIE, "content-type": "application/json" },
+        body: JSON.stringify({
+          enabledModels: [
+            { provider: "codex_oauth", model: "gpt-5.5" },
+            { provider: "codex_oauth", model: "gpt-5.3-codex" },
+          ],
+          activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+        }),
+      }),
+      new Promise<"test_timeout">((resolve) => setTimeout(() => resolve("test_timeout"), 150)),
+    ]);
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.notEqual(response, "test_timeout", `policy PUT exceeded aggregate deadline (${elapsedMs}ms)`);
+    assert.equal((response as Response).status, 504);
+    assert.deepEqual(await (response as Response).json(), { error: "model_policy_capability_check_timeout" });
+    assert.ok(maxActive <= 2, `observed aggregate concurrency ${maxActive}`);
+    assert.ok(aborted > 0, "stalled probes did not observe cancellation");
+    assert.equal(active, 0, "stalled probes remained active after PUT returned");
+    assert.equal(harness.modelPolicy.current, previous);
+    assert.deepEqual(harness.mutationCalls, []);
+    assert.deepEqual(harness.auditEvents, []);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
 });
 
 test("OpenAI-compatible activation uses credential model discovery as capability evidence", async () => {
