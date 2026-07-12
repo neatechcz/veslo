@@ -371,6 +371,17 @@ test("default admin dependencies reuse the shared runtime model policy stores", 
   assert.equal(dependencies.secretStore, runtime.secrets);
 });
 
+test("default user access dependencies reuse the shared runtime model policy store", () => {
+  const runtime = createPersistentRuntime();
+  const dependencies = createDefaultUserCredentialDependencies(runtime, {
+    sessionResolver: {
+      async resolveSession() { return null; },
+    },
+  });
+
+  assert.equal(dependencies.modelPolicy, runtime.modelPolicy);
+});
+
 test("createApp model policy PUT uses runtime mutation dependencies without a secondary database", async () => {
   const baseRuntime = createPersistentRuntime();
   const mutationCalls: unknown[] = [];

@@ -1,6 +1,5 @@
 import type { AuditRepository } from "../audit/repository.js";
 import type { CredentialRepository } from "../credentials/repository.js";
-import { resolveCodexModelPolicy } from "../providers/codex-model-catalog.js";
 import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js";
 import type { CodexCredentialStatusProvider } from "../usage/codex-status.js";
 import { codexStatusSupportsModel } from "../model-policy/capability-verifier.js";
@@ -89,18 +88,11 @@ export function createAutoAssignedCodexCredentialRotationService(
         if (input.activeModel?.provider === "codex_oauth") throw new AssignedCredentialModelIncompatibleError();
         return aiAccess;
       }
-      const modelPolicy = resolveCodexModelPolicy({
-        defaultModel: aiAccess.defaultModel,
-        allowedModels: aiAccess.allowedModels,
-      });
-
       const repaired = await deps.aiAccess.upsertUserAiAccess({
         userId: aiAccess.userId,
         enabled: aiAccess.enabled,
         provider: "codex_oauth",
         credentialId: replacement.credentialId,
-        defaultModel: modelPolicy.defaultModel,
-        allowedModels: modelPolicy.allowedModels,
         assignmentOrigin: aiAccess.assignmentOrigin,
       });
 

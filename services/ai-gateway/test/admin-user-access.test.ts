@@ -15,15 +15,15 @@ const AI_ACCESS_PAYLOAD = {
   enabled: true,
   provider: "openai",
   credentialId: "cred_openai_123",
-  defaultModel: "gpt-4o-mini",
-  allowedModels: ["gpt-4o-mini", "gpt-4.1-mini"],
   updatedAt: "2026-04-08T10:00:00.000Z",
 };
 
 const AVAILABLE_CREDENTIALS = [
-  { id: "cred_codex_123", name: "Shared Codex A" },
-  { id: "cred_codex_456", name: "Shared Codex B" },
+  { id: "cred_codex_123", name: "Shared Codex A", provider: "codex_oauth" },
+  { id: "cred_codex_456", name: "Shared Codex B", provider: "codex_oauth" },
 ];
+
+let adminUserAccessUpsertCalls = 0;
 
 function createCredential(
   id: string,
@@ -46,7 +46,23 @@ function createCredential(
   };
 }
 
+function createCodexModelPolicyRepository() {
+  return {
+    async getPolicy() {
+      return {
+        id: "platform" as const,
+        enabledModels: [{ provider: "codex_oauth" as const, model: "gpt-5.5" }],
+        activeModel: { provider: "codex_oauth" as const, model: "gpt-5.5" },
+        createdAt: new Date("2026-07-12T08:00:00.000Z"),
+        updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+      };
+    },
+    async replacePolicy() { throw new Error("unused"); },
+  };
+}
+
 function createAdminUserAccessApp() {
+  adminUserAccessUpsertCalls = 0;
   let currentAiAccess = {
     ...AI_ACCESS_PAYLOAD,
   };
@@ -138,6 +154,7 @@ function createAdminUserAccessApp() {
         };
       },
       async upsertUserAiAccess(_token: string, userId: string, input: Record<string, unknown>) {
+        adminUserAccessUpsertCalls += 1;
         currentAiAccess = {
           id: currentAiAccess.id,
           updatedAt: currentAiAccess.updatedAt,
@@ -198,6 +215,17 @@ function createAdminUserAccessApp() {
           };
         },
       },
+      modelPolicy: {
+        async getPolicy() {
+          return {
+            id: "platform",
+            enabledModels: [{ provider: "openai", model: "gpt-5.5" }],
+            activeModel: { provider: "openai", model: "gpt-5.5" },
+            createdAt: new Date("2026-07-12T08:00:00.000Z"),
+            updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+          };
+        },
+      },
     } as any,
   });
 
@@ -224,6 +252,71 @@ test("GET /admin/api/users/:userId/ai-access returns the stored ai access policy
     server.close();
     await once(server, "close");
   }
+});
+
+test("PUT /admin/api/users/:userId/ai-access rejects legacy user model fields without writing", async () => {
+  const app = createAdminUserAccessApp();
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "codex_oauth",
+        credentialId: "cred_codex_123",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "user_model_policy_not_supported" });
+    assert.equal(adminUserAccessUpsertCalls, 0);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("admin user access rejects a provider that differs from the platform active model", async () => {
+  let writes = 0;
+  const service = createDefaultAdminService("http://den.example.test", {
+    aiAccessRepository: {
+      async getUserAiAccess() { return null; },
+      async upsertUserAiAccess() { writes += 1; throw new Error("unexpected write"); },
+    },
+    credentialReadRepository: {
+      async listAdminCredentials() {
+        return [createCredential("cred_custom", { provider: "openai_compatible", state: "healthy" })];
+      },
+    },
+    modelPolicyRepository: {
+      async getPolicy() {
+        return {
+          id: "platform",
+          enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
+          activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+          createdAt: new Date("2026-07-12T08:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+        };
+      },
+      async replacePolicy() { throw new Error("unused"); },
+    },
+  });
+
+  await assert.rejects(
+    service.upsertUserAiAccess("admin-token", "user_123", {
+      enabled: true,
+      provider: "openai_compatible",
+      credentialId: "cred_custom",
+    }),
+    /ai_access_provider_mismatch/,
+  );
+  assert.equal(writes, 0);
 });
 
 test("GET /admin/api/users/:userId/ai-access only returns eligible codex credentials", async () => {
@@ -286,6 +379,7 @@ test("GET /admin/api/users/:userId/ai-access only returns eligible codex credent
           throw new Error("unused");
         },
       },
+      modelPolicyRepository: createCodexModelPolicyRepository(),
       credentialReadRepository: {
         async listAdminCredentials() {
           return [
@@ -398,8 +492,6 @@ test("GET /admin/api/users/:userId/ai-access repairs admin-assigned Codex creden
             enabled: true,
             provider: "codex_oauth",
             credentialId: "cred_old",
-            defaultModel: "gpt-5.5",
-            allowedModels: ["gpt-5.5"],
             assignmentOrigin: "admin_assigned",
             createdAt: new Date("2026-05-07T08:00:00.000Z"),
             updatedAt: new Date("2026-05-07T08:00:00.000Z"),
@@ -413,14 +505,13 @@ test("GET /admin/api/users/:userId/ai-access repairs admin-assigned Codex creden
             enabled: input.enabled,
             provider: input.provider,
             credentialId: input.credentialId,
-            defaultModel: input.defaultModel,
-            allowedModels: input.allowedModels,
             assignmentOrigin: input.assignmentOrigin,
             createdAt: new Date("2026-05-07T08:00:00.000Z"),
             updatedAt: new Date("2026-05-07T09:00:00.000Z"),
           };
         },
       },
+      modelPolicyRepository: createCodexModelPolicyRepository(),
       credentialReadRepository: {
         async listAdminCredentials() {
           return [
@@ -515,8 +606,6 @@ test("GET /admin/api/users/:userId/ai-access repairs admin-assigned Codex creden
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_new",
-        defaultModel: "gpt-5.5",
-        allowedModels: ["gpt-5.5"],
         assignmentOrigin: "admin_assigned",
       },
     ]);
@@ -578,6 +667,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects ineligible codex credential
           throw new Error("unexpected_ai_access_upsert");
         },
       },
+      modelPolicyRepository: createCodexModelPolicyRepository(),
       credentialReadRepository: {
         async listAdminCredentials() {
           return [
@@ -622,8 +712,6 @@ test("PUT /admin/api/users/:userId/ai-access rejects ineligible codex credential
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_unavailable",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       }),
     });
 
@@ -655,8 +743,6 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
         enabled: true,
         provider: "anthropic",
         credentialId: "cred_openai_123",
-        defaultModel: "claude-3-7-sonnet",
-        allowedModels: ["claude-3-7-sonnet", "claude-3-5-sonnet"],
       }),
     });
 
@@ -668,8 +754,6 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
         enabled: true,
         provider: "anthropic",
         credentialId: "cred_openai_123",
-        defaultModel: "claude-3-7-sonnet",
-        allowedModels: ["claude-3-7-sonnet", "claude-3-5-sonnet"],
       },
       availableCredentials: AVAILABLE_CREDENTIALS,
     });
@@ -696,8 +780,6 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_123",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       }),
     });
 
@@ -709,8 +791,6 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_123",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       },
       availableCredentials: AVAILABLE_CREDENTIALS,
     });
@@ -733,7 +813,10 @@ test("GET /api/me/ai-access returns the signed-in user's effective ai access pol
 
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
-      aiAccess: AI_ACCESS_PAYLOAD,
+      aiAccess: {
+        ...AI_ACCESS_PAYLOAD,
+        effectiveModel: { provider: "openai", model: "gpt-5.5" },
+      },
     });
   } finally {
     server.close();
@@ -758,8 +841,6 @@ test("admin ai access updates flow through to the signed-in user's effective pol
         enabled: false,
         provider: "anthropic",
         credentialId: "cred_openai_123",
-        defaultModel: "claude-3-7-sonnet",
-        allowedModels: ["claude-3-7-sonnet"],
       }),
     });
 
@@ -777,8 +858,7 @@ test("admin ai access updates flow through to the signed-in user's effective pol
         enabled: false,
         provider: "anthropic",
         credentialId: "cred_openai_123",
-        defaultModel: "claude-3-7-sonnet",
-        allowedModels: ["claude-3-7-sonnet"],
+        effectiveModel: { provider: "openai", model: "gpt-5.5" },
       },
     });
   } finally {
