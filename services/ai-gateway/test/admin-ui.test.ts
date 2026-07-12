@@ -574,7 +574,7 @@ test("GET /admin/app.js checks the HTTP-only admin cookie before showing the log
   }
 })
 
-test("GET /admin/users includes admin-managed ai access controls in the user editor", async () => {
+test("GET /admin/users keeps model choice out of the admin-managed user access editor", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -593,12 +593,44 @@ test("GET /admin/users includes admin-managed ai access controls in the user edi
     assert.match(html, /id="user-ai-access-enabled"/)
     assert.match(html, /id="user-ai-access-provider"/)
     assert.match(html, /id="user-ai-access-credential"/)
-    assert.match(html, /id="user-ai-access-default-model"/)
-    assert.match(html, /id="user-ai-access-model-options"/)
-    assert.match(html, /id="user-ai-access-allowed-models"/)
+    assert.doesNotMatch(html, /id="user-ai-access-default-model"/)
+    assert.doesNotMatch(html, /id="user-ai-access-model-options"/)
+    assert.doesNotMatch(html, /id="user-ai-access-allowed-models"/)
+    assert.doesNotMatch(html, />Default model</i)
+    assert.doesNotMatch(html, />Allowed models</i)
+    assert.match(html, /Models are managed centrally in AI Infrastructure/i)
     assert.match(html, /id="user-save-status"/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
     assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/credentials presents platform model policy controls in AI Infrastructure", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/credentials`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /data-route="credentials"[^>]*>AI Infrastructure</)
+    assert.match(html, /id="model-policy-panel"[^>]*data-platform-admin-control/)
+    assert.match(html, /id="model-policy-list"/)
+    assert.match(html, /id="model-policy-credential"/)
+    assert.match(html, /id="model-policy-discovered-model"/)
+    assert.match(html, /id="model-policy-discover-button"/)
+    assert.match(html, /id="model-policy-add-button"/)
+    assert.match(html, /id="model-policy-save-button"[^>]*>Save model policy</)
+    assert.match(html, /id="model-policy-status"/)
+    assert.doesNotMatch(html, /Choose your model|Switch models?|model picker/i)
   } finally {
     server.close()
     await once(server, "close")
@@ -800,7 +832,7 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
     assert.match(script, /route === "overview" \? !canManagePlatform : !allowed\.has\(route\)/)
     assert.match(script, /runAllowedLoad\("organization", loadOrganization\)/)
     assert.match(script, /runAllowedLoad\("users", loadUsers\)/)
-    assert.match(script, /runAllowedLoad\("credentials", loadCredentials\)/)
+    assert.match(script, /runAllowedLoad\("credentials", loadAiInfrastructure\)/)
     assert.doesNotMatch(script, /runAllowedLoad\("sessions", loadSessions\)/)
     assert.doesNotMatch(script, /\bloadSessions\(\)/)
     assert.doesNotMatch(script, /async function loadSessions\(\)/)
@@ -1587,7 +1619,7 @@ test("GET /admin/app.js renders credential usage and Codex limits status", async
   }
 })
 
-test("GET /admin/app.js loads and saves per-user ai access assignments", async () => {
+test("GET /admin/app.js saves user ai access without per-user model authority", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -1601,23 +1633,22 @@ test("GET /admin/app.js loads and saves per-user ai access assignments", async (
     assert.match(script, /\/users\/\$\{encodeURIComponent\([^)]+\)\}\/ai-access/)
     assert.match(script, /user-ai-access-provider/)
     assert.match(script, /user-ai-access-credential/)
-    assert.match(script, /user-ai-access-default-model/)
-    assert.match(script, /userAiAccessModelOptions/)
-    assert.match(script, /user-ai-access-allowed-models/)
+    assert.doesNotMatch(script, /user-ai-access-default-model/)
+    assert.doesNotMatch(script, /userAiAccessModelOptions/)
+    assert.doesNotMatch(script, /user-ai-access-allowed-models/)
+    assert.doesNotMatch(script, /userAiAccessModelsByCredentialId/)
+    assert.doesNotMatch(script, /refreshSelectedAiAccessModels/)
+    assert.doesNotMatch(script, /defaultModel:/)
+    assert.doesNotMatch(script, /allowedModels:/)
     assert.match(script, /availableCredentials/)
     assert.match(script, /Select assigned credential/)
     assert.match(script, /No eligible Codex credential/)
     assert.match(script, /No healthy Codex credentials with OK upstream status are available for assignment\./)
-    assert.match(script, /\/credentials\/\$\{encodeURIComponent\(credentialId\)\}\/models/)
-    assert.match(script, /selectedProvider !== "codex_oauth" && selectedProvider !== "openai_compatible"/)
-    assert.match(script, /defaultModel:\s*typeof payload\?\.defaultModel === "string" \? payload\.defaultModel\.trim\(\) : ""/)
-    assert.match(script, /if \(!els\.userAiAccessDefaultModel\.value\.trim\(\) && payload\.defaultModel\) \{/)
-    assert.match(script, /Loaded \$\{payload\.models\.length\} models from the assigned credential\./)
     assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
     assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(
       script,
-      /async function saveUserAiAccess\(userId,\s*input = null\)[\s\S]*const aiAccessInput = input && typeof input === "object"[\s\S]*credentialId: readAiAccessCredentialValue\(\)/,
+      /async function saveUserAiAccess\(userId,\s*input = null\)[\s\S]*enabled: input\.enabled === true,[\s\S]*provider:[\s\S]*credentialId:[\s\S]*fetchJson\(`\/users\//,
     )
     assert.match(
       script,
@@ -1627,6 +1658,52 @@ test("GET /admin/app.js loads and saves per-user ai access assignments", async (
       script,
       /if \(!wasCreating && selectedUser\?\.id\) \{[\s\S]*await saveUserAiAccess\(selectedUser\.id,\s*aiAccessInput\)/,
     )
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js manages one global model policy with discovery-backed explicit save", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(
+      script,
+      /modelPolicy:\s*\{\s*saved: null,\s*draftEnabledModels: \[\],\s*draftActiveModel: null,\s*dirty: false,\s*loading: false,\s*saving: false,\s*error: "",\s*\}/,
+    )
+    assert.match(script, /fetchJson\("\/ai-infrastructure\/model-policy"\)/)
+    assert.match(script, /fetchJson\("\/ai-infrastructure\/model-policy", \{\s*method: "PUT"/)
+    assert.match(script, /modelPolicySaveButton\.addEventListener\("click", \(\) => void saveModelPolicy\(\)\)/)
+    assert.match(script, /enabledModels:\s*normalizeModelRefs\(state\.modelPolicy\.draftEnabledModels\)/)
+    assert.match(script, /activeModel:\s*normalizeModelRef\(state\.modelPolicy\.draftActiveModel\)/)
+    assert.match(script, /async function loadModelPolicy\(\)/)
+    assert.match(script, /state\.modelPolicy\.loading = true/)
+    assert.match(script, /state\.modelPolicy\.saved = policy/)
+    assert.match(script, /state\.modelPolicy\.dirty = false/)
+    assert.match(script, /state\.modelPolicy\.error = error instanceof Error/)
+    assert.match(script, /No platform model policy configured/)
+    assert.match(script, /Unsaved model policy changes/)
+    assert.match(script, /if \(state\.session\?\.platformAdmin !== true\) \{\s*return;/)
+    assert.match(script, /credential\.state === "healthy"/)
+    assert.match(script, /credential\.provider === "codex_oauth" \|\| credential\.provider === "openai_compatible"/)
+    assert.match(script, /fetchJson\(`\/credentials\/\$\{encodeURIComponent\(credential\.id\)\}\/models`\)/)
+    assert.match(script, /state\.modelDiscovery\.models/)
+    assert.match(script, /function removeDraftModel\(provider, model\)/)
+    assert.match(script, /modelRefsEqual\(state\.modelPolicy\.draftActiveModel, target\)/)
+    assert.match(script, /Select a replacement active model before removing this model\./)
+    assert.match(
+      script,
+      /const normalizedSaved = normalizeModelPolicy\(saved\?\.policy\);[\s\S]*if \(!normalizedSaved\) \{[\s\S]*throw new Error\("invalid_model_policy_response"\);[\s\S]*state\.modelPolicy\.saved = normalizedSaved/,
+    )
+    assert.doesNotMatch(script, /modelPolicy[^\n]*addEventListener\("change",[^\n]*saveModelPolicy/)
   } finally {
     server.close()
     await once(server, "close")
