@@ -167,6 +167,15 @@ requests. This keeps `traceId`, `runId`, `workspaceId`, conversation id, and
 OpenCode session id attached to AI gateway proxy events through the whole send
 workflow.
 
+Managed-AI authorization is bound at the same server-owned run boundary. A
+workspace-scoped access prime associates the authenticated organization with a
+workspace identity already validated by the local server. Run admission copies
+that actor-plus-organization binding into active run context. Provider requests
+then resolve authorization from the registered OpenCode session and active run,
+not from caller-supplied organization or workspace headers. Concurrent runs for
+different organizations therefore keep distinct authorization and accounting
+scope, and missing or ambiguous multi-organization binding fails closed.
+
 Server-controlled writes must remain expressible through Veslo server APIs.
 Avoid adding Tauri-only filesystem mutations for behavior that changes
 `.opencode/` state.

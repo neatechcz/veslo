@@ -152,7 +152,7 @@ test("runtime auth prime is single-flight and cached for a short success window"
   let accessCalls = 0;
   const firstAccessGate: { release?: () => void } = {};
   const traces: string[] = [];
-  const accessArguments: Array<[string, string | undefined]> = [];
+  const accessArguments: Array<[string, string | undefined, string | undefined]> = [];
   const response = {
     aiAccess: {
       id: "access-1",
@@ -174,8 +174,8 @@ test("runtime auth prime is single-flight and cached for a short success window"
       },
       createVesloServerClient: () => ({
         baseUrl: "http://127.0.0.1:34115",
-        getMyAiAccess: async (userToken, orgId) => {
-          accessArguments.push([userToken, orgId]);
+        getMyAiAccess: async (userToken, orgId, workspaceId) => {
+          accessArguments.push([userToken, orgId, workspaceId]);
           accessCalls += 1;
           if (accessCalls === 1) {
             await new Promise<void>((resolve) => {
@@ -215,9 +215,9 @@ test("runtime auth prime is single-flight and cached for a short success window"
   assert.equal(await sync.ensureManagedAiRuntimeAuthorizationForSend(), true);
   assert.equal(accessCalls, 3);
   assert.deepEqual(accessArguments, [
-    ["den-token", "org-1"],
-    ["den-token", "org-1"],
-    ["den-token", "org-1"],
+    ["den-token", "org-1", "ws-active"],
+    ["den-token", "org-1", "ws-active"],
+    ["den-token", "org-1", "ws-active"],
   ]);
 });
 

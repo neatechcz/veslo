@@ -25,6 +25,7 @@ const activeRun = {
   clientMessageId: "client-message-1",
   origin: "composer",
   runtimeAuthorizationActorTokenHash: null,
+  runtimeAuthorizationOrgId: null,
 };
 
 describe("createAiGatewayRuntimeOwner", () => {
@@ -257,6 +258,173 @@ describe("createAiGatewayRuntimeOwner", () => {
     ).toThrow(ApiError);
   });
 
+  test("keeps concurrent organization authorizations isolated by server-owned workspace run binding", () => {
+    const owner = createAiGatewayRuntimeOwner();
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      orgId: "org-a",
+      workspaceId: "workspace-a",
+      callerAuthorization: "Bearer caller-a",
+      value: { aiAccess: { enabled: true }, accessToken: "runtime-a" },
+    });
+    const bindingA = owner.resolveRuntimeAuthorizationBindingForRun({
+      actor,
+      workspaceId: "workspace-a",
+    });
+    owner.registerActiveRun({
+      ...activeRun,
+      workspaceId: "workspace-a",
+      conversationId: "conversation-a",
+      runId: "run-a",
+      opencodeSessionId: "session-a",
+      runtimeAuthorizationActorTokenHash: bindingA.actorTokenHash,
+      runtimeAuthorizationOrgId: bindingA.orgId,
+    });
+
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      orgId: "org-b",
+      workspaceId: "workspace-b",
+      callerAuthorization: "Bearer caller-b",
+      value: { aiAccess: { enabled: true }, accessToken: "runtime-b" },
+    });
+    const bindingB = owner.resolveRuntimeAuthorizationBindingForRun({
+      actor,
+      workspaceId: "workspace-b",
+    });
+    owner.registerActiveRun({
+      ...activeRun,
+      workspaceId: "workspace-b",
+      conversationId: "conversation-b",
+      runId: "run-b",
+      opencodeSessionId: "session-b",
+      runtimeAuthorizationActorTokenHash: bindingB.actorTokenHash,
+      runtimeAuthorizationOrgId: bindingB.orgId,
+    });
+
+    const resolve = (sessionId: string, forgedOrgId: string, forgedWorkspaceId: string) => {
+      const context = owner.resolveSession({
+        incomingSessionId: sessionId,
+        workspaceId: forgedWorkspaceId,
+      }).activeRunContext;
+      expect(context).not.toBeNull();
+      return owner.resolveProviderAuthorization({
+        actor: opencodeActor,
+        request: new Request("http://localhost", {
+          headers: {
+            "x-veslo-org-id": forgedOrgId,
+            "x-veslo-workspace-id": forgedWorkspaceId,
+          },
+        }),
+        accessTokenHeader: "x-veslo-gateway-token",
+        runtimeAuthorizationActorTokenHash: context?.runtimeAuthorizationActorTokenHash,
+        runtimeAuthorizationOrgId: context?.runtimeAuthorizationOrgId,
+        activeRunContextPresent: true,
+      });
+    };
+
+    expect(resolve("session-a", "org-b", "workspace-b")).toEqual({
+      authorization: "Bearer runtime-a",
+      source: "ai-access-token",
+      orgId: "org-a",
+    });
+    expect(resolve("session-b", "org-a", "workspace-a")).toEqual({
+      authorization: "Bearer runtime-b",
+      source: "ai-access-token",
+      orgId: "org-b",
+    });
+
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      orgId: "org-b",
+      workspaceId: "workspace-b",
+      callerAuthorization: "Bearer caller-b-2",
+      value: { aiAccess: { enabled: true }, accessToken: "runtime-b-2" },
+    });
+
+    expect(resolve("session-a", "org-b", "workspace-b").authorization).toBe("Bearer runtime-a");
+    expect(resolve("session-b", "org-a", "workspace-a").authorization).toBe("Bearer runtime-b-2");
+  });
+
+  test("denied organization binding cannot inherit another allowed organization", () => {
+    const owner = createAiGatewayRuntimeOwner();
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      orgId: "org-b",
+      workspaceId: "workspace-b",
+      callerAuthorization: "Bearer caller-b",
+      value: { aiAccess: { enabled: true }, accessToken: "runtime-b" },
+    });
+    owner.syncRuntimeAuthorizationFromAccessBundle({
+      actor,
+      orgId: "org-a",
+      workspaceId: "workspace-a",
+      callerAuthorization: "Bearer caller-a",
+      value: { aiAccess: { enabled: false } },
+    });
+
+    const deniedBinding = owner.resolveRuntimeAuthorizationBindingForRun({
+      actor,
+      workspaceId: "workspace-a",
+    });
+    expect(deniedBinding).toEqual({ actorTokenHash: "actor-token", orgId: "org-a" });
+    expect(() =>
+      owner.resolveProviderAuthorization({
+        actor: opencodeActor,
+        request: new Request("http://localhost"),
+        accessTokenHeader: "x-veslo-gateway-token",
+        runtimeAuthorizationActorTokenHash: deniedBinding.actorTokenHash,
+        runtimeAuthorizationOrgId: deniedBinding.orgId,
+        activeRunContextPresent: true,
+      })
+    ).toThrow(ApiError);
+  });
+
+  test("fails closed when a multi-organization actor has no server-owned workspace binding", () => {
+    const owner = createAiGatewayRuntimeOwner();
+    for (const orgId of ["org-a", "org-b"]) {
+      owner.syncRuntimeAuthorizationFromAccessBundle({
+        actor,
+        orgId,
+        callerAuthorization: `Bearer caller-${orgId}`,
+        value: { aiAccess: { enabled: true }, accessToken: `runtime-${orgId}` },
+      });
+    }
+
+    expect(() =>
+      owner.resolveRuntimeAuthorizationBindingForRun({ actor, workspaceId: "workspace-unbound" })
+    ).toThrow(ApiError);
+  });
+
+  test("clearing an actor removes every organization and workspace-scoped authorization", () => {
+    const owner = createAiGatewayRuntimeOwner();
+    for (const [orgId, workspaceId] of [["org-a", "workspace-a"], ["org-b", "workspace-b"]]) {
+      owner.syncRuntimeAuthorizationFromAccessBundle({
+        actor,
+        orgId,
+        workspaceId,
+        callerAuthorization: `Bearer caller-${orgId}`,
+        value: { aiAccess: { enabled: true }, accessToken: `runtime-${orgId}` },
+      });
+    }
+
+    owner.clearRuntimeAuthorization(actor);
+
+    for (const workspaceId of ["workspace-a", "workspace-b"]) {
+      const binding = owner.resolveRuntimeAuthorizationBindingForRun({ actor, workspaceId });
+      expect(() =>
+        owner.resolveProviderAuthorization({
+          actor: opencodeActor,
+          request: new Request("http://localhost"),
+          accessTokenHeader: "x-veslo-gateway-token",
+          runtimeAuthorizationActorTokenHash: binding.actorTokenHash,
+          runtimeAuthorizationOrgId: binding.orgId,
+          activeRunContextPresent: true,
+        })
+      ).toThrow(ApiError);
+    }
+  });
+
   test("expires runtime authorization by age and accepts a fresh access prime", () => {
     let now = 1_000;
     const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
@@ -325,7 +493,7 @@ describe("createAiGatewayRuntimeOwner", () => {
     });
   });
 
-  test("falls back to fresh actor runtime authorization when scoped run authorization expired", () => {
+  test("does not let an expired scoped run fall back to another actor authorization", () => {
     let now = 1_000;
     const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
     const owner = createAiGatewayRuntimeOwner({
@@ -353,16 +521,15 @@ describe("createAiGatewayRuntimeOwner", () => {
       },
     });
 
-    expect(owner.resolveProviderAuthorization({
-      actor: opencodeActor,
-      request: new Request("http://localhost"),
-      accessTokenHeader: "x-veslo-gateway-token",
-      runtimeAuthorizationActorTokenHash: actor.tokenHash ?? null,
-      activeRunContextPresent: true,
-    })).toEqual({
-      authorization: "Bearer fresh-actor-runtime-token",
-      source: "ai-access-token",
-    });
+    expect(() =>
+      owner.resolveProviderAuthorization({
+        actor: opencodeActor,
+        request: new Request("http://localhost"),
+        accessTokenHeader: "x-veslo-gateway-token",
+        runtimeAuthorizationActorTokenHash: actor.tokenHash ?? null,
+        activeRunContextPresent: true,
+      })
+    ).toThrow(ApiError);
 
     expect(traces).toEqual([
       {

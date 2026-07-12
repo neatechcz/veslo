@@ -62,13 +62,14 @@ export type ConversationRunLifecycleAiGatewayActiveRunInput = {
   clientMessageId: string | null;
   origin: string | null;
   runtimeAuthorizationActorTokenHash: string | null;
+  runtimeAuthorizationOrgId: string | null;
 };
 
 export type ConversationRunLifecycleAiGatewayActiveRunPort = {
   register(input: ConversationRunLifecycleAiGatewayActiveRunInput): void;
   unregister(input: Omit<
     ConversationRunLifecycleAiGatewayActiveRunInput,
-    "traceId" | "clientMessageId" | "origin" | "runtimeAuthorizationActorTokenHash"
+    "traceId" | "clientMessageId" | "origin" | "runtimeAuthorizationActorTokenHash" | "runtimeAuthorizationOrgId"
   >): void;
 };
 
@@ -141,6 +142,7 @@ export type ConversationRunLifecycleSubmitInput = {
   submitQueuePolicy?: ConversationRunLifecycleSubmitQueuePolicy;
   expectAiGatewayStart: boolean;
   runtimeAuthorizationActorTokenHash?: string | null;
+  runtimeAuthorizationOrgId?: string | null;
 };
 
 export type ConversationRunLifecycleSubmitResult = {
@@ -403,6 +405,9 @@ export function createConversationRunLifecycleController(
       ...(input.runtimeAuthorizationActorTokenHash
         ? { runtimeAuthorizationActorTokenHash: input.runtimeAuthorizationActorTokenHash }
         : {}),
+      ...(input.runtimeAuthorizationOrgId
+        ? { runtimeAuthorizationOrgId: input.runtimeAuthorizationOrgId }
+        : {}),
     });
     let queued: ReturnType<ConversationRunQueueStore["enqueue"]>;
     try {
@@ -508,6 +513,7 @@ export function createConversationRunLifecycleController(
       clientMessageId: input.clientMessageId,
       origin: input.origin,
       runtimeAuthorizationActorTokenHash: input.runtimeAuthorizationActorTokenHash?.trim() || null,
+      runtimeAuthorizationOrgId: input.runtimeAuthorizationOrgId?.trim() || null,
     });
     return true;
   };
@@ -1081,6 +1087,7 @@ export function createConversationRunLifecycleController(
       const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
       const runtimeAuthorizationActorTokenHash =
         optionalBodyString(body, "runtimeAuthorizationActorTokenHash") || null;
+      const runtimeAuthorizationOrgId = optionalBodyString(body, "runtimeAuthorizationOrgId") || null;
       const target: ConversationRunLifecycleTarget = {
         directory: item.directory,
         binding: null,
@@ -1152,6 +1159,7 @@ export function createConversationRunLifecycleController(
         origin: item.origin,
         expectAiGatewayStart,
         runtimeAuthorizationActorTokenHash,
+        runtimeAuthorizationOrgId,
       }, lifecycleOwner);
       const submitted = options.queueStore.markSubmitted(item.queueItemId);
       if (!submitted) {

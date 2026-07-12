@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import { registerAiGatewayRoutes } from "../routes/ai-gateway.js";
 import { matchRoute, type RequestContext, type Route } from "../routing.js";
 
+const actor = { type: "remote", tokenHash: "actor-token", scope: "collaborator" } as const;
+
 describe("AI gateway routes", () => {
   test("registers the AI gateway proxy contract", () => {
     const routes: Route[] = [];
@@ -11,12 +13,14 @@ describe("AI gateway routes", () => {
       clearAiGatewayRuntimeAuthorization: () => undefined,
       proxyAiGatewayReadinessRequest: proxy,
       proxyAiGatewayRequest: proxy,
+      resolveAiGatewayWorkspaceId: async (_ctx, workspaceId) => workspaceId,
     });
 
-    expect(routes).toHaveLength(7);
+    expect(routes).toHaveLength(8);
 
     const expectedRoutes = [
       ["GET", "/ai-gateway/me/ai-access"],
+      ["GET", "/workspace/:id/ai-gateway/me/ai-access"],
       ["GET", "/ai-gateway/readiness"],
       ["POST", "/ai-gateway/me/runtime-authorization/clear"],
       ["POST", "/ai-gateway/providers/openai/v1/chat/completions"],
@@ -45,6 +49,7 @@ describe("AI gateway routes", () => {
       clearAiGatewayRuntimeAuthorization: () => undefined,
       proxyAiGatewayReadinessRequest: proxy,
       proxyAiGatewayRequest: proxy,
+      resolveAiGatewayWorkspaceId: async (_ctx, workspaceId) => workspaceId,
     });
 
     const route = matchRoute(routes, "POST", "/ai-gateway/providers/openai/v1/chat/completions");
@@ -64,5 +69,39 @@ describe("AI gateway routes", () => {
       },
     });
     expect(proxyCalled).toBe(false);
+  });
+
+  test("workspace access prime uses only the server-resolved route workspace identity", async () => {
+    const routes: Route[] = [];
+    const proxyInputs: Array<Record<string, unknown>> = [];
+    registerAiGatewayRoutes(routes, {
+      clearAiGatewayRuntimeAuthorization: () => undefined,
+      proxyAiGatewayReadinessRequest: async () => new Response("{}"),
+      proxyAiGatewayRequest: async (input) => {
+        proxyInputs.push(input as unknown as Record<string, unknown>);
+        return new Response("{}");
+      },
+      resolveAiGatewayWorkspaceId: async (_ctx, workspaceId) => {
+        expect(workspaceId).toBe("forged-route-value");
+        return "server-owned-workspace";
+      },
+    });
+
+    const route = matchRoute(
+      routes,
+      "GET",
+      "/workspace/forged-route-value/ai-gateway/me/ai-access",
+    );
+    await route?.handler({
+      request: new Request("http://127.0.0.1/workspace/forged-route-value/ai-gateway/me/ai-access", {
+        headers: { "x-veslo-workspace-id": "forged-header-workspace" },
+      }),
+      url: new URL("http://127.0.0.1/workspace/forged-route-value/ai-gateway/me/ai-access"),
+      params: { id: "forged-route-value" },
+      actor,
+    } as unknown as RequestContext);
+
+    expect(proxyInputs).toHaveLength(1);
+    expect(proxyInputs[0]?.runtimeWorkspaceId).toBe("server-owned-workspace");
   });
 });

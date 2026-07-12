@@ -503,13 +503,19 @@ export function createVesloServerClient(options: {
       }),
     opencodeRouterHealth: identities.health,
     opencodeRouterBindings: identities.bindings,
-    getMyAiAccess: (userToken: string, orgId?: string) =>
-      requestJson<VesloManagedAiAccessBundle>(baseUrl, "/ai-gateway/me/ai-access", {
+    getMyAiAccess: (userToken: string, orgId?: string, workspaceId?: string) =>
+      requestJson<VesloManagedAiAccessBundle>(
+        baseUrl,
+        workspaceId?.trim()
+          ? `/workspace/${encodeURIComponent(workspaceId.trim())}/ai-gateway/me/ai-access`
+          : "/ai-gateway/me/ai-access",
+        {
         token,
         hostToken,
         timeoutMs: timeouts.aiAccess,
         extraHeaders: buildGatewayCallerHeaders(userToken, orgId),
-      }),
+        },
+      ),
     clearMyAiGatewayRuntimeAuthorization: () =>
       requestJson<{ ok: true }>(baseUrl, "/ai-gateway/me/runtime-authorization/clear", {
         method: "POST",

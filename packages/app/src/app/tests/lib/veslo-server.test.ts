@@ -3728,7 +3728,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
     assert.equal(typeof client.getMyAiAccess, "function");
     assert.equal(typeof client.clearMyAiGatewayRuntimeAuthorization, "function");
 
-    const response = await client.getMyAiAccess("den-user-token", "org_123");
+    const response = await client.getMyAiAccess("den-user-token", "org_123", "workspace a");
     const clearResponse = await client.clearMyAiGatewayRuntimeAuthorization();
 
     assert.deepEqual(response, {
@@ -3746,7 +3746,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
 
     assert.deepEqual(calls, [
       {
-        url: "http://127.0.0.1:8787/ai-gateway/me/ai-access",
+        url: "http://127.0.0.1:8787/workspace/workspace%20a/ai-gateway/me/ai-access",
         method: "GET",
         headers: {
           authorization: "Bearer veslo-server-token",

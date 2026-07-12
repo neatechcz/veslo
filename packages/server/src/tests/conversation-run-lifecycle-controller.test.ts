@@ -969,6 +969,7 @@ test("submitRun keeps active gateway context after provider start and clears it 
   const result = await controller.submitRun(submitInput({
     expectAiGatewayStart: true,
     runtimeAuthorizationActorTokenHash: "request-actor-hash",
+    runtimeAuthorizationOrgId: "org-a",
   }));
 
   expect(result.httpStatus).toBe(200);
@@ -979,6 +980,7 @@ test("submitRun keeps active gateway context after provider start and clears it 
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
   expect(activeGatewayCalls[0]?.input).toMatchObject({
     runtimeAuthorizationActorTokenHash: "request-actor-hash",
+    runtimeAuthorizationOrgId: "org-a",
   });
   expect(reconcileCalls).toEqual([{
     workspaceId: "ws_1",
