@@ -19,12 +19,19 @@
     {
       "idx": 2,
       "version": "5",
+      "when": 1775211720000,
+      "tag": "0002_user_ai_access_assignment_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
       "when": 1783838130000,
       "tag": "0003_platform_model_policy",
       "breakpoints": true
     },
     {
-      "idx": 3,
+      "idx": 4,
       "version": "5",
       "when": 1783843200000,
       "tag": "0004_organization_audit_scope",
