@@ -137,8 +137,6 @@ test("rotates auto-assigned Codex access away from an exhausted credential", asy
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_new",
-      defaultModel: "gpt-5.5",
-      allowedModels: ["gpt-5.5"],
       assignmentOrigin: "auto_assigned",
     },
   ])
@@ -202,8 +200,6 @@ test("rotates admin-assigned Codex access away from an exhausted credential", as
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_new",
-      defaultModel: "gpt-5.5",
-      allowedModels: ["gpt-5.5"],
       assignmentOrigin: "admin_assigned",
     },
   ])

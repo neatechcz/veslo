@@ -68,6 +68,7 @@ function createEntitlementApp(input: {
   app.use(express.json())
   app.use(
     createProxyRouter({
+      denInferenceMode: "legacy_rollback",
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")

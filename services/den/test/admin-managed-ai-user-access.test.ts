@@ -28,8 +28,6 @@ function createAiAccess() {
     enabled: true,
     provider: "openai",
     credentialId: "cred_openai_123",
-    defaultModel: "gpt-4o-mini",
-    allowedModels: ["gpt-4o-mini", "gpt-4.1-mini"],
     updatedAt: "2026-04-10T10:05:00.000Z",
   }
 }
@@ -176,7 +174,7 @@ test("GET /admin/api/users/:userId/ai-access returns the stored ai access policy
   }
 })
 
-test("GET /admin/api/users/:userId/ai-access repairs admin-assigned Codex credentials before returning", async () => {
+test("GET /admin/api/users/:userId/ai-access does not mutate Codex assignments during compatibility reads", async () => {
   const session = createSession()
   const upserts: unknown[] = []
   const app = express()
@@ -215,8 +213,8 @@ test("GET /admin/api/users/:userId/ai-access repairs admin-assigned Codex creden
               enabled: input.enabled,
               provider: input.provider,
               credentialId: input.credentialId,
-              defaultModel: input.defaultModel,
-              allowedModels: input.allowedModels,
+              defaultModel: null,
+              allowedModels: [],
               assignmentOrigin: input.assignmentOrigin,
               createdAt: new Date("2026-05-07T08:00:00.000Z"),
               updatedAt: new Date("2026-05-07T09:00:00.000Z"),
@@ -302,18 +300,8 @@ test("GET /admin/api/users/:userId/ai-access repairs admin-assigned Codex creden
 
     assert.equal(response.status, 200)
     const body = await response.json()
-    assert.equal(body.aiAccess.credentialId, "cred_new")
-    assert.deepEqual(upserts, [
-      {
-        userId: "user_123",
-        enabled: true,
-        provider: "codex_oauth",
-        credentialId: "cred_new",
-        defaultModel: "gpt-5.5",
-        allowedModels: ["gpt-5.5"],
-        assignmentOrigin: "admin_assigned",
-      },
-    ])
+    assert.equal(body.aiAccess.credentialId, "cred_old")
+    assert.deepEqual(upserts, [])
   } finally {
     server.close()
     await once(server, "close")
@@ -345,8 +333,8 @@ test("PUT /admin/api/users/:userId/ai-access returns available codex credentials
               enabled: input.enabled,
               provider: input.provider,
               credentialId: input.credentialId,
-              defaultModel: input.defaultModel,
-              allowedModels: input.allowedModels,
+              defaultModel: null,
+              allowedModels: [],
               createdAt: new Date("2026-04-10T10:00:00.000Z"),
               updatedAt: new Date("2026-04-10T10:05:00.000Z"),
             }
@@ -413,6 +401,20 @@ test("PUT /admin/api/users/:userId/ai-access returns available codex credentials
 
   try {
     const { port } = server.address() as AddressInfo
+    const legacyResponse = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "codex_oauth",
+        credentialId: "cred_codex_123",
+        defaultModel: "gpt-5.4",
+        allowedModels: ["gpt-5.4"],
+      }),
+    })
+    assert.equal(legacyResponse.status, 400)
+    assert.deepEqual(await legacyResponse.json(), { error: "user_model_policy_not_supported" })
+
     const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
       method: "PUT",
       headers: {
@@ -422,8 +424,6 @@ test("PUT /admin/api/users/:userId/ai-access returns available codex credentials
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_123",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       }),
     })
 
@@ -434,8 +434,6 @@ test("PUT /admin/api/users/:userId/ai-access returns available codex credentials
         userId: "user_123",
         provider: "codex_oauth",
         credentialId: "cred_codex_123",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       },
       availableCredentials: [{ id: "cred_codex_123", name: "Shared Codex A", provider: "codex_oauth" }],
     })
@@ -682,8 +680,6 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
               enabled: true,
               provider: "anthropic",
               credentialId: "cred_anthropic_123",
-              defaultModel: "claude-3-7-sonnet",
-              allowedModels: ["claude-3-7-sonnet", "claude-3-5-sonnet"],
               assignmentOrigin: "admin_assigned",
             })
             return {
@@ -692,8 +688,8 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
               enabled: input.enabled,
               provider: input.provider,
               credentialId: input.credentialId,
-              defaultModel: input.defaultModel,
-              allowedModels: input.allowedModels,
+              defaultModel: null,
+              allowedModels: [],
               createdAt: new Date("2026-04-10T10:00:00.000Z"),
               updatedAt: new Date("2026-04-10T10:05:00.000Z"),
             }
@@ -734,8 +730,6 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
           enabled: true,
           provider: "anthropic",
           credentialId: "cred_anthropic_123",
-          defaultModel: "claude-3-7-sonnet",
-          allowedModels: ["claude-3-7-sonnet", "claude-3-5-sonnet"],
         }),
       })
 
@@ -746,8 +740,6 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
         userId: "user_123",
         provider: "anthropic",
         credentialId: "cred_anthropic_123",
-        defaultModel: "claude-3-7-sonnet",
-        allowedModels: ["claude-3-7-sonnet", "claude-3-5-sonnet"],
       },
     })
     assert.deepEqual(auditCalls, [
@@ -790,8 +782,6 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
               enabled: true,
               provider: "codex_oauth",
               credentialId: "cred_codex_123",
-              defaultModel: "gpt-5.4",
-              allowedModels: ["gpt-5.4"],
               assignmentOrigin: "admin_assigned",
             })
             return {
@@ -800,8 +790,8 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
               enabled: input.enabled,
               provider: input.provider,
               credentialId: input.credentialId,
-              defaultModel: input.defaultModel,
-              allowedModels: input.allowedModels,
+              defaultModel: null,
+              allowedModels: [],
               createdAt: new Date("2026-04-10T10:00:00.000Z"),
               updatedAt: new Date("2026-04-10T10:05:00.000Z"),
             }
@@ -861,8 +851,6 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_123",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       }),
     })
 
@@ -873,8 +861,6 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
         userId: "user_123",
         provider: "codex_oauth",
         credentialId: "cred_codex_123",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       },
       availableCredentials: [{ id: "cred_codex_123", name: "Shared Codex A", provider: "codex_oauth" }],
     })
@@ -945,8 +931,6 @@ test("PUT /admin/api/users/:userId/ai-access requires an OpenAI-compatible crede
         enabled: true,
         provider: "openai_compatible",
         credentialId: null,
-        defaultModel: "qwen/qwen3",
-        allowedModels: ["qwen/qwen3"],
       }),
     })
 
@@ -985,8 +969,8 @@ test("PUT /admin/api/users/:userId/ai-access accepts a healthy OpenAI-compatible
               enabled: input.enabled,
               provider: input.provider,
               credentialId: input.credentialId,
-              defaultModel: input.defaultModel,
-              allowedModels: input.allowedModels,
+              defaultModel: null,
+              allowedModels: [],
               createdAt: new Date("2026-04-10T10:00:00.000Z"),
               updatedAt: new Date("2026-04-10T10:05:00.000Z"),
             }
@@ -1039,8 +1023,6 @@ test("PUT /admin/api/users/:userId/ai-access accepts a healthy OpenAI-compatible
         enabled: true,
         provider: "openai_compatible",
         credentialId: "cred_custom_1",
-        defaultModel: "qwen/qwen3",
-        allowedModels: ["qwen/qwen3"],
       }),
     })
 
@@ -1050,8 +1032,6 @@ test("PUT /admin/api/users/:userId/ai-access accepts a healthy OpenAI-compatible
       userId: "user_123",
       provider: "openai_compatible",
       credentialId: "cred_custom_1",
-      defaultModel: "qwen/qwen3",
-      allowedModels: ["qwen/qwen3"],
     })
   } finally {
     server.close()
@@ -1135,8 +1115,6 @@ test("PUT /admin/api/users/:userId/ai-access rejects credentials from the wrong 
         enabled: true,
         provider: "openai_compatible",
         credentialId: "cred_codex_healthy",
-        defaultModel: "qwen/qwen3",
-        allowedModels: ["qwen/qwen3"],
       }),
     })
 
@@ -1220,8 +1198,6 @@ test("PUT /admin/api/users/:userId/ai-access rejects unhealthy OpenAI-compatible
         enabled: true,
         provider: "openai_compatible",
         credentialId: "cred_custom_unhealthy",
-        defaultModel: "qwen/qwen3",
-        allowedModels: ["qwen/qwen3"],
       }),
     })
 
@@ -1333,8 +1309,6 @@ test("PUT /admin/api/users/:userId/ai-access rejects exhausted codex_oauth crede
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_exhausted",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       }),
     })
 
@@ -1404,8 +1378,6 @@ test("PUT /admin/api/users/:userId/ai-access rejects enabled codex_oauth without
       body: JSON.stringify({
         enabled: true,
         provider: "codex_oauth",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       }),
     })
 

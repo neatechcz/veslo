@@ -28,6 +28,18 @@ Local Veslo server runtime state for this proxy path is owned by
 `packages/server/src/ai-gateway-runtime-owner.ts`. The HTTP transport remains
 wired through `packages/server/src/server.ts`.
 
+## Global model policy rollout
+
+Deploy the global-model transition in this order:
+
+1. Deploy schema, repository, and API support for the global policy while retaining the historical per-user model columns.
+2. Configure and verify exactly one active platform model.
+3. Enable runtime enforcement and the simplified user-assignment contracts that contain only access, provider, and credential state.
+4. Remove per-user model controls from the app and admin UI.
+5. Remove the historical database columns only in a separately approved cleanup after the rollback window closes.
+
+The retained `default_model` and `allowed_models_json` values are rollback-only data. New DEN access records store neutral compatibility values, updates preserve historical values without changing them, and the standalone AI Gateway never uses those columns as runtime model authority. Production DEN provider inference routes are retired and return `den_managed_ai_inference_retired`; the old per-user policy path is available only through an explicit rollback-only runtime mode. A temporary DEN self-access endpoint may return an injected gateway-owned `effectiveModel`; when no gateway policy resolver is configured, it fails explicitly instead of falling back to the retained columns. Account creation and eligible credential assignment remain available even when the platform model policy has not yet been configured, but inference remains blocked until the active policy exists.
+
 ## App behavior
 
 - End users no longer get provider connect/disconnect controls.
@@ -43,9 +55,9 @@ wired through `packages/server/src/server.ts`.
 - The AI Gateway admin `Users` page includes an `AI access` editor.
 - The AI Gateway admin `Organization` page is shared by Platform Admins and Organization Admins. Platform Admins can switch the edited organization with the searchable organization selector on that page; Organization Admins only see their active organization and do not see the selector or seat-limit controls.
 - Platform admins can enable/disable user access, pick the assigned provider and credential, and manage the global enabled/active model policy under AI Infrastructure. User assignments contain no model fields.
-- New DEN sign-ups may be auto-assigned to Codex / ChatGPT inference when at least one eligible Codex OAuth inference credential exists. These rows are marked `auto_assigned`. The active platform model applies to them like every other managed-AI user.
+- New DEN sign-ups may be auto-assigned to Codex / ChatGPT inference when the read-only Gateway policy projection reports `codex_oauth` as the active provider and at least one eligible Codex OAuth inference credential exists. These rows are marked `auto_assigned`. A non-Codex, missing, or unavailable policy projection skips assignment without failing account creation. The active platform model applies to assigned users like every other managed-AI user.
 - Admin edits are marked `admin_assigned`. Non-Codex admin assignments remain explicit credential choices.
-- Assigned Codex access is lazily repaired on the next Codex request, including both `auto_assigned` and `admin_assigned` rows. If the assigned credential is missing, no longer healthy, revoked, permanently unavailable, or currently exhausted, DEN selects another healthy eligible Codex credential and updates the user's policy before routing the request. If no replacement exists, the request fails explicitly and the existing assignment is kept.
+- Assigned Codex access is lazily repaired by the canonical AI Gateway on the next Codex request, including both `auto_assigned` and `admin_assigned` rows. If the assigned credential is missing, no longer healthy, revoked, permanently unavailable, or currently exhausted, the Gateway selects another healthy eligible Codex credential and updates the user's policy before routing the request. DEN compatibility reads are mutation-free. If no replacement exists, the request fails explicitly and the existing assignment is kept.
 - Codex credential assignment options only include credentials whose provider is `codex_oauth`, whose stored state is `healthy`, and whose latest upstream status probe reports OK. A successful `codex | OK` probe is eligible even when rate-limit windows cannot be parsed; revoked, draining, unhealthy, invalid-grant, or probe-failing credentials are hidden from assignment.
 - When no eligible Codex credential exists, user creation still succeeds and AI access remains unassigned until an eligible credential is available.
 - The DEN admin and standalone AI Gateway admin `Credentials` pages are the place to connect/reconnect OpenAI and create/rotate shared Anthropic, Codex OAuth inference, and OpenAI-compatible credentials.
@@ -174,7 +186,7 @@ Use these commands when verifying the admin-managed flow locally or against the 
   - `POST /ai-gateway/providers/anthropic/v1/messages`
   - `POST /ai-gateway/providers/codex_oauth/v1/chat/completions`
   - `POST /ai-gateway/providers/openai_compatible/v1/chat/completions`
-- DEN hosted provider routes:
+- Retired DEN hosted provider routes (return `410 den_managed_ai_inference_retired` in the production runtime):
   - `POST /providers/openai/v1/chat/completions`
   - `POST /providers/anthropic/v1/messages`
   - `POST /providers/codex_oauth/v1/chat/completions`
