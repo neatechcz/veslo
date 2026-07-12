@@ -134,6 +134,7 @@ export const auditEventTable = mysqlTable(
   {
     id: idColumn().primaryKey(),
     actor_user_id: varchar("actor_user_id", { length: 64 }),
+    organization_id: varchar("organization_id", { length: 64 }),
     entity_type: varchar("entity_type", { length: 64 }).notNull(),
     entity_id: varchar("entity_id", { length: 64 }).notNull(),
     action: varchar("action", { length: 64 }).notNull(),
@@ -145,6 +146,7 @@ export const auditEventTable = mysqlTable(
     index("audit_event_entity").on(table.entity_type, table.entity_id),
     index("audit_event_actor").on(table.actor_user_id),
     index("audit_event_action").on(table.action),
+    index("audit_event_organization_created").on(table.organization_id, table.created_at),
   ],
 );
 

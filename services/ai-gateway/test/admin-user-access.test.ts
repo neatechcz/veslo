@@ -25,6 +25,7 @@ const AVAILABLE_CREDENTIALS = [
 ];
 
 let adminUserAccessUpsertCalls = 0;
+let adminUserAccessOrganizationId: string | null | undefined;
 
 function createCredential(
   id: string,
@@ -73,6 +74,7 @@ function createSupportedModelCapabilities() {
 
 function createAdminUserAccessApp() {
   adminUserAccessUpsertCalls = 0;
+  adminUserAccessOrganizationId = undefined;
   let currentAiAccess = {
     ...AI_ACCESS_PAYLOAD,
   };
@@ -163,8 +165,9 @@ function createAdminUserAccessApp() {
           availableCredentials: AVAILABLE_CREDENTIALS,
         };
       },
-      async upsertUserAiAccess(_token: string, userId: string, input: Record<string, unknown>) {
+      async upsertUserAiAccess(_token: string, userId: string, input: Record<string, unknown>, organizationId?: string | null) {
         adminUserAccessUpsertCalls += 1;
+        adminUserAccessOrganizationId = organizationId;
         currentAiAccess = {
           id: currentAiAccess.id,
           updatedAt: currentAiAccess.updatedAt,
@@ -286,6 +289,30 @@ test("PUT /admin/api/users/:userId/ai-access rejects legacy user model fields wi
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), { error: "user_model_policy_not_supported" });
     assert.equal(adminUserAccessUpsertCalls, 0);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("PUT /admin/api/users/:userId/ai-access forwards authorized organization audit scope", async () => {
+  const app = createAdminUserAccessApp();
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
+      body: JSON.stringify({
+        enabled: true,
+        provider: "codex_oauth",
+        credentialId: "cred_codex_123",
+        organizationId: "org_1",
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(adminUserAccessOrganizationId, "org_1");
   } finally {
     server.close();
     await once(server, "close");

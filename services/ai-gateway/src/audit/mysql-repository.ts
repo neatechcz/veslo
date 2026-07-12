@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 
-import { desc } from "drizzle-orm"
+import { desc, eq } from "drizzle-orm"
 
 import type { AiGatewayDb } from "../db/index.js"
 import { auditEventTable } from "../db/schema.js"
@@ -18,6 +18,7 @@ export class MySqlAuditRepository implements AuditRepository {
     await this.db.insert(auditEventTable).values({
       id: createAuditEventId(input),
       actor_user_id: input.actorUserId ?? null,
+      organization_id: input.organizationId ?? null,
       entity_type: input.entityType,
       entity_id: input.entityId,
       action: input.action,
@@ -31,6 +32,7 @@ export class MySqlAuditRepository implements AuditRepository {
     const rows = await this.db
       .select()
       .from(auditEventTable)
+      .where(input.organizationId ? eq(auditEventTable.organization_id, input.organizationId) : undefined)
       .orderBy(desc(auditEventTable.created_at))
       .limit(input.limit)
 
@@ -44,6 +46,7 @@ export class MySqlAuditRepository implements AuditRepository {
       result: normalizeResult(row.result),
       summary: row.summary ?? "",
       changedFields: [],
+      organizationId: row.organization_id ?? null,
     }))
   }
 }

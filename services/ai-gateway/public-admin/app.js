@@ -60,6 +60,8 @@ const state = {
   organizationLoad: createOrganizationLoadState(),
   organizationDomains: [],
   organizationInvites: [],
+  organizationBilling: null,
+  organizationAudit: [],
   usage: null,
   readiness: null,
   usageFilters: {
@@ -115,6 +117,7 @@ const els = {
   organizationSections: Array.from(document.querySelectorAll("[data-organization-section]")),
   organizationPlaceholders: Array.from(document.querySelectorAll("[data-organization-placeholder]")),
   platformAdminControls: Array.from(document.querySelectorAll("[data-platform-admin-control]")),
+  organizationBillingControls: Array.from(document.querySelectorAll("[data-organization-billing-control]")),
   aiAccessControls: Array.from(document.querySelectorAll("[data-ai-access-control]")),
   userGlobalControls: Array.from(document.querySelectorAll("[data-user-global-control]")),
   userMembershipControls: Array.from(document.querySelectorAll("[data-user-membership-control]")),
@@ -132,6 +135,22 @@ const els = {
   organizationDomainList: document.getElementById("organization-domain-list"),
   organizationInviteSendButton: document.getElementById("organization-invite-send-button"),
   organizationInviteList: document.getElementById("organization-invite-list"),
+  organizationBillingStatus: document.getElementById("organization-billing-status"),
+  organizationBillingSummary: document.getElementById("organization-billing-summary"),
+  organizationBillingInterval: document.getElementById("organization-billing-interval"),
+  organizationBillingBasic: document.getElementById("organization-billing-basic"),
+  organizationBillingExtended: document.getElementById("organization-billing-extended"),
+  organizationBillingCheckout: document.getElementById("organization-billing-checkout"),
+  organizationBillingPortal: document.getElementById("organization-billing-portal"),
+  organizationBillingPlanSave: document.getElementById("organization-billing-plan-save"),
+  organizationBillingCancel: document.getElementById("organization-billing-cancel"),
+  organizationBillingPlatformMode: document.getElementById("organization-billing-platform-mode"),
+  organizationBillingPlatformStatus: document.getElementById("organization-billing-platform-status"),
+  organizationBillingManualEnabled: document.getElementById("organization-billing-manual-enabled"),
+  organizationBillingManualExpires: document.getElementById("organization-billing-manual-expires"),
+  organizationBillingPlatformSave: document.getElementById("organization-billing-platform-save"),
+  organizationAuditStatus: document.getElementById("organization-audit-status"),
+  organizationAuditList: document.getElementById("organization-audit-list"),
   organizationDomainModal: document.getElementById("organization-domain-modal"),
   organizationDomainModalTitle: document.getElementById("organization-domain-modal-title"),
   organizationDomainModalClose: document.getElementById("organization-domain-modal-close"),
@@ -511,6 +530,12 @@ function routeAccessSnapshot() {
     organizationIds: Array.isArray(state.session?.organizations)
       ? state.session.organizations.map((entry) => entry.id).filter(Boolean)
       : [],
+    organizationAdminIds: Array.isArray(state.session?.organizations)
+      ? state.session.organizations
+        .filter((entry) => entry.role === "organization_admin")
+        .map((entry) => entry.id)
+        .filter(Boolean)
+      : [],
     capabilities: Array.isArray(state.session?.capabilities)
       ? [...state.session.capabilities]
       : state.session?.platformAdmin === true
@@ -532,11 +557,17 @@ function firstAuthorizedRoute() {
 function applyAdminCapabilities() {
   const canManagePlatform = state.session?.platformAdmin === true;
   const inOrganizationWorkspace = state.route?.area === "organization";
+  const canManageOrganizationBilling = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "manage-organization-billing",
+  );
   const userPermissions = adminUserRoutePermissions(state.route, routeAccessSnapshot());
 
   els.platformNavigation.classList.toggle("hidden", !canManagePlatform);
   els.organizationContextHeader.classList.toggle("hidden", !inOrganizationWorkspace);
   els.platformAdminControls.forEach((node) => node.classList.toggle("hidden", !canManagePlatform));
+  els.organizationBillingControls.forEach((node) => node.classList.toggle("hidden", !canManageOrganizationBilling));
   els.aiAccessControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.editAiAccess));
   els.userGlobalControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.editProfile));
   els.userMembershipControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.editMembership));
@@ -1063,9 +1094,9 @@ function routeTitle(route) {
       overview: ["Organization workspace", "Overview", "Review this organization's identity and status."],
       members: ["Organization workspace", "Members", "Manage members within the routed organization."],
       "domains-invites": ["Organization workspace", "Domains & invites", "Manage authorized domains and pending invitations."],
-      billing: ["Organization workspace", "Billing", "Organization-scoped billing will be connected in Task 7."],
+      billing: ["Organization workspace", "Billing", "Manage this organization's canonical Den billing state."],
       "ai-access": ["Organization workspace", "AI access", "Manage member AI access for this organization."],
-      audit: ["Organization workspace", "Audit", "Organization-scoped audit will be connected in Task 7."],
+      audit: ["Organization workspace", "Audit", "Inspect administrative events scoped to this organization."],
     };
     return titles[route.page] || titles.overview;
   }
@@ -1140,6 +1171,8 @@ async function setAdminRoute(route, { historyMode = "push", load = true } = {}) 
     state.organizationLoad = createOrganizationLoadState();
     state.organizationDomains = [];
     state.organizationInvites = [];
+    state.organizationBilling = null;
+    state.organizationAudit = [];
   }
   const historyUpdate = planAdminHistoryUpdate(state.route, location, historyMode);
   if (historyUpdate?.method === "push") {
@@ -1192,9 +1225,21 @@ async function api(path, options = {}) {
 async function fetchJson(path, options = {}) {
   const { response, payload } = await api(path, options);
   if (!response.ok) {
-    throw new Error(payload?.error || "request_failed");
+    const error = new Error(payload?.error || payload?.message || "request_failed");
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
   return payload;
+}
+
+function formatAdminError(error) {
+  if (error?.payload && typeof error.payload === "object") {
+    return Object.entries(error.payload)
+      .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
+      .join(" · ");
+  }
+  return error instanceof Error ? error.message : "unknown_error";
 }
 
 async function bootstrapSession() {
@@ -1378,6 +1423,8 @@ async function signOut() {
   state.organizations = [];
   state.organizationDomains = [];
   state.organizationInvites = [];
+  state.organizationBilling = null;
+  state.organizationAudit = [];
   state.usage = null;
   state.selectedCredentialId = null;
   state.selectedAlertId = null;
@@ -1583,6 +1630,77 @@ async function loadOrganizationWorkspace(route) {
   }
 }
 
+function renderOrganizationBilling() {
+  const billing = state.organizationBilling;
+  if (!billing) {
+    els.organizationBillingSummary.innerHTML = `<article class="metric-card"><span class="metric-label">Billing</span><strong>Unavailable</strong><span class="metric-note">No billing summary was returned.</span></article>`;
+    return;
+  }
+  const account = billing.account || {};
+  const entitlement = billing.entitlement || {};
+  els.organizationBillingSummary.innerHTML = [
+    ["Status", account.status || entitlement.status || "none", account.mode || entitlement.effectiveMode || "none"],
+    ["Licenses", billing.licenseLimit ?? entitlement.licenseLimit ?? 0, `${billing.activeUserCount ?? entitlement.activeUserCount ?? 0} active users`],
+    ["Managed AI", entitlement.canUseManagedAi ? "Enabled" : "Blocked", entitlement.managedAiBlockingReason || "Access available"],
+  ].map(([label, value, note]) => `<article class="metric-card"><span class="metric-label">${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><span class="metric-note">${escapeHtml(note)}</span></article>`).join("");
+  els.organizationBillingBasic.value = String(account.quantities?.managedAiBasic ?? 0);
+  els.organizationBillingExtended.value = String(account.quantities?.managedAiExtended ?? 0);
+  els.organizationBillingInterval.value = account.billingInterval === "annual" ? "annual" : "monthly";
+  els.organizationBillingPlatformMode.value = account.mode || "none";
+  els.organizationBillingPlatformStatus.value = account.status || "none";
+  els.organizationBillingManualEnabled.checked = account.manualAccess?.enabled === true;
+  els.organizationBillingManualExpires.value = account.manualAccess?.expiresAt
+    ? String(account.manualAccess.expiresAt).slice(0, 16)
+    : "";
+}
+
+function renderOrganizationAudit() {
+  els.organizationAuditList.innerHTML = state.organizationAudit.map((entry) => `
+    <article class="list-card">
+      <div><strong>${escapeHtml(entry.action)}</strong><p>${escapeHtml(entry.summary || `${entry.entityType}:${entry.entityId}`)}</p></div>
+      <span>${escapeHtml(formatDate(entry.timestamp))}</span>
+    </article>
+  `).join("") || `<article class="list-card active"><div><strong>No organization events</strong><p>Legacy global events without organization scope are intentionally absent.</p></div></article>`;
+}
+
+async function loadOrganizationBilling(route) {
+  const organizationId = organizationIdForRoute(route);
+  const mutation = beginAdminRouteMutation(state.mutations, "organization-billing-load", route);
+  if (!organizationId || !mutation) return;
+  els.organizationBillingStatus.textContent = "Loading billing...";
+  try {
+    const payload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}/billing`);
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    state.organizationBilling = payload?.billing || null;
+    renderOrganizationBilling();
+    els.organizationBillingStatus.textContent = "Billing loaded.";
+  } catch (error) {
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    state.organizationBilling = null;
+    renderOrganizationBilling();
+    els.organizationBillingStatus.textContent = `Unable to load billing · ${formatAdminError(error)}`;
+  }
+}
+
+async function loadOrganizationAudit(route) {
+  const organizationId = organizationIdForRoute(route);
+  const mutation = beginAdminRouteMutation(state.mutations, "organization-audit-load", route);
+  if (!organizationId || !mutation) return;
+  els.organizationAuditStatus.textContent = "Loading organization audit...";
+  try {
+    const payload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}/audit`);
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    state.organizationAudit = Array.isArray(payload?.events) ? payload.events : [];
+    renderOrganizationAudit();
+    els.organizationAuditStatus.textContent = state.organizationAudit.length ? "Organization audit loaded." : "No scoped events found.";
+  } catch (error) {
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    state.organizationAudit = [];
+    renderOrganizationAudit();
+    els.organizationAuditStatus.textContent = `Unable to load organization audit · ${formatAdminError(error)}`;
+  }
+}
+
 async function loadRouteData(route) {
   await loadReadiness();
   if (route.area === "platform") {
@@ -1599,6 +1717,8 @@ async function loadRouteData(route) {
   if (route.area === "organization") {
     await loadOrganizationWorkspace(route);
     if (route.page === "members" || route.page === "ai-access") await loadUsers();
+    if (route.page === "billing") await loadOrganizationBilling(route);
+    if (route.page === "audit") await loadOrganizationAudit(route);
   }
 }
 
@@ -1730,7 +1850,10 @@ async function saveUserAiAccess(userId, input = null) {
 
   const saved = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`, {
     method: "PUT",
-    body: JSON.stringify(aiAccessInput),
+    body: JSON.stringify({
+      ...aiAccessInput,
+      organizationId: organizationIdForRoute(state.route),
+    }),
   });
   state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
     saved?.availableCredentials,
@@ -2821,6 +2944,76 @@ async function runAlertAction(action) {
   }
 }
 
+function organizationBillingQuantities() {
+  return {
+    managedAiBasic: Math.max(0, Number.parseInt(els.organizationBillingBasic.value || "0", 10) || 0),
+    managedAiExtended: Math.max(0, Number.parseInt(els.organizationBillingExtended.value || "0", 10) || 0),
+  };
+}
+
+async function runOrganizationBillingAction(action) {
+  const organizationId = organizationIdForRoute(state.route);
+  const platformOnly = action === "platform";
+  const allowed = platformOnly
+    ? canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-platform-billing")
+    : canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-organization-billing");
+  if (!organizationId || !allowed) return;
+  const mutation = beginAdminRouteMutation(state.mutations, `organization-billing-${action}`, state.route);
+  const quantities = organizationBillingQuantities();
+  const manualExpiresRaw = els.organizationBillingManualExpires.value.trim();
+  const manualExpiresDate = manualExpiresRaw ? new Date(manualExpiresRaw) : null;
+  const manualExpiresAt = manualExpiresDate && !Number.isNaN(manualExpiresDate.getTime())
+    ? manualExpiresDate.toISOString()
+    : manualExpiresRaw || null;
+  const platformBody = {
+    mode: els.organizationBillingPlatformMode.value,
+    status: els.organizationBillingPlatformStatus.value,
+    quantities,
+    ...(els.organizationBillingPlatformMode.value === "manual_access"
+      ? {
+        manualAccess: {
+          enabled: els.organizationBillingManualEnabled.checked,
+          expiresAt: manualExpiresAt,
+          licenseLimit: quantities.managedAiBasic + quantities.managedAiExtended,
+        },
+      }
+      : {}),
+  };
+  const requests = {
+    checkout: { method: "POST", body: { interval: els.organizationBillingInterval.value, quantities } },
+    portal: { method: "POST", body: {} },
+    plan: { method: "PATCH", body: { quantities } },
+    cancel: { method: "POST", body: {} },
+    platform: { method: "PATCH", body: platformBody },
+  };
+  const request = requests[action];
+  if (!mutation || !request) return;
+  els.organizationBillingStatus.textContent = `Applying billing ${action}...`;
+  try {
+    const payload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}/billing/${action}`, {
+      method: request.method,
+      body: JSON.stringify(request.body),
+    });
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    const redirectUrl = payload?.checkout?.url || payload?.portal?.url;
+    if (typeof redirectUrl === "string" && redirectUrl) {
+      window.location.assign(redirectUrl);
+      return;
+    }
+    if (payload?.billing) {
+      state.organizationBilling = payload.billing;
+      renderOrganizationBilling();
+    } else {
+      await loadOrganizationBilling(state.route);
+    }
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    els.organizationBillingStatus.textContent = `Billing ${action} completed.`;
+  } catch (error) {
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    els.organizationBillingStatus.textContent = `Billing ${action} failed · ${formatAdminError(error)}`;
+  }
+}
+
 async function saveOrganization() {
   const orgId = organizationIdForRoute(state.route);
   if (!orgId || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-organization-profile")) {
@@ -3261,6 +3454,11 @@ function bindActions() {
   els.organizationInviteSendButton.addEventListener("click", () => openOrganizationInviteModal());
   els.organizationInviteModalSend.addEventListener("click", () => void createOrganizationInvite());
   els.organizationInviteModalClose.addEventListener("click", () => closeModal(els.organizationInviteModal));
+  els.organizationBillingCheckout.addEventListener("click", () => void runOrganizationBillingAction("checkout"));
+  els.organizationBillingPortal.addEventListener("click", () => void runOrganizationBillingAction("portal"));
+  els.organizationBillingPlanSave.addEventListener("click", () => void runOrganizationBillingAction("plan"));
+  els.organizationBillingCancel.addEventListener("click", () => void runOrganizationBillingAction("cancel"));
+  els.organizationBillingPlatformSave.addEventListener("click", () => void runOrganizationBillingAction("platform"));
   els.credentialCreateProvider.addEventListener("change", updateCredentialCreateFields);
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
   els.credentialCreateCodexUpload.addEventListener("click", () => void prepareNewCodexCredentialUpload());

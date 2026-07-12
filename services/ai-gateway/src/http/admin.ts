@@ -350,6 +350,13 @@ export type ReplacePlatformModelPolicyInput = {
   activeModel: PlatformModelRef;
 };
 
+export type AdminDenProxyResponse = {
+  status: number;
+  body: unknown;
+};
+
+export type AdminOrganizationBillingInput = Record<string, unknown>;
+
 export interface AdminService {
   startBrowserAuth(input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload>;
   exchangeBrowserAuth(input: BrowserAuthExchangeInput): Promise<AuthPayload>;
@@ -361,6 +368,12 @@ export interface AdminService {
   listOrganizations(token: string): Promise<{ organizations: AdminOrganizationRecord[] }>;
   getOrganization(token: string, orgId: string): Promise<{ organization: AdminOrganizationRecord }>;
   updateOrganization(token: string, orgId: string, input: UpdateOrganizationInput): Promise<{ organization: AdminOrganizationRecord }>;
+  getOrganizationBilling?(token: string, orgId: string): Promise<AdminDenProxyResponse>;
+  createOrganizationBillingCheckout?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  createOrganizationBillingPortal?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  updateOrganizationBillingPlan?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  cancelOrganizationBilling?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  updatePlatformOrganizationBilling?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
   listOrganizationMembers(token: string, orgId: string): Promise<{ members: AdminOrganizationMemberRecord[] }>;
   createOrganizationMember(token: string, orgId: string, input: CreateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
   updateOrganizationMember(token: string, orgId: string, memberId: string, input: UpdateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
@@ -381,6 +394,7 @@ export interface AdminService {
     token: string,
     userId: string,
     input: UpdateUserAiAccessInput,
+    organizationId?: string | null,
   ): Promise<{ aiAccess: AdminUserAiAccessRecord; availableCredentials: AdminCredentialOption[] }>;
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
@@ -407,6 +421,7 @@ export interface AdminService {
   acknowledgeAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   resolveAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   listAudit(_token: string): Promise<{ events: AuditRecord[] }>;
+  listOrganizationAudit?(_token: string, orgId: string): Promise<{ events: AuditRecord[] }>;
   runCodexCapacityAlertEmailMonitor?(): Promise<CodexCapacityAlertMonitorResult>;
 }
 
@@ -436,6 +451,12 @@ type DenAdminApi = {
   listOrganizations(token: string): Promise<{ organizations: AdminOrganizationRecord[] }>;
   getOrganization(token: string, orgId: string): Promise<{ organization: AdminOrganizationRecord }>;
   updateOrganization(token: string, orgId: string, input: UpdateOrganizationInput): Promise<{ organization: AdminOrganizationRecord }>;
+  getOrganizationBilling(token: string, orgId: string): Promise<AdminDenProxyResponse>;
+  createOrganizationBillingCheckout(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  createOrganizationBillingPortal(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  updateOrganizationBillingPlan(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  cancelOrganizationBilling(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  updatePlatformOrganizationBilling(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
   listOrganizationMembers(token: string, orgId: string): Promise<{ members: AdminOrganizationMemberRecord[] }>;
   createOrganizationMember(token: string, orgId: string, input: CreateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
   updateOrganizationMember(token: string, orgId: string, memberId: string, input: UpdateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
@@ -992,6 +1013,20 @@ class DenAdminClient {
     };
   }
 
+  private async proxyAdminJson(pathname: string, token: string, init: RequestInit = {}): Promise<AdminDenProxyResponse> {
+    const response = await fetch(`${this.denApiBase}${pathname}`, {
+      ...init,
+      headers: {
+        ...this.adminHeaders(token, init.body !== undefined),
+        ...(init.headers ?? {}),
+      },
+    });
+    return {
+      status: response.status,
+      body: await response.json().catch(() => null),
+    };
+  }
+
   private async requestNoContent(pathname: string, token: string) {
     const response = await fetch(`${this.denApiBase}${pathname}`, {
       method: "DELETE",
@@ -1099,6 +1134,45 @@ class DenAdminClient {
       headers: this.adminHeaders(token, true),
       body: JSON.stringify(input),
     }) as Promise<{ organization: AdminOrganizationRecord }>;
+  }
+
+  async getOrganizationBilling(token: string, orgId: string) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing`, token);
+  }
+
+  async createOrganizationBillingCheckout(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/checkout`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async createOrganizationBillingPortal(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/portal`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async updateOrganizationBillingPlan(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/plan`, token, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async cancelOrganizationBilling(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/cancel`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async updatePlatformOrganizationBilling(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/platform`, token, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
   }
 
   async listOrganizationMembers(token: string, orgId: string) {
@@ -1334,6 +1408,12 @@ export function createDefaultAdminService(
     | "listOrganizations"
     | "getOrganization"
     | "updateOrganization"
+    | "getOrganizationBilling"
+    | "createOrganizationBillingCheckout"
+    | "createOrganizationBillingPortal"
+    | "updateOrganizationBillingPlan"
+    | "cancelOrganizationBilling"
+    | "updatePlatformOrganizationBilling"
     | "listOrganizationMembers"
     | "createOrganizationMember"
     | "updateOrganizationMember"
@@ -1397,6 +1477,7 @@ export function createDefaultAdminService(
 
   async function recordAuditEvent(input: {
     actorUserId?: string | null;
+    organizationId?: string | null;
     entityType: string;
     entityId: string;
     action: string;
@@ -1406,6 +1487,7 @@ export function createDefaultAdminService(
     try {
       await getAuditRepository().recordEvent({
         actorUserId: input.actorUserId ?? null,
+        ...(input.organizationId ? { organizationId: input.organizationId } : {}),
         entityType: input.entityType,
         entityId: input.entityId,
         action: input.action,
@@ -1907,6 +1989,7 @@ export function createDefaultAdminService(
       const created = await denClient.createUser(token, input);
       await recordAuditEvent({
         actorUserId: "admin-ui",
+        organizationId: input.orgId,
         action: "user.create",
         entityType: "user",
         entityId: created.id,
@@ -1919,6 +2002,7 @@ export function createDefaultAdminService(
       const updated = await denClient.updateUser(token, userId, input);
       await recordAuditEvent({
         actorUserId: "admin-ui",
+        organizationId: input.orgId,
         action: "user.update",
         entityType: "user",
         entityId: updated.id,
@@ -1933,44 +2017,90 @@ export function createDefaultAdminService(
     getOrganization(token, orgId) {
       return requireDenOrganizationProxy("getOrganization")(token, orgId);
     },
-    updateOrganization(token, orgId, input) {
-      return requireDenOrganizationProxy("updateOrganization")(token, orgId, input);
+    async updateOrganization(token, orgId, input) {
+      const result = await requireDenOrganizationProxy("updateOrganization")(token, orgId, input);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.update", entityType: "organization", entityId: orgId, result: "ok", summary: `Updated organization ${orgId}.` });
+      return result;
+    },
+    getOrganizationBilling(token, orgId) {
+      return requireDenOrganizationProxy("getOrganizationBilling")(token, orgId);
+    },
+    async createOrganizationBillingCheckout(token, orgId, input) {
+      const result = await requireDenOrganizationProxy("createOrganizationBillingCheckout")(token, orgId, input);
+      if (result.status >= 200 && result.status < 300) await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.billing.checkout", entityType: "organization", entityId: orgId, result: "ok", summary: "Created billing checkout." });
+      return result;
+    },
+    async createOrganizationBillingPortal(token, orgId, input) {
+      const result = await requireDenOrganizationProxy("createOrganizationBillingPortal")(token, orgId, input);
+      if (result.status >= 200 && result.status < 300) await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.billing.portal", entityType: "organization", entityId: orgId, result: "ok", summary: "Created billing portal session." });
+      return result;
+    },
+    async updateOrganizationBillingPlan(token, orgId, input) {
+      const result = await requireDenOrganizationProxy("updateOrganizationBillingPlan")(token, orgId, input);
+      if (result.status >= 200 && result.status < 300) await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.billing.plan", entityType: "organization", entityId: orgId, result: "ok", summary: "Updated billing plan." });
+      return result;
+    },
+    async cancelOrganizationBilling(token, orgId, input) {
+      const result = await requireDenOrganizationProxy("cancelOrganizationBilling")(token, orgId, input);
+      if (result.status >= 200 && result.status < 300) await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.billing.cancel", entityType: "organization", entityId: orgId, result: "warning", summary: "Scheduled billing cancellation." });
+      return result;
+    },
+    async updatePlatformOrganizationBilling(token, orgId, input) {
+      const result = await requireDenOrganizationProxy("updatePlatformOrganizationBilling")(token, orgId, input);
+      if (result.status >= 200 && result.status < 300) await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.billing.platform", entityType: "organization", entityId: orgId, result: "ok", summary: "Updated platform billing controls." });
+      return result;
     },
     listOrganizationMembers(token, orgId) {
       return requireDenOrganizationProxy("listOrganizationMembers")(token, orgId);
     },
-    createOrganizationMember(token, orgId, input) {
-      return requireDenOrganizationProxy("createOrganizationMember")(token, orgId, input);
+    async createOrganizationMember(token, orgId, input) {
+      const result = await requireDenOrganizationProxy("createOrganizationMember")(token, orgId, input);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.member.create", entityType: "organization_member", entityId: result.member.membershipId, result: "ok", summary: "Created organization member." });
+      return result;
     },
-    updateOrganizationMember(token, orgId, memberId, input) {
-      return requireDenOrganizationProxy("updateOrganizationMember")(token, orgId, memberId, input);
+    async updateOrganizationMember(token, orgId, memberId, input) {
+      const result = await requireDenOrganizationProxy("updateOrganizationMember")(token, orgId, memberId, input);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.member.update", entityType: "organization_member", entityId: memberId, result: "ok", summary: "Updated organization member." });
+      return result;
     },
-    deleteOrganizationMember(token, orgId, memberId) {
-      return requireDenOrganizationProxy("deleteOrganizationMember")(token, orgId, memberId);
+    async deleteOrganizationMember(token, orgId, memberId) {
+      await requireDenOrganizationProxy("deleteOrganizationMember")(token, orgId, memberId);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.member.delete", entityType: "organization_member", entityId: memberId, result: "warning", summary: "Deleted organization member." });
     },
     listOrganizationDomains(token, orgId) {
       return requireDenOrganizationProxy("listOrganizationDomains")(token, orgId);
     },
-    createOrganizationDomain(token, orgId, input) {
-      return requireDenOrganizationProxy("createOrganizationDomain")(token, orgId, input);
+    async createOrganizationDomain(token, orgId, input) {
+      const result = await requireDenOrganizationProxy("createOrganizationDomain")(token, orgId, input);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.domain.create", entityType: "organization_domain", entityId: result.domain.id, result: "ok", summary: "Created organization domain." });
+      return result;
     },
-    updateOrganizationDomain(token, orgId, domainId, input) {
-      return requireDenOrganizationProxy("updateOrganizationDomain")(token, orgId, domainId, input);
+    async updateOrganizationDomain(token, orgId, domainId, input) {
+      const result = await requireDenOrganizationProxy("updateOrganizationDomain")(token, orgId, domainId, input);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.domain.update", entityType: "organization_domain", entityId: domainId, result: "ok", summary: "Updated organization domain." });
+      return result;
     },
-    deleteOrganizationDomain(token, orgId, domainId) {
-      return requireDenOrganizationProxy("deleteOrganizationDomain")(token, orgId, domainId);
+    async deleteOrganizationDomain(token, orgId, domainId) {
+      await requireDenOrganizationProxy("deleteOrganizationDomain")(token, orgId, domainId);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.domain.delete", entityType: "organization_domain", entityId: domainId, result: "warning", summary: "Deleted organization domain." });
     },
     listOrganizationInvites(token, orgId) {
       return requireDenOrganizationProxy("listOrganizationInvites")(token, orgId);
     },
-    createOrganizationInvite(token, orgId, input) {
-      return requireDenOrganizationProxy("createOrganizationInvite")(token, orgId, input);
+    async createOrganizationInvite(token, orgId, input) {
+      const result = await requireDenOrganizationProxy("createOrganizationInvite")(token, orgId, input);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.invite.create", entityType: "organization_invite", entityId: result.invite.id, result: "ok", summary: "Created organization invite." });
+      return result;
     },
-    resendOrganizationInvite(token, orgId, inviteId) {
-      return requireDenOrganizationProxy("resendOrganizationInvite")(token, orgId, inviteId);
+    async resendOrganizationInvite(token, orgId, inviteId) {
+      const result = await requireDenOrganizationProxy("resendOrganizationInvite")(token, orgId, inviteId);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.invite.resend", entityType: "organization_invite", entityId: inviteId, result: "ok", summary: "Resent organization invite." });
+      return result;
     },
-    revokeOrganizationInvite(token, orgId, inviteId) {
-      return requireDenOrganizationProxy("revokeOrganizationInvite")(token, orgId, inviteId);
+    async revokeOrganizationInvite(token, orgId, inviteId) {
+      const result = await requireDenOrganizationProxy("revokeOrganizationInvite")(token, orgId, inviteId);
+      await recordAuditEvent({ actorUserId: "admin-ui", organizationId: orgId, action: "organization.invite.revoke", entityType: "organization_invite", entityId: inviteId, result: "warning", summary: "Revoked organization invite." });
+      return result;
     },
     async getUserAiAccess(_token, userId) {
       const modelPolicy = await getModelPolicyRepository().getPolicy();
@@ -1987,7 +2117,7 @@ export function createDefaultAdminService(
         availableCredentials,
       };
     },
-    async upsertUserAiAccess(_token, userId, input) {
+    async upsertUserAiAccess(_token, userId, input, organizationId) {
       const modelPolicy = await getModelPolicyRepository().getPolicy();
       if (!modelPolicy) throw new HttpError("platform_model_policy_not_configured", 503);
       const validated = validateUserAiAccessInput({
@@ -2000,6 +2130,7 @@ export function createDefaultAdminService(
       const saved = await getAiAccessRepository().upsertUserAiAccess(validated);
       await recordAuditEvent({
         actorUserId: "admin-ui",
+        organizationId,
         action: "user.ai_access.update",
         entityType: "user",
         entityId: userId,
@@ -2470,6 +2601,11 @@ export function createDefaultAdminService(
     async listAudit() {
       const auditRepository = getAuditRepository();
       const listInput: ListAuditEventsInput = { limit: 100 };
+      return { events: auditRepository.listEvents ? await auditRepository.listEvents(listInput) : [] };
+    },
+    async listOrganizationAudit(_token, orgId) {
+      const auditRepository = getAuditRepository();
+      const listInput: ListAuditEventsInput = { limit: 100, organizationId: orgId };
       return { events: auditRepository.listEvents ? await auditRepository.listEvents(listInput) : [] };
     },
   };
@@ -3179,6 +3315,20 @@ function requirePlatformAdmin(res: express.Response): boolean {
   return false;
 }
 
+function requireOrganizationAccess(res: express.Response, orgId: string): boolean {
+  const session = res.locals.adminSession as AdminSessionSnapshot | undefined;
+  if (
+    session?.platformAdmin === true
+    || session?.organizations.some(
+      (organization) => organization.id === orgId && organization.role === "organization_admin",
+    )
+  ) {
+    return true;
+  }
+  res.status(403).json({ error: "forbidden" });
+  return false;
+}
+
 const platformAdminShellPaths = new Set([
   "/admin",
   "/admin/organizations",
@@ -3550,6 +3700,82 @@ export function createAdminRouter(adminService: AdminService) {
         return;
       }
       res.status(502).json({ error: "organization_update_failed" });
+    }
+  });
+
+  const sendOrganizationBillingProxy = async (
+    req: express.Request,
+    res: express.Response,
+    operation: keyof Pick<AdminService,
+      | "getOrganizationBilling"
+      | "createOrganizationBillingCheckout"
+      | "createOrganizationBillingPortal"
+      | "updateOrganizationBillingPlan"
+      | "cancelOrganizationBilling"
+      | "updatePlatformOrganizationBilling">,
+    options: { platformOnly?: boolean } = {},
+  ) => {
+    const orgId = req.params.orgId;
+    if (!orgId) {
+      res.status(400).json({ error: "invalid_organization_id" });
+      return;
+    }
+    if (
+      !requireAdminCapability(res, "organization")
+      || !requireOrganizationAccess(res, orgId)
+      || (options.platformOnly === true && !requirePlatformAdmin(res))
+    ) return;
+    const handler = adminService[operation];
+    if (!handler) {
+      res.status(503).json({ error: "organization_billing_unavailable" });
+      return;
+    }
+    try {
+      const token = res.locals.adminToken as string;
+      const result = operation === "getOrganizationBilling"
+        ? await (handler as NonNullable<AdminService["getOrganizationBilling"]>)(token, orgId)
+        : await (handler as (
+            token: string,
+            orgId: string,
+            input: AdminOrganizationBillingInput,
+          ) => Promise<AdminDenProxyResponse>)(token, orgId, req.body ?? {});
+      res.status(result.status).json(result.body);
+    } catch (error) {
+      if (mapHttpError(error, res)) return;
+      res.status(502).json({ error: "organization_billing_proxy_failed" });
+    }
+  };
+
+  router.get("/admin/api/organizations/:orgId/billing", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "getOrganizationBilling");
+  });
+  router.post("/admin/api/organizations/:orgId/billing/checkout", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "createOrganizationBillingCheckout");
+  });
+  router.post("/admin/api/organizations/:orgId/billing/portal", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "createOrganizationBillingPortal");
+  });
+  router.patch("/admin/api/organizations/:orgId/billing/plan", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "updateOrganizationBillingPlan");
+  });
+  router.post("/admin/api/organizations/:orgId/billing/cancel", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "cancelOrganizationBilling");
+  });
+  router.patch("/admin/api/organizations/:orgId/billing/platform", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "updatePlatformOrganizationBilling", { platformOnly: true });
+  });
+
+  router.get("/admin/api/organizations/:orgId/audit", async (req, res) => {
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
+    if (!adminService.listOrganizationAudit) {
+      res.status(503).json({ error: "organization_audit_unavailable" });
+      return;
+    }
+    try {
+      res.json(await adminService.listOrganizationAudit(res.locals.adminToken as string, req.params.orgId));
+    } catch (error) {
+      if (mapHttpError(error, res)) return;
+      res.status(502).json({ error: "organization_audit_list_failed" });
     }
   });
 
@@ -4218,11 +4444,17 @@ export function createAdminRouter(adminService: AdminService) {
       ) {
         throw new HttpError("user_model_policy_not_supported", 400);
       }
+      const organizationId = typeof req.body?.organizationId === "string"
+        ? req.body.organizationId.trim()
+        : null;
+      if (organizationId && !requireOrganizationAccess(res, organizationId)) {
+        return;
+      }
       const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
         enabled: req.body?.enabled === true,
         provider: parseAiAccessProvider(req.body?.provider),
         credentialId: typeof req.body?.credentialId === "string" ? req.body.credentialId : null,
-      });
+      }, organizationId);
       res.json(payload);
     } catch (error) {
       if (mapHttpError(error, res)) {

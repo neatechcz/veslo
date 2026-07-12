@@ -189,6 +189,13 @@ const USER_ACTION_PERMISSION = Object.freeze({
 export function canPerformAdminRouteAction(route, access, action) {
   if (route?.area === "organization" && canAccessAdminRoute(route, access)) {
     if (action === "edit-organization-profile") return route.page === "overview";
+    if (action === "manage-organization-billing") {
+      return route.page === "billing" && (
+        access?.platformAdmin === true
+        || (Array.isArray(access?.organizationAdminIds) && access.organizationAdminIds.includes(route.organizationId))
+      );
+    }
+    if (action === "manage-platform-billing") return route.page === "billing" && access?.platformAdmin === true;
     if (action === "manage-organization-domains" || action === "manage-organization-invites") {
       return route.page === "domains-invites";
     }

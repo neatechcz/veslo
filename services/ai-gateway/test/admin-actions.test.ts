@@ -1991,3 +1991,139 @@ test("GET admin read endpoints return JSON 502 payloads when read models fail", 
     await once(server, "close");
   }
 });
+
+test("organization billing facades preserve DEN status and body and enforce organization scope", async () => {
+  const { service, session } = createAdminServiceSpy();
+  session.platformAdmin = false;
+  session.organizations = [{
+    id: "org_1",
+    name: "Acme",
+    slug: "acme",
+    ownerUserId: session.user.id,
+    role: "organization_admin",
+  }, {
+    id: "org_2",
+    name: "Member Org",
+    slug: "member-org",
+    ownerUserId: "user_other",
+    role: "member",
+  }];
+  const calls: Array<{ action: string; orgId: string; body?: unknown }> = [];
+  const response = (action: string, orgId: string, body?: unknown) => {
+    calls.push({ action, orgId, ...(body === undefined ? {} : { body }) });
+    return Promise.resolve({ status: 207, body: { action, orgId, accepted: body ?? null } });
+  };
+  service.getOrganizationBilling = (_token, orgId) => response("get", orgId);
+  service.createOrganizationBillingCheckout = (_token, orgId, body) => response("checkout", orgId, body);
+  service.createOrganizationBillingPortal = (_token, orgId, body) => response("portal", orgId, body);
+  service.updateOrganizationBillingPlan = (_token, orgId, body) => response("plan", orgId, body);
+  service.cancelOrganizationBilling = (_token, orgId, body) => response("cancel", orgId, body);
+  service.updatePlatformOrganizationBilling = (_token, orgId, body) => response("platform", orgId, body);
+
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { port } = server.address() as AddressInfo;
+    const base = `http://127.0.0.1:${port}/admin/api/organizations/org_1/billing`;
+    const cases: Array<[string, string, unknown?]> = [
+      ["get", base],
+      ["checkout", `${base}/checkout`, { interval: "monthly", quantities: { managedAiBasic: 2 } }],
+      ["portal", `${base}/portal`, {}],
+      ["plan", `${base}/plan`, { quantities: { managedAiBasic: 3 } }],
+      ["cancel", `${base}/cancel`, {}],
+    ];
+    for (const [action, url, body] of cases) {
+      const method = action === "get" ? "GET" : action === "plan" ? "PATCH" : "POST";
+      const result = await fetch(url, {
+        method,
+        headers: { ...AUTHORIZATION, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      assert.equal(result.status, 207, action);
+      assert.deepEqual(await result.json(), { action, orgId: "org_1", accepted: body ?? null }, action);
+    }
+
+    const deniedOrg = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_2/billing`, { headers: AUTHORIZATION });
+    assert.equal(deniedOrg.status, 403);
+    assert.deepEqual(await deniedOrg.json(), { error: "forbidden" });
+    const platformDenied = await fetch(`${base}/platform`, {
+      method: "PATCH",
+      headers: { ...AUTHORIZATION, "content-type": "application/json" },
+      body: JSON.stringify({ status: "active" }),
+    });
+    assert.equal(platformDenied.status, 403);
+    assert.equal(calls.some((entry) => entry.action === "platform"), false);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("organization billing facade preserves exact DEN validation errors", async () => {
+  const { service, session } = createAdminServiceSpy();
+  session.organizations = [{ id: "org_1", name: "Acme", slug: "acme", ownerUserId: session.user.id, role: "organization_admin" }];
+  service.updateOrganizationBillingPlan = async () => ({
+    status: 422,
+    body: { error: "requested_license_limit_below_active_users", requestedLicenseLimit: 1, activeUserCount: 3 },
+  });
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { port } = server.address() as AddressInfo;
+    const result = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/billing/plan`, {
+      method: "PATCH",
+      headers: { ...AUTHORIZATION, "content-type": "application/json" },
+      body: JSON.stringify({ quantities: { managedAiBasic: 1 } }),
+    });
+    assert.equal(result.status, 422);
+    assert.deepEqual(await result.json(), {
+      error: "requested_license_limit_below_active_users",
+      requestedLicenseLimit: 1,
+      activeUserCount: 3,
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("organization audit route authorizes and requests a server-scoped audit list", async () => {
+  const { service, session } = createAdminServiceSpy();
+  session.platformAdmin = false;
+  session.organizations = [{ id: "org_1", name: "Acme", slug: "acme", ownerUserId: session.user.id, role: "organization_admin" }];
+  const calls: string[] = [];
+  service.listOrganizationAudit = async (_token, orgId) => {
+    calls.push(orgId);
+    return {
+      events: [{
+        id: "audit_org_1",
+        timestamp: "2026-07-12T12:00:00.000Z",
+        actor: "admin@example.test",
+        action: "organization.member.update",
+        entityType: "user",
+        entityId: "user_1",
+        result: "ok",
+        summary: "Membership updated.",
+        changedFields: [],
+        organizationId: orgId,
+      }],
+    };
+  };
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { port } = server.address() as AddressInfo;
+    const allowed = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/audit`, { headers: AUTHORIZATION });
+    assert.equal(allowed.status, 200);
+    assert.equal((await allowed.json()).events[0].organizationId, "org_1");
+    const denied = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_2/audit`, { headers: AUTHORIZATION });
+    assert.equal(denied.status, 403);
+    assert.deepEqual(calls, ["org_1"]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
