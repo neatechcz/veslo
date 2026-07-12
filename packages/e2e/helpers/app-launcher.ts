@@ -686,6 +686,17 @@ export function publishPilotDenAuthSeedForWebView(
   targetEnv.E2E_DEN_AUTH_JSON = seed;
 }
 
+export function publishManagedAiFixtureAuthSeed(
+  authJson: string,
+  targetEnv: Record<string, string | undefined> = process.env,
+): void {
+  targetEnv.VESLO_E2E_DEN_AUTH_JSON = authJson;
+  targetEnv.E2E_DEN_AUTH_JSON = authJson;
+  delete targetEnv.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE;
+  delete targetEnv.E2E_DEN_AUTH_SNAPSHOT_FILE;
+  delete targetEnv.VESLO_DEN_AUTH_SNAPSHOT_PATH;
+}
+
 async function startManagedAiGatewayFixtureIfRequested(): Promise<ManagedAiGatewayFixture | null> {
   if (!shouldUseManagedAiGatewayFixture()) {
     return null;
@@ -739,17 +750,20 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
   const exposeSkillRegistryServerEnv = process.env.E2E_SKILL_REGISTRY_SERVER_ENV?.trim() !== '0';
   const seedDenAuthFromSkillRegistryFixture =
     process.env.E2E_SKILL_REGISTRY_AUTH_BASE?.trim() === 'fixture' && Boolean(skillRegistryFixtureBaseUrl);
-  const seedEnv = managedAiGatewayFixtureBaseUrl
-    ? {
-        ...process.env,
-        E2E_DEN_AUTH_JSON: JSON.stringify({
-          denApiBase: managedAiGatewayFixtureBaseUrl,
-          token: E2E_MANAGED_AI_TOKEN,
-          orgId: E2E_MANAGED_AI_ORG_ID,
-          user: { id: E2E_MANAGED_AI_USER_ID, email: 'veslo-managed-ai-e2e@example.test' },
-          org: { id: E2E_MANAGED_AI_ORG_ID, slug: 'veslo-managed-ai-e2e' },
-        }),
-      }
+  const managedAiFixtureAuthJson = managedAiGatewayFixtureBaseUrl
+    ? JSON.stringify({
+        denApiBase: managedAiGatewayFixtureBaseUrl,
+        token: E2E_MANAGED_AI_TOKEN,
+        orgId: E2E_MANAGED_AI_ORG_ID,
+        user: { id: E2E_MANAGED_AI_USER_ID, email: 'veslo-managed-ai-e2e@example.test' },
+        org: { id: E2E_MANAGED_AI_ORG_ID, slug: 'veslo-managed-ai-e2e' },
+      })
+    : null;
+  if (managedAiFixtureAuthJson) {
+    publishManagedAiFixtureAuthSeed(managedAiFixtureAuthJson);
+  }
+  const seedEnv = managedAiFixtureAuthJson
+    ? { ...process.env }
     : googleMcpCatalogFixtureBaseUrl
     ? {
         ...process.env,
@@ -767,7 +781,9 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
         }),
       }
     : process.env;
-  publishPilotDenAuthSeedForWebView(seedEnv);
+  if (!managedAiFixtureAuthJson) {
+    publishPilotDenAuthSeedForWebView(seedEnv);
+  }
   if (skillRegistryFixtureBaseUrl) {
     console.log(`[e2e] Skill registry fixture: ${skillRegistryFixtureBaseUrl}`);
   }

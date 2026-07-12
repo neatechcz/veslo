@@ -5,6 +5,7 @@ import {
   closeSync,
   copyFileSync,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -21,6 +22,13 @@ import { createRequire } from "module";
 import { dirname, join, relative, resolve } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
+
+import {
+  publishBundledNodeExecutable,
+  resolveBundledNodeRuntimeDistribution,
+  validateBundledNodeArchiveEntries,
+  verifyBundledNodeArchiveChecksum,
+} from "./bundled-node-runtime.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -708,13 +716,82 @@ const copyExecutableSync = (source, target) => {
   }
 };
 
-const ensureBundledNodeRuntime = () => {
-  if (process.platform !== "win32" || !resolvedTargetTriple?.includes("windows")) {
+const ensureBundledNodeRuntime = async () => {
+  const isWindowsTarget = process.platform === "win32" && resolvedTargetTriple?.includes("windows");
+  const isMacTarget = process.platform === "darwin" && resolvedTargetTriple?.endsWith("-apple-darwin");
+  if (!isWindowsTarget && !isMacTarget) {
     return;
   }
 
   if (existsSync(bundledNodePath) && (!bundledNodeTargetPath || existsSync(bundledNodeTargetPath))) {
     return;
+  }
+
+  if (isMacTarget) {
+    const distribution = resolveBundledNodeRuntimeDistribution({
+      version: bundledNodeVersion,
+      platform: process.platform,
+      targetTriple: resolvedTargetTriple,
+    });
+    const privateRoot = mkdtempSync(join(tmpdir(), "veslo-node-provision-"));
+    const archivePath = join(privateRoot, distribution.archiveName);
+    const extractionDir = join(privateRoot, "extract");
+    const sourcePath = join(extractionDir, ...distribution.executablePathParts);
+    const download = async (url, label) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60_000);
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`${label} returned HTTP ${response.status}.`);
+        }
+        return Buffer.from(await response.arrayBuffer());
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`Unable to download bundled Node.js ${bundledNodeVersion} ${label}: ${detail}`);
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+    try {
+      const [archive, shasums] = await Promise.all([
+        download(distribution.url, "archive"),
+        download(distribution.shasumsUrl, "checksums"),
+      ]);
+      writeFileSync(archivePath, archive);
+      verifyBundledNodeArchiveChecksum({
+        archivePath,
+        archiveName: distribution.archiveName,
+        shasums: shasums.toString("utf8"),
+      });
+
+      const listing = spawnSync("tar", ["-tzf", archivePath], {
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      if (listing.status !== 0) {
+        throw new Error(`Unable to inspect bundled Node.js ${bundledNodeVersion} archive.`);
+      }
+      validateBundledNodeArchiveEntries({
+        entries: listing.stdout.split(/\r?\n/),
+        distributionDirectory: distribution.distributionDirectory,
+      });
+
+      mkdirSync(extractionDir, { recursive: true });
+      const extraction = spawnSync("tar", ["-xzf", archivePath, "-C", extractionDir], {
+        stdio: "inherit",
+      });
+      if (extraction.status !== 0 || !existsSync(sourcePath)) {
+        throw new Error(`Unable to extract bundled Node.js ${bundledNodeVersion} runtime.`);
+      }
+      publishBundledNodeExecutable({
+        sourcePath,
+        targetPaths: [bundledNodePath, bundledNodeTargetPath].filter(Boolean),
+      });
+      return;
+    } finally {
+      rmSync(privateRoot, { recursive: true, force: true });
+    }
   }
 
   const archiveName = `node-v${bundledNodeVersion}-win-x64.zip`;
@@ -1168,7 +1245,7 @@ try {
 }
 
 try {
-  ensureBundledNodeRuntime();
+  await ensureBundledNodeRuntime();
 } catch (error) {
   console.error(`Failed to provision bundled Node.js runtime: ${error}`);
   process.exit(1);

@@ -1,20 +1,35 @@
 import { once } from 'node:events';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type Server } from 'node:http';
+
+import { createApp } from '../../../services/ai-gateway/src/index.js';
 
 export const E2E_MANAGED_AI_USER_ID = 'user_veslo_e2e_managed_ai';
+export const E2E_MANAGED_AI_SECOND_USER_ID = 'user_veslo_e2e_managed_ai_second';
 export const E2E_MANAGED_AI_ORG_ID = 'org_veslo_e2e_managed_ai';
 export const E2E_MANAGED_AI_TOKEN = 'veslo-e2e-managed-ai-token';
+export const E2E_MANAGED_AI_SECOND_TOKEN = 'veslo-e2e-managed-ai-second-token';
 export const E2E_MANAGED_AI_GATEWAY_ACCESS_TOKEN = 'veslo-e2e-managed-ai-gateway-access-token';
+
+const ACTIVE_MODEL = { provider: 'codex_oauth', model: 'gpt-5.4' } as const;
+const ENABLED_MODELS = [
+  ACTIVE_MODEL,
+  { provider: 'codex_oauth', model: 'gpt-5.3-codex' } as const,
+];
+const CREDENTIAL_ID = 'cred_veslo_e2e_codex';
+const BINDING_ID = 'binding_veslo_e2e_codex';
 
 export type ManagedAiGatewayFixtureRequest = {
   at: string;
   method: string;
   pathname: string;
-  authorization: string | null;
-  sessionId: string | null;
-  model: string | null;
-  promptText: string | null;
-  stream: boolean | null;
+  authorizationPresent: boolean;
+  userId: string;
+  orgId: string | null;
+  sessionId: string;
+  model: string;
+  promptNonce: string;
+  stream: boolean;
+  status: number;
 };
 
 export type ManagedAiGatewayFixture = {
@@ -23,28 +38,21 @@ export type ManagedAiGatewayFixture = {
   server: Server;
 };
 
-function setCorsHeaders(res: ServerResponse): void {
-  res.setHeader('access-control-allow-origin', '*');
-  res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS');
-  res.setHeader(
-    'access-control-allow-headers',
-    'authorization,content-type,x-veslo-gateway-authorization,x-veslo-gateway-token,x-veslo-session-id,x-veslo-request-id',
-  );
-}
+type FixtureUser = { id: string; email: string };
+type PendingTransportRequest = {
+  model: string;
+  promptNonce: string;
+  stream: boolean;
+};
 
-function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
-  setCorsHeaders(res);
-  res.statusCode = statusCode;
-  res.setHeader('content-type', 'application/json');
-  res.end(JSON.stringify(payload));
-}
-
-async function readBody(req: IncomingMessage): Promise<string> {
-  let body = '';
-  for await (const chunk of req) {
-    body += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+function fixtureUserForToken(token: string): FixtureUser | null {
+  if (token === E2E_MANAGED_AI_TOKEN || token === E2E_MANAGED_AI_GATEWAY_ACCESS_TOKEN) {
+    return { id: E2E_MANAGED_AI_USER_ID, email: 'veslo-managed-ai-e2e@example.test' };
   }
-  return body;
+  if (token === E2E_MANAGED_AI_SECOND_TOKEN) {
+    return { id: E2E_MANAGED_AI_SECOND_USER_ID, email: 'veslo-managed-ai-second-e2e@example.test' };
+  }
+  return null;
 }
 
 function compactText(value: string): string {
@@ -53,9 +61,7 @@ function compactText(value: string): string {
 
 function textFromContent(value: unknown): string {
   if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return compactText(value.map(textFromContent).filter(Boolean).join(' '));
-  }
+  if (Array.isArray(value)) return compactText(value.map(textFromContent).filter(Boolean).join(' '));
   if (!value || typeof value !== 'object') return '';
   const record = value as Record<string, unknown>;
   return compactText([
@@ -76,13 +82,21 @@ function extractPromptText(body: unknown): string | null {
     const text = textFromContent(messageRecord.content);
     if (text) return text;
   }
-  const fallback = textFromContent(record.input) || textFromContent(record.prompt);
-  return fallback || null;
+  return textFromContent(record.input) || textFromContent(record.prompt) || null;
 }
 
-function extractToken(promptText: string | null): string {
-  const prompt = promptText ?? '';
-  return prompt.match(/\b[a-z0-9][a-z0-9_-]*-\d{10,}\b/i)?.[0] ?? 'managed-ai-fixture';
+function extractPromptNonce(promptText: string | null): string {
+  return promptText?.match(/\b[a-z0-9][a-z0-9_-]*-\d{10,}\b/i)?.[0] ?? 'managed-ai-fixture';
+}
+
+function readBodyModel(body: unknown): string {
+  if (!body || typeof body !== 'object') return ACTIVE_MODEL.model;
+  const model = (body as Record<string, unknown>).model;
+  return typeof model === 'string' && model.trim() ? model.trim() : ACTIVE_MODEL.model;
+}
+
+function readBodyStream(body: unknown): boolean {
+  return Boolean(body && typeof body === 'object' && (body as Record<string, unknown>).stream === true);
 }
 
 function buildChatCompletionResponse(model: string, content: string) {
@@ -93,144 +107,270 @@ function buildChatCompletionResponse(model: string, content: string) {
     model,
     choices: [{
       index: 0,
-      message: {
-        role: 'assistant',
-        content,
-      },
+      message: { role: 'assistant', content },
       finish_reason: 'stop',
     }],
-    usage: {
-      prompt_tokens: 8,
-      completion_tokens: 8,
-      total_tokens: 16,
-    },
+    usage: { prompt_tokens: 8, completion_tokens: 8, total_tokens: 16 },
   };
 }
 
+function buildChatCompletionStream(model: string, content: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const id = `chatcmpl_e2e_${Date.now()}`;
+  const created = Math.floor(Date.now() / 1000);
+  const events = [
+    {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }],
+    },
+    {
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    },
+  ];
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const event of events) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      controller.close();
+    },
+  });
+}
+
 function responseDelayMs(): number {
-  const raw = process.env.E2E_MANAGED_AI_RESPONSE_DELAY_MS?.trim() ?? '';
-  if (!raw) return 0;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 30000) : 0;
+  const parsed = Number(process.env.E2E_MANAGED_AI_RESPONSE_DELAY_MS?.trim() ?? '0');
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 30_000) : 0;
 }
 
 async function delayResponseIfRequested(): Promise<void> {
   const delayMs = responseDelayMs();
-  if (!delayMs) return;
-  await new Promise((resolve) => setTimeout(resolve, delayMs));
-}
-
-function sendChatCompletionStream(res: ServerResponse, model: string, content: string): void {
-  setCorsHeaders(res);
-  res.statusCode = 200;
-  res.setHeader('content-type', 'text/event-stream; charset=utf-8');
-  res.setHeader('cache-control', 'no-cache');
-  res.setHeader('connection', 'keep-alive');
-  const id = `chatcmpl_e2e_${Date.now()}`;
-  const created = Math.floor(Date.now() / 1000);
-  const chunk = (payload: unknown) => {
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  };
-  chunk({
-    id,
-    object: 'chat.completion.chunk',
-    created,
-    model,
-    choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }],
-  });
-  chunk({
-    id,
-    object: 'chat.completion.chunk',
-    created,
-    model,
-    choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-  });
-  res.end('data: [DONE]\n\n');
+  if (delayMs > 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
 }
 
 export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFixture> {
   const requests: ManagedAiGatewayFixtureRequest[] = [];
-
-  const server = createServer(async (req, res) => {
-    try {
-      setCorsHeaders(res);
-      if (req.method === 'OPTIONS') {
-        res.statusCode = 204;
-        res.end();
-        return;
-      }
-
-      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-      if (req.method === 'GET' && url.pathname === '/__e2e/requests') {
-        sendJson(res, 200, { requests });
-        return;
-      }
-
-      if (req.method === 'POST' && url.pathname === '/__e2e/reset') {
-        requests.splice(0, requests.length);
-        sendJson(res, 200, { ok: true });
-        return;
-      }
-
-      if (req.method === 'GET' && url.pathname === '/api/me') {
-        sendJson(res, 200, {
-          user: { id: E2E_MANAGED_AI_USER_ID, email: 'veslo-managed-ai-e2e@example.test' },
-          org: { id: E2E_MANAGED_AI_ORG_ID, slug: 'veslo-managed-ai-e2e' },
-        });
-        return;
-      }
-
-      if (req.method === 'GET' && url.pathname === '/api/me/ai-access') {
-        sendJson(res, 200, {
-          accessToken: E2E_MANAGED_AI_GATEWAY_ACCESS_TOKEN,
-          aiAccess: {
-            id: 'ai_access_veslo_e2e_managed_ai',
-            userId: E2E_MANAGED_AI_USER_ID,
-            enabled: true,
-            provider: 'codex_oauth',
-            effectiveModel: { provider: 'codex_oauth', model: 'gpt-5.4' },
-            updatedAt: new Date(0).toISOString(),
-          },
-        });
-        return;
-      }
-
-      if (req.method === 'POST' && url.pathname === '/providers/codex_oauth/v1/chat/completions') {
-        const rawBody = await readBody(req);
-        const body = rawBody ? JSON.parse(rawBody) as Record<string, unknown> : {};
-        const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : 'gpt-5.4';
-        const promptText = extractPromptText(body);
-        const stream = typeof body.stream === 'boolean' ? body.stream : false;
+  const pendingTransportRequests: PendingTransportRequest[] = [];
+  const now = new Date('2026-07-12T00:00:00.000Z');
+  const modelPolicy = {
+    async getPolicy() {
+      return {
+        id: 'platform' as const,
+        enabledModels: ENABLED_MODELS.map((entry) => ({ ...entry })),
+        activeModel: { ...ACTIVE_MODEL },
+        createdAt: now,
+        updatedAt: now,
+      };
+    },
+    async replacePolicy() {
+      throw new Error('fixture model policy is immutable');
+    },
+  };
+  const aiAccess = {
+    async getUserAiAccess(userId: string) {
+      if (userId !== E2E_MANAGED_AI_USER_ID && userId !== E2E_MANAGED_AI_SECOND_USER_ID) return null;
+      return {
+        id: `ai_access_${userId}`,
+        userId,
+        enabled: true,
+        provider: 'codex_oauth' as const,
+        credentialId: CREDENTIAL_ID,
+        assignmentOrigin: 'admin_assigned' as const,
+        createdAt: now,
+        updatedAt: now,
+      };
+    },
+    async upsertUserAiAccess() {
+      throw new Error('fixture access policy is immutable');
+    },
+    async countEnabledPolicies() {
+      return 2;
+    },
+  };
+  const sessionResolver = {
+    async resolveSession(token: string) {
+      const user = fixtureUserForToken(token);
+      return user ? { token, user } : null;
+    },
+  };
+  const credentialRecord = {
+    id: CREDENTIAL_ID,
+    name: 'E2E Codex credential',
+    ownerUserId: 'platform:codex_oauth',
+    provider: 'codex_oauth',
+    credentialType: 'oauth',
+    state: 'healthy',
+    secretRef: 'secret_veslo_e2e_codex',
+    createdAt: now,
+    updatedAt: now,
+    lastFailureAt: null,
+  };
+  const binding = {
+    id: BINDING_ID,
+    ownerUserId: 'platform:codex_oauth',
+    provider: 'codex_oauth',
+    credentialRecordId: CREDENTIAL_ID,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const credentials = {
+    async getCredentialRecordById(id: string) {
+      return id === CREDENTIAL_ID ? credentialRecord : null;
+    },
+    async listHealthyCredentialRecordIds() {
+      return [CREDENTIAL_ID];
+    },
+    async getBindingByCredentialId(id: string) {
+      return id === CREDENTIAL_ID ? binding : null;
+    },
+    async getCredentialRecordByBindingId(id: string) {
+      return id === BINDING_ID ? credentialRecord : null;
+    },
+    async markCredentialState() {},
+  };
+  const proxy = {
+    gatewaySessions: sessionResolver,
+    managedAiEntitlement: {
+      async resolve(input: { requestedOrgId: string | null }) {
+        return { orgId: input.requestedOrgId ?? E2E_MANAGED_AI_ORG_ID, canUseManagedAi: true };
+      },
+    },
+    aiAccess,
+    modelPolicy,
+    credentials,
+    secrets: {
+      async put() { return { secretRef: credentialRecord.secretRef }; },
+      async get() { return { kind: 'codex_auth_json' as const, authJson: '{"fixture":true}' }; },
+      async replace() {},
+    },
+    usageRepository: {
+      async recordUsage(input: {
+        ownerUserId: string;
+        orgId: string | null;
+        sessionId: string;
+        model: string;
+      }) {
+        const transport = pendingTransportRequests.shift();
+        if (!transport) throw new Error('fixture transport request was not captured');
         requests.push({
           at: new Date().toISOString(),
-          method: req.method ?? 'POST',
-          pathname: url.pathname,
-          authorization: typeof req.headers.authorization === 'string' ? req.headers.authorization : null,
-          sessionId: typeof req.headers['x-veslo-session-id'] === 'string' ? req.headers['x-veslo-session-id'] : null,
-          model,
-          promptText,
-          stream,
+          method: 'POST',
+          pathname: '/providers/codex_oauth/v1/chat/completions',
+          authorizationPresent: true,
+          userId: input.ownerUserId,
+          orgId: input.orgId,
+          sessionId: input.sessionId,
+          model: input.model,
+          promptNonce: transport.promptNonce,
+          stream: transport.stream,
+          status: 200,
         });
-
-        const content = `Veslo managed AI fixture response for ${extractToken(promptText)}.`;
+      },
+    },
+    leaseBroker: {
+      async getOrCreateActiveLease(input: { ownerUserId: string; provider: 'codex_oauth'; sessionId: string }) {
+        return {
+          id: `lease_${input.ownerUserId}_${input.sessionId}`,
+          ownerUserId: input.ownerUserId,
+          provider: input.provider,
+          sessionId: input.sessionId,
+          activeBindingId: BINDING_ID,
+        };
+      },
+      async handleUpstreamFailure() {
+        throw new Error('unused');
+      },
+    },
+    tokenBroker: { async getUpstreamAuth() { return { kind: 'oauth' as const, value: 'fixture' }; } },
+    codexOAuthTransport: {
+      async chatCompletions(input: { body: unknown }) {
+        const model = readBodyModel(input.body);
+        const promptText = extractPromptText(input.body);
+        const promptNonce = extractPromptNonce(promptText);
+        const stream = readBodyStream(input.body);
+        pendingTransportRequests.push({ model, promptNonce, stream });
         await delayResponseIfRequested();
-        if (stream) {
-          sendChatCompletionStream(res, model, content);
-        } else {
-          sendJson(res, 200, buildChatCompletionResponse(model, content));
-        }
-        return;
-      }
-
-      sendJson(res, 404, { error: 'not_found', path: url.pathname });
-    } catch (error) {
-      sendJson(res, 500, {
-        error: 'fixture_error',
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
+        const content = `Veslo managed AI fixture response for ${promptNonce}.`;
+        return stream
+          ? {
+              status: 200,
+              body: buildChatCompletionStream(model, content),
+              headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+              usage: { inputTokens: 8, outputTokens: 8, cachedTokens: 0, totalTokens: 16 },
+            }
+          : {
+              status: 200,
+              body: buildChatCompletionResponse(model, content),
+              usage: { inputTokens: 8, outputTokens: 8, cachedTokens: 0, totalTokens: 16 },
+            };
+      },
+    },
+    openAiTransport: { async chatCompletions() { throw new Error('unused'); } },
+    anthropicTransport: { async messages() { throw new Error('unused'); } },
+    openAiCompatibleTransport: { async chatCompletions() { throw new Error('unused'); } },
+  };
+  const app = createApp({
+    runtime: {} as never,
+    admin: {} as never,
+    readiness: {
+      probes: [{ provider: 'codex_oauth', url: 'http://fixture.invalid' }],
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+      credentials,
+      aiAccess,
+      modelPolicy,
+      modelCapabilities: {
+        async checkHealthyCredentialForModel() { return { status: 'supported' as const, credentialId: CREDENTIAL_ID }; },
+        async checkCredentialForModel() { return { status: 'supported' as const, credentialId: CREDENTIAL_ID }; },
+        async hasHealthyCredentialForModel() { return true; },
+        invalidateCredential() {},
+      },
+    },
+    userCredentials: { sessionResolver, aiAccess, modelPolicy },
+    proxy: proxy as never,
   });
 
+  app.get('/__e2e/model-policy', async (_req, res) => {
+    const policy = await modelPolicy.getPolicy();
+    res.json({ enabledModels: policy.enabledModels, activeModel: policy.activeModel });
+  });
+  app.get('/__e2e/requests', (_req, res) => res.json({ requests }));
+  app.post('/__e2e/reset', (_req, res) => {
+    requests.splice(0, requests.length);
+    pendingTransportRequests.splice(0, pendingTransportRequests.length);
+    res.json({ ok: true });
+  });
+  app.get('/api/me', (req, res) => {
+    const authorization = req.header('authorization') ?? '';
+    const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? '';
+    const user = fixtureUserForToken(token);
+    if (!user) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    res.json({ user, org: { id: E2E_MANAGED_AI_ORG_ID, slug: 'veslo-managed-ai-e2e' } });
+  });
+
+  const server = createServer((req, res) => {
+    res.setHeader('access-control-allow-origin', '*');
+    res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS');
+    res.setHeader(
+      'access-control-allow-headers',
+      'authorization,content-type,x-veslo-den-org-id,x-veslo-org-id,x-veslo-session-id',
+    );
+    if (req.method === 'OPTIONS') {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+    app(req, res);
+  });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -238,12 +378,7 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
     server.close();
     throw new Error('Managed AI gateway fixture did not bind to a TCP port.');
   }
-
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    requests,
-    server,
-  };
+  return { baseUrl: `http://127.0.0.1:${address.port}`, requests, server };
 }
 
 export async function stopManagedAiGatewayFixture(fixture: ManagedAiGatewayFixture | null): Promise<void> {

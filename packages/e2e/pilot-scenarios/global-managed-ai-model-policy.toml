@@ -1,0 +1,422 @@
+[scenario]
+name = "global-managed-ai-model-policy"
+fail_fast = true
+global_timeout_ms = 300000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "enable debug-only managed AI status surface"
+action = "eval"
+script = '''
+const oldUrl = window.location.href;
+window.location.hash = "/dashboard/settings?debug=1";
+window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+true;
+'''
+
+[[step]]
+name = "developer managed AI settings card renders"
+action = "wait"
+target = "[data-testid=\"managed-ai-access-settings-card\"]"
+timeout_ms = 30000
+
+[[step]]
+name = "start global managed AI model policy proof"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="global-managed-ai-model-policy-complete"]';
+const errorSelector = '[data-testid="global-managed-ai-model-policy-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const appendMarker = (testid, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = testid;
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloGlobalManagedAiModelPolicyStarted) {
+  window.__vesloGlobalManagedAiModelPolicyStarted = true;
+  window.__vesloGlobalManagedAiModelPolicyPromise = (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+    const canonicalizeModelLabel = (value) => normalize(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const deadline = Date.now() + (options.timeout ?? 10000);
+      let latest = null;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(options.interval ?? 250);
+      }
+      throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latest)}`);
+    };
+    const withTimeout = async (promise, timeout, message) => {
+      let timer;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(message)), timeout);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    const tauriInvoke = async (command, payload = {}) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await withTimeout(invoke(command, payload), 90000, `Tauri command ${command} timed out.`);
+    };
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      return Boolean(element.offsetParent) && rect.width > 0 && rect.height > 0;
+    };
+    const bodyText = () => normalize(document.body.innerText);
+    const visibleText = (element) => normalize(element?.innerText || element?.textContent);
+    const buttonValues = (button) => [
+      normalize(button.textContent),
+      normalize(button.title),
+      normalize(button.getAttribute("aria-label")),
+    ].filter(Boolean);
+    const buttonMatches = (button, labels) =>
+      isVisible(button) && !button.disabled && labels.some((label) =>
+        buttonValues(button).some((value) => value === label || value.includes(label))
+      );
+    const assertNoModelAuthorityControls = (surface, label) => {
+      assert(surface instanceof HTMLElement, `${label} surface is unavailable.`);
+      const visiblePicker = Array.from(
+        surface.querySelectorAll('select,[role="combobox"],input[list]'),
+      ).find(isVisible);
+      assert(!visiblePicker, `${label} exposed a visible model picker control.`);
+      const visibleModelAction = Array.from(surface.querySelectorAll("button")).find((button) =>
+        isVisible(button) && buttonValues(button).some((value) =>
+          /Change model|Allowed models|Default model|Model picker/i.test(value)
+        )
+      );
+      assert(!visibleModelAction, `${label} exposed a model authority action.`);
+    };
+    const dispatchClickSequence = (element) => {
+      element.focus?.();
+      const base = { bubbles: true, cancelable: true, composed: true, view: window, button: 0 };
+      if (typeof PointerEvent === "function") {
+        element.dispatchEvent(new PointerEvent("pointerdown", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 1,
+        }));
+        element.dispatchEvent(new PointerEvent("pointerup", {
+          ...base,
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 0,
+        }));
+      }
+      element.dispatchEvent(new MouseEvent("mousedown", { ...base, buttons: 1 }));
+      element.dispatchEvent(new MouseEvent("mouseup", { ...base, buttons: 0 }));
+      element.dispatchEvent(new MouseEvent("click", { ...base, buttons: 0 }));
+    };
+    const findComposerSendButton = (textbox) => {
+      const labels = ["Send now", "Steer agent now", "Queue message", "Send", "Poslat hned", "Odeslat"];
+      let current = textbox;
+      for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+        const match = Array.from(current.querySelectorAll("button")).find((button) => buttonMatches(button, labels));
+        if (match) return match;
+        current = current.parentElement;
+      }
+      return Array.from(document.querySelectorAll("button")).find((button) => buttonMatches(button, labels));
+    };
+    const navigateToHash = (path) => {
+      const oldUrl = window.location.href;
+      window.location.hash = path;
+      window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+    };
+    const parseAuth = (raw) => {
+      try {
+        const parsed = JSON.parse(raw || "null");
+        const token = normalize(parsed?.token);
+        const denApiBase = trimBaseUrl(parsed?.denApiBase);
+        const orgId = normalize(parsed?.orgId || parsed?.org?.id);
+        return token && denApiBase && orgId
+          ? { token, denApiBase, orgId, userId: normalize(parsed?.user?.id) }
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const readAuth = async () => {
+      const browser = parseAuth(
+        window.localStorage.getItem("veslo.den.auth") ||
+        window.sessionStorage.getItem("veslo.den.auth"),
+      );
+      if (browser) return browser;
+      const snapshot = await tauriInvoke("den_auth_snapshot_read", {});
+      return parseAuth(snapshot?.authJson);
+    };
+    const readJson = async (response, label) => {
+      const text = await response.text();
+      let payload = null;
+      try {
+        payload = text.trim() ? JSON.parse(text) : null;
+      } catch {
+        throw new Error(`${label} returned invalid JSON: ${text.slice(0, 1000)}`);
+      }
+      return { response, payload, text };
+    };
+    const waitForLocalServer = async () => await waitUntil(async () => {
+      const info = await tauriInvoke("veslo_server_info").catch(() => null);
+      const baseUrl = trimBaseUrl(info?.baseUrl);
+      const clientToken = normalize(info?.clientToken);
+      if (!info?.running || !baseUrl || !clientToken) return false;
+      const health = await fetch(`${baseUrl}/health`).catch(() => null);
+      return health?.ok ? { baseUrl, clientToken } : false;
+    }, {
+      timeout: 90000,
+      interval: 500,
+      message: "Local Veslo server did not become ready",
+    });
+    const readAccessThroughLocalServer = async (connection, token, orgId) => {
+      const result = await readJson(await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+        headers: {
+          authorization: `Bearer ${connection.clientToken}`,
+          "x-veslo-gateway-authorization": `Bearer ${token}`,
+          "x-veslo-den-org-id": orgId,
+          accept: "application/json",
+        },
+      }), "local AI access");
+      assert(result.response.ok, `Local AI access failed ${result.response.status}: ${result.text}`);
+      return result.payload;
+    };
+    const startWorkspaceRuntime = async () => {
+      const bootstrap = await waitUntil(async () => {
+        const value = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(value?.workspaces) && value.workspaces.length > 0 ? value : false;
+      }, { timeout: 45000, interval: 500, message: "Workspace bootstrap did not expose a workspace" });
+      const workspace = bootstrap.workspaces.find((entry) => entry.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
+      const workspacePath = normalize(workspace?.path || workspace?.directory);
+      assert(workspacePath, `Workspace path is unavailable: ${JSON.stringify(workspace)}`);
+      await tauriInvoke("engine_start", {
+        projectDir: workspacePath,
+        preferSidecar: true,
+        opencodeBinPath: null,
+        runtime: "veslo-orchestrator",
+        workspacePaths: [workspacePath],
+      });
+      await tauriInvoke("orchestrator_workspace_activate", {
+        workspacePath,
+        name: normalize(workspace?.displayName || workspace?.name) || null,
+      });
+      return { workspace, workspacePath };
+    };
+    const waitForComposer = async () => await waitUntil(() => {
+      const candidate = document.querySelector(
+        'div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]',
+      );
+      return candidate instanceof HTMLElement && isVisible(candidate) ? candidate : false;
+    }, { timeout: 45000, message: `Composer did not appear. Body=${bodyText().slice(0, 2500)}` });
+    const setComposerText = (textbox, text) => {
+      textbox.focus();
+      if (textbox.isContentEditable) textbox.replaceChildren(document.createTextNode(text));
+      else textbox.value = text;
+      textbox.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" }));
+    };
+
+    const auth = await waitUntil(readAuth, { timeout: 30000, message: "Fixture auth was not seeded" });
+    assert(auth.token === "veslo-e2e-managed-ai-token", "Fixture mode did not replace the primary auth token.");
+    const policyResult = await readJson(
+      await fetch(`${auth.denApiBase}/__e2e/model-policy`),
+      "fixture model policy",
+    );
+    assert(policyResult.response.ok, `Fixture model policy failed: ${policyResult.text}`);
+    const policy = policyResult.payload;
+    assert(Array.isArray(policy?.enabledModels) && policy.enabledModels.length === 2,
+      `Expected two enabled models: ${JSON.stringify(policy)}`);
+    assert(policy.activeModel?.provider === "codex_oauth" && policy.activeModel?.model === "gpt-5.4",
+      `Unexpected active model: ${JSON.stringify(policy)}`);
+
+    navigateToHash("/dashboard/settings?debug=1");
+    const settingsCard = await waitUntil(() => {
+      const text = bodyText();
+      if (!text.includes("AI access") || !text.includes("Provider and model selection are managed by your platform admin.")) {
+        return false;
+      }
+      const heading = Array.from(document.querySelectorAll("div,h1,h2,h3")).find((entry) =>
+        isVisible(entry) && visibleText(entry) === "AI access"
+      );
+      return heading?.closest(".rounded-2xl") || heading?.parentElement || false;
+    }, { timeout: 45000, message: `Managed AI settings anchor did not render. Body=${bodyText().slice(0, 2500)}` });
+    const settingsText = visibleText(settingsCard);
+    const expectedSettingsModelIdentity = canonicalizeModelLabel(
+      `${policy.activeModel.provider} ${policy.activeModel.model}`,
+    );
+    const canonicalSettingsText = canonicalizeModelLabel(settingsText);
+    assert(canonicalSettingsText.includes(canonicalizeModelLabel("Effective model")) &&
+      canonicalSettingsText.includes(expectedSettingsModelIdentity),
+      `Managed AI settings did not show the active model: ${settingsText}`);
+    assertNoModelAuthorityControls(settingsCard, "Developer managed AI settings");
+
+    navigateToHash("/dashboard/settings");
+    const normalSettingsSurface = await waitUntil(() => {
+      const main = document.querySelector("main");
+      const text = visibleText(main);
+      return main instanceof HTMLElement &&
+        !main.querySelector('[data-testid="managed-ai-access-settings-card"]') &&
+        text.includes("Run preferences")
+        ? main
+        : false;
+    }, { timeout: 30000, message: `Normal Settings did not render. Body=${bodyText().slice(0, 2500)}` });
+    assertNoModelAuthorityControls(normalSettingsSurface, "Normal Settings");
+
+    const connection = await waitForLocalServer();
+    const primaryAccess = await readAccessThroughLocalServer(connection, auth.token, auth.orgId);
+    assert(primaryAccess?.aiAccess?.enabled === true, `Primary AI access is not enabled: ${JSON.stringify(primaryAccess)}`);
+    assert(primaryAccess.aiAccess.effectiveModel?.model === policy.activeModel.model,
+      `Primary access did not resolve the active model: ${JSON.stringify(primaryAccess)}`);
+    const runtime = await startWorkspaceRuntime();
+
+    navigateToHash("/session");
+    const textbox = await waitForComposer();
+    const sessionComposerSurface = textbox.closest("main") || document.querySelector("main");
+    assertNoModelAuthorityControls(sessionComposerSurface, "Session composer");
+    const token = `global-model-policy-${Date.now()}`;
+    const prompt = `Reply with exactly ${token}. Do not use tools. No other words.`;
+    setComposerText(textbox, prompt);
+    const sendButton = await waitUntil(() => findComposerSendButton(textbox), {
+      timeout: 20000,
+      message: "Composer send button did not become enabled",
+    });
+    dispatchClickSequence(sendButton);
+    await waitUntil(() => bodyText().includes(`Veslo managed AI fixture response for ${token}.`), {
+      timeout: 120000,
+      interval: 500,
+      message: `Desktop prompt response did not render. Body=${bodyText().slice(0, 3000)}`,
+    });
+
+    const primaryRequest = await waitUntil(async () => {
+      const result = await readJson(await fetch(`${auth.denApiBase}/__e2e/requests`), "fixture requests");
+      return result.payload?.requests?.find((entry) => entry.promptNonce === token) || false;
+    }, { timeout: 30000, interval: 250, message: "Fixture did not capture the desktop provider request" });
+    assert(primaryRequest.model === policy.activeModel.model,
+      `Desktop provider request did not use the active model: ${JSON.stringify(primaryRequest)}`);
+    assert(primaryRequest.userId === "user_veslo_e2e_managed_ai",
+      `Desktop provider request used the wrong user: ${JSON.stringify(primaryRequest)}`);
+    assert(primaryRequest.orgId === auth.orgId && primaryRequest.sessionId,
+      `Desktop provider request lost organization/session attribution: ${JSON.stringify(primaryRequest)}`);
+    assert(primaryRequest.authorizationPresent === true && !("authorization" in primaryRequest),
+      `Fixture diagnostics retained unsafe auth data: ${JSON.stringify(primaryRequest)}`);
+
+    const override = await readJson(await fetch(
+      `${auth.denApiBase}/providers/codex_oauth/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${auth.token}`,
+          "content-type": "application/json",
+          "x-veslo-org-id": auth.orgId,
+          "x-veslo-session-id": "session_non_active_override",
+        },
+        body: JSON.stringify({
+          model: "gpt-5.3-codex",
+          messages: [{ role: "user", content: "non-active override probe" }],
+        }),
+      },
+    ), "non-active model override");
+    assert(override.response.status === 403 && override.payload?.error === "model_override_not_allowed",
+      `Non-active override was not rejected by the real Gateway path: ${override.response.status} ${override.text}`);
+
+    const secondToken = "veslo-e2e-managed-ai-second-token";
+    const secondAccessResult = await readJson(await fetch(`${auth.denApiBase}/api/me/ai-access`, {
+      headers: { authorization: `Bearer ${secondToken}` },
+    }), "second user AI access");
+    assert(secondAccessResult.response.ok, `Second user AI access failed: ${secondAccessResult.text}`);
+    assert(secondAccessResult.payload?.aiAccess?.userId !== primaryAccess.aiAccess.userId,
+      "Second access fixture did not resolve a distinct user.");
+    assert(secondAccessResult.payload.aiAccess.effectiveModel?.model === policy.activeModel.model,
+      `Second user did not resolve the active model: ${JSON.stringify(secondAccessResult.payload)}`);
+
+    const secondProvider = await readJson(await fetch(
+      `${auth.denApiBase}/providers/codex_oauth/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${secondToken}`,
+          "content-type": "application/json",
+          "x-veslo-org-id": auth.orgId,
+          "x-veslo-session-id": "session_second_user",
+        },
+        body: JSON.stringify({ messages: [{ role: "user", content: "second user active model probe" }] }),
+      },
+    ), "second user provider request");
+    assert(secondProvider.response.ok && secondProvider.payload?.model === policy.activeModel.model,
+      `Second user provider request did not use the active model: ${secondProvider.response.status} ${secondProvider.text}`);
+    const secondRequest = await waitUntil(async () => {
+      const result = await readJson(await fetch(`${auth.denApiBase}/__e2e/requests`), "fixture requests");
+      return result.payload?.requests?.find((entry) => entry.userId === "user_veslo_e2e_managed_ai_second") || false;
+    }, { timeout: 10000, message: "Second user provider request was not captured" });
+    assert(secondRequest.model === policy.activeModel.model,
+      `Second user captured a different model: ${JSON.stringify(secondRequest)}`);
+
+    appendMarker("global-managed-ai-model-policy-complete", {
+      ok: true,
+      policy,
+      settings: {
+        anchored: true,
+        normalSettingsSurface: true,
+        modelPickerAbsent: true,
+        changeModelActionAbsent: true,
+      },
+      sessionComposerSurface: { anchored: true, modelPickerAbsent: true, changeModelActionAbsent: true },
+      runtime,
+      prompt: { token, activeModel: primaryRequest.model, request: primaryRequest },
+      override: { status: override.response.status, error: override.payload.error },
+      secondUser: {
+        userId: secondAccessResult.payload.aiAccess.userId,
+        effectiveModel: secondAccessResult.payload.aiAccess.effectiveModel,
+        request: secondRequest,
+      },
+    });
+  })().catch((error) => {
+    appendMarker("global-managed-ai-model-policy-error", {
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      body: document.body.innerText.slice(0, 5000),
+    });
+  });
+}
+true;
+'''
+
+[[step]]
+name = "global managed AI model policy proof finishes"
+action = "wait"
+target = "[data-testid=\"global-managed-ai-model-policy-complete\"], [data-testid=\"global-managed-ai-model-policy-error\"]"
+timeout_ms = 270000
+
+[[step]]
+name = "global managed AI model policy proof succeeds"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="global-managed-ai-model-policy-error"]');
+if (error) {
+  throw new Error(`Global managed AI model policy proof failed: ${(error.textContent || "").slice(0, 30000)}`);
+}
+const complete = document.querySelector('[data-testid="global-managed-ai-model-policy-complete"]');
+if (!complete) throw new Error("Global managed AI model policy completion marker is missing.");
+true;
+'''

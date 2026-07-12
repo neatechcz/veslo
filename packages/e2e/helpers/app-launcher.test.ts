@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as appLauncherModule from './app-launcher.js';
 import {
   buildWindowsManagedChildCleanupScript,
   createAppLaunchEnv,
@@ -101,6 +102,27 @@ test('publishPilotDenAuthSeedForWebView exposes fixture auth to Pilot seeding wi
   const explicitTarget = { VESLO_E2E_DEN_AUTH_JSON: '{"token":"explicit"}' };
   publishPilotDenAuthSeedForWebView({ E2E_DEN_AUTH_JSON: '{"token":"fixture"}' }, explicitTarget);
   assert.deepEqual(explicitTarget, { VESLO_E2E_DEN_AUTH_JSON: '{"token":"explicit"}' });
+});
+
+test('managed AI fixture auth replaces live auth inputs and prevents snapshot fallback', () => {
+  const target: Record<string, string | undefined> = {
+    VESLO_E2E_DEN_AUTH_JSON: '{"token":"live-veslo"}',
+    E2E_DEN_AUTH_JSON: '{"token":"live-fallback"}',
+    VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: '/tmp/live-veslo-snapshot.json',
+    E2E_DEN_AUTH_SNAPSHOT_FILE: '/tmp/live-fallback-snapshot.json',
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: '/tmp/live-production-snapshot.json',
+  };
+  const fixtureAuth = '{"token":"fixture"}';
+
+  const publishFixtureAuth = (appLauncherModule as Record<string, unknown>).publishManagedAiFixtureAuthSeed;
+  assert.equal(typeof publishFixtureAuth, 'function');
+  (publishFixtureAuth as (authJson: string, env: Record<string, string | undefined>) => void)(fixtureAuth, target);
+
+  assert.equal(target.VESLO_E2E_DEN_AUTH_JSON, fixtureAuth);
+  assert.equal(target.E2E_DEN_AUTH_JSON, fixtureAuth);
+  assert.equal('VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE' in target, false);
+  assert.equal('E2E_DEN_AUTH_SNAPSHOT_FILE' in target, false);
+  assert.equal('VESLO_DEN_AUTH_SNAPSHOT_PATH' in target, false);
 });
 
 test('createAppLaunchEnv isolates Windows app, local, and WebView2 storage so stale desktop state does not override the E2E snapshot', () => {
