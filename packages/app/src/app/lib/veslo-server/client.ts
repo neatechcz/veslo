@@ -19,6 +19,7 @@ import {
   requestJsonRaw,
   requestMultipartRaw,
 } from "./transport";
+import { VESLO_DEN_ORG_ID_HEADER } from "./header-profiles";
 import type {
   VesloServerCapabilities,
   VesloServerStatus,
@@ -335,7 +336,7 @@ function validateSkillRegistrySearchResponse(value: unknown): VesloSkillRegistry
   }
 }
 
-export async function requestManagedAiAccessBundle(baseUrl: string, userToken: string) {
+export async function requestManagedAiAccessBundle(baseUrl: string, userToken: string, orgId?: string) {
   const normalizedBaseUrl = normalizeVesloServerUrl(baseUrl);
   if (!normalizedBaseUrl) {
     throw new Error("Managed AI gateway base URL is required");
@@ -345,6 +346,7 @@ export async function requestManagedAiAccessBundle(baseUrl: string, userToken: s
     timeoutMs: 30_000,
     extraHeaders: {
       Authorization: normalizeBearerToken(userToken, "userToken"),
+      ...(orgId?.trim() ? { [VESLO_DEN_ORG_ID_HEADER]: orgId.trim() } : {}),
     },
   });
 }
@@ -501,12 +503,12 @@ export function createVesloServerClient(options: {
       }),
     opencodeRouterHealth: identities.health,
     opencodeRouterBindings: identities.bindings,
-    getMyAiAccess: (userToken: string) =>
+    getMyAiAccess: (userToken: string, orgId?: string) =>
       requestJson<VesloManagedAiAccessBundle>(baseUrl, "/ai-gateway/me/ai-access", {
         token,
         hostToken,
         timeoutMs: timeouts.aiAccess,
-        extraHeaders: buildGatewayCallerHeaders(userToken),
+        extraHeaders: buildGatewayCallerHeaders(userToken, orgId),
       }),
     clearMyAiGatewayRuntimeAuthorization: () =>
       requestJson<{ ok: true }>(baseUrl, "/ai-gateway/me/runtime-authorization/clear", {

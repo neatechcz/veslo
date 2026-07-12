@@ -71,6 +71,22 @@ test("DenUserSessionResolver joins concurrent lookups for the same token", async
   assert.equal(calls, 1)
 })
 
+test("DenUserSessionResolver isolates bearer tokens that collide under the legacy 32-bit cache hash", async () => {
+  const calls: string[] = []
+  const resolver = new DenUserSessionResolver({
+    denApiBase: "https://den.example",
+    fetchImpl: async (_url, init) => {
+      const token = new Headers(init?.headers).get("authorization")?.replace(/^Bearer\s+/i, "") ?? ""
+      calls.push(token)
+      return userResponse(token === "token_5wzx" ? "user-one" : "user-two")
+    },
+  })
+
+  assert.equal((await resolver.resolveSession("token_5wzx"))?.user.id, "user-one")
+  assert.equal((await resolver.resolveSession("token_c6cd"))?.user.id, "user-two")
+  assert.deepEqual(calls, ["token_5wzx", "token_c6cd"])
+})
+
 test("DenUserSessionResolver does not cache failed lookups", async () => {
   let calls = 0
   const resolver = new DenUserSessionResolver({

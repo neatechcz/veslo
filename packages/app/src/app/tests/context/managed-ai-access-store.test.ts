@@ -104,6 +104,28 @@ function createStoreOptions(
   return options;
 }
 
+test("managed AI access refresh sends the authenticated DEN organization", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const calls: Array<[string, string | undefined]> = [];
+      createManagedAiAccessStore(createStoreOptions({
+        gatewayVesloServerClient: () => ({
+          baseUrl: "https://gateway.veslo.test",
+          getMyAiAccess: async (userToken, orgId) => {
+            calls.push([userToken, orgId]);
+            return { aiAccess: null, accessToken: "" };
+          },
+        }),
+      }));
+
+      await settleEffects();
+      assert.deepEqual(calls, [["den-token", "org-1"]]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("managed AI access cache hydrates, expires, and clears browser records", () => {
   const storage = createMemoryStorage();
   const profile = managedProfile();

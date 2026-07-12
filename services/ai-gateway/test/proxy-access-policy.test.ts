@@ -9,6 +9,7 @@ import type { CredentialRecord } from "../src/credentials/repository.js";
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import { createApp, type AppDependencies } from "../src/index.js";
 import type { PlatformModelPolicyRecord } from "../src/model-policy/repository.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 
 const GATEWAY_AUTH_HEADER = {
   authorization: "Bearer gateway-access-token",
@@ -78,6 +79,7 @@ function createPolicyBoundaryApp(input: {
   let currentUserId = "";
   return createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession(token: string) {
           currentUserId = token === "gateway-user-two" ? "user_two" : "user_one";
@@ -187,6 +189,7 @@ async function requestOpenAi(app: ReturnType<typeof createApp>, input: {
 test("provider proxy rejects prompt requests when no ai access policy is assigned", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();
@@ -271,6 +274,7 @@ test("provider proxy rejects prompt requests when no ai access policy is assigne
 test("provider proxy rejects prompt requests when the assigned provider does not match the route", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();
@@ -359,6 +363,7 @@ test("provider proxy rejects prompt requests when the assigned provider does not
 test("provider proxy rejects a client model override", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();
@@ -455,6 +460,7 @@ test("provider proxy applies the platform active model when the request omits mo
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();
@@ -575,6 +581,7 @@ test("desktop-compatible provider proxy alias applies the platform active model"
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();

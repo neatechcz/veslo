@@ -7,6 +7,7 @@ import type { CredentialBinding, CredentialRecord } from "../src/credentials/rep
 import type { StoredSecret } from "../src/credentials/secret-store.js";
 import { ProviderTransportError } from "../src/providers/transport.js";
 import { createApp } from "../src/index.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 
 const GATEWAY_AUTH_HEADER = {
   authorization: "Bearer gateway-access-token",
@@ -55,6 +56,7 @@ function createProxyApp(input: {
   const credential = createCredentialRecord();
   return createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       modelPolicy: {
         async getPolicy() {
           return {
@@ -297,7 +299,7 @@ test("POST /providers/openai_compatible/v1/chat/completions forwards assigned cu
       {
         requestId: "custom_req_1",
         ownerUserId: "user_gateway",
-        orgId: null,
+        orgId: "org_test",
         provider: "openai_compatible",
         sessionId: "session_custom_1",
         credentialId: "cred_custom_1",

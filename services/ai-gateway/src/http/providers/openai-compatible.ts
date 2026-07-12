@@ -19,6 +19,7 @@ import {
   recordProviderProxyFailureAlert,
 } from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
+import { readGatewayOrganizationId } from "./gateway-context.js";
 import { asyncHandler } from "../async-handler.js";
 import type { ProxyDependencies } from "../proxy-dependencies.js";
 
@@ -120,7 +121,12 @@ export function createOpenAiCompatibleProxyRouter(
     };
 
     try {
-      const upstreamResponse = await executeRequest(scope, policyResult.body, assignedSecret);
+      const upstreamResponse = await executeRequest(
+        scope,
+        policyResult.body,
+        assignedSecret,
+        readGatewayOrganizationId(res),
+      );
       applyUpstreamResponse(res, upstreamResponse);
     } catch (error) {
       await recordProviderProxyFailureAlert({
@@ -154,15 +160,17 @@ export function createOpenAiCompatibleProxyRouter(
     scope: ResolveLeaseInput,
     body: unknown,
     secret: Extract<StoredSecret, { kind: "openai_compatible_api_key" }> | null,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const lease = await deps.leaseBroker.getOrCreateActiveLease(scope);
-    return executeLeaseRequest(lease, body, secret);
+    return executeLeaseRequest(lease, body, secret, orgId);
   }
 
   async function executeLeaseRequest(
     lease: SessionLease,
     body: unknown,
     secret: Extract<StoredSecret, { kind: "openai_compatible_api_key" }> | null,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     if (!secret) {
       throw new Error("openai_compatible_secret_unavailable");
@@ -176,6 +184,7 @@ export function createOpenAiCompatibleProxyRouter(
 
     await recordUsage({
       ownerUserId: lease.ownerUserId,
+      orgId,
       sessionId: lease.sessionId,
       bindingId: lease.activeBindingId,
       requestBody: body,
@@ -187,6 +196,7 @@ export function createOpenAiCompatibleProxyRouter(
 
   async function recordUsage(input: {
     ownerUserId: string;
+    orgId: string | null;
     sessionId: string;
     bindingId: string;
     requestBody: unknown;
@@ -205,7 +215,7 @@ export function createOpenAiCompatibleProxyRouter(
       await deps.usageRepository.recordUsage({
         requestId,
         ownerUserId: input.ownerUserId,
-        orgId: null,
+        orgId: input.orgId,
         provider: "openai_compatible",
         sessionId: input.sessionId,
         credentialId: credential.id,

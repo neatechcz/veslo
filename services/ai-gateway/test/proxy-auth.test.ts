@@ -5,6 +5,7 @@ import test from "node:test";
 
 import type { CredentialRecord } from "../src/credentials/repository.js";
 import { createApp, type AppDependencies } from "../src/index.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 
 function createModelPolicy() {
   return {
@@ -26,6 +27,7 @@ function createModelPolicy() {
 test("provider proxy rejects requests without gateway bearer auth", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           throw new Error("resolver should not be called without authorization");
@@ -100,6 +102,7 @@ test("provider proxy rejects requests without gateway bearer auth", async () => 
 test("provider proxy rejects unauthenticated malformed JSON before body parsing", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           throw new Error("resolver should not be called without authorization");
@@ -172,6 +175,7 @@ test("provider proxy rejects unauthenticated malformed JSON before body parsing"
 test("provider proxy returns bounded JSON when gateway session lookup throws", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           throw new Error("den lookup failed");
@@ -266,6 +270,7 @@ test("provider proxy uses resolved gateway user identity instead of trusting x-v
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
@@ -379,6 +384,7 @@ test("provider proxy accepts the OpenCode gateway token header", async () => {
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {

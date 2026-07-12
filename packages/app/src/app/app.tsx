@@ -2270,6 +2270,7 @@ export default function App() {
     managedAiAccessError,
     managedAiGatewayAccessToken,
     denGatewayAccessToken,
+    denOrgId: () => readDenAuth()?.orgId?.trim() ?? "",
     denAuthRevision,
     gatewayVesloServerClient,
     vesloServerClient,

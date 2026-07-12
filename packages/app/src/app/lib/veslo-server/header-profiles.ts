@@ -61,9 +61,11 @@ export function buildVesloServerAuthHeaders(
   return headers;
 }
 
-export function buildGatewayCallerHeaders(userToken: string): Record<string, string> {
+export function buildGatewayCallerHeaders(userToken: string, orgId?: string): Record<string, string> {
+  const normalizedOrgId = orgId?.trim() ?? "";
   return {
     [VESLO_GATEWAY_AUTHORIZATION_HEADER]: normalizeBearerToken(userToken, "userToken"),
+    ...(normalizedOrgId ? { [VESLO_DEN_ORG_ID_HEADER]: normalizedOrgId } : {}),
   };
 }
 

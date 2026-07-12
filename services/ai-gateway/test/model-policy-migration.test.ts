@@ -12,6 +12,7 @@ import { createProxyRouter } from "../src/http/proxy.js";
 import { applyPlatformModelPolicy } from "../src/http/providers/access-policy.js";
 import { createUserCredentialsRouter } from "../src/http/user-credentials.js";
 import type { PlatformModelPolicyRecord, PlatformModelRef } from "../src/model-policy/repository.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 
 // Rollout contract:
 // 1. deploy schema/repository/API support;
@@ -84,6 +85,7 @@ test("runtime enforcement fails closed while the platform policy is unavailable"
   const app = express();
   app.use(express.json());
   app.use(createProxyRouter({
+    managedAiEntitlement: allowManagedAiEntitlement,
     gatewaySessions: {
       async resolveSession(token: string) {
         return { token, user: { id: "user_1", email: "user@example.test" } };

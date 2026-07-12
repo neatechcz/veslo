@@ -6,6 +6,7 @@ import test from "node:test";
 import type { AiAccessRepository } from "../src/access/repository.js";
 import type { AiGatewayDb } from "../src/db/index.js";
 import { createApp, createDefaultProxyDependencies, createDefaultRuntimeState, createDefaultUserCredentialDependencies, type RuntimeState } from "../src/index.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 import { getPlatformCredentialOwnerUserId } from "../src/credentials/platform-owner.js";
 import { MySqlCredentialRepository } from "../src/credentials/mysql-repository.js";
 import { MySqlSecretStore } from "../src/credentials/mysql-secret-store.js";
@@ -288,6 +289,7 @@ function createRuntimeBackedApp(input: {
       },
     }),
     proxy: createDefaultProxyDependencies(input.runtime, {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token");
