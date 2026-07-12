@@ -1666,6 +1666,7 @@ function registerAiGatewayRuntimeAuthorization(input: {
   actor?: Actor;
   authorization: string;
   orgId?: string | null;
+  workspaceId?: string | null;
   source: AiGatewayRuntimeAuthorizationEntry["source"];
 }): void {
   aiGatewayRuntimeOwner.registerRuntimeAuthorization(input);
@@ -1680,14 +1681,23 @@ function syncAiGatewayRuntimeAuthorizationFromAccessBundle(input: {
   value: unknown;
   callerAuthorization: string;
   orgId?: string | null;
+  workspaceId?: string | null;
 }): void {
   aiGatewayRuntimeOwner.syncRuntimeAuthorizationFromAccessBundle(input);
+}
+
+function resolveAiGatewayRuntimeAuthorizationBindingForRun(input: {
+  actor?: Actor;
+  workspaceId: string;
+}): { actorTokenHash: string; orgId: string | null } {
+  return aiGatewayRuntimeOwner.resolveRuntimeAuthorizationBindingForRun(input);
 }
 
 function resolveAiGatewayProviderAuthorization(input: {
   request: Request;
   actor?: Actor;
   runtimeAuthorizationActorTokenHash?: string | null;
+  runtimeAuthorizationOrgId?: string | null;
   activeRunContextPresent?: boolean;
 }): {
   authorization: string;
@@ -2055,6 +2065,7 @@ async function proxyAiGatewayRequest(input: {
   auth: "caller" | "gateway-token";
   requireSessionId?: boolean;
   preserveAiAccessToken?: boolean;
+  runtimeWorkspaceId?: string;
 }) {
   const startedAt = perfMs();
   let headersPreparedAt = startedAt;
@@ -2102,6 +2113,7 @@ async function proxyAiGatewayRequest(input: {
         request: input.request,
         ...(input.actor ? { actor: input.actor } : {}),
         runtimeAuthorizationActorTokenHash: activeRunContext?.runtimeAuthorizationActorTokenHash ?? null,
+        runtimeAuthorizationOrgId: activeRunContext?.runtimeAuthorizationOrgId ?? null,
         activeRunContextPresent: Boolean(activeRunContext),
       })
     : null;
@@ -2585,6 +2597,7 @@ async function proxyAiGatewayRequest(input: {
       value: json,
       callerAuthorization: gatewayCallerAuth,
       orgId: incomingOrganizationId,
+      workspaceId: input.runtimeWorkspaceId,
       ...(input.actor ? { actor: input.actor } : {}),
     });
   }
@@ -4226,6 +4239,8 @@ function createRoutes(
     clearAiGatewayRuntimeAuthorization,
     proxyAiGatewayReadinessRequest,
     proxyAiGatewayRequest,
+    resolveAiGatewayWorkspaceId: async (ctx, workspaceId) =>
+      (await resolveWorkspace(ctx.config, workspaceId)).id,
   });
 
   registerAdminRoutes(routes);
@@ -4241,6 +4256,7 @@ function createRoutes(
     loadConversationTranscriptResponse,
     createConversationRunTracer,
     resolveConversationExecutionTarget,
+    resolveAiGatewayRuntimeAuthorizationBindingForRun,
     deleteOpenCodeSession: async ({ workspace, sessionId }) => {
       await fetchOpencodeJsonWithOrchestratorFallback(
         config,

@@ -104,22 +104,23 @@ function createStoreOptions(
   return options;
 }
 
-test("managed AI access refresh sends the authenticated DEN organization", async () => {
+test("managed AI access refresh sends the authenticated DEN organization and server workspace", async () => {
   await createRoot(async (dispose) => {
     try {
-      const calls: Array<[string, string | undefined]> = [];
+      const calls: Array<[string, string | undefined, string | undefined]> = [];
       createManagedAiAccessStore(createStoreOptions({
+        activeVesloServerWorkspaceId: () => "workspace-1",
         gatewayVesloServerClient: () => ({
           baseUrl: "https://gateway.veslo.test",
-          getMyAiAccess: async (userToken, orgId) => {
-            calls.push([userToken, orgId]);
+          getMyAiAccess: async (userToken, orgId, workspaceId) => {
+            calls.push([userToken, orgId, workspaceId]);
             return { aiAccess: null, accessToken: "" };
           },
         }),
       }));
 
       await settleEffects();
-      assert.deepEqual(calls, [["den-token", "org-1"]]);
+      assert.deepEqual(calls, [["den-token", "org-1", "workspace-1"]]);
     } finally {
       dispose();
     }

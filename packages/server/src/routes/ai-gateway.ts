@@ -10,6 +10,7 @@ type AiGatewayProxyRequestInput = {
   auth: "caller" | "gateway-token";
   preserveAiAccessToken?: boolean;
   requireSessionId?: boolean;
+  runtimeWorkspaceId?: string;
 };
 
 type AiGatewayReadinessRequestInput = {
@@ -21,6 +22,7 @@ export type AiGatewayRouteDependencies = {
   proxyAiGatewayRequest: (input: AiGatewayProxyRequestInput) => Promise<Response>;
   proxyAiGatewayReadinessRequest: (input: AiGatewayReadinessRequestInput) => Promise<Response>;
   clearAiGatewayRuntimeAuthorization: (actor?: Actor) => void;
+  resolveAiGatewayWorkspaceId: (ctx: AiGatewayRouteContext, workspaceId: string) => Promise<string>;
 };
 
 type AiGatewayRouteContext = Parameters<Route["handler"]>[0];
@@ -43,6 +45,17 @@ export function registerAiGatewayRoutes(routes: Route[], dependencies: AiGateway
       gatewayPath: "/api/me/ai-access",
       auth: "caller",
       preserveAiAccessToken: true,
+    }));
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/ai-gateway/me/ai-access", "client", async (ctx) => {
+    const routeWorkspaceId = ctx.params.id?.trim() ?? "";
+    const runtimeWorkspaceId = await dependencies.resolveAiGatewayWorkspaceId(ctx, routeWorkspaceId);
+    return dependencies.proxyAiGatewayRequest(proxyRequestInput(ctx, {
+      gatewayPath: "/api/me/ai-access",
+      auth: "caller",
+      preserveAiAccessToken: true,
+      runtimeWorkspaceId,
     }));
   });
 

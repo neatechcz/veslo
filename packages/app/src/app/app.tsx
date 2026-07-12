@@ -2214,6 +2214,7 @@ export default function App() {
     vesloServerAuth,
     activeVesloServerHostInfo,
     activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+    activeVesloServerWorkspaceId: vesloServerWorkspaceId,
     ensureLocalVesloServerRunning,
     providers,
     formatModelLabel,

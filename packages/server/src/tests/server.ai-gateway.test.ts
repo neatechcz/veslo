@@ -860,10 +860,15 @@ describe("ai gateway proxy routes", () => {
 
     try {
       await withManagedAiEnv({ managedAiBaseUrl: `http://127.0.0.1:${upstreamPort}` }, async () => {
-        const server = startServer(createTestConfig());
+        const workspaceRoot = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-workspace-prime-"));
+        const server = startServer({
+          ...createTestConfig(),
+          workspaces: [{ id: "ws_1", path: workspaceRoot, name: "Workspace 1", workspaceType: "local" as const }],
+          authorizedRoots: [workspaceRoot],
+        });
 
         try {
-          const accessResponse = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+          const accessResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/ai-gateway/me/ai-access`, {
             headers: {
               authorization: "Bearer client-token",
               "x-veslo-gateway-authorization": "Bearer den-user-token",
@@ -927,7 +932,7 @@ describe("ai gateway proxy routes", () => {
             "gateway_runtime_authorization_required",
           );
 
-          const refreshedAccessResponse = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/me/ai-access`, {
+          const refreshedAccessResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/ai-gateway/me/ai-access`, {
             headers: {
               authorization: "Bearer client-token",
               "x-veslo-gateway-authorization": "Bearer den-user-token",
@@ -995,6 +1000,7 @@ describe("ai gateway proxy routes", () => {
           ]);
         } finally {
           stopTestServer(server);
+          rmSync(workspaceRoot, { recursive: true, force: true });
         }
       });
     } finally {

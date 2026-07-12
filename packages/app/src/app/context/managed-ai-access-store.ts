@@ -113,6 +113,7 @@ export type ManagedAiAccessStoreOptions = ManagedAiAccessCacheDeps & {
   vesloServerAuth: Accessor<{ token?: string | null }>;
   activeVesloServerHostInfo: Accessor<{ baseUrl?: string | null } | null>;
   activeWorkspaceDisplay: Accessor<{ workspaceType?: string | null }>;
+  activeVesloServerWorkspaceId?: Accessor<string | null>;
   ensureLocalVesloServerRunning: (options: { ignoreStartupPreference: true }) => Promise<boolean>;
   providers: Accessor<ProviderListItem[]>;
   formatModelLabel: (
@@ -561,6 +562,7 @@ export function createManagedAiAccessStore(
     const cacheContext = managedAiAccessCacheContext();
     const managedAiCacheKey = cacheContext.cacheKey;
     const gatewayLocalAuth = options.vesloServerAuth();
+    const runtimeWorkspaceId = options.activeVesloServerWorkspaceId?.()?.trim() ?? "";
     const proofCacheState = managedAiAccessProofCacheState();
     if (
       options.isTauriRuntime() &&
@@ -645,7 +647,9 @@ export function createManagedAiAccessStore(
     };
 
     const loadManagedAiAccess = loadManagedAiAccessSingleFlight(
-      managedAiCacheKey,
+      gatewayClient && runtimeWorkspaceId
+        ? `${managedAiCacheKey}|runtime-workspace:${runtimeWorkspaceId}`
+        : managedAiCacheKey,
       () => {
         if (managedAiBaseUrl) {
           if (!options.requestManagedAiAccessBundle) {
@@ -653,7 +657,7 @@ export function createManagedAiAccessStore(
           }
           return options.requestManagedAiAccessBundle(managedAiBaseUrl, userToken, denOrgId);
         }
-        return gatewayClient!.getMyAiAccess(userToken, denOrgId);
+        return gatewayClient!.getMyAiAccess(userToken, denOrgId, runtimeWorkspaceId || undefined);
       },
     );
 
