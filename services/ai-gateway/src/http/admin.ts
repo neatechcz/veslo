@@ -3054,6 +3054,7 @@ function readAdminAuthCallback(req: express.Request): { code: string; sessionId:
 function adminAssetRequest(pathname: string): boolean {
   return pathname === "/admin/app.js"
     || pathname === "/admin/app.css"
+    || pathname === "/admin/admin-route-state.js"
     || pathname === "/admin/model-policy-editor-state.js";
 }
 
@@ -3146,19 +3147,41 @@ function requirePlatformAdmin(res: express.Response): boolean {
   return false;
 }
 
-function pageFromAdminPath(pathname: string): AdminAllowedPage | "overview" {
-  const path = pathname.replace(/\/+$/, "");
-  if (!path || path === "/admin") {
-    return "overview";
+const platformAdminShellPaths = new Set([
+  "/admin",
+  "/admin/organizations",
+  "/admin/ai-infrastructure",
+  "/admin/ai-infrastructure/usage",
+  "/admin/ai-infrastructure/alerts",
+  "/admin/platform-users",
+  "/admin/audit",
+]);
+
+function organizationIdFromAdminShellPath(pathname: string): string | null {
+  const match = pathname.match(/^\/admin\/organizations\/([^/]+)\/(overview|members|domains-invites|billing|ai-access|audit)$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1] ?? "").trim() || null;
+  } catch {
+    return null;
   }
-  const page = path.split("/").pop() ?? "";
-  return PlatformAdminAllowedPages.includes(page as AdminAllowedPage)
-    ? page as AdminAllowedPage
-    : "overview";
 }
 
-function firstAllowedAdminPage(session: AdminSessionSnapshot | undefined): AdminAllowedPage {
-  return adminSessionAllowedPages(session)[0] ?? "organization";
+function adminShellRouteAllowed(pathname: string, session: AdminSessionSnapshot): boolean {
+  if (platformAdminShellPaths.has(pathname)) {
+    return session.platformAdmin === true;
+  }
+  const organizationId = organizationIdFromAdminShellPath(pathname);
+  if (!organizationId) return false;
+  return session.platformAdmin === true || session.organizations.some((organization) => organization.id === organizationId);
+}
+
+function firstAuthorizedAdminPath(session: AdminSessionSnapshot): string {
+  if (session.platformAdmin) return "/admin";
+  const organizationId = session.organizations[0]?.id;
+  return organizationId
+    ? `/admin/organizations/${encodeURIComponent(organizationId)}/overview`
+    : "/admin";
 }
 
 function hasOwn(input: unknown, key: string): boolean {
@@ -4322,13 +4345,8 @@ export function createAdminRouter(adminService: AdminService) {
         res.locals.adminToken = token;
         const session = await adminService.getSession(token);
         res.locals.adminSession = session;
-        const requestedPage = pageFromAdminPath(req.path);
-        const allowedPages = adminSessionAllowedPages(session);
-        if (
-          (requestedPage === "overview" && !session.platformAdmin) ||
-          (requestedPage !== "overview" && !allowedPages.includes(requestedPage))
-        ) {
-          res.redirect(302, `/admin/${firstAllowedAdminPage(session)}`);
+        if (!adminShellRouteAllowed(req.path, session)) {
+          res.redirect(302, firstAuthorizedAdminPath(session));
           return;
         }
         sendAdminShell(req, res);
