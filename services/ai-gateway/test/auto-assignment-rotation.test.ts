@@ -251,16 +251,16 @@ test("fills Codex catalog default when rotating a legacy policy without a model"
   });
 
   assert.equal(repaired.credentialId, "cred_new");
-  assert.equal(repaired.defaultModel, "gpt-5.5");
-  assert.deepEqual(repaired.allowedModels, ["gpt-5.5"]);
+  assert.equal(repaired.defaultModel, "gpt-5.6-sol");
+  assert.deepEqual(repaired.allowedModels, ["gpt-5.6-sol"]);
   assert.deepEqual(upserts, [
     {
       userId: "user_1",
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_new",
-      defaultModel: "gpt-5.5",
-      allowedModels: ["gpt-5.5"],
+      defaultModel: "gpt-5.6-sol",
+      allowedModels: ["gpt-5.6-sol"],
       assignmentOrigin: "auto_assigned",
     },
   ]);

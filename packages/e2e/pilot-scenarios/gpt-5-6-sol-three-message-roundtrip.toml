@@ -1,0 +1,363 @@
+[scenario]
+name = "gpt-5-6-sol-three-message-roundtrip"
+fail_fast = true
+global_timeout_ms = 900000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "start GPT-5.6 Sol three-message roundtrip"
+action = "eval"
+script = '''
+(async () => {
+const completeSelector = '[data-testid="gpt-5-6-sol-three-message-complete"]';
+const errorSelector = '[data-testid="gpt-5-6-sol-three-message-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+window.__vesloSendWorkflowTraceEnabled = true;
+window.localStorage.setItem("veslo.sendWorkflowTrace", "1");
+
+const appendMarker = (selector, payload) => {
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector.slice(14, -2);
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+if (!window.__vesloGpt56SolThreeMessageStarted) {
+  window.__vesloGpt56SolThreeMessageStarted = true;
+  window.__vesloGpt56SolThreeMessagePromise = (async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+    const bodyText = () => normalize(document.body.innerText);
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const waitUntil = async (predicate, options = {}) => {
+      const timeout = options.timeout ?? 10000;
+      const interval = options.interval ?? 250;
+      const deadline = Date.now() + timeout;
+      let latest = null;
+      while (Date.now() < deadline) {
+        latest = await predicate();
+        if (latest) return latest;
+        await sleep(interval);
+      }
+      throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latest)}`);
+    };
+    const tauriInvoke = async (command, payload = {}) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await invoke(command, payload);
+    };
+    const isVisibleElement = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    };
+    const visibleMessageTexts = (role) =>
+      Array.from(document.querySelectorAll(`[data-message-role="${role}"]`))
+        .filter(isVisibleElement)
+        .map((element) => normalize(element.textContent));
+    const workflowTrace = () =>
+      Array.isArray(window.__vesloSendWorkflowTrace) ? window.__vesloSendWorkflowTrace.slice(-1000) : [];
+    const assertNoInferenceError = () => {
+      const text = bodyText();
+      if (/Send failed|model_not_allowed|codex_runtime_incompatible/i.test(text)) {
+        throw new Error(`Known managed-AI failure rendered: ${text.slice(0, 3000)}`);
+      }
+    };
+
+    const waitForLocalVesloServerReady = async () => {
+      let latest = null;
+      return await waitUntil(async () => {
+        latest = await tauriInvoke("veslo_server_info").catch(() => null);
+        const baseUrl = trimBaseUrl(latest?.baseUrl);
+        const clientToken = normalize(latest?.clientToken);
+        if (!latest?.running || !baseUrl || !clientToken) return false;
+        const response = await fetch(`${baseUrl}/health`).catch(() => null);
+        const payload = response?.ok ? await response.json().catch(() => null) : null;
+        return payload?.ok === true ? { baseUrl, clientToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Local Veslo server did not become ready: ${JSON.stringify(latest)}`,
+      });
+    };
+
+    const parseDenAuth = (raw) => {
+      if (!raw || typeof raw !== "string") return null;
+      try {
+        const parsed = JSON.parse(raw);
+        const token = normalize(parsed?.token);
+        const email = normalize(parsed?.user?.email);
+        return token && email ? { token, email } : null;
+      } catch {
+        return null;
+      }
+    };
+    const readDenAuth = async () => {
+      const fromStorage = parseDenAuth(
+        window.localStorage.getItem("veslo.den.auth") ||
+        window.sessionStorage.getItem("veslo.den.auth"),
+      );
+      if (fromStorage) return fromStorage;
+      const snapshot = await tauriInvoke("den_auth_snapshot_read").catch(() => null);
+      return parseDenAuth(snapshot?.authJson);
+    };
+    const waitForExpectedAiAccess = async (connection) => {
+      let latest = null;
+      return await waitUntil(async () => {
+        const auth = await readDenAuth();
+        if (!auth?.token || !auth?.email) {
+          latest = { hasAuth: false };
+          return false;
+        }
+        assert(!auth.email.endsWith("@example.test"), "Live inference cannot use fixture Den auth.");
+        const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
+          headers: {
+            authorization: `Bearer ${connection.clientToken}`,
+            "x-veslo-gateway-authorization": `Bearer ${auth.token}`,
+            accept: "application/json",
+          },
+        }).catch((error) => {
+          latest = { error: error?.message || String(error) };
+          return null;
+        });
+        if (!response) return false;
+        const text = await response.text();
+        latest = { status: response.status, body: text.slice(0, 1000) };
+        if (!response.ok) return false;
+        const payload = text.trim() ? JSON.parse(text) : null;
+        const aiAccess = payload?.aiAccess;
+        assert(aiAccess?.provider === "codex_oauth", `Expected codex_oauth, received ${aiAccess?.provider}.`);
+        assert(aiAccess?.defaultModel === "gpt-5.6-sol", `Expected gpt-5.6-sol, received ${aiAccess?.defaultModel}.`);
+        assert(aiAccess?.enabled === true, "Managed-AI access is disabled.");
+        return { provider: aiAccess.provider, defaultModel: aiAccess.defaultModel };
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: `Expected live GPT-5.6 Sol access was not available: ${JSON.stringify(latest)}`,
+      });
+    };
+
+    const waitForActiveLocalWorkspace = async () => {
+      return await waitUntil(async () => {
+        const bootstrap = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        if (!Array.isArray(bootstrap?.workspaces) || bootstrap.workspaces.length === 0) return false;
+        const active = bootstrap.workspaces.find((workspace) => workspace.id === bootstrap.activeId)
+          ?? bootstrap.workspaces[0];
+        return active ? {
+          id: normalize(active.id),
+          path: normalize(active.path || active.directory || active.rootPath),
+        } : false;
+      }, {
+        timeout: 60000,
+        interval: 500,
+        message: "No active local workspace became available",
+      });
+    };
+    const assertSameWorkspace = async (initialWorkspace, label) => {
+      const current = await waitForActiveLocalWorkspace();
+      assert(current.id === initialWorkspace.id, `${label} changed workspace id from ${initialWorkspace.id} to ${current.id}.`);
+      if (initialWorkspace.path || current.path) {
+        assert(current.path === initialWorkspace.path, `${label} changed workspace path.`);
+      }
+      return current;
+    };
+
+    const navigateToSession = () => {
+      const oldUrl = window.location.href;
+      window.location.hash = "/session";
+      window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+    };
+    const waitForComposer = async () => await waitUntil(() => {
+      const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
+      return candidate instanceof HTMLElement && isVisibleElement(candidate) ? candidate : false;
+    }, {
+      timeout: 60000,
+      interval: 250,
+      message: `Session composer did not render. Body=${bodyText().slice(0, 2000)}`,
+    });
+    const buttonMatches = (button, labels) => {
+      if (!(button instanceof HTMLButtonElement) || button.disabled || !isVisibleElement(button)) return false;
+      const values = [button.textContent, button.title, button.getAttribute("aria-label")].map(normalize);
+      return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+    };
+    const findSendButton = (textbox) => {
+      const labels = [
+        "Send now",
+        "Steer agent now",
+        "Queue message",
+        "Send",
+        "Odeslat",
+        "Poslat hned",
+        "Nasměrovat agenta teď",
+        "Zařadit zprávu",
+        "立即发送",
+        "立即引导代理",
+        "将消息加入队列",
+        "发送",
+      ];
+      let current = textbox;
+      for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+        const button = Array.from(current.querySelectorAll("button")).find((candidate) => buttonMatches(candidate, labels));
+        if (button) return button;
+        current = current.parentElement;
+      }
+      return Array.from(document.querySelectorAll("button")).find((candidate) => buttonMatches(candidate, labels));
+    };
+    const fillComposer = async (textbox, prompt) => {
+      textbox.focus();
+      textbox.replaceChildren(document.createTextNode(prompt));
+      textbox.dispatchEvent(new InputEvent("input", { bubbles: true, data: prompt, inputType: "insertText" }));
+      await waitUntil(() => normalize(textbox.textContent) === prompt, {
+        timeout: 10000,
+        message: "Composer did not retain the prompt",
+      });
+    };
+
+    await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+      timeout: 15000,
+      message: "Veslo root did not render child UI",
+    });
+    const initialWorkspace = await waitForActiveLocalWorkspace();
+    const connection = await waitForLocalVesloServerReady();
+    const aiAccess = await waitForExpectedAiAccess(connection);
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitUntil(() => workflowTrace().find((entry) =>
+      entry?.source === "opencode-config" &&
+      entry?.event === "managed-config-compare" &&
+      entry?.workspaceId === initialWorkspace.id &&
+      entry?.matches === true &&
+      entry?.managedProviderId === "codex_oauth" &&
+      entry?.managedDefaultModelId === "gpt-5.6-sol"
+    ), {
+      timeout: 120000,
+      interval: 500,
+      message: `Managed GPT-5.6 Sol routing did not settle. Workflow=${JSON.stringify(workflowTrace())}`,
+    });
+    navigateToSession();
+    await waitUntil(() => window.location.hash.includes("/session"), {
+      timeout: 10000,
+      message: "Session route did not become active",
+    });
+
+    const nonce = Date.now();
+    const turns = [
+      { label: "cold run", token: `gpt-5-6-sol-cold-${nonce}` },
+      { label: "run 2", token: `gpt-5-6-sol-warm-2-${nonce}` },
+      { label: "run 3", token: `gpt-5-6-sol-warm-3-${nonce}` },
+    ];
+    const timings = [];
+    const routes = [];
+    for (const turn of turns) {
+      await assertSameWorkspace(initialWorkspace, turn.label);
+      assertNoInferenceError();
+      const textbox = await waitForComposer();
+      const token = turn.token;
+      const prompt = `Reply with exactly ${token}. Do not use tools. No other words.`;
+      const assistantBefore = visibleMessageTexts("assistant").length;
+      await fillComposer(textbox, prompt);
+      const sendButton = await waitUntil(() => findSendButton(textbox), {
+        timeout: 15000,
+        interval: 250,
+        message: `No enabled send button for ${turn.label}`,
+      });
+      const traceLastIdBefore = Number(workflowTrace().at(-1)?.id ?? 0);
+      const startedAt = Date.now();
+      sendButton.click();
+      const route = await waitUntil(() => workflowTrace().find((entry) =>
+        Number(entry?.id ?? 0) > traceLastIdBefore &&
+        entry?.event === "server:conversation-run:opencode-submit-body"
+      ), {
+        timeout: 120000,
+        interval: 250,
+        message: `Server submit route was not traced for ${turn.label}. Workflow=${JSON.stringify(workflowTrace())}`,
+      });
+      assert(route?.body?.model?.providerID === "codex_oauth", `${turn.label} used provider ${route?.body?.model?.providerID}.`);
+      assert(route?.body?.model?.modelID === "gpt-5.6-sol", `${turn.label} used model ${route?.body?.model?.modelID}.`);
+      assert(typeof route?.body?.variant === "string" && route.body.variant.length > 0, `${turn.label} did not submit a model variant.`);
+      routes.push({
+        label: turn.label,
+        provider: route.body.model.providerID,
+        model: route.body.model.modelID,
+        variant: route.body.variant,
+      });
+      await waitUntil(() => {
+        assertNoInferenceError();
+        const assistantTexts = visibleMessageTexts("assistant");
+        return assistantTexts.length > assistantBefore && assistantTexts.some((value) => value === token);
+      }, {
+        timeout: 120000,
+        interval: 500,
+        message: `Exact assistant token did not render for ${turn.label}`,
+      });
+      const firstAssistantVisibleMs = Date.now() - startedAt;
+      await waitUntil(async () => {
+        assertNoInferenceError();
+        await assertSameWorkspace(initialWorkspace, turn.label);
+        const nextComposer = await waitForComposer();
+        const stopButton = Array.from(document.querySelectorAll("button"))
+          .find((candidate) => buttonMatches(candidate, ["Stop", "Zastavit", "停止"]));
+        return normalize(nextComposer.textContent) === "" && !stopButton;
+      }, {
+        timeout: 30000,
+        interval: 250,
+        message: `${turn.label} did not settle after its exact response`,
+      });
+      const settledMs = Date.now() - startedAt;
+      timings.push({ label: turn.label, token, prompt, firstAssistantVisibleMs, settledMs });
+    }
+
+    await assertSameWorkspace(initialWorkspace, "final verification");
+    assert(routes.length === turns.length, `Expected ${turns.length} traced routes, received ${routes.length}.`);
+    assert(routes.every((route) => route.variant === routes[0].variant), `Model variants changed between turns: ${JSON.stringify(routes)}`);
+    const result = {
+      workspace: initialWorkspace,
+      provider: aiAccess.provider,
+      model: aiAccess.defaultModel,
+      variant: routes[0].variant,
+      routes,
+      timings,
+    };
+    window.__vesloGpt56SolThreeMessageResult = result;
+    console.info("[gpt-5.6-sol-three-message-result]", JSON.stringify(result));
+    appendMarker(completeSelector, result);
+  })().catch((error) => {
+    appendMarker(errorSelector, {
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      body: String(document.body.innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 4000),
+    });
+  });
+}
+return true;
+})();
+'''
+
+[[step]]
+name = "GPT-5.6 Sol three-message roundtrip finished"
+action = "wait"
+target = "[data-testid=\"gpt-5-6-sol-three-message-complete\"], [data-testid=\"gpt-5-6-sol-three-message-error\"]"
+timeout_ms = 890000
+
+[[step]]
+name = "GPT-5.6 Sol three-message roundtrip succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="gpt-5-6-sol-three-message-error"]');
+if (error) {
+  throw new Error(`GPT-5.6 Sol three-message roundtrip failed: ${(error.textContent || "unknown error").slice(0, 6000)}`);
+}
+const complete = document.querySelector('[data-testid="gpt-5-6-sol-three-message-complete"]');
+if (!complete) throw new Error("GPT-5.6 Sol three-message result marker is missing.");
+JSON.parse(complete.textContent || "{}");
+'''

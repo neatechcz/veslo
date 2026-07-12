@@ -8,10 +8,12 @@
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "ops:codex-model-migration": "node dist/ops/migrate-codex-model.js",
+    "ops:codex-credential-probe": "node dist/ops/probe-codex-credentials.js"
   },
   "dependencies": {
-    "@openai/codex": "0.137.0",
+    "@openai/codex": "0.144.1",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.45.1",
     "express": "^4.19.2",

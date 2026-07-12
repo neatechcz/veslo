@@ -10,7 +10,7 @@ export function evaluateCodexCredentialEligibility(
   now: Date = new Date(),
 ): CodexCredentialEligibility {
   const statusText = [status.label, status.detail].filter(Boolean).join(" | ");
-  if (isPermanentUnavailableStatus(statusText)) {
+  if (isCodexPermanentCredentialFailureStatusText(statusText)) {
     return {
       eligible: false,
       state: "unavailable",
@@ -57,8 +57,8 @@ export function evaluateCodexCredentialEligibility(
   };
 }
 
-function isPermanentUnavailableStatus(statusText: string): boolean {
-  return /invalid_grant|invalid token|revoked auth|access token could not be refreshed|refresh token|HTTP error:\s*401|401\s+Unauthorized|missing field `id_token`|missing Codex auth\.json|please run `?codex login`?|authentication required/i
+export function isCodexPermanentCredentialFailureStatusText(statusText: string): boolean {
+  return /invalid[_\s-]?grant|invalid[_\s-]+(?:(?:authentication|access|refresh|id)[_\s-]+)?token|(?:authentication|access|id)[_\s-]?token[_\s-]+(?:is[_\s-]+)?(?:invalid|expired|revoked|reused|missing)|revoked\s+auth|access[_\s-]?token\s+could\s+not\s+be\s+refreshed|refresh[_\s-]?token|HTTP error:\s*401|401\s+Unauthorized|missing field `id_token`|missing Codex auth\.json|please run `?codex login`?|login\s+required|required\s+login|authentication required/i
     .test(statusText);
 }
 

@@ -18,6 +18,16 @@ on:
         required: true
         type: boolean
         default: false
+      codex_model_migration:
+        description: "Optional Codex model id to apply to every codex_oauth policy after backup."
+        required: false
+        type: string
+        default: ""
+      probe_codex_credentials:
+        description: "Run the selected Codex model through every stored Codex credential."
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,6 +46,8 @@ jobs:
       DEPLOY_BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
       INSTALL_BACKUP_TIMER: ${{ inputs.install_backup_timer }}
       RUN_BACKUP_NOW: ${{ inputs.run_backup_now }}
+      CODEX_MODEL_MIGRATION: ${{ inputs.codex_model_migration }}
+      PROBE_CODEX_CREDENTIALS: ${{ inputs.probe_codex_credentials }}
       VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_DEPLOYMENT_DOMAIN || 'veslo.work' }}
       REPO_URL: https://github.com/${{ github.repository }}.git
       GITHUB_TOKEN: ${{ github.token }}
@@ -53,6 +65,16 @@ jobs:
           done
 
           if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          if [ -n "$CODEX_MODEL_MIGRATION" ] && [ "$RUN_BACKUP_NOW" != "true" ]; then
+            echo "::error::Codex model migration requires run_backup_now=true"
+            exit 1
+          fi
+
+          if [ "$PROBE_CODEX_CREDENTIALS" = "true" ] && [ -z "$CODEX_MODEL_MIGRATION" ]; then
+            echo "::error::Codex credential probing requires codex_model_migration"
             exit 1
           fi
 
@@ -210,3 +232,29 @@ jobs:
             ls -lh den.sql.zst ai-gateway.sql.zst manifest.json
             cat manifest.json
           '
+
+      - name: Migrate and probe Codex credentials
+        if: env.CODEX_MODEL_MIGRATION != ''
+        run: |
+          set -euo pipefail
+
+          cd "$OWNED_SERVER_APP_DIR"
+
+          compose() {
+            sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$OWNED_SERVER_ENV_FILE" "$@"
+          }
+
+          compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway ops:codex-model-migration -- --model "$CODEX_MODEL_MIGRATION"
+          compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway ops:codex-model-migration -- --model "$CODEX_MODEL_MIGRATION" --apply
+          post_apply_summary="$(
+            compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway ops:codex-model-migration -- --model "$CODEX_MODEL_MIGRATION"
+          )"
+          printf '%s\n' "$post_apply_summary"
+          if ! printf '%s\n' "$post_apply_summary" | grep -F '"changedCount":0' >/dev/null; then
+            echo "::error::Codex model migration was not idempotent after apply"
+            exit 1
+          fi
+
+          if [ "$PROBE_CODEX_CREDENTIALS" = "true" ]; then
+            compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway ops:codex-credential-probe -- --model "$CODEX_MODEL_MIGRATION"
+          fi

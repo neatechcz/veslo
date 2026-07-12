@@ -3,8 +3,8 @@ import test from "node:test"
 
 import { createManagedAiSignupAssignmentService, DEFAULT_CODEX_AUTO_ASSIGN_MODEL } from "../src/managed-ai/signup-assignment.js"
 
-test("signup assignment default model is gpt-5.5", () => {
-  assert.equal(DEFAULT_CODEX_AUTO_ASSIGN_MODEL, "gpt-5.5")
+test("signup assignment default model is gpt-5.6-sol", () => {
+  assert.equal(DEFAULT_CODEX_AUTO_ASSIGN_MODEL, "gpt-5.6-sol")
 })
 
 function createCredential(
@@ -86,8 +86,8 @@ test("new user gets the least-loaded healthy eligible Codex credential", async (
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_codex_2",
-      defaultModel: DEFAULT_CODEX_AUTO_ASSIGN_MODEL,
-      allowedModels: [DEFAULT_CODEX_AUTO_ASSIGN_MODEL],
+      defaultModel: "gpt-5.6-sol",
+      allowedModels: ["gpt-5.6-sol"],
       assignmentOrigin: "auto_assigned",
     },
   ])

@@ -154,6 +154,41 @@ test("unavailable status with codex login required is permanently ineligible", (
   assert.equal(eligibility.resetAt, null);
 });
 
+test("unavailable status with missing id_token is permanently ineligible", () => {
+  const eligibility = evaluateCodexCredentialEligibility(
+    unavailableStatus("missing field `id_token`"),
+    NOW,
+  );
+
+  assert.equal(eligibility.eligible, false);
+  assert.equal(eligibility.state, "unavailable");
+  assert.equal(eligibility.resetAt, null);
+});
+
+test("unavailable status with generic login required is permanently ineligible", () => {
+  const eligibility = evaluateCodexCredentialEligibility(
+    unavailableStatus("ERROR: login required"),
+    NOW,
+  );
+
+  assert.equal(eligibility.eligible, false);
+  assert.equal(eligibility.state, "unavailable");
+  assert.equal(eligibility.resetAt, null);
+});
+
+test("unavailable status with snake-case access or refresh token failure is permanently ineligible", () => {
+  for (const tokenKey of ["access_token", "refresh_token"]) {
+    const eligibility = evaluateCodexCredentialEligibility(
+      unavailableStatus(`ERROR: ${tokenKey} invalid`),
+      NOW,
+    );
+
+    assert.equal(eligibility.eligible, false, tokenKey);
+    assert.equal(eligibility.state, "unavailable", tokenKey);
+    assert.equal(eligibility.resetAt, null, tokenKey);
+  }
+});
+
 test("unavailable status with transient ERROR stderr is eligible", () => {
   const eligibility = evaluateCodexCredentialEligibility(
     unavailableStatus("ERROR: network timeout while contacting api.openai.com"),
