@@ -309,8 +309,9 @@ export function scenarioSelectionNeedsSharePointMcpCatalogFixture(scenarios: str
 }
 
 export function scenarioSelectionNeedsManagedAiGatewayFixture(scenarios: string[]): boolean {
-  void scenarios;
-  return false;
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/global-managed-ai-model-policy.toml'),
+  );
 }
 
 export function scenarioSelectionNeedsModelStreamRetryFixture(scenarios: string[]): boolean {
@@ -325,6 +326,7 @@ export function scenarioSelectionDisablesDevAutostart(scenarios: string[]): bool
     const normalized = scenario.replaceAll('\\', '/');
     return normalized.endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
       normalized.endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml') ||
+      normalized.endsWith('/pilot-scenarios/global-managed-ai-model-policy.toml') ||
       MANAGED_AI_INFERENCE_SCENARIO_NAMES.some((name) =>
         normalized.endsWith(`/pilot-scenarios/${name}.toml`),
       );
@@ -402,6 +404,11 @@ export function scenarioSelectionRequiresExplicitSessionRuntimeActivation(scenar
 }
 
 export function assertPilotScenarioSelectionIsolated(scenarios: string[]): void {
+  if (scenarioSelectionNeedsManagedAiGatewayFixture(scenarios) && scenarios.length > 1) {
+    throw new Error(
+      'global-managed-ai-model-policy must run as a focused pilot scenario because it owns the deterministic managed-AI fixture.',
+    );
+  }
   if (scenarioSelectionNeedsModelStreamRetryFixture(scenarios) && scenarios.length > 1) {
     throw new Error(
       'model-stream-retry-no-progress must run as a focused pilot scenario because it enables a global orchestrator probe fixture.',
@@ -410,6 +417,23 @@ export function assertPilotScenarioSelectionIsolated(scenarios: string[]): void 
   if (scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios) && scenarios.length > 1) {
     throw new Error(
       'session-queue-durability must run as a focused pilot scenario because it owns a deterministic OpenCode and lifecycle fixture.',
+    );
+  }
+}
+
+export function assertManagedAiGatewayFixtureProfileIsolation(
+  scenarios: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (!scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)) return;
+  if (env.E2E_USE_EXISTING_PROFILE?.trim() === '1') {
+    throw new Error(
+      'global-managed-ai-model-policy must use the isolated E2E profile; unset E2E_USE_EXISTING_PROFILE.',
+    );
+  }
+  if (env.E2E_OPENCODE_HOME?.trim()) {
+    throw new Error(
+      'global-managed-ai-model-policy must not set E2E_OPENCODE_HOME because the runner owns its isolated auth profile.',
     );
   }
 }
@@ -428,18 +452,34 @@ export function assertSessionQueueRuntimeFixtureProfileIsolation(
   }
 }
 
-function setEnvironmentForFixture(values: Record<string, string>): EnvironmentRestore {
+function setEnvironmentForFixture(
+  values: Record<string, string>,
+  targetEnv: NodeJS.ProcessEnv = process.env,
+): EnvironmentRestore {
   const previous = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(values)) {
-    previous.set(key, process.env[key]);
-    process.env[key] = value;
+    previous.set(key, targetEnv[key]);
+    targetEnv[key] = value;
   }
   return () => {
     for (const [key, value] of previous) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+      if (value === undefined) delete targetEnv[key];
+      else targetEnv[key] = value;
     }
   };
+}
+
+export function configureManagedAiGatewayFixtureEnvironment(
+  targetEnv: NodeJS.ProcessEnv = process.env,
+): EnvironmentRestore {
+  return setEnvironmentForFixture({
+    E2E_MANAGED_AI_GATEWAY_FIXTURE: '1',
+    VESLO_E2E_DEN_AUTH_JSON: '',
+    E2E_DEN_AUTH_JSON: '',
+    VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: '',
+    E2E_DEN_AUTH_SNAPSHOT_FILE: '',
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: '',
+  }, targetEnv);
 }
 
 export function scenarioSelectionNeedsNoWorkspaceProfile(scenarios: string[]): boolean {
@@ -890,8 +930,12 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   }
   assertPilotScenarioSelectionIsolated(scenarios);
   assertSessionQueueRuntimeFixtureProfileIsolation(scenarios);
+  assertManagedAiGatewayFixtureProfileIsolation(scenarios);
   assertLiveManagedAiAuthForScenarioSelection(scenarios);
 
+  const restoreManagedAiFixtureEnvironment = scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)
+    ? configureManagedAiGatewayFixtureEnvironment()
+    : null;
   if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
     process.env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
   }
@@ -1028,6 +1072,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     await stopPortContentionFixture(portContentionFixture);
     await sessionQueueRuntimeFixture?.stop();
     restoreSessionQueueFixtureEnvironment?.();
+    restoreManagedAiFixtureEnvironment?.();
   }
 }
 

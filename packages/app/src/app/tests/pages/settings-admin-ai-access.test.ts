@@ -6,6 +6,7 @@ const source = readFileSync(new URL("../../pages/settings.tsx", import.meta.url)
 const generalSection = source.match(/<Match when=\{activeTab\(\) === "general"\}>[\s\S]*?<\/Match>/)?.[0] ?? "";
 
 test("settings shows admin-managed ai access only in developer mode", () => {
+  assert.match(generalSection, /data-testid="managed-ai-access-settings-card"/);
   assert.match(
     generalSection,
     /<Show when=\{props\.developerMode\}>[\s\S]*ui\.literal\.ai_access_1fcmzn[\s\S]*ui\.literal\.provider_and_model_assignment_is_managed_by__ekvlg6/,

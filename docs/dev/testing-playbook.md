@@ -176,9 +176,44 @@ pnpm test:pilot:smoke
 pnpm test:pilot:navigation
 pnpm test:pilot:google-mcp
 pnpm test:pilot -- --suite current-gate
+pnpm test:pilot:global-managed-ai-model-policy
 pnpm test:pilot -- --scenario sidebar-session-retention
 pnpm test:pilot -- --scenario <name-or-path>
 ```
+
+`test:pilot:global-managed-ai-model-policy` is a focused-only, isolated-profile
+acceptance scenario. It starts a secret-free local fixture that mounts the real
+AI Gateway session, entitlement, user-access, global-model, credential, and
+provider proxy pipeline with a deterministic upstream transport. The fixture
+contains two enabled models, one active model, and two users that resolve the
+same active model. It replaces live DEN auth inputs for the duration of the run,
+rejects `E2E_USE_EXISTING_PROFILE=1`, restores the previous environment during
+teardown, rejects a user-supplied `E2E_OPENCODE_HOME`, and records only
+sanitized request metadata with a generated test nonce instead of prompt text.
+The scenario checks the read-only effective model in developer Settings, then
+checks normal Settings and the real Session/composer surface for model-authority
+controls before sending. Run the Desktop Test
+Runtime Preflight first, rebuild the server sidecar, and use the Pilot-enabled
+E2E config explicitly:
+
+```bash
+pnpm --filter veslo-server build:bin
+VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar
+cd packages/desktop
+pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
+cd ../e2e
+pnpm test:pilot:global-managed-ai-model-policy
+```
+
+The macOS build requires every `externalBin` resource declared by the Tauri
+config to exist. The documented `prepare:sidecar` command provisions the pinned
+Node.js runtime from the official `nodejs.org` macOS archive for the resolved
+Apple target triple, verifies the exact asset against the published
+`SHASUMS256.txt`, rejects unsafe archive paths, extracts in a private temporary
+directory, and atomically publishes executable base and target-suffixed copies.
+Do not create an ad-hoc symlink or copy a sidecar from another checkout. Before
+relying on a newly provisioned runtime, verify the worktree's base and
+target-suffixed executables both report the pinned version.
 
 `test:pilot:google-mcp` runs the converted Google Workspace MCP connector
 scenario with the local Den-compatible fixture enabled. It verifies separate

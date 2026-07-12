@@ -970,7 +970,10 @@ export default function SettingsView(props: SettingsViewProps) {
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
             <Show when={props.developerMode}>
-              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+              <div
+                data-testid="managed-ai-access-settings-card"
+                class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4"
+              >
                 <div class="flex items-start justify-between gap-4">
                   <div>
                     <div class="flex items-center gap-2">

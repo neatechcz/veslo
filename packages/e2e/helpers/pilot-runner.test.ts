@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as pilotRunnerModule from './pilot-runner.js';
 
 import {
   assertLiveManagedAiAuthForScenarioSelection,
@@ -383,6 +384,140 @@ test('managed AI inference pilot scenarios require live auth and never auto-sele
     scenarioSelectionNeedsManagedAiGatewayFixture(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
+});
+
+test('global managed AI model policy selects only the deterministic gateway fixture path', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const scenarios = resolvePilotScenarioSelection(
+    { scenario: ['global-managed-ai-model-policy'] },
+    e2eRoot,
+  );
+
+  assert.equal(scenarioSelectionNeedsManagedAiGatewayFixture(scenarios), true);
+  assert.equal(scenarioSelectionRequiresLiveManagedAiAuth(scenarios), false);
+  assert.equal(
+    scenarioSelectionNeedsManagedAiGatewayFixture(
+      resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot),
+    ),
+    false,
+  );
+});
+
+test('global managed AI model policy fixture rejects the existing desktop profile', () => {
+  const scenarios = resolvePilotScenarioSelection(
+    { scenario: ['global-managed-ai-model-policy'] },
+    '/repo/packages/e2e',
+  );
+
+  const assertProfileIsolation = (pilotRunnerModule as Record<string, unknown>)
+    .assertManagedAiGatewayFixtureProfileIsolation;
+  assert.equal(typeof assertProfileIsolation, 'function');
+  assert.throws(
+    () => (assertProfileIsolation as (selected: string[], env: NodeJS.ProcessEnv) => void)(
+      scenarios,
+      { E2E_USE_EXISTING_PROFILE: '1' },
+    ),
+    /must use the isolated E2E profile/,
+  );
+  assert.throws(
+    () => (assertProfileIsolation as (selected: string[], env: NodeJS.ProcessEnv) => void)(
+      scenarios,
+      { E2E_OPENCODE_HOME: '/user/profile' },
+    ),
+    /must not set E2E_OPENCODE_HOME/,
+  );
+  assert.doesNotThrow(() => (
+    assertProfileIsolation as (selected: string[], env: NodeJS.ProcessEnv) => void
+  )(scenarios, {}));
+});
+
+test('global managed AI model policy is focused-only and disables debug autostart', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const focused = resolvePilotScenarioSelection(
+    { scenario: ['global-managed-ai-model-policy'] },
+    e2eRoot,
+  );
+
+  assert.equal(scenarioSelectionDisablesDevAutostart(focused), true);
+  assert.doesNotThrow(() => assertPilotScenarioSelectionIsolated(focused));
+  assert.throws(
+    () => assertPilotScenarioSelectionIsolated([
+      ...focused,
+      ...resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot),
+    ]),
+    /global-managed-ai-model-policy must run as a focused pilot scenario/,
+  );
+});
+
+test('global managed AI model policy restores prior auth environment after fixture teardown', () => {
+  const configureFixtureEnvironment = (pilotRunnerModule as Record<string, unknown>)
+    .configureManagedAiGatewayFixtureEnvironment;
+  assert.equal(typeof configureFixtureEnvironment, 'function');
+  const env: NodeJS.ProcessEnv = {
+    E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+    VESLO_E2E_DEN_AUTH_JSON: '{"token":"live"}',
+    E2E_DEN_AUTH_JSON: '{"token":"fallback"}',
+    VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: '/tmp/veslo.json',
+    E2E_DEN_AUTH_SNAPSHOT_FILE: '/tmp/fallback.json',
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: '/tmp/production.json',
+  };
+
+  const restore = (
+    configureFixtureEnvironment as (target: NodeJS.ProcessEnv) => () => void
+  )(env);
+  assert.equal(env.E2E_MANAGED_AI_GATEWAY_FIXTURE, '1');
+  assert.equal(env.VESLO_E2E_DEN_AUTH_JSON, '');
+  assert.equal(env.E2E_DEN_AUTH_JSON, '');
+  assert.equal(env.VESLO_DEN_AUTH_SNAPSHOT_PATH, '');
+
+  restore();
+  assert.deepEqual(env, {
+    E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+    VESLO_E2E_DEN_AUTH_JSON: '{"token":"live"}',
+    E2E_DEN_AUTH_JSON: '{"token":"fallback"}',
+    VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: '/tmp/veslo.json',
+    E2E_DEN_AUTH_SNAPSHOT_FILE: '/tmp/fallback.json',
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: '/tmp/production.json',
+  });
+});
+
+test('global managed AI model policy enables the fixture before the desktop launch', () => {
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+  const fixtureSelection = source.indexOf('scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)');
+  const fixtureEnv = source.indexOf('configureManagedAiGatewayFixtureEnvironment()');
+  const desktopLaunch = source.indexOf('await startApp(');
+
+  assert.ok(fixtureSelection >= 0, 'fixture selection guard must exist');
+  assert.ok(fixtureEnv > fixtureSelection, 'fixture env must be enabled after scenario selection');
+  assert.ok(desktopLaunch > fixtureEnv, 'fixture env must be enabled before startApp launches Tauri');
+});
+
+test('global managed AI model policy scenario covers the real desktop contract', () => {
+  const scenarioUrl = new URL('../pilot-scenarios/global-managed-ai-model-policy.toml', import.meta.url);
+  assert.equal(existsSync(scenarioUrl), true, 'global managed AI model policy Pilot scenario is missing');
+
+  const content = readFileSync(scenarioUrl, 'utf8');
+  assert.match(content, /name = "global-managed-ai-model-policy"/);
+  assert.match(content, /window\.location\.hash = "\/dashboard\/settings\?debug=1"/);
+  assert.doesNotMatch(content, /setTimeout\(\(\) => window\.location\.assign/);
+  const debugAnchor = content.indexOf('target = "[data-testid=\\"managed-ai-access-settings-card\\"]"');
+  const proofStart = content.indexOf('name = "start global managed AI model policy proof"');
+  assert.ok(debugAnchor >= 0, 'scenario must wait for the developer-only managed AI card');
+  assert.ok(debugAnchor < proofStart, 'developer-mode card must render before the async proof starts');
+  assert.match(content, /canonicalizeModelLabel/);
+  assert.match(content, /normalSettingsSurface/);
+  assert.match(content, /sessionComposerSurface/);
+  assert.match(content, /assertNoModelAuthorityControls/);
+  assert.match(content, /promptNonce/);
+  assert.doesNotMatch(content, /entry\.promptText/);
+  assert.match(content, /__e2e\/model-policy/);
+  assert.match(content, /enabledModels\.length === 2/);
+  assert.match(content, /Change model/);
+  assert.match(content, /findComposerSendButton/);
+  assert.match(content, /__e2e\/requests/);
+  assert.match(content, /gpt-5\.3-codex/);
+  assert.match(content, /model_override_not_allowed/);
+  assert.match(content, /veslo-e2e-managed-ai-second-token/);
 });
 
 test('model stream retry pilot scenario requests retry fixture and live managed-AI auth', () => {
