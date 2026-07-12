@@ -54,6 +54,20 @@ function createProxyApp(input: {
   const credential = createCredentialRecord();
   return createApp({
     proxy: {
+      modelPolicy: {
+        async getPolicy() {
+          return {
+            id: "platform" as const,
+            enabledModels: [{ provider: "openai_compatible" as const, model: "custom-model" }],
+            activeModel: { provider: "openai_compatible" as const, model: "custom-model" },
+            createdAt: new Date("2026-07-12T08:00:00.000Z"),
+            updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+          };
+        },
+        async replacePolicy() {
+          throw new Error("unused");
+        },
+      },
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token");

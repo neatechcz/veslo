@@ -6,6 +6,23 @@ import test from "node:test";
 import type { CredentialRecord } from "../src/credentials/repository.js";
 import { createApp, type AppDependencies } from "../src/index.js";
 
+function createModelPolicy() {
+  return {
+    async getPolicy() {
+      return {
+        id: "platform" as const,
+        enabledModels: [{ provider: "openai" as const, model: "gpt-4o-mini" }],
+        activeModel: { provider: "openai" as const, model: "gpt-4o-mini" },
+        createdAt: new Date("2026-07-12T08:00:00.000Z"),
+        updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+      };
+    },
+    async replacePolicy() {
+      throw new Error("unused");
+    },
+  };
+}
+
 test("provider proxy rejects requests without gateway bearer auth", async () => {
   const app = createApp({
     proxy: {
@@ -249,6 +266,7 @@ test("provider proxy uses resolved gateway user identity instead of trusting x-v
 
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           resolvedSessions.push(token);
@@ -361,6 +379,7 @@ test("provider proxy accepts the OpenCode gateway token header", async () => {
 
   const app = createApp({
     proxy: {
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           resolvedSessions.push(token);
