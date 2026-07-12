@@ -834,6 +834,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
     const response = await requestManagedAiAccessBundle(
       "https://veslo-ai-gateway-dev.onrender.com",
       "den-user-token",
+      "org_123",
     );
 
     assert.deepEqual(response, {
@@ -852,6 +853,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
     assert.equal(calls[0]?.url, "https://veslo-ai-gateway-dev.onrender.com/api/me/ai-access");
     assert.equal(calls[0]?.method, "GET");
     assert.equal(calls[0]?.headers.get("authorization"), "Bearer den-user-token");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
     assert.equal(calls[0]?.headers.get("content-type"), "application/json");
     assert.equal(calls[0]?.body, null);
   } finally {
@@ -3726,7 +3728,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
     assert.equal(typeof client.getMyAiAccess, "function");
     assert.equal(typeof client.clearMyAiGatewayRuntimeAuthorization, "function");
 
-    const response = await client.getMyAiAccess("den-user-token");
+    const response = await client.getMyAiAccess("den-user-token", "org_123");
     const clearResponse = await client.clearMyAiGatewayRuntimeAuthorization();
 
     assert.deepEqual(response, {
@@ -3750,6 +3752,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
           authorization: "Bearer veslo-server-token",
           "content-type": "application/json",
           "x-veslo-gateway-authorization": "Bearer den-user-token",
+          "x-veslo-den-org-id": "org_123",
           "x-veslo-host-token": "veslo-host-token",
         },
         body: null,

@@ -66,6 +66,7 @@ type AiGatewaySessionHit = {
 
 export type AiGatewayRuntimeAuthorizationEntry = {
   authorization: string;
+  orgId: string | null;
   at: number;
   source: "ai-access-token" | "caller-authorization";
 };
@@ -298,6 +299,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
   function registerRuntimeAuthorization(input: {
     actor?: Actor;
     authorization: string;
+    orgId?: string | null;
     source: AiGatewayRuntimeAuthorizationEntry["source"];
   }): void {
     const key = actorRuntimeTokenKey(input.actor);
@@ -305,6 +307,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     if (!key || !authorization) return;
     const entry = {
       authorization,
+      orgId: input.orgId?.trim() || null,
       source: input.source,
       at: now(),
     };
@@ -321,6 +324,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     actor?: Actor;
     value: unknown;
     callerAuthorization: string;
+    orgId?: string | null;
   }): void {
     if (!readAiAccessBundleEnabled(input.value)) {
       clearRuntimeAuthorization(input.actor);
@@ -332,6 +336,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       registerRuntimeAuthorization({
         ...(input.actor ? { actor: input.actor } : {}),
         authorization: `Bearer ${accessToken}`,
+        orgId: input.orgId,
         source: "ai-access-token",
       });
       return;
@@ -340,6 +345,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     registerRuntimeAuthorization({
       ...(input.actor ? { actor: input.actor } : {}),
       authorization: input.callerAuthorization,
+      orgId: input.orgId,
       source: "caller-authorization",
     });
   }
@@ -353,6 +359,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
   }): {
     authorization: string;
     source: AiGatewayRuntimeAuthorizationEntry["source"];
+    orgId?: string;
   } {
     const key = actorRuntimeTokenKey(input.actor);
     const scopedKey = input.runtimeAuthorizationActorTokenHash?.trim() ?? "";
@@ -384,6 +391,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       return {
         authorization: resolvedRuntime.authorization,
         source: resolvedRuntime.source,
+        ...(resolvedRuntime.orgId ? { orgId: resolvedRuntime.orgId } : {}),
       };
     }
 

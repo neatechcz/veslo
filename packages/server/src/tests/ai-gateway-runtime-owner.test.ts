@@ -91,6 +91,7 @@ describe("createAiGatewayRuntimeOwner", () => {
     const owner = createAiGatewayRuntimeOwner();
     owner.syncRuntimeAuthorizationFromAccessBundle({
       actor,
+      orgId: "org_123",
       callerAuthorization: "Bearer caller-token",
       value: {
         aiAccess: { enabled: true },
@@ -106,6 +107,7 @@ describe("createAiGatewayRuntimeOwner", () => {
     expect(runtime).toEqual({
       authorization: "Bearer runtime-token",
       source: "ai-access-token",
+      orgId: "org_123",
     });
 
     const runtimeWithLegacyHeader = owner.resolveProviderAuthorization({
@@ -118,6 +120,7 @@ describe("createAiGatewayRuntimeOwner", () => {
     expect(runtimeWithLegacyHeader).toEqual({
       authorization: "Bearer runtime-token",
       source: "ai-access-token",
+      orgId: "org_123",
     });
 
     const redactedLegacy = owner.resolveProviderAuthorization({
@@ -130,6 +133,7 @@ describe("createAiGatewayRuntimeOwner", () => {
     expect(redactedLegacy).toEqual({
       authorization: "Bearer runtime-token",
       source: "ai-access-token",
+      orgId: "org_123",
     });
 
     owner.syncRuntimeAuthorizationFromAccessBundle({

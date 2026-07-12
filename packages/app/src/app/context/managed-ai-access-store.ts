@@ -125,6 +125,7 @@ export type ManagedAiAccessStoreOptions = ManagedAiAccessCacheDeps & {
   requestManagedAiAccessBundle?: (
     baseUrl: string,
     userToken: string,
+    orgId?: string,
   ) => Promise<VesloManagedAiAccessBundle>;
   timers?: {
     setTimeout?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
@@ -556,6 +557,7 @@ export function createManagedAiAccessStore(
     const gatewayClient = options.gatewayVesloServerClient();
     const managedAiBaseUrl = options.managedAiGatewayBaseUrl();
     const userToken = denGatewayAccessToken();
+    const denOrgId = options.readDenAuth()?.orgId?.trim() ?? "";
     const cacheContext = managedAiAccessCacheContext();
     const managedAiCacheKey = cacheContext.cacheKey;
     const gatewayLocalAuth = options.vesloServerAuth();
@@ -649,9 +651,9 @@ export function createManagedAiAccessStore(
           if (!options.requestManagedAiAccessBundle) {
             throw new Error("managed AI access bundle requester is not configured");
           }
-          return options.requestManagedAiAccessBundle(managedAiBaseUrl, userToken);
+          return options.requestManagedAiAccessBundle(managedAiBaseUrl, userToken, denOrgId);
         }
-        return gatewayClient!.getMyAiAccess(userToken);
+        return gatewayClient!.getMyAiAccess(userToken, denOrgId);
       },
     );
 

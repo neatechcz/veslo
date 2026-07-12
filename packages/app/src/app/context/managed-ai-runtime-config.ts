@@ -119,7 +119,7 @@ export type ManagedAiRuntimeConfigVesloClient = {
 
 export type ManagedAiRuntimeConfigRuntimeClient = {
   baseUrl: string;
-  getMyAiAccess: (userToken: string) => Promise<{
+  getMyAiAccess: (userToken: string, orgId?: string) => Promise<{
     aiAccess?: VesloUserAiAccess | null;
     accessToken?: string | null;
   }>;
@@ -136,6 +136,7 @@ export type ManagedAiRuntimeConfigSyncOptions = {
   managedAiAccessError: Accessor<string | null>;
   managedAiGatewayAccessToken: Accessor<string>;
   denGatewayAccessToken: Accessor<string>;
+  denOrgId: Accessor<string>;
   denAuthRevision: Accessor<number>;
   gatewayVesloServerClient: Accessor<ManagedAiRuntimeGatewayClient | null>;
   vesloServerClient: Accessor<ManagedAiRuntimeConfigVesloClient | null>;
@@ -718,6 +719,7 @@ export function createManagedAiRuntimeConfigSync(
       hashRuntimeAuthorizationCachePart(providerRoutingTarget.serverClientToken),
       hashRuntimeAuthorizationCachePart(providerRoutingLocalHost?.hostToken),
       hashRuntimeAuthorizationCachePart(userToken),
+      deps.denOrgId().trim(),
       String(deps.denAuthRevision()),
     ].join("|");
 
@@ -753,7 +755,7 @@ export function createManagedAiRuntimeConfigSync(
           token: providerRoutingTarget.serverClientToken,
           hostToken: providerRoutingLocalHost?.hostToken || undefined,
         });
-        const response = await runtimeClient.getMyAiAccess(userToken);
+        const response = await runtimeClient.getMyAiAccess(userToken, deps.denOrgId().trim());
         const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
           aiAccess: response.aiAccess,
           accessToken: response.accessToken,

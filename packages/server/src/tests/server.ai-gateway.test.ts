@@ -142,6 +142,7 @@ async function primeAiGatewayRuntimeAuthorization(server: ReturnType<typeof star
     headers: {
       authorization: "Bearer client-token",
       "x-veslo-gateway-authorization": "Bearer den-user-token",
+      "x-veslo-den-org-id": "org_123",
     },
   });
   expect(response.status).toBe(200);
@@ -167,6 +168,7 @@ describe("ai gateway proxy routes", () => {
       sendTraceId: string | null;
       openCodeSessionId: string | null;
       sessionAffinity: string | null;
+      orgId: string | null;
       body: unknown;
     }> = [];
 
@@ -192,6 +194,7 @@ describe("ai gateway proxy routes", () => {
         sendTraceId: typeof req.headers["x-veslo-send-trace-id"] === "string" ? req.headers["x-veslo-send-trace-id"] : null,
         openCodeSessionId: typeof req.headers["x-session-id"] === "string" ? req.headers["x-session-id"] : null,
         sessionAffinity: typeof req.headers["x-session-affinity"] === "string" ? req.headers["x-session-affinity"] : null,
+        orgId: typeof req.headers["x-veslo-org-id"] === "string" ? req.headers["x-veslo-org-id"] : null,
         body: rawBody ? JSON.parse(rawBody) : null,
       });
 
@@ -236,6 +239,7 @@ describe("ai gateway proxy routes", () => {
                 "x-veslo-send-trace-id": "send-trace-should-not-forward",
                 "x-session-id": "opencode-local-session",
                 "x-session-affinity": "opencode-local-affinity",
+                "x-veslo-den-org-id": "org_attacker",
               },
               body: JSON.stringify({
                 model: "gpt-4o-mini",
@@ -263,6 +267,7 @@ describe("ai gateway proxy routes", () => {
                 sendTraceId: null,
                 openCodeSessionId: null,
                 sessionAffinity: null,
+                orgId: "org_123",
                 body: {
                   model: "gpt-4o-mini",
                   messages: [{ role: "user", content: "Hello" }],
@@ -1237,7 +1242,7 @@ describe("ai gateway proxy routes", () => {
                 "x-veslo-gateway-token": "gateway-access-token",
                 "x-veslo-session-id": "session_codex_blocked_123",
                 "x-veslo-account-id": "user_123",
-                "x-veslo-den-org-id": "org_123",
+                "x-veslo-den-org-id": "org_attacker",
               },
               body: JSON.stringify({
                 model: "gpt-5.4",

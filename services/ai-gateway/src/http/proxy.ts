@@ -3,6 +3,7 @@ import { Router, type Request } from "express";
 import type { UserAiAccessPolicyRecord } from "../access/repository.js";
 import { readBearerToken } from "../auth/user-session.js";
 import type { GatewaySession } from "../auth/gateway-session.js";
+import { ManagedAiEntitlementLookupError } from "../billing/den-managed-ai-entitlement-resolver.js";
 import { createAnthropicProxyRouter } from "./providers/anthropic.js";
 import { createCodexOAuthProxyRouter } from "./providers/codex-oauth.js";
 import { createOpenAiCompatibleProxyRouter } from "./providers/openai-compatible.js";
@@ -35,6 +36,25 @@ export function createProxyRouter(deps: ProxyDependencies) {
     }
 
     res.locals.gatewaySession = session;
+    try {
+      const entitlement = await deps.managedAiEntitlement.resolve({
+        token: session.token,
+        requestedOrgId: readRequestedOrganizationId(req),
+      });
+      if (!entitlement.canUseManagedAi) {
+        res.status(402).json({ error: "managed_ai_entitlement_denied" });
+        return;
+      }
+      res.locals.gatewayOrganizationId = entitlement.orgId;
+    } catch (error) {
+      if (error instanceof ManagedAiEntitlementLookupError) {
+        res.status(error.status).json({ error: error.code });
+        return;
+      }
+      res.status(503).json({ error: "managed_ai_entitlement_unavailable" });
+      return;
+    }
+
     if (deps.aiAccess) {
       let aiAccess: UserAiAccessPolicyRecord | null;
       try {
@@ -78,6 +98,12 @@ export function createProxyRouter(deps: ProxyDependencies) {
   router.use(jsonErrorHandler("proxy_request_failed"));
 
   return router;
+}
+
+function readRequestedOrganizationId(req: Request): string | null {
+  return req.header("x-veslo-org-id")?.trim()
+    || req.header("x-veslo-den-org-id")?.trim()
+    || null;
 }
 
 export function readGatewayAccessToken(req: Request) {

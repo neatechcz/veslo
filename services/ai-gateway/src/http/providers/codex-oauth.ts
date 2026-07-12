@@ -21,6 +21,7 @@ import {
   recordProviderProxyFailureAlert,
 } from "./proxy-failure-alert.js"
 import { normalizeGatewaySessionId } from "./session-id.js"
+import { readGatewayOrganizationId } from "./gateway-context.js"
 import { asyncHandler } from "../async-handler.js"
 import type { ProxyDependencies } from "../proxy-dependencies.js"
 
@@ -133,7 +134,12 @@ export function createCodexOAuthProxyRouter(
     }
 
     try {
-      const upstreamResponse = await executeRequest(scope, policyResult.body, assignedAuthJson)
+      const upstreamResponse = await executeRequest(
+        scope,
+        policyResult.body,
+        assignedAuthJson,
+        readGatewayOrganizationId(res),
+      )
       await applyUpstreamResponse(res, upstreamResponse)
     } catch (error) {
       await recordProviderProxyFailureAlert({
@@ -179,15 +185,17 @@ export function createCodexOAuthProxyRouter(
     scope: ResolveLeaseInput,
     body: unknown,
     authJson: string | null,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const lease = await deps.leaseBroker.getOrCreateActiveLease(scope)
-    return executeLeaseRequest(lease, body, authJson)
+    return executeLeaseRequest(lease, body, authJson, orgId)
   }
 
   async function executeLeaseRequest(
     lease: SessionLease,
     body: unknown,
     authJson: string | null,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const upstreamResponse = await deps.codexOAuthTransport.chatCompletions({ body, authJson })
 
@@ -197,6 +205,7 @@ export function createCodexOAuthProxyRouter(
           if (!usage) return
           await recordUsage({
             ownerUserId: lease.ownerUserId,
+            orgId,
             sessionId: lease.sessionId,
             bindingId: lease.activeBindingId,
             requestBody: body,
@@ -209,6 +218,7 @@ export function createCodexOAuthProxyRouter(
     } else {
       await recordUsage({
         ownerUserId: lease.ownerUserId,
+        orgId,
         sessionId: lease.sessionId,
         bindingId: lease.activeBindingId,
         requestBody: body,
@@ -221,6 +231,7 @@ export function createCodexOAuthProxyRouter(
 
   async function recordUsage(input: {
     ownerUserId: string
+    orgId: string | null
     sessionId: string
     bindingId: string
     requestBody: unknown
@@ -239,6 +250,7 @@ export function createCodexOAuthProxyRouter(
       await deps.usageRepository.recordUsage({
         requestId,
         ownerUserId: input.ownerUserId,
+        orgId: input.orgId,
         provider: "codex_oauth",
         sessionId: input.sessionId,
         credentialId: credential.id,

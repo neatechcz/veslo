@@ -1665,6 +1665,7 @@ function buildActiveAiGatewayResolutionDiagnostics(input: {
 function registerAiGatewayRuntimeAuthorization(input: {
   actor?: Actor;
   authorization: string;
+  orgId?: string | null;
   source: AiGatewayRuntimeAuthorizationEntry["source"];
 }): void {
   aiGatewayRuntimeOwner.registerRuntimeAuthorization(input);
@@ -1678,6 +1679,7 @@ function syncAiGatewayRuntimeAuthorizationFromAccessBundle(input: {
   actor?: Actor;
   value: unknown;
   callerAuthorization: string;
+  orgId?: string | null;
 }): void {
   aiGatewayRuntimeOwner.syncRuntimeAuthorizationFromAccessBundle(input);
 }
@@ -1690,6 +1692,7 @@ function resolveAiGatewayProviderAuthorization(input: {
 }): {
   authorization: string;
   source: AiGatewayRuntimeAuthorizationEntry["source"];
+  orgId?: string;
 } {
   return aiGatewayRuntimeOwner.resolveProviderAuthorization({
     ...input,
@@ -1967,6 +1970,7 @@ function buildAiGatewayFailureDetails(input: {
   response: Response;
   responseText: string;
   responseTextTruncated?: boolean;
+  orgId?: string | null;
   knownSecrets: Array<string | undefined>;
 }) {
   const contentType = input.response.headers.get(CONTENT_TYPE_HEADER) ?? "";
@@ -1974,9 +1978,7 @@ function buildAiGatewayFailureDetails(input: {
     trimmedHeader(input.request, VESLO_ACCOUNT_ID_HEADER) ??
     trimmedHeader(input.request, VESLO_USER_ID_HEADER) ??
     trimmedHeader(input.request, VESLO_DEN_USER_ID_HEADER);
-  const orgId =
-    trimmedHeader(input.request, VESLO_DEN_ORG_ID_HEADER) ??
-    trimmedHeader(input.request, VESLO_ORG_ID_HEADER);
+  const orgId = input.orgId?.trim() || undefined;
 
   const upstreamSnippet = buildAiGatewayUpstreamSnippet({
     text: input.responseText,
@@ -2076,6 +2078,10 @@ async function proxyAiGatewayRequest(input: {
     ? trimmedHeader(input.request, OPENCODE_SESSION_ID_HEADER)
     : undefined;
   const incomingWorkspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
+  const incomingOrganizationId =
+    trimmedHeader(input.request, VESLO_DEN_ORG_ID_HEADER) ??
+    trimmedHeader(input.request, VESLO_ORG_ID_HEADER) ??
+    null;
   const provider = resolveAiGatewayProvider(input.gatewayPath) ?? null;
   const incomingHeaderNames = headerNamesForTrace(input.request.headers);
   const sessionResolution = input.requireSessionId
@@ -2295,6 +2301,12 @@ async function proxyAiGatewayRequest(input: {
   }
   headers.set("x-veslo-request-id", requestId);
   stripAiGatewayProxyRequestHeaders(headers);
+  const forwardedOrganizationId = input.auth === "gateway-token"
+    ? providerAuthorization?.orgId ?? null
+    : incomingOrganizationId;
+  if (forwardedOrganizationId) {
+    headers.set(VESLO_ORG_ID_HEADER, forwardedOrganizationId);
+  }
   headers.set(ACCEPT_ENCODING_HEADER, ACCEPT_ENCODING_IDENTITY);
   const forwardedHeaderNames = headerNamesForTrace(headers);
 
@@ -2531,6 +2543,7 @@ async function proxyAiGatewayRequest(input: {
       response,
       responseText: diagnostic.text,
       responseTextTruncated: diagnostic.truncated,
+      orgId: forwardedOrganizationId,
       knownSecrets: expandKnownSecrets([gatewayAccessToken, gatewayCallerAuth, authorization]),
       ...(sessionId ? { sessionId } : {}),
       ...(diagnosticModel ? { model: diagnosticModel } : {}),
@@ -2571,6 +2584,7 @@ async function proxyAiGatewayRequest(input: {
     syncAiGatewayRuntimeAuthorizationFromAccessBundle({
       value: json,
       callerAuthorization: gatewayCallerAuth,
+      orgId: incomingOrganizationId,
       ...(input.actor ? { actor: input.actor } : {}),
     });
   }

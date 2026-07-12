@@ -1,3 +1,5 @@
+import { digestBearerTokenForCache } from "./token-cache-key.js"
+
 export type UserSession = {
   token: string
   user: {
@@ -18,15 +20,6 @@ export type DenUserSessionResolverDeps = {
   fetchImpl?: typeof fetch
   now?: () => number
   sessionCacheTtlMs?: number
-}
-
-function hashSessionCacheToken(value: string): string {
-  let hash = 0x811c9dc5
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index)
-    hash = Math.imul(hash, 0x01000193) >>> 0
-  }
-  return hash.toString(16).padStart(8, "0")
 }
 
 function cloneSession(session: UserSession): UserSession {
@@ -61,7 +54,7 @@ export class DenUserSessionResolver implements UserSessionResolver {
       return null
     }
 
-    const cacheKey = hashSessionCacheToken(trimmedToken)
+    const cacheKey = digestBearerTokenForCache(trimmedToken)
     const cached = this.positiveCache.get(cacheKey)
     const at = this.now()
     if (cached && cached.expiresAt > at) {

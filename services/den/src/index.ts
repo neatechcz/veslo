@@ -19,6 +19,7 @@ import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
 import { createDesktopDiagnosticsRouter } from "./http/desktop-diagnostics.js"
 import { createInternalPlatformAdminRecipientsRouter } from "./http/internal-platform-admin-recipients.js"
 import { createOrganizationBillingWebhookRouter } from "./http/organization-billing-webhook.js"
+import { createManagedAiRuntimeEntitlementRouter } from "./http/managed-ai-runtime-entitlement.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
@@ -73,6 +74,7 @@ import { createGoogleWorkspaceRouter } from "./http/google-workspace.js"
 import { createMicrosoftRouter } from "./http/microsoft.js"
 import { workersRouter } from "./http/workers.js"
 import { createYouTrackRestIssueClient } from "./integrations/youtrack-rest.js"
+import { readRequestedOrganizationId, resolveMembershipOrganizations } from "./http/org-auth.js"
 
 const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
@@ -186,6 +188,12 @@ app.get("/health", (_, res) => {
   res.json({ ok: true })
 })
 
+app.use(createManagedAiRuntimeEntitlementRouter({
+  requireSession,
+  listOrganizations: resolveMembershipOrganizations,
+  readRequestedOrganizationId,
+  deriveEntitlement: (orgId) => organizationBillingRepository.deriveEntitlement(orgId),
+}))
 
 app.get("/v1/me", asyncRoute(async (req, res) => {
   const checkedSession = await requireSession(req, res)

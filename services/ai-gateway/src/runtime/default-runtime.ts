@@ -7,6 +7,7 @@ import { MySqlAuditRepository } from "../audit/mysql-repository.js";
 import type { AuditRepository } from "../audit/repository.js";
 import { DenGatewaySessionResolver } from "../auth/gateway-session.js";
 import { DenUserSessionResolver } from "../auth/user-session.js";
+import { DenManagedAiEntitlementResolver } from "../billing/den-managed-ai-entitlement-resolver.js";
 import { DefaultTokenBroker } from "../credentials/default-token-broker.js";
 import { MySqlCredentialRepository } from "../credentials/mysql-repository.js";
 import { MySqlSecretStore } from "../credentials/mysql-secret-store.js";
@@ -108,6 +109,7 @@ export function createDefaultAdminDependencies(
 export function createDefaultProxyDependencies(
   runtime: RuntimeState,
   overrides: Partial<Pick<ProxyDependencies, "gatewaySessions" | "openAiTransport" | "anthropicTransport" | "codexOAuthTransport" | "openAiCompatibleTransport">> & {
+    managedAiEntitlement?: ProxyDependencies["managedAiEntitlement"];
     openAiOAuth?: OpenAiOAuthClient;
     now?: () => Date;
   } = {},
@@ -126,6 +128,8 @@ export function createDefaultProxyDependencies(
       now: overrides.now,
     }),
     gatewaySessions: overrides.gatewaySessions ?? new DenGatewaySessionResolver({ denApiBase: env.denApiBase }),
+    managedAiEntitlement: overrides.managedAiEntitlement
+      ?? new DenManagedAiEntitlementResolver({ denApiBase: env.denApiBase }),
     credentials: runtime.credentials,
     secrets: runtime.secrets,
     usageRepository: runtime.usage,
