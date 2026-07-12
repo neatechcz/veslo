@@ -17,17 +17,11 @@ import {
   type CredentialAlertEmailMonitorResult,
 } from "../alerts/credential-alert-email-monitor.js";
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
-import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
-import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
 import type { AuditRepository, AuditEventRecord, ListAuditEventsInput } from "../audit/repository.js";
-import { MySqlAuditRepository } from "../audit/mysql-repository.js";
 import { getPlatformCredentialOwnerUserId } from "../credentials/platform-owner.js";
-import { MySqlCredentialRepository } from "../credentials/mysql-repository.js";
-import { MySqlSecretStore } from "../credentials/mysql-secret-store.js";
 import type { AdminCredentialRecord, CreatePlatformCredentialInput, CredentialRecord as GatewayCredentialRecord, CredentialRepository } from "../credentials/repository.js";
 import type { SecretStore, StoredSecret } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
-import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, userAiAccessPolicyTable, type CredentialState } from "../db/schema.js";
 import { sendAdminAlertEmail, type AdminAlertEmailInput } from "../email/admin-alert-mailer.js";
 import { env } from "../env.js";
@@ -45,7 +39,6 @@ import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transp
 import { ProviderTransportError, type OpenAiCompatibleProviderTransport } from "../providers/transport.js";
 import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js";
 import { buildCodexCapacityOverview, type CodexCapacityCredential, type CodexCapacityOverview } from "../usage/codex-capacity.js";
-import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
 
@@ -425,6 +418,13 @@ class HttpError extends Error {
   }
 }
 
+function requireAdminDependency<T>(value: T | null | undefined, name: string): T {
+  if (value == null) {
+    throw new HttpError(`admin_dependency_unavailable:${name}`, 503);
+  }
+  return value;
+}
+
 type DenAdminApi = {
   startBrowserAuth(input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload>;
   exchangeBrowserAuth(input: BrowserAuthExchangeInput): Promise<{ token?: string }>;
@@ -595,7 +595,7 @@ export class MySqlAdminCredentialReadRepository implements AdminCredentialReadRe
   }
 }
 
-class MySqlAdminSessionReadRepository implements AdminSessionReadRepository {
+export class MySqlAdminSessionReadRepository implements AdminSessionReadRepository {
   constructor(private readonly db: AiGatewayDb) {}
 
   async listAdminSessions(): Promise<SessionRecord[]> {
@@ -832,46 +832,6 @@ export class MySqlAdminCredentialActionRepository implements AdminCredentialActi
 
     return Number(rows[0]?.assignedUsers ?? 0);
   }
-}
-
-function createDefaultAdminReadRepositories() {
-  let repositories:
-    | {
-        credentialReadRepository: AdminCredentialReadRepository;
-        credentialActionRepository: AdminCredentialActionRepository;
-        credentialWriteRepository: AdminCredentialWriteRepository;
-        credentialSecretLookupRepository: CredentialSecretLookupRepository;
-        sessionReadRepository: AdminSessionReadRepository;
-        aiAccessRepository: AiAccessRepository;
-        alertRepository: AlertRepository;
-        usageRepository: UsageRepository;
-        auditRepository: AuditRepository;
-        secretStore: SecretStore;
-      }
-    | null = null;
-
-  return () => {
-    if (repositories) {
-      return repositories;
-    }
-
-    const handle = createDb(env.databaseUrl);
-    const credentialRepository = new MySqlCredentialRepository(handle.db);
-    repositories = {
-      credentialReadRepository: new MySqlAdminCredentialReadRepository(handle.db),
-      credentialActionRepository: new MySqlAdminCredentialActionRepository(handle.db),
-      credentialWriteRepository: credentialRepository,
-      credentialSecretLookupRepository: credentialRepository,
-      sessionReadRepository: new MySqlAdminSessionReadRepository(handle.db),
-      aiAccessRepository: new MySqlAiAccessRepository(handle.db),
-      alertRepository: new MySqlAlertRepository(handle.db),
-      usageRepository: new MySqlUsageRepository(handle.db),
-      auditRepository: new MySqlAuditRepository(handle.db),
-      secretStore: new MySqlSecretStore(handle.db, env.secretKey),
-    };
-
-    return repositories;
-  };
 }
 
 function formatProviderLabel(provider: string) {
@@ -1300,25 +1260,24 @@ export function createDefaultAdminService(
   deps: AdminServiceDependencies = {},
 ): AdminService {
   const denClient = deps.denClient ?? new DenAdminClient(denApiBase);
-  const getDefaultRepositories = createDefaultAdminReadRepositories();
   const getCredentialReadRepository = () =>
-    deps.credentialReadRepository ?? getDefaultRepositories().credentialReadRepository;
+    requireAdminDependency(deps.credentialReadRepository, "credential_read_repository");
   const getCredentialActionRepository = () =>
-    deps.credentialActionRepository ?? getDefaultRepositories().credentialActionRepository;
+    requireAdminDependency(deps.credentialActionRepository, "credential_action_repository");
   const getCredentialWriteRepository = () =>
-    deps.credentialWriteRepository ?? getDefaultRepositories().credentialWriteRepository;
+    requireAdminDependency(deps.credentialWriteRepository, "credential_write_repository");
   const getCredentialSecretLookupRepository = () =>
-    deps.credentialSecretLookupRepository ?? getDefaultRepositories().credentialSecretLookupRepository;
+    requireAdminDependency(deps.credentialSecretLookupRepository, "credential_secret_lookup_repository");
   const getSessionReadRepository = () =>
-    deps.sessionReadRepository ?? getDefaultRepositories().sessionReadRepository;
+    requireAdminDependency(deps.sessionReadRepository, "session_read_repository");
   const getAiAccessRepository = () =>
-    deps.aiAccessRepository ?? getDefaultRepositories().aiAccessRepository;
+    requireAdminDependency(deps.aiAccessRepository, "ai_access_repository");
   const getAlertRepository = () =>
-    deps.alertRepository ?? getDefaultRepositories().alertRepository;
+    requireAdminDependency(deps.alertRepository, "alert_repository");
   const getUsageRepository = () =>
-    deps.usageRepository ?? getDefaultRepositories().usageRepository;
+    requireAdminDependency(deps.usageRepository, "usage_repository");
   const getAuditRepository = () =>
-    deps.auditRepository ?? getDefaultRepositories().auditRepository;
+    requireAdminDependency(deps.auditRepository, "audit_repository");
   const getModelPolicyRepository = () => {
     if (!deps.modelPolicyRepository) {
       throw new HttpError("model_policy_store_unavailable", 503);
@@ -1332,30 +1291,30 @@ export function createDefaultAdminService(
     return deps.modelPolicyMutation;
   };
   const getSecretStore = () =>
-    deps.secretStore ?? getDefaultRepositories().secretStore;
+    requireAdminDependency(deps.secretStore, "secret_store");
   const openAiCompatibleTransport = deps.openAiCompatibleTransport ?? new OpenAiCompatibleTransport();
   const alertEmailRecipients = deps.alertEmailRecipients ?? env.alertEmail.recipients;
   const sendAlertEmail = deps.sendAlertEmail ?? sendAdminAlertEmail;
   const now = deps.now ?? (() => new Date());
   const codexStatusProvider =
     deps.codexStatusProvider ??
-    (getCredentialSecretLookupRepository()
+    (deps.credentialSecretLookupRepository && deps.secretStore
       ? new CachedCodexCredentialStatusProvider({
           loadCredentialAuthJson: async (credentialId) => {
-            const credential = await getCredentialSecretLookupRepository().getCredentialRecordById(credentialId);
+            const credential = await deps.credentialSecretLookupRepository!.getCredentialRecordById(credentialId);
             if (!credential) {
               return null;
             }
 
-            const secret = await getSecretStore().get(credential.secretRef).catch(() => null);
+            const secret = await deps.secretStore!.get(credential.secretRef).catch(() => null);
             return secret?.kind === "codex_auth_json" ? secret.authJson : null;
           },
           saveCredentialAuthJson: async (credentialId, authJson) => {
-            const credential = await getCredentialSecretLookupRepository().getCredentialRecordById(credentialId);
+            const credential = await deps.credentialSecretLookupRepository!.getCredentialRecordById(credentialId);
             if (!credential) {
               return;
             }
-            await getSecretStore().replace(credential.secretRef, {
+            await deps.secretStore!.replace(credential.secretRef, {
               kind: "codex_auth_json",
               authJson,
             });
@@ -2508,7 +2467,10 @@ export function createDefaultAdminService(
         && !credential.deletedAt
       );
       if (credentials.length === 0) {
-        throw new HttpError("model_policy_active_model_has_no_healthy_credential", 422);
+        throw new HttpError(
+          `model_policy_enabled_model_has_no_healthy_credential:${provider}/${requestedModels[0]}`,
+          422,
+        );
       }
 
       if (provider === "codex_oauth") {
