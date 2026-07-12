@@ -1,6 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { Agent, type Dispatcher } from "undici";
+import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
 
 import {
   headersToRecord,
@@ -13,13 +13,18 @@ import {
 } from "./transport.js";
 
 type OpenAiCompatibleTransportDependencies = {
-  fetchImpl?: typeof fetch;
+  fetchImpl?: OpenAiCompatibleFetch;
   resolveHostname?: (hostname: string) => Promise<string[]>;
   createPinnedDispatcher?: (input: PinnedDispatcherInput) => PinnedDispatcherHandle;
   allowDevelopmentLoopback?: boolean;
   timeoutMs?: number;
   maxModelResponseBytes?: number;
 };
+
+type OpenAiCompatibleFetch = (
+  input: string,
+  init?: RequestInit & { dispatcher?: Dispatcher },
+) => Promise<Response>;
 
 type PinnedDispatcherInput = {
   hostname: string;
@@ -42,16 +47,16 @@ const DEFAULT_MODEL_DISCOVERY_TIMEOUT_MS = 10_000;
 const DEFAULT_MODEL_RESPONSE_BYTES = 1024 * 1024;
 
 export class OpenAiCompatibleTransport implements OpenAiCompatibleProviderTransport {
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: OpenAiCompatibleFetch;
   private readonly resolveHostname: (hostname: string) => Promise<string[]>;
   private readonly createPinnedDispatcher: (input: PinnedDispatcherInput) => PinnedDispatcherHandle;
   private readonly allowDevelopmentLoopback: boolean;
   private readonly timeoutMs: number;
   private readonly maxModelResponseBytes: number;
 
-  constructor(input: typeof fetch | OpenAiCompatibleTransportDependencies = {}) {
+  constructor(input: OpenAiCompatibleFetch | OpenAiCompatibleTransportDependencies = {}) {
     const deps = typeof input === "function" ? { fetchImpl: input } : input;
-    this.fetchImpl = deps.fetchImpl ?? fetch;
+    this.fetchImpl = deps.fetchImpl ?? (undiciFetch as unknown as OpenAiCompatibleFetch);
     this.resolveHostname = deps.resolveHostname ?? resolveHostname;
     this.createPinnedDispatcher = deps.createPinnedDispatcher ?? createUndiciPinnedDispatcher;
     this.allowDevelopmentLoopback = deps.allowDevelopmentLoopback === true;

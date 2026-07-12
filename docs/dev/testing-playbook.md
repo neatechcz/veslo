@@ -79,6 +79,22 @@ Then run focused script tests relevant to the changed area, for example:
 - `pnpm --filter @neatech/veslo-ui test:fs-engine`
 - `pnpm --filter @neatech/veslo-ui test:browser-entry`
 
+### AI Gateway provider transport changes
+
+Run the gateway tests and build from the repo root. When changing the
+OpenAI-compatible discovery transport, also run its compiled smoke under the
+production Node.js major version:
+
+```bash
+pnpm --dir services/ai-gateway test
+pnpm --dir services/ai-gateway build
+docker run --rm -v "$PWD:/workspace" -w /workspace/services/ai-gateway node:22-bookworm-slim node test/node22-openai-compatible-smoke.mjs
+```
+
+The Node 22 smoke starts an explicit loopback-only model endpoint and exercises
+the default discovery fetch plus its pinned dispatcher. It must not inject a
+fake fetch or bypass the transport's default connection path.
+
 ### Desktop runtime or native command changes
 
 Use the real desktop runtime:
