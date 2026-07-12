@@ -53,7 +53,7 @@ If all visible sessions in a local non-private workspace are archived, the works
 
 The app exposes:
 
-- default model selection
+- read-only active managed-AI model status
 - thinking visibility (`showThinking`)
 - model variant / reasoning effort
 - auto-compaction preference
@@ -63,6 +63,7 @@ The built-in thinking default is Max (`xhigh`). Existing app-global thinking val
 Important product rule:
 
 - Veslo uses one global runtime model for future runs across sessions
+- the AI Gateway platform model policy owns model selection; users cannot choose or switch the managed-AI model
 
 Do not document or implement model selection as a per-session durable routing contract unless the product rule changes.
 
