@@ -13,6 +13,8 @@ import type { CredentialBinding, CredentialRecord, CredentialRepository, MarkCre
 import type { SecretStore, StoredSecret } from "../src/credentials/secret-store.js";
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import { MySqlLeaseRepository } from "../src/leases/mysql-repository.js";
+import { MySqlPlatformModelPolicyRepository } from "../src/model-policy/mysql-repository.js";
+import type { PlatformModelPolicyRepository } from "../src/model-policy/repository.js";
 import type {
   CreateSessionLeaseInput,
   LeaseRepository,
@@ -238,6 +240,14 @@ function createPersistentRuntime() {
     credentials: new PersistentCredentialRepository(),
     secrets: new PersistentSecretStore(),
     leases: new PersistentLeaseRepository(),
+    modelPolicy: {
+      async getPolicy() {
+        return null;
+      },
+      async replacePolicy() {
+        throw new Error("unused");
+      },
+    } satisfies PlatformModelPolicyRepository,
     usage: {
       async recordUsage() {},
     } satisfies UsageRepository,
@@ -310,6 +320,7 @@ test("createDefaultRuntimeState uses MySQL-backed runtime stores", () => {
   assert.ok(runtime.credentials instanceof MySqlCredentialRepository);
   assert.ok(runtime.secrets instanceof MySqlSecretStore);
   assert.ok(runtime.leases instanceof MySqlLeaseRepository);
+  assert.ok(runtime.modelPolicy instanceof MySqlPlatformModelPolicyRepository);
 });
 
 test("default runtime credential repository exposes admin credential listing for Codex rotation", () => {
