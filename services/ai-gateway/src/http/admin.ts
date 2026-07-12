@@ -2102,14 +2102,18 @@ export function createDefaultAdminService(
       await assertActiveModelCapability(validated.activeModel);
       const previous = await getModelPolicyRepository().getPolicy();
       const saved = await getModelPolicyRepository().replacePolicy(validated);
-      await recordAuditEvent({
-        actorUserId: "admin-ui",
-        action: "platform.model_policy.update",
-        entityType: "platform_model_policy",
-        entityId: "platform",
-        result: "ok",
-        summary: `Updated platform model policy active model from ${formatModelRef(previous?.activeModel)} to ${formatModelRef(saved.activeModel)}.`,
-      });
+      try {
+        await getAuditRepository().recordEvent({
+          actorUserId: "admin-ui",
+          action: "platform.model_policy.update",
+          entityType: "platform_model_policy",
+          entityId: "platform",
+          result: "ok",
+          summary: `Updated platform model policy active model from ${formatModelRef(previous?.activeModel)} to ${formatModelRef(saved.activeModel)}.`,
+        });
+      } catch {
+        throw new HttpError("model_policy_audit_failed", 502);
+      }
       return { policy: toAdminPlatformModelPolicy(saved)! };
     },
     async createCredential(_token, input, actorUserId) {

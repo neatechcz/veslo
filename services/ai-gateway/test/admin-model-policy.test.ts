@@ -96,12 +96,18 @@ function createHarness(input: {
   codexStatus?: CodexUsageStatus;
   openAiCompatibleModels?: string[];
   secret?: StoredSecret;
+  failAudit?: boolean;
 } = {}) {
   const modelPolicy = new MemoryModelPolicyRepository(input.policy ?? null);
   const auditEvents: RecordAuditEventInput[] = [];
+  const auditAttempts: RecordAuditEventInput[] = [];
   const credentials = input.credentials ?? [credential({ id: "cred_codex", provider: "codex_oauth" })];
   const auditRepository: AuditRepository = {
     async recordEvent(event) {
+      auditAttempts.push(event);
+      if (input.failAudit) {
+        throw new Error("model_policy_audit_store_down");
+      }
       auditEvents.push(event);
     },
   };
@@ -162,7 +168,7 @@ function createHarness(input: {
     now: () => NOW,
   });
 
-  return { service, modelPolicy, auditEvents };
+  return { service, modelPolicy, auditEvents, auditAttempts };
 }
 
 test("getPlatformModelPolicy returns null or the current serialized policy", async () => {
@@ -362,6 +368,40 @@ test("failed model policy replacement preserves the previous policy and records 
   );
   assert.equal(harness.modelPolicy.current, previous);
   assert.deepEqual(harness.auditEvents, []);
+});
+
+test("PUT does not report success when required model policy audit persistence fails", async () => {
+  const harness = createHarness({ failAudit: true });
+  const app = createApp({ admin: harness.service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(
+      `http://127.0.0.1:${port}/admin/api/ai-infrastructure/model-policy`,
+      {
+        method: "PUT",
+        headers: { cookie: ADMIN_COOKIE, "content-type": "application/json" },
+        body: JSON.stringify({
+          enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
+          activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+        }),
+      },
+    );
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), { error: "model_policy_audit_failed" });
+    assert.deepEqual(harness.auditEvents, []);
+    assert.equal(harness.auditAttempts.length, 1);
+    assert.deepEqual(harness.modelPolicy.current?.activeModel, {
+      provider: "codex_oauth",
+      model: "gpt-5.5",
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
 });
 
 test("model policy routes return payloads and stable read/write errors", async () => {
