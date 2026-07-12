@@ -27,6 +27,7 @@ import {
   createAdminMutationState,
   createOrganizationLoadState,
   failOrganizationLoad,
+  fromAdminDateTimeLocalValue,
   formatAdminRoute,
   navigateAdminRoute,
   organizationIdForRoute,
@@ -34,6 +35,7 @@ import {
   planAdminHistoryUpdate,
   isAdminRouteMutationCurrent,
   switchOrganizationRoute,
+  toAdminDateTimeLocalValue,
   toPlatformRoute,
 } from "./admin-route-state.js";
 
@@ -1649,9 +1651,7 @@ function renderOrganizationBilling() {
   els.organizationBillingPlatformMode.value = account.mode || "none";
   els.organizationBillingPlatformStatus.value = account.status || "none";
   els.organizationBillingManualEnabled.checked = account.manualAccess?.enabled === true;
-  els.organizationBillingManualExpires.value = account.manualAccess?.expiresAt
-    ? String(account.manualAccess.expiresAt).slice(0, 16)
-    : "";
+  els.organizationBillingManualExpires.value = toAdminDateTimeLocalValue(account.manualAccess?.expiresAt);
 }
 
 function renderOrganizationAudit() {
@@ -2960,11 +2960,7 @@ async function runOrganizationBillingAction(action) {
   if (!organizationId || !allowed) return;
   const mutation = beginAdminRouteMutation(state.mutations, `organization-billing-${action}`, state.route);
   const quantities = organizationBillingQuantities();
-  const manualExpiresRaw = els.organizationBillingManualExpires.value.trim();
-  const manualExpiresDate = manualExpiresRaw ? new Date(manualExpiresRaw) : null;
-  const manualExpiresAt = manualExpiresDate && !Number.isNaN(manualExpiresDate.getTime())
-    ? manualExpiresDate.toISOString()
-    : manualExpiresRaw || null;
+  const manualExpiresAt = fromAdminDateTimeLocalValue(els.organizationBillingManualExpires.value);
   const platformBody = {
     mode: els.organizationBillingPlatformMode.value,
     status: els.organizationBillingPlatformStatus.value,

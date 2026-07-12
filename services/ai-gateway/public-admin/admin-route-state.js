@@ -81,6 +81,20 @@ export function organizationIdForRoute(route) {
     : null;
 }
 
+export function toAdminDateTimeLocalValue(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const localClock = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localClock.toISOString().slice(0, 16);
+}
+
+export function fromAdminDateTimeLocalValue(value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized) return null;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? normalized : date.toISOString();
+}
+
 export function toPlatformRoute(page) {
   return PLATFORM_PAGES.includes(page)
     ? { area: "platform", page, organizationId: null }
