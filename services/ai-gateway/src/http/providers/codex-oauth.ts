@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import { Router, type Response } from "express"
 
 import type { UserAiAccessPolicyRecord } from "../../access/repository.js"
+import { AssignedCredentialModelIncompatibleError } from "../../access/auto-assignment-rotation.js"
 import type { GatewaySession } from "../../auth/gateway-session.js"
 import type { CredentialBinding } from "../../credentials/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js"
@@ -54,10 +55,15 @@ export function createCodexOAuthProxyRouter(
       try {
         gatewayAiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
           aiAccess: gatewayAiAccess,
+          activeModel: res.locals.gatewayActiveModel as PlatformModelRef,
           reason: "codex_proxy_request",
         })
         res.locals.gatewayAiAccess = gatewayAiAccess
       } catch (error) {
+        if (error instanceof AssignedCredentialModelIncompatibleError) {
+          res.status(503).json({ error: error.message })
+          return
+        }
         console.error("codex_auto_assignment_repair_failed", error)
       }
     }

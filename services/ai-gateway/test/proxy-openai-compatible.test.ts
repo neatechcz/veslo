@@ -45,6 +45,7 @@ function createProxyApp(input: {
   bindingLookupError?: Error;
   secret?: StoredSecret | null;
   transport?: { chatCompletions(transportInput: unknown): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> };
+  discoveredModels?: string[];
   transportCalls?: unknown[];
   recordUsageCalls?: unknown[];
   leaseScopes?: unknown[];
@@ -183,8 +184,11 @@ function createProxyApp(input: {
           throw new Error("codex transport should not run");
         },
       },
-      openAiCompatibleTransport: input.transport ?? {
-        async chatCompletions(transportInput: unknown) {
+      openAiCompatibleTransport: {
+        async listModels() {
+          return { models: input.discoveredModels ?? ["custom-model"] };
+        },
+        ...(input.transport ?? { async chatCompletions(transportInput: unknown) {
           input.transportCalls?.push(transportInput);
           return {
             status: 200,
@@ -200,11 +204,44 @@ function createProxyApp(input: {
               },
             },
           };
-        },
+        } }),
       },
     } as never,
   });
 }
+
+test("openai-compatible proxy rejects an assigned credential that cannot serve the active model", async () => {
+  const transportCalls: unknown[] = [];
+  const leaseScopes: unknown[] = [];
+  const app = createProxyApp({
+    discoveredModels: ["other-model"],
+    transportCalls,
+    leaseScopes,
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/providers/openai_compatible/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...GATEWAY_AUTH_HEADER,
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_custom_incompatible",
+      },
+      body: JSON.stringify({ messages: [] }),
+    });
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "assigned_credential_model_incompatible" });
+    assert.deepEqual(leaseScopes, []);
+    assert.deepEqual(transportCalls, []);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
 
 test("POST /providers/openai_compatible/v1/chat/completions forwards assigned custom provider requests", async () => {
   const transportCalls: unknown[] = [];
