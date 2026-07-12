@@ -34,7 +34,7 @@ import type {
   PlatformModelPolicyRepository,
   PlatformModelRef,
 } from "../model-policy/repository.js";
-import { CODEX_DEFAULT_MODEL, listCodexModelCatalog, resolveCodexModelPolicy } from "../providers/codex-model-catalog.js";
+import { CODEX_DEFAULT_MODEL, listCodexModelCatalog } from "../providers/codex-model-catalog.js";
 import { formatAiGatewayProviderLabel, isAiGatewayProvider } from "../providers/ids.js";
 import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transport.js";
 import { ProviderTransportError, type OpenAiCompatibleProviderTransport } from "../providers/transport.js";
@@ -191,8 +191,6 @@ export type AdminUserAiAccessRecord = {
   enabled: boolean;
   provider: AiAccessProvider | null;
   credentialId: string | null;
-  defaultModel: string | null;
-  allowedModels: string[];
   updatedAt: string;
 };
 
@@ -212,8 +210,6 @@ export type UpdateUserAiAccessInput = {
   enabled: boolean;
   provider: AiAccessProvider | null;
   credentialId: string | null;
-  defaultModel: string | null;
-  allowedModels: string[];
 };
 
 export type AuthPayload = {
@@ -1365,6 +1361,7 @@ export function createDefaultAdminService(
   async function repairCodexAccessForRead(
     aiAccess: UserAiAccessPolicyRecord | null,
     availableCredentials: AdminCredentialOption[] | undefined,
+    activeModel: PlatformModelRef,
   ): Promise<UserAiAccessPolicyRecord | null> {
     if (!aiAccess || aiAccess.provider !== "codex_oauth") {
       return aiAccess;
@@ -1382,6 +1379,7 @@ export function createDefaultAdminService(
     try {
       return await getCredentialRotationService().repairCodexAccess({
         aiAccess,
+        activeModel,
         reason: "admin_ai_access_read",
       });
     } catch (error) {
@@ -1550,12 +1548,16 @@ export function createDefaultAdminService(
     return selected ?? null;
   }
 
-  async function listAvailableAssignmentCredentials(): Promise<AdminCredentialOption[]> {
+  async function listAvailableAssignmentCredentials(provider?: AiAccessProvider): Promise<AdminCredentialOption[]> {
     const credentials = await getCredentialReadRepository().listAdminCredentials();
     const options: AdminCredentialOption[] = [];
 
     for (const credential of credentials) {
       if (credential.state !== "healthy") {
+        continue;
+      }
+
+      if (provider && credential.provider !== provider) {
         continue;
       }
 
@@ -1599,7 +1601,7 @@ export function createDefaultAdminService(
       throw new HttpError("invalid_ai_access_credential_id", 400);
     }
 
-    const assignable = (await listAvailableAssignmentCredentials())
+    const assignable = (await listAvailableAssignmentCredentials(provider))
       .some((entry) => entry.id === credentialId && entry.provider === provider);
     if (!assignable && provider === "codex_oauth") {
       throw new HttpError("ineligible_ai_access_credential_id", 400);
@@ -1947,10 +1949,13 @@ export function createDefaultAdminService(
       return requireDenOrganizationProxy("revokeOrganizationInvite")(token, orgId, inviteId);
     },
     async getUserAiAccess(_token, userId) {
-      const availableCredentials = await listAvailableAssignmentCredentials();
+      const modelPolicy = await getModelPolicyRepository().getPolicy();
+      if (!modelPolicy) throw new HttpError("platform_model_policy_not_configured", 503);
+      const availableCredentials = await listAvailableAssignmentCredentials(modelPolicy.activeModel.provider);
       const aiAccess = await repairCodexAccessForRead(
         await getAiAccessRepository().getUserAiAccess(userId),
         availableCredentials,
+        modelPolicy.activeModel,
       );
 
       return {
@@ -1959,10 +1964,12 @@ export function createDefaultAdminService(
       };
     },
     async upsertUserAiAccess(_token, userId, input) {
+      const modelPolicy = await getModelPolicyRepository().getPolicy();
+      if (!modelPolicy) throw new HttpError("platform_model_policy_not_configured", 503);
       const validated = validateUserAiAccessInput({
         ...input,
         userId,
-      });
+      }, modelPolicy.activeModel);
       if (validated.enabled) {
         await assertAssignableCredential(validated.provider, validated.credentialId);
       }
@@ -1977,7 +1984,7 @@ export function createDefaultAdminService(
       });
       return {
         aiAccess: toAdminUserAiAccessRecord(saved)!,
-        availableCredentials: await listAvailableAssignmentCredentials(),
+        availableCredentials: await listAvailableAssignmentCredentials(modelPolicy.activeModel.provider),
       };
     },
     async disableUser(token, userId) {
@@ -2710,6 +2717,7 @@ function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
 
 function validateUserAiAccessInput(
   input: UpdateUserAiAccessInput & { userId: string },
+  activeModel: PlatformModelRef,
 ): UpsertUserAiAccessPolicyInput {
   const enabled = input.enabled === true;
   const provider = parseAiAccessProvider(input.provider);
@@ -2717,31 +2725,16 @@ function validateUserAiAccessInput(
     typeof input.credentialId === "string" && input.credentialId.trim()
       ? input.credentialId.trim()
       : null;
-  let defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : "";
-  let allowedModels = normalizeAllowedModels(input.allowedModels);
-  if (enabled && provider === "codex_oauth") {
-    const resolvedPolicy = resolveCodexModelPolicy({
-      defaultModel,
-      allowedModels,
-    });
-    defaultModel = resolvedPolicy.defaultModel;
-    allowedModels = resolvedPolicy.allowedModels;
-  }
-
   if (enabled && !provider) {
     throw new HttpError("invalid_ai_access_provider", 400);
   }
 
+  if (enabled && provider !== activeModel.provider) {
+    throw new HttpError("ai_access_provider_mismatch", 400);
+  }
+
   if (enabled && (provider === "codex_oauth" || provider === "openai_compatible") && !credentialId) {
     throw new HttpError("invalid_ai_access_credential_id", 400);
-  }
-
-  if (enabled && !defaultModel) {
-    throw new HttpError("invalid_ai_access_default_model", 400);
-  }
-
-  if (allowedModels.length > 0 && defaultModel && !allowedModels.includes(defaultModel)) {
-    throw new HttpError("invalid_ai_access_allowed_models", 400);
   }
 
   return {
@@ -2749,30 +2742,12 @@ function validateUserAiAccessInput(
     enabled,
     provider,
     credentialId,
-    defaultModel: defaultModel || null,
-    allowedModels,
     assignmentOrigin: "admin_assigned",
   };
 }
 
 function parseAiAccessProvider(value: unknown): AiAccessProvider | null {
   return isAiGatewayProvider(value) ? value : null;
-}
-
-function normalizeAllowedModels(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const unique = new Set<string>();
-  for (const entry of value) {
-    if (typeof entry !== "string") continue;
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    unique.add(trimmed);
-  }
-
-  return Array.from(unique);
 }
 
 function mapOpenAiCompatibleModelDiscoveryError(error: unknown): HttpError {
@@ -2900,8 +2875,6 @@ function toAdminUserAiAccessRecord(record: UserAiAccessPolicyRecord | null): Adm
     enabled: record.enabled,
     provider: record.provider,
     credentialId: record.credentialId,
-    defaultModel: record.defaultModel,
-    allowedModels: record.allowedModels,
     updatedAt: record.updatedAt.toISOString(),
   };
 }
@@ -4158,12 +4131,16 @@ export function createAdminRouter(adminService: AdminService) {
     }
 
     try {
+      if (
+        req.body && typeof req.body === "object"
+        && (Object.hasOwn(req.body, "defaultModel") || Object.hasOwn(req.body, "allowedModels"))
+      ) {
+        throw new HttpError("user_model_policy_not_supported", 400);
+      }
       const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
         enabled: req.body?.enabled === true,
         provider: parseAiAccessProvider(req.body?.provider),
         credentialId: typeof req.body?.credentialId === "string" ? req.body.credentialId : null,
-        defaultModel: typeof req.body?.defaultModel === "string" ? req.body.defaultModel.trim() : null,
-        allowedModels: normalizeAllowedModels(req.body?.allowedModels),
       });
       res.json(payload);
     } catch (error) {

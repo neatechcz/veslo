@@ -12,8 +12,6 @@ export type UserAiAccessPolicyRecord = {
   enabled: boolean;
   provider: AiAccessProvider | null;
   credentialId: string | null;
-  defaultModel: string | null;
-  allowedModels: string[];
   assignmentOrigin: AiAccessAssignmentOrigin;
   createdAt: Date;
   updatedAt: Date;
@@ -24,8 +22,6 @@ export type UpsertUserAiAccessPolicyInput = {
   enabled: boolean;
   provider: AiAccessProvider | null;
   credentialId: string | null;
-  defaultModel: string | null;
-  allowedModels: string[];
   assignmentOrigin: AiAccessAssignmentOrigin;
 };
 

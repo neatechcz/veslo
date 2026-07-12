@@ -11,8 +11,6 @@ function createAiAccess(overrides: Partial<UserAiAccessPolicyRecord> = {}): User
     enabled: true,
     provider: "codex_oauth",
     credentialId: "cred_old",
-    defaultModel: "gpt-5.5",
-    allowedModels: ["gpt-5.5"],
     assignmentOrigin: "auto_assigned",
     createdAt: new Date("2026-05-05T09:00:00.000Z"),
     updatedAt: new Date("2026-05-05T09:00:00.000Z"),
@@ -138,8 +136,6 @@ test("rotates auto-assigned Codex access away from an exhausted credential", asy
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_new",
-      defaultModel: "gpt-5.5",
-      allowedModels: ["gpt-5.5"],
       assignmentOrigin: "auto_assigned",
     },
   ]);
@@ -341,14 +337,12 @@ test("rotates admin-assigned Codex access away from an exhausted credential", as
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_new",
-      defaultModel: "gpt-5.5",
-      allowedModels: ["gpt-5.5"],
       assignmentOrigin: "admin_assigned",
     },
   ]);
 });
 
-test("fills Codex catalog default when rotating a legacy policy without a model", async () => {
+test("rotation writes no model fields and preserves assignment origin", async () => {
   const upserts: unknown[] = [];
   const service = createAutoAssignedCodexCredentialRotationService({
     aiAccess: {
@@ -359,8 +353,7 @@ test("fills Codex catalog default when rotating a legacy policy without a model"
         upserts.push(input);
         return createAiAccess({
           credentialId: input.credentialId,
-          defaultModel: input.defaultModel,
-          allowedModels: input.allowedModels,
+          assignmentOrigin: input.assignmentOrigin,
           updatedAt: new Date("2026-05-05T09:01:00.000Z"),
         });
       },
@@ -385,22 +378,20 @@ test("fills Codex catalog default when rotating a legacy policy without a model"
   });
 
   const repaired = await service.repairCodexAccess({
-    aiAccess: createAiAccess({ defaultModel: null, allowedModels: [] }),
+    aiAccess: createAiAccess({ assignmentOrigin: "admin_assigned" }),
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
     reason: "codex_proxy_request",
   });
 
   assert.equal(repaired.credentialId, "cred_new");
-  assert.equal(repaired.defaultModel, "gpt-5.5");
-  assert.deepEqual(repaired.allowedModels, ["gpt-5.5"]);
+  assert.equal(repaired.assignmentOrigin, "admin_assigned");
   assert.deepEqual(upserts, [
     {
       userId: "user_1",
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_new",
-      defaultModel: "gpt-5.5",
-      allowedModels: ["gpt-5.5"],
-      assignmentOrigin: "auto_assigned",
+      assignmentOrigin: "admin_assigned",
     },
   ]);
 });

@@ -3,11 +3,13 @@ import { type NextFunction, type Request, type Response, Router } from "express"
 import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AiAccessRepository } from "../access/repository.js";
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js";
+import type { PlatformModelPolicyRepository } from "../model-policy/repository.js";
 import { asyncHandler, jsonErrorHandler } from "./async-handler.js";
 
 export type UserCredentialDependencies = {
   sessionResolver: UserSessionResolver;
   aiAccess?: AiAccessRepository;
+  modelPolicy?: Pick<PlatformModelPolicyRepository, "getPolicy">;
   autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService;
 };
 
@@ -41,10 +43,29 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
   const getMyAiAccess = asyncHandler(async (_req: Request, res: Response) => {
     const session = res.locals.userSession as UserSession;
     let aiAccess = await deps.aiAccess?.getUserAiAccess(session.user.id);
+    if (!aiAccess) {
+      res.json({ aiAccess: null });
+      return;
+    }
+
+    let modelPolicy;
+    try {
+      modelPolicy = await deps.modelPolicy?.getPolicy();
+    } catch (error) {
+      console.error("platform_model_policy_lookup_failed", error);
+      res.status(502).json({ error: "platform_model_policy_lookup_failed" });
+      return;
+    }
+    if (!modelPolicy) {
+      res.status(503).json({ error: "platform_model_policy_not_configured" });
+      return;
+    }
+
     if (aiAccess?.provider === "codex_oauth" && deps.autoAssignedCodexCredentialRotation) {
       try {
         aiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
           aiAccess,
+          activeModel: modelPolicy.activeModel,
           reason: "user_ai_access_read",
         });
       } catch (error) {
@@ -60,8 +81,7 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
             enabled: aiAccess.enabled,
             provider: aiAccess.provider,
             credentialId: aiAccess.credentialId,
-            defaultModel: aiAccess.defaultModel,
-            allowedModels: aiAccess.allowedModels,
+            effectiveModel: modelPolicy.activeModel,
             updatedAt: toIsoString(aiAccess.updatedAt),
           }
         : null,

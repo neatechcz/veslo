@@ -172,8 +172,6 @@ test("GET /admin/api/users/:userId/ai-access returns assignable openai-compatibl
             enabled: true,
             provider: "openai_compatible" as never,
             credentialId: "cred_custom_1",
-            defaultModel: "custom-model",
-            allowedModels: ["custom-model"],
             createdAt: new Date("2026-05-03T08:00:00.000Z"),
             updatedAt: new Date("2026-05-03T08:00:00.000Z"),
           };
@@ -182,6 +180,18 @@ test("GET /admin/api/users/:userId/ai-access returns assignable openai-compatibl
           throw new Error("unused");
         },
       },
+      modelPolicyRepository: {
+        async getPolicy() {
+          return {
+            id: "platform",
+            enabledModels: [{ provider: "openai_compatible", model: "custom-model" }],
+            activeModel: { provider: "openai_compatible", model: "custom-model" },
+            createdAt: new Date("2026-07-12T08:00:00.000Z"),
+            updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+          };
+        },
+        async replacePolicy() { throw new Error("unused"); },
+      } as any,
       credentialReadRepository: {
         async listAdminCredentials() {
           return [
@@ -218,8 +228,6 @@ test("GET /admin/api/users/:userId/ai-access returns assignable openai-compatibl
         enabled: true,
         provider: "openai_compatible",
         credentialId: "cred_custom_1",
-        defaultModel: "custom-model",
-        allowedModels: ["custom-model"],
         updatedAt: "2026-05-03T08:00:00.000Z",
       },
       availableCredentials: [

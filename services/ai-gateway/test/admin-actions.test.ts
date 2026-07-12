@@ -1903,6 +1903,18 @@ test("default admin service rejects enabled codex_oauth access without credentia
         throw new Error("unused");
       },
     } as any,
+    modelPolicyRepository: {
+      async getPolicy() {
+        return {
+          id: "platform",
+          enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
+          activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+          createdAt: new Date("2026-07-12T08:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+        };
+      },
+      async replacePolicy() { throw new Error("unused"); },
+    } as any,
   });
   const app = createApp({ admin: service });
   const server = app.listen(0, "127.0.0.1");
@@ -1919,8 +1931,6 @@ test("default admin service rejects enabled codex_oauth access without credentia
       body: JSON.stringify({
         enabled: true,
         provider: "codex_oauth",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
       }),
     });
 
