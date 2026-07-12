@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { getTableColumns } from "drizzle-orm";
 
@@ -10,6 +11,7 @@ import {
   credentialRecordTable,
   credentialSecretTable,
   credentialUsageEventTable,
+  platformModelPolicyTable,
   sessionLeaseTable,
   userAiAccessPolicyTable,
 } from "../src/db/schema.js";
@@ -25,6 +27,7 @@ test("exports required core table names", () => {
     credential_usage_event: "credential_usage_event",
     audit_event: "ai_gateway_audit_event",
     user_ai_access_policy: "user_ai_access_policy",
+    platform_model_policy: "platform_model_policy",
   } as const;
 
   for (const [key, value] of Object.entries(requiredCoreNames)) {
@@ -41,6 +44,7 @@ test("exports required table definitions", () => {
   assert.ok(credentialUsageEventTable);
   assert.ok(auditEventTable);
   assert.ok(userAiAccessPolicyTable);
+  assert.ok(platformModelPolicyTable);
 });
 
 test("gateway tables include BYOK ownership and provider scoped lease columns", () => {
@@ -62,6 +66,17 @@ test("gateway tables include BYOK ownership and provider scoped lease columns", 
   assert.ok(userAiAccessPolicyColumns.allowed_models_json);
 });
 
+test("platform model policy schema stores one active model and the enabled model set", () => {
+  const columns = getTableColumns(platformModelPolicyTable);
+
+  assert.ok(columns.id);
+  assert.ok(columns.enabled_models_json);
+  assert.ok(columns.active_provider);
+  assert.ok(columns.active_model);
+  assert.ok(columns.created_at);
+  assert.ok(columns.updated_at);
+});
+
 test("exports db factory", () => {
   assert.equal(typeof createDb, "function");
 });
@@ -71,6 +86,24 @@ test("repository modules exist at expected paths", async () => {
   await assert.doesNotReject(async () => import("../src/leases/repository.js"));
   await assert.doesNotReject(async () => import("../src/access/repository.js"));
   await assert.doesNotReject(async () => import("../src/access/mysql-repository.js"));
+  await assert.doesNotReject(async () => import("../src/model-policy/repository.js"));
+  await assert.doesNotReject(async () => import("../src/model-policy/mysql-repository.js"));
+});
+
+test("platform model policy migration creates the singleton persistence shape", async () => {
+  const migration = await readFile(new URL("../drizzle/0003_platform_model_policy.sql", import.meta.url), "utf8");
+  const journal = JSON.parse(
+    await readFile(new URL("../drizzle/meta/_journal.json", import.meta.url), "utf8"),
+  ) as { entries: Array<{ tag: string }> };
+
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS `platform_model_policy`/);
+  assert.match(migration, /`id` varchar\(32\) NOT NULL PRIMARY KEY/);
+  assert.match(migration, /`enabled_models_json` text NOT NULL/);
+  assert.match(migration, /`active_provider` varchar\(64\) NOT NULL/);
+  assert.match(migration, /`active_model` varchar\(128\) NOT NULL/);
+  assert.match(migration, /`created_at` timestamp\(3\) NOT NULL/);
+  assert.match(migration, /`updated_at` timestamp\(3\) NOT NULL/);
+  assert.ok(journal.entries.some((entry) => entry.tag === "0003_platform_model_policy"));
 });
 
 test("exports drizzle config for ai-gateway migrations", async () => {

@@ -16,6 +16,11 @@ test("ensureAiGatewaySchema repairs managed AI tables and columns for live datab
 
   const sql = statements.join("\n");
   assert.match(sql, /CREATE TABLE IF NOT EXISTS `user_ai_access_policy`/);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS `platform_model_policy`/);
+  assert.match(sql, /`id` varchar\(32\) NOT NULL PRIMARY KEY/);
+  assert.match(sql, /`enabled_models_json` text NOT NULL,/);
+  assert.match(sql, /`active_provider` varchar\(64\) NOT NULL,/);
+  assert.match(sql, /`active_model` varchar\(128\) NOT NULL,/);
   assert.match(sql, /`id` varchar\(64\) NOT NULL PRIMARY KEY/);
   assert.match(sql, /`created_at` timestamp\(3\) NOT NULL,/);
   assert.match(sql, /`updated_at` timestamp\(3\) NOT NULL,/);

@@ -15,6 +15,13 @@
       "when": 1775211710000,
       "tag": "0001_vslo_133_usage_accounting",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1783838130000,
+      "tag": "0003_platform_model_policy",
+      "breakpoints": true
     }
   ]
 }

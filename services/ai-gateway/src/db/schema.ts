@@ -19,6 +19,7 @@ export const CoreTableNames = {
   credential_usage_event: "credential_usage_event",
   audit_event: "ai_gateway_audit_event",
   user_ai_access_policy: "user_ai_access_policy",
+  platform_model_policy: "platform_model_policy",
 } as const;
 
 export const CredentialType = ["api_key", "oauth"] as const;
@@ -165,3 +166,12 @@ export const userAiAccessPolicyTable = mysqlTable(
     index("user_ai_access_policy_provider").on(table.provider),
   ],
 );
+
+export const platformModelPolicyTable = mysqlTable(CoreTableNames.platform_model_policy, {
+  id: varchar("id", { length: 32 }).notNull().primaryKey(),
+  enabled_models_json: text("enabled_models_json").notNull(),
+  active_provider: varchar("active_provider", { length: 64 }).notNull(),
+  active_model: varchar("active_model", { length: 128 }).notNull(),
+  created_at: timestamp("created_at", { fsp: 3 }).notNull(),
+  updated_at: timestamp("updated_at", { fsp: 3 }).notNull(),
+});
