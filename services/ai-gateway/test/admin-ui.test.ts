@@ -20,6 +20,7 @@ import type {
   UpdateUserInput,
   UsageGroupBy,
 } from "../src/http/admin.js"
+import type { PlatformModelRef } from "../src/model-policy/repository.js"
 
 const ADMIN_COOKIE = "veslo.ai-gateway.admin.token=admin-token"
 
@@ -168,6 +169,15 @@ function createAdminServiceStub(overrides: Partial<AdminService> = {}): AdminSer
     },
     async listCredentialModels(_token: string, credentialId: string) {
       return { credentialId, models: [] }
+    },
+    async getPlatformModelPolicy() {
+      return { policy: null }
+    },
+    async replacePlatformModelPolicy(
+      _token: string,
+      _input: { enabledModels: PlatformModelRef[]; activeModel: PlatformModelRef },
+    ) {
+      throw new Error("unused")
     },
     async createCredential(_token: string, _input: CreateCredentialInput, _actorUserId: string | null) {
       throw new Error("unused")
@@ -1037,6 +1047,8 @@ test("organization admins are forbidden from platform-only gateway admin API rou
   const blockedRoutes = [
     ["GET", "/admin/api/credentials"],
     ["GET", "/admin/api/credentials/cred_1/models"],
+    ["GET", "/admin/api/ai-infrastructure/model-policy"],
+    ["PUT", "/admin/api/ai-infrastructure/model-policy"],
     ["POST", "/admin/api/credentials"],
     ["DELETE", "/admin/api/credentials/cred_1"],
     ["POST", "/admin/api/credentials/cred_1/revoke"],

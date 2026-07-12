@@ -22,6 +22,8 @@ import { DefaultBindingSelector } from "../leases/binding-selector.js";
 import { LeaseBroker } from "../leases/lease-broker.js";
 import { MySqlLeaseRepository } from "../leases/mysql-repository.js";
 import type { LeaseRepository } from "../leases/repository.js";
+import { MySqlPlatformModelPolicyRepository } from "../model-policy/mysql-repository.js";
+import type { PlatformModelPolicyRepository } from "../model-policy/repository.js";
 import { AnthropicTransport } from "../providers/anthropic-transport.js";
 import { CodexOAuthInferenceProxyTransport } from "../providers/codex-oauth-inference-proxy-transport.js";
 import { CachedCodexCredentialStatusProvider } from "../usage/codex-status.js";
@@ -37,6 +39,7 @@ export type RuntimeState = {
   credentials: CredentialRepository;
   secrets: SecretStore;
   leases: LeaseRepository;
+  modelPolicy: PlatformModelPolicyRepository;
   usage: UsageRepository;
 };
 
@@ -57,6 +60,7 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
     credentials: new MySqlCredentialRepository(db),
     secrets: new MySqlSecretStore(db, secretKey),
     leases: new MySqlLeaseRepository(db),
+    modelPolicy: new MySqlPlatformModelPolicyRepository(db),
     usage: new MySqlUsageRepository(db),
   };
 }
