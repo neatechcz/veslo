@@ -53,6 +53,11 @@ test("GET /readiness reports unavailable when provider reachability fails", asyn
           };
         },
       },
+      modelCapabilities: {
+        async hasHealthyCredentialForModel() {
+          return true;
+        },
+      },
     },
   } as never);
   const server = app.listen(0, "127.0.0.1");

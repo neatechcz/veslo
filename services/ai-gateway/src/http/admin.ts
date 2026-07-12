@@ -27,6 +27,7 @@ import { sendAdminAlertEmail, type AdminAlertEmailInput } from "../email/admin-a
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { PlatformModelPolicyAuditPersistenceError } from "../model-policy/mysql-repository.js";
+import { filterUnsupportedCodexModels, normalizeDiscoveredModels } from "../model-policy/capability-verifier.js";
 import type {
   PlatformModelPolicyRecord,
   PlatformModelPolicyMutation,
@@ -2772,34 +2773,6 @@ function normalizeAllowedModels(value: unknown): string[] {
   }
 
   return Array.from(unique);
-}
-
-function normalizeDiscoveredModels(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const unique = new Set<string>();
-  for (const entry of value) {
-    if (typeof entry !== "string") continue;
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    unique.add(trimmed);
-  }
-
-  return Array.from(unique);
-}
-
-function filterUnsupportedCodexModels(models: string[], upstreamStatus: CodexUsageStatus | null): string[] {
-  const unsupported = new Set(
-    (upstreamStatus?.unsupportedModels ?? [])
-      .map((model) => model.trim())
-      .filter(Boolean),
-  );
-  if (unsupported.size === 0) {
-    return models;
-  }
-  return models.filter((model) => !unsupported.has(model));
 }
 
 function mapOpenAiCompatibleModelDiscoveryError(error: unknown): HttpError {

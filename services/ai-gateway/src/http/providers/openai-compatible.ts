@@ -9,6 +9,7 @@ import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-own
 import type { StoredSecret } from "../../credentials/secret-store.js";
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js";
 import type { PlatformModelRef } from "../../model-policy/repository.js";
+import { openAiCompatibleCredentialSupportsModel } from "../../model-policy/capability-verifier.js";
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { ProviderTransportError } from "../../providers/transport.js";
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js";
@@ -93,6 +94,21 @@ export function createOpenAiCompatibleProxyRouter(
       });
       res.status(503).json({ error: "invalid_custom_provider_config" });
       return;
+    }
+    if (assignedSecret) {
+      try {
+        if (!(await openAiCompatibleCredentialSupportsModel({
+          transport: deps.openAiCompatibleTransport,
+          secret: assignedSecret,
+          model: activeModel.model,
+        }))) {
+          res.status(503).json({ error: "assigned_credential_model_incompatible" });
+          return;
+        }
+      } catch {
+        res.status(503).json({ error: "assigned_credential_model_incompatible" });
+        return;
+      }
     }
 
     const scope: ResolveLeaseInput = {

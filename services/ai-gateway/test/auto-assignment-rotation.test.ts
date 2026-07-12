@@ -127,6 +127,7 @@ test("rotates auto-assigned Codex access away from an exhausted credential", asy
 
   const repaired = await service.repairCodexAccess({
     aiAccess: createAiAccess(),
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
     reason: "codex_proxy_request",
   });
 
@@ -152,6 +153,71 @@ test("rotates auto-assigned Codex access away from an exhausted credential", asy
       summary: "Rotated Codex credential for user user_1 from cred_old to cred_new.",
     },
   ]);
+});
+
+test("does not rotate to a Codex credential that cannot serve the active model", async () => {
+  const upserts: unknown[] = [];
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() {
+        throw new Error("unused");
+      },
+      async upsertUserAiAccess(input) {
+        upserts.push(input);
+        return createAiAccess({ credentialId: input.credentialId });
+      },
+    },
+    credentials: {
+      async getCredentialRecordById(credentialId: string) {
+        return credentialId === "cred_old" ? createCredentialRecord("cred_old") : null;
+      },
+      async listAdminCredentials() {
+        return [createAdminCredential("cred_old"), createAdminCredential("cred_new")];
+      },
+    } as any,
+    codexStatusProvider: {
+      async getStatus(input) {
+        return input.credentialId === "cred_old"
+          ? exhaustedStatus
+          : { ...healthyStatus, unsupportedModels: ["gpt-5.5"] };
+      },
+    },
+    now: () => new Date("2026-05-05T09:30:00.000Z"),
+  });
+
+  const original = createAiAccess();
+  await assert.rejects(
+    service.repairCodexAccess({
+      aiAccess: original,
+      activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+      reason: "codex_proxy_request",
+    }),
+    { message: "assigned_credential_model_incompatible" },
+  );
+  assert.deepEqual(upserts, []);
+});
+
+test("fails closed when active-model compatibility cannot be verified", async () => {
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() { throw new Error("unused"); },
+      async upsertUserAiAccess() { throw new Error("must not write"); },
+    },
+    credentials: {
+      async getCredentialRecordById() { return createCredentialRecord("cred_old"); },
+    } as any,
+    codexStatusProvider: {
+      async getStatus() { throw new Error("probe unavailable"); },
+    },
+  });
+
+  await assert.rejects(
+    service.repairCodexAccess({
+      aiAccess: createAiAccess(),
+      activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+    }),
+    { message: "assigned_credential_model_incompatible" },
+  );
 });
 
 test("rotates admin-assigned Codex access away from an exhausted credential", async () => {
