@@ -122,7 +122,7 @@ export function createPlatformModelCapabilityVerifier(deps: {
     let result: ModelCapabilityCheckResult;
     try {
       if (model.provider === "codex_oauth") {
-        const status = await deps.codexStatusProvider.getStatus({ credentialId, credentialName });
+        const status = await deps.codexStatusProvider.getStatus({ credentialId, credentialName, signal });
         result = status.available !== true
           ? { status: "transient", reason: "capability_evidence_unavailable" }
           : codexStatusSupportsModel(status, model.model)
