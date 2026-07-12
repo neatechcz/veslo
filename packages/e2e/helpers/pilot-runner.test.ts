@@ -514,6 +514,8 @@ test('global managed AI model policy scenario covers the real desktop contract',
   assert.match(content, /enabledModels\.length === 2/);
   assert.match(content, /Change model/);
   assert.match(content, /findComposerSendButton/);
+  assert.match(content, /tauriInvoke\("runtime_prepare_workspace"/);
+  assert.doesNotMatch(content, /tauriInvoke\("(?:engine_start|orchestrator_workspace_activate)"/);
   assert.match(content, /__e2e\/requests/);
   assert.match(content, /gpt-5\.3-codex/);
   assert.match(content, /model_override_not_allowed/);

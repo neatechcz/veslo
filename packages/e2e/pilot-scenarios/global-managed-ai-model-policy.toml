@@ -211,18 +211,20 @@ if (!window.__vesloGlobalManagedAiModelPolicyStarted) {
       const workspace = bootstrap.workspaces.find((entry) => entry.id === bootstrap.activeId) ?? bootstrap.workspaces[0];
       const workspacePath = normalize(workspace?.path || workspace?.directory);
       assert(workspacePath, `Workspace path is unavailable: ${JSON.stringify(workspace)}`);
-      await tauriInvoke("engine_start", {
+      const prepared = await tauriInvoke("runtime_prepare_workspace", {
         projectDir: workspacePath,
+        workspaceId: normalize(workspace?.id) || null,
+        workspaceName: normalize(workspace?.displayName || workspace?.name) || null,
+        reason: "global-managed-ai-model-policy-e2e",
+        forceFreshRuntime: false,
         preferSidecar: true,
         opencodeBinPath: null,
         runtime: "veslo-orchestrator",
         workspacePaths: [workspacePath],
       });
-      await tauriInvoke("orchestrator_workspace_activate", {
-        workspacePath,
-        name: normalize(workspace?.displayName || workspace?.name) || null,
-      });
-      return { workspace, workspacePath };
+      assert(prepared?.ok === true && prepared?.engine?.running === true,
+        `Workspace runtime did not become ready: ${JSON.stringify(prepared)}`);
+      return { workspace, workspacePath, prepared };
     };
     const waitForComposer = async () => await waitUntil(() => {
       const candidate = document.querySelector(

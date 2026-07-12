@@ -212,6 +212,13 @@ an isolation strategy, not the only mechanism for parallel workspace execution.
 
 The desktop shell owns the local Veslo server process lifecycle.
 
+Engine startup is single-owner. Debug scratch autostart must reserve the same
+startup queue as explicit workspace startup and skip when an explicit startup
+is already active or ready. A runtime prepare keeps that reservation through
+daemon boot and target-workspace activation. Two concurrent orchestrator
+daemons can split workspace registration from the lifecycle endpoint used by
+the local server, so desktop boot must never allow that race.
+
 The local Veslo server must be able to reach a ready state without an active
 workspace. Starting, recovering, or refreshing the local server must not be a
 side effect of switching the visible workspace.

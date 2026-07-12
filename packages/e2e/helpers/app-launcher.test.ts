@@ -277,9 +277,11 @@ test('seedDefaultWorkspaceState uses the deterministic queue fixture as a remote
       E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN: 'session-queue-e2e-token',
       E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID: 'session-queue-workspace',
     });
-    const stateDirectory = process.platform === 'win32'
-      ? join(root, 'AppData', 'Roaming', 'com.neatech.veslo.e2e')
-      : join(root, '.local', 'share', 'com.neatech.veslo.e2e');
+    const stateDirectory = process.platform === 'darwin'
+      ? join(root, 'Library', 'Application Support', 'com.neatech.veslo.e2e')
+      : process.platform === 'win32'
+        ? join(root, 'AppData', 'Roaming', 'com.neatech.veslo.e2e')
+        : join(root, '.local', 'share', 'com.neatech.veslo.e2e');
     const state = JSON.parse(
       readFileSync(join(stateDirectory, 'veslo-workspaces.json'), 'utf8'),
     ) as { workspaces: Array<{ workspaceType?: string; baseUrl?: string | null }> };
@@ -315,9 +317,11 @@ test('seedDefaultWorkspaceState can require an explicit user activation for sess
       E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID: 'session-queue-workspace',
       E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION: '1',
     });
-    const stateDirectory = process.platform === 'win32'
-      ? join(root, 'AppData', 'Roaming', 'com.neatech.veslo.e2e')
-      : join(root, '.local', 'share', 'com.neatech.veslo.e2e');
+    const stateDirectory = process.platform === 'darwin'
+      ? join(root, 'Library', 'Application Support', 'com.neatech.veslo.e2e')
+      : process.platform === 'win32'
+        ? join(root, 'AppData', 'Roaming', 'com.neatech.veslo.e2e')
+        : join(root, '.local', 'share', 'com.neatech.veslo.e2e');
     const state = JSON.parse(readFileSync(join(stateDirectory, 'veslo-workspaces.json'), 'utf8')) as {
       activeId: string;
       workspaces: Array<{ id: string; workspaceType?: string; remoteType?: string; baseUrl?: string | null }>;
