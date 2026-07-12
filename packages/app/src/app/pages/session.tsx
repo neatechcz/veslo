@@ -2088,6 +2088,9 @@ export default function SessionView(props: SessionViewProps) {
   };
   const runDiagnosticLabel = createMemo(() => {
     const diagnostic = activeRunDiagnostic();
+    if (diagnostic?.recoveryState === "exhausted") {
+      return tr("session.run_observation_exhausted");
+    }
     if (diagnostic?.waitReason !== "model_retry_no_output") return null;
     const time = formatNoProgressDuration(activeNoProgressSeconds());
     const lastProgress = formatLastProgressTime(diagnostic.lastUsefulProgressAt);

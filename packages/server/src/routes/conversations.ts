@@ -1424,17 +1424,17 @@ export function registerConversationSessionRoutes(
       if (!lifecycleClient) {
         throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is unavailable");
       }
-      let latest;
+      let expected;
       try {
-        latest = await lifecycleClient.status(workspace.id, binding.conversationId, "latest");
+        expected = await lifecycleClient.status(workspace.id, binding.conversationId, expectedRunId);
       } catch (error) {
         if (error instanceof OrchestratorLifecycleRequestError) throw lifecycleRequestApiError(error);
         throw error;
       }
-      if (!latest || latest.runId !== expectedRunId) {
+      if (!expected || expected.runId !== expectedRunId) {
         throw new ApiError(409, "transcript_recovery_run_mismatch", "The requested run is no longer current", {
           expectedRunId,
-          actualRunId: latest?.runId ?? null,
+          actualRunId: expected?.runId ?? null,
         });
       }
     }

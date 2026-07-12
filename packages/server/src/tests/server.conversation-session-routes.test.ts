@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { matchRoute, type Route } from "../routing.js";
+import { matchRoute, type RequestContext, type Route } from "../routing.js";
 import { registerConversationSessionRoutes } from "../routes/conversations.js";
 
 describe("Conversation and session routes", () => {
@@ -36,5 +36,75 @@ describe("Conversation and session routes", () => {
     }
 
     expect(matchRoute(routes, "GET", "/workspace/demo/conversation")).toBeNull();
+  });
+
+  test("transcript recovery validates an expected run by exact id even after a successor becomes latest", async () => {
+    const routes: Route[] = [];
+    const lifecycleReads: string[] = [];
+    const ingestRuns: Array<string | null | undefined> = [];
+    const workspaceRoot = process.cwd();
+    const dependencies = {
+      conversationService: {
+        resolveOpenCodeSessionForRead: async () => ({
+          workspaceId: "demo",
+          conversationId: "conv-a",
+          engine: "opencode",
+          engineSessionId: "ses-a",
+          directory: workspaceRoot,
+          branchId: null,
+          parentConversationId: null,
+          parentEngineSessionId: null,
+          title: "Conversation",
+          createdAt: 1,
+          updatedAt: 1,
+          firstSeenAt: 1,
+          lastSeenAt: 1,
+        }),
+      },
+      lifecycleClient: {
+        status: async (_workspaceId: string, _conversationId: string, runId: string) => {
+          lifecycleReads.push(runId);
+          if (runId === "latest") {
+            throw new Error("recovery must not validate against the successor run");
+          }
+          return { runId, status: "completed", stale: false };
+        },
+      },
+      resolveConversationReadDirectory: async () => workspaceRoot,
+      transcriptIngestCoordinator: {
+        request: async (input: { runId?: string | null }) => {
+          ingestRuns.push(input.runId);
+          return { kind: "persisted" as const, generation: 1 };
+        },
+      },
+    } as unknown as Parameters<typeof registerConversationSessionRoutes>[1];
+    registerConversationSessionRoutes(routes, dependencies);
+
+    const route = matchRoute(routes, "POST", "/workspace/demo/sessions/ses-a/transcript/recover");
+    const request = new Request("http://127.0.0.1/workspace/demo/sessions/ses-a/transcript/recover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ directory: workspaceRoot, expectedRunId: "run-old" }),
+    });
+    const response = await route!.handler({
+      request,
+      url: new URL(request.url),
+      params: route!.params,
+      actor: { type: "remote", scope: "collaborator" },
+      config: {
+        readOnly: false,
+        workspaces: [{
+          id: "demo",
+          name: "Demo",
+          path: workspaceRoot,
+          workspaceType: "local",
+        }],
+        authorizedRoots: [workspaceRoot],
+      },
+    } as RequestContext);
+
+    expect(response.status).toBe(200);
+    expect(lifecycleReads).toEqual(["run-old"]);
+    expect(ingestRuns).toEqual(["run-old"]);
   });
 });

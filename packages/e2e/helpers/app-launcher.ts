@@ -547,7 +547,31 @@ function seedSkillEnableInventoryFixture(input: {
   writeFileSync(join(input.workspacePath, '.opencode', SKILL_ENABLE_FIXTURE_MARKER), 'enabled\n');
 }
 
-export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv): void {
+export function resolveWorkspaceStateDirectories(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const joinForPlatform = platform === 'win32' ? win32.join : posix.join;
+  const xdgData = env.XDG_DATA_HOME ?? joinForPlatform(root, '.local', 'share');
+  const appData = env.APPDATA ?? joinForPlatform(root, 'AppData', 'Roaming');
+  const localAppData = env.LOCALAPPDATA ?? joinForPlatform(root, 'AppData', 'Local');
+  return [
+    env.VESLO_APP_DATA_DIR,
+    env.VESLO_APP_LOCAL_DATA_DIR,
+    ...(platform === 'darwin'
+      ? APP_IDENTIFIERS.map(id => joinForPlatform(root, 'Library', 'Application Support', id))
+      : platform === 'win32'
+        ? APP_IDENTIFIERS.flatMap(id => [joinForPlatform(appData, id), joinForPlatform(localAppData, id)])
+        : APP_IDENTIFIERS.map(id => joinForPlatform(xdgData, id))),
+  ].filter((dir): dir is string => Boolean(dir));
+}
+
+export function seedDefaultWorkspaceState(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): void {
   const workspacePath = join(root, 'workspaces', 'visual-workspace');
   const sessionQueueFixtureBaseUrl = env.E2E_SESSION_QUEUE_FIXTURE_BASE_URL?.trim() || null;
   const sessionQueueVesloServerUrl = env.E2E_SESSION_QUEUE_VESLO_SERVER_URL?.trim().replace(/\/+$/, '') || null;
@@ -640,20 +664,7 @@ export function seedDefaultWorkspaceState(root: string, env: NodeJS.ProcessEnv):
     workspaces,
   };
 
-  const xdgData = env.XDG_DATA_HOME ?? join(root, '.local', 'share');
-  const appData = env.APPDATA ?? join(root, 'AppData', 'Roaming');
-  const localAppData = env.LOCALAPPDATA ?? join(root, 'AppData', 'Local');
-  const stateDirs = [
-    env.VESLO_APP_DATA_DIR,
-    env.VESLO_APP_LOCAL_DATA_DIR,
-    ...(process.platform === 'darwin'
-      ? APP_IDENTIFIERS.map(id => join(root, 'Library', 'Application Support', id))
-      : process.platform === 'win32'
-        ? APP_IDENTIFIERS.flatMap(id => [join(appData, id), join(localAppData, id)])
-        : APP_IDENTIFIERS.map(id => join(xdgData, id))),
-  ].filter((dir): dir is string => Boolean(dir));
-
-  for (const dir of stateDirs) {
+  for (const dir of resolveWorkspaceStateDirectories(root, env, platform)) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'veslo-workspaces.json'), JSON.stringify(workspaceState, null, 2));
   }

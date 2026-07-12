@@ -7,6 +7,7 @@ import type { Part } from "@opencode-ai/sdk/v2/client";
 
 import { createSessionStore } from "../../context/session.js";
 import { createWorkspaceRouting } from "../../context/workspace-routing.js";
+import { deriveSessionRunPresentation } from "../../pages/session-run-presentation.js";
 
 function makeTestRouting(client: () => any) {
   return createWorkspaceRouting({
@@ -119,6 +120,85 @@ test("hydrateTranscriptSnapshot keeps messages in creation order", () => {
       });
 
       assert.deepEqual(store.getCachedTranscriptMessages("sess-a").map((message) => message.id), ["msg-z", "msg-a"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("accepted run recovery hydrates an OpenCode snapshot under the materialized UI session", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>("ses-ui");
+      const store = createSessionStore({
+        client: () => null,
+        routing: makeTestRouting(() => null),
+        activeWorkspaceRoot: () => "/tmp/project",
+        selectedSessionId,
+        setSelectedSessionId,
+        developerMode: () => false,
+        setError: () => {},
+        setSseConnected: () => {},
+        resolveConversationRunForSession: () => null,
+        readConversationRunStatus: async () => ({
+          runId: "run-a",
+          status: "completed",
+          stale: false,
+          clientMessageId: "msg-client-a",
+        }),
+        recoverConversationTranscript: async () => ({
+          workspaceId: "server-workspace",
+          sessionId: "ses-open",
+          opencodeSessionId: "ses-open",
+          conversationId: "conv-a",
+          limit: 140,
+          messages: [{ ...makeMessageInfo(), sessionID: "ses-open" }],
+          partsByMessageId: {
+            "msg-1": [{ ...makeTextPart(), sessionID: "ses-open" }],
+          },
+          source: "sqlite",
+        }),
+      });
+      store.setSessions([makeSession("ses-ui") as any]);
+
+      assert.equal(store.admitAcceptedConversationRun({
+        sessionId: "ses-ui",
+        workspaceId: "test-workspace",
+        conversationId: "conv-a",
+        opencodeSessionId: "ses-open",
+        directory: "/tmp/project",
+        runId: "run-a",
+        clientMessageId: "msg-client-a",
+      }), true);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      assert.equal(store.getCachedTranscriptMessageCount("ses-ui"), 1);
+      assert.equal(store.getCachedTranscriptMessageCount("ses-open"), 0);
+      assert.deepEqual(
+        store.getCachedTranscriptMessages("ses-ui").map((message) => message.id),
+        ["msg-1"],
+      );
+
+      const lifecycle = Object.values(store.conversationRunDiagnosticsBySessionKey())
+        .find((diagnostic) => diagnostic.runId === "run-a");
+      assert.ok(lifecycle);
+      const presentation = deriveSessionRunPresentation({
+        hasSessionScope: true,
+        engineStatus: "idle",
+        lifecycle,
+        local: {
+          started: true,
+          hasBegun: true,
+          optimisticSending: true,
+          optimisticAccepted: true,
+          acceptedRunId: "run-a",
+          acceptedClientMessageId: "msg-client-a",
+          responseStarted: false,
+        },
+      });
+      assert.equal(presentation.phase, "idle");
+      assert.equal(presentation.showIndicator, false);
     } finally {
       dispose();
     }

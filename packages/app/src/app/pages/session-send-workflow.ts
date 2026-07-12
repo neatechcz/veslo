@@ -57,6 +57,7 @@ import type {
   ConversationSendPreflightContext,
 } from "../context/conversation-service";
 import type { LiveTranscriptReadPolicyEvent } from "../context/live-transcript-read-policy";
+import type { AcceptedConversationRunInput } from "../context/session-lifecycle-recovery";
 import type { UiScopeToken } from "../lib/ui-conversation-scope";
 import { deleteSessionComposerDraft } from "./session-composer-drafts";
 import type {
@@ -283,6 +284,7 @@ export type ConversationRunCompatibilityBridgeOptions = {
 };
 
 export type SessionSendWorkflowOptions = {
+  admitAcceptedConversationRun: (input: AcceptedConversationRunInput) => boolean | void;
   abortConversationFromVesloWriteApi: (
     sessionId: string,
     target?: ConversationAbortTarget,
@@ -1772,6 +1774,18 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           traceId: sendTraceId,
         });
       }
+
+      if (result.status === "submitted") {
+        deps.admitAcceptedConversationRun({
+          sessionId: existingSessionId,
+          workspaceId,
+          conversationId: result.conversationId,
+          opencodeSessionId: result.opencodeSessionId,
+          directory,
+          runId: result.runId,
+          clientMessageId: result.clientMessageId,
+        });
+      }
       deps.holdVisibleRuntimeActivity(
         existingSessionId,
         compactCommand ? "sendPrompt:server-submit-existing-compact-success" : "sendPrompt:server-submit-existing-success",
@@ -2056,6 +2070,30 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           traceId: sendTraceId,
         });
       }
+      if (serverFirstSubmitResult.status === "submitted") {
+        const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
+        const directory =
+          sendTargetWorkspace?.directory?.trim() ||
+          sendTargetWorkspace?.workspaceRoot?.trim() ||
+          "";
+        if (!workspaceId || !directory) {
+          deps.recordSendTrace("sendPrompt:server-submit-first-admission-missing-target", {
+            traceId: sendTraceId,
+            sessionID,
+            runId: serverFirstSubmitResult.runId,
+          });
+        } else {
+          deps.admitAcceptedConversationRun({
+            sessionId: sessionID,
+            workspaceId,
+            conversationId: serverFirstSubmitResult.conversationId,
+            opencodeSessionId: serverFirstSubmitResult.opencodeSessionId,
+            directory,
+            runId: serverFirstSubmitResult.runId,
+            clientMessageId: serverFirstSubmitResult.clientMessageId,
+          });
+        }
+      }
       await consumePendingDraftAfterAcceptedSend(true);
       deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:server-submit-first-success");
       return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
@@ -2153,7 +2191,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       selectedAbortScope?.workspaceId?.trim() ||
       (scope.hasConversationScope ? scope.workspaceId?.trim() : "") ||
       "";
-    const activeAbortWorkspaceId = deps.workspace.activeWorkspaceId().trim();
     deps.recordSendTrace("abortSession:start", {
       sessionID: id,
       workspaceId: scope.workspaceId || null,
@@ -2166,15 +2203,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       if (!explicitAbortWorkspaceId) {
         deps.recordSendTrace("abortSession:abort-blocked-missing-workspace-scope", { sessionID: id });
         deps.setError("Cannot stop this run because its workspace scope is missing. Re-select the session and try again.");
-        return true;
-      }
-      if (!activeAbortWorkspaceId || explicitAbortWorkspaceId !== activeAbortWorkspaceId) {
-        deps.recordSendTrace("abortSession:abort-blocked-foreign-workspace", {
-          sessionID: id,
-          workspaceId: explicitAbortWorkspaceId,
-          activeWorkspaceId: activeAbortWorkspaceId || null,
-        });
-        deps.setError("Cannot stop this run through the active workspace because it belongs to another workspace.");
         return true;
       }
       return false;
@@ -2190,6 +2218,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       });
       deps.setError(message);
     };
+    if (blockAbortWithoutSafeServerScope()) return;
     try {
       const result = await deps.abortConversationFromVesloWriteApi(id, target);
       if (result) {

@@ -1166,6 +1166,7 @@ export default function App() {
     respondQuestion,
     setSessions,
     setSessionStatusById,
+    admitAcceptedConversationRun,
     setMessages,
     setTodos,
     setPendingPermissions,
@@ -1618,6 +1619,7 @@ export default function App() {
   };
 
   const sessionSendWorkflow = createSessionSendWorkflow({
+    admitAcceptedConversationRun,
     abortConversationFromVesloWriteApi,
     abortSessionTyped,
     activePendingDraftKey,

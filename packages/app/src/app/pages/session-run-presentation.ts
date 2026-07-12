@@ -5,7 +5,7 @@ export type SessionRunPresentation = {
   showIndicator: boolean;
   abortable: boolean;
   source: "local" | "lifecycle" | "engine" | null;
-  diagnosticKind: "model-retry" | "model-retry-blocked" | null;
+  diagnosticKind: "model-retry" | "model-retry-blocked" | "lifecycle-observation-exhausted" | null;
 };
 
 export type SessionRunLifecycleEvidence = {
@@ -14,6 +14,7 @@ export type SessionRunLifecycleEvidence = {
   stale: boolean;
   clientMessageId?: string | null;
   waitReason?: string | null;
+  recoveryState?: "watching" | "exhausted";
 };
 
 export type SessionRunPresentationInput = {
@@ -87,6 +88,15 @@ export function deriveSessionRunPresentation(input: SessionRunPresentationInput)
   }
   const lifecycleActive = lifecycleKeepsRunPresentationActive(lifecycle);
   if (lifecycleActive) {
+    if (lifecycle?.recoveryState === "exhausted") {
+      return {
+        phase: "error",
+        showIndicator: true,
+        abortable: true,
+        source: "lifecycle",
+        diagnosticKind: "lifecycle-observation-exhausted",
+      };
+    }
     if (lifecycle?.waitReason === "model_retry_no_output") {
       const blocked = lifecycle.status === "blocked";
       return {

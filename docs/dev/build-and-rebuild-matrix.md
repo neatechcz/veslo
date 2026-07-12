@@ -73,6 +73,13 @@ macOS extracted-app verifier also requires the bundled `veslo-server`,
 `veslo-code-router`, `veslo-orchestrator`, `veslo-code`, `opencode`,
 `chrome-devtools-mcp`, and `opencode-managed-deps.json` sidecars to exist, and
 executable sidecars must have executable permissions on POSIX platforms.
+The bundled `veslo-node` runtime is Windows-only: it is added by
+`tauri.windows.conf.json`, provisioned by `prepare-sidecar.mjs`, and required by
+Windows bundle verification. The shared Tauri config must not list it, because
+that would make macOS builds require nonexistent Apple target binaries.
+Generated CI config extensions must stay minimal and override only the intended
+setting; copying the base config into a later `--config` layer would replace the
+Windows-specific `externalBin` array.
 
 ## When in Doubt
 

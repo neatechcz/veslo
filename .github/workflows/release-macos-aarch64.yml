@@ -1273,7 +1273,7 @@ jobs:
         id: source-date
         shell: bash
         run: |
-          epoch=$(git show -s --format=%ct "${RELEASE_TAG}")
+          epoch=$(git log -1 --format=%ct "${RELEASE_TAG}^{commit}")
           echo "epoch=$epoch" >> "$GITHUB_OUTPUT"
 
       - name: Check veslo-orchestrator release

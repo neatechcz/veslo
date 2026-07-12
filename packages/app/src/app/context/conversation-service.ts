@@ -1371,6 +1371,13 @@ export function createConversationService<Client extends ConversationServiceClie
     const normalizedSessionId = sessionId.trim();
     if (!normalizedSessionId) return null;
     const scope = deps.resolveSelectedSessionBrowseScope(normalizedSessionId);
+    if (options?.allowLatest && (!scope?.workspaceId?.trim() || !scope.conversationId?.trim())) {
+      deps.recordSendTrace("resolveConversationRunForSession:latest-missing-scope", {
+        sessionId: normalizedSessionId,
+        workspaceIdHint: workspaceIdHint?.trim() || null,
+      });
+      return null;
+    }
     const workspaceId =
       scope?.workspaceId?.trim() ||
       workspaceIdHint?.trim() ||
@@ -1501,9 +1508,9 @@ export function createConversationService<Client extends ConversationServiceClie
       expectedRunId: scope.expectedRunId?.trim() || undefined,
     });
     if (recovery.state === "persisted" || recovery.state === "unchanged") {
-      await serverClient.getSessionTranscript(serverWorkspaceId, sessionId, 140, directory);
+      return serverClient.getSessionTranscript(serverWorkspaceId, sessionId, 140, directory);
     }
-    return recovery;
+    return null;
   };
 
   return {

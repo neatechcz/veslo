@@ -315,6 +315,14 @@ test("selected exact conversation probes latest once after reload and restores d
     notifySessionBusy: () => {},
     recoverConversationTranscript: async (input) => {
       transcriptRecoveries.push(input);
+      return {
+        workspaceId: "ws-a",
+        sessionId: "ses-a",
+        limit: 140,
+        messages: [],
+        partsByMessageId: {},
+        source: "sqlite",
+      };
     },
   });
 
@@ -420,5 +428,271 @@ test("a superseded in-flight lifecycle poll cannot terminalize its replacement",
 
   assert.deepEqual(terminals, []);
   assert.deepEqual(statusWrites, []);
+  assert.equal(controller.activeWatchCount(), 1);
+});
+
+test("accepted run admission watches idle UI state and hydrates the selected terminal transcript", async () => {
+  const statuses: string[] = [];
+  const recoveries: string[] = [];
+  const hydrated: string[] = [];
+  let reads = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({ "ws-a\0ses-ui": "idle" }),
+    selectedSessionId: () => "ses-ui",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async (scope) => {
+      reads += 1;
+      assert.equal(scope.runId, "run-a");
+      return { runId: "run-a", status: "completed", stale: false, clientMessageId: "msg-a" };
+    },
+    recoverConversationTranscript: async (scope) => {
+      recoveries.push(`${scope.workspaceId}:${scope.sessionId}:${scope.expectedRunId}`);
+      return {
+        workspaceId: "ws-a",
+        sessionId: "ses-open",
+        limit: 140,
+        messages: [],
+        partsByMessageId: {},
+        source: "sqlite",
+      };
+    },
+    hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot.sessionId),
+    setSessionStatusForWorkspace: (sessionId, status) => statuses.push(`${sessionId}:${status}`),
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-ui",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "ses-open",
+    directory: "/tmp/a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  }), true);
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  assert.equal(reads, 1);
+  assert.deepEqual(recoveries, ["ws-a:ses-open:run-a"]);
+  assert.deepEqual(hydrated, ["ses-ui"]);
+  assert.ok(statuses.includes("ses-ui:submitted"));
+  assert.ok(statuses.includes("ses-ui:idle"));
+  assert.equal(controller.activeWatchCount(), 0);
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-ui",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "ses-open",
+    directory: "/tmp/a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+  await waitForAsyncPoll();
+  assert.equal(reads, 1);
+  assert.deepEqual(hydrated, ["ses-ui"]);
+});
+
+test("terminal transcript recovery failure is traced and can retry through the existing latest probe", async () => {
+  const traces: string[] = [];
+  const hydrated: string[] = [];
+  let recoveries = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: (_sessionId, _workspaceId, options) => options?.allowLatest
+      ? {
+          sessionId: "ses-a",
+          workspaceId: "ws-a",
+          conversationId: "conv-a",
+          opencodeSessionId: "ses-a",
+          directory: "/tmp/a",
+          runId: "latest",
+        }
+      : null,
+    readConversationRunStatus: async () => ({ runId: "run-a", status: "completed", stale: false }),
+    recoverConversationTranscript: async () => {
+      recoveries += 1;
+      if (recoveries === 1) throw new Error("transient recovery failure");
+      return {
+        workspaceId: "ws-a",
+        sessionId: "ses-a",
+        limit: 140,
+        messages: [],
+        partsByMessageId: {},
+        source: "sqlite",
+      };
+    },
+    hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot.sessionId),
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    trace: (event) => traces.push(event),
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "ses-a",
+    directory: "/tmp/a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  assert.equal(recoveries, 1);
+  assert.ok(traces.includes("session-lifecycle-recovery:terminal-transcript-error"));
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  await waitForAsyncPoll();
+
+  assert.equal(recoveries, 2);
+  assert.deepEqual(hydrated, ["ses-a"]);
+});
+
+test("latest probe releases its dedupe after a transient status failure", async () => {
+  let reads = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: (_sessionId, _workspaceId, options) => options?.allowLatest
+      ? {
+          sessionId: "ses-a",
+          workspaceId: "ws-a",
+          conversationId: "conv-a",
+          runId: "latest",
+        }
+      : null,
+    readConversationRunStatus: async () => {
+      reads += 1;
+      if (reads === 1) throw new Error("runtime still starting");
+      return null;
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(reads, 2);
+});
+
+test("accepted run exhaustion stays explicit and resumes only on a relevant trigger", async () => {
+  const diagnostics: Array<SessionLifecycleRecoveryStatus | null> = [];
+  const readScopes: string[] = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({ "ws-a\0ses-a": "idle" }),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async (scope) => {
+      readScopes.push(`${scope.workspaceId}:${scope.runId}`);
+      return { runId: "run-a", status: "running", stale: false };
+    },
+    onConversationRunStatus: (_scope, status) => diagnostics.push(status),
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    maxAttempts: 1,
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "ses-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+  await waitForAsyncPoll();
+
+  assert.deepEqual(readScopes, ["ws-a:run-a"]);
+  assert.equal(controller.activeWatchCount(), 0);
+  assert.equal(diagnostics.at(-1)?.status, "running");
+  assert.equal(diagnostics.at(-1)?.recoveryState, "exhausted");
+
+  assert.equal(controller.resumeExhaustedWatchForSession("ses-b", "ws-a"), 0);
+  assert.deepEqual(readScopes, ["ws-a:run-a"]);
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-b",
+    conversationId: "conv-b",
+    opencodeSessionId: "ses-a",
+    runId: "run-b",
+    clientMessageId: "msg-b",
+  });
+  await waitForAsyncPoll();
+  assert.deepEqual(readScopes, ["ws-a:run-a", "ws-b:run-b"]);
+
+  assert.equal(controller.resumeExhaustedWatchForSession("ses-a", "ws-a"), 1);
+  await waitForAsyncPoll();
+  assert.deepEqual(readScopes, ["ws-a:run-a", "ws-b:run-b", "ws-a:run-a"]);
+});
+
+test("a newer admitted run fences late transcript hydration from the old run", async () => {
+  let resolveOldRecovery!: (snapshot: {
+    workspaceId: string;
+    sessionId: string;
+    limit: number;
+    messages: [];
+    partsByMessageId: {};
+    source: "sqlite";
+  }) => void;
+  const oldRecovery = new Promise<{
+    workspaceId: string;
+    sessionId: string;
+    limit: number;
+    messages: [];
+    partsByMessageId: {};
+    source: "sqlite";
+  }>((resolve) => {
+    resolveOldRecovery = resolve;
+  });
+  const hydrated: string[] = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async (scope) => ({
+      runId: scope.runId,
+      status: scope.runId === "run-old" ? "completed" : "running",
+      stale: false,
+    }),
+    recoverConversationTranscript: async (scope) => scope.expectedRunId === "run-old"
+      ? oldRecovery
+      : null,
+    hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot.sessionId),
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "ses-a",
+    runId: "run-old",
+    clientMessageId: "msg-old",
+  });
+  await waitForAsyncPoll();
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "ses-a",
+    runId: "run-new",
+    clientMessageId: "msg-new",
+  });
+  resolveOldRecovery({
+    workspaceId: "ws-a",
+    sessionId: "ses-old",
+    limit: 140,
+    messages: [],
+    partsByMessageId: {},
+    source: "sqlite",
+  });
+  await waitForAsyncPoll();
+
+  assert.deepEqual(hydrated, []);
   assert.equal(controller.activeWatchCount(), 1);
 });

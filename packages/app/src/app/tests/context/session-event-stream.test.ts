@@ -279,20 +279,7 @@ test("background events update scoped runtime state without mutating active mess
       assert.equal(store.sessionStatus["ws-b:sess-b"], "running");
       assert.deepEqual(busyCalls, [{ sessionID: "sess-b", status: "running", workspaceId: "ws-b" }]);
       assert.deepEqual(store.messages, {});
-      assert.deepEqual(backgroundIngest, [
-        {
-          sessionID: "sess-b",
-          workspaceId: "ws-b",
-          reason: "background message.updated",
-          delayMs: undefined,
-        },
-        {
-          sessionID: "sess-b",
-          workspaceId: "ws-b",
-          reason: "background message.part.updated",
-          delayMs: undefined,
-        },
-      ]);
+      assert.deepEqual(backgroundIngest, []);
       assert.deepEqual(permissionRefreshes, ["permissions", "permissions"]);
       assert.deepEqual(questionRefreshes, ["questions", "questions"]);
     } finally {
@@ -332,10 +319,7 @@ test("foreground stream accepts message and part events before session list hydr
       assert.deepEqual(store.messages["sess-late"].map((message) => message.id), ["msg-late"]);
       assert.equal(store.parts["msg-late"]?.find((part) => part.id === "part-late")?.text, "late text");
       assert.deepEqual(observed, ["sess-late"]);
-      assert.deepEqual(
-        transcriptIngest.map((entry) => entry.reason),
-        ["message.updated", "message.part.updated"],
-      );
+      assert.deepEqual(transcriptIngest, []);
     } finally {
       dispose();
     }
@@ -420,7 +404,7 @@ test("queued SSE text deltas for the same part are not coalesced before flush", 
   });
 });
 
-test("queued SSE full part snapshots for the same part are still coalesced", async () => {
+test("queued SSE full part snapshots are coalesced without legacy app-side transcript ingest", async () => {
   await createRoot(async (dispose) => {
     try {
       const transcriptIngest: Array<Record<string, unknown>> = [];
@@ -448,8 +432,7 @@ test("queued SSE full part snapshots for the same part are still coalesced", asy
       cleanup();
 
       assert.equal(store.parts["msg-a"]?.find((part) => part.id === "part-a")?.text, "complete");
-      assert.equal(transcriptIngest.length, 1);
-      assert.equal(transcriptIngest[0]?.reason, "message.part.updated");
+      assert.equal(transcriptIngest.length, 0);
     } finally {
       dispose();
     }
@@ -720,7 +703,7 @@ test(
   }),
 );
 
-test("active session idle schedules one canonical transcript ingestion immediately", async () => {
+test("active session idle delegates durable reconciliation without legacy app-side ingest", async () => {
   await createRoot(async (dispose) => {
     try {
       const transcriptIngest: Array<Record<string, unknown>> = [];
@@ -740,14 +723,7 @@ test("active session idle schedules one canonical transcript ingestion immediate
       );
 
       assert.deepEqual(transcriptIngest, []);
-      assert.deepEqual(backgroundIngest, [
-        {
-          sessionID: "sess-a",
-          workspaceId: "ws-a",
-          reason: "session.idle engine snapshot",
-          delayMs: 0,
-        },
-      ]);
+      assert.deepEqual(backgroundIngest, []);
     } finally {
       dispose();
     }
@@ -1376,7 +1352,7 @@ test("reconnect catch-up stays degraded when transcript refresh fails", async ()
   }
 });
 
-test("background reconnect catch-up schedules durable ingest without mutating active transcript state", async () => {
+test("background reconnect catch-up avoids legacy ingest and active transcript mutation", async () => {
   const realSetTimeout = globalThis.setTimeout;
   const realClearTimeout = globalThis.clearTimeout;
   let reconnectCallback: (() => void) | null = null;
@@ -1448,14 +1424,7 @@ test("background reconnect catch-up schedules durable ingest without mutating ac
     assert.deepEqual(messageWrites, []);
     assert.equal(store.messages["sess-b"], undefined);
     assert.equal(store.todos["sess-b"], undefined);
-    assert.deepEqual(backgroundIngest, [
-      {
-        sessionID: "sess-b",
-        workspaceId: "ws-b",
-        reason: "reconnect catch-up",
-        delayMs: 0,
-      },
-    ]);
+    assert.deepEqual(backgroundIngest, []);
 
     cleanup();
   } finally {

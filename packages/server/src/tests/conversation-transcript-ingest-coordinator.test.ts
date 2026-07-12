@@ -70,6 +70,36 @@ test("transcript ingest coordinator retries an incomplete canonical read with bo
   expect(writes).toBe(0);
 });
 
+test("concurrent incomplete transcript requests exhaust the latest generation without looping", async () => {
+  let releaseFirstRead: () => void = () => {
+    throw new Error("read gate was not initialized");
+  };
+  const firstReadGate = new Promise<void>((resolve) => {
+    releaseFirstRead = resolve;
+  });
+  let reads = 0;
+  const coordinator = createTranscriptIngestCoordinator({
+    readCanonicalTranscript: async () => {
+      reads += 1;
+      if (reads === 1) await firstReadGate;
+      return { complete: false, messages: [], partsByMessageId: {} };
+    },
+    persistCanonicalTranscript: async () => {
+      throw new Error("incomplete transcripts must not be persisted");
+    },
+    invalidateTranscriptCaches: () => {},
+    retryDelaysMs: [0],
+  });
+
+  const first = coordinator.request({ ...identity, trigger: "terminal-lifecycle", runId: "run-a" });
+  const second = coordinator.request({ ...identity, trigger: "recovery", runId: "run-a" });
+  releaseFirstRead();
+
+  await expect(first).resolves.toEqual({ kind: "exhausted", generation: 2 });
+  await expect(second).resolves.toEqual({ kind: "exhausted", generation: 2 });
+  expect(reads).toBe(2);
+});
+
 test("transcript ingest coordinator uses payload changes, not timestamps, for its watermark", async () => {
   let text = "partial";
   let writes = 0;

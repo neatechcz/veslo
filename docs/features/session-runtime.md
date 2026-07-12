@@ -32,14 +32,16 @@ Session store ownership map:
 - `packages/app/src/app/context/session-store-model.ts`: pure session/message/part ordering,
   command display aliases, placeholder messages, and synthetic error-turn modeling.
 - `packages/app/src/app/context/session-transcript-controller.ts`: transcript hydration, message
-  pagination, live/background transcript ingest, deletion tracking, and freshness.
+  pagination, deletion tracking, and freshness. Durable transcript ingest remains server-owned.
+- `packages/app/src/app/context/session-lifecycle-recovery.ts`: exact accepted-run observation,
+  terminal transcript recovery, scoped run diagnostics, and bounded reconnect/reselection recovery.
 - `packages/app/src/app/context/session-runtime-prompts.ts`: permission/question refresh, active
   prompt selection, per-workspace prompt aggregation, reply routing, and stale route release.
 - `packages/app/src/app/context/session-selection-controller.ts`: session list loading, selected
   session lifecycle, offline transcript fallback, directory filtering, rename, and load-earlier.
 - `packages/app/src/app/context/session-event-stream.ts`: SSE stream fan-out, active/background
   event application, event coalescing, reconnect catch-up, unread assistant observation, and
-  background transcript persistence triggers.
+  lifecycle/transcript freshness observations. It does not own durable transcript ingest.
 - `packages/app/src/app/context/session-workspace-cache.ts`: workspace snapshot save/load/clear,
   selected-session validation, transcript metadata restore, and snapshot eviction.
 - `packages/app/src/app/context/session-reconnect.ts`: outage snapshot and reconnect notice rules.
@@ -160,6 +162,16 @@ If an existing-conversation server-submit transport loses its response, Veslo re
 idempotent `clientMessageId` once. A second transport failure is shown as an unconfirmed-delivery
 warning, not as an editable retry with a fresh id. While any transient local submission remains
 unresolved, a new normal send stays in Composer and is not dispatched without its own local owner.
+
+Every validated immediate `submitted` result is also admitted to the app's existing lifecycle
+recovery controller with the materialized UI session id, captured workspace/directory, conversation
+id, OpenCode session id, run id, and client message id. This exact-run observation is the correctness
+fallback when frontend OpenCode SSE is missed. A durable terminal result recovers the exact
+transcript and adopts the returned snapshot through the normal transcript controller, including for
+the currently selected session. If bounded observation is exhausted, Veslo keeps the accepted run
+identity, shows a scoped unverified-status diagnostic, stops polling, and retries only after a
+relevant lifecycle event, reconnect, or explicit open/reselect of that exact session; exhaustion
+never fabricates `idle` or a terminal run result.
 
 Main source of truth:
 

@@ -136,6 +136,9 @@ function createHarness(
   const liveTranscriptPolicyEvents: LiveTranscriptReadPolicyEvent[] = [];
 
   const optionsWithBridge = {
+    admitAcceptedConversationRun: (input: Parameters<SessionSendWorkflowOptions["admitAcceptedConversationRun"]>[0]) => actions.push(
+      `admit:${input.sessionId}:${input.workspaceId}:${input.conversationId}:${input.opencodeSessionId}:${input.runId}:${input.clientMessageId}`,
+    ),
     abortConversationFromVesloWriteApi: async () => null,
     abortSessionTyped: async () => undefined,
     activePendingDraftKey: () => null,
@@ -922,6 +925,9 @@ test("session send workflow submits an existing local prompt through server subm
   });
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing:start"));
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
+  assert.ok(harness.actions.includes(
+    "admit:sess-target:ws-active:conv-target:open-target:run-submit:client-server-submit",
+  ));
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
@@ -1637,6 +1643,9 @@ test("session send workflow accepts first-session server submit results without 
   assert.equal(createOptions[0]?.submitDraft?.text, "first server submit");
   assert.ok(harness.events.includes("sendPrompt:server-submit-first-success"));
   assert.equal(harness.liveTranscriptPolicyEvents.at(-1)?.reason, "sendPrompt:success");
+  assert.ok(harness.actions.includes(
+    "admit:sess-created:ws-active:conv-created:sess-created:run-created:client-first-server-submit",
+  ));
   assert.ok(harness.actions.includes("clear-pending-draft"));
   assert.ok(harness.actions.includes("refresh-pending-drafts"));
   assert.deepEqual(composerDraftCleanupCalls, ["cleanup"]);
@@ -1689,6 +1698,7 @@ test("session send workflow emits queued event for first-session queued submit r
   assert.equal(queuedEvent?.type, "conversation-run.queued");
   assert.equal(queuedEvent?.reason, "sendPrompt:queued");
   assert.equal(queuedEvent?.type === "conversation-run.queued" ? queuedEvent.queueItemId : null, "queue-created");
+  assert.ok(!harness.actions.some((action) => action.startsWith("admit:")));
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
@@ -1839,8 +1849,12 @@ test("session send workflow opens first materialized session and reports failed 
 
 test("abortSession blocks abort when workspace scope is missing", async () => {
   const abortCalls: string[] = [];
+  const conversationAbortCalls: string[] = [];
   const harness = createHarness({
-    abortConversationFromVesloWriteApi: async () => null,
+    abortConversationFromVesloWriteApi: async (sessionId) => {
+      conversationAbortCalls.push(sessionId);
+      return null;
+    },
     abortSessionTyped: async (_client, sessionId) => {
       abortCalls.push(sessionId);
     },
@@ -1860,6 +1874,7 @@ test("abortSession blocks abort when workspace scope is missing", async () => {
   await workflow.abortSession("sess-unscoped");
 
   assert.deepEqual(abortCalls, []);
+  assert.deepEqual(conversationAbortCalls, []);
   assert.ok(harness.events.includes("abortSession:abort-blocked-missing-workspace-scope"));
   assert.match(harness.errors.at(-1) ?? "", /workspace scope is missing/);
 });
@@ -1897,10 +1912,14 @@ test("abortSession preserves a resolved scoped abort when selected scope lookup 
   assert.match(harness.errors.at(-1) ?? "", /Conversation service is unavailable/);
 });
 
-test("abortSession blocks abort for foreign workspace scope", async () => {
+test("abortSession permits an explicit scoped abort for a foreign workspace", async () => {
   const abortCalls: string[] = [];
+  const conversationAbortCalls: Array<{ sessionId: string; target?: unknown }> = [];
   const harness = createHarness({
-    abortConversationFromVesloWriteApi: async () => null,
+    abortConversationFromVesloWriteApi: async (sessionId, target) => {
+      conversationAbortCalls.push({ sessionId, target });
+      return null;
+    },
     abortSessionTyped: async (_client, sessionId) => {
       abortCalls.push(sessionId);
     },
@@ -1922,11 +1941,20 @@ test("abortSession blocks abort for foreign workspace scope", async () => {
   });
   const workflow = createSessionSendWorkflow(harness.options);
 
-  await workflow.abortSession("sess-foreign");
+  const target = {
+    workspaceId: "ws-foreign",
+    workspaceRoot: "/foreign",
+    directory: "/foreign",
+    conversationId: "conv-foreign",
+    opencodeSessionId: "open-foreign",
+  };
+  await workflow.abortSession("sess-foreign", target);
 
   assert.deepEqual(abortCalls, []);
-  assert.ok(harness.events.includes("abortSession:abort-blocked-foreign-workspace"));
-  assert.match(harness.errors.at(-1) ?? "", /belongs to another workspace/);
+  assert.deepEqual(conversationAbortCalls, [{ sessionId: "sess-foreign", target }]);
+  assert.equal(harness.events.includes("abortSession:abort-blocked-missing-workspace-scope"), false);
+  assert.ok(harness.events.includes("abortSession:conversation-abort-unavailable"));
+  assert.ok(harness.events.includes("abortSession:conversation-abort-blocked-unavailable"));
 });
 
 test("abortSession blocks scoped abort when server abort is unavailable", async () => {
