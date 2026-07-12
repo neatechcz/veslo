@@ -178,7 +178,7 @@
                 <span class="status-chip">Admin managed</span>
               </div>
             </div>
-            <section id="model-policy-panel" class="detail-card model-policy-card" data-platform-admin-control>
+            <section id="model-policy-panel" class="detail-card model-policy-card" data-platform-admin-control aria-busy="false">
               <div class="section-head compact">
                 <div>
                   <p class="eyebrow">Global model policy</p>
@@ -204,7 +204,7 @@
                 </label>
                 <button id="model-policy-add-button" class="button button-secondary" type="button" disabled>Add enabled model</button>
               </div>
-              <p id="model-policy-status" class="editor-note muted">Loading platform model policy...</p>
+              <p id="model-policy-status" class="editor-note muted" role="status" aria-live="polite" aria-atomic="true">Loading platform model policy...</p>
             </section>
             <div class="section-head compact credential-inventory-head">
               <div>
