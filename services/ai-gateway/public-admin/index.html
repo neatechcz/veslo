@@ -23,14 +23,15 @@
           </div>
         </div>
 
-        <nav class="nav" aria-label="Admin sections">
-          <a href="/admin" data-route="overview" class="nav-item">Overview</a>
-          <a href="/admin/organization" data-route="organization" class="nav-item">Organization</a>
-          <a href="/admin/credentials" data-route="credentials" class="nav-item">AI Infrastructure</a>
-          <a href="/admin/usage" data-route="usage" class="nav-item">Usage</a>
-          <a href="/admin/alerts" data-route="alerts" class="nav-item">Alerts</a>
-          <a href="/admin/users" data-route="users" class="nav-item">Users</a>
-          <a href="/admin/audit" data-route="audit" class="nav-item">Audit</a>
+        <nav class="nav grouped-nav" aria-label="Admin sections" data-nav-group="platform">
+          <span class="nav-group-label">Platform administration</span>
+          <a href="/admin" data-platform-route="overview" class="nav-item">Overview</a>
+          <a href="/admin/organizations" data-platform-route="organizations" class="nav-item">Organizations</a>
+          <a href="/admin/ai-infrastructure" data-platform-route="ai-infrastructure" class="nav-item">AI Infrastructure</a>
+          <a href="/admin/ai-infrastructure/usage" data-platform-route="ai-usage" class="nav-item nav-item-nested">Usage</a>
+          <a href="/admin/ai-infrastructure/alerts" data-platform-route="ai-alerts" class="nav-item nav-item-nested">Alerts</a>
+          <a href="/admin/platform-users" data-platform-route="platform-users" class="nav-item">Platform Users</a>
+          <a href="/admin/audit" data-platform-route="audit" class="nav-item">Global Audit</a>
         </nav>
 
         <section class="sidebar-card">
@@ -66,6 +67,27 @@
             <button id="create-user-button" class="button button-primary hidden" type="button">Create user</button>
           </div>
         </header>
+
+        <section id="organization-context-header" class="organization-context hidden" data-organization-context aria-live="polite">
+          <div class="organization-context-copy">
+            <p class="eyebrow">Organization workspace</p>
+            <strong id="operating-organization-label">Operating organization: unavailable</strong>
+          </div>
+          <label id="organization-selector-control" class="organization-selector">
+            <span>Switch organization</span>
+            <input id="organization-selector-input" class="input" type="search" list="organization-selector-options" autocomplete="off" placeholder="Search authorized organization" />
+            <datalist id="organization-selector-options"></datalist>
+          </label>
+          <nav class="organization-subnav" aria-label="Organization workspace sections">
+            <a href="#" data-organization-route="overview">Overview</a>
+            <a href="#" data-organization-route="members">Members</a>
+            <a href="#" data-organization-route="domains-invites">Domains &amp; invites</a>
+            <a href="#" data-organization-route="billing">Billing</a>
+            <a href="#" data-organization-route="ai-access">AI access</a>
+            <a href="#" data-organization-route="audit">Audit</a>
+          </nav>
+          <p id="organization-context-status" class="editor-note muted" role="status" aria-live="polite"></p>
+        </section>
 
         <section id="login-panel" class="panel login-panel hidden" aria-labelledby="login-title">
           <div class="login-copy">
@@ -108,23 +130,29 @@
             </div>
           </section>
 
-          <section class="panel page page-organization hidden" data-page="organization">
+          <section class="panel page hidden" data-page="organizations">
             <div class="section-head">
               <div>
-                <p class="eyebrow">Organization</p>
+                <p class="eyebrow">Platform administration</p>
+                <h2>Organizations</h2>
+                <p class="muted">Enter an explicit organization workspace without changing the context of global platform pages.</p>
+              </div>
+            </div>
+            <div id="organization-directory-list" class="list-cards" aria-live="polite"></div>
+          </section>
+
+          <section class="panel page page-organization hidden" data-page="organization-workspace">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Organization workspace</p>
                 <h2>Organization details</h2>
               </div>
               <div class="section-actions organization-page-actions">
-                <label id="organization-selector-control" class="organization-selector hidden" data-platform-admin-control>
-                  <span>Organization</span>
-                  <input id="organization-selector-input" class="input" type="search" list="organization-selector-options" autocomplete="off" placeholder="Search organization" />
-                  <datalist id="organization-selector-options"></datalist>
-                </label>
                 <button id="organization-save-button" class="button button-primary" type="button">Save organization</button>
               </div>
             </div>
             <div class="split-layout organization-layout">
-              <aside class="detail-card organization-editor">
+              <aside class="detail-card organization-editor" data-organization-section="overview">
                 <p class="eyebrow">Details</p>
                 <h3 id="organization-editor-title">Organization</h3>
                 <form class="editor-form">
@@ -143,7 +171,7 @@
                 </form>
                 <p id="organization-save-status" class="editor-note muted">No pending changes.</p>
               </aside>
-              <div class="stack">
+              <div class="stack" data-organization-section="domains-invites">
                 <section class="detail-card">
                   <div class="section-head compact">
                     <div>
@@ -166,6 +194,19 @@
                 </section>
               </div>
             </div>
+          </section>
+
+          <section class="panel page hidden" data-page="organization-placeholder">
+            <article id="organization-billing-placeholder" class="detail-card honest-placeholder hidden" data-honest-placeholder data-organization-placeholder="billing">
+              <p class="eyebrow">Organization billing</p>
+              <h2>Billing data is not available yet</h2>
+              <p class="muted">This workspace route is reserved for the organization-scoped billing facade delivered in Task 7. No platform-wide or fabricated billing data is shown here.</p>
+            </article>
+            <article id="organization-audit-placeholder" class="detail-card honest-placeholder hidden" data-honest-placeholder data-organization-placeholder="audit">
+              <p class="eyebrow">Organization audit</p>
+              <h2>Scoped audit data is not available yet</h2>
+              <p class="muted">This workspace route is reserved for the organization-scoped audit facade delivered in Task 7. Global audit events are not reused here.</p>
+            </article>
           </section>
 
           <section class="panel page page-credentials" data-page="credentials">
