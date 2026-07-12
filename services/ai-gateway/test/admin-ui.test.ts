@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net"
 import test from "node:test"
 
 import { createApp } from "../src/index.js"
-import { PlatformAdminAllowedPages, PlatformAdminCapabilities } from "../src/http/admin.js"
+import { adminFallbackShellHtml, PlatformAdminAllowedPages, PlatformAdminCapabilities } from "../src/http/admin.js"
 import type {
   AdminService,
   AdminSessionSnapshot,
@@ -226,7 +226,7 @@ function createAdminServiceStub(overrides: Partial<AdminService> = {}): AdminSer
   return { ...service, ...overrides }
 }
 
-test("GET /admin/credentials redirects unauthenticated browsers to the existing Den login page", async () => {
+test("GET /admin/ai-infrastructure redirects unauthenticated browsers to the existing Den login page", async () => {
   const calls: BrowserAuthStartInput[] = []
   const app = createApp({
     admin: createAdminServiceStub({
@@ -245,7 +245,7 @@ test("GET /admin/credentials redirects unauthenticated browsers to the existing 
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/credentials`, { redirect: "manual" })
+    const response = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure`, { redirect: "manual" })
 
     assert.equal(response.status, 302)
     const location = response.headers.get("location")
@@ -258,7 +258,7 @@ test("GET /admin/credentials redirects unauthenticated browsers to the existing 
     assert.equal(redirect.searchParams.get("view"), "auth")
     assert.match(response.headers.get("set-cookie") ?? "", /veslo\.ai-gateway\.admin\.browser-auth=/)
     assert.equal(calls.length, 1)
-    assert.match(calls[0]!.redirectUri, new RegExp(`^http://127\\.0\\.0\\.1:${port}/admin/credentials$`))
+    assert.match(calls[0]!.redirectUri, new RegExp(`^http://127\\.0\\.0\\.1:${port}/admin/ai-infrastructure$`))
   } finally {
     server.close()
     await once(server, "close")
@@ -284,11 +284,11 @@ test("GET /admin callback exchanges Den handoff and returns to the original admi
 
   try {
     const { port } = server.address() as AddressInfo
-    const start = await fetch(`http://127.0.0.1:${port}/admin/credentials`, { redirect: "manual" })
+    const start = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure`, { redirect: "manual" })
     const pendingCookie = start.headers.get("set-cookie")?.split(";")[0] ?? ""
     assert.match(pendingCookie, /veslo\.ai-gateway\.admin\.browser-auth=/)
 
-    const callback = await fetch(`http://127.0.0.1:${port}/admin/credentials?code=code_123&sessionId=session_test`, {
+    const callback = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure?code=code_123&sessionId=session_test`, {
       redirect: "manual",
       headers: {
         cookie: pendingCookie,
@@ -296,7 +296,7 @@ test("GET /admin callback exchanges Den handoff and returns to the original admi
     })
 
     assert.equal(callback.status, 302)
-    assert.equal(callback.headers.get("location"), "/admin/credentials")
+    assert.equal(callback.headers.get("location"), "/admin/ai-infrastructure")
     const setCookie = callback.headers.get("set-cookie") ?? ""
     assert.match(setCookie, /veslo\.ai-gateway\.admin\.token=admin-token/)
     assert.match(setCookie, /veslo\.ai-gateway\.admin\.browser-auth=;/)
@@ -311,14 +311,14 @@ test("GET /admin callback exchanges Den handoff and returns to the original admi
   }
 })
 
-test("GET /admin/credentials serves the admin shell with an admin-only platform credential form", async () => {
+test("GET /admin/ai-infrastructure serves the admin shell with an admin-only platform credential form", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/credentials`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure`, {
       headers: {
         cookie: ADMIN_COOKIE,
       },
@@ -573,14 +573,14 @@ test("GET /admin/app.js checks the HTTP-only admin cookie before showing the log
   }
 })
 
-test("GET /admin/users keeps model choice out of the admin-managed user access editor", async () => {
+test("GET /admin/platform-users keeps model choice out of the admin-managed user access editor", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/users`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/platform-users`, {
       headers: {
         cookie: ADMIN_COOKIE,
       },
@@ -695,6 +695,9 @@ test("GET /admin/app.js uses typed route descriptors and clears organization con
     assert.match(script, /history\.pushState\(null, "", pathname\)/)
     assert.match(script, /window\.addEventListener\("popstate"/)
     assert.match(script, /applyAdminPopState\(state\.navigation, location\.pathname\)/)
+    assert.match(script, /planAdminHistoryUpdate\(state\.route, location, historyMode\)/)
+    assert.match(script, /setAdminRoute\(route, \{ historyMode: "replace" \}\)/)
+    assert.doesNotMatch(script, /location\.pathname !== pathname/)
     assert.match(script, /switchOrganizationRoute\(state\.route,/)
     assert.match(script, /item\.href = formatAdminRoute\(\{/)
     assert.match(script, /state\.route\?\.area === "organization"/)
@@ -787,6 +790,27 @@ test("organization admins are restricted to canonical routes for their authorize
       const response = await fetch(`http://127.0.0.1:${port}${pathname}`, { headers, redirect: "manual" })
       assert.equal(response.status, 302, pathname)
       assert.equal(response.headers.get("location"), "/admin/organizations/org_1/overview", pathname)
+    }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("platform admins recover from rejected legacy flat routes at the canonical overview", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    for (const pathname of ["/admin/organization", "/admin/credentials", "/admin/users", "/admin/usage", "/admin/alerts"]) {
+      const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+        headers: { cookie: ADMIN_COOKIE },
+        redirect: "manual",
+      })
+      assert.equal(response.status, 302, pathname)
+      assert.equal(response.headers.get("location"), "/admin", pathname)
     }
   } finally {
     server.close()
@@ -941,6 +965,30 @@ test("AI Gateway admin server defaults exclude Sessions from visible pages and f
   assert.doesNotMatch(source, /<a href="\/admin\/sessions">Sessions<\/a>/)
   assert.doesNotMatch(source, /"sessions",\s*\n\s*"usage"/)
   assert.match(source, /router\.get\("\/admin\/api\/sessions"[\s\S]*requirePlatformAdmin\(res\)/)
+})
+
+test("fallback admin shell exposes only canonical routes for the current admin scope", () => {
+  const platformHtml = adminFallbackShellHtml(adminSession())
+  for (const pathname of [
+    "/admin",
+    "/admin/organizations",
+    "/admin/ai-infrastructure",
+    "/admin/ai-infrastructure/usage",
+    "/admin/ai-infrastructure/alerts",
+    "/admin/platform-users",
+    "/admin/audit",
+  ]) {
+    assert.match(platformHtml, new RegExp(`href="${pathname.replaceAll("/", "\\/")}"`), pathname)
+  }
+  for (const page of ["overview", "members", "domains-invites", "billing", "ai-access", "audit"]) {
+    assert.match(platformHtml, new RegExp(`href="\\/admin\\/organizations\\/org_admin\\/${page}"`), page)
+  }
+  assert.doesNotMatch(platformHtml, /href="\/admin\/(organization|credentials|usage|alerts|users)"/)
+
+  const organizationHtml = adminFallbackShellHtml(orgAdminSession() as AdminSessionSnapshot)
+  assert.doesNotMatch(organizationHtml, /data-nav-group="platform"/)
+  assert.match(organizationHtml, /href="\/admin\/organizations\/org_1\/overview"/)
+  assert.doesNotMatch(organizationHtml, /href="\/admin\/audit"/)
 })
 
 test("GET /admin/app.js gates organization-admin navigation and platform-only loads by DEN capabilities", async () => {
@@ -1113,14 +1161,14 @@ test("GET /admin/app.js saves organization membership changes only from the user
   }
 })
 
-test("GET /admin/usage includes a credential usage section", async () => {
+test("GET /admin/ai-infrastructure/usage includes a credential usage section", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/usage`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure/usage`, {
       headers: {
         cookie: ADMIN_COOKIE,
       },
@@ -1147,7 +1195,7 @@ test("GET /admin shell prioritizes Codex capacity before usage drilldown", async
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/usage`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure/usage`, {
       headers: {
         cookie: ADMIN_COOKIE,
       },

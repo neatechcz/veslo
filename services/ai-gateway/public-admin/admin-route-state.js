@@ -118,6 +118,20 @@ export function navigateAdminRoute(state, route) {
   return pathname;
 }
 
+export function planAdminHistoryUpdate(route, location, historyMode = "push") {
+  const pathname = formatAdminRoute(route);
+  if (!pathname) {
+    return null;
+  }
+  const currentUrl = typeof location?.pathname === "string"
+    ? `${location.pathname}${location.search || ""}${location.hash || ""}`
+    : "";
+  return {
+    method: currentUrl === pathname ? null : historyMode === "replace" ? "replace" : "push",
+    pathname,
+  };
+}
+
 export function applyAdminPopState(state, pathname) {
   const route = parseAdminRoute(pathname);
   if (!route) {
