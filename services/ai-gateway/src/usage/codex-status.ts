@@ -38,6 +38,7 @@ export type CodexUsageStatus = {
 export type CodexCredentialStatusInput = {
   credentialId: string;
   credentialName: string;
+  signal?: AbortSignal;
 };
 
 export interface CodexCredentialStatusProvider {
@@ -76,6 +77,7 @@ export type CachedCodexCredentialStatusProviderDeps = {
     credentialId: string;
     credentialName: string;
     authJson: string;
+    signal?: AbortSignal;
   }) => Promise<ProbeResult>;
   command?: string;
   commandArgsPrefix?: string[];
@@ -91,6 +93,13 @@ export class UnavailableCodexCredentialStatusProvider implements CodexCredential
   }
 }
 
+export class CodexStatusProbeAbortedError extends Error {
+  constructor() {
+    super("Codex status probe was aborted.");
+    this.name = "CodexStatusProbeAbortedError";
+  }
+}
+
 export class CachedCodexCredentialStatusProvider implements CodexCredentialStatusProvider {
   private readonly loadCredentialAuthJson: (credentialId: string) => Promise<string | null>;
   private readonly saveCredentialAuthJson: ((credentialId: string, authJson: string) => Promise<void>) | null;
@@ -98,6 +107,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     credentialId: string;
     credentialName: string;
     authJson: string;
+    signal?: AbortSignal;
   }) => Promise<ProbeResult>;
   private readonly ttlMs: number;
   private readonly now: () => Date;
@@ -128,21 +138,18 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
   }
 
   async getStatus(input: CodexCredentialStatusInput): Promise<CodexUsageStatus> {
+    throwIfCodexStatusProbeAborted(input.signal);
     const cached = this.cache.get(input.credentialId);
     const nowMs = this.now().getTime();
     if (cached && cached.expiresAt > nowMs) {
       return cached.status;
     }
 
-    const current = this.inFlight.get(input.credentialId);
-    if (current) {
-      return current;
-    }
-
-    const refresh = (async () => {
+    const refreshStatus = async () => {
       let status = unavailableStatus("Credential is missing Codex auth.json.");
       try {
         const authJson = await this.loadCredentialAuthJson(input.credentialId);
+        throwIfCodexStatusProbeAborted(input.signal);
         if (!authJson?.trim()) {
           status = unavailableStatus("Credential is missing Codex auth.json.");
         } else {
@@ -150,8 +157,11 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
             credentialId: input.credentialId,
             credentialName: input.credentialName,
             authJson,
+            signal: input.signal,
           });
+          throwIfCodexStatusProbeAborted(input.signal);
           await this.persistUpdatedAuthJson(input.credentialId, authJson, result.updatedAuthJson);
+          throwIfCodexStatusProbeAborted(input.signal);
           const unsupportedModels = extractUnsupportedCodexModels(result.detail);
           const usageLimitStatus = result.rateLimits
             ? null
@@ -165,18 +175,35 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
               : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
         }
       } catch (error) {
+        if (error instanceof CodexStatusProbeAbortedError || input.signal?.aborted) {
+          throw new CodexStatusProbeAbortedError();
+        }
         status = unavailableStatus(
           error instanceof Error && error.message ? error.message : "Codex probe failed.",
           this.now().toISOString(),
         );
       }
 
+      throwIfCodexStatusProbeAborted(input.signal);
       this.cache.set(input.credentialId, {
         expiresAt: nowMs + this.ttlMs,
         status,
       });
       return status;
-    })();
+    };
+
+    // A caller-owned signal must never cancel or join a probe owned by another caller.
+    // Signal-aware aggregate checks therefore run independently from the shared refresh.
+    if (input.signal) {
+      return refreshStatus();
+    }
+
+    const current = this.inFlight.get(input.credentialId);
+    if (current) {
+      return current;
+    }
+
+    const refresh = refreshStatus();
     this.inFlight.set(input.credentialId, refresh);
 
     try {
@@ -197,6 +224,12 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     }
 
     await this.saveCredentialAuthJson(credentialId, nextAuthJson);
+  }
+}
+
+function throwIfCodexStatusProbeAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new CodexStatusProbeAbortedError();
   }
 }
 
@@ -439,13 +472,19 @@ async function runCodexExecRateLimitProbe(input: {
   workDir: string;
   timeoutMs: number;
   now: () => Date;
+  signal?: AbortSignal;
 }): Promise<ProbeResult> {
   const checkedAt = input.now().toISOString();
-  const codexHome = await mkdtemp(path.join(input.workDir, "veslo-codex-status-home-"));
-  const scratchDir = await mkdtemp(path.join(input.workDir, "veslo-codex-status-work-"));
-  const outputFile = path.join(scratchDir, "last-message.txt");
+  let codexHome: string | null = null;
+  let scratchDir: string | null = null;
 
   try {
+    throwIfCodexStatusProbeAborted(input.signal);
+    codexHome = await mkdtemp(path.join(input.workDir, "veslo-codex-status-home-"));
+    throwIfCodexStatusProbeAborted(input.signal);
+    scratchDir = await mkdtemp(path.join(input.workDir, "veslo-codex-status-work-"));
+    throwIfCodexStatusProbeAborted(input.signal);
+    const outputFile = path.join(scratchDir, "last-message.txt");
     await materializeCodexAuthJson({
       codexHome,
       authJson: input.authJson,
@@ -472,6 +511,7 @@ async function runCodexExecRateLimitProbe(input: {
       cwd: scratchDir,
       codexHome,
       timeoutMs: input.timeoutMs,
+      signal: input.signal,
     });
     const updatedAuthJson = await readUpdatedCodexAuthJson(codexHome, input.authJson);
 
@@ -494,10 +534,11 @@ async function runCodexExecRateLimitProbe(input: {
       updatedAuthJson,
     };
   } finally {
-    await Promise.all([
-      removeTemporaryProbeDirectory(codexHome),
-      removeTemporaryProbeDirectory(scratchDir),
-    ]);
+    await Promise.all(
+      [codexHome, scratchDir]
+        .filter((directory): directory is string => directory !== null)
+        .map((directory) => removeTemporaryProbeDirectory(directory)),
+    );
   }
 }
 
@@ -667,8 +708,13 @@ function runProcess(input: {
   cwd: string;
   codexHome: string;
   timeoutMs: number;
+  signal?: AbortSignal;
 }): Promise<ProcessResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    if (input.signal?.aborted) {
+      reject(new CodexStatusProbeAbortedError());
+      return;
+    }
     const child = spawn(input.command, input.args, {
       cwd: input.cwd,
       env: {
@@ -682,17 +728,36 @@ function runProcess(input: {
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    let aborted = false;
+    let killTimer: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      if (killTimer) clearTimeout(killTimer);
+      input.signal?.removeEventListener("abort", onAbort);
+    };
+
+    const terminate = (killAfterMs: number) => {
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        if (!settled) child.kill("SIGKILL");
+      }, killAfterMs);
+      killTimer.unref();
+    };
+
+    const onAbort = () => {
+      if (settled || aborted) return;
+      aborted = true;
+      terminate(1_000);
+    };
 
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (!settled) {
-          child.kill("SIGKILL");
-        }
-      }, 5000).unref();
+      terminate(5_000);
     }, input.timeoutMs);
     timeout.unref();
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    if (input.signal?.aborted) onAbort();
 
     child.stdout?.on("data", (chunk) => {
       stdout += chunk.toString("utf8");
@@ -706,7 +771,11 @@ function runProcess(input: {
         return;
       }
       settled = true;
-      clearTimeout(timeout);
+      cleanup();
+      if (aborted) {
+        reject(new CodexStatusProbeAbortedError());
+        return;
+      }
       resolve({
         exitCode: 1,
         signal: null,
@@ -721,7 +790,11 @@ function runProcess(input: {
         return;
       }
       settled = true;
-      clearTimeout(timeout);
+      cleanup();
+      if (aborted) {
+        reject(new CodexStatusProbeAbortedError());
+        return;
+      }
       resolve({
         exitCode,
         signal,

@@ -101,6 +101,95 @@ test("capability verifier bounds concurrency and cancels slow discovery at the a
   assert.ok(aborted > 0, "outstanding discovery was not aborted");
 });
 
+test("capability verifier aborts hanging Codex probes at the aggregate deadline", async () => {
+  let active = 0;
+  let aborted = 0;
+  const verifier = createPlatformModelCapabilityVerifier({
+    credentials: {
+      async listAdminCredentials() {
+        return Array.from({ length: 4 }, (_, index) => adminCredential(`cred_${index}`, "codex_oauth"));
+      },
+    } as never,
+    secrets: {} as never,
+    codexStatusProvider: {
+      async getStatus(input) {
+        active += 1;
+        try {
+          await new Promise<void>((resolve) => {
+            const fallback = setTimeout(resolve, 250);
+            input.signal?.addEventListener("abort", () => {
+              aborted += 1;
+              clearTimeout(fallback);
+              resolve();
+            }, { once: true });
+          });
+          return healthyCodexStatus;
+        } finally {
+          active -= 1;
+        }
+      },
+    },
+    openAiCompatibleTransport: {} as never,
+    concurrency: 2,
+    overallTimeoutMs: 35,
+  });
+
+  const startedAt = Date.now();
+  const result = await verifier.checkHealthyCredentialForModel({ provider: "codex_oauth", model: "gpt-5.5" });
+  const elapsedMs = Date.now() - startedAt;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(result, { status: "transient", reason: "capability_check_timeout" });
+  assert.ok(elapsedMs < 150, `aggregate verification took ${elapsedMs}ms`);
+  assert.ok(aborted > 0, "outstanding Codex probe was not aborted");
+  assert.equal(active, 0, "Codex probe remained active after aggregate timeout");
+});
+
+test("capability verifier aborts outstanding Codex probes after early success", async () => {
+  let slowActive = 0;
+  let slowAborted = 0;
+  const verifier = createPlatformModelCapabilityVerifier({
+    credentials: {
+      async listAdminCredentials() {
+        return [adminCredential("cred_slow", "codex_oauth"), adminCredential("cred_fast", "codex_oauth")];
+      },
+    } as never,
+    secrets: {} as never,
+    codexStatusProvider: {
+      async getStatus(input) {
+        if (input.credentialId === "cred_fast") {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          return healthyCodexStatus;
+        }
+        slowActive += 1;
+        try {
+          await new Promise<void>((resolve) => {
+            const fallback = setTimeout(resolve, 250);
+            input.signal?.addEventListener("abort", () => {
+              slowAborted += 1;
+              clearTimeout(fallback);
+              resolve();
+            }, { once: true });
+          });
+          return healthyCodexStatus;
+        } finally {
+          slowActive -= 1;
+        }
+      },
+    },
+    openAiCompatibleTransport: {} as never,
+    concurrency: 2,
+    overallTimeoutMs: 500,
+  });
+
+  const result = await verifier.checkHealthyCredentialForModel({ provider: "codex_oauth", model: "gpt-5.5" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(result, { status: "supported", credentialId: "cred_fast" });
+  assert.equal(slowAborted, 1, "slow Codex probe did not observe early-success cancellation");
+  assert.equal(slowActive, 0, "slow Codex probe remained active after early success");
+});
+
 test("capability verifier reuses and expires credential-model results", async () => {
   let nowMs = 1_000;
   let probes = 0;
