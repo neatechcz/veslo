@@ -192,6 +192,12 @@ test("GET /admin/api/users/:userId/ai-access returns assignable openai-compatibl
         },
         async replacePolicy() { throw new Error("unused"); },
       } as any,
+      modelCapabilities: {
+        async checkHealthyCredentialForModel() { return { status: "supported", credentialId: "cred_custom_1" }; },
+        async checkCredentialForModel(credentialId: string) { return { status: "supported", credentialId }; },
+        async hasHealthyCredentialForModel() { return true; },
+        invalidateCredential() {},
+      } as any,
       credentialReadRepository: {
         async listAdminCredentials() {
           return [

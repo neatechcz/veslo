@@ -326,6 +326,7 @@ test("rotates admin-assigned Codex access away from an exhausted credential", as
 
   const repaired = await service.repairCodexAccess({
     aiAccess: createAiAccess({ assignmentOrigin: "admin_assigned" }),
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
     reason: "codex_proxy_request",
   });
 
@@ -423,7 +424,32 @@ test("does not rotate admin-assigned non-Codex access", async () => {
     provider: "openai_compatible",
     assignmentOrigin: "admin_assigned",
   });
-  const repaired = await service.repairCodexAccess({ aiAccess });
+  const repaired = await service.repairCodexAccess({
+    aiAccess,
+    activeModel: { provider: "openai_compatible", model: "custom-model" },
+  });
 
   assert.equal(repaired, aiAccess);
+});
+
+test("fails closed with a typed error when activeModel is missing at runtime", async () => {
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() { throw new Error("should_not_read"); },
+      async upsertUserAiAccess() { throw new Error("should_not_write"); },
+    },
+    credentials: {
+      async getCredentialRecordById() { throw new Error("should_not_read"); },
+    } as any,
+    codexStatusProvider: {
+      async getStatus() { throw new Error("should_not_probe"); },
+    },
+  });
+
+  await assert.rejects(
+    service.repairCodexAccess({ aiAccess: createAiAccess() } as never),
+    (error: unknown) => error instanceof Error
+      && error.name === "AssignedCredentialActiveModelRequiredError"
+      && error.message === "assigned_credential_active_model_required",
+  );
 });

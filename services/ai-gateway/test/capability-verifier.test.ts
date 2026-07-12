@@ -214,3 +214,112 @@ test("capability verifier reuses and expires credential-model results", async ()
   await verifier.checkHealthyCredentialForModel(model);
   assert.equal(probes, 2);
 });
+
+test("capability verifier checks one Codex credential instead of accepting another compatible credential", async () => {
+  const verifier = createPlatformModelCapabilityVerifier({
+    credentials: {
+      async listAdminCredentials() {
+        return [adminCredential("cred_blocked", "codex_oauth"), adminCredential("cred_supported", "codex_oauth")];
+      },
+    } as never,
+    secrets: {} as never,
+    codexStatusProvider: {
+      async getStatus(input) {
+        return input.credentialId === "cred_blocked"
+          ? { ...healthyCodexStatus, unsupportedModels: ["gpt-5.5"] }
+          : healthyCodexStatus;
+      },
+    },
+    openAiCompatibleTransport: {} as never,
+  });
+
+  assert.deepEqual(
+    await verifier.checkCredentialForModel("cred_blocked", { provider: "codex_oauth", model: "gpt-5.5" }),
+    { status: "unsupported" },
+  );
+});
+
+test("capability verifier checks one OpenAI-compatible credential's authoritative model list", async () => {
+  const verifier = createPlatformModelCapabilityVerifier({
+    credentials: {
+      async listAdminCredentials() {
+        return [adminCredential("cred_custom", "openai_compatible")];
+      },
+      async getCredentialRecordById(id: string) {
+        return {
+          id,
+          name: id,
+          ownerUserId: "platform:openai_compatible",
+          provider: "openai_compatible",
+          credentialType: "api_key",
+          state: "healthy",
+          secretRef: `secret_${id}`,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          lastFailureAt: null,
+        };
+      },
+    } as never,
+    secrets: {
+      async get() {
+        return { kind: "openai_compatible_api_key", apiKey: "test-key", baseUrl: "https://models.example.test/v1" };
+      },
+    } as never,
+    codexStatusProvider: {} as never,
+    openAiCompatibleTransport: {
+      async chatCompletions() { throw new Error("unused"); },
+      async listModels() { return { models: ["different-model"] }; },
+    },
+  });
+
+  assert.deepEqual(
+    await verifier.checkCredentialForModel("cred_custom", { provider: "openai_compatible", model: "target-model" }),
+    { status: "unsupported" },
+  );
+});
+
+test("credential-specific capability verification returns at its deadline when discovery ignores abort", async () => {
+  let aborted = 0;
+  const verifier = createPlatformModelCapabilityVerifier({
+    credentials: {
+      async listAdminCredentials() {
+        return [adminCredential("cred_hanging", "openai_compatible")];
+      },
+      async getCredentialRecordById(id: string) {
+        return {
+          id,
+          name: id,
+          ownerUserId: "platform:openai_compatible",
+          provider: "openai_compatible",
+          credentialType: "api_key",
+          state: "healthy",
+          secretRef: `secret_${id}`,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+      },
+    } as never,
+    secrets: {
+      async get() {
+        return { kind: "openai_compatible_api_key", apiKey: "test-key", baseUrl: "https://models.example.test/v1" };
+      },
+    } as never,
+    codexStatusProvider: {} as never,
+    openAiCompatibleTransport: {
+      async chatCompletions() { throw new Error("unused"); },
+      async listModels(input) {
+        input.signal?.addEventListener("abort", () => { aborted += 1; }, { once: true });
+        return await new Promise<never>(() => {});
+      },
+    },
+    overallTimeoutMs: 25,
+  });
+
+  const result = await Promise.race([
+    verifier.checkCredentialForModel("cred_hanging", { provider: "openai_compatible", model: "target-model" }),
+    new Promise<{ status: "test_timeout" }>((resolve) => setTimeout(() => resolve({ status: "test_timeout" }), 125)),
+  ]);
+
+  assert.deepEqual(result, { status: "transient", reason: "capability_check_timeout" });
+  assert.equal(aborted, 1, "hanging discovery did not observe deadline cancellation");
+});

@@ -27,7 +27,11 @@ import { sendAdminAlertEmail, type AdminAlertEmailInput } from "../email/admin-a
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
 import { PlatformModelPolicyAuditPersistenceError } from "../model-policy/mysql-repository.js";
-import { filterUnsupportedCodexModels, normalizeDiscoveredModels } from "../model-policy/capability-verifier.js";
+import {
+  filterUnsupportedCodexModels,
+  normalizeDiscoveredModels,
+  type PlatformModelCapabilityVerifier,
+} from "../model-policy/capability-verifier.js";
 import type {
   PlatformModelPolicyRecord,
   PlatformModelPolicyMutation,
@@ -531,6 +535,7 @@ export type AdminServiceDependencies = {
   openAiCompatibleTransport?: OpenAiCompatibleProviderTransport;
   modelPolicyRepository?: PlatformModelPolicyRepository;
   modelPolicyMutation?: PlatformModelPolicyMutation;
+  modelCapabilities?: PlatformModelCapabilityVerifier;
   alertEmailRecipients?: string[];
   sendAlertEmail?: (input: AdminAlertEmailInput) => Promise<void>;
   now?: () => Date;
@@ -1287,6 +1292,8 @@ export function createDefaultAdminService(
     }
     return deps.modelPolicyMutation;
   };
+  const getModelCapabilities = () =>
+    requireAdminDependency(deps.modelCapabilities, "model_capabilities");
   const getSecretStore = () =>
     requireAdminDependency(deps.secretStore, "secret_store");
   const openAiCompatibleTransport = deps.openAiCompatibleTransport ?? new OpenAiCompatibleTransport();
@@ -1548,51 +1555,59 @@ export function createDefaultAdminService(
     return selected ?? null;
   }
 
-  async function listAvailableAssignmentCredentials(provider?: AiAccessProvider): Promise<AdminCredentialOption[]> {
-    const credentials = await getCredentialReadRepository().listAdminCredentials();
-    const options: AdminCredentialOption[] = [];
+  async function assessAssignmentCredential(
+    credential: CredentialRecord,
+    activeModel: PlatformModelRef,
+  ): Promise<"eligible" | "ineligible" | "incompatible"> {
+    if (credential.state !== "healthy" || credential.provider !== activeModel.provider) {
+      return "ineligible";
+    }
 
-    for (const credential of credentials) {
-      if (credential.state !== "healthy") {
-        continue;
-      }
-
-      if (provider && credential.provider !== provider) {
-        continue;
-      }
-
-      if (credential.provider === "openai_compatible") {
-        options.push({
-          id: credential.id,
-          name: credential.name,
-          provider: "openai_compatible",
-        });
-        continue;
-      }
-
-      if (credential.provider !== "codex_oauth") {
-        continue;
-      }
-
+    if (credential.provider === "codex_oauth") {
       const status = await codexStatusProvider.getStatus({
         credentialId: credential.id,
         credentialName: credential.name,
       });
       if (!evaluateCodexCredentialEligibility(status, now()).eligible) {
+        return "ineligible";
+      }
+    } else if (credential.provider !== "openai_compatible") {
+      return "ineligible";
+    }
+
+    const capability = await getModelCapabilities().checkCredentialForModel(credential.id, activeModel);
+    if (capability.status === "transient") {
+      throw new HttpError("ai_access_credential_capability_unavailable", 503);
+    }
+    return capability.status === "supported" && capability.credentialId === credential.id
+      ? "eligible"
+      : "incompatible";
+  }
+
+  async function listAvailableAssignmentCredentials(activeModel: PlatformModelRef): Promise<AdminCredentialOption[]> {
+    const credentials = await getCredentialReadRepository().listAdminCredentials();
+    const options: AdminCredentialOption[] = [];
+
+    for (const credential of credentials) {
+      if (await assessAssignmentCredential(credential, activeModel) !== "eligible") {
         continue;
       }
 
       options.push({
         id: credential.id,
         name: credential.name,
-        provider: "codex_oauth",
+        provider: activeModel.provider,
       });
     }
 
     return options;
   }
 
-  async function assertAssignableCredential(provider: AiAccessProvider | null, credentialId: string | null): Promise<void> {
+  async function assertAssignableCredential(
+    provider: AiAccessProvider | null,
+    credentialId: string | null,
+    activeModel: PlatformModelRef,
+  ): Promise<void> {
     if (provider !== "codex_oauth" && provider !== "openai_compatible") {
       return;
     }
@@ -1601,12 +1616,21 @@ export function createDefaultAdminService(
       throw new HttpError("invalid_ai_access_credential_id", 400);
     }
 
-    const assignable = (await listAvailableAssignmentCredentials(provider))
-      .some((entry) => entry.id === credentialId && entry.provider === provider);
-    if (!assignable && provider === "codex_oauth") {
+    const credential = (await getCredentialReadRepository().listAdminCredentials())
+      .find((entry) => entry.id === credentialId && entry.provider === provider);
+    if (!credential) {
+      throw new HttpError(provider === "codex_oauth"
+        ? "ineligible_ai_access_credential_id"
+        : "invalid_ai_access_credential_id", 400);
+    }
+    const assessment = await assessAssignmentCredential(credential, activeModel);
+    if (assessment === "incompatible") {
+      throw new HttpError("incompatible_ai_access_credential_id", 400);
+    }
+    if (assessment === "ineligible" && provider === "codex_oauth") {
       throw new HttpError("ineligible_ai_access_credential_id", 400);
     }
-    if (!assignable) {
+    if (assessment !== "eligible") {
       throw new HttpError("invalid_ai_access_credential_id", 400);
     }
   }
@@ -1951,7 +1975,7 @@ export function createDefaultAdminService(
     async getUserAiAccess(_token, userId) {
       const modelPolicy = await getModelPolicyRepository().getPolicy();
       if (!modelPolicy) throw new HttpError("platform_model_policy_not_configured", 503);
-      const availableCredentials = await listAvailableAssignmentCredentials(modelPolicy.activeModel.provider);
+      const availableCredentials = await listAvailableAssignmentCredentials(modelPolicy.activeModel);
       const aiAccess = await repairCodexAccessForRead(
         await getAiAccessRepository().getUserAiAccess(userId),
         availableCredentials,
@@ -1971,7 +1995,7 @@ export function createDefaultAdminService(
         userId,
       }, modelPolicy.activeModel);
       if (validated.enabled) {
-        await assertAssignableCredential(validated.provider, validated.credentialId);
+        await assertAssignableCredential(validated.provider, validated.credentialId, modelPolicy.activeModel);
       }
       const saved = await getAiAccessRepository().upsertUserAiAccess(validated);
       await recordAuditEvent({
@@ -1984,7 +2008,7 @@ export function createDefaultAdminService(
       });
       return {
         aiAccess: toAdminUserAiAccessRecord(saved)!,
-        availableCredentials: await listAvailableAssignmentCredentials(modelPolicy.activeModel.provider),
+        availableCredentials: await listAvailableAssignmentCredentials(modelPolicy.activeModel),
       };
     },
     async disableUser(token, userId) {

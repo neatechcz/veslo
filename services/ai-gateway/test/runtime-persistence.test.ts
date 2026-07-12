@@ -362,6 +362,7 @@ test("default admin dependencies reuse the shared runtime model policy stores", 
   const dependencies = createDependencies!(runtime);
   assert.equal(dependencies.modelPolicyRepository, runtime.modelPolicy);
   assert.equal(dependencies.modelPolicyMutation, runtime.modelPolicyMutation);
+  assert.equal(typeof dependencies.modelCapabilities?.checkCredentialForModel, "function");
   assert.equal(dependencies.credentialWriteRepository, runtime.credentials);
   assert.equal(dependencies.credentialSecretLookupRepository, runtime.credentials);
   assert.equal(dependencies.aiAccessRepository, runtime.aiAccess);

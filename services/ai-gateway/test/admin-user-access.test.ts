@@ -5,6 +5,7 @@ import test from "node:test";
 
 import { createDefaultAdminService, type CredentialRecord } from "../src/http/admin.js";
 import { createApp } from "../src/index.js";
+import { createPlatformModelCapabilityVerifier } from "../src/model-policy/capability-verifier.js";
 
 const ADMIN_AUTHORIZATION = { authorization: "Bearer admin-token" };
 const USER_AUTHORIZATION = { authorization: "Bearer den-user-token" };
@@ -58,6 +59,15 @@ function createCodexModelPolicyRepository() {
       };
     },
     async replacePolicy() { throw new Error("unused"); },
+  };
+}
+
+function createSupportedModelCapabilities() {
+  return {
+    async checkHealthyCredentialForModel() { return { status: "supported", credentialId: "unused" } as const; },
+    async checkCredentialForModel(credentialId: string) { return { status: "supported", credentialId } as const; },
+    async hasHealthyCredentialForModel() { return true; },
+    invalidateCredential() {},
   };
 }
 
@@ -319,6 +329,167 @@ test("admin user access rejects a provider that differs from the platform active
   assert.equal(writes, 0);
 });
 
+test("admin user access rejects and filters a Codex credential that does not support the active model", async () => {
+  let writes = 0;
+  const credential = createCredential("cred_codex_limited");
+  const modelCapabilities = createPlatformModelCapabilityVerifier({
+    credentials: {
+      async listAdminCredentials() { return [credential]; },
+    } as never,
+    secrets: {} as never,
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_no_rate_limits",
+          label: "Codex OK, limits unknown",
+          unsupportedModels: ["gpt-5.5"],
+          limits: { fiveHour: null, weekly: null },
+        } as const;
+      },
+    },
+    openAiCompatibleTransport: {} as never,
+  });
+  const service = createDefaultAdminService("http://den.example.test", {
+    aiAccessRepository: {
+      async getUserAiAccess() { return null; },
+      async upsertUserAiAccess() { writes += 1; throw new Error("unexpected write"); },
+    },
+    credentialReadRepository: {
+      async listAdminCredentials() { return [credential]; },
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        return {
+          available: true,
+          source: "codex_exec_no_rate_limits",
+          label: "Codex OK, limits unknown",
+          unsupportedModels: ["gpt-5.5"],
+          limits: { fiveHour: null, weekly: null },
+        } as const;
+      },
+    },
+    modelPolicyRepository: createCodexModelPolicyRepository(),
+    modelCapabilities,
+  } as never);
+
+  await assert.rejects(
+    service.upsertUserAiAccess("admin-token", "user_123", {
+      enabled: true,
+      provider: "codex_oauth",
+      credentialId: credential.id,
+    }),
+    /incompatible_ai_access_credential_id/,
+  );
+  assert.equal(writes, 0);
+  assert.deepEqual((await service.getUserAiAccess("admin-token", "user_123")).availableCredentials, []);
+});
+
+test("admin user access rejects and filters an OpenAI-compatible credential that omits the active model", async () => {
+  let writes = 0;
+  const credential = createCredential("cred_custom_limited", { provider: "openai_compatible" });
+  const modelCapabilities = createPlatformModelCapabilityVerifier({
+    credentials: {
+      async listAdminCredentials() { return [credential]; },
+      async getCredentialRecordById(id: string) {
+        return {
+          id,
+          name: credential.name,
+          ownerUserId: "platform:openai_compatible",
+          provider: "openai_compatible",
+          credentialType: "api_key",
+          state: "healthy",
+          secretRef: "secret_custom_limited",
+          createdAt: new Date("2026-07-12T08:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+          lastFailureAt: null,
+        };
+      },
+    } as never,
+    secrets: {
+      async get() {
+        return { kind: "openai_compatible_api_key", apiKey: "test-key", baseUrl: "https://models.example.test/v1" };
+      },
+    } as never,
+    codexStatusProvider: {} as never,
+    openAiCompatibleTransport: {
+      async chatCompletions() { throw new Error("unused"); },
+      async listModels() { return { models: ["other-model"] }; },
+    },
+  });
+  const service = createDefaultAdminService("http://den.example.test", {
+    aiAccessRepository: {
+      async getUserAiAccess() { return null; },
+      async upsertUserAiAccess() { writes += 1; throw new Error("unexpected write"); },
+    },
+    credentialReadRepository: {
+      async listAdminCredentials() { return [credential]; },
+    },
+    modelPolicyRepository: {
+      async getPolicy() {
+        return {
+          id: "platform",
+          enabledModels: [{ provider: "openai_compatible", model: "target-model" }],
+          activeModel: { provider: "openai_compatible", model: "target-model" },
+          createdAt: new Date("2026-07-12T08:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+        };
+      },
+      async replacePolicy() { throw new Error("unused"); },
+    },
+    modelCapabilities,
+  } as never);
+
+  await assert.rejects(
+    service.upsertUserAiAccess("admin-token", "user_123", {
+      enabled: true,
+      provider: "openai_compatible",
+      credentialId: credential.id,
+    }),
+    /incompatible_ai_access_credential_id/,
+  );
+  assert.equal(writes, 0);
+  assert.deepEqual((await service.getUserAiAccess("admin-token", "user_123")).availableCredentials, []);
+});
+
+test("admin user access preserves transient capability failures as 5xx", async () => {
+  let writes = 0;
+  const credential = createCredential("cred_codex_transient");
+  const service = createDefaultAdminService("http://den.example.test", {
+    aiAccessRepository: {
+      async getUserAiAccess() { return null; },
+      async upsertUserAiAccess() { writes += 1; throw new Error("unexpected write"); },
+    },
+    credentialReadRepository: {
+      async listAdminCredentials() { return [credential]; },
+    },
+    codexStatusProvider: {
+      async getStatus() {
+        return { available: true, source: "codex_exec_no_rate_limits", label: "available", limits: { fiveHour: null, weekly: null } } as const;
+      },
+    },
+    modelPolicyRepository: createCodexModelPolicyRepository(),
+    modelCapabilities: {
+      async checkHealthyCredentialForModel() { return { status: "transient", reason: "capability_evidence_unavailable" }; },
+      async checkCredentialForModel() { return { status: "transient", reason: "capability_evidence_unavailable" }; },
+      async hasHealthyCredentialForModel() { return false; },
+      invalidateCredential() {},
+    },
+  } as never);
+
+  await assert.rejects(
+    service.upsertUserAiAccess("admin-token", "user_123", {
+      enabled: true,
+      provider: "codex_oauth",
+      credentialId: credential.id,
+    }),
+    (error: unknown) => error instanceof Error
+      && error.message === "ai_access_credential_capability_unavailable"
+      && (error as { status?: number }).status === 503,
+  );
+  assert.equal(writes, 0);
+});
+
 test("GET /admin/api/users/:userId/ai-access only returns eligible codex credentials", async () => {
   const app = createApp({
     admin: createDefaultAdminService("http://den.example.test", {
@@ -380,6 +551,7 @@ test("GET /admin/api/users/:userId/ai-access only returns eligible codex credent
         },
       },
       modelPolicyRepository: createCodexModelPolicyRepository(),
+      modelCapabilities: createSupportedModelCapabilities(),
       credentialReadRepository: {
         async listAdminCredentials() {
           return [
@@ -512,6 +684,7 @@ test("GET /admin/api/users/:userId/ai-access repairs admin-assigned Codex creden
         },
       },
       modelPolicyRepository: createCodexModelPolicyRepository(),
+      modelCapabilities: createSupportedModelCapabilities(),
       credentialReadRepository: {
         async listAdminCredentials() {
           return [

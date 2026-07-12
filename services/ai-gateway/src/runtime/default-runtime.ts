@@ -79,6 +79,8 @@ export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): 
 export function createDefaultAdminDependencies(
   runtime: RuntimeState,
 ): AdminServiceDependencies {
+  const codexStatusProvider = createCodexStatusProvider(runtime);
+  const openAiCompatibleTransport = new OpenAiCompatibleTransport();
   return {
     credentialReadRepository: new MySqlAdminCredentialReadRepository(runtime.db),
     credentialActionRepository: new MySqlAdminCredentialActionRepository(runtime.db),
@@ -90,8 +92,16 @@ export function createDefaultAdminDependencies(
     usageRepository: runtime.usage,
     auditRepository: runtime.audit,
     secretStore: runtime.secrets,
+    codexStatusProvider,
+    openAiCompatibleTransport,
     modelPolicyRepository: runtime.modelPolicy,
     modelPolicyMutation: runtime.modelPolicyMutation,
+    modelCapabilities: createPlatformModelCapabilityVerifier({
+      credentials: runtime.credentials,
+      secrets: runtime.secrets,
+      codexStatusProvider,
+      openAiCompatibleTransport,
+    }),
   };
 }
 
