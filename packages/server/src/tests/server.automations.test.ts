@@ -489,7 +489,7 @@ test("PATCH enabled true does not reactivate a completed past one-shot", async (
   expect(persisted.items[0]).toEqual(completed);
 });
 
-test("manual run forwards target agent model and variant to OpenCode prompt", async () => {
+test("manual run ignores persisted target model while preserving agent and variant", async () => {
   const fixture = await startFixture();
   const created = await fixture.createAutomation({
     target: {
@@ -511,7 +511,6 @@ test("manual run forwards target agent model and variant to OpenCode prompt", as
     body: {
       parts: [{ type: "text", text: "Run once" }],
       agent: "build",
-      model: "gpt-5",
       variant: "xhigh",
     },
   });

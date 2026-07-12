@@ -20,7 +20,6 @@ Primary keys are defined in `packages/app/src/app/constants.ts`, related app hel
 
 Common keys:
 
-- `veslo.defaultModel`
 - `veslo.showThinking`
 - `veslo.modelVariant`
 - `veslo.modelVariant.maxDefaultMigration`
@@ -55,6 +54,11 @@ Session/sidebar convenience state also lives in local storage, for example:
 - parent session branch expansion state
 
 Treat these as UI state, not product contract, unless a feature depends on them explicitly.
+
+Legacy `veslo.defaultModel`, `veslo.sessionModels`, and per-workspace
+`veslo.sessionModels.*` values are cleanup-only keys. Desktop startup does not
+hydrate or recreate them, and prompt submission never serializes them as model
+authority. Managed AI gets its read-only effective model from the gateway.
 
 Developer-only UI surfaces are not enabled by default. The app derives developer mode from the current URL search string, and only a `debug` parameter with no value or a truthy value (`1`, `true`, `yes`, `on`) exposes debug-only panels, badges, and diagnostics. The separate `veslo:workspace-debug` local storage flag keeps workspace tracing available without showing developer-only UI.
 

@@ -107,21 +107,6 @@ function conversationSubmitDraftFromComposerDraft(
   };
 }
 
-function conversationSubmitModelForAttachments(
-  model: ModelRef,
-  providers: ProviderListItem[],
-  includeCapabilities: boolean,
-): ConversationSubmitOptionsInput["model"] {
-  if (!includeCapabilities) return model;
-  const modelInfo = providers.find((provider) => provider.id === model.providerID)?.models?.[model.modelID];
-  return {
-    providerID: model.providerID,
-    modelID: model.modelID,
-    ...(typeof modelInfo?.attachment === "boolean" ? { attachment: modelInfo.attachment } : {}),
-    ...(modelInfo?.modalities ? { modalities: modelInfo.modalities } : {}),
-  };
-}
-
 const DOCUMENT_RUNTIME_FORMAT_BY_SKILL_NAME = {
   "veslo-docx": "docx",
   "veslo-xlsx": "xlsx",
@@ -835,7 +820,6 @@ export function createConversationRunCompatibilityBridge(
           kind: "shell",
           directory: sessionDirOverride,
           command: content,
-          model,
           agent: agent ?? undefined,
         });
       } else if (resolvedDraft.command || input.compactCommand) {
@@ -868,7 +852,6 @@ export function createConversationRunCompatibilityBridge(
         commandMessageIDToClear = input.sendCorrelation.clientMessageId;
         const commandMessageID = commandMessageIDToClear;
         deps.sessionStoreSetCommandDisplay(commandMessageID, command.name, command.arguments);
-        const modelString = `${model.providerID}/${model.modelID}`;
         const files = deps.buildCommandFileParts(resolvedDraft);
 
         await runConversationOrFail({
@@ -878,7 +861,6 @@ export function createConversationRunCompatibilityBridge(
           command: command.name,
           arguments: command.arguments,
           agent: agent ?? undefined,
-          model: modelString,
           variant: selectedVariant,
           parts: files.length ? files : undefined,
           directory: sessionDirOverride,
@@ -888,7 +870,6 @@ export function createConversationRunCompatibilityBridge(
         await runConversationOrFail({
           kind: "prompt_async",
           directory: sessionDirOverride,
-          model,
           agent: agent ?? undefined,
           variant: selectedVariant,
           ...promptOverrides,
@@ -1474,11 +1455,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           });
         }
       }
-      const submitModel = conversationSubmitModelForAttachments(
-        model,
-        deps.providers(),
-        resolvedDraft.attachments.length > 0,
-      );
       deps.recordPerfLog(perfEnabled, "session.prompt", "start", {
         sessionID: existingSessionId,
         mode: resolvedDraft.mode,
@@ -1514,7 +1490,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         },
         draft: conversationSubmitDraftFromComposerDraft(resolvedDraft, stagedAttachments),
         options: {
-          model: submitModel,
           agent: agent ?? null,
           variant: selectedVariant ?? null,
           submitQueuePolicy: sendCorrelation.origin === "session:send-now"
@@ -1864,11 +1839,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     })();
     const serverSubmitMaterializationOptions = serverSubmitMaterializationDraft
       ? {
-          model: conversationSubmitModelForAttachments(
-            deps.modelForSession(sessionID),
-            deps.providers(),
-            resolvedDraft.attachments.length > 0,
-          ),
           agent: sessionID ? (deps.agentForSession(sessionID) ?? null) : null,
           variant: deps.modelVariant() ?? null,
           ...(options.implicitSkillCommandPolicy

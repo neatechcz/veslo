@@ -53,11 +53,10 @@ const EXPECTED_CODEX_MODEL_VARIANTS = {
 const managedCodexProfile: ManagedAiAccessProfile = {
   userId: "user_123",
   providerId: "codex_oauth",
-  defaultModel: {
+  effectiveModel: {
     providerID: "codex_oauth",
     modelID: "gpt-5.4",
   },
-  allowedModels: ["gpt-5.4"],
   updatedAt: null,
 };
 
@@ -101,8 +100,7 @@ test("resolveManagedAiAccess returns a configured profile for valid admin policy
     userId: "user_123",
     enabled: true,
     provider: "openai",
-    defaultModel: "gpt-4o-mini",
-    allowedModels: ["gpt-4o-mini", "gpt-4.1"],
+    effectiveModel: { provider: "openai", model: "gpt-5.5" },
     updatedAt: "2026-04-08T12:00:00.000Z",
   });
 
@@ -110,14 +108,29 @@ test("resolveManagedAiAccess returns a configured profile for valid admin policy
     profile: {
       userId: "user_123",
       providerId: "openai",
-      defaultModel: {
+      effectiveModel: {
         providerID: "openai",
-        modelID: "gpt-4o-mini",
+        modelID: "gpt-5.5",
       },
-      allowedModels: ["gpt-4o-mini", "gpt-4.1"],
       updatedAt: "2026-04-08T12:00:00.000Z",
     },
     reason: null,
+  });
+});
+
+test("resolveManagedAiAccess ignores legacy per-user model fields without effectiveModel", () => {
+  const result = resolveManagedAiAccess({
+    id: "ai_access_legacy",
+    userId: "user_123",
+    enabled: true,
+    provider: "openai",
+    defaultModel: "gpt-4o-mini",
+    updatedAt: null,
+  } as never);
+
+  assert.deepEqual(result, {
+    profile: null,
+    reason: AI_ACCESS_INVALID_MESSAGE,
   });
 });
 
@@ -142,8 +155,7 @@ test("resolveManagedAiAccess reports unconfigured access for missing or disabled
       userId: "user_123",
       enabled: false,
       provider: "openai",
-      defaultModel: "gpt-4o-mini",
-      allowedModels: [],
+      effectiveModel: null,
       updatedAt: null,
     }),
     {
@@ -160,8 +172,7 @@ test("resolveManagedAiAccess rejects incomplete admin policy payloads", () => {
       userId: "user_123",
       enabled: true,
       provider: "openai",
-      defaultModel: "gpt-4o-mini",
-      allowedModels: ["gpt-4.1"],
+      effectiveModel: { provider: "anthropic", model: "claude-sonnet-4-5" },
       updatedAt: null,
     }),
     {
@@ -178,8 +189,7 @@ test("resolveManagedAiAccessBundleState uses the DEN token when the gateway omit
       userId: "user_123",
       enabled: true,
       provider: "codex_oauth",
-      defaultModel: "gpt-5.4",
-      allowedModels: ["gpt-5.4"],
+      effectiveModel: { provider: "codex_oauth", model: "gpt-5.4" },
       updatedAt: "2026-04-24T15:05:18.147Z",
     },
     accessToken: null,
@@ -202,8 +212,7 @@ test("resolveManagedAiAccessBundleState ignores redacted gateway tokens and uses
       userId: "user_123",
       enabled: true,
       provider: "codex_oauth",
-      defaultModel: "gpt-5.4",
-      allowedModels: ["gpt-5.4"],
+      effectiveModel: { provider: "codex_oauth", model: "gpt-5.4" },
       updatedAt: null,
     },
     accessToken: "[REDACTED]",
@@ -694,11 +703,10 @@ test("formatManagedAiAccessConfig writes admin-managed default model and gateway
       profile: {
         userId: "user_123",
         providerId: "openai",
-        defaultModel: {
+        effectiveModel: {
           providerID: "openai",
           modelID: "gpt-4o-mini",
         },
-        allowedModels: ["gpt-4o-mini"],
         updatedAt: "2026-04-08T12:00:00.000Z",
       },
       serverBaseUrl: "https://veslo.example.test",
@@ -800,11 +808,10 @@ test("formatManagedAiAccessConfig routes openai_compatible through the gateway",
       profile: {
         userId: "user_123",
         providerId: "openai_compatible",
-        defaultModel: {
+        effectiveModel: {
           providerID: "openai_compatible",
           modelID: "custom-model",
         },
-        allowedModels: ["custom-model"],
         updatedAt: null,
       },
       serverBaseUrl: "https://veslo.example.test",
@@ -858,14 +865,14 @@ test("formatManagedAiAccessConfig routes openai_compatible through the gateway",
   });
 });
 
-test("formatManagedAiAccessConfig supports assigned gpt-5.5 without making it the default", () => {
+test("formatManagedAiAccessConfig ignores stale allowed models and configures only effectiveModel", () => {
   const content = formatManagedAiAccessConfig(
     "{}",
     {
       profile: {
         ...managedCodexProfile,
         allowedModels: ["gpt-5.4", "gpt-5.5"],
-      },
+      } as ManagedAiAccessProfile,
       serverBaseUrl: "https://veslo.example.test",
       serverClientToken: "veslo-client-token",
       gatewayAccessToken: "den_token_123",
@@ -889,15 +896,8 @@ test("formatManagedAiAccessConfig supports assigned gpt-5.5 without making it th
   };
 
   assert.equal(parsed.model, "codex_oauth/gpt-5.4");
-  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.name, "gpt-5.5");
-  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.tool_call, true);
-  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.reasoning, true);
-  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.options, EXPECTED_CODEX_MODEL_OPTIONS);
-  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.variants, EXPECTED_CODEX_MODEL_VARIANTS);
+  assert.equal(parsed.provider?.codex_oauth?.models?.["gpt-5.5"], undefined);
   assert.doesNotMatch(content, /den_token_123/);
-  assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.5"]?.headers, {
-    "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
-  });
 });
 
 test("shouldPreserveManagedAiConfig keeps existing gateway routing while managed access is still loading", () => {

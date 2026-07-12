@@ -53,7 +53,7 @@ The app may send:
 - workspace id,
 - conversation id when continuing a known conversation,
 - message content,
-- user-selected model, agent, or variant choices.
+- user-selected agent or variant choices.
 
 The app must not send:
 
@@ -61,6 +61,8 @@ The app must not send:
 - a raw OpenCode directory override,
 - a run target based only on the currently selected workspace,
 - global busy or error state that represents a different workspace run.
+- a user, session, automation, or transcript-derived model override. Managed AI
+  resolves the effective model from the gateway's global active platform model.
 
 When the user sends the first message, the app should show a prepared local
 message and let the runtime attach the workspace and create the conversation in

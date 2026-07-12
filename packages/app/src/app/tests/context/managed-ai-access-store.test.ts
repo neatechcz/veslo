@@ -38,11 +38,10 @@ function managedProfile(overrides: Partial<ManagedAiAccessProfile> = {}): Manage
   return {
     userId: "user-1",
     providerId: "codex_oauth",
-    defaultModel: {
+    effectiveModel: {
       providerID: "codex_oauth",
       modelID: "gpt-5",
     },
-    allowedModels: ["gpt-5"],
     updatedAt: "2026-07-01T10:00:00.000Z",
     ...overrides,
   };
@@ -151,6 +150,36 @@ test("managed AI access cache hydrates, expires, and clears browser records", ()
     isTauriRuntime: () => false,
   });
   assert.deepEqual(storage.removals, ["veslo.managedAiAccess.v1"]);
+});
+
+test("managed AI browser cache rejects malformed or mismatched effective models", () => {
+  const cacheKey = "user-1|org-1|https://gateway.veslo.test";
+  const invalidProfiles = [
+    managedProfile({ effectiveModel: { providerID: "codex_oauth", modelID: "" } }),
+    managedProfile({ effectiveModel: { providerID: "openai", modelID: "gpt-5" } }),
+    managedProfile({
+      providerId: "local_development" as ManagedAiAccessProfile["providerId"],
+      effectiveModel: { providerID: "local_development", modelID: "gpt-5" },
+    }),
+  ];
+
+  for (const profile of invalidProfiles) {
+    const storage = createMemoryStorage();
+    writeManagedAiAccessCache(cacheKey, profile, "gateway-token", {
+      storage,
+      isTauriRuntime: () => false,
+      now: () => 1_000,
+    });
+
+    assert.equal(
+      readManagedAiAccessCache(cacheKey, {
+        storage,
+        isTauriRuntime: () => false,
+        now: () => 1_000,
+      }),
+      null,
+    );
+  }
 });
 
 test("managed AI access single-flight reuses loads for the same cache key", async () => {

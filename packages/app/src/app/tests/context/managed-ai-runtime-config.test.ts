@@ -21,8 +21,7 @@ const model: ModelRef = {
 const profile: ManagedAiAccessProfile = {
   userId: "user-1",
   providerId: "codex_oauth",
-  defaultModel: model,
-  allowedModels: ["gpt-5"],
+  effectiveModel: model,
   updatedAt: "2026-07-01T10:00:00.000Z",
 };
 
@@ -134,8 +133,7 @@ function createOptions(
           enabled: true,
           userId: profile.userId,
           provider: profile.providerId,
-          defaultModel: profile.defaultModel.modelID,
-          allowedModels: profile.allowedModels,
+          effectiveModel: { provider: profile.providerId, model: profile.effectiveModel.modelID },
           updatedAt: profile.updatedAt,
         },
         accessToken: "runtime-access-token",
@@ -159,8 +157,7 @@ test("runtime auth prime is single-flight and cached for a short success window"
       enabled: true,
       userId: profile.userId,
       provider: profile.providerId,
-      defaultModel: profile.defaultModel.modelID,
-      allowedModels: profile.allowedModels,
+      effectiveModel: { provider: profile.providerId, model: profile.effectiveModel.modelID },
       updatedAt: profile.updatedAt,
     },
     accessToken: "runtime-access-token",
@@ -227,8 +224,7 @@ test("runtime auth prime records request diagnostics after the success cache exp
       enabled: true,
       userId: profile.userId,
       provider: profile.providerId,
-      defaultModel: profile.defaultModel.modelID,
-      allowedModels: profile.allowedModels,
+      effectiveModel: { provider: profile.providerId, model: profile.effectiveModel.modelID },
       updatedAt: profile.updatedAt,
     },
     accessToken: "runtime-access-token",
@@ -638,16 +634,12 @@ test("inactive workspace heal keeps config tracking across managed access metada
   assert.deepEqual(getConfigCalls, ["ws-inactive"]);
   assert.equal(patched.length, 1);
 
-  currentProfile = {
-    ...currentProfile,
-    allowedModels: ["gpt-5", "gpt-5.5"],
-    updatedAt: "2026-07-01T10:02:00.000Z",
-  };
+  currentProfile = { ...currentProfile, updatedAt: "2026-07-01T10:02:00.000Z" };
   runResetEffect();
   await sync.healInactiveManagedAiWorkspaceConfigs();
 
-  assert.deepEqual(getConfigCalls, ["ws-inactive", "ws-inactive"]);
-  assert.equal(patched.length, 2);
+  assert.deepEqual(getConfigCalls, ["ws-inactive"]);
+  assert.equal(patched.length, 1);
 });
 
 test("inactive workspace heal skips server scans while a send or run is active", async () => {
