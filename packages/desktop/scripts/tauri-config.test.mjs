@@ -8,15 +8,24 @@ import { APP_WINDOW_MIN_WIDTH } from "./window-size-contract.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const tauriConfigPath = resolve(__dirname, "../src-tauri/tauri.conf.json");
+const tauriWindowsConfigPath = resolve(__dirname, "../src-tauri/tauri.windows.conf.json");
 const srcTauriDir = resolve(__dirname, "../src-tauri");
 const runtimePreferencesPath = resolve(srcTauriDir, "src/runtime_preferences.rs");
 
-test("desktop bundle ships the Node runtime beside Chrome DevTools MCP", () => {
-  const config = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
-  const externalBin = config?.bundle?.externalBin;
-  assert.ok(Array.isArray(externalBin), "Expected Tauri externalBin configuration");
-  assert.ok(externalBin.includes("sidecars/chrome-devtools-mcp"));
-  assert.ok(externalBin.includes("sidecars/veslo-node"));
+test("desktop bundle ships the Node runtime beside Chrome DevTools MCP on Windows only", () => {
+  const baseConfig = JSON.parse(readFileSync(tauriConfigPath, "utf8"));
+  const windowsConfig = JSON.parse(readFileSync(tauriWindowsConfigPath, "utf8"));
+  const baseExternalBin = baseConfig?.bundle?.externalBin;
+  const windowsExternalBin = windowsConfig?.bundle?.externalBin;
+  assert.ok(Array.isArray(baseExternalBin), "Expected base Tauri externalBin configuration");
+  assert.ok(Array.isArray(windowsExternalBin), "Expected Windows Tauri externalBin configuration");
+  assert.ok(baseExternalBin.includes("sidecars/chrome-devtools-mcp"));
+  assert.equal(baseExternalBin.includes("sidecars/veslo-node"), false);
+  assert.deepEqual(
+    windowsExternalBin.filter((entry) => entry !== "sidecars/veslo-node"),
+    baseExternalBin,
+  );
+  assert.ok(windowsExternalBin.includes("sidecars/veslo-node"));
 });
 
 test("desktop window keeps Tauri native drag-drop disabled for HTML5 file drop", () => {

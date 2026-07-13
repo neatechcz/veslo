@@ -998,10 +998,10 @@ export default function SkillsView(props: SkillsViewProps) {
         aria-label={title()}
         title={title()}
         disabled={disabled()}
-        class={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+        class={`relative h-6 w-11 shrink-0 rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60 ${
           checked()
-            ? "border-[var(--dls-accent-border)] bg-dls-accent"
-            : "border-dls-border bg-dls-hover"
+            ? "border-gray-12/20 bg-gray-12"
+            : "border-gray-6 bg-gray-3 hover:bg-gray-4"
         }`}
         onClick={(event) => {
           event.preventDefault();
@@ -1010,8 +1010,8 @@ export default function SkillsView(props: SkillsViewProps) {
         }}
       >
         <span
-          class={`absolute h-4 w-4 rounded-full bg-dls-surface shadow-sm transition-transform ${
-            checked() ? "translate-x-[18px]" : "translate-x-[2px]"
+          class={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-gray-1 shadow-sm transition-transform ${
+            checked() ? "translate-x-5" : "translate-x-0"
           }`}
         />
       </button>

@@ -209,6 +209,22 @@ function createFakeClient(options: {
         ...options.runStatusResult,
       };
     },
+    recoverSessionTranscript: async (
+      workspaceId: string,
+      sessionId: string,
+      input: { expectedRunId?: string | null },
+    ) => {
+      calls.push(`recoverSessionTranscript:${workspaceId}:${sessionId}:${input.expectedRunId ?? ""}`);
+      return {
+        workspaceId,
+        conversationId: `conv-${sessionId}`,
+        opencodeSessionId: sessionId,
+        state: "persisted" as const,
+        generation: 1,
+        attempts: 1,
+        runId: input.expectedRunId ?? null,
+      };
+    },
     appendSessionTranscript: async (workspaceId: string, sessionId: string, input: { messages: unknown[]; partsByMessageId: Record<string, unknown[]> }) => {
       calls.push(`appendSessionTranscript:${workspaceId}:${sessionId}:${input.messages.length}`);
       return {
@@ -474,6 +490,21 @@ test("mapped local workspace id is used for server calls while app scopes stay l
   );
   assert.equal(rememberedScopes[0]?.workspaceId, "app-ws");
   assert.equal(rememberedScopes[0]?.conversationId, "conv-created");
+});
+
+test("terminal transcript recovery returns the exact fetched snapshot for session-store hydration", async () => {
+  const { service, calls } = createService();
+
+  const snapshot = await service.recoverConversationTranscript({
+    workspaceId: "app-ws",
+    sessionId: "open-a",
+    directory: "/repo",
+    expectedRunId: "run-a",
+  });
+
+  assert.equal(snapshot?.sessionId, "open-a");
+  assert.ok(calls.includes("recoverSessionTranscript:server-ws:open-a:run-a"));
+  assert.ok(calls.includes("getSessionTranscript:server-ws:open-a"));
 });
 
 test("conversation write refreshes stale server workspace registration with live OpenCode URL", async () => {
@@ -970,6 +1001,21 @@ test("latest status reads remember the resolved durable lifecycle run", async ()
     opencodeSessionId: "open-a",
     uiSessionId: "sess-a",
     runId: "run-recovered",
+  }]);
+});
+
+test("latest lifecycle resolution fails closed when the selected session lacks an exact workspace scope", () => {
+  const { service, sendTraces } = createService();
+
+  const scope = service.resolveConversationRunForSession("sess-without-scope", null, { allowLatest: true });
+
+  assert.equal(scope, null);
+  assert.deepEqual(sendTraces, [{
+    event: "resolveConversationRunForSession:latest-missing-scope",
+    payload: {
+      sessionId: "sess-without-scope",
+      workspaceIdHint: null,
+    },
   }]);
 });
 

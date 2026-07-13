@@ -156,7 +156,7 @@ export function createSessionStore(options: {
     sessionId: string;
     directory?: string | null;
     expectedRunId?: string | null;
-  }) => Promise<unknown>;
+  }) => Promise<VesloSessionTranscriptSnapshot | null>;
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
@@ -744,6 +744,7 @@ export function createSessionStore(options: {
           resolveConversationRunForSession: options.resolveConversationRunForSession,
           readConversationRunStatus: options.readConversationRunStatus,
           recoverConversationTranscript: options.recoverConversationTranscript,
+          hydrateConversationTranscript: hydrateTranscriptSnapshot,
           onConversationRunStatus: updateConversationRunDiagnosticsForScope,
           onConversationRunTerminal: (scope, status) => {
             if (status.status !== "failed" || status.stale) return;
@@ -857,9 +858,15 @@ export function createSessionStore(options: {
     selectedSessionLoadingEarlierMessages,
     loadSessions,
     renameSession,
-    selectSession,
+    selectSession: selectSessionFromController,
     loadEarlierMessages,
   } = selectionController;
+  const selectSession = async (sessionId: string) => {
+    lifecycleRecoveryController?.resumeExhaustedWatchForSession(sessionId, resolveSessionWorkspaceId(sessionId));
+    const result = await selectSessionFromController(sessionId);
+    void lifecycleRecoveryController?.probeSelectedConversationLatestRun();
+    return result;
+  };
   const sessionStatusById = () => store.sessionStatus;
   const conversationRunDiagnosticsBySessionKey = () => store.conversationRunDiagnosticsBySessionKey;
   const events = () => store.events;
@@ -913,7 +920,13 @@ export function createSessionStore(options: {
     setSseConnected: options.setSseConnected,
     onHotReloadApplied: options.onHotReloadApplied,
     onReconnectNotice: options.onReconnectNotice,
-    onReconnectState: options.onReconnectState,
+    onReconnectState: (state) => {
+      options.onReconnectState?.(state);
+      if (state.status === "live") {
+        lifecycleRecoveryController?.resumeExhaustedWatches(state.workspaceId);
+        void lifecycleRecoveryController?.probeSelectedConversationLatestRun();
+      }
+    },
     onAssistantResponseObserved: options.onAssistantResponseObserved,
     onTranscriptObserved: noteTranscriptObserved,
     sessionDebugEnabled,
@@ -1005,6 +1018,7 @@ export function createSessionStore(options: {
     clearCommandDisplay,
     setSessions,
     setSessionStatusById,
+    admitAcceptedConversationRun: lifecycleRecoveryController?.admitAcceptedConversationRun ?? (() => false),
     setMessages,
     setTodos,
     setPendingPermissions,

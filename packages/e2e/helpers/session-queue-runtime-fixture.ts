@@ -465,7 +465,7 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
         const transcript = state.transcripts.get(sessionId);
         sendJson(response, 200, (transcript?.messages ?? []).map((info) => ({
           info,
-          parts: transcript?.partsByMessageId[normalized(info.id)] ?? [],
+          parts: transcript?.partsByMessageId[transcriptMessageId(info)] ?? [],
         })));
         return;
       }

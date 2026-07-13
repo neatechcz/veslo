@@ -86,7 +86,7 @@ export class CodexCliWorkerTransport implements CodexOAuthProviderTransport {
     const result = await this.spawnCodex({ prompt, model, authJson })
     if (result.exitCode !== 0 || result.timedOut || !result.finalMessage.trim()) {
       const stderrTail = summarizeWorkerStderr(result.stderr)
-      if (isGpt55RuntimeIncompatibility({ model, stderrTail })) {
+      if (isRequestedModelRuntimeIncompatibility({ model, stderrTail })) {
         throw new ProviderTransportError("codex_runtime_incompatible", {
           statusCode: 502,
           code: "codex_runtime_incompatible",
@@ -308,11 +308,40 @@ function parseJsonRecord(text: string): Record<string, unknown> | null {
   }
 }
 
-function isGpt55RuntimeIncompatibility(input: { model: string; stderrTail: string | null }): boolean {
-  if (input.model.trim().toLowerCase() !== "gpt-5.5") return false
+export function isRequestedModelRuntimeIncompatibility(input: { model: string; stderrTail: string | null }): boolean {
+  const model = input.model.trim().toLowerCase()
   const stderr = input.stderrTail?.toLowerCase() ?? ""
-  if (!stderr || !stderr.includes("gpt-5.5")) return false
-  return /(unknown|unsupported|not supported|not found|invalid|unrecognized|unavailable)/.test(stderr)
+  if (!model || model === "unknown" || !stderr) return false
+
+  const escapedModel = model.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const mentionsRequestedModel = new RegExp(
+    `(?:^|[^a-z0-9._-])${escapedModel}(?=$|[^a-z0-9._-])`,
+    "i",
+  ).test(stderr)
+  if (!mentionsRequestedModel) return false
+
+  const authenticationFailureSignal =
+    /\b(?:auth(?:entication|orization)?|login|unauthorized|forbidden|credential(?:s)?|token)\b|\b(?:access|refresh)_token\b|\binvalid[_ -]?grant\b|\bapi[_ -]?key\b/
+  if (authenticationFailureSignal.test(stderr)) return false
+
+  const modelIncompatibilitySignal =
+    "(?:unknown|unsupported|invalid|unrecognized|unavailable|not[ \\t]+(?:supported|found|available))"
+  const requestedModelReference = `${escapedModel}(?=$|[^a-z0-9._-])`
+  const modelIncompatibilityPatterns = [
+    new RegExp(
+      `\\b${modelIncompatibilitySignal}[ \\t]+(?:requested[ \\t]+)?model[ \\t]*:?[ \\t]+["']?${requestedModelReference}`,
+      "i",
+    ),
+    new RegExp(
+      `\\b(?:requested[ \\t]+)?model[ \\t]+["']?${requestedModelReference}["']?[ \\t]+(?:(?:is|was)[ \\t]+)?${modelIncompatibilitySignal}\\b`,
+      "i",
+    ),
+    new RegExp(
+      `(?:^|[^a-z0-9._-])${requestedModelReference}["']?[ \\t]+(?:model[ \\t]+)?(?:(?:is|was)[ \\t]+)?${modelIncompatibilitySignal}\\b`,
+      "i",
+    ),
+  ]
+  return modelIncompatibilityPatterns.some((pattern) => pattern.test(stderr))
 }
 
 function buildCodexRuntimeIncompatibleBody(input: {

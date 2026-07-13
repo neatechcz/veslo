@@ -29,7 +29,10 @@ const mergeSidebarSessionStoreRow = (
   parentConversationId: incoming.parentConversationId ?? existing.parentConversationId,
   branchId: incoming.branchId ?? existing.branchId,
   pendingSessionInstanceId: incoming.pendingSessionInstanceId ?? existing.pendingSessionInstanceId,
-  time: incoming.time ?? existing.time,
+  // `session.updated` is emitted throughout a streamed response. Sidebar rows
+  // are a directory projection, not a transcript heartbeat: retain their
+  // stored activity timestamp until an explicit sidebar mutation changes it.
+  time: existing.time ?? incoming.time,
 });
 
 export const deriveSidebarRowsFromSessionStore = (

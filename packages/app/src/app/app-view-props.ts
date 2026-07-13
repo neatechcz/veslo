@@ -13,6 +13,7 @@ import type { ManagedAiAccessProfile } from "./lib/ai-access";
 import type { DocumentRuntimeStatusPayload } from "./lib/document-runtime";
 import type { McpServersRefreshOptions } from "./lib/mcp-server-refresh";
 import type { SessionSubmitResult } from "./lib/session-send-contract";
+import type { SidebarSessionActivity } from "./context/sidebar-session-activity-projection";
 import type { SkillMutationTarget } from "./lib/skill-inventory";
 import type { SessionCapabilitiesSnapshot } from "./lib/session-capabilities";
 import type { UiConversationRef } from "./lib/ui-conversation-scope";
@@ -357,6 +358,7 @@ export type AppViewPropsScope = {
   subagentDecorationsBySessionId: () => Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: Accessor<string[]>;
   activeSessionStatusById: Accessor<Record<string, string>>;
+  sidebarSessionActivityByRowKey: Accessor<Record<string, SidebarSessionActivity>>;
   conversationRunDiagnosticsBySessionKey: () => Record<string, SessionRunDiagnostic>;
   busySessionByWorkspaceId: Accessor<WorkspaceBusyMap>;
   archiveSidebarSessionAndClearActive: (
@@ -700,6 +702,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     subagentDecorationsBySessionId,
     archivedSessionIds,
     activeSessionStatusById,
+    sidebarSessionActivityByRowKey,
     conversationRunDiagnosticsBySessionKey,
     busySessionByWorkspaceId,
     archiveSidebarSessionAndClearActive,
@@ -1144,6 +1147,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
       archivedSessionIds: archivedSessionIds(),
       sessionStatusById: activeSessionStatusById(),
+      sidebarSessionActivityByRowKey: sidebarSessionActivityByRowKey(),
       busySessionByWorkspaceId: busySessionByWorkspaceId(),
       archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) =>
         archiveSidebarSessionAndClearActive(workspaceId, sessionId, target).catch((error: unknown) => {
@@ -1575,6 +1579,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     setSessionAgent: setSessionAgent,
     saveSession: saveSessionExport,
     sessionStatusById: activeSessionStatusById(),
+    sidebarSessionActivityByRowKey: sidebarSessionActivityByRowKey(),
     conversationRunDiagnosticsBySessionKey: conversationRunDiagnosticsBySessionKey(),
     busySessionByWorkspaceId: busySessionByWorkspaceId(),
     historyUnavailable: selectedSessionHistoryUnavailable(),

@@ -15,6 +15,7 @@ import {
   resolvePilotIdentifier,
   resolvePilotRuntimeDir,
   resolvePilotSocketPath,
+  resolveWorkspaceStateDirectories,
   seedDefaultWorkspaceState,
   terminateAppProcess,
 } from './app-launcher.js';
@@ -271,17 +272,16 @@ test('seedDefaultWorkspaceState skips network-backed enterprise creators for det
 test('seedDefaultWorkspaceState uses the deterministic queue fixture as a remote Veslo workspace', () => {
   const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-queue-home-'));
   try {
-    seedDefaultWorkspaceState(root, {
+    const env = {
       E2E_SESSION_QUEUE_FIXTURE_BASE_URL: 'http://127.0.0.1:45678',
       E2E_SESSION_QUEUE_VESLO_SERVER_URL: 'http://127.0.0.1:45679',
       E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN: 'session-queue-e2e-token',
       E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID: 'session-queue-workspace',
-    });
-    const stateDirectory = process.platform === 'darwin'
-      ? join(root, 'Library', 'Application Support', 'com.neatech.veslo.e2e')
-      : process.platform === 'win32'
-        ? join(root, 'AppData', 'Roaming', 'com.neatech.veslo.e2e')
-        : join(root, '.local', 'share', 'com.neatech.veslo.e2e');
+    };
+    seedDefaultWorkspaceState(root, env);
+    const stateDirectory = resolveWorkspaceStateDirectories(root, env)
+      .find(dir => dir.endsWith('com.neatech.veslo.e2e'));
+    assert.ok(stateDirectory);
     const state = JSON.parse(
       readFileSync(join(stateDirectory, 'veslo-workspaces.json'), 'utf8'),
     ) as { workspaces: Array<{ workspaceType?: string; baseUrl?: string | null }> };
@@ -310,18 +310,17 @@ test('seedDefaultWorkspaceState uses the deterministic queue fixture as a remote
 test('seedDefaultWorkspaceState can require an explicit user activation for session runtime fixtures', () => {
   const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-session-runtime-home-'));
   try {
-    seedDefaultWorkspaceState(root, {
+    const env = {
       E2E_SESSION_QUEUE_FIXTURE_BASE_URL: 'http://127.0.0.1:45678',
       E2E_SESSION_QUEUE_VESLO_SERVER_URL: 'http://127.0.0.1:45679',
       E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN: 'session-queue-e2e-token',
       E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID: 'session-queue-workspace',
       E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION: '1',
-    });
-    const stateDirectory = process.platform === 'darwin'
-      ? join(root, 'Library', 'Application Support', 'com.neatech.veslo.e2e')
-      : process.platform === 'win32'
-        ? join(root, 'AppData', 'Roaming', 'com.neatech.veslo.e2e')
-        : join(root, '.local', 'share', 'com.neatech.veslo.e2e');
+    };
+    seedDefaultWorkspaceState(root, env);
+    const stateDirectory = resolveWorkspaceStateDirectories(root, env)
+      .find(dir => dir.endsWith('com.neatech.veslo.e2e'));
+    assert.ok(stateDirectory);
     const state = JSON.parse(readFileSync(join(stateDirectory, 'veslo-workspaces.json'), 'utf8')) as {
       activeId: string;
       workspaces: Array<{ id: string; workspaceType?: string; remoteType?: string; baseUrl?: string | null }>;
@@ -338,6 +337,20 @@ test('seedDefaultWorkspaceState can require an explicit user activation for sess
       directory: join(root, 'workspaces', 'visual-workspace'),
       displayName: 'E2E activation decoy',
     });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('seedDefaultWorkspaceState and its resolver agree on the macOS Application Support path', () => {
+  const root = mkdtempSync(join(tmpdir(), 'veslo-e2e-macos-home-'));
+  try {
+    seedDefaultWorkspaceState(root, {}, 'darwin');
+    const stateDirectory = resolveWorkspaceStateDirectories(root, {}, 'darwin')
+      .find(dir => dir.endsWith('com.neatech.veslo.e2e'));
+    assert.ok(stateDirectory);
+    assert.match(stateDirectory, /Library\/Application Support\/com\.neatech\.veslo\.e2e$/);
+    assert.equal(existsSync(join(stateDirectory, 'veslo-workspaces.json')), true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

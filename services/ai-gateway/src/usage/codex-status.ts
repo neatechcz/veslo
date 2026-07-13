@@ -5,7 +5,10 @@ import path from "node:path";
 
 import { CODEX_DEFAULT_MODEL } from "../providers/codex-model-catalog.js";
 import { resolveCodexCliCommandSpec, type CodexCliCommandSpec } from "../providers/codex-command.js";
-import { materializeCodexAuthJson } from "../providers/codex-cli-worker-transport.js";
+import {
+  isRequestedModelRuntimeIncompatibility,
+  materializeCodexAuthJson,
+} from "../providers/codex-cli-worker-transport.js";
 
 export type CodexUsageStatusSource =
   | "codex_exec_rate_limits"
@@ -23,6 +26,7 @@ export type CodexUsageLimitWindow = {
 
 export type CodexUsageStatus = {
   available: boolean;
+  probeSucceeded?: boolean;
   source: CodexUsageStatusSource;
   label: string;
   detail?: string | null;
@@ -73,6 +77,7 @@ type ProbeResult = {
 export type CachedCodexCredentialStatusProviderDeps = {
   loadCredentialAuthJson: (credentialId: string) => Promise<string | null>;
   saveCredentialAuthJson?: (credentialId: string, authJson: string) => Promise<void>;
+  model?: string;
   probe?: (input: {
     credentialId: string;
     credentialName: string;
@@ -109,6 +114,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     authJson: string;
     signal?: AbortSignal;
   }) => Promise<ProbeResult>;
+  private readonly model: string;
   private readonly ttlMs: number;
   private readonly now: () => Date;
   private readonly cache = new Map<string, CachedStatusEntry>();
@@ -119,6 +125,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     this.saveCredentialAuthJson = deps.saveCredentialAuthJson ?? null;
     this.ttlMs = deps.ttlMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_STATUS_TTL_MS, 5 * 60 * 1000);
     this.now = deps.now ?? (() => new Date());
+    this.model = deps.model?.trim() || CODEX_DEFAULT_MODEL;
     this.probe =
       deps.probe ??
       ((input) =>
@@ -132,6 +139,7 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
             },
             workDir: deps.workDir?.trim() || process.env.AI_GATEWAY_CODEX_WORKDIR?.trim() || tmpdir(),
             timeoutMs: deps.timeoutMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_TIMEOUT_MS, 120000),
+            model: this.model,
             now: this.now,
           });
         });
@@ -146,12 +154,12 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
     }
 
     const refreshStatus = async () => {
-      let status = unavailableStatus("Credential is missing Codex auth.json.");
+      let status = withProbeResult(unavailableStatus("Credential is missing Codex auth.json."), false);
       try {
         const authJson = await this.loadCredentialAuthJson(input.credentialId);
         throwIfCodexStatusProbeAborted(input.signal);
         if (!authJson?.trim()) {
-          status = unavailableStatus("Credential is missing Codex auth.json.");
+          status = withProbeResult(unavailableStatus("Credential is missing Codex auth.json."), false);
         } else {
           const result = await this.probe({
             credentialId: input.credentialId,
@@ -162,25 +170,29 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
           throwIfCodexStatusProbeAborted(input.signal);
           await this.persistUpdatedAuthJson(input.credentialId, authJson, result.updatedAuthJson);
           throwIfCodexStatusProbeAborted(input.signal);
-          const unsupportedModels = extractUnsupportedCodexModels(result.detail);
+          const unsupportedModels = extractUnsupportedCodexModels(result.detail, this.model);
           const usageLimitStatus = result.rateLimits
             ? null
             : codexUsageStatusFromUsageLimitFailure(result.detail, result.checkedAt);
-          status = result.rateLimits
+          const resolvedStatus = result.rateLimits
             ? codexUsageStatusFromRateLimits(result.rateLimits, result.checkedAt, result.detail)
             : usageLimitStatus
               ? usageLimitStatus
             : result.ok === true || unsupportedModels.length > 0
               ? codexUsageStatusUnknownLimits(result.checkedAt, result.detail, unsupportedModels)
               : unavailableStatus(result.detail || "Codex probe did not return rate limits.", result.checkedAt);
+          status = withProbeResult(resolvedStatus, result.ok === true, unsupportedModels);
         }
       } catch (error) {
         if (error instanceof CodexStatusProbeAbortedError || input.signal?.aborted) {
           throw new CodexStatusProbeAbortedError();
         }
-        status = unavailableStatus(
-          error instanceof Error && error.message ? error.message : "Codex probe failed.",
-          this.now().toISOString(),
+        status = withProbeResult(
+          unavailableStatus(
+            error instanceof Error && error.message ? error.message : "Codex probe failed.",
+            this.now().toISOString(),
+          ),
+          false,
         );
       }
 
@@ -231,6 +243,18 @@ function throwIfCodexStatusProbeAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     throw new CodexStatusProbeAbortedError();
   }
+}
+
+function withProbeResult(
+  status: CodexUsageStatus,
+  probeSucceeded: boolean,
+  unsupportedModels: string[] = [],
+): CodexUsageStatus {
+  return {
+    ...status,
+    probeSucceeded,
+    ...(unsupportedModels.length > 0 ? { unsupportedModels } : {}),
+  };
 }
 
 export function parseCodexStatusText(
@@ -297,28 +321,16 @@ function codexUsageStatusUnknownLimits(
   };
 }
 
-function extractUnsupportedCodexModels(detail: string | null | undefined): string[] {
-  const text = detail?.trim();
-  if (!text || !/model is not supported/i.test(text)) {
-    return [];
-  }
-
-  const models = new Set<string>();
-  const quotedPattern = /['"`]([a-z0-9][a-z0-9._:-]*)['"`]\s+model is not supported/gi;
-  for (const match of text.matchAll(quotedPattern)) {
-    if (match[1]) {
-      models.add(match[1]);
-    }
-  }
-
-  const unquotedPattern = /\b([a-z0-9][a-z0-9._:-]*)['"`]?\s+model is not supported/gi;
-  for (const match of text.matchAll(unquotedPattern)) {
-    if (match[1] && !["the", "a", "this"].includes(match[1].toLowerCase())) {
-      models.add(match[1]);
-    }
-  }
-
-  return Array.from(models);
+function extractUnsupportedCodexModels(
+  detail: string | null | undefined,
+  requestedModel: string,
+): string[] {
+  return isRequestedModelRuntimeIncompatibility({
+    model: requestedModel,
+    stderrTail: detail?.trim() || null,
+  })
+    ? [requestedModel]
+    : [];
 }
 
 function codexUsageStatusFromUsageLimitFailure(
@@ -471,6 +483,7 @@ async function runCodexExecRateLimitProbe(input: {
   command: CodexCliCommandSpec;
   workDir: string;
   timeoutMs: number;
+  model: string;
   now: () => Date;
   signal?: AbortSignal;
 }): Promise<ProbeResult> {
@@ -498,7 +511,7 @@ async function runCodexExecRateLimitProbe(input: {
         "never",
         "exec",
         "--model",
-        CODEX_DEFAULT_MODEL,
+        input.model,
         "--cd",
         scratchDir,
         "--skip-git-repo-check",

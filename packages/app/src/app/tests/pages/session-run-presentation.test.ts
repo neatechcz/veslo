@@ -155,6 +155,35 @@ test("optimistic pre-admission sends remain visibly active without an abort targ
   });
 });
 
+test("exhausted lifecycle observation is visibly degraded without fabricating idle", () => {
+  const projection = deriveSessionRunPresentation({
+    hasSessionScope: true,
+    engineStatus: "submitted",
+    lifecycle: {
+      runId: "run-a",
+      status: "running",
+      stale: false,
+      recoveryState: "exhausted",
+    },
+    local: {
+      started: true,
+      hasBegun: true,
+      optimisticSending: true,
+      optimisticAccepted: true,
+      acceptedRunId: "run-a",
+      responseStarted: false,
+    },
+  });
+
+  assert.deepEqual(projection, {
+    phase: "error",
+    showIndicator: true,
+    abortable: true,
+    source: "lifecycle",
+    diagnosticKind: "lifecycle-observation-exhausted",
+  });
+});
+
 test("assistant response progress changes an active engine run to responding", () => {
   const projection = deriveSessionRunPresentation({
     hasSessionScope: true,

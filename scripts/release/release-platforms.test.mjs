@@ -19,6 +19,13 @@ test("production release workflow only builds macOS and Windows desktop targets"
   assert.doesNotMatch(workflow, /Publish AUR/);
 });
 
+test("production release workflow peels annotated tags before resolving SOURCE_DATE_EPOCH", () => {
+  const workflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
+
+  assert.match(workflow, /git log -1 --format=%ct "\$\{RELEASE_TAG\}\^\{commit\}"/);
+  assert.doesNotMatch(workflow, /git show -s --format=%ct "\$\{RELEASE_TAG\}"/);
+});
+
 test("prerelease workflow only builds macOS and Windows desktop targets", () => {
   const workflow = readRepoFile(".github/workflows/prerelease.yml");
 
@@ -43,6 +50,18 @@ test("desktop build workflow no longer runs Linux app builds", () => {
   assert.doesNotMatch(workflow, /unknown-linux/);
   assert.doesNotMatch(workflow, /Tauri Build \(Linux\)/);
   assert.doesNotMatch(workflow, /Install Linux build dependencies/);
+});
+
+test("manual Windows CI config overrides only updater artifacts", () => {
+  for (const workflowPath of [
+    ".github/workflows/build-desktop.yml",
+    ".github/workflows/build-windows-msi.yml",
+  ]) {
+    const workflow = readRepoFile(workflowPath);
+    assert.match(workflow, /JSON\.stringify\(\{bundle:\{createUpdaterArtifacts:false\}\}/);
+    assert.doesNotMatch(workflow, /config\.bundle=\{\.\.\.config\.bundle/);
+    assert.doesNotMatch(workflow, /const config=JSON\.parse/);
+  }
 });
 
 test("Windows document runtime resource is scoped to Windows release config", () => {

@@ -352,7 +352,7 @@ test("runtime owner gates app-level routing client reads", () => {
 test("session-store sidebar sync skips unchanged sidebar rows", () => {
   assert.match(
     sidebarWorkspaceSessionsSource,
-    /const sidebarSessionItemsEqual = \(left: SidebarSessionItem\[\], right: SidebarSessionItem\[\]\) => \{[\s\S]*a\.id !== b\.id[\s\S]*a\.title !== b\.title[\s\S]*a\.directory !== b\.directory[\s\S]*a\.time\?\.updated[\s\S]*return true;[\s\S]*\};/,
+    /const sidebarSessionItemsEqual = \(left: SidebarSessionItem\[\], right: SidebarSessionItem\[\]\) => \{[\s\S]*a\.id !== b\.id[\s\S]*a\.title !== b\.title[\s\S]*a\.directory !== b\.directory[\s\S]*a\.time\?\.created[\s\S]*return true;[\s\S]*\};/,
     "app should compare sidebar rows before publishing session-store sync output",
   );
   assert.match(

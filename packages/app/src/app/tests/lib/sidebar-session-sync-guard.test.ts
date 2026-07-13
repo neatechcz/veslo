@@ -38,7 +38,7 @@ test("allows sidebar sync during workspace switch once scoped sessions exist", (
   );
 });
 
-test("allows sidebar sync during workspace switch for freshly materialized created sessions", () => {
+test("blocks session-store sidebar sync during an active send even after materialization", () => {
   assert.equal(
     shouldSyncSidebarFromSessionStore({
       activeWorkspaceId: "ws-a",
@@ -50,7 +50,7 @@ test("allows sidebar sync during workspace switch for freshly materialized creat
       freshlyCreatedSessionCount: 1,
       activeSendInProgress: true,
     }),
-    true,
+    false,
   );
 });
 
@@ -70,7 +70,7 @@ test("blocks active-send live-only sidebar sync before target rows hydrate", () 
   );
 });
 
-test("allows active-send sidebar sync once there are target rows to merge with", () => {
+test("blocks active-send sidebar sync even once target rows exist", () => {
   assert.equal(
     shouldSyncSidebarFromSessionStore({
       activeWorkspaceId: "ws-a",
@@ -82,7 +82,7 @@ test("allows active-send sidebar sync once there are target rows to merge with",
       freshlyCreatedSessionCount: 0,
       activeSendInProgress: true,
     }),
-    true,
+    false,
   );
 });
 

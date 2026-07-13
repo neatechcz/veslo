@@ -98,6 +98,7 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
       let outcome: TranscriptIngestOutcome = { kind: "exhausted", generation: task.generation };
       do {
         const observedGeneration = task.generation;
+        let cycleCompleted = false;
         for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
           if (attempt > 0) await sleep(retryDelaysMs[attempt] ?? 0);
           try {
@@ -112,11 +113,15 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
               options.invalidateTranscriptCaches(task.identity, snapshot);
               outcome = { kind: "persisted", generation: observedGeneration };
             }
+            cycleCompleted = true;
             break;
           } catch {
             // A canonical read is a bounded recovery concern. Never turn its
             // failure into a lifecycle or queue transition.
           }
+        }
+        if (!cycleCompleted) {
+          outcome = { kind: "exhausted", generation: observedGeneration };
         }
       } while (task.generation > outcome.generation);
       return { ...outcome, generation: task.generation };

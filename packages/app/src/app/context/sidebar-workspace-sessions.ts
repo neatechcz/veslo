@@ -143,8 +143,7 @@ const sidebarSessionItemsEqual = (left: SidebarSessionItem[], right: SidebarSess
       a.parentConversationId !== b.parentConversationId ||
       a.branchId !== b.branchId ||
       a.pendingSessionInstanceId !== b.pendingSessionInstanceId ||
-      (a.time?.created ?? 0) !== (b.time?.created ?? 0) ||
-      (a.time?.updated ?? 0) !== (b.time?.updated ?? 0)
+      (a.time?.created ?? 0) !== (b.time?.created ?? 0)
     ) {
       return false;
     }

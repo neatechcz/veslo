@@ -57,6 +57,11 @@ import type {
   ConversationSendPreflightContext,
 } from "../context/conversation-service";
 import type { LiveTranscriptReadPolicyEvent } from "../context/live-transcript-read-policy";
+import type { AcceptedConversationRunInput } from "../context/session-lifecycle-recovery";
+import type {
+  SidebarActivityTokenHandle,
+  SidebarActivityTokenScope,
+} from "../context/sidebar-session-activity-token";
 import type { UiScopeToken } from "../lib/ui-conversation-scope";
 import { deleteSessionComposerDraft } from "./session-composer-drafts";
 import type {
@@ -268,6 +273,17 @@ export type ConversationRunCompatibilityBridgeOptions = {
 };
 
 export type SessionSendWorkflowOptions = {
+  admitAcceptedConversationRun: (input: AcceptedConversationRunInput) => boolean | void;
+  beginSidebarActivityToken?: (scope: SidebarActivityTokenScope) => SidebarActivityTokenHandle | null;
+  migrateSidebarActivityToken?: (
+    handle: SidebarActivityTokenHandle | null | undefined,
+    scope: SidebarActivityTokenScope,
+  ) => boolean;
+  promoteSidebarActivityToken?: (
+    handle: SidebarActivityTokenHandle | null | undefined,
+    runId: string | null | undefined,
+  ) => boolean;
+  removeSidebarActivityToken?: (handle: SidebarActivityTokenHandle | null | undefined) => boolean;
   abortConversationFromVesloWriteApi: (
     sessionId: string,
     target?: ConversationAbortTarget,
@@ -1173,6 +1189,8 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     let releaseSendPromptInFlight: (() => void) | null =
       deps.startSendPromptInFlight?.() ?? null;
     let sendPromptInFlightReleased = false;
+    let sidebarActivityToken: SidebarActivityTokenHandle | null = null;
+    let sidebarActivityTokenCommitted = false;
     const releasePromptSendInFlight = () => {
       if (sendPromptInFlightReleased) return;
       sendPromptInFlightReleased = true;
@@ -1304,6 +1322,17 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     if (!sessionID && pendingSidebarSession) {
       deps.registerPendingSidebarSession(pendingSidebarSession);
       pendingSidebarRowRegistered = true;
+    }
+
+    if (deps.submitConversationFromVesloWriteApi) {
+      const tokenWorkspaceId = sendTargetWorkspace?.workspaceId?.trim() || pendingSidebarSession?.workspaceId?.trim() || "";
+      const tokenSessionId = sessionID?.trim() || pendingSidebarSession?.id?.trim() || "";
+      if (tokenWorkspaceId && tokenSessionId) {
+        sidebarActivityToken = deps.beginSidebarActivityToken?.({
+          workspaceId: tokenWorkspaceId,
+          sessionId: tokenSessionId,
+        }) ?? null;
+      }
     }
 
     const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(initialContent);
@@ -1688,6 +1717,19 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         return sessionSubmitResultFromConversationSubmit(result);
       }
 
+      if (sidebarActivityToken) {
+        deps.migrateSidebarActivityToken?.(sidebarActivityToken, {
+          workspaceId,
+          sessionId: existingSessionId,
+          conversationId: result.conversationId,
+          opencodeSessionId: result.opencodeSessionId,
+        });
+        sidebarActivityTokenCommitted = deps.promoteSidebarActivityToken?.(
+          sidebarActivityToken,
+          result.status === "submitted" ? result.runId : result.reservedRunId,
+        ) ?? false;
+      }
+
       if (result.draftDisposition === "clear") {
         if (!compactCommand) {
           deps.setLastPromptSent(initialContent);
@@ -1745,6 +1787,18 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           workspaceId,
           sessionId: existingSessionId,
           traceId: sendTraceId,
+        });
+      }
+
+      if (result.status === "submitted") {
+        deps.admitAcceptedConversationRun({
+          sessionId: existingSessionId,
+          workspaceId,
+          conversationId: result.conversationId,
+          opencodeSessionId: result.opencodeSessionId,
+          directory,
+          runId: result.runId,
+          clientMessageId: result.clientMessageId,
         });
       }
       deps.holdVisibleRuntimeActivity(
@@ -1968,6 +2022,22 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     }
 
     if (serverFirstSubmitResult) {
+      if (sidebarActivityToken) {
+        deps.migrateSidebarActivityToken?.(sidebarActivityToken, {
+          workspaceId: serverFirstSubmitResult.workspaceId?.trim() || sendTargetWorkspace?.workspaceId?.trim() || "",
+          sessionId: sessionID,
+          conversationId: serverFirstSubmitResult.conversationId,
+          opencodeSessionId: serverFirstSubmitResult.opencodeSessionId,
+        });
+        if (serverFirstSubmitResult.status === "submitted" || serverFirstSubmitResult.status === "queued") {
+          sidebarActivityTokenCommitted = deps.promoteSidebarActivityToken?.(
+            sidebarActivityToken,
+            serverFirstSubmitResult.status === "submitted"
+              ? serverFirstSubmitResult.runId
+              : serverFirstSubmitResult.reservedRunId,
+          ) ?? false;
+        }
+      }
       if (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked") {
         const implicitSkillConfirmationRequired =
           conversationSubmitNeedsImplicitSkillConfirmation(serverFirstSubmitResult);
@@ -2025,6 +2095,30 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           sessionId: sessionID,
           traceId: sendTraceId,
         });
+      }
+      if (serverFirstSubmitResult.status === "submitted") {
+        const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
+        const directory =
+          sendTargetWorkspace?.directory?.trim() ||
+          sendTargetWorkspace?.workspaceRoot?.trim() ||
+          "";
+        if (!workspaceId || !directory) {
+          deps.recordSendTrace("sendPrompt:server-submit-first-admission-missing-target", {
+            traceId: sendTraceId,
+            sessionID,
+            runId: serverFirstSubmitResult.runId,
+          });
+        } else {
+          deps.admitAcceptedConversationRun({
+            sessionId: sessionID,
+            workspaceId,
+            conversationId: serverFirstSubmitResult.conversationId,
+            opencodeSessionId: serverFirstSubmitResult.opencodeSessionId,
+            directory,
+            runId: serverFirstSubmitResult.runId,
+            clientMessageId: serverFirstSubmitResult.clientMessageId,
+          });
+        }
       }
       await consumePendingDraftAfterAcceptedSend(true);
       deps.holdVisibleRuntimeActivity(sessionID, "sendPrompt:server-submit-first-success");
@@ -2109,6 +2203,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
     });
     return sessionSubmitCompatibilityResultFromAccepted(compatibilityAccepted, null);
     } finally {
+      if (sidebarActivityToken && !sidebarActivityTokenCommitted) {
+        deps.removeSidebarActivityToken?.(sidebarActivityToken);
+      }
       stopSendPromptBusy();
     }
   }
@@ -2123,7 +2220,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       selectedAbortScope?.workspaceId?.trim() ||
       (scope.hasConversationScope ? scope.workspaceId?.trim() : "") ||
       "";
-    const activeAbortWorkspaceId = deps.workspace.activeWorkspaceId().trim();
     deps.recordSendTrace("abortSession:start", {
       sessionID: id,
       workspaceId: scope.workspaceId || null,
@@ -2136,15 +2232,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       if (!explicitAbortWorkspaceId) {
         deps.recordSendTrace("abortSession:abort-blocked-missing-workspace-scope", { sessionID: id });
         deps.setError("Cannot stop this run because its workspace scope is missing. Re-select the session and try again.");
-        return true;
-      }
-      if (!activeAbortWorkspaceId || explicitAbortWorkspaceId !== activeAbortWorkspaceId) {
-        deps.recordSendTrace("abortSession:abort-blocked-foreign-workspace", {
-          sessionID: id,
-          workspaceId: explicitAbortWorkspaceId,
-          activeWorkspaceId: activeAbortWorkspaceId || null,
-        });
-        deps.setError("Cannot stop this run through the active workspace because it belongs to another workspace.");
         return true;
       }
       return false;
@@ -2160,6 +2247,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       });
       deps.setError(message);
     };
+    if (blockAbortWithoutSafeServerScope()) return;
     try {
       const result = await deps.abortConversationFromVesloWriteApi(id, target);
       if (result) {
