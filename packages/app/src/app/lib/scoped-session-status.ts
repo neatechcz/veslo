@@ -33,6 +33,17 @@ export const readSessionStatus = (
   return fallback;
 };
 
+export const readScopedSessionStatus = (
+  statuses: Record<string, string> | null | undefined,
+  workspaceId: string | null | undefined,
+  sessionId: string | null | undefined,
+  fallback = "idle",
+) => {
+  const key = scopedSessionStatusKey(workspaceId, sessionId);
+  const status = key ? statuses?.[key]?.trim() : "";
+  return status || fallback;
+};
+
 export const withSessionStatus = (
   current: Record<string, string>,
   workspaceId: string | null | undefined,

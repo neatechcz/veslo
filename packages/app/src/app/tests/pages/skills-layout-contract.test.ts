@@ -369,6 +369,14 @@ test("skills inventory exposes stable desktop e2e selectors", () => {
   assert.match(source, /data-testid="skills-hub-placeholder"/);
 });
 
+test("skill enabled switch uses the shared neutral toggle treatment", () => {
+  assert.match(source, /data-testid="skill-enabled-switch"/);
+  assert.match(source, /border-gray-12\/20 bg-gray-12/);
+  assert.match(source, /border-gray-6 bg-gray-3 hover:bg-gray-4/);
+  assert.match(source, /h-6 w-11/);
+  assert.match(source, /h-5 w-5 rounded-full bg-gray-1/);
+});
+
 test("skills inventory item clicks toggle selection while pencil opens detail drawer", () => {
   assert.match(renderInventoryCardSource, /const toggleCurrentSelection = \(\) => toggleInventorySelection\(selectionId\(\), !selected\(\)\)/);
   assert.match(renderInventoryCardSource, /onClick=\{toggleCurrentSelection\}/);

@@ -223,6 +223,7 @@ import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { readSessionStatus, scopedSessionStatusKey } from "../lib/scoped-session-status";
 import type { WorkspaceBusyMap } from "../context/workspace-debug";
 import type { SessionRunDiagnostic } from "../context/session-lifecycle-recovery";
+import type { SidebarSessionActivity } from "../context/sidebar-session-activity-projection";
 
 function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   if (typeof window === "undefined") return;
@@ -474,6 +475,7 @@ export type SessionViewProps = {
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
+  sidebarSessionActivityByRowKey: Record<string, SidebarSessionActivity>;
   conversationRunDiagnosticsBySessionKey: Record<string, SessionRunDiagnostic>;
   busySessionByWorkspaceId?: WorkspaceBusyMap;
   historyUnavailable: SessionHistoryUnavailableView | null;
@@ -3652,8 +3654,7 @@ export default function SessionView(props: SessionViewProps) {
           selectedSessionKey: props.activeUiConversationRef?.key ?? null,
           pendingPermissionCountByWs: props.pendingPermissionCountByWs,
           allowSelectedParentExpansion: true,
-          sessionStatusById: props.sessionStatusById,
-          busySessionByWorkspaceId: props.busySessionByWorkspaceId,
+          sidebarSessionActivityByRowKey: props.sidebarSessionActivityByRowKey,
           connectingWorkspaceId: props.connectingWorkspaceId,
           workspaceConnectionStateById: props.workspaceConnectionStateById,
           readyEngineWorkspaceIds: props.readyEngineWorkspaceIds,

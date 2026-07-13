@@ -364,13 +364,36 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     }
 
     if ((event.type === "session.idle" || event.type === "session.error") && sessionID) {
-      deps.onSessionLifecycleObservation?.(sessionID, workspaceId, event.type);
+      const error = event.type === "session.error" && record.error && typeof record.error === "object"
+        ? record.error as Record<string, unknown>
+        : null;
+      const errorName = typeof error?.name === "string" ? error.name : "UnknownError";
+      const lifecycleOwnsEvent =
+        (event.type !== "session.error" || errorName !== "MessageAbortedError") &&
+        deps.onSessionLifecycleObservation?.(sessionID, workspaceId, event.type) === true;
       deps.recordSessionStatusTrace("background-sse-session-idle", {
         sessionId: sessionID,
-        status: "idle",
+        status: lifecycleOwnsEvent ? "lifecycle-pending" : "idle",
         sourceWorkspaceId: workspaceId,
         previous: deps.readStatusForSession(sessionID, workspaceId),
+        lifecycleOwnsEvent,
       });
+      if (lifecycleOwnsEvent) {
+        recordSendWorkflowTrace(
+          "session-sse",
+          event.type === "session.idle"
+            ? "session-sse:idle-deferred-to-lifecycle"
+            : "session-sse:error-deferred-to-lifecycle",
+          {
+            sessionId: sessionID,
+            workspaceId,
+            background: true,
+            eventType: event.type,
+            errorName: event.type === "session.error" ? errorName : undefined,
+          },
+        );
+        return;
+      }
       deps.setSessionStatusForWorkspace(sessionID, "idle", workspaceId);
       deps.notifySessionBusy(sessionID, "idle", workspaceId);
       return;
@@ -526,15 +549,26 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
-          deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.idle");
+          const lifecycleOwnsEvent =
+            deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.idle") === true;
           deps.recordSessionStatusTrace("sse-session-idle", {
             sessionId: sessionID,
-            status: "idle",
+            status: lifecycleOwnsEvent ? "lifecycle-pending" : "idle",
             sourceWorkspaceId: sourceWsId ?? null,
             previous: deps.readStatusForSession(sessionID, sourceWsId),
+            lifecycleOwnsEvent,
           });
-          deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
-          deps.notifySessionBusy(sessionID, "idle", sourceWsId);
+          if (lifecycleOwnsEvent) {
+            recordSendWorkflowTrace("session-sse", "session-sse:idle-deferred-to-lifecycle", {
+              sessionId: sessionID,
+              workspaceId: sourceWsId ?? null,
+              background: false,
+              eventType: "session.idle",
+            });
+          } else {
+            deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
+            deps.notifySessionBusy(sessionID, "idle", sourceWsId);
+          }
           const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
           if (workspaceId) {
           }
@@ -555,9 +589,17 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const lifecycleOwnsEvent = sessionID && errorName !== "MessageAbortedError"
           ? deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.error") === true
           : false;
-        if (sessionID) {
+        if (sessionID && !lifecycleOwnsEvent) {
           deps.setSessionStatusForWorkspace(sessionID, "idle", sourceWsId);
           deps.notifySessionBusy(sessionID, "idle", sourceWsId);
+        } else if (sessionID) {
+          recordSendWorkflowTrace("session-sse", "session-sse:error-deferred-to-lifecycle", {
+            sessionId: sessionID,
+            workspaceId: sourceWsId ?? null,
+            background: false,
+            eventType: "session.error",
+            errorName,
+          });
         }
         if (errorObj) {
           if (errorName === "MessageAbortedError") {

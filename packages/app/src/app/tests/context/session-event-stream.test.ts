@@ -708,11 +708,12 @@ test("active session idle delegates durable reconciliation without legacy app-si
     try {
       const transcriptIngest: Array<Record<string, unknown>> = [];
       const backgroundIngest: Array<Record<string, unknown>> = [];
-      const { controller } = makeController({
+      const { controller, store, setStore } = makeController({
         workspaceSessionIds: new Set(["sess-a"]),
         transcriptIngest,
         backgroundIngest,
       });
+      setStore("sessionStatus", "ws-a:sess-a", "running");
 
       await controller.applyEvent(
         {
@@ -724,6 +725,7 @@ test("active session idle delegates durable reconciliation without legacy app-si
 
       assert.deepEqual(transcriptIngest, []);
       assert.deepEqual(backgroundIngest, []);
+      assert.equal(store.sessionStatus["ws-a:sess-a"], "idle");
     } finally {
       dispose();
     }
@@ -814,13 +816,102 @@ test("event stream socket close reconnects without route release when scoped run
   });
 });
 
+test("lifecycle-owned foreground idle preserves the active status until durable reconciliation", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+      const { controller, store, setStore } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        statusTraces,
+        lifecycleObservation: () => true,
+      });
+      setStore("sessionStatus", "ws-a:sess-a", "running");
+
+      await controller.applyEvent(
+        {
+          type: "session.idle",
+          properties: { sessionID: "sess-a" },
+        } as OpencodeEvent,
+        "ws-a",
+      );
+
+      assert.equal(store.sessionStatus["ws-a:sess-a"], "running");
+      assert.deepEqual(statusTraces, [{
+        event: "sse-session-idle",
+        payload: {
+          sessionId: "sess-a",
+          status: "lifecycle-pending",
+          sourceWorkspaceId: "ws-a",
+          previous: "running",
+          lifecycleOwnsEvent: true,
+        },
+      }]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("lifecycle-owned background idle preserves the scoped active status", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, store, setStore } = makeController({
+        activeWorkspaceId: "ws-a",
+        lifecycleObservation: () => true,
+      });
+      setStore("sessionStatus", "ws-b:sess-b", "submitted");
+
+      await controller.applyEvent(
+        {
+          type: "session.idle",
+          properties: { sessionID: "sess-b" },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+
+      assert.equal(store.sessionStatus["ws-b:sess-b"], "submitted");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("background abort errors still release the scoped active status immediately", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let observations = 0;
+      const { controller, store, setStore } = makeController({
+        activeWorkspaceId: "ws-a",
+        lifecycleObservation: () => {
+          observations += 1;
+          return true;
+        },
+      });
+      setStore("sessionStatus", "ws-b:sess-b", "running");
+
+      await controller.applyEvent(
+        {
+          type: "session.error",
+          properties: { sessionID: "sess-b", error: { name: "MessageAbortedError" } },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+
+      assert.equal(observations, 0);
+      assert.equal(store.sessionStatus["ws-b:sess-b"], "idle");
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("known admitted run uses durable lifecycle arbitration for SSE errors", async () => {
   await createRoot(async (dispose) => {
     try {
       const observed: Array<{ sessionID: string; workspaceId: string | null | undefined; type: string }> = [];
       const sessionErrorTurns: Array<{ sessionID: string; text: string }> = [];
       const errors: Array<string | null> = [];
-      const { controller } = makeController({
+      const { controller, store, setStore } = makeController({
         workspaceSessionIds: new Set(["sess-a"]),
         sessionErrorTurns,
         errors,
@@ -829,6 +920,7 @@ test("known admitted run uses durable lifecycle arbitration for SSE errors", asy
           return true;
         },
       });
+      setStore("sessionStatus", "ws-a:sess-a", "running");
 
       await controller.applyEvent({
         type: "session.error",
@@ -841,6 +933,7 @@ test("known admitted run uses durable lifecycle arbitration for SSE errors", asy
       assert.deepEqual(observed, [{ sessionID: "sess-a", workspaceId: "ws-a", type: "session.error" }]);
       assert.deepEqual(sessionErrorTurns, []);
       assert.deepEqual(errors, []);
+      assert.equal(store.sessionStatus["ws-a:sess-a"], "running");
     } finally {
       dispose();
     }

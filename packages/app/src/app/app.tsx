@@ -88,6 +88,9 @@ import { createLiveTranscriptReadPolicy } from "./context/live-transcript-read-p
 import { createPendingSessionDraftController } from "./context/pending-session-draft-controller";
 import { createSessionFlowFacade } from "./context/session-flow-facade";
 import { createSessionFlowProgressPresenter } from "./context/session-flow-progress-presenter";
+import { createSidebarSessionActivityTokenModel } from "./context/sidebar-session-activity-token";
+import { projectSidebarSessionActivity } from "./context/sidebar-session-activity-projection";
+import { buildRecentRows } from "./components/session/workspace-session-list-model";
 import { createComposerTargetController } from "./context/composer-target-controller";
 import { createAppShellEnvironment } from "./context/app-shell-environment";
 import { createFeedbackWorkflow } from "./context/feedback-workflow";
@@ -1178,6 +1181,11 @@ export default function App() {
     getCachedTranscriptMessages,
   } = sessionStore;
 
+  const [sidebarActivityTokenByScopedSessionKey, setSidebarActivityTokenByScopedSessionKey] = createSignal({});
+  const sidebarActivityTokenModel = createSidebarSessionActivityTokenModel(
+    setSidebarActivityTokenByScopedSessionKey,
+  );
+
   const [e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds] = createSignal<Set<string>>(
     new Set(),
   );
@@ -1620,6 +1628,10 @@ export default function App() {
 
   const sessionSendWorkflow = createSessionSendWorkflow({
     admitAcceptedConversationRun,
+    beginSidebarActivityToken: (scope) => sidebarActivityTokenModel.begin(scope),
+    migrateSidebarActivityToken: (handle, scope) => sidebarActivityTokenModel.migrate(handle, scope),
+    promoteSidebarActivityToken: (handle, runId) => sidebarActivityTokenModel.promote(handle, runId),
+    removeSidebarActivityToken: (handle) => sidebarActivityTokenModel.remove(handle),
     abortConversationFromVesloWriteApi,
     abortSessionTyped,
     activePendingDraftKey,
@@ -2904,6 +2916,36 @@ export default function App() {
     moveSessionBetweenWorkspaceSidebars,
     ensureSessionInWorkspaceSidebar,
   } = sidebarWorkspaceSessions;
+
+  const sidebarSessionActivityShadow = createMemo(() => projectSidebarSessionActivity({
+    rows: buildRecentRows(sidebarWorkspaceGroups(), workspaceStore.isPrivateWorkspacePath),
+    sessionStatusById: activeSessionStatusById(),
+    workspaceBusy: busySessionByWorkspaceId(),
+    diagnostics: conversationRunDiagnosticsBySessionKey(),
+    tokens: sidebarActivityTokenByScopedSessionKey(),
+  }));
+  let previousSidebarSessionActivityShadow: Record<string, { active: boolean; phase: string; source: string | null }> = {};
+  let sidebarSessionActivityShadowInitialized = false;
+  createEffect(() => {
+    const next = sidebarSessionActivityShadow();
+    if (!sidebarSessionActivityShadowInitialized) {
+      sidebarSessionActivityShadowInitialized = true;
+      previousSidebarSessionActivityShadow = next;
+      return;
+    }
+    const rowKeys = new Set([...Object.keys(previousSidebarSessionActivityShadow), ...Object.keys(next)]);
+    for (const rowKey of rowKeys) {
+      const previous = previousSidebarSessionActivityShadow[rowKey] ?? null;
+      const current = next[rowKey] ?? null;
+      if (JSON.stringify(previous) === JSON.stringify(current)) continue;
+      recordSendWorkflowTrace("sidebar-session-activity", "sidebar-session-activity:transition", {
+        rowKey,
+        previous,
+        current,
+      });
+    }
+    previousSidebarSessionActivityShadow = next;
+  });
 
   const pendingSidebarSessionToItem = (pending: PendingSidebarSessionMetadata): SidebarSessionItem => ({
     id: pending.id,
@@ -4588,6 +4630,7 @@ export default function App() {
     subagentDecorationsBySessionId,
     archivedSessionIds,
     activeSessionStatusById,
+    sidebarSessionActivityByRowKey: sidebarSessionActivityShadow,
     conversationRunDiagnosticsBySessionKey,
     busySessionByWorkspaceId,
     archiveSidebarSessionAndClearActive,

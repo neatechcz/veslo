@@ -41,17 +41,11 @@ export const shouldSyncSidebarFromSessionStore = (
     connectingWorkspaceId.length > 0 &&
     connectingWorkspaceId !== activeWorkspaceId;
 
-  // During a send/switch window, the live session store may contain only the
-  // currently materializing row while the host sidebar list is still loading.
-  // Do not let that live-only view become the full sidebar list unless the
-  // sidebar already has rows to merge with or the create path materialized one.
-  if (
-    activeSendInProgress &&
-    existingTargetSessionCount === 0 &&
-    freshlyCreatedSessionCount === 0
-  ) {
-    return false;
-  }
+  // Stream-time session updates are transcript/runtime evidence, not sidebar
+  // directory mutations. Create/materialize/delete/rename paths update the
+  // sidebar explicitly; suppress this broad session-store sync for the full
+  // active send so it cannot rewrite every row on each SSE update.
+  if (activeSendInProgress) return false;
 
   if (!switchingWorkspace) return true;
 

@@ -69,7 +69,7 @@ test("upserts incoming rows without duplicating retained sidebar rows", async ()
     rows.map((item) => item.id),
     ["old-b", "new-session", "old-a", "old-c"],
   );
-  assert.equal(rows[0]?.time?.updated, 500);
+  assert.equal(rows[0]?.time?.updated, 200, "runtime session updates must not rewrite sidebar activity time");
 });
 
 test("preserves stored conversation identity when session-store rows refresh", async () => {
@@ -104,5 +104,5 @@ test("preserves stored conversation identity when session-store rows refresh", a
       "Stored B:/workspace/project-b:conv-b",
     ],
   );
-  assert.equal(rows[0]?.time?.updated, 500);
+  assert.equal(rows[0]?.time?.updated, 200, "stored sidebar time survives a session-store refresh");
 });

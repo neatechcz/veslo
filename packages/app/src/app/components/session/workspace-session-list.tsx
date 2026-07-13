@@ -24,8 +24,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../../types";
 import type { WorkspaceActivationOptions } from "../../context/workspace-types";
-import type { WorkspaceBusyMap } from "../../context/workspace-debug";
-import { readSessionStatus } from "../../lib/scoped-session-status";
+import type { SidebarSessionActivity } from "../../context/sidebar-session-activity-projection";
 import {
   getWorkspaceTaskLoadErrorDisplay,
 } from "../../utils";
@@ -114,8 +113,7 @@ type Props = {
   pendingSelectedSessionId?: string | null;
   pendingSelectedWorkspaceId?: string | null;
   suspendProjectReorder?: boolean;
-  sessionStatusById?: Record<string, string>;
-  busySessionByWorkspaceId?: WorkspaceBusyMap;
+  sidebarSessionActivityByRowKey?: Record<string, SidebarSessionActivity>;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -1845,20 +1843,8 @@ export default function WorkspaceSessionList(props: Props) {
     session.conversationId ?? "",
   ].map((value) => value.trim()).filter(Boolean);
 
-  const isBusySession = (workspaceId: string, sessionId: string) =>
-    Boolean(props.busySessionByWorkspaceId?.[workspaceId]?.[sessionId]);
-
-  const isBusyRowSession = (row: FlatSessionRow) =>
-    sessionIdentityIds(row.session).some((id) => isBusySession(row.workspace.id, id));
-
-  const rowSessionStatus = (row: FlatSessionRow) => {
-    const statuses = props.sessionStatusById ?? {};
-    for (const id of sessionIdentityIds(row.session)) {
-      const status = readSessionStatus(statuses, row.workspace.id, id);
-      if (status !== "idle") return status;
-    }
-    return "idle";
-  };
+  const isProjectedRowActive = (row: FlatSessionRow) =>
+    props.sidebarSessionActivityByRowKey?.[row.rowKey]?.active ?? false;
 
   const rowForcesProjectOpen = (row: FlatSessionRow) => {
     const selectedSessionKey = props.selectedSessionKey?.trim() ?? "";
@@ -1873,8 +1859,7 @@ export default function WorkspaceSessionList(props: Props) {
       if (!pendingWorkspaceId || pendingWorkspaceId === row.workspace.id) return true;
     }
 
-    if (rowSessionStatus(row) !== "idle") return true;
-    return isBusyRowSession(row);
+    return isProjectedRowActive(row);
   };
 
   const shouldForceProjectOpen = (group: ProjectSessionGroup) =>
@@ -2012,9 +1997,7 @@ export default function WorkspaceSessionList(props: Props) {
     const session = () => row.session;
     const sessionTarget = () => sidebarSessionOpenTargetForRow(row);
     const isSelected = () => isRowSelected(row);
-    const isSessionActive = () =>
-      rowSessionStatus(row) !== "idle" ||
-      isBusyRowSession(row);
+    const isSessionActive = () => isProjectedRowActive(row);
     const isUnread = () => isSessionUnread(session().id);
     const labelOverride = () => options.label?.().trim() ?? "";
     const label = () => {
@@ -2131,9 +2114,7 @@ export default function WorkspaceSessionList(props: Props) {
     const session = () => row.session;
     const sessionTarget = () => sidebarSessionOpenTargetForRow(row);
     const isSelected = () => isRowSelected(row);
-    const isSessionActive = () =>
-      rowSessionStatus(row) !== "idle" ||
-      isBusyRowSession(row);
+    const isSessionActive = () => isProjectedRowActive(row);
     const isUnread = () => isSessionUnread(session().id);
     const isConnecting = () => isConnectingWorkspace(workspace().id);
     const taskLoadError = () => taskLoadErrorFor(workspace(), row.error);

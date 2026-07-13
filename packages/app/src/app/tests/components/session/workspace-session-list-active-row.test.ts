@@ -40,9 +40,10 @@ test("recent and by-project session rows both use the helper and aria-current", 
 test("active background session rows render a loading spinner", () => {
   assert.match(
     source,
-    /const rowSessionStatus = \(row: FlatSessionRow\) => \{[\s\S]*for \(const id of sessionIdentityIds\(row\.session\)\) \{[\s\S]*const status = readSessionStatus\(statuses, row\.workspace\.id, id\);[\s\S]*const isSessionActive = \(\) =>[\s\S]*rowSessionStatus\(row\) !== "idle"[\s\S]*isBusyRowSession\(row\);/,
-    "session rows should derive activity from live status and workspace busy state",
+    /const isProjectedRowActive = \(row: FlatSessionRow\) =>[\s\S]*sidebarSessionActivityByRowKey\?\.\[row\.rowKey\]\?\.active/,
+    "session rows should derive activity from the sole sidebar projection",
   );
+  assert.match(source, /const rowForcesProjectOpen = \(row: FlatSessionRow\) =>[\s\S]*return isProjectedRowActive\(row\);/);
 
   const spinnerUses =
     source.match(/<Loader2 size=\{11\} class="shrink-0 animate-spin text-amber-10" \/>/g) ?? [];
