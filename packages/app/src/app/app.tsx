@@ -2938,6 +2938,7 @@ export default function App() {
       const previous = previousSidebarSessionActivityShadow[rowKey] ?? null;
       const current = next[rowKey] ?? null;
       if (JSON.stringify(previous) === JSON.stringify(current)) continue;
+      if (!previous?.active && !current?.active) continue;
       recordSendWorkflowTrace("sidebar-session-activity", "sidebar-session-activity:transition", {
         rowKey,
         previous,

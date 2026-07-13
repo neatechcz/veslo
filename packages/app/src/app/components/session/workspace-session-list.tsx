@@ -2027,9 +2027,13 @@ export default function WorkspaceSessionList(props: Props) {
         >
           <span class="relative min-w-0 flex-1">
             <span class="flex items-center gap-1.5 min-w-0">
-              <Show when={isSessionActive()}>
+              <span
+                class="inline-flex shrink-0 overflow-hidden transition-[width,opacity] duration-150 ease-out"
+                classList={{ "w-[11px] opacity-100": isSessionActive(), "w-0 opacity-0": !isSessionActive() }}
+                aria-hidden={!isSessionActive()}
+              >
                 <Loader2 size={11} class="shrink-0 animate-spin text-amber-10" />
-              </Show>
+              </span>
               <span
                 class="text-[13px] text-gray-12 truncate"
                 classList={{ "font-bold": isUnread() }}
@@ -2139,9 +2143,13 @@ export default function WorkspaceSessionList(props: Props) {
         >
           <span class="relative min-w-0 flex-1">
             <span class="flex items-center gap-1.5 min-w-0">
-              <Show when={isSessionActive()}>
+              <span
+                class="inline-flex shrink-0 overflow-hidden transition-[width,opacity] duration-150 ease-out"
+                classList={{ "w-[11px] opacity-100": isSessionActive(), "w-0 opacity-0": !isSessionActive() }}
+                aria-hidden={!isSessionActive()}
+              >
                 <Loader2 size={11} class="shrink-0 animate-spin text-amber-10" />
-              </Show>
+              </span>
               <span
                 class="text-[13px] text-gray-12 truncate"
                 classList={{ "font-bold": isUnread() }}
