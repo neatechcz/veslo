@@ -743,6 +743,9 @@ pub fn spawn_veslo_server(
     ) {
         command = command.env(key, value);
     }
+    for (key, value) in crate::runtime_preferences::runtime_diagnostics_env_overrides(app)? {
+        command = command.env(key, value);
+    }
 
     if let Some(port) = opencode_router_health_port {
         command = command.env("OPENCODE_ROUTER_HEALTH_PORT", port.to_string());

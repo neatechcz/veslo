@@ -21,9 +21,12 @@ import type {
   AppBuildInfo,
   OpenCodeRouterInfo,
   WorkspaceInfo,
+  DesktopRuntimePreferences,
 } from "../lib/tauri";
 import {
   appBuildInfo,
+  desktopRuntimePreferencesRead,
+  desktopRuntimePreferencesWrite,
   engineRestart,
   opencodeRouterRestart,
   opencodeRouterStop,
@@ -55,6 +58,8 @@ function formatUpdateRetryDelay(delayMs: number) {
   if (clampedMs < 60 * 60_000) return `${Math.max(1, Math.ceil(clampedMs / 60_000))}m`;
   return `${Math.max(1, Math.ceil(clampedMs / (60 * 60_000)))}h`;
 }
+
+const SUPPORT_DIAGNOSTICS_STORAGE_KEY = "veslo.supportDiagnostics";
 
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
@@ -378,6 +383,10 @@ export default function SettingsView(props: SettingsViewProps) {
   const [vesloRestartBusy, setVesloRestartBusy] = createSignal(false);
   const [vesloRestartStatus, setVesloRestartStatus] = createSignal<string | null>(null);
   const [vesloRestartError, setVesloRestartError] = createSignal<string | null>(null);
+  const [runtimePreferences, setRuntimePreferences] = createSignal<DesktopRuntimePreferences | null>(null);
+  const [supportDiagnosticsBusy, setSupportDiagnosticsBusy] = createSignal(false);
+  const [supportDiagnosticsStatus, setSupportDiagnosticsStatus] = createSignal<string | null>(null);
+  const [supportDiagnosticsError, setSupportDiagnosticsError] = createSignal<string | null>(null);
   const defaultDenApiBase = getDefaultDenApiBase();
   const [denApiBaseOverride, setDenApiBaseOverride] = createSignal(readDenApiBaseOverride() ?? "");
   const [denApiBaseDraft, setDenApiBaseDraft] = createSignal(getDenApiBase());
@@ -437,6 +446,39 @@ export default function SettingsView(props: SettingsViewProps) {
       setVesloRestartError(message || translate("settings.restart_local_server_failed"));
     } finally {
       setVesloRestartBusy(false);
+    }
+  };
+
+  const supportDiagnosticsEnabled = () => runtimePreferences()?.supportDiagnostics ?? false;
+
+  const persistSupportDiagnosticsBrowserOverride = (enabled: boolean) => {
+    try {
+      window.localStorage?.setItem(SUPPORT_DIAGNOSTICS_STORAGE_KEY, enabled ? "1" : "0");
+    } catch {
+      // Native preference remains the source of truth for the desktop runtime.
+    }
+  };
+
+  const handleToggleSupportDiagnostics = async () => {
+    if (!isTauriRuntime() || props.busy || supportDiagnosticsBusy()) return;
+    setSupportDiagnosticsBusy(true);
+    setSupportDiagnosticsStatus(null);
+    setSupportDiagnosticsError(null);
+    try {
+      const current = runtimePreferences() ?? await desktopRuntimePreferencesRead();
+      const supportDiagnostics = !current.supportDiagnostics;
+      const saved = await desktopRuntimePreferencesWrite({ ...current, supportDiagnostics });
+      setRuntimePreferences(saved);
+      persistSupportDiagnosticsBrowserOverride(saved.supportDiagnostics);
+      setSupportDiagnosticsStatus(
+        saved.supportDiagnostics
+          ? "Support diagnostics enabled. Restart Veslo before reproducing the issue."
+          : "Support diagnostics disabled for the UI. Restart Veslo to stop local services.",
+      );
+    } catch (error) {
+      setSupportDiagnosticsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSupportDiagnosticsBusy(false);
     }
   };
 
@@ -712,6 +754,12 @@ export default function SettingsView(props: SettingsViewProps) {
   onMount(() => {
     if (!isTauriRuntime()) return;
     void appBuildInfo().then((info) => setBuildInfo(info)).catch(() => setBuildInfo(null));
+    void desktopRuntimePreferencesRead()
+      .then((preferences) => {
+        setRuntimePreferences(preferences);
+        persistSupportDiagnosticsBrowserOverride(preferences.supportDiagnostics);
+      })
+      .catch(() => setRuntimePreferences(null));
   });
 
   const formatUptime = (uptimeMs?: number | null) => {
@@ -1565,6 +1613,41 @@ export default function SettingsView(props: SettingsViewProps) {
                 />
               </div>
             </div>
+
+            <Show when={isTauriRuntime()}>
+              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium text-gray-12">Support diagnostics</div>
+                    <div class="text-xs text-gray-10">Collect runtime and send-workflow logs only while Veslo support asks for them. Logs can contain task and session metadata.</div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-label="Toggle support diagnostics"
+                    aria-checked={supportDiagnosticsEnabled()}
+                    disabled={props.busy || supportDiagnosticsBusy()}
+                    class={`relative h-6 w-11 shrink-0 rounded-full border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:opacity-50 ${
+                      supportDiagnosticsEnabled()
+                        ? "border-gray-12/20 bg-gray-12"
+                        : "border-gray-6 bg-gray-3 hover:bg-gray-4"
+                    }`}
+                    onClick={handleToggleSupportDiagnostics}
+                  >
+                    <span class={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-gray-1 shadow-sm transition-transform ${
+                      supportDiagnosticsEnabled() ? "translate-x-5" : "translate-x-0"
+                    }`} />
+                  </button>
+                </div>
+                <div class="text-[11px] text-gray-8">The setting is off by default, writes to the app log folder, and applies to new local services after a Veslo restart.</div>
+                <Show when={supportDiagnosticsStatus()}>
+                  {(status) => <div class="text-xs text-green-11">{status()}</div>}
+                </Show>
+                <Show when={supportDiagnosticsError()}>
+                  {(error) => <div class="text-xs text-red-11">{error()}</div>}
+                </Show>
+              </div>
+            </Show>
 
           </div>
         </Match>

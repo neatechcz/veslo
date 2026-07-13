@@ -532,6 +532,9 @@ pub fn spawn_orchestrator_daemon(
     ) {
         command = command.env(key, value);
     }
+    for (key, value) in crate::runtime_preferences::runtime_diagnostics_env_overrides(app)? {
+        command = command.env(key, value);
+    }
 
     for (key, value) in crate::bun_env::bun_env_overrides() {
         command = command.env(key, value);

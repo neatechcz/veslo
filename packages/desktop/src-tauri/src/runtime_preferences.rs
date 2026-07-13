@@ -9,6 +9,7 @@ const RUNTIME_PREFERENCES_FILE: &str = "runtime-preferences.json";
 #[serde(rename_all = "camelCase")]
 pub struct DesktopRuntimePreferences {
     pub shared_unsandboxed_engine: bool,
+    pub support_diagnostics: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -16,12 +17,15 @@ pub struct DesktopRuntimePreferences {
 struct PersistedRuntimePreferences {
     #[serde(default)]
     shared_unsandboxed_engine: Option<bool>,
+    #[serde(default)]
+    support_diagnostics: Option<bool>,
 }
 
 impl Default for DesktopRuntimePreferences {
     fn default() -> Self {
         Self {
             shared_unsandboxed_engine: default_shared_unsandboxed_engine_enabled(),
+            support_diagnostics: false,
         }
     }
 }
@@ -53,6 +57,16 @@ fn runtime_preferences_path_for_dir(config_dir: PathBuf) -> PathBuf {
     config_dir.join(RUNTIME_PREFERENCES_FILE)
 }
 
+fn support_diagnostics_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|e| format!("Failed to resolve app log directory: {e}"))?
+        .join("support-diagnostics");
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
 fn env_flag_enabled(value: Option<String>) -> bool {
     matches!(
         value
@@ -69,25 +83,49 @@ fn shared_unsandboxed_engine_from_env() -> bool {
         && env_flag_enabled(std::env::var("VESLO_SHARED_OPENCODE_ENGINE").ok())
 }
 
-pub fn read_shared_unsandboxed_engine_override(app: &AppHandle) -> Result<Option<bool>, String> {
+fn support_diagnostics_from_env() -> bool {
+    env_flag_enabled(std::env::var("VESLO_RUNTIME_DIAGNOSTICS").ok())
+}
+
+fn read_persisted_runtime_preferences(
+    app: &AppHandle,
+) -> Result<Option<PersistedRuntimePreferences>, String> {
     let path = runtime_preferences_path(app)?;
     if !path.exists() {
-        return Ok(resolve_shared_unsandboxed_engine_override(None));
+        return Ok(None);
     }
 
     let payload =
         fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-    let parsed: PersistedRuntimePreferences = serde_json::from_str(&payload)
-        .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
+    serde_json::from_str(&payload)
+        .map(Some)
+        .map_err(|e| format!("Failed to parse {}: {e}", path.display()))
+}
+
+pub fn read_shared_unsandboxed_engine_override(app: &AppHandle) -> Result<Option<bool>, String> {
     Ok(resolve_shared_unsandboxed_engine_override(
-        parsed.shared_unsandboxed_engine,
+        read_persisted_runtime_preferences(app)?
+            .and_then(|preferences| preferences.shared_unsandboxed_engine),
     ))
 }
 
+pub fn read_support_diagnostics_override(app: &AppHandle) -> Result<Option<bool>, String> {
+    Ok(read_persisted_runtime_preferences(app)?
+        .and_then(|preferences| preferences.support_diagnostics))
+}
+
 pub fn read_runtime_preferences(app: &AppHandle) -> Result<DesktopRuntimePreferences, String> {
+    let persisted = read_persisted_runtime_preferences(app)?;
     Ok(DesktopRuntimePreferences {
-        shared_unsandboxed_engine: read_shared_unsandboxed_engine_override(app)?
-            .unwrap_or_else(shared_unsandboxed_engine_from_env),
+        shared_unsandboxed_engine: resolve_shared_unsandboxed_engine_override(
+            persisted
+                .as_ref()
+                .and_then(|preferences| preferences.shared_unsandboxed_engine),
+        )
+        .unwrap_or_else(shared_unsandboxed_engine_from_env),
+        support_diagnostics: persisted
+            .and_then(|preferences| preferences.support_diagnostics)
+            .unwrap_or_else(support_diagnostics_from_env),
     })
 }
 
@@ -103,6 +141,7 @@ pub fn write_runtime_preferences(
 
     let persisted = PersistedRuntimePreferences {
         shared_unsandboxed_engine: Some(preferences.shared_unsandboxed_engine),
+        support_diagnostics: Some(preferences.support_diagnostics),
     };
     let payload = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
     fs::write(&path, format!("{payload}\n"))
@@ -121,6 +160,58 @@ pub fn shared_unsandboxed_engine_env_overrides(preference: Option<bool>) -> Vec<
             ("VESLO_DISABLE_SANDBOX".to_string(), "0".to_string()),
             ("VESLO_SHARED_OPENCODE_ENGINE".to_string(), "0".to_string()),
         ],
+        None => Vec::new(),
+    }
+}
+
+pub fn runtime_diagnostics_enabled(app: &AppHandle) -> Result<bool, String> {
+    Ok(read_runtime_preferences(app)?.support_diagnostics)
+}
+
+pub fn runtime_diagnostics_env_overrides(app: &AppHandle) -> Result<Vec<(String, String)>, String> {
+    let preference = read_support_diagnostics_override(app)?;
+    let mut overrides = runtime_diagnostics_env_overrides_from_override(preference);
+    if preference == Some(true) {
+        let dir = support_diagnostics_dir(app)?;
+        overrides.extend([
+            (
+                "VESLO_RUNTIME_TRACE_DIR".to_string(),
+                dir.to_string_lossy().to_string(),
+            ),
+            (
+                "VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE".to_string(),
+                dir.join("send-workflow-trace.server.ndjson")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            (
+                "VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE".to_string(),
+                dir.join("send-workflow-trace.orchestrator.ndjson")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            (
+                "VESLO_OPENCODE_HEALTH_DIAG_FILE".to_string(),
+                dir.join("opencode-health.ndjson")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        ]);
+    }
+    Ok(overrides)
+}
+
+fn runtime_diagnostics_env_overrides_from_override(
+    preference: Option<bool>,
+) -> Vec<(String, String)> {
+    match preference {
+        Some(true) => vec![
+            ("VESLO_RUNTIME_DIAGNOSTICS".to_string(), "1".to_string()),
+            ("VESLO_RUNTIME_TRACE".to_string(), "1".to_string()),
+            ("VESLO_SEND_WORKFLOW_TRACE".to_string(), "1".to_string()),
+            ("VESLO_OPENCODE_HEALTH_DIAG".to_string(), "1".to_string()),
+        ],
+        Some(false) => vec![("VESLO_RUNTIME_DIAGNOSTICS".to_string(), "0".to_string())],
         None => Vec::new(),
     }
 }
@@ -144,8 +235,8 @@ pub fn desktop_runtime_preferences_write(
 mod tests {
     use super::{
         default_shared_unsandboxed_engine_override, resolve_shared_unsandboxed_engine_override,
-        runtime_preferences_path_for_dir, shared_unsandboxed_engine_env_overrides,
-        DesktopRuntimePreferences,
+        runtime_diagnostics_env_overrides_from_override, runtime_preferences_path_for_dir,
+        shared_unsandboxed_engine_env_overrides, DesktopRuntimePreferences,
     };
     use std::path::PathBuf;
 
@@ -155,6 +246,7 @@ mod tests {
             DesktopRuntimePreferences::default().shared_unsandboxed_engine,
             cfg!(any(windows, target_os = "macos"))
         );
+        assert!(!DesktopRuntimePreferences::default().support_diagnostics);
         assert_eq!(
             default_shared_unsandboxed_engine_override(),
             if cfg!(any(windows, target_os = "macos")) {
@@ -212,6 +304,29 @@ mod tests {
     #[test]
     fn missing_preference_does_not_override_parent_env() {
         assert!(shared_unsandboxed_engine_env_overrides(None).is_empty());
+    }
+
+    #[test]
+    fn support_diagnostics_preference_controls_child_diagnostics_env() {
+        let enabled = runtime_diagnostics_env_overrides_from_override(Some(true));
+        assert!(enabled
+            .iter()
+            .any(|(key, value)| key == "VESLO_RUNTIME_DIAGNOSTICS" && value == "1"));
+        assert!(enabled
+            .iter()
+            .any(|(key, value)| key == "VESLO_RUNTIME_TRACE" && value == "1"));
+        assert!(enabled
+            .iter()
+            .any(|(key, value)| key == "VESLO_SEND_WORKFLOW_TRACE" && value == "1"));
+        assert!(enabled
+            .iter()
+            .any(|(key, value)| key == "VESLO_OPENCODE_HEALTH_DIAG" && value == "1"));
+
+        assert_eq!(
+            runtime_diagnostics_env_overrides_from_override(Some(false)),
+            vec![("VESLO_RUNTIME_DIAGNOSTICS".to_string(), "0".to_string())]
+        );
+        assert!(runtime_diagnostics_env_overrides_from_override(None).is_empty());
     }
 
     #[test]

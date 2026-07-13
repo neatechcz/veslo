@@ -53,15 +53,25 @@ test("workspace setup empty state waits for hydrated workspace metadata", () => 
   );
 });
 
-test("temporary runtime UI diagnostic is developer-mode only", () => {
+test("temporary runtime UI diagnostic is gated to developer mode or explicit mutation tracing", () => {
   assert.match(
     sessionSource,
-    /const markTempRuntimeUiRenderSource =[\s\S]*if \(!props\.developerMode\) return;[\s\S]*setTempRuntimeUiRenderSource\(createTempRuntimeUiRenderSnapshot/s,
-    "runtime UI diagnostic updates should not run during normal user sessions",
+    /const sessionUiDiagnosticEnabled = \(\) => props\.developerMode \|\| sessionUiMutationTraceEnabled\(\);/,
+    "one guard should define the only modes where session UI diagnostics may write",
   );
   assert.match(
     sessionSource,
-    /const tempRuntimeUiDiagnosticBadge =[\s\S]*<Show when=\{props\.developerMode\}>[\s\S]*TEMP UI render source/s,
+    /const markTempRuntimeUiRenderSource =[\s\S]*if \(!sessionUiDiagnosticEnabled\(\)\) return;[\s\S]*const snapshot = createTempRuntimeUiRenderSnapshot[\s\S]*setTempRuntimeUiRenderSource\(snapshot\)/s,
+    "flow and direct markers should use the shared diagnostic guard",
+  );
+  assert.match(
+    sessionSource,
+    /createEffect\(\s*on\([\s\S]*if \(!sessionUiDiagnosticEnabled\(\)\) return;[\s\S]*setTempRuntimeUiRenderSource/s,
+    "snapshot metadata effects should not write outside the shared diagnostic guard",
+  );
+  assert.match(
+    sessionSource,
+    /const tempRuntimeUiDiagnosticBadge =[\s\S]*<Show when=\{props\.developerMode\}>[\s\S]*TEMP UI marker/s,
     "the temporary runtime UI badge must be hidden outside developer mode",
   );
 });
@@ -87,6 +97,54 @@ test("session switch records browse scope and routes immediately without arming 
     helperSource,
     /input\.setSessionBrowseScope\(\{[\s\S]*workspaceId: input\.workspaceId,[\s\S]*conversationId: input\.target\?\.conversationId \?\? session\?\.conversationId \?\? null,[\s\S]*opencodeSessionId: input\.target\?\.opencodeSessionId \?\? session\?\.opencodeSessionId \?\? nextSessionId,[\s\S]*\}\);[\s\S]*input\.setView\("session", nextSessionId\);/s,
     "session click navigation should record browse scope before routing to the target session",
+  );
+});
+
+test("dev runtime records bounded session DOM mutation batches alongside state changes", () => {
+  assert.match(
+    sessionSource,
+    /const sessionUiMutationTraceEnabled =[\s\S]*import\.meta\.env\?\.DEV[\s\S]*VITE_VESLO_SESSION_UI_MUTATION_TRACE/s,
+    "the observer must be compiled out of non-dev builds and explicitly enabled for the dev runtime",
+  );
+  assert.match(
+    sessionSource,
+    /new MutationObserver\([\s\S]*observer\.observe\(root, \{ attributes: true, childList: true, subtree: true \}\)/s,
+    "the center pane observer should record structural and attribute DOM writes",
+  );
+  assert.match(
+    sessionSource,
+    /frame = window\.requestAnimationFrame\(\(\) => flush\("animation-frame"\)\)/,
+    "multiple records from one paint should become one trace record",
+  );
+  assert.match(
+    sessionSource,
+    /recordSendTrace\("session-ui:render-source-mark",[\s\S]*recordSendTrace\("session-ui:state-change",[\s\S]*recordSendTrace\("session-ui:dom-mutation-batch",/s,
+    "the trace should correlate named render owners, reactive state changes, and DOM writes",
+  );
+  assert.match(
+    sessionSource,
+    /if \(previous && changedFields\.length === 0\) return;[\s\S]*recordSendTrace\("session-ui:state-change"/s,
+    "state traces should suppress callback runs that did not change a sampled state field",
+  );
+  assert.match(
+    sessionSource,
+    /<MessageList[\s\S]*onMessageBlocksRecomputed=[\s\S]*MessageList\.messageBlocks[\s\S]*markerKind: "message-blocks"/s,
+    "the direct MessageList recompute marker should remain distinct from flow markers",
+  );
+  assert.match(
+    sessionSource,
+    /latestUiMarker: renderSource\.source,[\s\S]*latestUiMarkerKind: renderSource\.markerKind,[\s\S]*latestUiMarkerAgeMs:/s,
+    "DOM batches should describe their newest marker as temporal context rather than a causal render source",
+  );
+  assert.match(
+    sessionSource,
+    /data-testid="session-center-pane"[\s\S]*setSessionUiMutationRoot\(el\)/s,
+    "only the center session surface should be observed, excluding sidebar churn",
+  );
+  assert.match(
+    sessionSource,
+    /collect\(observer\.takeRecords\(\)\);[\s\S]*observer\.disconnect\(\)/s,
+    "observer cleanup should drain and disconnect the browser observer",
   );
 });
 

@@ -794,7 +794,7 @@ function prefixStream(
       }
       const severity: LogLevel = level === "stderr" ? "error" : "info";
       logger.log(severity, line, { stream: level, pid }, label);
-      if (label === "opencode" && process.env.VESLO_OPENCODE_HEALTH_DIAG === "1") {
+      if (label === "opencode" && opencodeHealthDiagEnabled()) {
         writeOpencodeHealthDiag("child-output", { stream: level, pid: pid ?? null, line });
       }
     }
@@ -807,7 +807,7 @@ function prefixStream(
     }
     const severity: LogLevel = level === "stderr" ? "error" : "info";
     logger.log(severity, buffer, { stream: level, pid }, label);
-    if (label === "opencode" && process.env.VESLO_OPENCODE_HEALTH_DIAG === "1") {
+    if (label === "opencode" && opencodeHealthDiagEnabled()) {
       writeOpencodeHealthDiag("child-output", { stream: level, pid: pid ?? null, line: buffer });
     }
   });
@@ -2117,7 +2117,7 @@ async function waitForOpencodeHealthy(
   let lastError: string | null = null;
   let lastLoggedAt = 0;
   const requestTimeoutMs = Math.min(1_500, Math.max(250, timeoutMs));
-  const healthDiag = process.env.VESLO_OPENCODE_HEALTH_DIAG === "1";
+  const healthDiag = opencodeHealthDiagEnabled();
   while (Date.now() - start < timeoutMs) {
     try {
       const health = rawHealth?.baseUrl
@@ -2265,6 +2265,7 @@ async function fetchOpencodeHealthRaw(
 }
 
 function writeOpencodeHealthDiag(event: string, payload: LogAttributes): void {
+  if (!opencodeHealthDiagEnabled()) return;
   const file = process.env.VESLO_OPENCODE_HEALTH_DIAG_FILE?.trim();
   if (!file) return;
   try {
@@ -2278,12 +2279,17 @@ function writeOpencodeHealthDiag(event: string, payload: LogAttributes): void {
   }
 }
 
-function resolveRuntimeTraceFile(dataDir: string): string {
+function resolveRuntimeTraceFile(dataDir: string, runId: string): string {
   const override = process.env.VESLO_RUNTIME_TRACE_FILE?.trim();
-  return override || join(dataDir, "runtime-trace.jsonl");
+  if (override) return override;
+  const traceDir = process.env.VESLO_RUNTIME_TRACE_DIR?.trim();
+  const fileRunId = runId.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 96) || `pid-${process.pid}`;
+  if (traceDir) return join(traceDir, `runtime-trace.${fileRunId}.jsonl`);
+  return join(dataDir, `runtime-trace.${fileRunId}.jsonl`);
 }
 
 function writeRuntimeTrace(file: string, event: string, payload: LogAttributes = {}): void {
+  if (!runtimeTraceEnabled()) return;
   const entry = {
     time: new Date().toISOString(),
     event,
@@ -2304,6 +2310,20 @@ function writeRuntimeTrace(file: string, event: string, payload: LogAttributes =
 function truthyEnv(name: string): boolean {
   const value = process.env[name]?.trim().toLowerCase() ?? "";
   return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function runtimeDiagnosticsDisabled(): boolean {
+  const value = process.env.VESLO_RUNTIME_DIAGNOSTICS?.trim().toLowerCase() ?? "";
+  return value === "0" || value === "false" || value === "no" || value === "off";
+}
+
+function runtimeTraceEnabled(): boolean {
+  if (runtimeDiagnosticsDisabled()) return false;
+  return truthyEnv("VESLO_RUNTIME_TRACE") || Boolean(process.env.VESLO_RUNTIME_TRACE_FILE?.trim());
+}
+
+function opencodeHealthDiagEnabled(): boolean {
+  return !runtimeDiagnosticsDisabled() && truthyEnv("VESLO_OPENCODE_HEALTH_DIAG");
 }
 
 function resolveSendWorkflowTraceFile(): string {
@@ -2327,6 +2347,7 @@ function resolveSendWorkflowTraceMirrorFile(): string | null {
 }
 
 function sendWorkflowTraceEnabled(): boolean {
+  if (runtimeDiagnosticsDisabled()) return false;
   return truthyEnv("VESLO_SEND_WORKFLOW_TRACE") ||
     Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE?.trim()) ||
     Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_MIRROR_FILE?.trim()) ||
@@ -2908,7 +2929,7 @@ async function startOpencode(options: {
     },
     "opencode",
   );
-  if (process.env.VESLO_OPENCODE_HEALTH_DIAG === "1") {
+  if (opencodeHealthDiagEnabled()) {
     writeOpencodeHealthDiag("child-spawned", {
       workspace: options.workspace,
       configDir: options.configDir ?? "",
@@ -3958,7 +3979,7 @@ async function runRouterDaemon(args: ParsedArgs) {
   const opencodeSource = opencodeSourceInput;
   const dataDir = resolveRouterDataDir(args.flags);
   await mkdir(dataDir, { recursive: true });
-  const runtimeTraceFile = resolveRuntimeTraceFile(dataDir);
+  const runtimeTraceFile = resolveRuntimeTraceFile(dataDir, runId);
   const traceRuntime = (event: string, payload: LogAttributes = {}) =>
     writeRuntimeTrace(runtimeTraceFile, event, {
       runId,
@@ -6129,7 +6150,7 @@ async function runStart(args: ParsedArgs) {
 
   const dataDir = resolveRouterDataDir(args.flags);
   await mkdir(dataDir, { recursive: true });
-  const runtimeTraceFile = resolveRuntimeTraceFile(dataDir);
+  const runtimeTraceFile = resolveRuntimeTraceFile(dataDir, runId);
   const traceRuntime = (event: string, payload: LogAttributes = {}) =>
     writeRuntimeTrace(runtimeTraceFile, event, {
       runId,

@@ -39,6 +39,12 @@ type ProgressGroupBlock = {
 
 export type ProgressRenderBlock = ProgressMessageBlock | ProgressGroupBlock;
 
+export type ProgressRenderBlockEntry = {
+  key: string;
+  block: ProgressRenderBlock;
+  unstable: boolean;
+};
+
 export type BuildProgressRenderBlocksInput = {
   messages: MessageWithParts[];
   isStreaming?: boolean;
@@ -51,6 +57,33 @@ type AssistantGroupEntry = {
   message: MessageWithParts;
   messageId: string;
 };
+
+export function progressRenderBlockKey(block: ProgressRenderBlock): string | null {
+  const id = (block.kind === "progress-group" ? block.id : block.messageId).trim();
+  if (!id) return null;
+  return block.kind === "progress-group" ? `progress:${id}` : `message:${id}`;
+}
+
+export function progressRenderBlockEntries(blocks: readonly ProgressRenderBlock[]): ProgressRenderBlockEntry[] {
+  const preferredKeys = blocks.map(progressRenderBlockKey);
+  const preferredKeyCounts = new Map<string, number>();
+  preferredKeys.forEach((key) => {
+    if (!key) return;
+    preferredKeyCounts.set(key, (preferredKeyCounts.get(key) ?? 0) + 1);
+  });
+
+  return blocks.map((block, index) => {
+    const preferredKey = preferredKeys[index];
+    if (preferredKey && preferredKeyCounts.get(preferredKey) === 1) {
+      return { key: preferredKey, block, unstable: false };
+    }
+    return {
+      key: `unstable:${block.kind}:${index}`,
+      block,
+      unstable: true,
+    };
+  });
+}
 
 const messageIdFor = (message: MessageWithParts, fallback: string) => {
   const id = (message.info as { id?: unknown }).id;

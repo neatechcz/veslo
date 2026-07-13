@@ -1,5 +1,5 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import type { JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
+import type { Accessor, JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Bot, Check, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
@@ -31,9 +31,11 @@ import {
 import type { EditableUserMessageDraft } from "./message-editability";
 import {
   buildProgressRenderBlocks,
+  progressRenderBlockEntries,
   type ProgressCommentItem,
   type ProgressGroupItem,
   type ProgressRenderBlock,
+  type ProgressRenderBlockEntry,
   type ProgressStepItem,
 } from "./progress-grouping-model.js";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
@@ -47,6 +49,19 @@ export type PendingMessageState =
       state: "sync-warning";
       reason: "ambiguous-legacy" | "delivery-unconfirmed";
     };
+
+export type MessageBlocksRecomputedTrace = {
+  revision: number;
+  messageCount: number;
+  blockCount: number;
+  changedMessageCount: number;
+  addedMessageCount: number;
+  removedMessageCount: number;
+  toolPartCount: number;
+  stepGroupCount: number;
+  unstableBlockKeyCount: number;
+  streaming: boolean;
+};
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -70,6 +85,7 @@ export type MessageListProps = {
   editableUserMessage?: EditableUserMessageDraft | null;
   onEditUserMessage?: (editable: EditableUserMessageDraft) => void;
   pendingMessageStateById?: Record<string, PendingMessageState>;
+  onMessageBlocksRecomputed?: (trace: MessageBlocksRecomputedTrace) => void;
   footer?: JSX.Element;
 };
 
@@ -620,7 +636,8 @@ export default function MessageList(props: MessageListProps) {
     props.expandedStepIds.has(id) ||
     relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
 
-  const messageBlocks = createMemo<MessageBlockItem[]>(() => {
+  let messageBlocksRevision = 0;
+  const messageBlockEntries = createMemo<ProgressRenderBlockEntry[]>(() => {
     const startedAt = perfNow();
     const nextMessagePartCountById = new Map<string, number>();
     let changedMessageCount = 0;
@@ -689,8 +706,27 @@ export default function MessageList(props: MessageListProps) {
       });
     }
 
-    return blocks;
+    const entries = progressRenderBlockEntries(blocks);
+    untrack(() => {
+      props.onMessageBlocksRecomputed?.({
+        revision: (messageBlocksRevision += 1),
+        messageCount: props.messages.length,
+        blockCount: entries.length,
+        changedMessageCount,
+        addedMessageCount,
+        removedMessageCount,
+        toolPartCount,
+        stepGroupCount,
+        unstableBlockKeyCount: entries.filter((entry) => entry.unstable).length,
+        streaming: Boolean(props.isStreaming),
+      });
+    });
+    return entries;
   });
+
+  const messageBlocks = createMemo<MessageBlockItem[]>(() => messageBlockEntries().map((entry) => entry.block));
+  const messageBlockKeys = createMemo(() => messageBlockEntries().map((entry) => entry.key));
+  const messageBlockByKey = createMemo(() => new Map(messageBlockEntries().map((entry) => [entry.key, entry.block])));
 
   const latestAssistantMessageId = createMemo(() => {
     for (let index = props.messages.length - 1; index >= 0; index -= 1) {
@@ -730,12 +766,7 @@ export default function MessageList(props: MessageListProps) {
     estimateSize: () => 220,
     overscan: VIRTUAL_OVERSCAN,
     getItemKey: (index) => {
-      const block = messageBlocks()[index];
-      if (!block) return `block-${index}`;
-      if (block.kind === "progress-group") {
-        return `progress-${block.messageIds.join(",")}`;
-      }
-      return `message-${block.messageId}`;
+      return messageBlockEntries()[index]?.key ?? `unstable:virtual:${index}`;
     },
   });
 
@@ -753,15 +784,17 @@ export default function MessageList(props: MessageListProps) {
     return cachedVirtualRows;
   });
 
-  const virtualRowByIndex = createMemo(() => {
-    const map = new Map<number, ReturnType<typeof virtualizer.getVirtualItems>[number]>();
+  const virtualRowByKey = createMemo(() => {
+    const currentKeys = new Set(messageBlockKeys());
+    const map = new Map<string, ReturnType<typeof virtualizer.getVirtualItems>[number]>();
     virtualRows().forEach((row) => {
-      map.set(row.index, row);
+      const key = String(row.key);
+      if (currentKeys.has(key)) map.set(key, row);
     });
     return map;
   });
 
-  const virtualRowIndices = createMemo(() => virtualRows().map((row) => row.index));
+  const virtualRowKeys = createMemo(() => Array.from(virtualRowByKey().keys()));
 
   const shouldUseContentVisibility = createMemo(() => !shouldVirtualize() && messageBlocks().length > 500);
   const blockPerfStyle = (index: number): JSX.CSSProperties | undefined => {
@@ -1451,36 +1484,42 @@ export default function MessageList(props: MessageListProps) {
     );
   };
 
-  const renderBlock = (block: MessageBlockItem, blockIndex: number) => {
-    const blockMessageIds = block.kind === "progress-group" ? block.messageIds : [block.messageId];
-    const hasSearchMatch = blockMessageIds.some((id) => props.searchMatchMessageIds?.has(id));
-    const hasActiveSearchMatch = blockMessageIds.some((id) => id === props.activeSearchMessageId);
-    const searchOutlineClass = hasActiveSearchMatch
-      ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl"
-      : hasSearchMatch
-        ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl"
-        : "";
+  const renderBlock = (block: Accessor<MessageBlockItem>, blockIndex: Accessor<number>) => {
+    const blockMessageIds = () => {
+      const current = block();
+      return current.kind === "progress-group" ? current.messageIds : [current.messageId];
+    };
+    const hasSearchMatch = () => blockMessageIds().some((id) => props.searchMatchMessageIds?.has(id));
+    const hasActiveSearchMatch = () => blockMessageIds().some((id) => id === props.activeSearchMessageId);
+    const searchOutlineClass = () =>
+      hasActiveSearchMatch()
+        ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl"
+        : hasSearchMatch()
+          ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl"
+          : "";
 
-    if (block.kind === "progress-group") {
-      const stepGroups = block.items
-        .filter((item): item is Extract<ProgressGroupItem, { kind: "steps" }> => item.kind === "steps")
-        .map((item) => ({ id: item.id, parts: item.parts, mode: item.mode }));
+    if (block().kind === "progress-group") {
+      const progressBlock = () => block() as Extract<MessageBlockItem, { kind: "progress-group" }>;
+      const stepGroups = () =>
+        progressBlock().items
+          .filter((item): item is Extract<ProgressGroupItem, { kind: "steps" }> => item.kind === "steps")
+          .map((item) => ({ id: item.id, parts: item.parts, mode: item.mode }));
       return (
         <div
           class="flex group justify-start"
           data-message-role="assistant"
-          data-message-id={block.messageIds[0] ?? ""}
-          style={blockPerfStyle(blockIndex)}
+          data-message-id={progressBlock().messageIds[0] ?? ""}
+          style={blockPerfStyle(blockIndex())}
         >
           <div
-            class={`w-full relative max-w-[960px] text-gray-12 group ${searchOutlineClass}`}
+            class={`w-full relative max-w-[960px] text-gray-12 group ${searchOutlineClass()}`}
             data-testid="session-progress-group"
           >
             <StepsContainer
-              id={block.id}
-              relatedIds={stepGroups.map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== block.id)}
-              stepGroups={stepGroups}
-              progressItems={block.items}
+              id={progressBlock().id}
+              relatedIds={stepGroups().map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== progressBlock().id)}
+              stepGroups={stepGroups()}
+              progressItems={progressBlock().items}
               isUser={false}
             />
           </div>
@@ -1488,15 +1527,16 @@ export default function MessageList(props: MessageListProps) {
       );
     }
 
-    const groupSpacing = block.isUser ? "mb-3" : "mb-4";
+    const messageBlock = () => block() as Extract<MessageBlockItem, { kind: "message" }>;
+    const groupSpacing = () => messageBlock().isUser ? "mb-3" : "mb-4";
     const isSyntheticSessionError =
-      !block.isUser && block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+      !messageBlock().isUser && messageBlock().messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
     const textGroups = () =>
-      block.groups.filter(
+      messageBlock().groups.filter(
         (group): group is { kind: "text"; part: Part; segment: "intent" | "result" } => group.kind === "text",
       );
     const inlineStepGroups = () =>
-      block.groups
+      messageBlock().groups
         .filter((group) => group.kind === "steps")
         .map((group) => {
           const stepGroup = group as {
@@ -1509,8 +1549,8 @@ export default function MessageList(props: MessageListProps) {
           return { id: stepGroup.id, parts: stepGroup.parts, mode: stepGroup.mode };
         });
     const editableMessage = () =>
-      props.editableUserMessage?.messageId === block.messageId ? props.editableUserMessage : null;
-    const pendingMessageState = () => props.pendingMessageStateById?.[block.messageId] ?? null;
+      props.editableUserMessage?.messageId === messageBlock().messageId ? props.editableUserMessage : null;
+    const pendingMessageState = () => props.pendingMessageStateById?.[messageBlock().messageId] ?? null;
     const pendingMessageError = () => {
       const state = pendingMessageState();
       return state?.state === "error" ? state : null;
@@ -1521,27 +1561,28 @@ export default function MessageList(props: MessageListProps) {
     };
 
     if (isSyntheticSessionError) {
-      const messageText = block.renderableParts
-        .map((part) => partToText(part))
-        .join(" ")
-        .replace(/\s*\n+\s*/g, " ")
-        .replace(/\s{2,}/g, " ")
-        .trim();
+      const messageText = () =>
+        messageBlock().renderableParts
+          .map((part) => partToText(part))
+          .join(" ")
+          .replace(/\s*\n+\s*/g, " ")
+          .replace(/\s{2,}/g, " ")
+          .trim();
 
       return (
         <div
           class="flex group justify-start"
           data-message-role="assistant"
-          data-message-id={block.messageId}
-          style={blockPerfStyle(blockIndex)}
+          data-message-id={messageBlock().messageId}
+          style={blockPerfStyle(blockIndex())}
         >
-          <div class={`w-full relative max-w-[960px] ${searchOutlineClass}`}>
+          <div class={`w-full relative max-w-[960px] ${searchOutlineClass()}`}>
             <div
               class="font-reading type-reading-md inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-red-12 shadow-sm"
               role="alert"
             >
               <CircleAlert size={14} class="mt-0.5 shrink-0" />
-              <div class="min-w-0 break-words">{messageText}</div>
+              <div class="min-w-0 break-words">{messageText()}</div>
             </div>
           </div>
         </div>
@@ -1549,129 +1590,128 @@ export default function MessageList(props: MessageListProps) {
     }
 
     return (
-            <div
-              class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
-              data-testid="session-message-row"
-              data-message-role={block.isUser ? "user" : "assistant"}
-              data-message-id={block.messageId}
-              style={blockPerfStyle(blockIndex)}
-            >
-              <div
-                class={`w-full relative ${
-                  block.isUser
-                    ? "font-reading type-reading-md max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12"
-                    : "font-reading type-reading-md max-w-[960px] text-gray-12 antialiased group"
-                } ${searchOutlineClass}`}
-              >
-                <Show when={attachmentsForMessage(block.message).length > 0}>
-                  <div class={block.isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
-                    <For each={attachmentsForMessage(block.message)}>
-                      {(attachment) => (
-                        <div class="font-product type-ui-sm flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-1/70 px-3 py-2 text-gray-11">
-                          <Show
-                            when={isImageAttachment(attachment.mime)}
-                            fallback={<File size={14} class="text-gray-9" />}
-                          >
-                            <div class="h-12 w-12 rounded-xl bg-gray-2 overflow-hidden border border-gray-6">
-                              <img
-                                src={attachment.url}
-                                alt={attachment.filename}
-                                class="h-full w-full object-cover"
-                              />
-                            </div>
-                          </Show>
-                          <div class="max-w-[180px]">
-                            <div class="truncate text-gray-12">{attachment.filename}</div>
-                            <div class="font-product type-ui-xs text-gray-9">{attachment.mime}</div>
-                          </div>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-                <For each={textGroups()}>
-                  {(group, idx) => (
-                    <div class={idx() === textGroups().length - 1 ? "" : groupSpacing}>
-                      {(() => {
-                        const isStreamingLatestAssistant =
-                          !block.isUser && props.isStreaming && block.messageId === latestAssistantMessageId();
-                        const markdownThrottleMs = isStreamingLatestAssistant ? 550 : 100;
-                        return (
-                          <PartView
-                            part={group.part}
-                            developerMode={props.developerMode}
-                            showThinking={props.showThinking}
-                            workspaceRoot={props.workspaceRoot}
-                            tone={block.isUser ? "dark" : "light"}
-                            renderMarkdown={!block.isUser}
-                            markdownThrottleMs={markdownThrottleMs}
-                            highlightQuery={hasSearchMatch ? props.searchHighlightQuery : undefined}
-                          />
-                        );
-                      })()}
-                    </div>
-                  )}
-                </For>
-                <Show when={inlineStepGroups().length > 0}>
-                  <StepsContainer
-                    id={inlineStepGroups()[0]!.id}
-                    relatedIds={inlineStepGroups().map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== inlineStepGroups()[0]!.id)}
-                    stepGroups={inlineStepGroups()}
-                    isUser={block.isUser}
-                    isInline={true}
-                  />
-                </Show>
-                <Show when={block.isUser && pendingMessageError()}>
-                  <div
-                    class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-red-11"
-                    title={pendingMessageError()?.error ?? undefined}
-                    role="status"
-                  >
-                    <CircleAlert size={12} />
-                    <span>{pendingSubmitFailureLabel(pendingMessageError()?.error)}</span>
-                  </div>
-                </Show>
-                <Show when={block.isUser && pendingMessageSyncWarning()}>
-                  <div
-                    class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-amber-11"
-                    role="status"
-                  >
-                    <CircleAlert size={12} />
-                    <span>{pendingSubmitSyncWarningLabel(pendingMessageSyncWarning()?.reason)}</span>
-                  </div>
-                </Show>
-                <div class="absolute bottom-2 right-2 flex justify-end gap-1 opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
-                  <Show when={editableMessage()}>
-                    {(editable) => (
-                      <button
-                        class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
-                        title={tr("session.edit_message_title")}
-                        aria-label={tr("session.edit_message_title")}
-                        onClick={() => props.onEditUserMessage?.(editable())}
-                      >
-                        <Pencil size={12} />
-                      </button>
-                    )}
-                  </Show>
-                  <button
-                    class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
-                    title={__vesloT("ui.literal.copy_message_1b3i55", __vesloCurrentLocale())}
-                    onClick={() => {
-                      const text = block.renderableParts
-                        .map((part) => partToText(part))
-                        .join("\n");
-                      handleCopy(text, block.messageId);
-                    }}
-                  >
-                    <Show when={copyingId() === block.messageId} fallback={<Copy size={12} />}>
-                      <Check size={12} class="text-green-10" />
+      <div
+        class={`flex group ${messageBlock().isUser ? "justify-end" : "justify-start"}`.trim()}
+        data-testid="session-message-row"
+        data-message-role={messageBlock().isUser ? "user" : "assistant"}
+        data-message-id={messageBlock().messageId}
+        style={blockPerfStyle(blockIndex())}
+      >
+        <div
+          class={`w-full relative ${
+            messageBlock().isUser
+              ? "font-reading type-reading-md max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12"
+              : "font-reading type-reading-md max-w-[960px] text-gray-12 antialiased group"
+          } ${searchOutlineClass()}`}
+        >
+          <Show when={attachmentsForMessage(messageBlock().message).length > 0}>
+            <div class={messageBlock().isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
+              <For each={attachmentsForMessage(messageBlock().message)}>
+                {(attachment) => (
+                  <div class="font-product type-ui-sm flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-1/70 px-3 py-2 text-gray-11">
+                    <Show
+                      when={isImageAttachment(attachment.mime)}
+                      fallback={<File size={14} class="text-gray-9" />}
+                    >
+                      <div class="h-12 w-12 rounded-xl bg-gray-2 overflow-hidden border border-gray-6">
+                        <img
+                          src={attachment.url}
+                          alt={attachment.filename}
+                          class="h-full w-full object-cover"
+                        />
+                      </div>
                     </Show>
-                  </button>
-                </div>
-              </div>
+                    <div class="max-w-[180px]">
+                      <div class="truncate text-gray-12">{attachment.filename}</div>
+                      <div class="font-product type-ui-xs text-gray-9">{attachment.mime}</div>
+                    </div>
+                  </div>
+                )}
+              </For>
             </div>
-          );
-        };
+          </Show>
+          <For each={textGroups()}>
+            {(group, idx) => (
+              <div class={idx() === textGroups().length - 1 ? "" : groupSpacing()}>
+                {(() => {
+                  const isStreamingLatestAssistant =
+                    !messageBlock().isUser && props.isStreaming && messageBlock().messageId === latestAssistantMessageId();
+                  const markdownThrottleMs = isStreamingLatestAssistant ? 550 : 100;
+                  return (
+                    <PartView
+                      part={group.part}
+                      developerMode={props.developerMode}
+                      showThinking={props.showThinking}
+                      workspaceRoot={props.workspaceRoot}
+                      tone={messageBlock().isUser ? "dark" : "light"}
+                      renderMarkdown={!messageBlock().isUser}
+                      markdownThrottleMs={markdownThrottleMs}
+                      highlightQuery={hasSearchMatch() ? props.searchHighlightQuery : undefined}
+                    />
+                  );
+                })()}
+              </div>
+            )}
+          </For>
+          <Show when={inlineStepGroups().length > 0}>
+            <StepsContainer
+              id={inlineStepGroups()[0]!.id}
+              relatedIds={inlineStepGroups().map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== inlineStepGroups()[0]!.id)}
+              stepGroups={inlineStepGroups()}
+              isUser={messageBlock().isUser}
+              isInline={true}
+            />
+          </Show>
+          <Show when={messageBlock().isUser && pendingMessageError()}>
+            <div
+              class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-red-11"
+              title={pendingMessageError()?.error ?? undefined}
+              role="status"
+            >
+              <CircleAlert size={12} />
+              <span>{pendingSubmitFailureLabel(pendingMessageError()?.error)}</span>
+            </div>
+          </Show>
+          <Show when={messageBlock().isUser && pendingMessageSyncWarning()}>
+            <div
+              class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-amber-11"
+              role="status"
+            >
+              <CircleAlert size={12} />
+              <span>{pendingSubmitSyncWarningLabel(pendingMessageSyncWarning()?.reason)}</span>
+            </div>
+          </Show>
+          <div class="absolute bottom-2 right-2 flex justify-end gap-1 opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
+            <Show when={editableMessage()}>
+              {(editable) => (
+                <button
+                  class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
+                  title={tr("session.edit_message_title")}
+                  aria-label={tr("session.edit_message_title")}
+                  onClick={() => props.onEditUserMessage?.(editable())}
+                >
+                  <Pencil size={12} />
+                </button>
+              )}
+            </Show>
+            <button
+              class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
+              title={__vesloT("ui.literal.copy_message_1b3i55", __vesloCurrentLocale())}
+              onClick={() => {
+                const current = messageBlock();
+                const text = current.renderableParts.map((part) => partToText(part)).join("\n");
+                handleCopy(text, current.messageId);
+              }}
+            >
+              <Show when={copyingId() === messageBlock().messageId} fallback={<Copy size={12} />}>
+                <Check size={12} class="text-green-10" />
+              </Show>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div class="pb-24" style={{ contain: "layout paint style" }}>
@@ -1679,7 +1719,9 @@ export default function MessageList(props: MessageListProps) {
         when={shouldVirtualize()}
         fallback={(
           <div class="space-y-4">
-            <For each={messageBlocks()}>{(block, blockIndex) => renderBlock(block, blockIndex())}</For>
+            <For each={messageBlockKeys()}>
+              {(key, blockIndex) => renderBlock(() => messageBlockByKey().get(key)!, blockIndex)}
+            </For>
           </div>
         )}
       >
@@ -1687,7 +1729,9 @@ export default function MessageList(props: MessageListProps) {
           when={virtualRows().length > 0}
           fallback={(
             <div class="space-y-4">
-              <For each={messageBlocks()}>{(block, blockIndex) => renderBlock(block, blockIndex())}</For>
+              <For each={messageBlockKeys()}>
+                {(key, blockIndex) => renderBlock(() => messageBlockByKey().get(key)!, blockIndex)}
+              </For>
             </div>
           )}
         >
@@ -1698,22 +1742,22 @@ export default function MessageList(props: MessageListProps) {
               width: "100%",
             }}
           >
-            <For each={virtualRowIndices()}>
-              {(rowIndex) => {
-                const virtualRow = virtualRowByIndex().get(rowIndex);
-                if (!virtualRow) return null;
-                const block = messageBlocks()[rowIndex];
-                if (!block) return null;
+            <For each={virtualRowKeys()}>
+              {(key) => {
+                const virtualRow = () => virtualRowByKey().get(key);
+                const virtualIndex = () => virtualRow()?.index ?? -1;
+                const virtualRowStyle = () => ({
+                  transform: `translateY(${virtualRow()?.start ?? 0}px)`,
+                });
+                if (virtualIndex() < 0) return null;
                 return (
                   <div
-                    data-index={rowIndex}
+                    data-index={virtualIndex()}
                     ref={(el) => virtualizer.measureElement(el)}
                     class="absolute left-0 top-0 w-full pb-4"
-                    style={{
-                      transform: `translateY(${virtualRow.start}px)`,
-                    }}
+                    style={virtualRowStyle()}
                   >
-                    {renderBlock(block, rowIndex)}
+                    {renderBlock(() => messageBlockByKey().get(key)!, virtualIndex)}
                   </div>
                 );
               }}

@@ -111,6 +111,11 @@ function makeController(options: {
     workspaceId: string | null | undefined,
     type: "session.idle" | "session.error",
   ) => boolean;
+  toolErrorCallbacks?: Array<{
+    kind: "invalid" | "chrome";
+    sessionID: string;
+    workspaceId: string | null | undefined;
+  }>;
 } = {}) {
   const [store, setStore] = makeStore();
   const workspaceSessionIds = options.workspaceSessionIds ?? new Set<string>();
@@ -166,8 +171,20 @@ function makeController(options: {
     setCommandDisplay: () => {},
     recordSyntheticContinueDiagnostic: () => {},
     maybeMarkReloadRequired: () => {},
-    maybeHandleInvalidToolError: () => {},
-    maybeHandleChromeMcpCompletedError: () => {},
+    maybeHandleInvalidToolError: (part, workspaceId) => {
+      options.toolErrorCallbacks?.push({
+        kind: "invalid",
+        sessionID: part.sessionID,
+        workspaceId,
+      });
+    },
+    maybeHandleChromeMcpCompletedError: (part, workspaceId) => {
+      options.toolErrorCallbacks?.push({
+        kind: "chrome",
+        sessionID: part.sessionID,
+        workspaceId,
+      });
+    },
     resolveTranscriptIngestWorkspaceId: (sourceWsId) => sourceWsId || "ws-a",
     resolveSessionIdForMessage: () => null,
     recordPendingTranscriptMessageDeletion: () => {},
@@ -666,6 +683,55 @@ test(
     });
   }),
 );
+
+test("tool error callbacks retain the exact source workspace", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const toolErrorCallbacks: Array<{
+        kind: "invalid" | "chrome";
+        sessionID: string;
+        workspaceId: string | null | undefined;
+      }> = [];
+      const { controller } = makeController({
+        activeWorkspaceId: "ws-b",
+        selectedSessionId: "sess-b",
+        workspaceSessionIds: new Set(["sess-b"]),
+        toolErrorCallbacks,
+      });
+
+      await controller.applyEvent(
+        {
+          type: "message.updated",
+          properties: { info: makeMessage("sess-b", "msg-tool", "assistant") },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+      await controller.applyEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "part-tool",
+              sessionID: "sess-b",
+              messageID: "msg-tool",
+              type: "tool",
+              tool: "chrome-devtools_navigate_page",
+              state: { status: "error", error: "unknown tool" },
+            },
+          },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+
+      assert.deepEqual(toolErrorCallbacks, [
+        { kind: "invalid", sessionID: "sess-b", workspaceId: "ws-b" },
+        { kind: "chrome", sessionID: "sess-b", workspaceId: "ws-b" },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+});
 
 test(
   "text part trace does not infer assistant role from a placeholder message",

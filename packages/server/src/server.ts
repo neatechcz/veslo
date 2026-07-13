@@ -301,6 +301,11 @@ function truthyEnv(name: string): boolean {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
+function runtimeDiagnosticsDisabled(): boolean {
+  const value = process.env.VESLO_RUNTIME_DIAGNOSTICS?.trim().toLowerCase() ?? "";
+  return value === "0" || value === "false" || value === "no" || value === "off";
+}
+
 function resolveSendWorkflowTraceFile(): string {
   const sourceOverride = process.env.VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE?.trim();
   if (sourceOverride) return sourceOverride;
@@ -321,6 +326,7 @@ function resolveSendWorkflowTraceMirrorFile(): string | null {
 }
 
 function sendWorkflowTraceEnabled(): boolean {
+  if (runtimeDiagnosticsDisabled()) return false;
   return truthyEnv("VESLO_SEND_WORKFLOW_TRACE") ||
     Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE?.trim()) ||
     Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_SERVER_MIRROR_FILE?.trim()) ||

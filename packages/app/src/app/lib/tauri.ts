@@ -937,6 +937,7 @@ export type DesktopSandboxEnvironment = {
 
 export type DesktopRuntimePreferences = {
   sharedUnsandboxedEngine: boolean;
+  supportDiagnostics: boolean;
 };
 
 export async function engineInstall(): Promise<ExecResult> {

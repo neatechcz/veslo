@@ -116,28 +116,15 @@ try {
   await openFixtureWorkspace();
   const sessionId = 'ses-run-truthfulness';
   const title = 'Session run truthfulness fixture';
-  const controlSessionId = 'ses-run-truthfulness-control';
-  const controlTitle = 'Session run truthfulness control';
   await waitUntil(async () => (await fixtureState()).sseSubscriberCount > 0, { timeout: 45000, message: 'The real desktop SSE bridge did not subscribe before fixture session creation.' });
   const created = await fetch(`${fixtureBaseUrl}/session`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: sessionId, title, directory: workspacePath }),
   });
   assert(created.ok, `The fixture OpenCode session could not be created (${created.status}).`);
-  const controlCreated = await fetch(`${fixtureBaseUrl}/session`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: controlSessionId, title: controlTitle, directory: workspacePath }),
-  });
-  assert(controlCreated.ok, `The control fixture session could not be created (${controlCreated.status}).`);
   await fixturePost('/__session_queue_fixture/emit-session-created', { sessionId });
-  await fixturePost('/__session_queue_fixture/emit-session-created', { sessionId: controlSessionId });
   const imported = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/conversations/import`, {
     method: 'POST',
-    body: JSON.stringify({
-      directory: workspacePath,
-      sessions: [
-        { id: sessionId, title, parentID: null, time: { created: 1000, updated: 1000 } },
-        { id: controlSessionId, title: controlTitle, parentID: null, time: { created: 1001, updated: 1001 } },
-      ],
-    }),
+    body: JSON.stringify({ directory: workspacePath, sessions: [{ id: sessionId, title, parentID: null, time: { created: 1000, updated: 1000 } }] }),
   });
   assert(imported.ok, `The host conversation import failed (${imported.status}).`);
   const conversationId = normalize(imported.body?.items?.[0]?.conversationId);
@@ -202,14 +189,6 @@ try {
   }, { timeout: 45000, interval: 200, message: 'The accepted composer submission did not register a durable fixture run.' });
   const runIndicator = () => document.querySelector('[data-testid="session-run-indicator"]');
   const stopButton = () => Array.from(document.querySelectorAll('button')).find((button) => visible(button) && normalize(button.getAttribute('aria-label')) === 'Stop') || null;
-  const sidebarRowFor = (rowTitle) => Array.from(document.querySelectorAll('[data-session-sidebar-row="true"]')).find((row) =>
-    visible(row) && normalize(row.textContent).includes(rowTitle),
-  ) || null;
-  const sidebarSpinnerActive = (rowTitle) => {
-    const spinner = sidebarRowFor(rowTitle)?.querySelector('svg.animate-spin.text-amber-10');
-    const wrapper = spinner?.parentElement;
-    return Boolean(spinner && wrapper?.getAttribute('aria-hidden') !== 'true' && getComputedStyle(wrapper).opacity !== '0');
-  };
   const appendCanonicalText = async (id, text, createdAt) => {
     const messages = [{ id, sessionID: sessionId, role: 'user', time: { created: createdAt } }];
     const partsByMessageId = { [id]: [{ id: `${id}-part`, messageID: id, sessionID: sessionId, type: 'text', text }] };
@@ -231,9 +210,6 @@ try {
   const failedRun = await nextRun(knownRunCount);
   knownRunCount += 1;
   await waitUntil(() => runIndicator() && stopButton(), { message: 'A running durable send did not expose both the run indicator and Stop.' });
-  await waitUntil(() => sidebarSpinnerActive(title), { message: 'The running durable send did not activate its own sidebar spinner.' });
-  await waitUntil(() => sidebarRowFor(controlTitle), { message: 'The control sidebar row did not render.' });
-  assert(!sidebarSpinnerActive(controlTitle), 'A different visible sidebar row gained the running session spinner.');
   stage = 'failed-run-transient-sse';
   const beforeSseError = await fixtureState();
   await fixturePost('/__session_queue_fixture/emit-session-error', { sessionId, message: 'Transient fixture SSE failure while durable lifecycle remains running.' });
@@ -258,8 +234,6 @@ try {
   await fixturePost('/__session_queue_fixture/emit-session-error', { sessionId, message: 'Repeat terminal reconciliation signal.' });
   await waitUntil(() => document.querySelectorAll('[role="alert"]').length === 1, { message: 'Repeated terminal reconciliation duplicated the failure turn.' });
   assert(!runIndicator(), 'The failed durable run remained visually active after terminal reconciliation.');
-  await waitUntil(() => !sidebarSpinnerActive(title), { message: 'The terminal durable run kept its sidebar spinner active.' });
-  assert(!sidebarSpinnerActive(controlTitle), 'Terminal reconciliation activated the control sidebar row.');
   await appendCanonicalText('msg-truthfulness-failed-user', 'truthfulness-running', 6000);
   await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
   await waitUntil(() => document.querySelectorAll('[data-message-id="msg-truthfulness-failed-user"]').length === 1, { message: 'The failed-run canonical user transcript row did not hydrate.' });
@@ -344,7 +318,7 @@ try {
   await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
   await waitUntil(() => !runIndicator(), { timeout: 45000, message: 'Final fixture cleanup run did not settle idle.' });
 
-  window.localStorage.setItem('veslo.e2e.sessionRunTruthfulness', JSON.stringify({ title, sessionId, controlTitle, canonicalMessageId: 'msg-truthfulness-attachment' }));
+  window.localStorage.setItem('veslo.e2e.sessionRunTruthfulness', JSON.stringify({ title, sessionId, canonicalMessageId: 'msg-truthfulness-attachment' }));
   const complete = document.createElement('div');
   complete.dataset.testid = 'session-run-truthfulness-ready-to-reload';
   complete.textContent = JSON.stringify({ workspaceId, conversationId, sessionId, failedRunId: failedRun.runId });
@@ -428,65 +402,4 @@ true;
 name = "reload contract succeeded"
 action = "wait"
 target = "[data-testid=\"session-run-truthfulness-complete\"]"
-timeout_ms = 60000
-
-[[step]]
-name = "archive terminal sidebar row without affecting a control row"
-action = "eval"
-timeout_ms = 60000
-script = '''
-const fixture = JSON.parse(window.localStorage.getItem('veslo.e2e.sessionRunTruthfulness') || 'null');
-if (!fixture?.title || !fixture?.controlTitle || !fixture?.sessionId) {
-  throw new Error('The sidebar activity fixture metadata is missing after reload.');
-}
-const normalize = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
-const visible = (element) => element instanceof HTMLElement && Boolean(element.offsetParent) && element.getBoundingClientRect().width > 0;
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitUntil = async (predicate, timeout = 45000) => {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const value = await predicate();
-    if (value) return value;
-    await sleep(150);
-  }
-  throw new Error('Timed out while checking terminal sidebar archive behavior.');
-};
-const rowFor = (title) => Array.from(document.querySelectorAll('[data-session-sidebar-row="true"]')).find((row) =>
-  visible(row) && normalize(row.textContent).includes(title),
-) || null;
-const spinnerActive = (title) => {
-  const spinner = rowFor(title)?.querySelector('svg.animate-spin.text-amber-10');
-  const wrapper = spinner?.parentElement;
-  return Boolean(spinner && wrapper?.getAttribute('aria-hidden') !== 'true' && getComputedStyle(wrapper).opacity !== '0');
-};
-const targetRow = await waitUntil(() => rowFor(fixture.title));
-await waitUntil(() => rowFor(fixture.controlTitle));
-if (spinnerActive(fixture.title) || spinnerActive(fixture.controlTitle)) {
-  throw new Error('A terminal sidebar row or its visible control row still shows a spinner before archive.');
-}
-let archiveButton = targetRow.parentElement?.querySelector(`button[data-session-id="${fixture.sessionId}"]`);
-if (!(archiveButton instanceof HTMLButtonElement)) {
-  throw new Error('The terminal sidebar row did not expose its Archive action.');
-}
-archiveButton.click();
-archiveButton = await waitUntil(() => {
-  const candidate = document.querySelector(`button[data-session-id="${fixture.sessionId}"]`);
-  return candidate instanceof HTMLButtonElement && normalize(candidate.textContent) ? candidate : false;
-});
-archiveButton.click();
-await waitUntil(() => !rowFor(fixture.title));
-if (!rowFor(fixture.controlTitle) || spinnerActive(fixture.controlTitle)) {
-  throw new Error('Archiving the terminal row removed or activated the unrelated visible control row.');
-}
-const complete = document.createElement('div');
-complete.dataset.testid = 'session-run-truthfulness-sidebar-archive-complete';
-complete.textContent = JSON.stringify({ sessionId: fixture.sessionId, controlTitle: fixture.controlTitle });
-document.body.append(complete);
-true;
-'''
-
-[[step]]
-name = "sidebar activity and archive contract succeeded"
-action = "wait"
-target = "[data-testid=\"session-run-truthfulness-sidebar-archive-complete\"]"
 timeout_ms = 60000

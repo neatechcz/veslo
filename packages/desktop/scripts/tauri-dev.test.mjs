@@ -11,11 +11,14 @@ const scriptPath = resolve(__dirname, "./tauri-dev.mjs");
 test("tauri-dev enables the manual Pilot runtime diagnostics by default", () => {
   const source = readFileSync(scriptPath, "utf8");
 
+  assert.match(source, /randomUUID/);
   assert.match(source, /VESLO_TAURI_PILOT/);
   assert.match(source, /manual-pilot/);
   assert.match(source, /pilot:default/);
   assert.match(source, /TAURI_PILOT_SOCKET/);
   assert.match(source, /TAURI_PILOT_LOG_DIR/);
+  assert.match(source, /VESLO_RUNTIME_DIAGNOSTICS/);
+  assert.match(source, /VITE_VESLO_RUNTIME_DIAGNOSTICS/);
   assert.match(source, /VESLO_RUNTIME_TRACE_FILE/);
   assert.match(source, /VESLO_SEND_WORKFLOW_TRACE_FILE/);
   assert.match(source, /VESLO_SEND_WORKFLOW_TRACE_UI_FILE/);
@@ -23,7 +26,10 @@ test("tauri-dev enables the manual Pilot runtime diagnostics by default", () => 
   assert.match(source, /VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE/);
   assert.match(source, /deriveTraceFilePath/);
   assert.match(source, /\.\$\{channel\}\.ndjson/);
+  assert.match(source, /optionalEnvValue\(baseEnv, "VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE"\)/);
+  assert.doesNotMatch(source, /join\(repoRoot, "\.tmp", "send-workflow-trace\.ndjson"\)/);
   assert.match(source, /VITE_VESLO_SEND_WORKFLOW_TRACE/);
+  assert.match(source, /VITE_VESLO_SESSION_UI_MUTATION_TRACE/);
   assert.match(source, /VESLO_OPENCODE_HEALTH_DIAG_FILE/);
   assert.match(source, /runtime-info\.json/);
   assert.match(source, /"--features"/);

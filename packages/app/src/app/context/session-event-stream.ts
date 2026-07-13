@@ -204,8 +204,8 @@ export type SessionEventStreamControllerDeps = {
   setCommandDisplay: (messageID: string, name: string, args: string) => void;
   recordSyntheticContinueDiagnostic: (part: Part) => void;
   maybeMarkReloadRequired: (part: Part) => void;
-  maybeHandleInvalidToolError: (part: Part) => void;
-  maybeHandleChromeMcpCompletedError: (part: Part) => void;
+  maybeHandleInvalidToolError: (part: Part, workspaceId?: string | null) => void;
+  maybeHandleChromeMcpCompletedError: (part: Part, workspaceId?: string | null) => void;
   resolveTranscriptIngestWorkspaceId: (sourceWsId?: string | null) => string;
   resolveSessionIdForMessage: (messageID: string) => string | null;
   recordPendingTranscriptMessageDeletion: (
@@ -870,8 +870,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             });
           }
           deps.maybeMarkReloadRequired(part);
-          deps.maybeHandleInvalidToolError(part);
-          deps.maybeHandleChromeMcpCompletedError(resolvedPart);
+          deps.maybeHandleInvalidToolError(part, sourceWsId);
+          deps.maybeHandleChromeMcpCompletedError(resolvedPart, sourceWsId);
         }
       }
     }
