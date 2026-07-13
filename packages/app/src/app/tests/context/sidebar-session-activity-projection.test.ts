@@ -40,6 +40,48 @@ test("old terminal cannot suppress a newer durable run", () => {
   assert.deepEqual(result["ws-a:ses-a"], { active: true, phase: "running", source: "session-status" });
 });
 
+test("connection-unavailable diagnostic suppresses stale running mirrors for its durable run", () => {
+  const key = scopedSessionStatusKey("ws-a", "ses-a");
+  const result = project({
+    sessionStatusById: { [key]: "running" },
+    workspaceBusy: { "ws-a": { "ses-a": true } },
+    tokens: { [key]: { kind: "durable", generation: 1, runId: "run-a" } },
+    diagnostics: {
+      [key]: {
+        status: "submitted",
+        stale: false,
+        recoveryState: "connection-unavailable",
+        runId: "run-a",
+        sessionId: "ses-a",
+        workspaceId: "ws-a",
+        conversationId: "conv-ses-a",
+      },
+    },
+  });
+  assert.deepEqual(result["ws-a:ses-a"], { active: false, phase: "error", source: "lifecycle" });
+});
+
+test("transcript-unavailable diagnostic suppresses a stale busy mirror after a terminal run", () => {
+  const key = scopedSessionStatusKey("ws-a", "ses-a");
+  const result = project({
+    sessionStatusById: { [key]: "running" },
+    workspaceBusy: { "ws-a": { "ses-a": true } },
+    tokens: { [key]: { kind: "durable", generation: 1, runId: "run-a" } },
+    diagnostics: {
+      [key]: {
+        status: "completed",
+        stale: false,
+        recoveryState: "transcript-unavailable",
+        runId: "run-a",
+        sessionId: "ses-a",
+        workspaceId: "ws-a",
+        conversationId: "conv-ses-a",
+      },
+    },
+  });
+  assert.deepEqual(result["ws-a:ses-a"], { active: false, phase: "error", source: "lifecycle" });
+});
+
 test("scoped status cannot leak from another workspace", () => {
   const result = project({
     sessionStatusById: { [scopedSessionStatusKey("ws-b", "ses-a")]: "running", "ses-a": "running" },

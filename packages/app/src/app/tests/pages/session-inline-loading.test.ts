@@ -303,8 +303,8 @@ test("pending send state renders an immediate local echo while the footer owns r
 
   assert.match(
     sessionSource,
-    /const showFooterRunIndicator = createMemo\(\(\) => showRunIndicator\(\)\);[\s\S]*footer=\{\s*showFooterRunIndicator\(\) \?/s,
-    "the standard dot run indicator should remain visible while waiting for backend assistant output",
+    /const recoveryNotice = createMemo\(\(\) => runPresentation\(\)\.recoveryNotice \?\? null\);[\s\S]*const showFooterRunIndicator = createMemo\(\(\) => showRunIndicator\(\) \|\| Boolean\(recoveryNotice\(\)\)\);[\s\S]*footer=\{\s*showFooterRunIndicator\(\) \?/s,
+    "the footer should cover both the standard run indicator and a non-streaming recovery notice",
   );
 });
 

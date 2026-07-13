@@ -60,6 +60,25 @@ export type VesloServerCapabilities = {
 
 export type VesloServerStatus = "connected" | "disconnected" | "limited" | "auth_desync";
 
+export type VesloServerReachability =
+  | "reachable"
+  | "limited"
+  | "unreachable"
+  | "auth_desync";
+
+export type VesloRuntimeReadiness =
+  | "ready"
+  | "starting"
+  | "degraded"
+  | "unavailable"
+  | "not-applicable"
+  | "unknown";
+
+export type VesloServerConnectionSnapshot = {
+  serverReachability: VesloServerReachability;
+  runtimeReadiness: VesloRuntimeReadiness;
+};
+
 export type VesloRuntimeChainStatus =
   | "server_running"
   | "runtime_chain_ready"

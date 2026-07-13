@@ -373,6 +373,7 @@ function controllerHarness(options?: { ingestTerminalTranscript?: (input: { runI
   const abortCalls: unknown[] = [];
   const drainCalls: Array<{ workspaceId: string; conversationId: string; delayMs: number }> = [];
   const traceEntries: Array<Record<string, unknown>> = [];
+  const backgroundTraceEntries: Array<Array<Record<string, unknown>>> = [];
   const reconcileCalls: Array<{
     workspaceId: string;
     conversationId: string;
@@ -385,7 +386,11 @@ function controllerHarness(options?: { ingestTerminalTranscript?: (input: { runI
     queueStore: queue,
     timers: timers.port,
     resolveWorkspace: (workspaceId) => workspaces.find((workspace) => workspace.id === workspaceId) ?? null,
-    createBackgroundRunTrace: createRunTrace,
+    createBackgroundRunTrace: () => {
+      const trace = createRunTrace();
+      backgroundTraceEntries.push(trace.entries);
+      return trace;
+    },
     submitOpenCode: async (input) => {
       submitCalls.push(input);
       if (behavior.submitError) throw behavior.submitError;
@@ -450,6 +455,7 @@ function controllerHarness(options?: { ingestTerminalTranscript?: (input: { runI
     abortCalls,
     drainCalls,
     traceEntries,
+    backgroundTraceEntries,
     reconcileCalls,
   };
 }
@@ -1070,8 +1076,8 @@ test("queue drain keeps pending work blocked while latest lifecycle is active", 
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
 });
 
-test("queue drain fails stale active latest runs and wakes queued work", async () => {
-  const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
+test("queue drain delegates generic stale active runs to normal lifecycle reconciliation", async () => {
+  const { controller, lifecycle, queue, submitCalls, timers, backgroundTraceEntries } = controllerHarness();
   enqueuePendingRun(queue);
   lifecycle.statusResult = {
     runId: "run-zombie",
@@ -1086,10 +1092,22 @@ test("queue drain fails stale active latest runs and wakes queued work", async (
   expect(queue.items[0]?.state).toBe("pending");
   expect(submitCalls).toEqual([]);
   expect(lifecycle.calls).toContain("status:ws_1:conv-a:latest");
-  expect(lifecycle.calls).toContain(
-    "markFailed:ws_1:run-zombie:run lifecycle stale/no-progress while draining queued conversation runs",
-  );
+  expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
+  expect(backgroundTraceEntries.flat()).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:queue-drain-stale-active-deferred",
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-zombie",
+    waitReason: "engine_unreachable",
+  }));
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+
+  timers.fire(timers.activeTimers()[0]!.id);
+  await flushMicrotasks();
+
+  expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-zombie");
+  expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([2_000]);
 });
 
 test("lifecycle reconcile keeps polling stale status until terminal", async () => {

@@ -86,8 +86,8 @@ test("composer exposes send result so the parent can handle failed handoff state
 test("composer clears transferred drafts through the revision-owned handoff", () => {
   assert.match(
     composerSource,
-    /const sendDisabled = createMemo\(\(\) => !hasDraftContent\(\) \|\| \(props\.busy && !props\.isStreaming\)\);/,
-    "global busy should only disable send outside streaming/run-indicator mode",
+    /const sendDisabled = createMemo\(\(\) =>\s*props\.recoveryBlocked === true \|\| !hasDraftContent\(\) \|\| \(props\.busy && !props\.isStreaming\)\s*\);/,
+    "global busy should only disable send outside streaming/run-indicator mode, except an explicit recovery block",
   );
 
   assert.match(

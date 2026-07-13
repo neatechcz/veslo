@@ -1824,6 +1824,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           directory,
           runId: result.runId,
           clientMessageId: result.clientMessageId,
+          diagnosticTraceId: sendTraceId,
         });
       }
       deps.holdVisibleRuntimeActivity(
@@ -2147,6 +2148,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             directory,
             runId: serverFirstSubmitResult.runId,
             clientMessageId: serverFirstSubmitResult.clientMessageId,
+            diagnosticTraceId: sendTraceId,
           });
         }
       }

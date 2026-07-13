@@ -49,6 +49,7 @@ type ComposerProps = {
   developerMode: boolean;
   busy: boolean;
   isStreaming: boolean;
+  recoveryBlocked?: boolean;
   stopShortcutConfirmPending?: boolean;
   compactTopSpacing?: boolean;
   compactWidth?: boolean;
@@ -1052,8 +1053,10 @@ export default function Composer(props: ComposerProps) {
   // A running lifecycle owns the global activity state. Once it is visible,
   // another Enter must be able to admit a durable server queue item even while
   // the first submit is finishing its local handoff bookkeeping.
-  const submitLocked = createMemo(() => sending() && !props.isStreaming);
-  const sendDisabled = createMemo(() => !hasDraftContent() || (props.busy && !props.isStreaming));
+  const submitLocked = createMemo(() => props.recoveryBlocked === true || (sending() && !props.isStreaming));
+  const sendDisabled = createMemo(() =>
+    props.recoveryBlocked === true || !hasDraftContent() || (props.busy && !props.isStreaming)
+  );
   const beginSending = () => setSendingCount((count) => count + 1);
   const finishSending = () => setSendingCount((count) => Math.max(0, count - 1));
 
@@ -1680,6 +1683,7 @@ export default function Composer(props: ComposerProps) {
 
     if (event.key === "Enter") {
       event.preventDefault();
+      if (props.recoveryBlocked) return;
       if (sending() && !props.isStreaming) return;
       if (props.busy && !props.isStreaming) return;
       if (event.ctrlKey || event.metaKey) {
@@ -2036,7 +2040,11 @@ export default function Composer(props: ComposerProps) {
                                   busy: props.busy,
                                   hasDraftContent: hasDraftContent(),
                                 });
-                                if ((sending() && !props.isStreaming) || (props.busy && !props.isStreaming)) {
+                                if (
+                                  props.recoveryBlocked ||
+                                  (sending() && !props.isStreaming) ||
+                                  (props.busy && !props.isStreaming)
+                                ) {
                                   recordSendTrace("sendButton:blocked", {
                                     sending: sending(),
                                     busy: props.busy,

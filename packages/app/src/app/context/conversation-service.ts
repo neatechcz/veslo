@@ -196,7 +196,6 @@ export type ConversationPassiveReadPolicy = {
   reason: string;
   workspaceId?: string | null;
   directory?: string | null;
-  serverStartRecoveryKey?: string | null;
 };
 
 type ConversationManagedProfile = {
@@ -213,14 +212,14 @@ type ConversationEngineInfo = {
   opencodePassword?: string | null;
 };
 
-const ACTIVE_LIVE_READ_RECOVERY_START_TTL_MS = 30_000;
-
 export type ConversationServiceDeps<Client extends ConversationServiceClient = ConversationServiceClient> = {
   vesloServerClient: () => Client | null;
   vesloServerStatus: () => string;
   isTauriRuntime: () => boolean;
   startupPreference: () => StartupPreference | null;
-  ensureLocalVesloServerRunning: () => Promise<boolean>;
+  ensureLocalVesloServerRunning: (options?: {
+    requireRuntimeChainReady?: boolean;
+  }) => Promise<boolean>;
   workspaces: () => ConversationServiceWorkspace[];
   activeWorkspaceId: () => string;
   activeWorkspaceRoot: () => string;
@@ -352,10 +351,7 @@ export function createConversationService<Client extends ConversationServiceClie
 
   const passiveReadPolicyAllowsServerStart = (policy: ConversationPassiveReadPolicy | undefined) =>
     policy?.intent === "write-follow-up" ||
-    policy?.intent === "write-control" ||
-    Boolean(policy?.serverStartRecoveryKey?.trim());
-
-  const activeLiveReadRecoveryStartedAtByKey = new Map<string, number>();
+    policy?.intent === "write-control";
 
   const recordPassiveServerStartDeclined = (policy: ConversationPassiveReadPolicy | undefined) => {
     deps.recordSendTrace("conversation-read:server-start-declined", {
@@ -383,30 +379,6 @@ export function createConversationService<Client extends ConversationServiceClie
     if (!allowServerStart) {
       recordPassiveServerStartDeclined(policy);
       return null;
-    }
-
-    const recoveryKey = policy?.serverStartRecoveryKey?.trim() ?? "";
-    if (recoveryKey) {
-      const previousAttemptAt = activeLiveReadRecoveryStartedAtByKey.get(recoveryKey) ?? 0;
-      const now = Date.now();
-      if (previousAttemptAt > 0 && now - previousAttemptAt < ACTIVE_LIVE_READ_RECOVERY_START_TTL_MS) {
-        deps.recordSendTrace("conversation-read:server-start-recovery-skipped", {
-          reason: "bounded-recovery-window",
-          intent: policy?.intent ?? "unspecified",
-          workspaceId: policy?.workspaceId ?? null,
-          directory: policy?.directory ?? null,
-          vesloServerStatus: deps.vesloServerStatus(),
-        });
-        return null;
-      }
-      activeLiveReadRecoveryStartedAtByKey.set(recoveryKey, now);
-      deps.recordSendTrace("conversation-read:server-start-recovery-attempt", {
-        reason: policy?.reason ?? "unspecified",
-        intent: policy?.intent ?? "unspecified",
-        workspaceId: policy?.workspaceId ?? null,
-        directory: policy?.directory ?? null,
-        vesloServerStatus: deps.vesloServerStatus(),
-      });
     }
 
     let attemptedServerStart = false;
@@ -884,17 +856,12 @@ export function createConversationService<Client extends ConversationServiceClie
     sessionId: string,
     limit: number,
     directory?: string,
-    options?: { activeVisibleSelectedSession?: boolean },
   ) => {
-    const recoveryKey = options?.activeVisibleSelectedSession
-      ? [workspaceId.trim(), directory?.trim() ?? "", sessionId.trim()].join("\0")
-      : "";
     const serverClient = await resolvePassiveConversationReadClient({
       intent: "live-read",
       reason: "getTranscriptFromVesloReadApi",
       workspaceId,
       directory,
-      serverStartRecoveryKey: recoveryKey,
     });
     if (!serverClient) return null;
     const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
@@ -1426,6 +1393,7 @@ export function createConversationService<Client extends ConversationServiceClie
     opencodeSessionId?: string | null;
     sessionId?: string | null;
     runId: string;
+    clientMessageId?: string | null;
   }) => {
     const serverClient = await resolvePassiveConversationReadClient({
       intent: "status-poll",
@@ -1513,6 +1481,108 @@ export function createConversationService<Client extends ConversationServiceClie
     return null;
   };
 
+  const recoverAcceptedConversationTranscript = async (scope: {
+    workspaceId: string;
+    directory?: string | null;
+    conversationId: string;
+    opencodeSessionId?: string | null;
+    sessionId: string;
+    runId: string;
+    clientMessageId?: string | null;
+  }) => {
+    const sessionId = scope.opencodeSessionId?.trim() || scope.sessionId.trim();
+    if (!sessionId) return null;
+    const recoverExactTranscript = () => recoverConversationTranscript({
+      workspaceId: scope.workspaceId,
+      sessionId,
+      directory: scope.directory,
+      expectedRunId: scope.runId,
+    });
+
+    // A terminal status already obtained by the lifecycle owner is sufficient
+    // for the normal transcript path. Do not re-ensure a healthy local server
+    // for every completed answer; use foreground recovery only when no client
+    // is available or the direct transcript read proves that the remembered
+    // client is stale.
+    const recoverAfterEnsure = async () => {
+      const status = await recoverAcceptedConversationRunStatus(scope);
+      if (!status || status.stale || !["completed", "failed", "aborted"].includes(status.status)) return null;
+      return recoverExactTranscript();
+    };
+    if (!deps.vesloServerClient()) return recoverAfterEnsure();
+    try {
+      return await recoverExactTranscript();
+    } catch (error) {
+      deps.recordSendTrace("accepted-run-transcript-recovery:direct-read-error", {
+        workspaceId: scope.workspaceId.trim(),
+        conversationId: scope.conversationId.trim(),
+        runId: scope.runId.trim(),
+        clientMessageId: scope.clientMessageId?.trim() || null,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      return recoverAfterEnsure();
+    }
+  };
+
+  const recoverAcceptedConversationRunStatus = async (scope: {
+    workspaceId: string;
+    directory?: string | null;
+    conversationId: string;
+    opencodeSessionId?: string | null;
+    sessionId?: string | null;
+    runId: string;
+    clientMessageId?: string | null;
+  }) => {
+    const workspaceId = scope.workspaceId.trim();
+    const conversationId = scope.conversationId.trim();
+    const runId = scope.runId.trim();
+    if (!workspaceId || !conversationId || !runId) return null;
+
+    // A client object is only a remembered URL/auth pair. Foreground recovery
+    // must revalidate the owned local server even when that stale client still
+    // exists, otherwise a red server loops in passive transport failures.
+    const hadClientBeforeEnsure = Boolean(deps.vesloServerClient());
+    deps.recordSendTrace("accepted-run-status-recovery:server-only-ensure-started", {
+      workspaceId,
+      conversationId,
+      runId,
+      clientMessageId: scope.clientMessageId?.trim() || null,
+      hadClientBeforeEnsure,
+    });
+    const ensured = await deps.ensureLocalVesloServerRunning({
+      requireRuntimeChainReady: false,
+    }).catch(() => false);
+    if (!ensured || !deps.vesloServerClient()) {
+      deps.recordSendTrace("accepted-run-status-recovery:server-only-ensure-failed", {
+        workspaceId,
+        conversationId,
+        runId,
+        clientMessageId: scope.clientMessageId?.trim() || null,
+        hadClientBeforeEnsure,
+      });
+      return null;
+    }
+
+    const status = await readConversationRunStatus({
+      workspaceId,
+      directory: scope.directory,
+      conversationId,
+      opencodeSessionId: scope.opencodeSessionId,
+      sessionId: scope.sessionId,
+      runId,
+      clientMessageId: scope.clientMessageId,
+    });
+    if (!status) {
+      deps.recordSendTrace("accepted-run-status-recovery:refreshed-status-unavailable", {
+        workspaceId,
+        conversationId,
+        runId,
+        clientMessageId: scope.clientMessageId?.trim() || null,
+      });
+    }
+    return status;
+  };
+
   return {
     vesloServerClient: deps.vesloServerClient,
     resolveConversationServerWorkspaceId,
@@ -1529,6 +1599,8 @@ export function createConversationService<Client extends ConversationServiceClie
     abortConversationFromVesloWriteApi,
     resolveConversationRunForSession,
     readConversationRunStatus,
+    recoverAcceptedConversationRunStatus,
     recoverConversationTranscript,
+    recoverAcceptedConversationTranscript,
   };
 }

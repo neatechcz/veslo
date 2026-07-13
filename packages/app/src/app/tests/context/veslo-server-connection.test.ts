@@ -6,12 +6,14 @@ import { createRoot } from "solid-js";
 import {
   createVesloServerConnection,
   mergeVesloServerDescriptorEvent,
+  resolveVesloRuntimeReadiness,
   resolveVesloServerAuth,
   resolveVesloServerBaseUrl,
   type VesloServerConnectionClientFactory,
 } from "../../context/veslo-server-connection.js";
 import { VesloServerError } from "../../lib/veslo-server.js";
 import type { VesloServerCapabilities } from "../../lib/veslo-server.js";
+import { clearPerfLogs, readPerfLogs } from "../../lib/perf-log.js";
 import type { VesloServerInfo } from "../../lib/tauri.js";
 
 const capabilities = (): VesloServerCapabilities => ({
@@ -98,7 +100,11 @@ test("server health checks distinguish no-token limited mode from auth desync", 
         throw new VesloServerError(403, "forbidden", "Forbidden");
       }
       if (token === "bad-token") {
-        throw new VesloServerError(401, "invalid_bearer_token", "Invalid bearer token");
+        throw new VesloServerError(
+          401,
+          "invalid_bearer_token",
+          "Invalid bearer token",
+        );
       }
       return capabilities();
     },
@@ -117,18 +123,30 @@ test("server health checks distinguish no-token limited mode from auth desync", 
         createClient: factory,
       });
 
-      assert.deepEqual(await connection.checkVesloServer("http://worker.test"), {
-        status: "limited",
-        capabilities: null,
-      });
-      assert.deepEqual(await connection.checkVesloServer("http://worker.test", "bad-token"), {
-        status: "auth_desync",
-        capabilities: null,
-      });
-      assert.deepEqual(await connection.checkVesloServer("http://worker.test", "token"), {
-        status: "connected",
-        capabilities: capabilities(),
-      });
+      assert.deepEqual(
+        await connection.checkVesloServer("http://worker.test"),
+        {
+          status: "limited",
+          capabilities: null,
+          runtimeReadiness: "not-applicable",
+        },
+      );
+      assert.deepEqual(
+        await connection.checkVesloServer("http://worker.test", "bad-token"),
+        {
+          status: "auth_desync",
+          capabilities: null,
+          runtimeReadiness: "unknown",
+        },
+      );
+      assert.deepEqual(
+        await connection.checkVesloServer("http://worker.test", "token"),
+        {
+          status: "connected",
+          capabilities: capabilities(),
+          runtimeReadiness: "not-applicable",
+        },
+      );
     } finally {
       dispose();
     }
@@ -170,7 +188,9 @@ test("manual connection test requires authenticated server status", async () => 
         createClient: factory,
       });
 
-      const ok = await connection.testVesloServerConnection({ urlOverride: "http://worker.test" });
+      const ok = await connection.testVesloServerConnection({
+        urlOverride: "http://worker.test",
+      });
 
       assert.equal(ok, false);
       assert.equal(connection.vesloServerStatus(), "limited");
@@ -182,8 +202,9 @@ test("manual connection test requires authenticated server status", async () => 
   });
 });
 
-test("local Tauri server check requires runtimeChain readiness", async () => {
+test("local Tauri server check preserves server reachability when the runtime is unavailable", async () => {
   let rootStatusCalls = 0;
+  let restartCalls = 0;
   const workspaceStatusCalls: string[] = [];
   const factory: VesloServerConnectionClientFactory = () => ({
     baseUrl: "http://127.0.0.1:8787",
@@ -207,8 +228,19 @@ test("local Tauri server check requires runtimeChain readiness", async () => {
         runtimeChain: {
           status: "runtime_chain_ready",
           checkedAt: Date.now(),
-          orchestrator: { configured: true, daemonUrl: "http://127.0.0.1:52008", ok: true, engineTopology: "shared-unsandboxed", error: null },
-          sharedEngine: { running: true, pending: false, engineState: "ready", baseUrl: "http://127.0.0.1:53553" },
+          orchestrator: {
+            configured: true,
+            daemonUrl: "http://127.0.0.1:52008",
+            ok: true,
+            engineTopology: "shared-unsandboxed",
+            error: null,
+          },
+          sharedEngine: {
+            running: true,
+            pending: false,
+            engineState: "ready",
+            baseUrl: "http://127.0.0.1:53553",
+          },
           proxy: { workspaceId: "ws-root", ok: true, status: 200, error: null },
         },
       };
@@ -217,31 +249,36 @@ test("local Tauri server check requires runtimeChain readiness", async () => {
       statusForWorkspace: async (workspaceId: string) => {
         workspaceStatusCalls.push(workspaceId);
         return {
-      ok: true,
-      version: "test",
-      uptimeMs: 1,
-      readOnly: false,
-      approval: { mode: "manual", timeoutMs: 1 },
-      corsOrigins: [],
-      workspaceCount: 1,
-      activeWorkspaceId: "ws-a",
-      workspace: null,
-      authorizedRoots: [],
-      server: { host: "127.0.0.1", port: 8787, configPath: null },
-      tokenSource: { client: "generated", host: "generated" },
-      runtimeChain: {
-        status: "orchestrator_unavailable",
-        checkedAt: Date.now(),
-        orchestrator: {
-          configured: true,
-          daemonUrl: "http://127.0.0.1:52008",
-          ok: false,
-          engineTopology: null,
-          error: "connect ECONNREFUSED",
-        },
-        sharedEngine: { running: null, pending: null, engineState: null, baseUrl: null },
-        proxy: { workspaceId: "ws-a", ok: null, status: null, error: null },
-      },
+          ok: true,
+          version: "test",
+          uptimeMs: 1,
+          readOnly: false,
+          approval: { mode: "manual", timeoutMs: 1 },
+          corsOrigins: [],
+          workspaceCount: 1,
+          activeWorkspaceId: "ws-a",
+          workspace: null,
+          authorizedRoots: [],
+          server: { host: "127.0.0.1", port: 8787, configPath: null },
+          tokenSource: { client: "generated", host: "generated" },
+          runtimeChain: {
+            status: "orchestrator_unavailable",
+            checkedAt: Date.now(),
+            orchestrator: {
+              configured: true,
+              daemonUrl: "http://127.0.0.1:52008",
+              ok: false,
+              engineTopology: null,
+              error: "connect ECONNREFUSED",
+            },
+            sharedEngine: {
+              running: null,
+              pending: null,
+              engineState: null,
+              baseUrl: null,
+            },
+            proxy: { workspaceId: "ws-a", ok: null, status: null, error: null },
+          },
         };
       },
     } as any,
@@ -263,17 +300,255 @@ test("local Tauri server check requires runtimeChain readiness", async () => {
           activeWorkspaceId: () => "ws-a",
           activeWorkspaceRoot: () => "/tmp/ws-a",
         },
+        vesloServerInfo: async () => runningHostInfo(),
+        vesloServerRestart: async () => {
+          restartCalls += 1;
+          return runningHostInfo();
+        },
         createClient: factory,
       });
 
-      assert.deepEqual(await connection.checkVesloServer("http://127.0.0.1:8787", "token"), {
-        status: "disconnected",
-        capabilities: null,
-      });
+      assert.equal(
+        await connection.testVesloServerConnection({
+          urlOverride: "http://127.0.0.1:8787",
+          token: "token",
+        }),
+        true,
+      );
       assert.equal(rootStatusCalls, 0);
       assert.deepEqual(workspaceStatusCalls, ["ws-a"]);
-      assert.equal(connection.vesloServerDiagnostics()?.runtimeChain?.status, "orchestrator_unavailable");
+      assert.equal(connection.vesloServerStatus(), "connected");
+      assert.deepEqual(connection.vesloServerCapabilities(), capabilities());
+      assert.equal(
+        connection.vesloServerDiagnostics()?.runtimeChain?.status,
+        "orchestrator_unavailable",
+      );
+      assert.deepEqual(connection.vesloServerConnectionSnapshot(), {
+        serverReachability: "reachable",
+        runtimeReadiness: "unavailable",
+      });
+      assert.equal(
+        await connection.ensureLocalVesloServerRunning({
+          ignoreStartupPreference: true,
+        }),
+        false,
+      );
+      assert.equal(restartCalls, 0);
     } finally {
+      dispose();
+    }
+  });
+});
+
+test("runtime readiness maps local runtime diagnostics without changing external server reachability", () => {
+  const diagnostics = (
+    status:
+      | "runtime_chain_ready"
+      | "server_running"
+      | "shared_engine_unhealthy"
+      | "orchestrator_unavailable"
+      | "proxy_unreachable",
+    pending = false,
+  ) => ({
+    ok: true,
+    version: "test",
+    uptimeMs: 1,
+    readOnly: false,
+    approval: { mode: "manual" as const, timeoutMs: 1 },
+    corsOrigins: [],
+    workspaceCount: 1,
+    activeWorkspaceId: "ws-a",
+    workspace: null,
+    authorizedRoots: [],
+    server: { host: "127.0.0.1", port: 8787, configPath: null },
+    tokenSource: { client: "generated", host: "generated" },
+    runtimeChain: {
+      status,
+      checkedAt: Date.now(),
+      orchestrator: {
+        configured: true,
+        daemonUrl: "http://127.0.0.1:52008",
+        ok: true,
+        engineTopology: "shared-unsandboxed",
+        error: null,
+      },
+      sharedEngine: {
+        running: !pending,
+        pending,
+        engineState: pending ? "starting" : "ready",
+        baseUrl: null,
+      },
+      proxy: {
+        workspaceId: "ws-a",
+        ok: status === "runtime_chain_ready",
+        status: null,
+        error: null,
+      },
+    },
+  });
+
+  assert.equal(
+    resolveVesloRuntimeReadiness({
+      localRuntimeContract: true,
+      diagnostics: diagnostics("runtime_chain_ready"),
+    }),
+    "ready",
+  );
+  assert.equal(
+    resolveVesloRuntimeReadiness({
+      localRuntimeContract: true,
+      diagnostics: diagnostics("server_running"),
+    }),
+    "starting",
+  );
+  assert.equal(
+    resolveVesloRuntimeReadiness({
+      localRuntimeContract: true,
+      diagnostics: diagnostics("shared_engine_unhealthy", true),
+    }),
+    "starting",
+  );
+  assert.equal(
+    resolveVesloRuntimeReadiness({
+      localRuntimeContract: true,
+      diagnostics: diagnostics("shared_engine_unhealthy"),
+    }),
+    "degraded",
+  );
+  assert.equal(
+    resolveVesloRuntimeReadiness({
+      localRuntimeContract: true,
+      diagnostics: diagnostics("orchestrator_unavailable"),
+    }),
+    "unavailable",
+  );
+  assert.equal(
+    resolveVesloRuntimeReadiness({
+      localRuntimeContract: true,
+      diagnostics: diagnostics("proxy_unreachable"),
+    }),
+    "degraded",
+  );
+  assert.equal(
+    resolveVesloRuntimeReadiness({
+      localRuntimeContract: false,
+      diagnostics: diagnostics("server_running"),
+    }),
+    "not-applicable",
+  );
+});
+
+test("connection tracing records distinct runtime transitions without poll noise", async () => {
+  clearPerfLogs();
+  let runtimeChainStatus: "server_running" | "runtime_chain_ready" =
+    "server_running";
+  const factory: VesloServerConnectionClientFactory = () => ({
+    baseUrl: "http://127.0.0.1:8787",
+    health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
+    capabilities: async () => capabilities(),
+    workspace: {
+      statusForWorkspace: async () => ({
+        ok: true,
+        version: "test",
+        uptimeMs: 1,
+        readOnly: false,
+        approval: { mode: "manual", timeoutMs: 1 },
+        corsOrigins: [],
+        workspaceCount: 1,
+        activeWorkspaceId: "ws-a",
+        workspace: null,
+        authorizedRoots: [],
+        server: { host: "127.0.0.1", port: 8787, configPath: null },
+        tokenSource: { client: "generated", host: "generated" },
+        runtimeChain: {
+          status: runtimeChainStatus,
+          checkedAt: Date.now(),
+          orchestrator: {
+            configured: true,
+            daemonUrl: "http://127.0.0.1:52008",
+            ok: true,
+            engineTopology: "shared-unsandboxed",
+            error: null,
+          },
+          sharedEngine: {
+            running: runtimeChainStatus === "runtime_chain_ready",
+            pending: runtimeChainStatus === "server_running",
+            engineState:
+              runtimeChainStatus === "runtime_chain_ready"
+                ? "ready"
+                : "starting",
+            baseUrl: null,
+          },
+          proxy: {
+            workspaceId: "ws-a",
+            ok: runtimeChainStatus === "runtime_chain_ready",
+            status: 200,
+            error: null,
+          },
+        },
+      }),
+    } as any,
+  });
+
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => "local",
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => true,
+        isTauriRuntime: () => true,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+        },
+        createClient: factory,
+      });
+
+      await connection.testVesloServerConnection({
+        urlOverride: "http://127.0.0.1:8787",
+        token: "token",
+      });
+      runtimeChainStatus = "runtime_chain_ready";
+      await connection.testVesloServerConnection({
+        urlOverride: "http://127.0.0.1:8787",
+        token: "token",
+      });
+
+      const transitions = readPerfLogs().filter(
+        (entry) =>
+          entry.scope === "workspace.requests" &&
+          entry.event === "veslo-connection-state",
+      );
+      assert.equal(transitions.length, 2);
+      assert.deepEqual(
+        transitions.map((entry) => ({
+          source: entry.payload?.source,
+          serverReachability: entry.payload?.serverReachability,
+          runtimeReadiness: entry.payload?.runtimeReadiness,
+          runtimeChainStatus: entry.payload?.runtimeChainStatus,
+        })),
+        [
+          {
+            source: "manual-test",
+            serverReachability: "reachable",
+            runtimeReadiness: "starting",
+            runtimeChainStatus: "server_running",
+          },
+          {
+            source: "manual-test",
+            serverReachability: "reachable",
+            runtimeReadiness: "ready",
+            runtimeChainStatus: "runtime_chain_ready",
+          },
+        ],
+      );
+    } finally {
+      clearPerfLogs();
       dispose();
     }
   });
@@ -312,7 +587,12 @@ test("local server-only ensure does not require runtimeChain readiness before ru
               engineTopology: null,
               error: "connect ECONNREFUSED",
             },
-            sharedEngine: { running: null, pending: null, engineState: null, baseUrl: null },
+            sharedEngine: {
+              running: null,
+              pending: null,
+              engineState: null,
+              baseUrl: null,
+            },
             proxy: { workspaceId: "ws-a", ok: null, status: null, error: null },
           },
         };
@@ -394,7 +674,12 @@ test("local ensure single-flights each readiness mode independently", async () =
             engineTopology: "shared-unsandboxed",
             error: null,
           },
-          sharedEngine: { running: true, pending: false, engineState: "ready", baseUrl: "http://127.0.0.1:53553" },
+          sharedEngine: {
+            running: true,
+            pending: false,
+            engineState: "ready",
+            baseUrl: "http://127.0.0.1:53553",
+          },
           proxy: { workspaceId: "ws-a", ok: true, status: 200, error: null },
         },
       }),
@@ -425,18 +710,109 @@ test("local ensure single-flights each readiness mode independently", async () =
         createClient: factory,
       });
 
-      const runtimeChain = connection.ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+      const runtimeChain = connection.ensureLocalVesloServerRunning({
+        ignoreStartupPreference: true,
+      });
       const serverOnly = connection.ensureLocalVesloServerRunning({
         ignoreStartupPreference: true,
         requireRuntimeChainReady: false,
       });
-      const runtimeChainDuplicate = connection.ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+      const runtimeChainDuplicate = connection.ensureLocalVesloServerRunning({
+        ignoreStartupPreference: true,
+      });
 
       assert.equal(infoCalls, 2);
       releaseInfo?.();
 
-      assert.deepEqual(await Promise.all([runtimeChain, serverOnly, runtimeChainDuplicate]), [true, true, true]);
+      assert.deepEqual(
+        await Promise.all([runtimeChain, serverOnly, runtimeChainDuplicate]),
+        [true, true, true],
+      );
       assert.equal(infoCalls, 2);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("local ensure reaches its owner deadline when Tauri server info never resolves", async () => {
+  let restartCalls = 0;
+
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => "local",
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => false,
+        isTauriRuntime: () => true,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+        },
+        localEnsureTimeoutMs: 1,
+        vesloServerInfo: () => new Promise(() => {}),
+        vesloServerRestart: async () => {
+          restartCalls += 1;
+          return runningHostInfo();
+        },
+      });
+
+      assert.equal(
+        await connection.ensureLocalVesloServerRunning({
+          ignoreStartupPreference: true,
+          requireRuntimeChainReady: false,
+        }),
+        false,
+      );
+      assert.equal(restartCalls, 0);
+      assert.equal(connection.vesloServerStatus(), "disconnected");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("local ensure applies the same deadline when Tauri restart never resolves", async () => {
+  let restartCalls = 0;
+
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => "local",
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => false,
+        isTauriRuntime: () => true,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+        },
+        localEnsureTimeoutMs: 1,
+        vesloServerInfo: async () => null,
+        vesloServerRestart: () => {
+          restartCalls += 1;
+          return new Promise(() => {});
+        },
+      });
+
+      assert.equal(
+        await connection.ensureLocalVesloServerRunning({
+          ignoreStartupPreference: true,
+          requireRuntimeChainReady: false,
+        }),
+        false,
+      );
+      assert.equal(restartCalls, 1);
+      assert.equal(connection.vesloServerStatus(), "disconnected");
     } finally {
       dispose();
     }
@@ -450,7 +826,11 @@ test("local ensure respawns the owned server once on auth desync", async () => {
     health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
     capabilities: async () => {
       if (restartCalls === 0) {
-        throw new VesloServerError(401, "invalid_bearer_token", "Invalid bearer token");
+        throw new VesloServerError(
+          401,
+          "invalid_bearer_token",
+          "Invalid bearer token",
+        );
       }
       return capabilities();
     },
@@ -471,8 +851,19 @@ test("local ensure respawns the owned server once on auth desync", async () => {
         runtimeChain: {
           status: "runtime_chain_ready",
           checkedAt: Date.now(),
-          orchestrator: { configured: true, daemonUrl: "http://127.0.0.1:52008", ok: true, engineTopology: "shared-unsandboxed", error: null },
-          sharedEngine: { running: true, pending: false, engineState: "ready", baseUrl: "http://127.0.0.1:53553" },
+          orchestrator: {
+            configured: true,
+            daemonUrl: "http://127.0.0.1:52008",
+            ok: true,
+            engineTopology: "shared-unsandboxed",
+            error: null,
+          },
+          sharedEngine: {
+            running: true,
+            pending: false,
+            engineState: "ready",
+            baseUrl: "http://127.0.0.1:53553",
+          },
           proxy: { workspaceId: "ws-a", ok: true, status: 200, error: null },
         },
       }),
@@ -503,7 +894,9 @@ test("local ensure respawns the owned server once on auth desync", async () => {
         createClient: factory,
       });
 
-      const ok = await connection.ensureLocalVesloServerRunning({ ignoreStartupPreference: true });
+      const ok = await connection.ensureLocalVesloServerRunning({
+        ignoreStartupPreference: true,
+      });
 
       assert.equal(ok, true);
       assert.equal(restartCalls, 1);

@@ -208,17 +208,11 @@ test("dashboard view props expose unread session ids", () => {
   );
 });
 
-test("dashboard view props expose background session activity state", () => {
+test("dashboard view props expose the sidebar activity projection", () => {
   assert.match(
     dashboardSource,
-    /sessionStatusById: Record<string, string>;/,
-    "DashboardViewProps should include live session status state for sidebar rows",
-  );
-
-  assert.match(
-    dashboardSource,
-    /busySessionByWorkspaceId\?: WorkspaceBusyMap;/,
-    "DashboardViewProps should include workspace busy state for background sidebar rows",
+    /sidebarSessionActivityByRowKey: Record<string, SidebarSessionActivity>;/,
+    "DashboardViewProps should expose the sole sidebar activity input",
   );
 });
 
@@ -230,17 +224,17 @@ test("session wires unread session ids into WorkspaceSessionList", () => {
   );
 });
 
-test("dashboard wires background session activity state into WorkspaceSessionList", () => {
+test("dashboard and session wire the same activity projection into WorkspaceSessionList", () => {
   assert.match(
     dashboardSource,
-    /sessionStatusById=\{props\.sessionStatusById\}/,
-    "Dashboard should pass live session status into WorkspaceSessionList",
+    /sidebarSessionActivityByRowKey=\{props\.sidebarSessionActivityByRowKey\}/,
+    "Dashboard should pass the activity projection into WorkspaceSessionList",
   );
 
   assert.match(
-    dashboardSource,
-    /busySessionByWorkspaceId=\{props\.busySessionByWorkspaceId\}/,
-    "Dashboard should pass workspace busy state into WorkspaceSessionList",
+    sessionSource,
+    /sidebarSessionActivityByRowKey:\s*props\.sidebarSessionActivityByRowKey/,
+    "Session should pass the same activity projection into WorkspaceSessionList",
   );
 });
 

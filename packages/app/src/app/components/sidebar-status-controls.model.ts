@@ -1,4 +1,4 @@
-import type { VesloServerStatus } from "../lib/veslo-server";
+import type { VesloRuntimeReadiness, VesloServerReachability } from "../lib/veslo-server";
 import { currentLocale, t } from "../../i18n";
 
 const tr = (key: string) => t(key, currentLocale());
@@ -9,9 +9,9 @@ export function getOpencodeStatusMeta(clientConnected: boolean) {
     : { text: "text-gray-10", label: tr("status.offline") };
 }
 
-export function getVesloStatusMeta(vesloServerStatus: VesloServerStatus) {
-  switch (vesloServerStatus) {
-    case "connected":
+export function getVesloStatusMeta(serverReachability: VesloServerReachability) {
+  switch (serverReachability) {
+    case "reachable":
       return { text: "text-green-11", label: tr("status.connected") };
     case "limited":
       return { text: "text-amber-11", label: tr("status.limited") };
@@ -22,9 +22,24 @@ export function getVesloStatusMeta(vesloServerStatus: VesloServerStatus) {
   }
 }
 
+export function getRuntimeReadinessMeta(runtimeReadiness: VesloRuntimeReadiness) {
+  switch (runtimeReadiness) {
+    case "ready":
+      return { text: "text-green-11", label: tr("status.connected") };
+    case "starting":
+      return { text: "text-amber-11", label: tr("status.starting_engine") };
+    case "degraded":
+      return { text: "text-amber-11", label: tr("status.limited") };
+    case "unavailable":
+      return { text: "text-amber-11", label: tr("status.unavailable") };
+    default:
+      return null;
+  }
+}
+
 export function getUnifiedStatusMeta(
   clientConnected: boolean,
-  vesloServerStatus: VesloServerStatus,
+  serverReachability: VesloServerReachability,
   runtimeAvailableWithoutClient = false,
   isLoggedIn = true,
 ) {
@@ -35,10 +50,13 @@ export function getUnifiedStatusMeta(
   void clientConnected;
   void runtimeAvailableWithoutClient;
 
-  if (isLoggedIn && vesloServerStatus === "connected") {
+  if (isLoggedIn && serverReachability === "reachable") {
     return { dot: "bg-green-9", text: "text-green-11", label: tr("status.ready") };
   }
-  if (vesloServerStatus === "auth_desync") {
+  if (serverReachability === "limited") {
+    return { dot: "bg-amber-9", text: "text-amber-11", label: tr("status.limited") };
+  }
+  if (serverReachability === "auth_desync") {
     return { dot: "bg-red-9", text: "text-red-11", label: tr("errors.authentication_failed") };
   }
   return { dot: "bg-red-9", text: "text-red-11", label: tr("status.unavailable") };

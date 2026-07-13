@@ -67,6 +67,7 @@ import ShareWorkspaceModal from "../components/share-workspace-modal";
 import { parseVesloWorkspaceIdFromUrl } from "../lib/veslo-server";
 import type {
   VesloServerClient,
+  VesloServerConnectionSnapshot,
   VesloServerSettings,
   VesloServerStatus,
 } from "../lib/veslo-server";
@@ -339,6 +340,7 @@ export type SessionViewProps = {
   onLogout: () => Promise<void> | void;
   onSignIn: () => Promise<void> | void;
   vesloServerStatus: VesloServerStatus;
+  vesloServerConnection: VesloServerConnectionSnapshot;
   startupPreference: StartupPreference | null;
   hideTitlebar: boolean;
   vesloServerClient: VesloServerClient | null;
@@ -481,6 +483,8 @@ export type SessionViewProps = {
   historyUnavailable: SessionHistoryUnavailableView | null;
   historyUnavailableRetrying: boolean;
   retryUnavailableHistory: (sessionId: string) => Promise<void> | void;
+  retryAcceptedRunForSession: (sessionId: string, workspaceId?: string | null) => number;
+  retryTerminalTranscriptRecoveryForSession: (sessionId: string, workspaceId?: string | null) => number;
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
   loadEarlierMessages: (sessionId: string) => Promise<void>;
@@ -2122,7 +2126,21 @@ export default function SessionView(props: SessionViewProps) {
   const hasAbortableBackendRun = createMemo(() => runPresentation().abortable);
   const runPhase = createMemo(() => runPresentation().phase);
   const showRunIndicator = createMemo(() => runPresentation().showIndicator);
-  const showFooterRunIndicator = createMemo(() => showRunIndicator());
+  const recoveryNotice = createMemo(() => runPresentation().recoveryNotice ?? null);
+  const recoveryBlockedComposer = createMemo(() => runPresentation().composerMode === "recovery-blocked");
+  const showFooterRunIndicator = createMemo(() => showRunIndicator() || Boolean(recoveryNotice()));
+  const retryAcceptedRunRecovery = () => {
+    const sessionId = props.selectedSessionId?.trim() ?? "";
+    const workspaceId = activeRunDiagnostic()?.workspaceId ?? null;
+    if (!sessionId) return;
+    props.retryAcceptedRunForSession(sessionId, workspaceId);
+  };
+  const retryTerminalTranscriptRecovery = () => {
+    const sessionId = props.selectedSessionId?.trim() ?? "";
+    const workspaceId = activeRunDiagnostic()?.workspaceId ?? null;
+    if (!sessionId) return;
+    props.retryTerminalTranscriptRecoveryForSession(sessionId, workspaceId);
+  };
   const operationalError = createMemo(() => props.error?.trim() || null);
   createEffect(() => {
     const sessionId = props.selectedSessionId;
@@ -3693,7 +3711,7 @@ export default function SessionView(props: SessionViewProps) {
         }}
         statusControlsProps={{
           clientConnected: props.clientConnected,
-          vesloServerStatus: props.vesloServerStatus,
+          vesloServerConnection: props.vesloServerConnection,
           runtimeAvailableWithoutClient: runtimeAvailableWithoutClient(),
           authenticatedUser: props.authenticatedUser,
           onOpenSettings: () => openSettings("general"),
@@ -3924,6 +3942,7 @@ export default function SessionView(props: SessionViewProps) {
                         developerMode={props.developerMode}
                         busy={props.busy}
                         isStreaming={showRunIndicator()}
+                        recoveryBlocked={recoveryBlockedComposer()}
                         stopShortcutConfirmPending={escapeStopConfirmationPending()}
                         compactWidth={useCompactCenterColumn()}
                         onSend={handleSendPrompt}
@@ -4043,8 +4062,31 @@ export default function SessionView(props: SessionViewProps) {
                           runPhase() === "error" ? "bg-red-9" : "bg-gray-8 animate-pulse"
                         }`}
                       />
-                      <span class="truncate">{runDiagnosticLabel() || thinkingStatus() || runLabel()}</span>
-                      <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
+                      <span class="truncate">
+                        {recoveryNotice() === "connection-unavailable"
+                          ? tr("session.run_observation_exhausted")
+                          : recoveryNotice() === "transcript-unavailable"
+                            ? tr("session.run_transcript_unavailable")
+                            : runDiagnosticLabel() || thinkingStatus() || runLabel()}
+                      </span>
+                      <Show when={recoveryNotice()}>
+                        <button
+                          type="button"
+                          class="ml-auto shrink-0 rounded border border-red-8 px-2 py-0.5 text-[10px] font-medium text-red-11 hover:bg-red-2"
+                          onClick={() => {
+                            if (recoveryNotice() === "connection-unavailable") {
+                              retryAcceptedRunRecovery();
+                            } else {
+                              retryTerminalTranscriptRecovery();
+                            }
+                          }}
+                        >
+                          {tr("session.history_retry")}
+                        </button>
+                      </Show>
+                      <Show when={!recoveryNotice()}>
+                        <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
+                      </Show>
                     </div>
                   </div>
                 </div>
@@ -4201,6 +4243,7 @@ export default function SessionView(props: SessionViewProps) {
                 developerMode={props.developerMode}
                 busy={props.busy || aiAccessLoading()}
                 isStreaming={showRunIndicator()}
+                recoveryBlocked={recoveryBlockedComposer()}
                 stopShortcutConfirmPending={escapeStopConfirmationPending()}
                 compactTopSpacing={todoCount() > 0}
                 compactWidth={useCompactCenterColumn()}

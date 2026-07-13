@@ -988,15 +988,9 @@ export function createConversationRunLifecycleController(
         try {
           const latest = await lifecycleOwner.status(workspace.id, normalizedConversationId, "latest");
           if (latest && isActiveLifecycleStatus(latest.status)) {
-            const reconcilePollMs = normalizeIntervalMs(options.resolveLifecycleReconcilePollMs?.()) ?? 1_000;
-            const reconcileMaxAttempts = Math.max(
-              1,
-              Math.floor(options.resolveLifecycleReconcileMaxAttempts?.() ?? 600),
-            );
-            if (shouldFailStaleActiveLifecycleRun(latest, reconcileMaxAttempts, reconcilePollMs)) {
+            if (latest.stale === true) {
               const activeRunId = latest.runId?.trim() || "latest";
-              const activeRunTrace = runTrace;
-              activeRunTrace.record("server:conversation-run:queue-drain-stale-active-failing", {
+              runTrace.record("server:conversation-run:queue-drain-stale-active-deferred", {
                 workspaceId,
                 conversationId: normalizedConversationId,
                 runId: activeRunId,
@@ -1004,25 +998,12 @@ export function createConversationRunLifecycleController(
                 stale: latest.stale,
                 ...lifecycleStatusTraceFields(latest),
               });
-              await lifecycleOwner.markFailed(
-                workspace.id,
-                activeRunId,
-                "run lifecycle stale/no-progress while draining queued conversation runs",
-              ).then(() => {
-                activeRunTrace.record("server:conversation-run:queue-drain-stale-active-failed", {
-                  workspaceId,
-                  conversationId: normalizedConversationId,
-                  runId: activeRunId,
-                });
-                scheduleQueueDrain(workspaceId, normalizedConversationId, 0);
-              }).catch((error) => {
-                activeRunTrace.record("server:conversation-run:queue-drain-stale-active-failed-error", {
-                  workspaceId,
-                  conversationId: normalizedConversationId,
-                  runId: activeRunId,
-                  message: error instanceof Error ? error.message : String(error),
-                });
-                scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
+              scheduleLifecycleReconcile({
+                workspace,
+                conversationId: normalizedConversationId,
+                runId: activeRunId,
+                reason: "queue-drain-active-stale",
+                delayMs: 0,
               });
               return;
             }

@@ -5,7 +5,11 @@ import {
   onCleanup,
   type Accessor,
 } from "solid-js";
-import { listen, type Event as TauriEvent, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  listen,
+  type Event as TauriEvent,
+  type UnlistenFn,
+} from "@tauri-apps/api/event";
 
 import {
   createInitialVesloServerStatusStabilityState,
@@ -21,12 +25,16 @@ import {
   resolveVesloServerAuthFailureStatus,
   type VesloServerCapabilities,
   type VesloServerClient,
+  type VesloServerConnectionSnapshot,
   type VesloServerDiagnostics,
+  type VesloServerReachability,
+  type VesloRuntimeReadiness,
   type VesloServerSettings,
   type VesloServerStatus,
 } from "../lib/veslo-server";
 import { resolveManagedAiGatewayBaseUrl } from "../lib/ai-access";
-import { recordPerfLog } from "../lib/perf-log";
+import { recordPerfLog, runtimePerfAuditEnabled } from "../lib/perf-log";
+import { truncateErrorField } from "../lib/session-error";
 import { resolveRunningVesloServerHostInfo } from "../lib/veslo-server-host";
 import {
   vesloServerInfo as defaultVesloServerInfo,
@@ -79,10 +87,16 @@ export type VesloServerConnectionClientFactory = (
 
 export type VesloServerConnectionWorkspaceDeps = {
   workspacesHydrated: Accessor<boolean>;
-  activeWorkspaceDisplay: Accessor<{ workspaceType: string; remoteType?: string | null }>;
+  activeWorkspaceDisplay: Accessor<{
+    workspaceType: string;
+    remoteType?: string | null;
+  }>;
   activeWorkspaceId: Accessor<string>;
   activeWorkspaceRoot: Accessor<string>;
-  createRemoteWorkspaceFlow?: (input: { vesloHostUrl: string; vesloToken?: string | null }) => Promise<unknown>;
+  createRemoteWorkspaceFlow?: (input: {
+    vesloHostUrl: string;
+    vesloToken?: string | null;
+  }) => Promise<unknown>;
   refreshEngine?: () => Promise<void>;
 };
 
@@ -105,10 +119,13 @@ export type VesloServerConnectionDeps = {
   createClient?: VesloServerConnectionClientFactory;
   vesloServerInfo?: () => Promise<VesloServerInfo | null>;
   vesloServerRestart?: () => Promise<VesloServerInfo | null>;
-  vesloServerStateListen?: (handler: (info: VesloServerInfo) => void) => Promise<UnlistenFn>;
+  vesloServerStateListen?: (
+    handler: (info: VesloServerInfo) => void,
+  ) => Promise<UnlistenFn>;
   opencodeRouterInfo?: () => Promise<OpenCodeRouterInfo | null>;
   orchestratorStatus?: () => Promise<OrchestratorStatus | null>;
   orchestratorEnginesList?: () => Promise<OrchestratorEngineSnapshot[]>;
+  localEnsureTimeoutMs?: number;
   now?: () => number;
 };
 
@@ -126,6 +143,13 @@ export type EnsureLocalVesloServerRunningOptions = {
   requireRuntimeChainReady?: boolean;
 };
 
+export type VesloServerProbeResult = {
+  status: VesloServerStatus;
+  capabilities: VesloServerCapabilities | null;
+  runtimeReadiness?: VesloRuntimeReadiness;
+  failureReason?: string;
+};
+
 export type ResolveVesloServerBaseUrlInput = {
   startupPreference: StartupPreference | null;
   activeHostInfo: VesloServerConnectionHostInfo | null;
@@ -138,20 +162,63 @@ export type ResolveVesloServerAuthInput = {
   settingsToken: string;
 };
 
-export type VesloServerConnection = ReturnType<typeof createVesloServerConnection>;
+export type VesloServerConnection = ReturnType<
+  typeof createVesloServerConnection
+>;
+
+const DEFAULT_LOCAL_VESLO_SERVER_ENSURE_TIMEOUT_MS = 15_000;
 
 function stateKey(value: unknown): string {
   return safeStringify(value ?? null);
 }
 
-function defaultCreateClient(input: VesloServerConnectionClientFactoryInput) {
-  return createVesloServerClient(input) as VesloServerConnectionClient & VesloServerClient;
+function summarizeConnectionFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : safeStringify(error);
+  return truncateErrorField(message, 240) ?? "Unknown connection failure";
 }
 
-function defaultListenVesloServerState(handler: (info: VesloServerInfo) => void) {
-  return listen<VesloServerInfo>(VESLO_SERVER_STATE_EVENT, (event: TauriEvent<VesloServerInfo>) => {
-    handler(event.payload);
-  });
+function runtimeChainTraceDetails(
+  diagnostics: VesloServerDiagnostics | null | undefined,
+) {
+  const runtimeChain = diagnostics?.runtimeChain;
+  return {
+    runtimeChainStatus: runtimeChain?.status ?? null,
+    orchestratorConfigured: runtimeChain?.orchestrator.configured ?? null,
+    orchestratorOk: runtimeChain?.orchestrator.ok ?? null,
+    orchestratorError: truncateErrorField(
+      runtimeChain?.orchestrator.error,
+      240,
+    ),
+    sharedEngineRunning: runtimeChain?.sharedEngine.running ?? null,
+    sharedEnginePending: runtimeChain?.sharedEngine.pending ?? null,
+    sharedEngineState: runtimeChain?.sharedEngine.engineState ?? null,
+    proxyOk: runtimeChain?.proxy.ok ?? null,
+    proxyStatus: runtimeChain?.proxy.status ?? null,
+    proxyError: truncateErrorField(runtimeChain?.proxy.error, 240),
+  };
+}
+
+type VesloConnectionTraceState = {
+  serverStatus: VesloServerStatus;
+  snapshot: VesloServerConnectionSnapshot;
+  failureReason: string | null;
+  runtimeChain: ReturnType<typeof runtimeChainTraceDetails>;
+};
+
+function defaultCreateClient(input: VesloServerConnectionClientFactoryInput) {
+  return createVesloServerClient(input) as VesloServerConnectionClient &
+    VesloServerClient;
+}
+
+function defaultListenVesloServerState(
+  handler: (info: VesloServerInfo) => void,
+) {
+  return listen<VesloServerInfo>(
+    VESLO_SERVER_STATE_EVENT,
+    (event: TauriEvent<VesloServerInfo>) => {
+      handler(event.payload);
+    },
+  );
 }
 
 export function mergeVesloServerDescriptorEvent(
@@ -183,14 +250,52 @@ function requiresLocalRuntimeChainReadiness(input: {
 }): boolean {
   return Boolean(
     input.isTauriRuntime &&
-      input.startupPreference !== "server" &&
-      input.activeWorkspaceType === "local" &&
-      isLoopbackVesloServerConnectionUrl(input.url),
+    input.startupPreference !== "server" &&
+    input.activeWorkspaceType === "local" &&
+    isLoopbackVesloServerConnectionUrl(input.url),
   );
 }
 
-function hasReadyRuntimeChain(status: VesloServerDiagnostics | null | undefined): boolean {
-  return status?.runtimeChain?.status === "runtime_chain_ready";
+export function resolveVesloServerReachability(
+  status: VesloServerStatus,
+): VesloServerReachability {
+  switch (status) {
+    case "connected":
+      return "reachable";
+    case "limited":
+      return "limited";
+    case "auth_desync":
+      return "auth_desync";
+    default:
+      return "unreachable";
+  }
+}
+
+export function resolveVesloRuntimeReadiness(input: {
+  localRuntimeContract: boolean;
+  diagnostics: VesloServerDiagnostics | null | undefined;
+}): VesloRuntimeReadiness {
+  if (!input.localRuntimeContract) return "not-applicable";
+
+  const runtimeChain = input.diagnostics?.runtimeChain;
+  if (!runtimeChain) return "unavailable";
+
+  switch (runtimeChain.status) {
+    case "runtime_chain_ready":
+      return "ready";
+    case "server_running":
+      return "starting";
+    case "shared_engine_unhealthy":
+      return runtimeChain.sharedEngine.pending === true
+        ? "starting"
+        : "degraded";
+    case "orchestrator_unavailable":
+      return "unavailable";
+    case "proxy_unreachable":
+      return "degraded";
+  }
+
+  return "unavailable";
 }
 
 function activeWorkspaceRuntimeStatus(
@@ -210,13 +315,17 @@ export function isLoopbackVesloServerConnectionUrl(value: string): boolean {
   try {
     const parsed = new URL(trimmed);
     const hostname = parsed.hostname.trim().toLowerCase();
-    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+    return (
+      hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1"
+    );
   } catch {
     return false;
   }
 }
 
-export function resolveVesloServerBaseUrl(input: ResolveVesloServerBaseUrlInput): string {
+export function resolveVesloServerBaseUrl(
+  input: ResolveVesloServerBaseUrlInput,
+): string {
   const pref = input.startupPreference;
   const hostInfo = input.activeHostInfo;
   const settingsUrl = input.settingsUrl.trim();
@@ -227,7 +336,9 @@ export function resolveVesloServerBaseUrl(input: ResolveVesloServerBaseUrlInput)
   return preferredLocalUrl || settingsUrl;
 }
 
-export function resolveVesloServerAuth(input: ResolveVesloServerAuthInput): VesloServerAuth {
+export function resolveVesloServerAuth(
+  input: ResolveVesloServerAuthInput,
+): VesloServerAuth {
   const pref = input.startupPreference;
   const hostInfo = input.activeHostInfo;
   const settingsToken = input.settingsToken.trim();
@@ -235,13 +346,19 @@ export function resolveVesloServerAuth(input: ResolveVesloServerAuthInput): Vesl
   const hostToken = hostInfo?.hostToken?.trim() ?? "";
 
   if (pref === "local") {
-    return { token: clientToken || undefined, hostToken: hostToken || undefined };
+    return {
+      token: clientToken || undefined,
+      hostToken: hostToken || undefined,
+    };
   }
   if (pref === "server") {
     return { token: settingsToken || undefined, hostToken: undefined };
   }
   if (hostInfo?.baseUrl) {
-    return { token: clientToken || undefined, hostToken: hostToken || undefined };
+    return {
+      token: clientToken || undefined,
+      hostToken: hostToken || undefined,
+    };
   }
   return { token: settingsToken || undefined, hostToken: undefined };
 }
@@ -249,21 +366,39 @@ export function resolveVesloServerAuth(input: ResolveVesloServerAuthInput): Vesl
 export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   const now = deps.now ?? (() => Date.now());
   const createClient = deps.createClient ?? defaultCreateClient;
+  const localEnsureTimeoutMs = Math.max(
+    1,
+    deps.localEnsureTimeoutMs ?? DEFAULT_LOCAL_VESLO_SERVER_ENSURE_TIMEOUT_MS,
+  );
   const loadVesloServerInfo = deps.vesloServerInfo ?? defaultVesloServerInfo;
-  const restartVesloServer = deps.vesloServerRestart ?? defaultVesloServerRestart;
-  const listenVesloServerState = deps.vesloServerStateListen ?? defaultListenVesloServerState;
-  const loadOpenCodeRouterInfo = deps.opencodeRouterInfo ?? defaultOpenCodeRouterInfo;
-  const loadOrchestratorStatus = deps.orchestratorStatus ?? defaultOrchestratorStatus;
-  const loadOrchestratorEngines = deps.orchestratorEnginesList ?? defaultOrchestratorEnginesList;
+  const restartVesloServer =
+    deps.vesloServerRestart ?? defaultVesloServerRestart;
+  const listenVesloServerState =
+    deps.vesloServerStateListen ?? defaultListenVesloServerState;
+  const loadOpenCodeRouterInfo =
+    deps.opencodeRouterInfo ?? defaultOpenCodeRouterInfo;
+  const loadOrchestratorStatus =
+    deps.orchestratorStatus ?? defaultOrchestratorStatus;
+  const loadOrchestratorEngines =
+    deps.orchestratorEnginesList ?? defaultOrchestratorEnginesList;
 
-  const [vesloServerSettings, setVesloServerSettings] = createSignal<VesloServerSettings>({});
+  const [vesloServerSettings, setVesloServerSettings] =
+    createSignal<VesloServerSettings>({});
   const [vesloServerUrl, setVesloServerUrl] = createSignal("");
-  const [vesloServerStatus, setVesloServerStatus] = createSignal<VesloServerStatus>("disconnected");
+  const [vesloServerStatus, setVesloServerStatus] =
+    createSignal<VesloServerStatus>("disconnected");
+  const [vesloRuntimeReadiness, setVesloRuntimeReadiness] =
+    createSignal<VesloRuntimeReadiness>("unknown");
   const [vesloServerCapabilities, setVesloServerCapabilities] =
     createSignal<VesloServerCapabilities | null>(null);
-  const [vesloServerCheckedAt, setVesloServerCheckedAt] = createSignal<number | null>(null);
-  const [vesloServerWorkspaceId, setVesloServerWorkspaceId] = createSignal<string | null>(null);
-  const [vesloServerHostInfo, setVesloServerHostInfo] = createSignal<VesloServerInfo | null>(null);
+  const [vesloServerCheckedAt, setVesloServerCheckedAt] = createSignal<
+    number | null
+  >(null);
+  const [vesloServerWorkspaceId, setVesloServerWorkspaceId] = createSignal<
+    string | null
+  >(null);
+  const [vesloServerHostInfo, setVesloServerHostInfo] =
+    createSignal<VesloServerInfo | null>(null);
   const [vesloServerDiagnostics, setVesloServerDiagnostics] =
     createSignal<VesloServerDiagnostics | null>(null);
   const [vesloReconnectBusy, setVesloReconnectBusy] = createSignal(false);
@@ -271,11 +406,17 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     createSignal<OpenCodeRouterInfo | null>(null);
   const [orchestratorStatusState, setOrchestratorStatusState] =
     createSignal<OrchestratorStatus | null>(null);
-  const [orchestratorEnginesState, setOrchestratorEnginesState] =
-    createSignal<OrchestratorEngineSnapshot[]>([]);
-  const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
+  const [orchestratorEnginesState, setOrchestratorEnginesState] = createSignal<
+    OrchestratorEngineSnapshot[]
+  >([]);
+  const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<
+    string | null
+  >(null);
   let vesloServerLastReachableAt = 0;
-  const ensureLocalVesloServerRunningInFlight = new Map<string, Promise<boolean>>();
+  const ensureLocalVesloServerRunningInFlight = new Map<
+    string,
+    Promise<boolean>
+  >();
   let lastLocalVesloEnsureKey = "";
 
   const markVesloServerReachable = (status: VesloServerStatus, at = now()) => {
@@ -287,18 +428,104 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   const vesloServerRecentlyReachable = (at = now()) =>
     vesloServerLastReachableAt > 0 && at - vesloServerLastReachableAt <= 30_000;
 
-  const setVesloServerCapabilitiesStable = (next: VesloServerCapabilities | null) => {
+  const vesloServerConnectionSnapshot = (): VesloServerConnectionSnapshot => ({
+    serverReachability: resolveVesloServerReachability(vesloServerStatus()),
+    runtimeReadiness: vesloRuntimeReadiness(),
+  });
+
+  let lastConnectionTraceState: VesloConnectionTraceState | null = null;
+  const runtimeConnectionTraceEnabled = () =>
+    deps.developerMode() || runtimePerfAuditEnabled();
+
+  const recordConnectionStateTransition = (
+    result: VesloServerProbeResult,
+    source: string,
+  ) => {
+    const next: VesloConnectionTraceState = {
+      serverStatus: result.status,
+      snapshot: vesloServerConnectionSnapshot(),
+      failureReason: result.failureReason ?? null,
+      runtimeChain: runtimeChainTraceDetails(
+        isReachableVesloServerStatus(result.status)
+          ? vesloServerDiagnostics()
+          : null,
+      ),
+    };
+    if (stateKey(next) === stateKey(lastConnectionTraceState)) return;
+
+    const previous = lastConnectionTraceState;
+    lastConnectionTraceState = next;
+    recordPerfLog(
+      runtimeConnectionTraceEnabled(),
+      "workspace.requests",
+      "veslo-connection-state",
+      {
+        source,
+        activeWorkspaceId: deps.workspace?.activeWorkspaceId().trim() || null,
+        previousServerStatus: previous?.serverStatus ?? null,
+        previousReachability: previous?.snapshot.serverReachability ?? null,
+        previousRuntimeReadiness: previous?.snapshot.runtimeReadiness ?? null,
+        previousRuntimeChainStatus:
+          previous?.runtimeChain.runtimeChainStatus ?? null,
+        serverStatus: next.serverStatus,
+        serverReachability: next.snapshot.serverReachability,
+        runtimeReadiness: next.snapshot.runtimeReadiness,
+        failureReason: next.failureReason,
+        ...next.runtimeChain,
+      },
+    );
+  };
+
+  const recordLocalEnsureOutcome = (input: {
+    outcome:
+      | "ready"
+      | "runtime-not-ready"
+      | "server-unreachable"
+      | "restart-missing-info"
+      | "deadline-exceeded"
+      | "ensure-failed"
+      | "skipped-startup-preference"
+      | "skipped-nonlocal-workspace";
+    requireRuntimeChainReady: boolean;
+    restartAttempted: boolean;
+  }) => {
+    const snapshot = vesloServerConnectionSnapshot();
+    recordPerfLog(
+      runtimeConnectionTraceEnabled(),
+      "workspace.requests",
+      "veslo-local-server-ensure",
+      {
+        ...input,
+        activeWorkspaceId: deps.workspace?.activeWorkspaceId().trim() || null,
+        serverReachability: snapshot.serverReachability,
+        runtimeReadiness: snapshot.runtimeReadiness,
+        runtimeChainStatus: isReachableVesloServerStatus(vesloServerStatus())
+          ? (vesloServerDiagnostics()?.runtimeChain?.status ?? null)
+          : null,
+      },
+    );
+  };
+
+  const setVesloServerCapabilitiesStable = (
+    next: VesloServerCapabilities | null,
+  ) => {
     const nextKey = stateKey(next);
-    setVesloServerCapabilities((current) => (stateKey(current) === nextKey ? current : next));
+    setVesloServerCapabilities((current) =>
+      stateKey(current) === nextKey ? current : next,
+    );
   };
 
   const setVesloServerHostInfoStable = (next: VesloServerInfo | null) => {
     const nextKey = stateKey(next);
-    setVesloServerHostInfo((current) => (stateKey(current) === nextKey ? current : next));
+    setVesloServerHostInfo((current) =>
+      stateKey(current) === nextKey ? current : next,
+    );
   };
 
   const setVesloServerHostInfoFromEvent = (next: VesloServerInfo | null) => {
-    setVesloServerHostInfoStable(mergeVesloServerDescriptorEvent(vesloServerHostInfo(), next));
+    setVesloServerHostInfoStable(
+      mergeVesloServerDescriptorEvent(vesloServerHostInfo(), next),
+    );
   };
 
   const activeVesloServerHostInfo = createMemo(() =>
@@ -329,7 +556,8 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   const readyEngineWorkspaceIds = createMemo(() => {
     const set = new Set<string>();
     for (const engine of orchestratorEnginesState()) {
-      if (engine.state === "ready" || engine.state === "idle") set.add(engine.workspaceId);
+      if (engine.state === "ready" || engine.state === "idle")
+        set.add(engine.workspaceId);
     }
     return set;
   });
@@ -338,7 +566,8 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     resolveVesloServerBaseUrl({
       startupPreference: deps.startupPreference(),
       activeHostInfo: activeVesloServerHostInfo(),
-      settingsUrl: normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "",
+      settingsUrl:
+        normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "",
     }),
   );
 
@@ -351,7 +580,8 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       }),
     undefined,
     {
-      equals: (prev, next) => prev?.token === next.token && prev?.hostToken === next.hostToken,
+      equals: (prev, next) =>
+        prev?.token === next.token && prev?.hostToken === next.hostToken,
     },
   );
 
@@ -359,7 +589,11 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     const baseUrl = vesloServerBaseUrl().trim();
     if (!baseUrl) return null;
     const auth = vesloServerAuth();
-    return createClient({ baseUrl, token: auth.token, hostToken: auth.hostToken }) as VesloServerClient;
+    return createClient({
+      baseUrl,
+      token: auth.token,
+      hostToken: auth.hostToken,
+    }) as VesloServerClient;
   });
 
   const vesloArchiveClientOptions = createMemo(() => {
@@ -375,7 +609,9 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     });
   });
 
-  const sessionArchiveOwnerKey = createMemo(() => vesloArchiveClientOptions()?.accountId ?? "");
+  const sessionArchiveOwnerKey = createMemo(
+    () => vesloArchiveClientOptions()?.accountId ?? "",
+  );
 
   const vesloArchiveClient = createMemo<VesloServerClient | null>(() => {
     const resolved = vesloArchiveClientOptions();
@@ -394,8 +630,14 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       return active;
     }
 
-    if (isLoopbackVesloServerConnectionUrl(activeBaseUrl) && !isLoopbackVesloServerConnectionUrl(remoteUrl)) {
-      return createClient({ baseUrl: remoteUrl, token: remoteToken }) as VesloServerClient;
+    if (
+      isLoopbackVesloServerConnectionUrl(activeBaseUrl) &&
+      !isLoopbackVesloServerConnectionUrl(remoteUrl)
+    ) {
+      return createClient({
+        baseUrl: remoteUrl,
+        token: remoteToken,
+      }) as VesloServerClient;
     }
 
     return active;
@@ -428,74 +670,134 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     token?: string,
     hostToken?: string,
     options?: CheckVesloServerOptions,
-  ) => {
+  ): Promise<VesloServerProbeResult> => {
     const client = createClient({ baseUrl: url, token, hostToken });
+    const localRuntimeContract = requiresLocalRuntimeChainReadiness({
+      isTauriRuntime: deps.isTauriRuntime(),
+      startupPreference: deps.startupPreference(),
+      activeWorkspaceType:
+        deps.workspace?.activeWorkspaceDisplay().workspaceType,
+      url,
+    });
     const requireRuntimeChainReady =
-      options?.requireRuntimeChainReady !== false &&
-      requiresLocalRuntimeChainReadiness({
-        isTauriRuntime: deps.isTauriRuntime(),
-        startupPreference: deps.startupPreference(),
-        activeWorkspaceType: deps.workspace?.activeWorkspaceDisplay().workspaceType,
-        url,
-      });
+      options?.requireRuntimeChainReady !== false && localRuntimeContract;
     try {
       await client.health();
     } catch (error) {
-      const authStatus = resolveVesloServerAuthFailureStatus(error, { token, hostToken });
+      const authStatus = resolveVesloServerAuthFailureStatus(error, {
+        token,
+        hostToken,
+      });
       if (authStatus) {
-        const result = { status: authStatus, capabilities: null };
+        const result: VesloServerProbeResult = {
+          status: authStatus,
+          capabilities: null,
+          runtimeReadiness: "unknown",
+        };
         markVesloServerReachable(result.status);
         return result;
       }
-      return { status: "disconnected" as VesloServerStatus, capabilities: null };
+      return {
+        status: "disconnected" as VesloServerStatus,
+        capabilities: null,
+        runtimeReadiness: "unknown" as VesloRuntimeReadiness,
+        failureReason: summarizeConnectionFailure(error),
+      };
     }
     markVesloServerReachable("limited");
 
     if (!token) {
-      return { status: "limited" as VesloServerStatus, capabilities: null };
+      return {
+        status: "limited" as VesloServerStatus,
+        capabilities: null,
+        runtimeReadiness: localRuntimeContract ? "unknown" : "not-applicable",
+      };
     }
 
     try {
       const caps = await client.capabilities();
       if (requireRuntimeChainReady) {
-        const diagnostics = await activeWorkspaceRuntimeStatus(client, deps.workspace?.activeWorkspaceId());
-        if (!hasReadyRuntimeChain(diagnostics)) {
-          setVesloServerDiagnostics(diagnostics ?? null);
-          return { status: "disconnected" as VesloServerStatus, capabilities: null };
+        let diagnostics: VesloServerDiagnostics | null = null;
+        let failureReason: string | undefined;
+        try {
+          diagnostics = await activeWorkspaceRuntimeStatus(
+            client,
+            deps.workspace?.activeWorkspaceId(),
+          );
+        } catch (error) {
+          failureReason = summarizeConnectionFailure(error);
         }
         setVesloServerDiagnostics(diagnostics ?? null);
+        return {
+          status: "connected" as VesloServerStatus,
+          capabilities: caps,
+          runtimeReadiness: resolveVesloRuntimeReadiness({
+            localRuntimeContract,
+            diagnostics,
+          }),
+          failureReason,
+        };
       }
-      const result = { status: "connected" as VesloServerStatus, capabilities: caps };
+      const result: VesloServerProbeResult = {
+        status: "connected" as VesloServerStatus,
+        capabilities: caps,
+        runtimeReadiness: localRuntimeContract ? undefined : "not-applicable",
+      };
       markVesloServerReachable(result.status);
       return result;
     } catch (error) {
-      const authStatus = resolveVesloServerAuthFailureStatus(error, { token, hostToken });
+      const authStatus = resolveVesloServerAuthFailureStatus(error, {
+        token,
+        hostToken,
+      });
       if (authStatus) {
-        const result = { status: authStatus, capabilities: null };
+        const result: VesloServerProbeResult = {
+          status: authStatus,
+          capabilities: null,
+          runtimeReadiness: "unknown",
+        };
         markVesloServerReachable(result.status);
         return result;
       }
-      return { status: "disconnected" as VesloServerStatus, capabilities: null };
+      return {
+        status: "disconnected" as VesloServerStatus,
+        capabilities: null,
+        runtimeReadiness: "unknown" as VesloRuntimeReadiness,
+        failureReason: summarizeConnectionFailure(error),
+      };
     }
   };
 
-  const applyVesloServerProbeResult = (result: {
-    status: VesloServerStatus;
-    capabilities: VesloServerCapabilities | null;
-  }) => {
+  const applyVesloServerProbeResult = (
+    result: VesloServerProbeResult,
+    source = "unspecified",
+  ) => {
     setVesloServerStatus(result.status);
     setVesloServerCapabilitiesStable(result.capabilities);
+    if (result.runtimeReadiness !== undefined) {
+      setVesloRuntimeReadiness(result.runtimeReadiness);
+    } else if (!isAuthenticatedVesloServerStatus(result.status)) {
+      setVesloRuntimeReadiness("unknown");
+    }
     setVesloServerCheckedAt(now());
+    recordConnectionStateTransition(result, source);
   };
 
   const testVesloServerConnection = async (next: VesloServerSettings) => {
     const derived = normalizeVesloServerUrl(next.urlOverride ?? "");
     if (!derived) {
-      applyVesloServerProbeResult({ status: "disconnected", capabilities: null });
+      applyVesloServerProbeResult(
+        { status: "disconnected", capabilities: null },
+        "manual-test-no-url",
+      );
       return false;
     }
-    const result = await checkVesloServer(derived, next.token, vesloServerAuth().hostToken);
-    applyVesloServerProbeResult(result);
+    const result = await checkVesloServer(
+      derived,
+      next.token,
+      vesloServerAuth().hostToken,
+    );
+    applyVesloServerProbeResult(result, "manual-test");
     const ok = isAuthenticatedVesloServerStatus(result.status);
     if (ok && !deps.isTauriRuntime()) {
       const active = deps.workspace?.activeWorkspaceDisplay();
@@ -505,10 +807,14 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         active.workspaceType !== "remote" ||
         active.remoteType !== "veslo";
       if (shouldAttach) {
-        await deps.workspace?.createRemoteWorkspaceFlow?.({
-          vesloHostUrl: derived,
-          vesloToken: next.token ?? null,
-        }).catch((error) => deps.reportError?.(error, "workspace.createRemoteFlow"));
+        await deps.workspace
+          ?.createRemoteWorkspaceFlow?.({
+            vesloHostUrl: derived,
+            vesloToken: next.token ?? null,
+          })
+          .catch((error) =>
+            deps.reportError?.(error, "workspace.createRemoteFlow"),
+          );
       }
     }
     return ok;
@@ -538,7 +844,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       }
 
       const runningHostInfo = resolveRunningVesloServerHostInfo(hostInfo);
-      if (runningHostInfo?.clientToken?.trim() && deps.startupPreference() !== "server") {
+      if (
+        runningHostInfo?.clientToken?.trim() &&
+        deps.startupPreference() !== "server"
+      ) {
         const liveToken = runningHostInfo.clientToken.trim();
         const settings = vesloServerSettings();
         if ((settings.token?.trim() ?? "") !== liveToken) {
@@ -549,25 +858,50 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       const url = vesloServerBaseUrl().trim();
       const auth = vesloServerAuth();
       if (!url) {
-        applyVesloServerProbeResult({ status: "disconnected", capabilities: null });
+        applyVesloServerProbeResult(
+          { status: "disconnected", capabilities: null },
+          "reconnect-no-url",
+        );
         return false;
       }
 
       const result = await checkVesloServer(url, auth.token, auth.hostToken);
-      applyVesloServerProbeResult(result);
+      applyVesloServerProbeResult(result, "reconnect");
       return isAuthenticatedVesloServerStatus(result.status);
     } finally {
       setVesloReconnectBusy(false);
     }
   };
 
-  const ensureLocalVesloServerRunning = async (options?: EnsureLocalVesloServerRunningOptions) => {
+  const ensureLocalVesloServerRunning = async (
+    options?: EnsureLocalVesloServerRunningOptions,
+  ) => {
     if (!deps.isTauriRuntime()) return false;
-    if (!options?.ignoreStartupPreference && deps.startupPreference() === "server") return false;
-    if (deps.workspace?.activeWorkspaceDisplay().workspaceType !== "local") return false;
-    const requireRuntimeChainReady = options?.requireRuntimeChainReady !== false;
+    const requireRuntimeChainReady =
+      options?.requireRuntimeChainReady !== false;
+    if (
+      !options?.ignoreStartupPreference &&
+      deps.startupPreference() === "server"
+    ) {
+      recordLocalEnsureOutcome({
+        outcome: "skipped-startup-preference",
+        requireRuntimeChainReady,
+        restartAttempted: false,
+      });
+      return false;
+    }
+    if (deps.workspace?.activeWorkspaceDisplay().workspaceType !== "local") {
+      recordLocalEnsureOutcome({
+        outcome: "skipped-nonlocal-workspace",
+        requireRuntimeChainReady,
+        restartAttempted: false,
+      });
+      return false;
+    }
     const ensureKey = [
-      options?.ignoreStartupPreference === true ? "ignore-startup" : "respect-startup",
+      options?.ignoreStartupPreference === true
+        ? "ignore-startup"
+        : "respect-startup",
       requireRuntimeChainReady ? "runtime-chain" : "server-only",
     ].join(":");
     const inFlight = ensureLocalVesloServerRunningInFlight.get(ensureKey);
@@ -575,12 +909,16 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       return inFlight;
     }
 
-    const ensurePromise = (async () => {
+    let ensureExpired = false;
+    let restartAttempted = false;
+    const ensureWork = async () => {
       let info: VesloServerInfo | null = null;
       try {
         info = await loadVesloServerInfo();
+        if (ensureExpired) return false;
         setVesloServerHostInfoStable(info);
       } catch {
+        if (ensureExpired) return false;
         setVesloServerHostInfoStable(null);
       }
 
@@ -592,20 +930,41 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
           liveInfo.hostToken?.trim() || undefined,
           { requireRuntimeChainReady },
         );
-        applyVesloServerProbeResult(result);
+        if (ensureExpired) return false;
+        applyVesloServerProbeResult(result, "local-ensure-existing");
         if (isAuthenticatedVesloServerStatus(result.status)) {
-          return true;
+          // A reachable owned server must not be restarted merely because its
+          // workspace runtime is warming or degraded. Runtime-dependent
+          // callers still receive false until the readiness contract is met.
+          const ready =
+            !requireRuntimeChainReady || result.runtimeReadiness === "ready";
+          recordLocalEnsureOutcome({
+            outcome: ready ? "ready" : "runtime-not-ready",
+            requireRuntimeChainReady,
+            restartAttempted: false,
+          });
+          return ready;
         }
         // Desktop owns this local process; auth desync blocks inference, so try
         // one respawn instead of leaving non-technical users stuck.
       }
 
+      restartAttempted = true;
       const restarted = await restartVesloServer();
+      if (ensureExpired) return false;
       setVesloServerHostInfoStable(restarted);
       const restartedInfo = resolveRunningVesloServerHostInfo(restarted);
       const baseUrl = restartedInfo?.baseUrl?.trim() ?? "";
       if (!baseUrl) {
-        applyVesloServerProbeResult({ status: "disconnected", capabilities: null });
+        applyVesloServerProbeResult(
+          { status: "disconnected", capabilities: null },
+          "local-ensure-restart-missing-info",
+        );
+        recordLocalEnsureOutcome({
+          outcome: "restart-missing-info",
+          requireRuntimeChainReady,
+          restartAttempted: true,
+        });
         return false;
       }
 
@@ -615,13 +974,56 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         restartedInfo?.hostToken?.trim() || undefined,
         { requireRuntimeChainReady },
       );
-      applyVesloServerProbeResult(result);
-      return isAuthenticatedVesloServerStatus(result.status);
-    })().finally(() => {
-      if (ensureLocalVesloServerRunningInFlight.get(ensureKey) === ensurePromise) {
-        ensureLocalVesloServerRunningInFlight.delete(ensureKey);
-      }
+      if (ensureExpired) return false;
+      applyVesloServerProbeResult(result, "local-ensure-restart");
+      const ready =
+        isAuthenticatedVesloServerStatus(result.status) &&
+        (!requireRuntimeChainReady || result.runtimeReadiness === "ready");
+      recordLocalEnsureOutcome({
+        outcome: ready
+          ? "ready"
+          : isAuthenticatedVesloServerStatus(result.status)
+            ? "runtime-not-ready"
+            : "server-unreachable",
+        requireRuntimeChainReady,
+        restartAttempted: true,
+      });
+      return ready;
+    };
+
+    let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+    const deadline = new Promise<never>((_, reject) => {
+      deadlineTimer = setTimeout(
+        () => {
+          ensureExpired = true;
+          reject(new Error("Local Veslo server ensure deadline exceeded"));
+        },
+        localEnsureTimeoutMs,
+      );
     });
+    const ensurePromise = Promise.race([ensureWork(), deadline])
+      .catch((error) => {
+        const timedOut = error instanceof Error &&
+          error.message === "Local Veslo server ensure deadline exceeded";
+        applyVesloServerProbeResult(
+          { status: "disconnected", capabilities: null },
+          timedOut ? "local-ensure-deadline-exceeded" : "local-ensure-failed",
+        );
+        recordLocalEnsureOutcome({
+          outcome: timedOut ? "deadline-exceeded" : "ensure-failed",
+          requireRuntimeChainReady,
+          restartAttempted,
+        });
+        return false;
+      })
+      .finally(() => {
+        if (deadlineTimer) clearTimeout(deadlineTimer);
+        if (
+          ensureLocalVesloServerRunningInFlight.get(ensureKey) === ensurePromise
+        ) {
+          ensureLocalVesloServerRunningInFlight.delete(ensureKey);
+        }
+      });
 
     ensureLocalVesloServerRunningInFlight.set(ensureKey, ensurePromise);
     return ensurePromise;
@@ -635,8 +1037,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   createEffect(() => {
     const pref = deps.startupPreference();
     const info = activeVesloServerHostInfo();
-    const hostUrl = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
-    const settingsUrl = normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
+    const hostUrl =
+      info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
+    const settingsUrl =
+      normalizeVesloServerUrl(vesloServerSettings().urlOverride ?? "") ?? "";
 
     if (pref === "local") {
       setVesloServerUrl(hostUrl);
@@ -658,7 +1062,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     const hostToken = auth.hostToken;
 
     if (!url) {
-      applyVesloServerProbeResult({ status: "disconnected", capabilities: null });
+      applyVesloServerProbeResult(
+        { status: "disconnected", capabilities: null },
+        "status-poll-no-url",
+      );
       return;
     }
 
@@ -684,14 +1091,36 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
           previousDelayMs: delayMs,
         });
         statusStability = decision.state;
-        setVesloServerStatus(decision.visibleStatus);
-        setVesloServerCapabilitiesStable(decision.visibleCapabilities);
+        applyVesloServerProbeResult(
+          {
+            status: decision.visibleStatus,
+            capabilities: decision.visibleCapabilities,
+            runtimeReadiness: isReachableVesloServerStatus(result.status)
+              ? result.runtimeReadiness
+              : isReachableVesloServerStatus(decision.visibleStatus)
+                ? undefined
+                : "unknown",
+            failureReason: result.failureReason,
+          },
+          "status-poll",
+        );
         delayMs = decision.nextDelayMs;
         if (decision.transientFailure) {
-          recordPerfLog(deps.developerMode(), "workspace.requests", "veslo-status-transient-failure", {
-            visibleStatus: decision.visibleStatus,
-            nextDelayMs: decision.nextDelayMs,
-          });
+          recordPerfLog(
+            runtimeConnectionTraceEnabled(),
+            "workspace.requests",
+            "veslo-status-transient-failure",
+            {
+              visibleStatus: decision.visibleStatus,
+              observedStatus: result.status,
+              observedReachability: resolveVesloServerReachability(
+                result.status,
+              ),
+              observedRuntimeReadiness: result.runtimeReadiness ?? null,
+              failureReason: result.failureReason ?? null,
+              nextDelayMs: decision.nextDelayMs,
+            },
+          );
         }
       } catch (error) {
         const decision = applyVesloServerStatusProbe(
@@ -703,15 +1132,31 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
           },
         );
         statusStability = decision.state;
-        setVesloServerStatus(decision.visibleStatus);
-        setVesloServerCapabilitiesStable(decision.visibleCapabilities);
+        applyVesloServerProbeResult(
+          {
+            status: decision.visibleStatus,
+            capabilities: decision.visibleCapabilities,
+            runtimeReadiness: isReachableVesloServerStatus(
+              decision.visibleStatus,
+            )
+              ? undefined
+              : "unknown",
+            failureReason: summarizeConnectionFailure(error),
+          },
+          "status-poll-error",
+        );
         delayMs = decision.nextDelayMs;
         if (decision.transientFailure) {
-          recordPerfLog(deps.developerMode(), "workspace.requests", "veslo-status-transient-failure", {
-            visibleStatus: decision.visibleStatus,
-            nextDelayMs: decision.nextDelayMs,
-            message: error instanceof Error ? error.message : safeStringify(error),
-          });
+          recordPerfLog(
+            runtimeConnectionTraceEnabled(),
+            "workspace.requests",
+            "veslo-status-transient-failure",
+            {
+              visibleStatus: decision.visibleStatus,
+              nextDelayMs: decision.nextDelayMs,
+              failureReason: summarizeConnectionFailure(error),
+            },
+          );
         }
       } finally {
         if (!active) return;
@@ -766,7 +1211,9 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
           cleanup();
         }
       })
-      .catch((error) => deps.reportError?.(error, "vesloServer.stateEventListen"));
+      .catch((error) =>
+        deps.reportError?.(error, "vesloServer.stateEventListen"),
+      );
 
     onCleanup(() => {
       active = false;
@@ -796,7 +1243,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       if (busy) return;
       busy = true;
       try {
-        const status = await activeWorkspaceRuntimeStatus(client, deps.workspace?.activeWorkspaceId());
+        const status = await activeWorkspaceRuntimeStatus(
+          client,
+          deps.workspace?.activeWorkspaceId(),
+        );
         if (active) setVesloServerDiagnostics(status);
       } catch {
         if (active) setVesloServerDiagnostics(null);
@@ -916,13 +1366,19 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     if (!deps.isTauriRuntime()) return;
     if (!deps.workspace?.workspacesHydrated()) return;
     if (deps.startupPreference() === "server") return;
-    if (deps.workspace.activeWorkspaceDisplay().workspaceType !== "local") return;
+    if (deps.workspace.activeWorkspaceDisplay().workspaceType !== "local")
+      return;
 
     const activeWorkspaceId = deps.workspace.activeWorkspaceId().trim();
     const activeWorkspaceRoot = deps.workspace.activeWorkspaceRoot().trim();
-    const nextKey = activeWorkspaceId || activeWorkspaceRoot
-      ? [activeWorkspaceId, activeWorkspaceRoot, deps.opencodeBaseUrl().trim()].join("::")
-      : "app-service";
+    const nextKey =
+      activeWorkspaceId || activeWorkspaceRoot
+        ? [
+            activeWorkspaceId,
+            activeWorkspaceRoot,
+            deps.opencodeBaseUrl().trim(),
+          ].join("::")
+        : "app-service";
     if (nextKey === lastLocalVesloEnsureKey) return;
 
     const scheduledKey = nextKey;
@@ -933,7 +1389,8 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         }
       })
       .catch((error) => {
-        const message = error instanceof Error ? error.message : safeStringify(error);
+        const message =
+          error instanceof Error ? error.message : safeStringify(error);
         deps.setError?.(deps.addOpencodeCacheHint?.(message) ?? message);
         deps.reportError?.(error, "veslo-server.ensure.effect");
       });
@@ -948,6 +1405,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     setVesloServerUrl,
     vesloServerStatus,
     setVesloServerStatus,
+    vesloServerConnectionSnapshot,
     vesloServerCapabilities,
     setVesloServerCapabilitiesStable,
     vesloServerRecentlyReachable,

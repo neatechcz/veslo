@@ -21,6 +21,7 @@ export type TranscriptFreshness = {
 
 export type HydrateTranscriptSnapshotOptions = {
   allowShorter?: boolean;
+  preserveLiveParts?: boolean;
 };
 
 export const INITIAL_SESSION_MESSAGE_LIMIT = 140;
@@ -89,12 +90,31 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
       return;
     }
 
+    let preservedMessageCount = 0;
+    let preservedPartCount = 0;
+    const preserveLiveParts = options.preserveLiveParts !== false;
     const nextMessages: MessageWithParts[] = snapshot.messages
       .filter((info): info is MessageInfo => Boolean(info?.id))
-      .map((info) => ({
-        info,
-        parts: sortById((snapshot.partsByMessageId[info.id] ?? []).filter((part): part is Part => Boolean(part?.id))),
-      }));
+      .map((info) => {
+        const snapshotParts = sortById(
+          (snapshot.partsByMessageId[info.id] ?? []).filter((part): part is Part => Boolean(part?.id)),
+        );
+        const observedParts = (deps.store.parts[info.id] ?? []).filter((part): part is Part => Boolean(part?.id));
+        const preservesLiveParts = preserveLiveParts &&
+          snapshotParts.length === 0 && observedParts.length > 0;
+        if (preservesLiveParts) {
+          preservedMessageCount += 1;
+          preservedPartCount += observedParts.length;
+        }
+        return {
+          info,
+          // A passive snapshot can lag the live event stream even when it has the
+          // same message list. Never let it erase message content already shown.
+          parts: preservesLiveParts
+            ? sortById(observedParts)
+            : snapshotParts,
+        };
+      });
     const existingMessageCount = getCachedTranscriptMessageCount(sessionID);
 
     batch(() => {
@@ -107,6 +127,15 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
       }));
 
       if (existingMessageCount > nextMessages.length && !options.allowShorter) return;
+
+      if (preservedMessageCount > 0) {
+        recordSendWorkflowTrace("session-transcript", "session-transcript:snapshot-preserved-live-parts", {
+          workspaceId: snapshot.workspaceId,
+          sessionId: sessionID,
+          preservedMessageCount,
+          preservedPartCount,
+        });
+      }
 
       setMessagesForSession(sessionID, nextMessages);
 

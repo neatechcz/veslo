@@ -43,6 +43,7 @@ import type {
   VesloSoulOverviewResponse,
   VesloServerClient,
   VesloServerCapabilities,
+  VesloServerConnectionSnapshot,
   VesloServerDiagnostics,
   VesloServerSettings,
   VesloServerStatus,
@@ -140,6 +141,7 @@ export type DashboardViewProps = {
   headerStatus: string;
   error: string | null;
   vesloServerStatus: VesloServerStatus;
+  vesloServerConnection: VesloServerConnectionSnapshot;
   vesloServerCanWriteSkills: boolean;
   vesloServerSkillRegistryAvailable: boolean;
   vesloServerUrl: string;
@@ -953,7 +955,7 @@ export default function DashboardView(props: DashboardViewProps) {
         </div>
           <SidebarStatusControls
             clientConnected={props.clientConnected}
-            vesloServerStatus={props.vesloServerStatus}
+            vesloServerConnection={props.vesloServerConnection}
             runtimeAvailableWithoutClient={runtimeAvailableWithoutClient()}
             authenticatedUser={props.authenticatedUser}
             onOpenSettings={handleSettingsButtonClick}

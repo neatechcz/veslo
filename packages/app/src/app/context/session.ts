@@ -24,6 +24,7 @@ import {
 } from "../utils";
 import type { WorkspaceRouting } from "./workspace-routing";
 import { perfNow, recordPerfLog } from "../lib/perf-log";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
 import {
   toolNameFromPart,
@@ -102,6 +103,11 @@ function recordSessionStatusTrace(event: string, payload?: Record<string, unknow
   }
 }
 
+function recordSessionLifecycleRecoveryTrace(event: string, payload?: Record<string, unknown>) {
+  recordSessionStatusTrace(event, payload);
+  recordSendWorkflowTrace("session-lifecycle-recovery", event, payload);
+}
+
 type StoreState = {
   sessions: Session[];
   sessionStatus: Record<string, string>;
@@ -151,12 +157,22 @@ export function createSessionStore(options: {
   readConversationRunStatus?: (
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<SessionLifecycleRecoveryStatus | null>;
+  recoverAcceptedConversationRunStatus?: (
+    scope: SessionLifecycleRecoveryScope,
+  ) => Promise<SessionLifecycleRecoveryStatus | null>;
+  recoverAcceptedConversationTranscript?: (
+    scope: SessionLifecycleRecoveryScope,
+  ) => Promise<VesloSessionTranscriptSnapshot | null>;
   recoverConversationTranscript?: (scope: {
     workspaceId: string;
     sessionId: string;
     directory?: string | null;
     expectedRunId?: string | null;
   }) => Promise<VesloSessionTranscriptSnapshot | null>;
+  lifecycleRecoveryDiagnosticContext?: () => {
+    appWorkspaceId?: string | null;
+    connectionSnapshot?: Record<string, string | null | undefined> | null;
+  };
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
@@ -743,8 +759,15 @@ export function createSessionStore(options: {
           selectedSessionId: options.selectedSessionId,
           resolveConversationRunForSession: options.resolveConversationRunForSession,
           readConversationRunStatus: options.readConversationRunStatus,
+          recoverAcceptedConversationRunStatus: options.recoverAcceptedConversationRunStatus,
+          recoverAcceptedConversationTranscript: options.recoverAcceptedConversationTranscript,
           recoverConversationTranscript: options.recoverConversationTranscript,
-          hydrateConversationTranscript: hydrateTranscriptSnapshot,
+          // Terminal recovery has already passed its exact durable run fence;
+          // unlike a passive browse snapshot, it is allowed to replace stale
+          // live parts with the canonical terminal snapshot.
+          hydrateConversationTranscript: (snapshot) =>
+            hydrateTranscriptSnapshot(snapshot, { preserveLiveParts: false }),
+          diagnosticContext: options.lifecycleRecoveryDiagnosticContext,
           onConversationRunStatus: updateConversationRunDiagnosticsForScope,
           onConversationRunTerminal: (scope, status) => {
             if (status.status !== "failed" || status.stale) return;
@@ -755,7 +778,7 @@ export function createSessionStore(options: {
           },
           setSessionStatusForWorkspace,
           notifySessionBusy,
-          trace: recordSessionStatusTrace,
+          trace: recordSessionLifecycleRecoveryTrace,
         })
       : null;
   if (lifecycleRecoveryController) {
@@ -864,6 +887,11 @@ export function createSessionStore(options: {
   const selectSession = async (sessionId: string) => {
     lifecycleRecoveryController?.resumeExhaustedWatchForSession(sessionId, resolveSessionWorkspaceId(sessionId));
     const result = await selectSessionFromController(sessionId);
+    lifecycleRecoveryController?.retryAcceptedRunForSession(sessionId, resolveSessionWorkspaceId(sessionId));
+    lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession(
+      sessionId,
+      resolveSessionWorkspaceId(sessionId),
+    );
     void lifecycleRecoveryController?.probeSelectedConversationLatestRun();
     return result;
   };
@@ -924,6 +952,7 @@ export function createSessionStore(options: {
       options.onReconnectState?.(state);
       if (state.status === "live") {
         lifecycleRecoveryController?.resumeExhaustedWatches(state.workspaceId);
+        lifecycleRecoveryController?.resumeAcceptedRunsForWorkspace(state.workspaceId);
         void lifecycleRecoveryController?.probeSelectedConversationLatestRun();
       }
     },
@@ -1019,6 +1048,9 @@ export function createSessionStore(options: {
     setSessions,
     setSessionStatusById,
     admitAcceptedConversationRun: lifecycleRecoveryController?.admitAcceptedConversationRun ?? (() => false),
+    retryAcceptedRunForSession: lifecycleRecoveryController?.retryAcceptedRunForSession ?? (() => 0),
+    retryTerminalTranscriptRecoveryForSession:
+      lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession ?? (() => 0),
     setMessages,
     setTodos,
     setPendingPermissions,

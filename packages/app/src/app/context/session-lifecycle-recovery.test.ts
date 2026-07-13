@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -13,6 +14,531 @@ type Timer = {
 };
 
 const waitForAsyncPoll = () => new Promise<void>((resolve) => setImmediate(resolve));
+const sessionStoreSource = readFileSync(new URL("./session.ts", import.meta.url), "utf8");
+
+test("lifecycle recovery traces are mirrored into the enabled dev-runtime send trace", () => {
+  assert.match(
+    sessionStoreSource,
+    /function recordSessionLifecycleRecoveryTrace\(event: string, payload\?: Record<string, unknown>\) \{\s*recordSessionStatusTrace\(event, payload\);\s*recordSendWorkflowTrace\("session-lifecycle-recovery", event, payload\);\s*\}/s,
+  );
+  assert.match(
+    sessionStoreSource,
+    /trace: recordSessionLifecycleRecoveryTrace/,
+  );
+  assert.match(
+    sessionStoreSource,
+    /hydrateConversationTranscript:\s*\(snapshot\)\s*=>\s*hydrateTranscriptSnapshot\(snapshot, \{ preserveLiveParts: false \}\)/,
+  );
+});
+
+test("accepted-run lifecycle traces retain exact correlation without directory data", async () => {
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-ui",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => null,
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    diagnosticContext: () => ({
+      appWorkspaceId: "ws-active",
+      connectionSnapshot: {
+        serverReachability: "unreachable",
+        runtimeReadiness: "degraded",
+      },
+    }),
+    trace: (event, payload) => traces.push({ event, payload }),
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-ui",
+    workspaceId: "ws-run",
+    conversationId: "conv-run",
+    opencodeSessionId: "ses-open",
+    directory: "/private/project",
+    runId: "run-accepted",
+    clientMessageId: "msg-client",
+    diagnosticTraceId: "send-trace",
+  }), true);
+  await waitForAsyncPoll();
+
+  const admitted = traces.find((entry) => entry.event === "session-lifecycle-recovery:admitted");
+  assert.ok(admitted);
+  assert.deepEqual(admitted.payload, {
+    outcome: "accepted-run-admitted",
+    workspaceId: "ws-run",
+    conversationId: "conv-run",
+    runId: "run-accepted",
+    sessionId: "ses-ui",
+    clientMessageId: "msg-client",
+    diagnosticTraceId: "send-trace",
+    generation: 1,
+    appWorkspaceId: "ws-active",
+    connectionSnapshot: {
+      serverReachability: "unreachable",
+      runtimeReadiness: "degraded",
+    },
+  });
+
+  const unavailable = traces.find((entry) => entry.event === "session-lifecycle-recovery:status-unavailable");
+  assert.ok(unavailable);
+  assert.equal(unavailable.payload?.clientMessageId, "msg-client");
+  assert.equal(unavailable.payload?.diagnosticTraceId, "send-trace");
+  assert.equal(unavailable.payload?.generation, 1);
+  assert.equal("directory" in (unavailable.payload ?? {}), false);
+});
+
+test("accepted visible runs attempt one exact server-only recovery before reporting connection unavailable", async () => {
+  const timers: Timer[] = [];
+  const diagnostics: SessionLifecycleRecoveryStatus[] = [];
+  const recoveryScopes: Array<{ workspaceId: string; conversationId: string; runId: string }> = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-ui",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => null,
+    isAcceptedRunVisible: (scope) => scope.sessionId === "ses-ui",
+    recoverAcceptedConversationRunStatus: async (scope) => {
+      recoveryScopes.push(scope);
+      return null;
+    },
+    onConversationRunStatus: (_scope, status) => {
+      if (status) diagnostics.push(status);
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as Timer).cleared = true;
+    },
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-ui",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    directory: "/private/project",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  }), true);
+  await waitForAsyncPoll();
+
+  assert.deepEqual(recoveryScopes.map((scope) => ({
+    workspaceId: scope.workspaceId,
+    conversationId: scope.conversationId,
+    runId: scope.runId,
+  })), [{ workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a" }]);
+  assert.equal(diagnostics.at(-1)?.recoveryState, "connection-unavailable");
+  assert.equal(diagnostics.at(-1)?.status, "submitted");
+
+  const pollTimer = timers.find((timer) => timer.delayMs > 0 && !timer.cleared);
+  assert.ok(pollTimer);
+  pollTimer.callback();
+  await waitForAsyncPoll();
+  assert.equal(recoveryScopes.length, 1, "repeated passive polls must not restart server recovery");
+
+  assert.equal(controller.retryAcceptedRunForSession("ses-ui", "ws-a"), 1);
+  await waitForAsyncPoll();
+  assert.equal(recoveryScopes.length, 2, "explicit retry advances this exact run generation once");
+
+  assert.equal(controller.resumeAcceptedRunsForWorkspace("ws-a"), 1);
+  await waitForAsyncPoll();
+  assert.equal(recoveryScopes.length, 3, "a live reconnect resumes the same accepted run without a new identity");
+});
+
+test("accepted admission promotes an earlier SSE watch into exact foreground recovery", async () => {
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  const diagnostics: SessionLifecycleRecoveryStatus[] = [];
+  const recoveryScopes: Array<{ workspaceId: string; conversationId: string; runId: string; clientMessageId?: string | null }> = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-ui",
+    resolveConversationRunForSession: () => ({
+      sessionId: "ses-ui",
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "ses-open",
+      runId: "run-a",
+    }),
+    readConversationRunStatus: async () => null,
+    isAcceptedRunVisible: (scope) => scope.sessionId === "ses-ui",
+    recoverAcceptedConversationRunStatus: async (scope) => {
+      recoveryScopes.push(scope);
+      return null;
+    },
+    onConversationRunStatus: (_scope, status) => {
+      if (status) diagnostics.push(status);
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    trace: (event, payload) => traces.push({ event, payload }),
+  });
+
+  assert.equal(controller.observeSessionLifecycleEvent("ses-ui", "ws-a", "session.idle"), true);
+  await waitForAsyncPoll();
+  assert.equal(controller.activeWatchCount(), 1);
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-ui",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "ses-open",
+    directory: "/private/project",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+    diagnosticTraceId: "send-a",
+  }), true);
+  await waitForAsyncPoll();
+
+  assert.equal(controller.activeWatchCount(), 1);
+  assert.deepEqual(recoveryScopes.map((scope) => ({
+    workspaceId: scope.workspaceId,
+    conversationId: scope.conversationId,
+    runId: scope.runId,
+    clientMessageId: scope.clientMessageId,
+  })), [{
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  }]);
+  assert.equal(diagnostics.at(-1)?.recoveryState, "connection-unavailable");
+  const admission = traces.find((entry) => entry.event === "session-lifecycle-recovery:admitted");
+  assert.equal(admission?.payload?.outcome, "accepted-run-promoted-existing-watch");
+  assert.equal(admission?.payload?.diagnosticTraceId, "send-a");
+});
+
+test("accepted visible transport failures run one exact recovery before reporting connection unavailable", async () => {
+  const diagnostics: SessionLifecycleRecoveryStatus[] = [];
+  const recoveryScopes: Array<{ workspaceId: string; conversationId: string; runId: string }> = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-ui",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => {
+      throw new Error("transport down");
+    },
+    isAcceptedRunVisible: (scope) => scope.sessionId === "ses-ui",
+    recoverAcceptedConversationRunStatus: async (scope) => {
+      recoveryScopes.push(scope);
+      return null;
+    },
+    onConversationRunStatus: (_scope, status) => {
+      if (status) diagnostics.push(status);
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-ui",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  }), true);
+  await waitForAsyncPoll();
+
+  assert.deepEqual(recoveryScopes.map((scope) => ({
+    workspaceId: scope.workspaceId,
+    conversationId: scope.conversationId,
+    runId: scope.runId,
+  })), [{ workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a" }]);
+  assert.equal(diagnostics.at(-1)?.recoveryState, "connection-unavailable");
+});
+
+test("accepted-run recovery cannot publish into a chat that was switched while the exact reconnect was pending", async () => {
+  let selectedSessionId = "ses-a";
+  let resolveRecovery!: (status: SessionLifecycleRecoveryStatus | null) => void;
+  const recovery = new Promise<SessionLifecycleRecoveryStatus | null>((resolve) => {
+    resolveRecovery = resolve;
+  });
+  const diagnostics: Array<SessionLifecycleRecoveryStatus | null> = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => selectedSessionId,
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => null,
+    isAcceptedRunVisible: (scope) => scope.sessionId === selectedSessionId,
+    recoverAcceptedConversationRunStatus: async (scope) => {
+      assert.deepEqual({
+        workspaceId: scope.workspaceId,
+        conversationId: scope.conversationId,
+        runId: scope.runId,
+      }, {
+        workspaceId: "workspace-private",
+        conversationId: "conversation-private",
+        runId: "run-a",
+      });
+      return recovery;
+    },
+    onConversationRunStatus: (_scope, status) => diagnostics.push(status),
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "workspace-private",
+    conversationId: "conversation-private",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  }), true);
+  await waitForAsyncPoll();
+
+  selectedSessionId = "ses-b";
+  resolveRecovery({ runId: "run-a", status: "running", stale: false });
+  await waitForAsyncPoll();
+
+  assert.equal(diagnostics.length, 1, "only the original submitted admission may have been published");
+  assert.equal(diagnostics[0]?.status, "submitted");
+  assert.equal(diagnostics.some((status) => status?.recoveryState === "connection-unavailable"), false);
+});
+
+test("private Chat and workspace-chat accepted recovery preserve their admitted scope", async () => {
+  for (const scope of [
+    {
+      sessionId: "ses-private",
+      workspaceId: "ws-private",
+      conversationId: "conv-private",
+      directory: "/private-root",
+      runId: "run-private",
+      clientMessageId: "msg-private",
+    },
+    {
+      sessionId: "ses-workspace",
+      workspaceId: "ws-workspace",
+      conversationId: "conv-workspace",
+      directory: "/workspace-root",
+      runId: "run-workspace",
+      clientMessageId: "msg-workspace",
+    },
+  ]) {
+    const recoveredScopes: Array<typeof scope> = [];
+    const controller = createSessionLifecycleRecoveryController({
+      sessionStatusById: () => ({}),
+      selectedSessionId: () => scope.sessionId,
+      resolveConversationRunForSession: () => null,
+      readConversationRunStatus: async () => null,
+      isAcceptedRunVisible: (input) => input.sessionId === scope.sessionId,
+      recoverAcceptedConversationRunStatus: async (input) => {
+        recoveredScopes.push({
+          sessionId: input.sessionId,
+          workspaceId: input.workspaceId,
+          conversationId: input.conversationId,
+          directory: input.directory ?? "",
+          runId: input.runId,
+          clientMessageId: input.clientMessageId ?? "",
+        });
+        return null;
+      },
+      setSessionStatusForWorkspace: () => {},
+      notifySessionBusy: () => {},
+    });
+
+    assert.equal(controller.admitAcceptedConversationRun(scope), true);
+    await waitForAsyncPoll();
+    assert.deepEqual(recoveredScopes, [scope]);
+  }
+});
+
+test("reconcile cannot replace an accepted run scope with a conversation alias", async () => {
+  const acceptedScope = {
+    sessionId: "ses-ui",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "ses-open",
+    directory: "/private-root",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+    diagnosticTraceId: "send-a",
+  };
+  let statuses: Record<string, string> = {};
+  const readScopes: Array<typeof acceptedScope> = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => statuses,
+    selectedSessionId: () => "ses-ui",
+    resolveConversationRunForSession: (sessionId) => ({
+      ...acceptedScope,
+      // A lifecycle/status alias can be the durable conversation id rather
+      // than the UI session id, even though it identifies the same run.
+      sessionId,
+      diagnosticTraceId: null,
+    }),
+    readConversationRunStatus: async (scope) => {
+      readScopes.push({
+        ...scope,
+        opencodeSessionId: scope.opencodeSessionId ?? "",
+        directory: scope.directory ?? "",
+        clientMessageId: scope.clientMessageId ?? "",
+        diagnosticTraceId: scope.diagnosticTraceId ?? "",
+      });
+      return { runId: "run-a", status: "running", stale: false };
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun(acceptedScope), true);
+  await waitForAsyncPoll();
+
+  statuses = {
+    "ws-a\0ses-ui": "running",
+    "ws-a\0conv-a": "running",
+  };
+  controller.reconcile();
+  assert.equal(controller.retryAcceptedRunForSession("ses-ui", "ws-a"), 1);
+  await waitForAsyncPoll();
+
+  assert.deepEqual(readScopes.at(-1), acceptedScope);
+});
+
+test("an offscreen terminal accepted run never gains server-only transcript recovery authority", async () => {
+  let selectedSessionId = "ses-a";
+  let acceptedTranscriptRecoveries = 0;
+  let passiveTranscriptRecoveries = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => selectedSessionId,
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => {
+      selectedSessionId = "ses-b";
+      return { runId: "run-a", status: "completed", stale: false };
+    },
+    isAcceptedRunVisible: (scope) => scope.sessionId === selectedSessionId,
+    recoverAcceptedConversationTranscript: async () => {
+      acceptedTranscriptRecoveries += 1;
+      return null;
+    },
+    recoverConversationTranscript: async () => {
+      passiveTranscriptRecoveries += 1;
+      return null;
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  }), true);
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  assert.equal(acceptedTranscriptRecoveries, 0);
+  assert.equal(passiveTranscriptRecoveries, 1);
+});
+
+test("terminal transcript recovery retries the same accepted run once without navigation", async () => {
+  const timers: Timer[] = [];
+  const hydrated: string[] = [];
+  let recoveryAttempts = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-ui",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => ({ runId: "run-a", status: "completed", stale: false }),
+    recoverConversationTranscript: async () => {
+      recoveryAttempts += 1;
+      if (recoveryAttempts === 1) return null;
+      return {
+        workspaceId: "ws-a",
+        sessionId: "ses-ui",
+        limit: 140,
+        messages: [],
+        partsByMessageId: {},
+        source: "sqlite",
+      };
+    },
+    hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot.sessionId),
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as Timer).cleared = true;
+    },
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-ui",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  assert.equal(recoveryAttempts, 1);
+  const retryTimer = timers.find((timer) => timer.delayMs > 0 && !timer.cleared);
+  assert.ok(retryTimer, "first terminal transcript miss should schedule one exact retry");
+  retryTimer.callback();
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  assert.equal(recoveryAttempts, 2);
+  assert.deepEqual(hydrated, ["ses-ui"]);
+});
+
+test("terminal transcript recovery publishes one retryable unavailable diagnostic after two safe misses", async () => {
+  const timers: Timer[] = [];
+  const diagnostics: SessionLifecycleRecoveryStatus[] = [];
+  let recoveryAttempts = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-ui",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => ({ runId: "run-a", status: "completed", stale: false }),
+    recoverConversationTranscript: async () => {
+      recoveryAttempts += 1;
+      return null;
+    },
+    onConversationRunStatus: (_scope, status) => {
+      if (status) diagnostics.push(status);
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as Timer).cleared = true;
+    },
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-ui",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+  timers.find((timer) => timer.delayMs > 0 && !timer.cleared)?.callback();
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  assert.equal(recoveryAttempts, 2);
+  assert.equal(diagnostics.at(-1)?.recoveryState, "transcript-unavailable");
+  assert.equal(diagnostics.at(-1)?.status, "completed");
+  assert.equal(controller.retryTerminalTranscriptRecoveryForSession("ses-ui", "ws-a"), 1);
+  await waitForAsyncPoll();
+  assert.equal(recoveryAttempts, 3, "explicit retry restarts only this terminal transcript recovery");
+});
 
 test("session lifecycle recovery clears local busy state after terminal backend status", async () => {
   const timers: Timer[] = [];
@@ -494,9 +1020,10 @@ test("accepted run admission watches idle UI state and hydrates the selected ter
   assert.deepEqual(hydrated, ["ses-ui"]);
 });
 
-test("terminal transcript recovery failure is traced and can retry through the existing latest probe", async () => {
+test("terminal transcript recovery error is traced and retried once by the lifecycle owner", async () => {
   const traces: string[] = [];
   const hydrated: string[] = [];
+  const timers: Timer[] = [];
   let recoveries = 0;
   const controller = createSessionLifecycleRecoveryController({
     sessionStatusById: () => ({}),
@@ -528,6 +1055,14 @@ test("terminal transcript recovery failure is traced and can retry through the e
     setSessionStatusForWorkspace: () => {},
     notifySessionBusy: () => {},
     trace: (event) => traces.push(event),
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as Timer).cleared = true;
+    },
   });
 
   controller.admitAcceptedConversationRun({
@@ -544,7 +1079,10 @@ test("terminal transcript recovery failure is traced and can retry through the e
 
   assert.equal(recoveries, 1);
   assert.ok(traces.includes("session-lifecycle-recovery:terminal-transcript-error"));
-  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  const retryTimer = timers.find((timer) => timer.delayMs > 0 && !timer.cleared);
+  assert.ok(retryTimer);
+  retryTimer.callback();
+  await waitForAsyncPoll();
   await waitForAsyncPoll();
 
   assert.equal(recoveries, 2);
@@ -695,4 +1233,59 @@ test("a newer admitted run fences late transcript hydration from the old run", a
 
   assert.deepEqual(hydrated, []);
   assert.equal(controller.activeWatchCount(), 1);
+});
+
+test("a newer accepted run cancels the old terminal transcript retry", async () => {
+  const timers: Timer[] = [];
+  let recoveryAttempts = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async (scope) => ({
+      runId: scope.runId,
+      status: scope.runId === "run-old" ? "completed" : "running",
+      stale: false,
+    }),
+    recoverConversationTranscript: async () => {
+      recoveryAttempts += 1;
+      return null;
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as Timer).cleared = true;
+    },
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-old",
+    clientMessageId: "msg-old",
+  });
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+  const retryTimer = timers.find((timer) => timer.delayMs === 1_000 && !timer.cleared);
+  assert.ok(retryTimer, "old terminal recovery should have one pending retry");
+  assert.equal(recoveryAttempts, 1);
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-new",
+    clientMessageId: "msg-new",
+  });
+
+  assert.equal(retryTimer.cleared, true);
+  retryTimer.callback();
+  await waitForAsyncPoll();
+  assert.equal(recoveryAttempts, 1, "a cancelled superseded retry must not recover the old run");
 });
