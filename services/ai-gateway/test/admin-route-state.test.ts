@@ -235,23 +235,24 @@ test("user update payloads contain only fields authorized by the canonical route
   assert.equal(routes.buildAdminUserUpdatePayload(aiAccess, platformAccess, input), null);
 });
 
-test("route mutation tokens reject pending success and error after switching organizations", () => {
+test("route mutation tokens reject completions after every platform and organization scope change", () => {
   assert.equal(typeof routes.createAdminMutationState, "function");
   assert.equal(typeof routes.beginAdminRouteMutation, "function");
   assert.equal(typeof routes.isAdminRouteMutationCurrent, "function");
   const mutations = routes.createAdminMutationState();
+  const platform = { area: "platform", page: "platform-users", organizationId: null };
   const orgA = { area: "organization", page: "members", organizationId: "org_a" };
   const orgB = { area: "organization", page: "members", organizationId: "org_b" };
 
-  const pendingSuccess = routes.beginAdminRouteMutation(mutations, "member-save", orgA);
-  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingSuccess, orgB), false);
-
-  const pendingError = routes.beginAdminRouteMutation(mutations, "member-save", orgA);
-  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingError, orgB), false);
-
-  const current = routes.beginAdminRouteMutation(mutations, "member-save", orgB);
-  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingError, orgA), false);
-  assert.equal(routes.isAdminRouteMutationCurrent(mutations, current, orgB), true);
+  for (const [from, to, label] of [
+    [platform, orgA, "platform to organization"],
+    [orgA, platform, "organization to platform"],
+    [orgA, orgB, "organization A to organization B"],
+  ]) {
+    const pending = routes.beginAdminRouteMutation(mutations, `member-save-${label}`, from);
+    assert.equal(routes.isAdminRouteMutationCurrent(mutations, pending, to), false, label);
+    assert.equal(routes.isAdminRouteMutationCurrent(mutations, pending, from), true, `${label} origin`);
+  }
 });
 
 test("billing actions are organization scoped and manual controls remain platform only", () => {

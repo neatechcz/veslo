@@ -24,6 +24,14 @@ import type { PlatformModelRef } from "../src/model-policy/repository.js"
 
 const ADMIN_COOKIE = "veslo.ai-gateway.admin.token=admin-token"
 
+function topLevelFunctionSource(source: string, name: string): string {
+  const start = source.search(new RegExp(`(?:async )?function ${name}\\(`))
+  assert.notEqual(start, -1, name)
+  const remainder = source.slice(start + 1)
+  const next = remainder.search(/\n(?:async )?function [A-Za-z0-9_]+\(/)
+  return source.slice(start, next === -1 ? source.length : start + 1 + next)
+}
+
 function adminSession(): AdminSessionSnapshot {
   return {
     user: {
@@ -578,6 +586,7 @@ test("GET /admin serves one fail-closed loading and error surface without realis
     assert.match(html, /id="admin-page-error"[^>]*class="[^"]*hidden[^"]*"[^>]*role="alert"/)
     assert.match(html, /id="admin-page-error-message"/)
     assert.match(html, /id="admin-page-retry"[^>]*>Retry<\/button>/)
+    assert.doesNotMatch(html, /id="app-panel"[^>]*aria-live=/)
 
     const skeletonStart = html.indexOf('<div id="admin-page-skeleton"')
     const skeletonEnd = html.indexOf("<!-- /admin-page-skeleton -->", skeletonStart)
@@ -608,16 +617,89 @@ test("GET /admin serves one fail-closed loading and error surface without realis
     ]) {
       assert.doesNotMatch(html, new RegExp(realisticSeed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
     }
-    assert.doesNotMatch(html, /id="usage-chart-bars"[^>]*>[\s\S]*?<span[^>]*style=/)
-    assert.doesNotMatch(html, /id="(?:alert-list|user-list|audit-list)"[^>]*>[\s\S]*?<article/)
+    for (const hostId of [
+      "organization-directory-list", "organization-domain-list", "organization-invite-list",
+      "organization-billing-summary", "organization-audit-list", "model-policy-list",
+      "credentials-table-body", "usage-capacity-five-hour", "usage-capacity-five-hour-note",
+      "usage-capacity-weekly", "usage-capacity-weekly-note", "usage-capacity-measured",
+      "usage-capacity-measured-note", "usage-capacity-credentials", "usage-chart-bars",
+      "usage-total-tokens", "usage-total-requests", "usage-top-credential", "usage-series",
+      "usage-credential-table-body", "alert-list", "user-list", "audit-list",
+    ]) {
+      assert.match(html, new RegExp(`id="${hostId}"[^>]*>\\s*<\\/`), hostId)
+    }
 
-    assert.match(html, /id="refresh-button"[^>]*disabled/)
-    assert.match(html, /id="organization-save-button"[^>]*disabled/)
-    assert.match(html, /id="model-policy-save-button"[^>]*disabled/)
-    assert.match(html, /id="credential-search"[^>]*disabled/)
-    assert.match(html, /id="usage-group-by"[^>]*disabled/)
-    assert.match(html, /id="create-user-button-inline"[^>]*disabled/)
-    assert.match(html, /id="audit-search"[^>]*disabled/)
+    for (const controlId of [
+      "organization-save-button", "organization-name", "organization-slug", "organization-seat-limit",
+      "organization-domain-add-button", "organization-invite-send-button", "organization-billing-interval",
+      "organization-billing-basic", "organization-billing-extended", "organization-billing-checkout",
+      "organization-billing-plan-save", "organization-billing-portal", "organization-billing-cancel",
+      "organization-billing-platform-mode", "organization-billing-platform-status",
+      "organization-billing-manual-enabled", "organization-billing-manual-expires",
+      "organization-billing-platform-save", "model-policy-save-button", "model-policy-credential",
+      "model-policy-discover-button", "model-policy-discovered-model", "model-policy-add-button",
+      "credential-search", "credential-provider-filter", "credential-state-filter", "credentials-show-deleted",
+      "credential-create-provider", "credential-create-name", "credential-create-base-url",
+      "credential-create-secret", "credential-create-submit", "credential-create-codex-upload",
+      "usage-group-by", "usage-filter-credential", "usage-filter-user", "usage-filter-org",
+      "create-user-button-inline", "user-search", "user-status-filter", "user-role-filter",
+      "audit-search", "audit-date-range", "audit-actor-filter", "audit-entity-filter",
+    ]) {
+      assert.match(html, new RegExp(`id="${controlId}"[^>]*disabled`), controlId)
+    }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js atomically isolates route generations and keeps readiness in the background", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+
+    for (const importedName of [
+      "beginAdminPageLoad", "completeAdminPageLoad", "createAdminPageLoadState",
+      "failAdminPageLoad", "isAdminPageLoadCurrent",
+    ]) {
+      assert.match(script, new RegExp(`\\b${importedName}\\b`), importedName)
+    }
+    assert.match(script, /from "\.\/admin-page-load-state\.js"/)
+    assert.match(script, /pageLoad:\s*createAdminPageLoadState\(\)/)
+    assert.match(script, /organizationDirectory:\s*\[\]/)
+    assert.match(script, /organizationMembers:\s*\[\]/)
+    assert.equal(script.match(/let routeLoadAbortController = null;/g)?.length, 1)
+    assert.doesNotMatch(script, /organizationLoadAbortController/)
+
+    assert.match(script, /function beginRouteDataLoad\(route\)/)
+    assert.match(script, /beginRouteDataLoad\(route\)[\s\S]*routeLoadAbortController\?\.abort\(\)[\s\S]*beginAdminPageLoad\(state\.pageLoad, route\)[\s\S]*closeAllModals\(\)[\s\S]*clearRouteOwnedState\(\)[\s\S]*renderAdminPageState\(\)[\s\S]*renderRoute\(\)/)
+    assert.match(script, /renderAdminPageState\(\);\s*renderRoute\(\);\s*setRouteActionsDisabled\(true\);\s*return request/)
+    assert.match(script, /function clearRouteOwnedState\(\)[\s\S]*state\.credentials = \[\][\s\S]*state\.alerts = \[\][\s\S]*state\.audit = \[\][\s\S]*state\.users = \[\][\s\S]*state\.organizationDirectory = \[\][\s\S]*state\.organizationMembers = \[\][\s\S]*state\.organizationDomains = \[\][\s\S]*state\.organizationInvites = \[\][\s\S]*state\.organizationBilling = null[\s\S]*state\.organizationAudit = \[\][\s\S]*state\.usage = null/)
+    for (const selectedState of [
+      "selectedCredentialId", "selectedAlertId", "selectedAuditId", "selectedUserId",
+      "selectedOrganizationMemberId", "selectedOrganizationDomainId", "selectedOrganizationInviteId",
+    ]) {
+      assert.match(script, new RegExp(`state\\.${selectedState} = null`), selectedState)
+    }
+    assert.match(script, /function currentRouteSubjects\(\)/)
+    assert.match(script, /function finishRouteDataLoad\(request, result, empty\)[\s\S]*isAdminPageLoadCurrent\(state\.pageLoad, request\)[\s\S]*completeAdminPageLoad\(state\.pageLoad, request, empty\)[\s\S]*Object\.assign\(state, result\)[\s\S]*renderCurrentRouteData\(\)[\s\S]*renderAdminPageState\(\)[\s\S]*applyAdminCapabilities\(\)/)
+    assert.match(script, /function failRouteDataLoad\(request, error\)[\s\S]*AbortError[\s\S]*401[\s\S]*showLogin\([\s\S]*403[\s\S]*Access denied[\s\S]*404[\s\S]*Organization not found[\s\S]*Unable to load data[\s\S]*renderAdminPageState\(\)/)
+    assert.match(script, /fetchJson\([^\n]+\{ signal \}\)/)
+    assert.match(script, /Promise\.all\(/)
+    assert.match(script, /adminPageRetry\.addEventListener\("click", \(\) => void loadRouteData\(state\.route\)\)/)
+    assert.match(script, /showApp\(\);\s*void loadReadiness\(\);\s*await loadRouteData\(state\.route\)/)
+    assert.doesNotMatch(script, /async function loadRouteData\(route\)[\s\S]{0,240}await loadReadiness\(\)/)
+    assert.match(script, /function renderAdminPageState\(\)[\s\S]*aria-busy[\s\S]*Access denied|function renderAdminPageState\(\)/)
+    assert.match(script, /function setRouteActionsDisabled\(disabled\)/)
+    for (const loaderName of ["loadCredentials", "loadAlerts", "loadAudit", "loadUsers", "loadUsage", "loadUserAiAccess"]) {
+      const loader = topLevelFunctionSource(script, loaderName)
+      assert.match(loader, /beginAdminRouteMutation\(state\.mutations,/, `${loaderName} begins a route mutation`)
+      assert.match(loader, /isAdminRouteMutationCurrent\(state\.mutations, mutation, state\.route\)/, `${loaderName} guards late completion`)
+    }
   } finally {
     server.close()
     await once(server, "close")
@@ -805,11 +887,11 @@ test("GET /admin/app.js uses typed route descriptors and clears organization con
     assert.doesNotMatch(script, /\bcurrentOrganizationId\b/)
     assert.doesNotMatch(script, /\bselectedOrganizationId\b/)
     assert.match(script, /async function loadRouteData\(route\)/)
-    assert.match(script, /route\.area === "platform"[\s\S]*loadAiInfrastructure/)
-    assert.match(script, /route\.area === "organization"[\s\S]*loadOrganizationWorkspace/)
-    assert.match(script, /beginOrganizationLoad\(state\.organizationLoad, route\)/)
-    assert.match(script, /organizationLoadAbortController\?\.abort\(\)/)
-    assert.match(script, /completeOrganizationLoad\(state\.organizationLoad, request,/)
+    assert.match(script, /route\.area === "platform"[\s\S]*loadPlatformRouteResult\(route, signal\)/)
+    assert.match(script, /loadOrganizationWorkspace\(route, signal\)/)
+    assert.match(script, /beginRouteDataLoad\(route\)/)
+    assert.match(script, /routeLoadAbortController\?\.abort\(\)/)
+    assert.match(script, /finishRouteDataLoad\(request, result,/)
   } finally {
     server.close()
     await once(server, "close")
@@ -912,7 +994,7 @@ test("organization billing and audit routes render real scoped loaders and actio
     assert.match(script, /organizationId:\s*aiAccessOrganizationIdForUser\(resolvedUserId\)/)
     assert.match(script, /function aiAccessOrganizationIdForUser\(userId\)/)
     assert.match(script, /resolveAiAccessOrganizationId\(state\.route, user, els\.userOrg\.value\)/)
-    assert.match(script, /async function signOut\(\) \{\s*invalidatePendingModelPolicyLoad\(\);\s*await clearServerAdminSession\(\)/)
+    assert.match(script, /async function signOut\(\) \{\s*invalidatePendingModelPolicyLoad\(\);[\s\S]*routeLoadAbortController\?\.abort\(\);[\s\S]*await clearServerAdminSession\(\)/)
     assert.match(script, /catch \(error\) \{\s*if \(error\?\.name !== "AbortError"\) \{\s*setBackendConnectionStatus/)
     assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "manage-platform-billing"\)/)
     assert.doesNotMatch(script, /will be connected in Task 7/)
@@ -1211,8 +1293,8 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
     assert.match(script, /function applyAdminCapabilities\(\)/)
     assert.match(script, /canAccessAdminRoute\(requestedRoute, routeAccessSnapshot\(\)\)/)
     assert.match(script, /els\.platformNavigation\.classList\.toggle\("hidden", !canManagePlatform\)/)
-    assert.match(script, /route\.area === "platform"[\s\S]*loadAiInfrastructure/)
-    assert.match(script, /route\.area === "organization"[\s\S]*loadOrganizationWorkspace/)
+    assert.match(script, /route\.area === "platform"[\s\S]*loadPlatformRouteResult\(route, signal\)/)
+    assert.match(script, /loadOrganizationWorkspace\(route, signal\)/)
     assert.doesNotMatch(script, /\bloadSessions\(\)/)
     assert.doesNotMatch(script, /async function loadSessions\(\)/)
     assert.doesNotMatch(script, /function renderSessions\(\)/)
@@ -1248,7 +1330,7 @@ test("GET /admin/app.js validates and loads canonical direct routes after sessio
     const script = await response.text()
     assert.match(script, /const requestedRoute = parseAdminRoute\(location\.pathname\)/)
     assert.match(script, /await setAdminRoute\(authorizedRoute, \{ historyMode: "replace", load: false \}\)/)
-    assert.match(script, /showApp\(\);\s*await loadRouteData\(state\.route\)/)
+    assert.match(script, /showApp\(\);\s*void loadReadiness\(\);\s*await loadRouteData\(state\.route\)/)
   } finally {
     server.close()
     await once(server, "close")
@@ -2059,19 +2141,18 @@ test("GET /admin/app.js manages one global model policy with discovery-backed ex
     )
     assert.match(script, /modelPolicy:\s*createModelPolicyState\(\)/)
     assert.match(script, /modelDiscovery:\s*createModelDiscoveryState\(\)/)
-    assert.match(script, /fetchJson\("\/ai-infrastructure\/model-policy", \{ signal: controller\.signal \}\)/)
+    assert.match(script, /fetchJson\("\/ai-infrastructure\/model-policy", \{ signal \}\)/)
     assert.match(script, /fetchJson\("\/ai-infrastructure\/model-policy", \{\s*method: "PUT"/)
     assert.match(script, /modelPolicySaveButton\.addEventListener\("click", \(\) => void saveModelPolicy\(\)\)/)
     assert.match(script, /const submission = beginModelPolicySave\(state\.modelPolicy\)/)
     assert.match(script, /completeModelPolicySave\(state\.modelPolicy, submission, saved\?\.policy\)/)
     assert.match(script, /failModelPolicySave\(\s*state\.modelPolicy,\s*submission,/)
-    assert.match(script, /async function loadModelPolicy\(\)/)
-    assert.match(script, /const request = beginModelPolicyLoad\(state\.modelPolicy\)/)
-    assert.match(script, /modelPolicyLoadAbortController\?\.abort\(\)/)
-    assert.match(script, /const controller = new AbortController\(\)/)
-    assert.match(script, /signal: controller\.signal/)
-    assert.match(script, /completeModelPolicyLoad\(state\.modelPolicy, request, payload\?\.policy\)/)
-    assert.match(script, /failModelPolicyLoad\(\s*state\.modelPolicy,\s*request,/)
+    assert.match(script, /async function loadModelPolicy\(signal\)/)
+    assert.match(script, /const stagedModelPolicy = createModelPolicyState\(\)/)
+    assert.match(script, /const request = beginModelPolicyLoad\(stagedModelPolicy\)/)
+    assert.match(script, /completeModelPolicyLoad\(stagedModelPolicy, request, payload\?\.policy\)/)
+    assert.match(script, /return stagedModelPolicy/)
+    assert.doesNotMatch(script, /modelPolicyLoadAbortController/)
     assert.match(script, /function invalidatePendingModelPolicyLoad\(\)/)
     assert.match(script, /invalidateModelPolicyLoad\(state\.modelPolicy\)/)
     assert.match(script, /state\.route\?\.area === "platform"[\s\S]*state\.route\.page === "ai-infrastructure"/)

@@ -8,7 +8,6 @@ import {
   createModelDiscoveryState,
   createModelPolicyState,
   failModelDiscovery,
-  failModelPolicyLoad,
   failModelPolicySave,
   invalidateModelPolicyLoad,
   modelRefsEqual,
@@ -21,15 +20,12 @@ import {
   adminUserRoutePermissions,
   applyAdminPopState,
   beginAdminRouteMutation,
-  beginOrganizationLoad,
   buildAdminUserUpdatePayload,
   canAccessAdminRoute,
   canPerformAdminRouteAction,
-  completeOrganizationLoad,
   createAdminNavigationState,
   createAdminMutationState,
   createOrganizationLoadState,
-  failOrganizationLoad,
   fromAdminDateTimeLocalValue,
   formatAdminRoute,
   navigateAdminRoute,
@@ -42,6 +38,13 @@ import {
   toAdminDateTimeLocalValue,
   toPlatformRoute,
 } from "./admin-route-state.js";
+import {
+  beginAdminPageLoad,
+  completeAdminPageLoad,
+  createAdminPageLoadState,
+  failAdminPageLoad,
+  isAdminPageLoadCurrent,
+} from "./admin-page-load-state.js";
 
 const STORAGE_KEY = "veslo.ai-gateway.admin.token";
 const BROWSER_AUTH_STORAGE_KEY = "veslo.ai-gateway.admin.browser-auth";
@@ -62,6 +65,9 @@ const state = {
   audit: [],
   users: [],
   organizations: [],
+  organizationDirectory: [],
+  organizationMembers: [],
+  pageLoad: createAdminPageLoadState(),
   mutations: createAdminMutationState(),
   organizationLoad: createOrganizationLoadState(),
   organizationDomains: [],
@@ -87,6 +93,9 @@ const state = {
   selectedAlertId: null,
   selectedAuditId: null,
   selectedUserId: null,
+  selectedOrganizationMemberId: null,
+  selectedOrganizationDomainId: null,
+  selectedOrganizationInviteId: null,
   codexAuthCredentialUpload: null,
   codexAuthUploadByCredentialId: {},
   userMode: "edit",
@@ -101,6 +110,12 @@ const els = {
   browserSignInButton: document.getElementById("browser-sign-in-button"),
   loginError: document.getElementById("login-error"),
   appPanel: document.getElementById("app-panel"),
+  adminPageState: document.getElementById("admin-page-state"),
+  adminPageLoading: document.getElementById("admin-page-loading"),
+  adminPageError: document.getElementById("admin-page-error"),
+  adminPageErrorMessage: document.getElementById("admin-page-error-message"),
+  adminPageRetry: document.getElementById("admin-page-retry"),
+  adminPageSkeleton: document.getElementById("admin-page-skeleton"),
   authState: document.getElementById("auth-state"),
   authUser: document.getElementById("auth-user"),
   signOutButton: document.getElementById("sign-out-button"),
@@ -116,6 +131,7 @@ const els = {
   platformNavItems: Array.from(document.querySelectorAll("[data-platform-route]")),
   organizationNavItems: Array.from(document.querySelectorAll("[data-organization-route]")),
   pages: Array.from(document.querySelectorAll("[data-page]")),
+  routeOwnedControls: Array.from(document.querySelectorAll("[data-page] button, [data-page] input, [data-page] select, [data-page] textarea")),
   organizationContextHeader: document.getElementById("organization-context-header"),
   operatingOrganizationLabel: document.getElementById("operating-organization-label"),
   organizationContextStatus: document.getElementById("organization-context-status"),
@@ -257,8 +273,7 @@ const els = {
 let pendingAdminRequests = 0;
 let backendConnectionHideTimer = 0;
 let modelDiscoveryAbortController = null;
-let modelPolicyLoadAbortController = null;
-let organizationLoadAbortController = null;
+let routeLoadAbortController = null;
 
 function openModal(modal) {
   if (!modal) {
@@ -295,6 +310,116 @@ function closeAllModals() {
     els.userEditorModal,
     els.auditDetailModal,
   ].forEach((modal) => closeModal(modal));
+}
+
+function clearRouteOwnedDom() {
+  [
+    els.organizationDirectoryList,
+    els.organizationDomainList,
+    els.organizationInviteList,
+    els.organizationBillingSummary,
+    els.organizationAuditList,
+    els.modelPolicyList,
+    els.credentialsTableBody,
+    els.credentialDetail,
+    els.usageCapacityCredentials,
+    els.usageChartBars,
+    els.usageSeries,
+    els.usageCredentialTableBody,
+    els.alertList,
+    els.alertDetail,
+    els.userList,
+    els.auditList,
+    els.auditDetail,
+  ].forEach((node) => node?.replaceChildren());
+  [
+    ...els.heroMetrics,
+    els.usageCapacityFiveHour,
+    els.usageCapacityFiveHourNote,
+    els.usageCapacityWeekly,
+    els.usageCapacityWeeklyNote,
+    els.usageCapacityMeasured,
+    els.usageCapacityMeasuredNote,
+    els.usageTotalTokens,
+    els.usageTotalRequests,
+    els.usageTopCredential,
+    els.organizationBillingStatus,
+    els.organizationAuditStatus,
+    els.organizationContextStatus,
+  ].forEach((node) => {
+    if (node) node.textContent = "";
+  });
+  [els.organizationName, els.organizationSlug, els.organizationSeatLimit].forEach((input) => {
+    if (input) input.value = "";
+  });
+}
+
+function clearRouteOwnedState() {
+  state.credentials = [];
+  state.alerts = [];
+  state.audit = [];
+  state.users = [];
+  state.organizationDirectory = [];
+  state.organizationMembers = [];
+  state.organizationLoad = createOrganizationLoadState();
+  state.organizationDomains = [];
+  state.organizationInvites = [];
+  state.organizationBilling = null;
+  state.organizationAudit = [];
+  state.usage = null;
+  state.selectedCredentialId = null;
+  state.selectedAlertId = null;
+  state.selectedAuditId = null;
+  state.selectedUserId = null;
+  state.selectedOrganizationMemberId = null;
+  state.selectedOrganizationDomainId = null;
+  state.selectedOrganizationInviteId = null;
+  state.organizationDomainMode = "create";
+  state.userMode = "edit";
+  state.userAiAccessByUserId = {};
+  state.userAiAccessAvailableCredentialsByUserId = {};
+  state.codexAuthCredentialUpload = null;
+  state.codexAuthUploadByCredentialId = {};
+  state.modelPolicy = createModelPolicyState();
+  state.modelDiscovery = createModelDiscoveryState();
+  clearRouteOwnedDom();
+}
+
+function setRouteActionsDisabled(disabled) {
+  els.routeOwnedControls.forEach((control) => {
+    control.disabled = disabled;
+  });
+  els.refreshButton.disabled = disabled;
+}
+
+function renderAdminPageState() {
+  const status = state.pageLoad.status;
+  const loading = status === "loading";
+  const error = status === "error";
+  const settled = status === "ready" || status === "empty";
+  els.adminPageState.dataset.state = status;
+  els.adminPageState.setAttribute("aria-busy", String(loading));
+  els.adminPageState.classList.toggle("hidden", settled || status === "idle");
+  els.adminPageLoading.classList.toggle("hidden", !loading);
+  els.adminPageSkeleton.classList.toggle("hidden", !loading);
+  els.adminPageError.classList.toggle("hidden", !error);
+  els.adminPageErrorMessage.textContent = error ? state.pageLoad.error : "";
+  els.adminPageRetry.classList.toggle("hidden", !error || state.pageLoad.retryable === false);
+  if (!settled) setRouteActionsDisabled(true);
+}
+
+function beginRouteDataLoad(route) {
+  routeLoadAbortController?.abort();
+  const controller = new AbortController();
+  routeLoadAbortController = controller;
+  const request = beginAdminPageLoad(state.pageLoad, route);
+  closeAllModals();
+  clearRouteOwnedState();
+  state.pageLoad.retryable = true;
+  renderAdminPageState();
+  renderRoute();
+  setRouteActionsDisabled(true);
+  return request ? { request, signal: controller.signal } : null;
 }
 
 function setDomainModalStatus(message, tone = "neutral") {
@@ -806,36 +931,15 @@ function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
   }
 }
 
-async function loadModelPolicy() {
+async function loadModelPolicy(signal) {
   if (state.session?.platformAdmin !== true) {
-    return;
+    return createModelPolicyState();
   }
-  modelPolicyLoadAbortController?.abort();
-  const controller = new AbortController();
-  modelPolicyLoadAbortController = controller;
-  const request = beginModelPolicyLoad(state.modelPolicy);
-  renderModelPolicy();
-  try {
-    const payload = await fetchJson("/ai-infrastructure/model-policy", { signal: controller.signal });
-    if (!isModelPolicyRouteCurrent()) {
-      invalidatePendingModelPolicyLoad();
-      return;
-    }
-    completeModelPolicyLoad(state.modelPolicy, request, payload?.policy);
-  } catch (error) {
-    if (!controller.signal.aborted) {
-      failModelPolicyLoad(
-        state.modelPolicy,
-        request,
-        error instanceof Error ? error.message : "unknown_error",
-      );
-    }
-  } finally {
-    if (modelPolicyLoadAbortController === controller) {
-      modelPolicyLoadAbortController = null;
-    }
-    renderModelPolicy();
-  }
+  const payload = await fetchJson("/ai-infrastructure/model-policy", { signal });
+  const stagedModelPolicy = createModelPolicyState();
+  const request = beginModelPolicyLoad(stagedModelPolicy);
+  completeModelPolicyLoad(stagedModelPolicy, request, payload?.policy);
+  return stagedModelPolicy;
 }
 
 function isModelPolicyRouteCurrent() {
@@ -843,8 +947,6 @@ function isModelPolicyRouteCurrent() {
 }
 
 function invalidatePendingModelPolicyLoad() {
-  modelPolicyLoadAbortController?.abort();
-  modelPolicyLoadAbortController = null;
   invalidateModelPolicyLoad(state.modelPolicy);
 }
 
@@ -1177,7 +1279,11 @@ function renderRoute() {
   els.pageDescription.textContent = description;
   const organization = currentOrganization();
   els.operatingOrganizationLabel.textContent = `Operating organization: ${organization?.name || organization?.slug || route?.organizationId || "unavailable"}`;
-  if (route?.area === "organization" && route.page === "overview") {
+  if (
+    route?.area === "organization"
+    && route.page === "overview"
+    && (state.pageLoad.status === "ready" || state.pageLoad.status === "empty")
+  ) {
     els.organizationSaveButton.disabled = false;
   }
   applyAdminCapabilities();
@@ -1199,23 +1305,14 @@ async function setAdminRoute(route, { historyMode = "push", load = true } = {}) 
   ) {
     state.userMode = "edit";
   }
-  if (state.route.area === "platform") {
-    organizationLoadAbortController?.abort();
-    organizationLoadAbortController = null;
-    state.organizationLoad = createOrganizationLoadState();
-    state.organizationDomains = [];
-    state.organizationInvites = [];
-    state.organizationBilling = null;
-    state.organizationAudit = [];
-  }
   const historyUpdate = planAdminHistoryUpdate(state.route, location, historyMode);
   if (historyUpdate?.method === "push") {
     history.pushState(null, "", pathname);
   } else if (historyUpdate?.method === "replace") {
     history.replaceState(null, "", pathname);
   }
-  renderRoute();
   if (load) await loadRouteData(state.route);
+  else renderRoute();
   return true;
 }
 
@@ -1323,6 +1420,7 @@ async function bootstrapSession() {
       : state.session.platformAdmin ? "platform admin" : "organization admin",
   );
   showApp();
+  void loadReadiness();
   await loadRouteData(state.route);
 }
 
@@ -1449,6 +1547,10 @@ async function clearServerAdminSession() {
 
 async function signOut() {
   invalidatePendingModelPolicyLoad();
+  routeLoadAbortController?.abort();
+  routeLoadAbortController = null;
+  state.pageLoad = createAdminPageLoadState();
+  renderAdminPageState();
   await clearServerAdminSession();
   state.token = "";
   state.session = null;
@@ -1458,6 +1560,8 @@ async function signOut() {
   state.audit = [];
   state.users = [];
   state.organizations = [];
+  state.organizationDirectory = [];
+  state.organizationMembers = [];
   state.organizationDomains = [];
   state.organizationInvites = [];
   state.organizationBilling = null;
@@ -1467,8 +1571,9 @@ async function signOut() {
   state.selectedAlertId = null;
   state.selectedAuditId = null;
   state.selectedUserId = null;
-  organizationLoadAbortController?.abort();
-  organizationLoadAbortController = null;
+  state.selectedOrganizationMemberId = null;
+  state.selectedOrganizationDomainId = null;
+  state.selectedOrganizationInviteId = null;
   state.organizationLoad = createOrganizationLoadState();
   state.mutations = createAdminMutationState();
   state.route = null;
@@ -1592,22 +1697,16 @@ async function selectOrganizationFromSelector() {
 
 async function loadOrganization() {
   if (state.route?.area !== "organization") return;
-  await loadOrganizationWorkspace(state.route);
+  await loadRouteData(state.route);
 }
 
-async function loadOrganizationsDirectory() {
-  try {
-    const payload = await fetchJson("/organizations");
-    state.organizations = Array.isArray(payload?.organizations) ? payload.organizations : [];
-    renderOrganizationsDirectory();
-    renderOrganizationSelector();
-  } catch (error) {
-    els.organizationDirectoryList.innerHTML = `<article class="list-card active"><div><strong>Unable to load organizations</strong><p>${escapeHtml(error instanceof Error ? error.message : "unknown_error")}</p></div></article>`;
-  }
+async function loadOrganizationsDirectory(signal) {
+  const payload = await fetchJson("/organizations", { signal });
+  return Array.isArray(payload?.organizations) ? payload.organizations : [];
 }
 
 function renderOrganizationsDirectory() {
-  const organizations = Array.isArray(state.organizations) ? state.organizations : [];
+  const organizations = Array.isArray(state.organizationDirectory) ? state.organizationDirectory : [];
   els.organizationDirectoryList.innerHTML = organizations.map((organization) => `
     <article class="list-card organization-directory-card">
       <div>
@@ -1624,47 +1723,61 @@ function renderOrganizationsDirectory() {
   `).join("") || `<article class="list-card active"><div><strong>No organizations</strong><p>No organization workspaces are available.</p></div></article>`;
 }
 
-async function loadOrganizationWorkspace(route) {
+async function loadOrganizationWorkspace(route, signal) {
   const organizationId = organizationIdForRoute(route);
-  const request = beginOrganizationLoad(state.organizationLoad, route);
-  if (!organizationId || !request) return;
-  organizationLoadAbortController?.abort();
-  const controller = new AbortController();
-  organizationLoadAbortController = controller;
-  els.organizationContextStatus.textContent = "Loading organization workspace...";
-  try {
-    const directoryPayload = await fetchJson("/organizations", { signal: controller.signal });
-    const organizations = Array.isArray(directoryPayload?.organizations) ? directoryPayload.organizations : [];
-    state.organizations = organizations;
-    if (!organizations.some((entry) => entry.id === organizationId)) {
-      throw new Error("organization_not_authorized_or_not_found");
-    }
-    const organizationPayload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}`, { signal: controller.signal });
-    if (!completeOrganizationLoad(state.organizationLoad, request, organizationPayload?.organization)) return;
-    if (route.page === "domains-invites") {
-      const [domainsPayload, invitesPayload] = await Promise.all([
-        fetchJson(`/organizations/${encodeURIComponent(organizationId)}/domains`, { signal: controller.signal }),
-        fetchJson(`/organizations/${encodeURIComponent(organizationId)}/invites`, { signal: controller.signal }),
-      ]);
-      if (state.route?.area !== "organization" || organizationIdForRoute(state.route) !== organizationId) return;
-      state.organizationDomains = Array.isArray(domainsPayload?.domains) ? domainsPayload.domains : [];
-      state.organizationInvites = Array.isArray(invitesPayload?.invites) ? invitesPayload.invites : [];
-    } else {
-      state.organizationDomains = [];
-      state.organizationInvites = [];
-    }
-    els.organizationContextStatus.textContent = "";
-    renderOrganization();
-    renderOrganizationSelector();
-    renderRoute();
-  } catch (error) {
-    if (controller.signal.aborted) return;
-    failOrganizationLoad(state.organizationLoad, request, error instanceof Error ? error.message : "unknown_error");
-    els.organizationContextStatus.textContent = "Organization unavailable or not authorized. Return to an authorized organization workspace.";
-    renderOrganization();
-  } finally {
-    if (organizationLoadAbortController === controller) organizationLoadAbortController = null;
+  if (!organizationId) {
+    throw Object.assign(new Error("organization_not_found"), { status: 404 });
   }
+  const encodedOrganizationId = encodeURIComponent(organizationId);
+  const requests = [
+    fetchJson("/organizations", { signal }),
+    fetchJson(`/organizations/${encodedOrganizationId}`, { signal }),
+  ];
+  if (route.page === "domains-invites") {
+    requests.push(
+      fetchJson(`/organizations/${encodedOrganizationId}/domains`, { signal }),
+      fetchJson(`/organizations/${encodedOrganizationId}/invites`, { signal }),
+    );
+  }
+  if (route.page === "members" || route.page === "ai-access") {
+    requests.push(fetchJson("/users", { signal }));
+  }
+  if (route.page === "billing") {
+    requests.push(fetchJson(`/organizations/${encodedOrganizationId}/billing`, { signal }));
+  }
+  if (route.page === "audit") {
+    requests.push(fetchJson(`/organizations/${encodedOrganizationId}/audit`, { signal }));
+  }
+  const [directoryPayload, organizationPayload, ...routePayloads] = await Promise.all(requests);
+  const directory = Array.isArray(directoryPayload?.organizations) ? directoryPayload.organizations : [];
+  if (!directory.some((entry) => entry.id === organizationId)) {
+    throw Object.assign(new Error("organization_not_authorized_or_not_found"), { status: 404 });
+  }
+  const organization = organizationPayload?.organization;
+  if (!organization || organization.id !== organizationId) {
+    throw Object.assign(new Error("organization_not_found"), { status: 404 });
+  }
+  const organizationLoad = createOrganizationLoadState();
+  organizationLoad.requestId = 1;
+  organizationLoad.organizationId = organizationId;
+  organizationLoad.organization = organization;
+  const result = {
+    organizationLoad,
+    organizationDomains: [],
+    organizationInvites: [],
+    organizationBilling: null,
+    organizationAudit: [],
+  };
+  if (route.page === "domains-invites") {
+    result.organizationDomains = Array.isArray(routePayloads[0]?.domains) ? routePayloads[0].domains : [];
+    result.organizationInvites = Array.isArray(routePayloads[1]?.invites) ? routePayloads[1].invites : [];
+  }
+  if (route.page === "members" || route.page === "ai-access") {
+    result.users = Array.isArray(routePayloads[0]?.users) ? routePayloads[0].users : [];
+  }
+  if (route.page === "billing") result.organizationBilling = routePayloads[0]?.billing || null;
+  if (route.page === "audit") result.organizationAudit = Array.isArray(routePayloads[0]?.events) ? routePayloads[0].events : [];
+  return result;
 }
 
 function renderOrganizationBilling() {
@@ -1736,24 +1849,165 @@ async function loadOrganizationAudit(route) {
   }
 }
 
-async function loadRouteData(route) {
-  await loadReadiness();
+function usageRequestPath() {
+  const params = new URLSearchParams();
+  params.set("groupBy", state.usageFilters.groupBy);
+  if (state.usageFilters.credentialId) params.set("credentialId", state.usageFilters.credentialId);
+  if (state.usageFilters.userId) params.set("userId", state.usageFilters.userId);
+  if (state.usageFilters.orgId) params.set("orgId", state.usageFilters.orgId);
+  return `/usage?${params.toString()}`;
+}
+
+async function loadPlatformRouteResult(route, signal) {
+  const includeDeleted = state.showDeletedCredentials ? "?includeDeleted=true" : "";
+  if (route.page === "overview") {
+    const [credentialsPayload, alertsPayload, usersPayload, usage] = await Promise.all([
+      fetchJson(`/credentials${includeDeleted}`, { signal }),
+      fetchJson("/alerts", { signal }),
+      fetchJson("/users", { signal }),
+      fetchJson(usageRequestPath(), { signal }),
+    ]);
+    return {
+      credentials: Array.isArray(credentialsPayload?.credentials) ? credentialsPayload.credentials : [],
+      alerts: Array.isArray(alertsPayload?.alerts) ? alertsPayload.alerts : [],
+      users: Array.isArray(usersPayload?.users) ? usersPayload.users : [],
+      usage,
+    };
+  }
+  if (route.page === "organizations") {
+    return { organizationDirectory: await loadOrganizationsDirectory(signal) };
+  }
+  if (route.page === "ai-infrastructure") {
+    const [credentialsPayload, modelPolicy] = await Promise.all([
+      fetchJson(`/credentials${includeDeleted}`, { signal }),
+      loadModelPolicy(signal),
+    ]);
+    return {
+      credentials: Array.isArray(credentialsPayload?.credentials) ? credentialsPayload.credentials : [],
+      modelPolicy,
+    };
+  }
+  if (route.page === "ai-usage") {
+    const [credentialsPayload, usage] = await Promise.all([
+      fetchJson(`/credentials${includeDeleted}`, { signal }),
+      fetchJson(usageRequestPath(), { signal }),
+    ]);
+    return {
+      credentials: Array.isArray(credentialsPayload?.credentials) ? credentialsPayload.credentials : [],
+      usage,
+    };
+  }
+  if (route.page === "ai-alerts") {
+    const payload = await fetchJson("/alerts", { signal });
+    return { alerts: Array.isArray(payload?.alerts) ? payload.alerts : [] };
+  }
+  if (route.page === "platform-users") {
+    const payload = await fetchJson("/users", { signal });
+    return { users: Array.isArray(payload?.users) ? payload.users : [] };
+  }
+  if (route.page === "audit") {
+    const payload = await fetchJson("/audit", { signal });
+    return { audit: Array.isArray(payload?.events) ? payload.events : [] };
+  }
+  throw new Error("unsupported_admin_route");
+}
+
+function routeResultIsEmpty(route, result) {
   if (route.area === "platform") {
-    if (route.page === "overview") await Promise.all([loadCredentials(), loadAlerts(), loadUsers(), loadUsage()]);
-    if (route.page === "organizations") await loadOrganizationsDirectory();
-    if (route.page === "ai-infrastructure") await loadAiInfrastructure();
-    if (route.page === "ai-usage") await Promise.all([loadCredentials(), loadUsage()]);
-    if (route.page === "ai-alerts") await loadAlerts();
-    if (route.page === "platform-users") await loadUsers();
-    if (route.page === "audit") await loadAudit();
-    renderOverview();
+    if (route.page === "organizations") return result.organizationDirectory.length === 0;
+    if (route.page === "ai-infrastructure") return result.credentials.length === 0 && !result.modelPolicy?.saved;
+    if (route.page === "ai-alerts") return result.alerts.length === 0;
+    if (route.page === "platform-users") return result.users.length === 0;
+    if (route.page === "audit") return result.audit.length === 0;
+    if (route.page === "ai-usage") return !result.usage || (result.usage.series || []).length === 0;
+    return false;
+  }
+  if (route.page === "members" || route.page === "ai-access") return (result.users || []).length === 0;
+  if (route.page === "billing") return !result.organizationBilling;
+  if (route.page === "audit") return result.organizationAudit.length === 0;
+  return false;
+}
+
+function renderCurrentRouteData() {
+  const route = state.route;
+  if (route.area === "platform") {
+    if (route.page === "overview") renderOverview();
+    if (route.page === "organizations") renderOrganizationsDirectory();
+    if (route.page === "ai-infrastructure") {
+      renderCredentials();
+      renderModelPolicy();
+    }
+    if (route.page === "ai-usage") renderUsage();
+    if (route.page === "ai-alerts") renderAlerts();
+    if (route.page === "platform-users") renderUsers();
+    if (route.page === "audit") renderAudit();
     return;
   }
-  if (route.area === "organization") {
-    await loadOrganizationWorkspace(route);
-    if (route.page === "members" || route.page === "ai-access") await loadUsers();
-    if (route.page === "billing") await loadOrganizationBilling(route);
-    if (route.page === "audit") await loadOrganizationAudit(route);
+  if (route.page === "overview" || route.page === "domains-invites") renderOrganization();
+  if (route.page === "members" || route.page === "ai-access") renderUsers();
+  if (route.page === "billing") renderOrganizationBilling();
+  if (route.page === "audit") renderOrganizationAudit();
+  renderOrganizationSelector();
+}
+
+function finishRouteDataLoad(request, result, empty) {
+  if (!isAdminPageLoadCurrent(state.pageLoad, request)) return false;
+  if (!completeAdminPageLoad(state.pageLoad, request, empty)) return false;
+  if (Array.isArray(result.credentials)) result.selectedCredentialId = result.credentials[0]?.id || null;
+  if (Array.isArray(result.alerts)) result.selectedAlertId = result.alerts[0]?.id || null;
+  if (Array.isArray(result.audit)) result.selectedAuditId = result.audit[0]?.id || null;
+  if (Array.isArray(result.users)) result.selectedUserId = result.users[0]?.id || null;
+  Object.assign(state, result);
+  setRouteActionsDisabled(false);
+  renderCurrentRouteData();
+  renderAdminPageState();
+  applyAdminCapabilities();
+  return true;
+}
+
+function failRouteDataLoad(request, error) {
+  if (!isAdminPageLoadCurrent(state.pageLoad, request)) return false;
+  if (error?.name === "AbortError") {
+    failAdminPageLoad(state.pageLoad, request, error);
+    renderAdminPageState();
+    return false;
+  }
+  if (!failAdminPageLoad(state.pageLoad, request, error)) return false;
+  if (error?.status === 401) {
+    state.token = "";
+    state.session = null;
+    state.user = null;
+    localStorage.removeItem(STORAGE_KEY);
+    showLogin("Your admin session has expired. Sign in again.");
+    return false;
+  }
+  state.pageLoad.retryable = true;
+  if (error?.status === 403) {
+    state.pageLoad.error = "Access denied";
+    state.pageLoad.retryable = false;
+  } else if (error?.status === 404 && state.route?.area === "organization") {
+    state.pageLoad.error = "Organization not found";
+    state.pageLoad.retryable = false;
+  } else {
+    state.pageLoad.error = "Unable to load data. Retry this page.";
+  }
+  renderAdminPageState();
+  return true;
+}
+
+async function loadRouteData(route) {
+  const activeLoad = beginRouteDataLoad(route);
+  if (!activeLoad) return;
+  const { request, signal } = activeLoad;
+  try {
+    const result = route.area === "platform"
+      ? await loadPlatformRouteResult(route, signal)
+      : await loadOrganizationWorkspace(route, signal);
+    finishRouteDataLoad(request, result, routeResultIsEmpty(route, result));
+  } catch (error) {
+    failRouteDataLoad(request, error);
+  } finally {
+    if (routeLoadAbortController?.signal === signal) routeLoadAbortController = null;
   }
 }
 
@@ -1793,9 +2047,12 @@ function setReadinessSignal(tone, label) {
 }
 
 async function loadCredentials() {
+  const mutation = beginAdminRouteMutation(state.mutations, "credentials-refresh", state.route);
+  if (!mutation) return;
   try {
     const includeDeleted = state.showDeletedCredentials ? "?includeDeleted=true" : "";
     const payload = await fetchJson(`/credentials${includeDeleted}`);
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     state.credentials = Array.isArray(payload?.credentials) ? payload.credentials : [];
     if (!state.selectedCredentialId || !state.credentials.some((entry) => entry.id === state.selectedCredentialId)) {
       state.selectedCredentialId = state.credentials[0]?.id || null;
@@ -1805,40 +2062,41 @@ async function loadCredentials() {
       renderModelPolicy();
     }
   } catch (error) {
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     console.error("loadCredentials failed", error);
   }
 }
 
-async function loadAiInfrastructure() {
-  await loadCredentials();
-  if (state.session?.platformAdmin !== true) {
-    return;
-  }
-  await loadModelPolicy();
-}
-
 async function loadAlerts() {
+  const mutation = beginAdminRouteMutation(state.mutations, "alerts-refresh", state.route);
+  if (!mutation) return;
   try {
     const payload = await fetchJson("/alerts");
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     state.alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
     if (!state.selectedAlertId || !state.alerts.some((entry) => entry.id === state.selectedAlertId)) {
       state.selectedAlertId = state.alerts[0]?.id || null;
     }
     renderAlerts();
   } catch (error) {
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     console.error("loadAlerts failed", error);
   }
 }
 
 async function loadAudit() {
+  const mutation = beginAdminRouteMutation(state.mutations, "audit-refresh", state.route);
+  if (!mutation) return;
   try {
     const payload = await fetchJson("/audit");
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     state.audit = Array.isArray(payload?.events) ? payload.events : [];
     if (!state.selectedAuditId || !state.audit.some((entry) => entry.id === state.selectedAuditId)) {
       state.selectedAuditId = state.audit[0]?.id || null;
     }
     renderAudit();
   } catch (error) {
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     console.error("loadAudit failed", error);
   }
 }
@@ -1853,7 +2111,10 @@ async function loadUserAiAccess(userId) {
     return null;
   }
 
+  const mutation = beginAdminRouteMutation(state.mutations, `user-ai-access-load:${resolvedUserId}`, state.route);
+  if (!mutation) return null;
   const payload = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`);
+  if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return null;
   const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
   state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
     payload?.availableCredentials,
@@ -1897,13 +2158,16 @@ async function saveUserAiAccess(userId, input = null) {
 }
 
 function aiAccessOrganizationIdForUser(userId) {
-  const user = state.users.find((entry) => entry.id === userId);
+  const user = currentRouteSubjects().find((entry) => entry.id === userId);
   return resolveAiAccessOrganizationId(state.route, user, els.userOrg.value);
 }
 
 async function loadUsers() {
+  const mutation = beginAdminRouteMutation(state.mutations, "users-refresh", state.route);
+  if (!mutation) return;
   try {
     const payload = await fetchJson("/users");
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     state.users = Array.isArray(payload?.users) ? payload.users : [];
     if (!state.selectedUserId || !state.users.some((entry) => entry.id === state.selectedUserId)) {
       state.selectedUserId = state.users[0]?.id || null;
@@ -1922,6 +2186,7 @@ async function loadUsers() {
       && canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")
     ) {
       await loadUserAiAccess(state.selectedUserId);
+      if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
       const user = currentUser();
       if (user) {
         populateUserEditor(user);
@@ -1929,6 +2194,7 @@ async function loadUsers() {
     }
     setUserSaveStatus(defaultUserSaveStatusMessage());
   } catch (error) {
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     console.error("loadUsers failed", error);
     setUserSaveStatus(
       `Unable to load users: ${error instanceof Error ? error.message : "unknown_error"}`,
@@ -1938,22 +2204,15 @@ async function loadUsers() {
 }
 
 async function loadUsage() {
+  const mutation = beginAdminRouteMutation(state.mutations, "usage-refresh", state.route);
+  if (!mutation) return;
   try {
-    const params = new URLSearchParams();
-    params.set("groupBy", state.usageFilters.groupBy);
-    if (state.usageFilters.credentialId) {
-      params.set("credentialId", state.usageFilters.credentialId);
-    }
-    if (state.usageFilters.userId) {
-      params.set("userId", state.usageFilters.userId);
-    }
-    if (state.usageFilters.orgId) {
-      params.set("orgId", state.usageFilters.orgId);
-    }
-    const payload = await fetchJson(`/usage?${params.toString()}`);
+    const payload = await fetchJson(usageRequestPath());
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     state.usage = payload;
     renderUsage();
   } catch (error) {
+    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     console.error("loadUsage failed", error);
   }
 }
@@ -2402,12 +2661,17 @@ function renderAlerts() {
   }
 }
 
+function currentRouteSubjects() {
+  // Task 4 replaces the organization branch with scoped organizationMembers.
+  return state.users;
+}
+
 function filteredUsers() {
   const term = els.userSearch.value.trim().toLowerCase();
   const status = els.userStatusFilter.value;
   const role = els.userRoleFilter.value;
 
-  return state.users.filter((user) => {
+  return currentRouteSubjects().filter((user) => {
     const organizationId = organizationIdForRoute(state.route);
     if (
       organizationId
@@ -2451,14 +2715,14 @@ function findUserByEmail(email) {
   if (!normalized) {
     return null;
   }
-  return state.users.find((user) => typeof user.email === "string" && user.email.trim().toLowerCase() === normalized) || null;
+  return currentRouteSubjects().find((user) => typeof user.email === "string" && user.email.trim().toLowerCase() === normalized) || null;
 }
 
 function currentUser() {
   if (state.userMode === "create") {
     return null;
   }
-  return state.users.find((entry) => entry.id === state.selectedUserId) || null;
+  return currentRouteSubjects().find((entry) => entry.id === state.selectedUserId) || null;
 }
 
 function currentCredential() {
@@ -3468,6 +3732,7 @@ function bindActions() {
   });
   els.signOutButton.addEventListener("click", () => void signOut());
   els.refreshButton.addEventListener("click", () => void bootstrapSession());
+  els.adminPageRetry.addEventListener("click", () => void loadRouteData(state.route));
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);
   els.organizationSaveButton.addEventListener("click", () => void saveOrganization());
