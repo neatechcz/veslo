@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const routes = await import("../public-admin/admin-route-state.js")
@@ -290,28 +291,16 @@ test("billing actions are organization scoped and manual controls remain platfor
   ), false);
 });
 
-test("AI access organization resolution requires the canonical organization AI Access route", () => {
-  const targetUser = {
-    id: "target_user",
-    memberships: [
-      { orgId: "org_target", orgName: "Target Org" },
-      { orgId: "org_second", orgName: "Second Org" },
-    ],
-  };
+test("production client modules contain no legacy AI access organization resolver", async () => {
+  const [routeStateSource, appSource] = await Promise.all([
+    readFile(new URL("../public-admin/admin-route-state.js", import.meta.url), "utf8"),
+    readFile(new URL("../public-admin/app.js", import.meta.url), "utf8"),
+  ]);
 
-  assert.equal(
-    routes.resolveAiAccessOrganizationId({ area: "platform", page: "platform-users", organizationId: null }, targetUser, ""),
-    null,
-    "Platform Users must not infer a multi-org target from membership order",
-  );
-  assert.equal(
-    routes.resolveAiAccessOrganizationId({ area: "platform", page: "platform-users", organizationId: null }, targetUser, "org_second"),
-    null,
-  );
-  assert.equal(
-    routes.resolveAiAccessOrganizationId({ area: "organization", page: "ai-access", organizationId: "org_routed" }, targetUser, "org_second"),
-    "org_routed",
-  );
+  assert.equal(Object.hasOwn(routes, "resolveAiAccessOrganizationId"), false);
+  assert.doesNotMatch(routeStateSource, /resolveAiAccessOrganizationId|selectedOrganizationId/);
+  assert.doesNotMatch(appSource, /resolveAiAccessOrganizationId|aiAccessOrganizationIdForUser/);
+  assert.doesNotMatch(appSource, /resolveAiAccessOrganizationId\([^)]*(?:userOrg|selectedOrganization)/);
 });
 
 test("manual billing expiry round-trips through datetime-local in Europe/Prague", () => {

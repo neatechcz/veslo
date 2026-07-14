@@ -81,13 +81,6 @@ export function organizationIdForRoute(route) {
     : null;
 }
 
-export function resolveAiAccessOrganizationId(route, user, selectedOrganizationId = "") {
-  const routedOrganizationId = organizationIdForRoute(route);
-  return route?.area === "organization" && route.page === "ai-access"
-    ? routedOrganizationId
-    : null;
-}
-
 export function toAdminDateTimeLocalValue(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
