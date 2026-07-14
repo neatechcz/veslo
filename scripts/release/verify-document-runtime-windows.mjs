@@ -14,7 +14,6 @@ const WINDOWS_PLATFORM = "windows-native-x64";
 const LOCAL_DOCS_REQUIRED = "local-docs-required";
 const REMOTE_DOCS_ONLY = "remote-docs-only";
 const WINDOWS_RUNTIME_RESOURCE_KEY = "resources/document-runtime/windows-native-x64";
-const WINDOWS_RUNTIME_RESOURCE_TARGET = "document-runtime";
 const REQUIRED_BINARIES = ["soffice", "pandoc", "pdftoppm", "pdftotext", "pdfimages", "qpdf", "python", "node", "weasyprint"];
 
 const readText = (filePath) => readFileSync(filePath, "utf8");
@@ -116,7 +115,7 @@ const verifyWslPolicy = ({ repoRoot, checks }) => {
     checks,
     "Windows document runtime does not use WSL scripts as package readiness",
     resources["windows/wsl2-client-installer.ps1"] === "wsl2-client-installer.ps1" &&
-      resources[WINDOWS_RUNTIME_RESOURCE_KEY] === WINDOWS_RUNTIME_RESOURCE_TARGET &&
+      resources[WINDOWS_RUNTIME_RESOURCE_KEY] === undefined &&
       !/document-runtime/i.test(nsis) &&
       !/veslo-document-runtime/i.test(wxs),
     `${tauriConfigPath}; ${windowsReleaseConfigPath}`,

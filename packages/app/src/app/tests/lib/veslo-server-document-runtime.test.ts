@@ -23,6 +23,7 @@ const readyPayload: DocumentRuntimeStatusPayload = {
     installing: false,
     rollback: false,
     remoteOnly: false,
+    progress: null,
   },
   repair: {
     available: true,

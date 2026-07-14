@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, createReadStream, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
@@ -9,6 +10,7 @@ import {
   buildManagedEnv,
   doctor,
   installPackageArchive,
+  installPackageFromFeed,
   packExpandedPackage,
   pathInfo,
   repairHeadless,
@@ -19,6 +21,8 @@ import {
 } from "./runtime.mjs";
 
 const sha = (char) => char.repeat(64);
+
+const sha256FileSync = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 const manifest = {
   schemaVersion: 1,
@@ -511,6 +515,75 @@ test("package archive packs, verifies, installs, doctors, and activates headless
     const installedPath = await pathInfo({ env: { VESLO_DOCUMENT_RUNTIME_ROOT: runtimeRoot } });
     assert.equal(installedPath.ok, true);
     assert.equal(installedPath.activePath, join(runtimeRoot, "packages", "2026.7.0"));
+  } finally {
+    rmSync(source.root, { recursive: true, force: true });
+    rmSync(packageRoot, { recursive: true, force: true });
+    rmSync(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test("package feed install downloads, verifies, installs, and activates the selected package", async () => {
+  const source = createRuntimeFixture();
+  const packageRoot = mkdtempSync(join(tmpdir(), "veslo-document-runtime-feed-package-"));
+  const runtimeRoot = mkdtempSync(join(tmpdir(), "veslo-document-runtime-feed-install-"));
+  const packagePath = join(packageRoot, "veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg");
+  const feedPath = join(packageRoot, "document-runtime-packages.json");
+  const progressEvents = [];
+  try {
+    await packExpandedPackage({
+      sourceDir: source.active,
+      outputPath: packagePath,
+    });
+    const contentSha256 = sha256FileSync(packagePath);
+    writeText(feedPath, JSON.stringify({
+      schemaVersion: 1,
+      packageId: "veslo-document-runtime",
+      releaseTag: "v2026.7.0",
+      channel: "stable",
+      generatedAt: "2026-07-02T00:00:00Z",
+      packages: [
+        {
+          packageId: "veslo-document-runtime",
+          packageVersion: "2026.7.0",
+          platform: "windows-native-x64",
+          channel: "stable",
+          minimumAppVersion: "2026.7.0",
+          artifactName: "veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+          url: "https://github.com/neatechcz/veslo-updates/releases/download/v2026.7.0/veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+          signature: "trusted-minisign-signature",
+          contentSha256,
+          manifestSha256: sha("5"),
+          sizeBytes: readFileSync(packagePath).byteLength,
+        },
+      ],
+    }, null, 2));
+
+    const result = await installPackageFromFeed({
+      feedPath,
+      platform: "windows-native-x64",
+      env: { VESLO_DOCUMENT_RUNTIME_ROOT: runtimeRoot },
+      timeoutMs: 1000,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        body: createReadStream(packagePath),
+      }),
+      onProgress: (progress) => progressEvents.push(progress),
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.installed, true);
+    assert.equal(result.activated, true);
+    assert.equal(result.packageVersion, "2026.7.0");
+    assert.equal(result.artifactSha256, contentSha256);
+    assert.equal(readFileSync(`${result.artifactPath}.sig`, "utf8"), "trusted-minisign-signature");
+    assert.equal(progressEvents.some((event) => event.phase === "downloading" && event.percent === 100), true);
+    assert.equal(progressEvents.some((event) => event.phase === "installing"), true);
+    assert.equal(progressEvents.at(-1).phase, "ready");
+
+    const pointer = JSON.parse(readFileSync(join(runtimeRoot, "active.json"), "utf8"));
+    assert.equal(pointer.activePath, "packages/2026.7.0");
   } finally {
     rmSync(source.root, { recursive: true, force: true });
     rmSync(packageRoot, { recursive: true, force: true });

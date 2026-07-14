@@ -15,7 +15,11 @@ test("settings exposes document runtime diagnostics through the shared model", (
   assert.match(enLocaleSource, /"ui\.literal\.document_runtime_z4n8k2": "Document runtime"/);
   assert.match(settingsSource, /documentRuntimeRow\(\)\.status/);
   assert.match(settingsSource, /documentRuntimeRow\(\)\.detail/);
-  assert.match(settingsSource, /documentRuntimeRow\(\)\.action === "repair"/);
+  assert.match(settingsSource, /action === "install" \|\| action === "repair" \|\| action === "update"/);
+  assert.match(settingsSource, /Install office package/);
+  assert.match(settingsSource, /Update office package/);
+  assert.match(settingsSource, /documentRuntimeRow\(\)\.progressPercent/);
+  assert.match(settingsSource, /bg-blue-9/);
   assert.match(settingsSource, /props\.repairDocumentRuntime\?\.\(\)/);
   assert.match(settingsSource, /props\.checkForUpdates\(\)/);
 });

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -38,6 +38,11 @@ const buildWindowsMsiWorkflow = readText(resolve(root, ".github", "workflows", "
 const releaseDoc = readText(resolve(root, "RELEASE.md"));
 const stateConfigDoc = readText(resolve(root, "docs", "dev", "state-and-config-reference.md"));
 const applicationLogsDoc = readText(resolve(root, "docs", "dev", "veslo-application-logs.md"));
+const workflowRoot = resolve(root, ".github", "workflows");
+const activeWorkflows = readdirSync(workflowRoot)
+  .filter((name) => /\.ya?ml$/.test(name))
+  .sort()
+  .map((name) => ({ name, text: readText(resolve(workflowRoot, name)) }));
 
 const versions = {
   app: appPkg.version ?? null,
@@ -137,6 +142,45 @@ const hasOrderedFragments = (text, fragments) => {
 
 const hasForcedSidecarBuild = (text) => /VESLO_SIDECAR_FORCE_BUILD:\s*["']?1["']?/.test(text);
 
+const findDeprecatedActionRefs = (actionRef, maxMajor = 4) => {
+  const escaped = actionRef.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`uses:\\s*${escaped}@v([0-${maxMajor}])\\b`, "g");
+  const refs = [];
+  for (const workflow of activeWorkflows) {
+    for (const match of workflow.text.matchAll(pattern)) {
+      refs.push(`${workflow.name}: ${actionRef}@v${match[1]}`);
+    }
+  }
+  return refs;
+};
+
+const setupNodeImplicitCacheGaps = () => {
+  const gaps = [];
+  for (const workflow of activeWorkflows) {
+    const lines = workflow.text.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (!/uses:\s*actions\/setup-node@v[5-9]\b/.test(line)) continue;
+      const setupIndent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
+      const stepIndent = line.trimStart().startsWith("- uses:") ? setupIndent : Math.max(0, setupIndent - 2);
+      const nextStepPattern = new RegExp(`^ {${stepIndent}}-\\s+`);
+      let end = lines.length;
+      for (let next = index + 1; next < lines.length; next += 1) {
+        if (nextStepPattern.test(lines[next])) {
+          end = next;
+          break;
+        }
+      }
+      const block = lines.slice(index, end).join("\n");
+      if (!/^\s*node-version\s*:/m.test(block)) continue;
+      if (/^\s*cache\s*:/m.test(block)) continue;
+      if (/^\s*package-manager-cache\s*:\s*false\s*$/m.test(block)) continue;
+      gaps.push(workflow.name);
+    }
+  }
+  return gaps;
+};
+
 const hasWindowsBundledSidecarHashGate = (text, buildFragment = "Build Windows bundle") =>
   hasOrderedFragments(text, [
     buildFragment,
@@ -162,14 +206,10 @@ const hasMacosDocumentRuntimeBundleGate = (text) =>
     ]),
   );
 
-const hasWindowsDocumentRuntimeBundleGate = (text) =>
-  hasOrderedFragments(text, [
-    "Assemble Windows document runtime",
-    "node scripts/document-runtime/assemble-windows.mjs",
-    "Verify Windows document runtime bundle",
-    "node scripts/release/verify-document-runtime-windows.mjs --profile local-docs-required --json",
-    "Build Windows bundle",
-  ]);
+const hasWindowsDocumentRuntimePackageOnlyGate = (text) =>
+  /Build Windows bundle/.test(text) &&
+  !/node scripts\/document-runtime\/assemble-windows\.mjs/.test(text) &&
+  !/node scripts\/release\/verify-document-runtime-windows\.mjs --profile local-docs-required --json/.test(text);
 
 const releaseDocsText = [releaseDoc, stateConfigDoc, applicationLogsDoc].join("\n");
 const releaseDocsDescribeGlitchTipDsn =
@@ -494,6 +534,60 @@ addCheck(
   releaseDocsDescribeGlitchTipDsn,
   "RELEASE.md + docs/dev",
 );
+
+const deprecatedCheckoutRefs = findDeprecatedActionRefs("actions/checkout");
+addCheck(
+  "Active workflows use Node 24 checkout action runtime",
+  deprecatedCheckoutRefs.length === 0,
+  deprecatedCheckoutRefs.length ? deprecatedCheckoutRefs.join(", ") : "no actions/checkout@v0-v4 refs",
+);
+
+const deprecatedSetupNodeRefs = findDeprecatedActionRefs("actions/setup-node");
+addCheck(
+  "Active workflows use Node 24 setup-node action runtime",
+  deprecatedSetupNodeRefs.length === 0,
+  deprecatedSetupNodeRefs.length ? deprecatedSetupNodeRefs.join(", ") : "no actions/setup-node@v0-v4 refs",
+);
+
+const deprecatedCacheRefs = findDeprecatedActionRefs("actions/cache");
+addCheck(
+  "Active workflows use Node 24 cache action runtime",
+  deprecatedCacheRefs.length === 0,
+  deprecatedCacheRefs.length ? deprecatedCacheRefs.join(", ") : "no actions/cache@v0-v4 refs",
+);
+
+const deprecatedUploadArtifactRefs = findDeprecatedActionRefs("actions/upload-artifact");
+addCheck(
+  "Active workflows use Node 24 upload-artifact action runtime",
+  deprecatedUploadArtifactRefs.length === 0,
+  deprecatedUploadArtifactRefs.length
+    ? deprecatedUploadArtifactRefs.join(", ")
+    : "no actions/upload-artifact@v0-v4 refs",
+);
+
+const deprecatedPnpmActionSetupRefs = findDeprecatedActionRefs("pnpm/action-setup");
+addCheck(
+  "Active workflows use Node 24 pnpm setup action runtime",
+  deprecatedPnpmActionSetupRefs.length === 0,
+  deprecatedPnpmActionSetupRefs.length
+    ? deprecatedPnpmActionSetupRefs.join(", ")
+    : "no pnpm/action-setup@v0-v4 refs",
+);
+
+const deprecatedSetupBunRefs = findDeprecatedActionRefs("oven-sh/setup-bun", 1);
+addCheck(
+  "Active workflows use Node 24 Bun setup action runtime",
+  deprecatedSetupBunRefs.length === 0,
+  deprecatedSetupBunRefs.length ? deprecatedSetupBunRefs.join(", ") : "no oven-sh/setup-bun@v0-v1 refs",
+);
+
+const setupNodeCacheGaps = setupNodeImplicitCacheGaps();
+addCheck(
+  "Setup Node implicit package-manager cache is disabled",
+  setupNodeCacheGaps.length === 0,
+  setupNodeCacheGaps.length ? setupNodeCacheGaps.join(", ") : "package-manager-cache=false or explicit cache",
+);
+
 addCheck(
   "Release workflow validates document runtime metadata before build",
   hasDocumentRuntimeMetadataGate(releaseVerifyJob),
@@ -505,8 +599,8 @@ addCheck(
   ".github/workflows/release-macos-aarch64.yml#publish-tauri",
 );
 addCheck(
-  "Release workflow verifies Windows document runtime after assembly",
-  hasWindowsDocumentRuntimeBundleGate(releaseWindowsTauriJob),
+  "Release workflow keeps Windows document runtime outside the MSI",
+  hasWindowsDocumentRuntimePackageOnlyGate(releaseWindowsTauriJob),
   ".github/workflows/release-macos-aarch64.yml#publish-tauri-windows",
 );
 addCheck(

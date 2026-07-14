@@ -4,6 +4,7 @@ import {
   doctor,
   execManaged,
   installPackageArchive,
+  installPackageFromFeed,
   packExpandedPackage,
   pathInfo,
   repairHeadless,
@@ -34,6 +35,7 @@ async function main(argv = process.argv.slice(2)) {
         "  veslo-document-runtime stage --headless --source <expanded-runtime-dir> [--activate]",
         "  veslo-document-runtime pack --headless --source <expanded-runtime-dir> --output <file.veslopkg>",
         "  veslo-document-runtime install --headless --package <file.veslopkg> [--activate] [--sha256 <digest>]",
+        "  veslo-document-runtime install-feed --headless [--feed <document-runtime-packages.json>] [--feed-url <url>] [--platform <platform>] [--channel <channel>]",
         "  veslo-document-runtime exec -- <command> [...args]",
         "",
       ].join("\n"),
@@ -115,6 +117,20 @@ async function main(argv = process.argv.slice(2)) {
       packagePath,
       expectedSha256: flagValue(rest, "--sha256") || undefined,
       activate: hasFlag(rest, "--activate"),
+    });
+    printJson(result);
+    return result.ok ? 0 : 1;
+  }
+
+  if (command === "install-feed") {
+    if (!hasFlag(rest, "--headless")) {
+      throw new Error("install-feed requires --headless");
+    }
+    const result = await installPackageFromFeed({
+      feedPath: flagValue(rest, "--feed") || undefined,
+      feedUrl: flagValue(rest, "--feed-url") || undefined,
+      platform: flagValue(rest, "--platform") || undefined,
+      channel: flagValue(rest, "--channel") || undefined,
     });
     printJson(result);
     return result.ok ? 0 : 1;

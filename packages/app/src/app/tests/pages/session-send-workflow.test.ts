@@ -100,6 +100,7 @@ function documentRuntimePayload(
       installing: false,
       rollback: false,
       remoteOnly: status === "remote_only",
+      progress: null,
     },
     repair: {
       available: status === "missing",

@@ -219,10 +219,12 @@ export default function SettingsView(props: SettingsViewProps) {
   });
   const documentRuntimeActionLabel = createMemo(() => {
     switch (documentRuntimeRow().action) {
+      case "install":
+        return props.documentRuntimeRepairBusy ? "Installing..." : "Install office package";
       case "repair":
         return props.documentRuntimeRepairBusy ? "Repairing..." : "Repair";
       case "update":
-        return "Check updates";
+        return props.documentRuntimeRepairBusy ? "Updating..." : "Update office package";
       case "wait":
         return "Waiting";
       case "none":
@@ -231,11 +233,10 @@ export default function SettingsView(props: SettingsViewProps) {
   });
   const handleDocumentRuntimeAction = () => {
     const action = documentRuntimeRow().action;
-    if (action === "repair") {
+    if (action === "install" || action === "repair" || action === "update") {
       props.repairDocumentRuntime?.();
       return;
     }
-    if (action === "update") props.checkForUpdates();
   };
   const updateDownloadPercent = createMemo<number | null>(() => {
     const total = updateTotalBytes();
@@ -318,8 +319,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const documentRuntimeActionDisabled = createMemo(() => {
     const action = documentRuntimeRow().action;
     if (action === "wait") return true;
-    if (action === "repair") return !props.repairDocumentRuntime || Boolean(props.documentRuntimeRepairBusy) || props.anyActiveRuns;
-    if (action === "update") return generalUpdateDisabled();
+    if (action === "install" || action === "repair" || action === "update") {
+      return !props.repairDocumentRuntime || Boolean(props.documentRuntimeRepairBusy) || props.anyActiveRuns;
+    }
     return true;
   });
 
@@ -1075,6 +1077,14 @@ export default function SettingsView(props: SettingsViewProps) {
                     </span>
                   </div>
                   <div class="text-xs text-gray-7">{documentRuntimeRow().detail}</div>
+                  <Show when={documentRuntimeRow().progressPercent !== null}>
+                    <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-5">
+                      <div
+                        class="h-full rounded-full bg-blue-9 transition-[width] duration-300"
+                        style={{ width: `${documentRuntimeRow().progressPercent ?? 0}%` }}
+                      />
+                    </div>
+                  </Show>
                 </div>
                 <Show when={documentRuntimeActionLabel()}>
                   {(label) => (
@@ -1083,7 +1093,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       class="text-xs h-8 py-0 px-3 shrink-0"
                       onClick={handleDocumentRuntimeAction}
                       disabled={documentRuntimeActionDisabled()}
-                      title={props.anyActiveRuns && documentRuntimeRow().action === "repair" ? translate("settings.stop_runs_to_update") : ""}
+                      title={props.anyActiveRuns && ["install", "repair", "update"].includes(documentRuntimeRow().action) ? translate("settings.stop_runs_to_update") : ""}
                     >
                       {label()}
                     </Button>

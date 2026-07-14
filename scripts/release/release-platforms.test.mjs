@@ -64,7 +64,7 @@ test("manual Windows CI config overrides only updater artifacts", () => {
   }
 });
 
-test("Windows document runtime resource is scoped to Windows release config", () => {
+test("Windows release config keeps document runtime package outside the MSI", () => {
   const baseTauriConfig = JSON.parse(readRepoFile("packages/desktop/src-tauri/tauri.conf.json"));
   const windowsReleaseConfig = JSON.parse(readRepoFile("packages/desktop/src-tauri/tauri.windows.release.conf.json"));
 
@@ -74,7 +74,7 @@ test("Windows document runtime resource is scoped to Windows release config", ()
   );
   assert.equal(
     windowsReleaseConfig.bundle?.resources?.["resources/document-runtime/windows-native-x64"],
-    "document-runtime",
+    undefined,
   );
 });
 

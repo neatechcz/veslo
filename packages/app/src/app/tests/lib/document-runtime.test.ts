@@ -30,6 +30,7 @@ function payload(status: DocumentRuntimeStatus, overrides: Partial<DocumentRunti
       installing: status === "package_installing",
       rollback: status === "package_rollback",
       remoteOnly: status === "remote_only",
+      progress: null,
     },
     repair: {
       available: false,
@@ -61,7 +62,7 @@ test("document runtime skill readiness follows per-format skill state", () => {
   assert.match(documentRuntimeTaskBlockReason(status, "xlsx") ?? "", /not ready for this file type/);
 });
 
-test("missing runtime blocks local document tasks and offers repair when available", () => {
+test("missing runtime blocks local document tasks and offers office package install when available", () => {
   const status = payload("missing", {
     repair: {
       available: true,
@@ -77,9 +78,34 @@ test("missing runtime blocks local document tasks and offers repair when availab
     status: "missing",
     tone: "danger",
     title: "Document runtime",
-    detail: "Runtime package is not available.",
-    action: "repair",
+    detail: "Office document package is not installed.",
+    action: "install",
+    progressPercent: null,
   });
+});
+
+test("installing runtime exposes office package download progress", () => {
+  const row = documentRuntimeSettingsRow(payload("package_installing", {
+    package: {
+      installedVersion: null,
+      activePackage: null,
+      updateAvailable: false,
+      installing: true,
+      rollback: false,
+      remoteOnly: false,
+      progress: {
+        phase: "downloading",
+        artifactName: "veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+        downloadedBytes: 50 * 1024 * 1024,
+        totalBytes: 100 * 1024 * 1024,
+        percent: 50,
+        message: "Downloading office document package.",
+      },
+    },
+  }));
+
+  assert.match(row.detail, /Downloading office package 50%/);
+  assert.equal(row.progressPercent, 50);
 });
 
 test("remote-only mode stays distinct from ready local runtime", () => {

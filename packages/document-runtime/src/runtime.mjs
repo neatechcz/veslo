@@ -11,7 +11,11 @@ import { createGunzip, createGzip } from "node:zlib";
 
 import {
   DOCUMENT_RUNTIME_PACKAGE_ID,
+  SUPPORTED_PLATFORMS,
+  packageFeedEndpoint,
+  selectPackageFeedEntry,
   validateDocumentRuntimeManifest,
+  validatePackageFeed,
 } from "./manifest.mjs";
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -159,6 +163,14 @@ const readJson = async (path) => {
   return JSON.parse(content);
 };
 
+const parseJsonText = (content, label) => {
+  try {
+    return JSON.parse(content);
+  } catch (error) {
+    throw new Error(`${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+};
+
 const sha256File = async (path) => {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path)) {
@@ -166,6 +178,140 @@ const sha256File = async (path) => {
   }
   return hash.digest("hex");
 };
+
+export function currentDocumentRuntimePlatform({ platform = process.platform, arch = process.arch } = {}) {
+  if (platform === "win32") return "windows-native-x64";
+  if (platform === "darwin" && arch === "arm64") return "macos-arm64";
+  if (platform === "darwin" && arch === "x64") return "macos-x64";
+  if (platform === "linux" && arch === "x64") return "linux-x64";
+  throw new Error(`Unsupported document runtime platform for ${platform}/${arch}.`);
+}
+
+async function readPackageFeed({ feed, feedPath, feedUrl, fetchImpl }) {
+  if (feed) return validatePackageFeed(feed);
+  if (feedPath) return validatePackageFeed(await readJson(resolve(feedPath)));
+
+  const resolvedFeedUrl = feedUrl || packageFeedEndpoint();
+  const fetcher = fetchImpl || globalThis.fetch;
+  if (typeof fetcher !== "function") {
+    throw new Error("Document runtime package feed download requires fetch support.");
+  }
+  const response = await fetcher(resolvedFeedUrl, {
+    headers: {
+      "Accept": "application/json",
+      "User-Agent": "veslo-document-runtime-installer",
+    },
+  });
+  if (!response?.ok) {
+    throw new Error(`Document runtime package feed download failed (${response?.status || "unknown"} ${response?.statusText || ""}).`);
+  }
+  const text = typeof response.text === "function"
+    ? await response.text()
+    : Buffer.from(await response.arrayBuffer()).toString("utf8");
+  return validatePackageFeed(parseJsonText(text, resolvedFeedUrl));
+}
+
+async function downloadPackageArtifact({ url, outputPath, expectedSha256, expectedSizeBytes, artifactName, fetchImpl, onProgress }) {
+  const existingSha256 = await sha256File(outputPath).catch(() => null);
+  if (existingSha256?.toLowerCase() === expectedSha256.toLowerCase()) {
+    onProgress?.({
+      phase: "cached",
+      artifactName,
+      downloadedBytes: expectedSizeBytes ?? null,
+      totalBytes: expectedSizeBytes ?? null,
+      percent: 100,
+      message: "Using cached office document package.",
+    });
+    return { artifactPath: outputPath, artifactSha256: existingSha256, reused: true };
+  }
+
+  await mkdir(dirname(outputPath), { recursive: true });
+  await rm(outputPath, { force: true });
+
+  const fetcher = fetchImpl || globalThis.fetch;
+  if (typeof fetcher !== "function") {
+    throw new Error("Document runtime package download requires fetch support.");
+  }
+
+  const tempPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    const response = await fetcher(url, {
+      headers: {
+        "Accept": "application/octet-stream",
+        "User-Agent": "veslo-document-runtime-installer",
+      },
+    });
+    if (!response?.ok) {
+      throw new Error(`Document runtime package download failed (${response?.status || "unknown"} ${response?.statusText || ""}).`);
+    }
+    const totalBytes = Number.isSafeInteger(expectedSizeBytes) && expectedSizeBytes > 0
+      ? expectedSizeBytes
+      : Number.parseInt(response.headers?.get?.("content-length") || "", 10) || null;
+    onProgress?.({
+      phase: "downloading",
+      artifactName,
+      downloadedBytes: 0,
+      totalBytes,
+      percent: totalBytes ? 0 : null,
+      message: "Downloading office document package.",
+    });
+
+    if (response.body) {
+      let downloadedBytes = 0;
+      const stream = createWriteStream(tempPath);
+      try {
+        for await (const chunk of response.body) {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          downloadedBytes += buffer.byteLength;
+          await writeStreamBuffer(stream, buffer);
+          onProgress?.({
+            phase: "downloading",
+            artifactName,
+            downloadedBytes,
+            totalBytes,
+            percent: totalBytes ? Math.max(0, Math.min(100, Math.floor((downloadedBytes / totalBytes) * 100))) : null,
+            message: "Downloading office document package.",
+          });
+        }
+        await endWritable(stream);
+      } catch (error) {
+        stream.destroy();
+        throw error;
+      }
+    } else if (typeof response.arrayBuffer === "function") {
+      const buffer = Buffer.from(await response.arrayBuffer());
+      await writeFile(tempPath, buffer);
+      onProgress?.({
+        phase: "downloading",
+        artifactName,
+        downloadedBytes: buffer.byteLength,
+        totalBytes: totalBytes ?? buffer.byteLength,
+        percent: 100,
+        message: "Downloading office document package.",
+      });
+    } else {
+      throw new Error("Document runtime package download response did not include a body.");
+    }
+
+    onProgress?.({
+      phase: "verifying",
+      artifactName,
+      downloadedBytes: totalBytes ?? null,
+      totalBytes,
+      percent: 100,
+      message: "Verifying office document package.",
+    });
+    const artifactSha256 = await sha256File(tempPath);
+    if (artifactSha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+      throw new Error("Document runtime package sha256 mismatch.");
+    }
+    await rename(tempPath, outputPath);
+    return { artifactPath: outputPath, artifactSha256, reused: false };
+  } catch (error) {
+    await rm(tempPath, { force: true });
+    throw error;
+  }
+}
 
 const writeArchiveLine = async (stream, value) => {
   if (!stream.write(`${JSON.stringify(value)}\n`, "utf8")) {
@@ -1135,6 +1281,156 @@ export async function installPackageArchive({
     };
   } catch (error) {
     return await fail(error);
+  }
+}
+
+export async function installPackageFromFeed({
+  feed,
+  feedPath,
+  feedUrl,
+  platform = currentDocumentRuntimePlatform(),
+  channel,
+  appVersion,
+  currentVersion,
+  cacheDir,
+  env = process.env,
+  runtimeRoot,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  fetchImpl,
+  onProgress,
+} = {}) {
+  if (!SUPPORTED_PLATFORMS.includes(platform)) {
+    throw new Error(`Unsupported document runtime platform: ${platform || "(missing)"}`);
+  }
+
+  const root = resolve(runtimeRoot || defaultDataRoot(env));
+  onProgress?.({
+    phase: "feed",
+    downloadedBytes: null,
+    totalBytes: null,
+    percent: null,
+    message: "Loading office document package feed.",
+  });
+  const packageFeed = await readPackageFeed({
+    feed,
+    feedPath,
+    feedUrl: feedUrl || env.VESLO_DOCUMENT_RUNTIME_PACKAGE_FEED_URL || undefined,
+    fetchImpl,
+  });
+  const selected = selectPackageFeedEntry(packageFeed, {
+    platform,
+    channel: channel || env.VESLO_DOCUMENT_RUNTIME_CHANNEL || packageFeed.channel || "stable",
+    appVersion,
+    currentVersion,
+  });
+
+  if (!selected) {
+    onProgress?.({
+      phase: "failed",
+      artifactName: null,
+      downloadedBytes: null,
+      totalBytes: null,
+      percent: null,
+      message: "No compatible office document package is available in the package feed.",
+    });
+    return {
+      ok: false,
+      status: "missing",
+      packageId: DOCUMENT_RUNTIME_PACKAGE_ID,
+      installed: false,
+      activated: false,
+      platform,
+      channel: channel || env.VESLO_DOCUMENT_RUNTIME_CHANNEL || packageFeed.channel || "stable",
+      reason: "No compatible document runtime package is available in the package feed.",
+    };
+  }
+
+  const downloadsDir = resolve(cacheDir || join(root, "downloads"));
+  const artifactPath = join(downloadsDir, selected.artifactName);
+  if (!inside(downloadsDir, artifactPath)) {
+    throw new Error("Document runtime package artifact path resolves outside the download cache.");
+  }
+
+  try {
+    onProgress?.({
+      phase: "selected",
+      artifactName: selected.artifactName,
+      downloadedBytes: null,
+      totalBytes: selected.sizeBytes,
+      percent: null,
+      message: `Selected office document package ${selected.packageVersion}.`,
+    });
+    const downloaded = await downloadPackageArtifact({
+      url: selected.url,
+      outputPath: artifactPath,
+      expectedSha256: selected.contentSha256,
+      expectedSizeBytes: selected.sizeBytes,
+      artifactName: selected.artifactName,
+      fetchImpl,
+      onProgress,
+    });
+    await writeFile(`${artifactPath}.sig`, selected.signature, "utf8");
+
+    onProgress?.({
+      phase: "installing",
+      artifactName: selected.artifactName,
+      downloadedBytes: selected.sizeBytes,
+      totalBytes: selected.sizeBytes,
+      percent: 100,
+      message: "Installing office document package.",
+    });
+    const installed = await installPackageArchive({
+      packagePath: downloaded.artifactPath,
+      expectedSha256: selected.contentSha256,
+      env,
+      runtimeRoot: root,
+      activate: true,
+      timeoutMs,
+    });
+
+    onProgress?.({
+      phase: installed.ok ? "ready" : "failed",
+      artifactName: selected.artifactName,
+      downloadedBytes: selected.sizeBytes,
+      totalBytes: selected.sizeBytes,
+      percent: installed.ok ? 100 : null,
+      message: installed.ok ? "Office document package is ready." : installed.reason || "Office document package install failed.",
+    });
+
+    return {
+      ...installed,
+      packageVersion: selected.packageVersion,
+      platform: selected.platform,
+      channel: selected.channel,
+      feedUrl: feedUrl || env.VESLO_DOCUMENT_RUNTIME_PACKAGE_FEED_URL || null,
+      feedPath: feedPath || null,
+      artifactName: selected.artifactName,
+      artifactPath: downloaded.artifactPath,
+      artifactSha256: downloaded.artifactSha256,
+      reusedDownload: downloaded.reused,
+    };
+  } catch (error) {
+    onProgress?.({
+      phase: "failed",
+      artifactName: selected.artifactName,
+      downloadedBytes: null,
+      totalBytes: selected.sizeBytes,
+      percent: null,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      ok: false,
+      status: "failed",
+      packageId: DOCUMENT_RUNTIME_PACKAGE_ID,
+      installed: false,
+      activated: false,
+      platform: selected.platform,
+      channel: selected.channel,
+      packageVersion: selected.packageVersion,
+      artifactName: selected.artifactName,
+      artifactPath,
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 

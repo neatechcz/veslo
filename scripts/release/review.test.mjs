@@ -98,7 +98,7 @@ test("release review verifies document runtime metadata preflight and desktop bu
     (entry) => entry.label === "Release workflow validates document runtime metadata before build",
   );
   const windowsCheck = report.checks.find(
-    (entry) => entry.label === "Release workflow verifies Windows document runtime after assembly",
+    (entry) => entry.label === "Release workflow keeps Windows document runtime outside the MSI",
   );
   const macosCheck = report.checks.find(
     (entry) => entry.label === "Release workflow verifies macOS document runtime before Tauri build",
@@ -111,7 +111,7 @@ test("release review verifies document runtime metadata preflight and desktop bu
   assert.equal(metadataCheck.ok, true);
   assert.ok(macosCheck, "expected release review to report the macOS document runtime bundle check");
   assert.equal(macosCheck.ok, true);
-  assert.ok(windowsCheck, "expected release review to report the Windows document runtime bundle check");
+  assert.ok(windowsCheck, "expected release review to report the Windows document runtime package-only check");
   assert.equal(windowsCheck.ok, true);
   assert.ok(prereleaseMacosCheck, "expected release review to report the prerelease macOS document runtime bundle check");
   assert.equal(prereleaseMacosCheck.ok, true);
@@ -128,10 +128,9 @@ test("release review verifies document runtime metadata preflight and desktop bu
     workflow,
     /Install macOS document runtime resource[\s\S]*mkdir -p "packages\/desktop\/src-tauri\/resources\/document-runtime\/\$\{\{ matrix\.doc_runtime_platform \}\}"[\s\S]*install-package-resource\.mjs[\s\S]*Verify macOS document runtime bundle[\s\S]*verify-document-runtime-macos\.mjs[\s\S]*VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE[\s\S]*pnpm exec tauri -vvv build/,
   );
-  assert.match(
-    workflow,
-    /Assemble Windows document runtime[\s\S]*Verify Windows document runtime bundle[\s\S]*node scripts\/release\/verify-document-runtime-windows\.mjs --profile local-docs-required --json[\s\S]*Build Windows bundle/,
-  );
+  assert.doesNotMatch(workflow, /Assemble Windows document runtime/);
+  assert.doesNotMatch(workflow, /verify-document-runtime-windows\.mjs --profile local-docs-required --json/);
+  assert.match(workflow, /Build Windows bundle/);
   const prereleaseWorkflow = readFileSync(
     resolve(import.meta.dirname, "../../.github/workflows/prerelease.yml"),
     "utf8",
@@ -145,8 +144,61 @@ test("release review verifies document runtime metadata preflight and desktop bu
   assert.match(reviewSource, /extractWorkflowJob\(releaseWorkflow,\s*"verify-release"\)/);
   assert.match(reviewSource, /hasDocumentRuntimeMetadataGate\(releaseVerifyJob\)/);
   assert.match(reviewSource, /hasMacosDocumentRuntimeBundleGate\(releaseMacosTauriJob\)/);
-  assert.match(reviewSource, /hasWindowsDocumentRuntimeBundleGate\(releaseWindowsTauriJob\)/);
+  assert.match(reviewSource, /hasWindowsDocumentRuntimePackageOnlyGate\(releaseWindowsTauriJob\)/);
   assert.match(reviewSource, /hasMacosDocumentRuntimeBundleGate\(prereleaseTauriJob\)/);
+});
+
+test("release review rejects Node 20 GitHub action runtime pins", () => {
+  const scriptPath = resolve(import.meta.dirname, "./review.mjs");
+  const output = execFileSync("node", [scriptPath, "--json"], {
+    cwd: resolve(import.meta.dirname, "../.."),
+    encoding: "utf8",
+  });
+
+  const report = JSON.parse(output);
+  for (const label of [
+    "Active workflows use Node 24 checkout action runtime",
+    "Active workflows use Node 24 setup-node action runtime",
+    "Active workflows use Node 24 cache action runtime",
+    "Active workflows use Node 24 upload-artifact action runtime",
+    "Active workflows use Node 24 pnpm setup action runtime",
+    "Active workflows use Node 24 Bun setup action runtime",
+    "Setup Node implicit package-manager cache is disabled",
+  ]) {
+    const check = report.checks.find((entry) => entry.label === label);
+    assert.ok(check, `expected release review to report: ${label}`);
+    assert.equal(check.ok, true);
+  }
+
+  const workflowRoot = resolve(import.meta.dirname, "../../.github/workflows");
+  const activeWorkflowPaths = [
+    "release-macos-aarch64.yml",
+    "prerelease.yml",
+    "build-desktop.yml",
+    "build-windows-msi.yml",
+    "build-staging-app.yml",
+    "ci.yml",
+    "ci-tests.yml",
+    "e2e-ui.yml",
+    "download-stats.yml",
+    "opencode-agents.yml",
+  ];
+  const workflows = activeWorkflowPaths
+    .map((name) => readFileSync(resolve(workflowRoot, name), "utf8"))
+    .join("\n");
+
+  assert.doesNotMatch(workflows, /actions\/checkout@v[0-4]\b/);
+  assert.doesNotMatch(workflows, /actions\/setup-node@v[0-4]\b/);
+  assert.doesNotMatch(workflows, /actions\/cache@v[0-4]\b/);
+  assert.doesNotMatch(workflows, /actions\/upload-artifact@v[0-4]\b/);
+  assert.doesNotMatch(workflows, /pnpm\/action-setup@v[0-4]\b/);
+  assert.doesNotMatch(workflows, /oven-sh\/setup-bun@v[0-1]\b/);
+  assert.match(workflows, /actions\/checkout@v7\b/);
+  assert.match(workflows, /actions\/setup-node@v7\b/);
+  assert.match(workflows, /actions\/cache@v6\b/);
+  assert.match(workflows, /actions\/upload-artifact@v7\b/);
+  assert.match(workflows, /pnpm\/action-setup@v6\b/);
+  assert.match(workflows, /oven-sh\/setup-bun@v2\b/);
 });
 
 test("release review verifies installer workflows force sidecar rebuilds from source", () => {
