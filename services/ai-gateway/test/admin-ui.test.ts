@@ -234,6 +234,248 @@ function createAdminServiceStub(overrides: Partial<AdminService> = {}): AdminSer
   return { ...service, ...overrides }
 }
 
+function organizationMemberFixture(overrides: Partial<{
+  membershipId: string
+  userId: string
+  name: string
+  email: string
+  role: "member" | "organization_admin"
+  status: "active" | "disabled" | "removed"
+  createdAt: string
+}> = {}) {
+  return {
+    membershipId: "membership_1",
+    userId: "user_1",
+    name: "Member One",
+    email: "member@example.test",
+    role: "member" as const,
+    status: "active" as const,
+    createdAt: "2026-07-14T08:00:00.000Z",
+    ...overrides,
+  }
+}
+
+test("GET organization members returns only the exact path organization's service response", async () => {
+  const requestedOrganizationIds: string[] = []
+  const expected = {
+    members: [organizationMemberFixture({ membershipId: "membership_exact", userId: "user_exact" })],
+  }
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async listOrganizationMembers(_token, orgId) {
+        requestedOrganizationIds.push(orgId)
+        return expected
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_exact/members`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await response.json(), expected)
+    assert.deepEqual(requestedOrganizationIds, ["org_exact"])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("every organization member route rejects a different organization before calling the service", async () => {
+  const serviceCalls: string[] = []
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async getSession() {
+        return orgAdminSession() as unknown as AdminSessionSnapshot
+      },
+      async listOrganizationMembers() {
+        serviceCalls.push("list")
+        return { members: [] }
+      },
+      async createOrganizationMember() {
+        serviceCalls.push("create")
+        return { member: organizationMemberFixture() }
+      },
+      async updateOrganizationMember() {
+        serviceCalls.push("update")
+        return { member: organizationMemberFixture() }
+      },
+      async deleteOrganizationMember() {
+        serviceCalls.push("delete")
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const requests = [
+      { method: "GET", pathname: "/admin/api/organizations/org_2/members" },
+      { method: "POST", pathname: "/admin/api/organizations/org_2/members", body: { email: "member@example.test", role: "member" } },
+      { method: "PATCH", pathname: "/admin/api/organizations/org_2/members/membership_1", body: { role: "organization_admin" } },
+      { method: "DELETE", pathname: "/admin/api/organizations/org_2/members/membership_1" },
+    ]
+
+    for (const request of requests) {
+      const response = await fetch(`http://127.0.0.1:${port}${request.pathname}`, {
+        method: request.method,
+        headers: {
+          cookie: ADMIN_COOKIE,
+          ...(request.body ? { "content-type": "application/json" } : {}),
+        },
+        ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+      })
+      assert.equal(response.status, 403, `${request.method} ${request.pathname}`)
+    }
+    assert.deepEqual(serviceCalls, [])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("every organization member route requires organization capability before calling the service", async () => {
+  const serviceCalls: string[] = []
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async getSession() {
+        return { ...orgAdminSession(), capabilities: ["users"] } as unknown as AdminSessionSnapshot
+      },
+      async listOrganizationMembers() {
+        serviceCalls.push("list")
+        return { members: [] }
+      },
+      async createOrganizationMember() {
+        serviceCalls.push("create")
+        return { member: organizationMemberFixture() }
+      },
+      async updateOrganizationMember() {
+        serviceCalls.push("update")
+        return { member: organizationMemberFixture() }
+      },
+      async deleteOrganizationMember() {
+        serviceCalls.push("delete")
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    for (const request of [
+      { method: "GET", pathname: "/admin/api/organizations/org_1/members" },
+      { method: "POST", pathname: "/admin/api/organizations/org_1/members", body: { email: "member@example.test", role: "member" } },
+      { method: "PATCH", pathname: "/admin/api/organizations/org_1/members/membership_1", body: { role: "member" } },
+      { method: "DELETE", pathname: "/admin/api/organizations/org_1/members/membership_1" },
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${port}${request.pathname}`, {
+        method: request.method,
+        headers: {
+          cookie: ADMIN_COOKIE,
+          ...(request.body ? { "content-type": "application/json" } : {}),
+        },
+        ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+      })
+      assert.equal(response.status, 403, `${request.method} ${request.pathname}`)
+    }
+    assert.deepEqual(serviceCalls, [])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("member routes use the path organization and scoped fields for authorized administrators", async () => {
+  const calls: Array<{ operation: string; token: string; orgId: string; memberId?: string; input?: unknown }> = []
+  const admin = createAdminServiceStub({
+    async listOrganizationMembers(token, orgId) {
+      calls.push({ operation: "list", token, orgId })
+      return { members: [organizationMemberFixture()] }
+    },
+    async createOrganizationMember(token, orgId, input) {
+      calls.push({ operation: "create", token, orgId, input })
+      return { member: organizationMemberFixture() }
+    },
+    async updateOrganizationMember(token, orgId, memberId, input) {
+      calls.push({ operation: "update", token, orgId, memberId, input })
+      return { member: organizationMemberFixture({ membershipId: memberId, role: input.role }) }
+    },
+    async deleteOrganizationMember(token, orgId, memberId) {
+      calls.push({ operation: "delete", token, orgId, memberId })
+    },
+  })
+  const app = createApp({ admin })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const headers = { cookie: ADMIN_COOKIE, "content-type": "application/json" }
+    const listResponse = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_platform/members`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+    assert.equal(listResponse.status, 200, "platform admin may route explicitly")
+
+    admin.getSession = async () => orgAdminSession() as unknown as AdminSessionSnapshot
+    const createResponse = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        organizationId: "org_body",
+        orgId: "org_body",
+        email: "new-member@example.test",
+        role: "organization_admin",
+        platformAdmin: true,
+      }),
+    })
+    assert.equal(createResponse.status, 201)
+    const updateResponse = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/membership_path`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        organizationId: "org_body",
+        orgId: "org_body",
+        role: "member",
+        disabled: true,
+      }),
+    })
+    assert.equal(updateResponse.status, 200)
+    const deleteResponse = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/membership_path`, {
+      method: "DELETE",
+      headers: { cookie: ADMIN_COOKIE },
+    })
+    assert.equal(deleteResponse.status, 204)
+
+    assert.deepEqual(calls, [
+      { operation: "list", token: "admin-token", orgId: "org_platform" },
+      {
+        operation: "create",
+        token: "admin-token",
+        orgId: "org_1",
+        input: { email: "new-member@example.test", role: "organization_admin" },
+      },
+      {
+        operation: "update",
+        token: "admin-token",
+        orgId: "org_1",
+        memberId: "membership_path",
+        input: { role: "member" },
+      },
+      { operation: "delete", token: "admin-token", orgId: "org_1", memberId: "membership_path" },
+    ])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/ai-infrastructure redirects unauthenticated browsers to the existing Den login page", async () => {
   const calls: BrowserAuthStartInput[] = []
   const app = createApp({
@@ -700,6 +942,70 @@ test("GET /admin/app.js atomically isolates route generations and keeps readines
       assert.match(loader, /beginCurrentRouteMutation\(/, `${loaderName} begins a route mutation`)
       assert.match(loader, /isCurrentRouteMutation\(/, `${loaderName} guards late completion`)
     }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js keeps organization workspace data and member actions path scoped", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const workspaceLoader = topLevelFunctionSource(script, "loadOrganizationWorkspace")
+    const platformLoader = topLevelFunctionSource(script, "loadPlatformRouteResult")
+    const routeSubjects = topLevelFunctionSource(script, "currentRouteSubjects")
+    const memberAdapter = topLevelFunctionSource(script, "organizationMemberToRouteSubject")
+    const saveUser = topLevelFunctionSource(script, "saveUser")
+    const loadUsers = topLevelFunctionSource(script, "loadUsers")
+    const finishRoute = topLevelFunctionSource(script, "finishRouteDataLoad")
+    const clearRoute = topLevelFunctionSource(script, "clearRouteOwnedState")
+
+    assert.match(workspaceLoader, /fetchJson\(`\/organizations\/\$\{encodedOrganizationId\}`[^\n]*\{ signal \}\)/)
+    assert.match(workspaceLoader, /fetchJson\(`\/organizations\/\$\{encodedOrganizationId\}\/members`[^\n]*\{ signal \}\)/)
+    assert.doesNotMatch(workspaceLoader, /fetchJson\("\/organizations"/)
+    assert.doesNotMatch(workspaceLoader, /fetchJson\("\/users"/)
+    assert.match(workspaceLoader, /route\.page === "domains-invites"[\s\S]*\/domains[\s\S]*\/invites/)
+    assert.match(workspaceLoader, /route\.page === "members" \|\| route\.page === "ai-access"[\s\S]*\/members/)
+    assert.match(workspaceLoader, /await Promise\.all\(requests\)/)
+    assert.match(workspaceLoader, /organizationMembers:\s*\[\]/)
+    assert.match(workspaceLoader, /result\.organizationMembers = Array\.isArray\(routePayloads\[0\]\?\.members\)/)
+    assert.doesNotMatch(workspaceLoader, /result\.users\s*=/)
+
+    assert.equal(platformLoader.match(/fetchJson\("\/users"/g)?.length, 2)
+    assert.match(platformLoader, /route\.page === "overview"[\s\S]*fetchJson\("\/users"/)
+    assert.match(platformLoader, /route\.page === "platform-users"[\s\S]*fetchJson\("\/users"/)
+    assert.match(loadUsers, /state\.route\?\.area !== "platform"[\s\S]*state\.route\.page !== "platform-users"[\s\S]*return/)
+
+    assert.match(routeSubjects, /state\.route\?\.area === "organization"/)
+    assert.match(routeSubjects, /state\.organizationMembers\.map\(\(member\) => organizationMemberToRouteSubject\(member,/)
+    assert.match(routeSubjects, /return state\.users/)
+    for (const field of ["membershipId", "userId", "name", "email", "role", "status"]) {
+      assert.match(memberAdapter, new RegExp(`\\b${field}\\b`), field)
+    }
+    assert.match(memberAdapter, /orgId:\s*organization\.id/)
+    assert.match(memberAdapter, /orgName:\s*organization\.name/)
+    assert.match(memberAdapter, /orgSlug:\s*organization\.slug/)
+    assert.match(memberAdapter, /platformAdmin:\s*false/)
+
+    assert.match(finishRoute, /Array\.isArray\(result\.organizationMembers\)[\s\S]*result\.selectedUserId = result\.organizationMembers\[0\]\?\.userId \|\| null/)
+    assert.match(finishRoute, /result\.selectedOrganizationMemberId = result\.organizationMembers\[0\]\?\.membershipId \|\| null/)
+    assert.match(clearRoute, /state\.organizationMembers = \[\][\s\S]*state\.selectedUserId = null[\s\S]*state\.selectedOrganizationMemberId = null/)
+
+    assert.match(saveUser, /state\.route\?\.area === "organization"[\s\S]*state\.route\.page === "members"/)
+    assert.match(saveUser, /`\/organizations\/\$\{encodeURIComponent\(organizationId\)\}\/members\/\$\{encodeURIComponent\(targetUser\.membershipId\)\}`/)
+    assert.match(saveUser, /method:\s*"PATCH"[\s\S]*body:\s*JSON\.stringify\(\{ role: membershipRole \}\)/)
+    assert.match(saveUser, /state\.organizationMembers = state\.organizationMembers\.map/)
+
+    assert.match(script, /organizationDirectoryCache:\s*\[\]/)
+    assert.match(script, /function refreshOrganizationChromeDirectory\(/)
+    assert.match(script, /state\.session\?\.organizations/)
+    assert.match(script, /state\.organizationDirectoryCache/)
+    assert.match(script, /result\.organizationDirectory[\s\S]*state\.organizationDirectoryCache = \[\.\.\.result\.organizationDirectory\]/)
   } finally {
     server.close()
     await once(server, "close")
@@ -1718,7 +2024,7 @@ test("GET /admin/app.js saves organization membership changes only from the user
     )
     assert.match(
       script,
-      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(targetUser\.id\)\}`,[\s\S]*body: JSON\.stringify\(updatePayload\)/,
+      /`\/organizations\/\$\{encodeURIComponent\(organizationId\)\}\/members\/\$\{encodeURIComponent\(targetUser\.membershipId\)\}`[\s\S]*body: JSON\.stringify\(\{ role: membershipRole \}\)/,
     )
     assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
     assert.match(script, /createUserButtonInline[\s\S]*data-platform-only/)

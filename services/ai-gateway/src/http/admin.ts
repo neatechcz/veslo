@@ -3722,9 +3722,7 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/organizations/:orgId/members", async (req, res) => {
-    if (!requireAdminCapability(res, "organization")) {
-      return;
-    }
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
 
     try {
       const payload = await adminService.listOrganizationMembers(res.locals.adminToken as string, req.params.orgId);
@@ -3738,9 +3736,7 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/organizations/:orgId/members", async (req, res) => {
-    if (!requireAdminCapability(res, "organization")) {
-      return;
-    }
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
 
     try {
       const payload = await adminService.createOrganizationMember(
@@ -3758,9 +3754,7 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.patch("/admin/api/organizations/:orgId/members/:memberId", async (req, res) => {
-    if (!requireAdminCapability(res, "organization")) {
-      return;
-    }
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
 
     try {
       const payload = await adminService.updateOrganizationMember(
@@ -3779,9 +3773,7 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.delete("/admin/api/organizations/:orgId/members/:memberId", async (req, res) => {
-    if (!requireAdminCapability(res, "organization")) {
-      return;
-    }
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
 
     try {
       await adminService.deleteOrganizationMember(

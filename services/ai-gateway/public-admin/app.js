@@ -66,6 +66,7 @@ const state = {
   users: [],
   organizations: [],
   organizationDirectory: [],
+  organizationDirectoryCache: [],
   organizationMembers: [],
   pageLoad: createAdminPageLoadState(),
   routeActionsLocked: true,
@@ -1609,10 +1610,28 @@ async function bootstrapSession({ refreshVisibleRoute = false } = {}) {
 }
 
 function populateOrganizationOptions() {
-  const organizations = Array.isArray(state.session?.organizations) ? state.session.organizations : [];
-  state.organizations = organizations;
-  els.userOrg.innerHTML = organizations.length
-    ? organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join("")
+  refreshOrganizationChromeDirectory();
+}
+
+function refreshOrganizationChromeDirectory(directOrganization = null) {
+  const sessionOrganizations = Array.isArray(state.session?.organizations) ? state.session.organizations : [];
+  const sessionOrganizationIds = new Set(sessionOrganizations.map((organization) => organization.id));
+  const cachedDirectory = Array.isArray(state.organizationDirectoryCache)
+    ? state.organizationDirectoryCache.filter(
+        (organization) => state.session?.platformAdmin === true || sessionOrganizationIds.has(organization.id),
+      )
+    : [];
+  const organizationsById = new Map();
+  for (const organization of [...cachedDirectory, ...sessionOrganizations, directOrganization]) {
+    if (!organization?.id) continue;
+    organizationsById.set(organization.id, {
+      ...(organizationsById.get(organization.id) || {}),
+      ...organization,
+    });
+  }
+  state.organizations = Array.from(organizationsById.values());
+  els.userOrg.innerHTML = state.organizations.length
+    ? state.organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join("")
     : `<option value="">No organization</option>`;
   if (state.route?.area === "organization") renderOrganizationSelector();
 }
@@ -1744,6 +1763,7 @@ async function signOut() {
   state.session = null;
   state.user = null;
   state.organizations = [];
+  state.organizationDirectoryCache = [];
   state.mutations = createAdminMutationState();
   state.route = null;
   state.navigation = createAdminNavigationState(null);
@@ -1868,6 +1888,7 @@ async function loadOrganization(mutation = beginCurrentRouteMutation("organizati
   const result = await loadOrganizationWorkspace(state.route);
   if (!isCurrentRouteMutation(mutation)) return;
   Object.assign(state, result);
+  refreshOrganizationChromeDirectory(result.organizationLoad?.organization);
   renderCurrentRouteData();
   applyAdminCapabilities();
 }
@@ -1902,7 +1923,6 @@ async function loadOrganizationWorkspace(route, signal) {
   }
   const encodedOrganizationId = encodeURIComponent(organizationId);
   const requests = [
-    fetchJson("/organizations", { signal }),
     fetchJson(`/organizations/${encodedOrganizationId}`, { signal }),
   ];
   if (route.page === "domains-invites") {
@@ -1912,7 +1932,7 @@ async function loadOrganizationWorkspace(route, signal) {
     );
   }
   if (route.page === "members" || route.page === "ai-access") {
-    requests.push(fetchJson("/users", { signal }));
+    requests.push(fetchJson(`/organizations/${encodedOrganizationId}/members`, { signal }));
   }
   if (route.page === "billing") {
     requests.push(fetchJson(`/organizations/${encodedOrganizationId}/billing`, { signal }));
@@ -1920,11 +1940,7 @@ async function loadOrganizationWorkspace(route, signal) {
   if (route.page === "audit") {
     requests.push(fetchJson(`/organizations/${encodedOrganizationId}/audit`, { signal }));
   }
-  const [directoryPayload, organizationPayload, ...routePayloads] = await Promise.all(requests);
-  const directory = Array.isArray(directoryPayload?.organizations) ? directoryPayload.organizations : [];
-  if (!directory.some((entry) => entry.id === organizationId)) {
-    throw Object.assign(new Error("organization_not_authorized_or_not_found"), { status: 404 });
-  }
+  const [organizationPayload, ...routePayloads] = await Promise.all(requests);
   const organization = organizationPayload?.organization;
   if (!organization || organization.id !== organizationId) {
     throw Object.assign(new Error("organization_not_found"), { status: 404 });
@@ -1935,6 +1951,7 @@ async function loadOrganizationWorkspace(route, signal) {
   organizationLoad.organization = organization;
   const result = {
     organizationLoad,
+    organizationMembers: [],
     organizationDomains: [],
     organizationInvites: [],
     organizationBilling: null,
@@ -1945,7 +1962,7 @@ async function loadOrganizationWorkspace(route, signal) {
     result.organizationInvites = Array.isArray(routePayloads[1]?.invites) ? routePayloads[1].invites : [];
   }
   if (route.page === "members" || route.page === "ai-access") {
-    result.users = Array.isArray(routePayloads[0]?.users) ? routePayloads[0].users : [];
+    result.organizationMembers = Array.isArray(routePayloads[0]?.members) ? routePayloads[0].members : [];
   }
   if (route.page === "billing") result.organizationBilling = routePayloads[0]?.billing || null;
   if (route.page === "audit") result.organizationAudit = Array.isArray(routePayloads[0]?.events) ? routePayloads[0].events : [];
@@ -2092,7 +2109,7 @@ function routeResultIsEmpty(route, result) {
     if (route.page === "ai-usage") return !result.usage || (result.usage.series || []).length === 0;
     return false;
   }
-  if (route.page === "members" || route.page === "ai-access") return (result.users || []).length === 0;
+  if (route.page === "members" || route.page === "ai-access") return result.organizationMembers.length === 0;
   if (route.page === "billing") return !result.organizationBilling;
   if (route.page === "audit") return result.organizationAudit.length === 0;
   return false;
@@ -2127,7 +2144,15 @@ function finishRouteDataLoad(request, result, empty, focusHeading) {
   if (Array.isArray(result.alerts)) result.selectedAlertId = result.alerts[0]?.id || null;
   if (Array.isArray(result.audit)) result.selectedAuditId = result.audit[0]?.id || null;
   if (Array.isArray(result.users)) result.selectedUserId = result.users[0]?.id || null;
+  if (Array.isArray(result.organizationMembers)) {
+    result.selectedUserId = result.organizationMembers[0]?.userId || null;
+    result.selectedOrganizationMemberId = result.organizationMembers[0]?.membershipId || null;
+  }
+  if (Array.isArray(result.organizationDirectory)) {
+    state.organizationDirectoryCache = [...result.organizationDirectory];
+  }
   Object.assign(state, result);
+  refreshOrganizationChromeDirectory(result.organizationLoad?.organization);
   renderCurrentRouteData();
   renderAdminPageState();
   applyAdminCapabilities();
@@ -2357,6 +2382,7 @@ function aiAccessOrganizationIdForUser(userId) {
 }
 
 async function loadUsers(mutation = beginCurrentRouteMutation("users-refresh")) {
+  if (state.route?.area !== "platform" || state.route.page !== "platform-users") return;
   if (!isCurrentRouteMutation(mutation)) return;
   try {
     const payload = await fetchJson("/users");
@@ -2853,8 +2879,41 @@ function renderAlerts() {
   }
 }
 
+function organizationMemberToRouteSubject(member, organization) {
+  const status = member?.status === "disabled" || member?.status === "removed"
+    ? member.status
+    : "active";
+  const membershipId = member?.membershipId || "";
+  const userId = member?.userId || "";
+  const role = normalizeOrganizationRoleInput(member?.role);
+  return {
+    id: userId,
+    userId,
+    membershipId,
+    name: member?.name || member?.email || userId,
+    email: member?.email || "",
+    role,
+    status,
+    emailVerified: status !== "removed",
+    disabled: status === "disabled" || status === "removed",
+    platformAdmin: false,
+    memberships: [{
+      membershipId,
+      orgId: organization.id,
+      orgName: organization.name || organization.slug || organization.id,
+      orgSlug: organization.slug || "",
+      role,
+      status,
+    }],
+  };
+}
+
 function currentRouteSubjects() {
-  // Task 4 replaces the organization branch with scoped organizationMembers.
+  if (state.route?.area === "organization") {
+    const organization = currentOrganization();
+    if (!organization) return [];
+    return state.organizationMembers.map((member) => organizationMemberToRouteSubject(member, organization));
+  }
   return state.users;
 }
 
@@ -3611,12 +3670,11 @@ async function saveOrganization() {
     if (!isCurrentRouteMutation(mutation)) return;
     const organization = saved?.organization;
     if (organization?.id) {
-      const index = state.organizations.findIndex((entry) => entry.id === organization.id);
-      if (index >= 0) {
-        state.organizations[index] = organization;
-      } else {
-        state.organizations.push(organization);
-      }
+      state.organizationLoad.organization = organization;
+      state.organizationDirectoryCache = state.organizationDirectoryCache.map((entry) =>
+        entry.id === organization.id ? organization : entry
+      );
+      refreshOrganizationChromeDirectory(organization);
     }
     renderOrganization();
     setOrganizationSaveStatus("Organization saved.", "success");
@@ -3843,6 +3901,16 @@ async function saveUser() {
   };
   const updatePayload = wasCreating ? payload : buildUserUpdatePayload(payload);
   const canEditAiAccess = permissions.editAiAccess && !wasCreating;
+  const organizationId = organizationIdForRoute(state.route);
+  const organizationMembershipSave = !wasCreating
+    && state.route?.area === "organization"
+    && state.route.page === "members"
+    && permissions.editMembership;
+  const membershipRole = normalizeOrganizationRoleInput(els.userRole.value);
+  if (organizationMembershipSave && (!organizationId || !targetUser?.membershipId)) {
+    setUserSaveStatus("Unable to save membership: the scoped membership record is missing.", "error");
+    return;
+  }
   if (!wasCreating && !updatePayload && !canEditAiAccess) return;
   const aiAccessInput = canEditAiAccess
     ? {
@@ -3882,6 +3950,21 @@ async function saveUser() {
       if (!isCurrentRouteMutation(mutation)) return;
       state.userMode = "edit";
       state.selectedUserId = created?.user?.id || null;
+    } else if (organizationMembershipSave) {
+      const saved = await fetchJson(
+        `/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(targetUser.membershipId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ role: membershipRole }),
+        },
+      );
+      if (!isCurrentRouteMutation(mutation)) return;
+      if (saved?.member?.membershipId === targetUser.membershipId) {
+        state.organizationMembers = state.organizationMembers.map((member) =>
+          member.membershipId === targetUser.membershipId ? saved.member : member
+        );
+        state.selectedOrganizationMemberId = targetUser.membershipId;
+      }
     } else if (updatePayload) {
       await fetchJson(`/users/${encodeURIComponent(targetUser.id)}`, {
         method: "PATCH",
@@ -3893,9 +3976,11 @@ async function saveUser() {
       await saveUserAiAccess(targetUser.id, aiAccessInput, mutation);
     }
     if (!isCurrentRouteMutation(mutation)) return;
-    if (wasCreating || updatePayload) await loadUsers(mutation);
+    if (!organizationMembershipSave && (wasCreating || updatePayload)) await loadUsers(mutation);
     if (!isCurrentRouteMutation(mutation)) return;
-    const selectedUser = state.users.find((entry) => entry.id === (targetUser?.id || state.selectedUserId)) || currentUser();
+    const selectedUser = organizationMembershipSave
+      ? currentUser()
+      : state.users.find((entry) => entry.id === (targetUser?.id || state.selectedUserId)) || currentUser();
     if (selectedUser?.id) {
       populateUserEditor(selectedUser);
     }
