@@ -30,13 +30,12 @@ test("codex proxy rejects an assigned credential that cannot serve the request m
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-    res.locals.gatewayActiveModel = { provider: "codex_oauth", model: "gpt-5.5" };
     next();
   });
   app.use(createCodexOAuthProxyRouter({
     autoAssignedCodexCredentialRotation: {
       async repairCodexAccess(input) {
-        assert.deepEqual(input.activeModel, { provider: "codex_oauth", model: "gpt-5.5" });
+        assert.deepEqual(input.activeModel, { provider: "codex_oauth", model: "legacy-model" });
         throw new AssignedCredentialModelIncompatibleError();
       },
     },
@@ -75,7 +74,7 @@ test("codex proxy rejects an assigned credential that cannot serve the request m
   }
 });
 
-test("codex proxy rejects a client model override before credential repair", async () => {
+test("codex proxy rejects a requested model not allowed by user access before credential repair", async () => {
   let repairCalls = 0;
   const app = express();
   app.use(express.json());
@@ -86,7 +85,6 @@ test("codex proxy rejects a client model override before credential repair", asy
       credentialId: "cred_1", defaultModel: "legacy", allowedModels: ["legacy"],
       assignmentOrigin: "admin_assigned", createdAt: new Date(), updatedAt: new Date(),
     };
-    res.locals.gatewayActiveModel = { provider: "codex_oauth", model: "gpt-5.5" };
     next();
   });
   app.use(createCodexOAuthProxyRouter({
@@ -115,7 +113,7 @@ test("codex proxy rejects a client model override before credential repair", asy
       body: JSON.stringify({ model: "gpt-5.4", messages: [] }),
     });
     assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), { error: "model_override_not_allowed" });
+    assert.deepEqual(await response.json(), { error: "model_not_allowed" });
     assert.equal(repairCalls, 0);
   } finally {
     server.close();
@@ -134,7 +132,6 @@ async function requestWithRepairFailure(error: Error) {
       credentialId: "cred_1", defaultModel: "legacy", allowedModels: ["legacy"],
       assignmentOrigin: "admin_assigned", createdAt: new Date(), updatedAt: new Date(),
     };
-    res.locals.gatewayActiveModel = { provider: "codex_oauth", model: "gpt-5.5" };
     next();
   });
   app.use(createCodexOAuthProxyRouter({

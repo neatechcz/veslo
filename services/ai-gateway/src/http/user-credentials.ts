@@ -3,13 +3,12 @@ import { type NextFunction, type Request, type Response, Router } from "express"
 import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AiAccessRepository } from "../access/repository.js";
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js";
-import type { PlatformModelPolicyRepository } from "../model-policy/repository.js";
+import type { PlatformModelRef } from "../model-policy/repository.js";
 import { asyncHandler, jsonErrorHandler } from "./async-handler.js";
 
 export type UserCredentialDependencies = {
   sessionResolver: UserSessionResolver;
   aiAccess?: AiAccessRepository;
-  modelPolicy?: Pick<PlatformModelPolicyRepository, "getPolicy">;
   autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService;
 };
 
@@ -47,25 +46,13 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
       res.json({ aiAccess: null });
       return;
     }
+    const effectiveModel = toEffectiveModel(aiAccess.provider, aiAccess.defaultModel);
 
-    let modelPolicy;
-    try {
-      modelPolicy = await deps.modelPolicy?.getPolicy();
-    } catch (error) {
-      console.error("platform_model_policy_lookup_failed", error);
-      res.status(502).json({ error: "platform_model_policy_lookup_failed" });
-      return;
-    }
-    if (!modelPolicy) {
-      res.status(503).json({ error: "platform_model_policy_not_configured" });
-      return;
-    }
-
-    if (aiAccess?.provider === "codex_oauth" && deps.autoAssignedCodexCredentialRotation) {
+    if (aiAccess?.provider === "codex_oauth" && effectiveModel && deps.autoAssignedCodexCredentialRotation) {
       try {
         aiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
           aiAccess,
-          activeModel: modelPolicy.activeModel,
+          activeModel: effectiveModel,
           reason: "user_ai_access_read",
         });
       } catch (error) {
@@ -81,7 +68,9 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
             enabled: aiAccess.enabled,
             provider: aiAccess.provider,
             credentialId: aiAccess.credentialId,
-            effectiveModel: modelPolicy.activeModel,
+            defaultModel: aiAccess.defaultModel,
+            allowedModels: aiAccess.allowedModels,
+            effectiveModel,
             updatedAt: toIsoString(aiAccess.updatedAt),
           }
         : null,
@@ -98,4 +87,14 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
 
 function toIsoString(value: Date | string) {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function toEffectiveModel(provider: string | null, model: string | null): PlatformModelRef | null {
+  if (
+    (provider === "openai" || provider === "anthropic" || provider === "codex_oauth" || provider === "openai_compatible")
+    && model?.trim()
+  ) {
+    return { provider, model: model.trim() };
+  }
+  return null;
 }

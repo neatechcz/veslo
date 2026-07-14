@@ -197,6 +197,8 @@ export type AdminUserAiAccessRecord = {
   enabled: boolean;
   provider: AiAccessProvider | null;
   credentialId: string | null;
+  defaultModel: string | null;
+  allowedModels: string[];
   updatedAt: string;
 };
 
@@ -2859,6 +2861,8 @@ function validateUserAiAccessInput(
     enabled,
     provider,
     credentialId,
+    defaultModel: enabled ? activeModel.model : null,
+    allowedModels: enabled ? [activeModel.model] : [],
     assignmentOrigin: "admin_assigned",
   };
 }
@@ -2992,6 +2996,8 @@ function toAdminUserAiAccessRecord(record: UserAiAccessPolicyRecord | null): Adm
     enabled: record.enabled,
     provider: record.provider,
     credentialId: record.credentialId,
+    defaultModel: record.defaultModel,
+    allowedModels: record.allowedModels,
     updatedAt: record.updatedAt.toISOString(),
   };
 }

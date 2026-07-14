@@ -17,6 +17,8 @@ const AI_ACCESS_PAYLOAD = {
   enabled: true,
   provider: "openai",
   credentialId: "cred_openai_123",
+  defaultModel: "gpt-5.5",
+  allowedModels: ["gpt-5.5"],
   updatedAt: "2026-04-08T10:00:00.000Z",
 };
 
@@ -174,10 +176,11 @@ function createAdminUserAccessApp(options: { upsertError?: Error } = {}) {
         adminUserAccessOrganizationId = organizationId;
         adminUserAccessActorUserId = actorUserId;
         currentAiAccess = {
-          id: currentAiAccess.id,
-          updatedAt: currentAiAccess.updatedAt,
+          ...currentAiAccess,
           userId,
           ...input,
+          defaultModel: input.enabled === false ? null : currentAiAccess.defaultModel,
+          allowedModels: input.enabled === false ? [] : currentAiAccess.allowedModels,
         };
         return {
           aiAccess: {
@@ -409,6 +412,8 @@ test("default admin AI-access write uses the audit-coupled mutation with real ac
           enabled: true,
           provider: "codex_oauth",
           credentialId: "cred_codex_123",
+          defaultModel: "gpt-5.5",
+          allowedModels: ["gpt-5.5"],
           assignmentOrigin: "admin_assigned",
           createdAt: new Date("2026-07-12T12:00:00.000Z"),
           updatedAt: new Date("2026-07-12T12:00:00.000Z"),
@@ -447,6 +452,8 @@ test("default admin AI-access write uses the audit-coupled mutation with real ac
     enabled: true,
     provider: "codex_oauth",
     credentialId: "cred_codex_123",
+    defaultModel: "gpt-5.5",
+    allowedModels: ["gpt-5.5"],
     assignmentOrigin: "admin_assigned",
   }]);
 
@@ -1280,7 +1287,9 @@ test("admin ai access updates flow through to the signed-in user's effective pol
         enabled: false,
         provider: "anthropic",
         credentialId: "cred_openai_123",
-        effectiveModel: { provider: "openai", model: "gpt-5.5" },
+        defaultModel: null,
+        allowedModels: [],
+        effectiveModel: null,
       },
     });
   } finally {

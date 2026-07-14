@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 
 import { Router, type Response } from "express";
 
+import type { UserAiAccessPolicyRecord } from "../../access/repository.js";
 import type { GatewaySession } from "../../auth/gateway-session.js";
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js";
 import { classifyUpstreamFailure, getUpstreamFailureInput } from "../../leases/error-classifier.js";
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js";
-import type { PlatformModelRef } from "../../model-policy/repository.js";
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js";
-import { applyPlatformModelPolicy } from "./access-policy.js";
+import { applyAiAccessPolicy } from "./access-policy.js";
 import {
   markProviderCredentialFailure,
   readUpstreamFailureReason,
@@ -39,12 +39,14 @@ export function createOpenAiProxyRouter(
 
     const sessionId = normalizeGatewaySessionId(rawSessionId, gatewaySession.user.id, "openai");
 
-    const activeModel = res.locals.gatewayActiveModel as PlatformModelRef;
-    const policyResult = applyPlatformModelPolicy({
-      routeProvider: "openai",
-      activeModel,
-      body: req.body,
-    });
+    const gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined;
+    const policyResult = gatewayAiAccess
+      ? applyAiAccessPolicy({
+          routeProvider: "openai",
+          aiAccess: gatewayAiAccess,
+          body: req.body,
+        })
+      : { ok: true as const, body: req.body as Record<string, unknown>, model: "" };
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error });
       return;

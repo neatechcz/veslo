@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AiGatewayDb } from "../db/index.js";
 import { auditEventTable, platformModelPolicyTable, userAiAccessPolicyTable } from "../db/schema.js";
+import { CODEX_DEFAULT_MODEL } from "../providers/codex-model-catalog.js";
 import { isAiGatewayProvider } from "../providers/ids.js";
 import type {
   AiAccessAssignmentOrigin,
@@ -62,6 +63,7 @@ export class MySqlAiAccessMutation implements AiAccessMutation {
       const existing = rows[0] ? mapUserAiAccessPolicy(rows[0]) : null;
       const now = new Date();
       const assignmentOrigin = parseAssignmentOrigin(input.assignmentOrigin);
+      const modelPolicy = resolveAiAccessModelFields(input, existing);
       let saved: UserAiAccessPolicyRecord;
 
       if (existing) {
@@ -71,6 +73,8 @@ export class MySqlAiAccessMutation implements AiAccessMutation {
             enabled: input.enabled ? 1 : 0,
             provider: input.provider,
             credential_id: input.credentialId,
+            default_model: modelPolicy.defaultModel,
+            allowed_models_json: JSON.stringify(modelPolicy.allowedModels),
             assignment_origin: assignmentOrigin,
             updated_at: now,
           })
@@ -80,6 +84,8 @@ export class MySqlAiAccessMutation implements AiAccessMutation {
           enabled: input.enabled,
           provider: input.provider,
           credentialId: input.credentialId,
+          defaultModel: modelPolicy.defaultModel,
+          allowedModels: modelPolicy.allowedModels,
           assignmentOrigin,
           updatedAt: now,
         };
@@ -91,8 +97,8 @@ export class MySqlAiAccessMutation implements AiAccessMutation {
           enabled: input.enabled ? 1 : 0,
           provider: input.provider,
           credential_id: input.credentialId,
-          default_model: null,
-          allowed_models_json: "[]",
+          default_model: modelPolicy.defaultModel,
+          allowed_models_json: JSON.stringify(modelPolicy.allowedModels),
           assignment_origin: assignmentOrigin,
           created_at: now,
           updated_at: now,
@@ -103,6 +109,8 @@ export class MySqlAiAccessMutation implements AiAccessMutation {
           enabled: input.enabled,
           provider: input.provider,
           credentialId: input.credentialId,
+          defaultModel: modelPolicy.defaultModel,
+          allowedModels: modelPolicy.allowedModels,
           assignmentOrigin,
           createdAt: now,
           updatedAt: now,
@@ -184,6 +192,7 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
       const existing = rows[0] ? mapUserAiAccessPolicy(rows[0]) : null;
       const now = new Date();
       const assignmentOrigin = parseAssignmentOrigin(input.assignmentOrigin);
+      const modelPolicy = resolveAiAccessModelFields(input, existing);
 
       if (existing) {
         await tx
@@ -192,6 +201,8 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
             enabled: input.enabled ? 1 : 0,
             provider: input.provider,
             credential_id: input.credentialId,
+            default_model: modelPolicy.defaultModel,
+            allowed_models_json: JSON.stringify(modelPolicy.allowedModels),
             assignment_origin: assignmentOrigin,
             updated_at: now,
           })
@@ -202,6 +213,8 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
           enabled: input.enabled,
           provider: input.provider,
           credentialId: input.credentialId,
+          defaultModel: modelPolicy.defaultModel,
+          allowedModels: modelPolicy.allowedModels,
           assignmentOrigin,
           updatedAt: now,
         };
@@ -214,8 +227,8 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
         enabled: input.enabled ? 1 : 0,
         provider: input.provider,
         credential_id: input.credentialId,
-        default_model: null,
-        allowed_models_json: "[]",
+        default_model: modelPolicy.defaultModel,
+        allowed_models_json: JSON.stringify(modelPolicy.allowedModels),
         assignment_origin: assignmentOrigin,
         created_at: now,
         updated_at: now,
@@ -227,6 +240,8 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
         enabled: input.enabled,
         provider: input.provider,
         credentialId: input.credentialId,
+        defaultModel: modelPolicy.defaultModel,
+        allowedModels: modelPolicy.allowedModels,
         assignmentOrigin,
         createdAt: now,
         updatedAt: now,
@@ -236,16 +251,77 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
 }
 
 function mapUserAiAccessPolicy(row: typeof userAiAccessPolicyTable.$inferSelect): UserAiAccessPolicyRecord {
+  const provider = parseProvider(row.provider);
+  const parsedAllowedModels = parseAllowedModelsJson(row.allowed_models_json);
+  const defaultModel = resolveDefaultModel({
+    provider,
+    defaultModel: row.default_model,
+    allowedModels: parsedAllowedModels,
+  });
   return {
     id: row.id,
     userId: row.user_id,
     enabled: Number(row.enabled) === 1,
-    provider: parseProvider(row.provider),
+    provider,
     credentialId: row.credential_id,
+    defaultModel,
+    allowedModels: normalizeAllowedModels(
+      parsedAllowedModels.length > 0
+        ? parsedAllowedModels
+        : defaultModel
+          ? [defaultModel]
+          : [],
+    ),
     assignmentOrigin: parseAssignmentOrigin(row.assignment_origin),
     createdAt: asDate(row.created_at),
     updatedAt: asDate(row.updated_at),
   };
+}
+
+function resolveAiAccessModelFields(
+  input: UpsertUserAiAccessPolicyInput,
+  existing: UserAiAccessPolicyRecord | null,
+): { defaultModel: string | null; allowedModels: string[] } {
+  if (!input.enabled) {
+    return { defaultModel: null, allowedModels: [] };
+  }
+  const allowedModels = normalizeAllowedModels(
+    Object.hasOwn(input, "allowedModels") ? input.allowedModels ?? [] : existing?.allowedModels ?? [],
+  );
+  const defaultModel = resolveDefaultModel({
+    provider: input.provider,
+    defaultModel: Object.hasOwn(input, "defaultModel") ? input.defaultModel : existing?.defaultModel ?? null,
+    allowedModels,
+  });
+  return {
+    defaultModel,
+    allowedModels: normalizeAllowedModels(
+      allowedModels.length > 0
+        ? allowedModels
+        : defaultModel
+          ? [defaultModel]
+          : [],
+    ),
+  };
+}
+
+function resolveDefaultModel(input: {
+  provider: AiAccessProvider | null;
+  defaultModel: unknown;
+  allowedModels: string[];
+}): string | null {
+  const explicit = normalizeModel(input.defaultModel);
+  if (explicit) {
+    return explicit;
+  }
+  const firstAllowed = input.allowedModels[0]?.trim() ?? "";
+  if (firstAllowed) {
+    return firstAllowed;
+  }
+  if (input.provider === "codex_oauth") {
+    return CODEX_DEFAULT_MODEL;
+  }
+  return null;
 }
 
 function parseProvider(value: string | null): AiAccessProvider | null {
@@ -268,6 +344,33 @@ async function lockPlatformActiveProvider(tx: Pick<AiGatewayDb, "select">): Prom
 
 function parseAssignmentOrigin(value: string | null | undefined): AiAccessAssignmentOrigin {
   return value === "auto_assigned" ? "auto_assigned" : "admin_assigned";
+}
+
+function parseAllowedModelsJson(value: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(value ?? "[]");
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return normalizeAllowedModels(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeAllowedModels(values: unknown[]): string[] {
+  const unique = new Set<string>();
+  for (const value of values) {
+    const model = normalizeModel(value);
+    if (model) {
+      unique.add(model);
+    }
+  }
+  return Array.from(unique);
+}
+
+function normalizeModel(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function asDate(value: Date | string): Date {

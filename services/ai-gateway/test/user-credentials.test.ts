@@ -92,6 +92,8 @@ function createAiAccessRecord(overrides: Partial<UserAiAccessPolicyRecord> = {})
     enabled: true,
     provider: "openai",
     credentialId: null,
+    defaultModel: "gpt-4o-mini",
+    allowedModels: ["gpt-4o-mini"],
     assignmentOrigin: "admin_assigned",
     createdAt: new Date("2026-04-08T10:00:00.000Z"),
     updatedAt: new Date("2026-04-08T10:05:00.000Z"),
@@ -102,7 +104,6 @@ function createAiAccessRecord(overrides: Partial<UserAiAccessPolicyRecord> = {})
 function createUserAiAccessApp(overrides: {
   session?: UserSession;
   aiAccess?: UserAiAccessPolicyRecord | null;
-  getModelPolicy?: () => Promise<unknown>;
 } = {}) {
   const session = overrides.session ?? {
     token: "den_token_123",
@@ -128,15 +129,6 @@ function createUserAiAccessApp(overrides: {
         async upsertUserAiAccess() {
           throw new Error("unused");
         },
-      },
-      modelPolicy: {
-        getPolicy: overrides.getModelPolicy ?? (async () => ({
-          id: "platform",
-          enabledModels: [{ provider: "openai", model: "gpt-5.5" }],
-          activeModel: { provider: "openai", model: "gpt-5.5" },
-          createdAt: new Date("2026-07-12T08:00:00.000Z"),
-          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
-        })),
       },
       openAiOAuth: {
         async startAuthorization() {
@@ -191,7 +183,9 @@ test("GET /api/me/ai-access returns the signed-in user's admin-managed ai access
         enabled: true,
         provider: "openai",
         credentialId: null,
-        effectiveModel: { provider: "openai", model: "gpt-5.5" },
+        defaultModel: "gpt-4o-mini",
+        allowedModels: ["gpt-4o-mini"],
+        effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
         updatedAt: "2026-04-08T10:05:00.000Z",
       },
     });
@@ -220,7 +214,9 @@ test("GET /ai-gateway/me/ai-access returns the signed-in user's admin-managed ai
         enabled: true,
         provider: "openai",
         credentialId: null,
-        effectiveModel: { provider: "openai", model: "gpt-5.5" },
+        defaultModel: "gpt-4o-mini",
+        allowedModels: ["gpt-4o-mini"],
+        effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
         updatedAt: "2026-04-08T10:05:00.000Z",
       },
     });
@@ -230,15 +226,11 @@ test("GET /ai-gateway/me/ai-access returns the signed-in user's admin-managed ai
   }
 });
 
-test("GET /api/me/ai-access reflects platform model changes without editing the user row", async () => {
-  let model = "gpt-5.5";
+test("GET /api/me/ai-access reflects user access model fields without platform policy", async () => {
   const runtime = createUserAiAccessApp({
-    getModelPolicy: async () => ({
-      id: "platform",
-      enabledModels: [{ provider: "openai", model }],
-      activeModel: { provider: "openai", model },
-      createdAt: new Date("2026-07-12T08:00:00.000Z"),
-      updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+    aiAccess: createAiAccessRecord({
+      defaultModel: "gpt-4.1",
+      allowedModels: ["gpt-4.1", "gpt-4.1-mini"],
     }),
   });
   const server = runtime.app.listen(0, "127.0.0.1");
@@ -246,35 +238,16 @@ test("GET /api/me/ai-access reflects platform model changes without editing the 
 
   try {
     const { port } = server.address() as AddressInfo;
-    const first = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, { headers: runtime.authHeader });
-    model = "gpt-5.6";
-    const second = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, { headers: runtime.authHeader });
+    const response = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, { headers: runtime.authHeader });
+    const body = await response.json();
 
-    assert.deepEqual((await first.json()).aiAccess.effectiveModel, { provider: "openai", model: "gpt-5.5" });
-    assert.deepEqual((await second.json()).aiAccess.effectiveModel, { provider: "openai", model: "gpt-5.6" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.aiAccess.defaultModel, "gpt-4.1");
+    assert.deepEqual(body.aiAccess.allowedModels, ["gpt-4.1", "gpt-4.1-mini"]);
+    assert.deepEqual(body.aiAccess.effectiveModel, { provider: "openai", model: "gpt-4.1" });
   } finally {
     server.close();
     await once(server, "close");
-  }
-});
-
-test("GET /api/me/ai-access reports missing and failed platform policy lookups stably", async () => {
-  for (const scenario of [
-    { getModelPolicy: async () => null, status: 503, error: "platform_model_policy_not_configured" },
-    { getModelPolicy: async () => { throw new Error("database unavailable"); }, status: 502, error: "platform_model_policy_lookup_failed" },
-  ]) {
-    const runtime = createUserAiAccessApp({ getModelPolicy: scenario.getModelPolicy });
-    const server = runtime.app.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    try {
-      const { port } = server.address() as AddressInfo;
-      const response = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, { headers: runtime.authHeader });
-      assert.equal(response.status, scenario.status);
-      assert.deepEqual(await response.json(), { error: scenario.error });
-    } finally {
-      server.close();
-      await once(server, "close");
-    }
   }
 });
 
