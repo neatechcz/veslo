@@ -693,7 +693,12 @@ export function createManagedAiAccessStore(
         setManagedAiGatewayAccessToken(successDecision.gatewayAccessToken);
         setManagedAiAccessError(successDecision.error);
         clearManagedAiAccessCache(managedAiCacheKey, cacheOptions());
-        scheduleRetry(false);
+        if (successDecision.retry) {
+          scheduleRetry(false);
+        } else {
+          setManagedAiAccessRetryAttempt(0);
+          setManagedAiAccessRetryScheduled(false);
+        }
       })
       .catch((error) => {
         if (cancelled) return;

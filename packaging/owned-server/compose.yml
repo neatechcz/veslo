@@ -136,6 +136,7 @@ services:
         condition: service_healthy
     volumes:
       - den-codex-data:/var/lib/veslo-den/codex
+      - ${DIAGNOSTIC_DUMP_HOST_ROOT:-/srv/veslo/diagnostic-dumps}:${DEN_DIAGNOSTIC_DUMP_ROOT:-/data/diagnostic-dumps}
     environment:
       CI: "true"
       NODE_ENV: production
@@ -193,6 +194,8 @@ services:
       DEN_LOG_MASTER_KEY: ${DEN_LOG_MASTER_KEY:-}
       DEN_LOG_MASTER_KEY_VERSION: ${DEN_LOG_MASTER_KEY_VERSION:-}
       DEN_LOG_RETENTION_DAYS: ${DEN_LOG_RETENTION_DAYS:-30}
+      DEN_DIAGNOSTIC_DUMP_ROOT: ${DEN_DIAGNOSTIC_DUMP_ROOT:-/data/diagnostic-dumps}
+      DEN_DIAGNOSTIC_DUMP_MAX_BYTES: ${DEN_DIAGNOSTIC_DUMP_MAX_BYTES:-52428800}
       GOOGLE_WORKSPACE_OAUTH_CLIENT_ID: ${GOOGLE_WORKSPACE_OAUTH_CLIENT_ID:-}
       GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET: ${GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET:-}
       GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI: ${GOOGLE_WORKSPACE_OAUTH_REDIRECT_URI:-}

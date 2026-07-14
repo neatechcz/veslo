@@ -16,6 +16,7 @@ import { isAdminAlertEmailConfigured, sendAdminAlertEmail } from "./email/admin-
 import { env } from "./env.js"
 import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
+import { createDesktopDiagnosticDumpsRouter, createDiagnosticDumpsIngestRouter } from "./http/diagnostic-dumps.js"
 import { createDesktopDiagnosticsRouter } from "./http/desktop-diagnostics.js"
 import { createInternalPlatformAdminRecipientsRouter } from "./http/internal-platform-admin-recipients.js"
 import { createOrganizationBillingWebhookRouter } from "./http/organization-billing-webhook.js"
@@ -119,6 +120,15 @@ const debugLogsIngestRouter = createDebugLogsIngestRouter({
   ingestToken: env.debugLogs.ingestToken,
   service: debugLogService,
 })
+const diagnosticDumpsIngestRouter = createDiagnosticDumpsIngestRouter({
+  ingestToken: env.debugLogs.ingestToken,
+  rootDir: env.diagnosticDumps.rootDir,
+  maxBytes: env.diagnosticDumps.maxBytes,
+})
+const desktopDiagnosticDumpsRouter = createDesktopDiagnosticDumpsRouter({
+  rootDir: env.diagnosticDumps.rootDir,
+  maxBytes: env.diagnosticDumps.maxBytes,
+})
 const desktopCorsOrigins = ["tauri://localhost", "http://localhost:1420", "http://localhost:1421"] as const
 const corsOrigins =
   env.corsOrigins.length > 0
@@ -144,6 +154,8 @@ app.use(createOrganizationBillingWebhookRouter({
 }))
 app.use("/v1", feedbackRouter)
 app.use("/v1/internal", debugLogsIngestRouter)
+app.use("/v1/internal", diagnosticDumpsIngestRouter)
+app.use("/v1", desktopDiagnosticDumpsRouter)
 app.use("/v1", createDesktopDiagnosticsRouter({ service: debugLogService }))
 app.use("/v1/internal", createInternalPlatformAdminRecipientsRouter({
   token: env.aiGatewayInternalToken,

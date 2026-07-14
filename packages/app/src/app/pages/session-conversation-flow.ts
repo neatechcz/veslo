@@ -41,7 +41,7 @@ import {
   sessionSubmitQueuedResult,
   sessionSubmitWasAccepted,
 } from "../lib/session-send-contract";
-import { isAiAccessLoadingMessage } from "../lib/ai-access";
+import { resolveActionableAiAccessBlockedReason } from "../lib/ai-access";
 import {
   createUiConversationKey,
   parseUiConversationKey,
@@ -1410,10 +1410,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       }
 
       const aiAccessBlockedReason = deps.runtime.aiAccessBlockedReason();
-      // Loading copy is localized; classify by key before deciding submit policy.
-      const aiAccessSubmitBlockedReason = isAiAccessLoadingMessage(aiAccessBlockedReason, deps.feedback.tr)
-        ? null
-        : aiAccessBlockedReason;
+      const aiAccessSubmitBlockedReason = resolveActionableAiAccessBlockedReason(
+        aiAccessBlockedReason,
+        deps.feedback.tr,
+      );
       if (aiAccessSubmitBlockedReason) {
         deps.trace.recordSendTrace("sendPromptImmediate:blocked-ai-access", {
           clientMessageId,

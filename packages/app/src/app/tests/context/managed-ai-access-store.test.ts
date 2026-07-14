@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { createRoot } from "solid-js";
 
-import type { ManagedAiAccessProfile } from "../../lib/ai-access.js";
+import {
+  AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+  AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY,
+  type ManagedAiAccessProfile,
+} from "../../lib/ai-access.js";
 import {
   buildManagedAiAccessCacheKey,
   clearManagedAiAccessCache,
@@ -265,6 +269,43 @@ test("managed AI access store applies cached access before retrying a gateway fa
       assert.equal(store.managedAiAccessBusy(), false);
       assert.equal(store.managedAiAccessRetryScheduled(), true);
       assert.equal(scheduledTimers.length, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("managed AI access store surfaces authoritative missing access without retry loading", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const scheduledTimers: Array<() => void> = [];
+      let loadCalls = 0;
+      const store = createManagedAiAccessStore(createStoreOptions({
+        gatewayVesloServerClient: () => ({
+          baseUrl: "https://gateway.veslo.test",
+          getMyAiAccess: async () => {
+            loadCalls += 1;
+            return { aiAccess: null, accessToken: "" };
+          },
+        }),
+        timers: {
+          setTimeout: (callback) => {
+            scheduledTimers.push(callback);
+            return scheduledTimers.length as unknown as ReturnType<typeof setTimeout>;
+          },
+          clearTimeout: () => undefined,
+        },
+      }));
+
+      await settleEffects();
+
+      assert.equal(loadCalls, 1);
+      assert.equal(store.managedAiAccess(), null);
+      assert.equal(store.managedAiAccessError(), AI_ACCESS_NOT_CONFIGURED_MESSAGE);
+      assert.equal(store.managedAiAccessBusy(), false);
+      assert.equal(store.managedAiAccessRetryScheduled(), false);
+      assert.equal(store.managedAiAccessBlockedReason(), AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY);
+      assert.equal(scheduledTimers.length, 0);
     } finally {
       dispose();
     }

@@ -12,6 +12,7 @@ import {
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
   isAiAccessLoadingMessage,
+  resolveActionableAiAccessBlockedReason,
   type ManagedAiAccessProfile,
   resolveManagedAiAccess,
   resolveManagedAiAccessBundleState,
@@ -118,19 +119,27 @@ test("resolveManagedAiAccess returns a configured profile for valid admin policy
   });
 });
 
-test("resolveManagedAiAccess ignores legacy per-user model fields without effectiveModel", () => {
+test("resolveManagedAiAccess accepts legacy defaultModel when effectiveModel is absent", () => {
   const result = resolveManagedAiAccess({
     id: "ai_access_legacy",
     userId: "user_123",
     enabled: true,
-    provider: "openai",
-    defaultModel: "gpt-4o-mini",
+    provider: "codex_oauth",
+    defaultModel: "gpt-5-codex",
     updatedAt: null,
   } as never);
 
   assert.deepEqual(result, {
-    profile: null,
-    reason: AI_ACCESS_INVALID_MESSAGE,
+    profile: {
+      userId: "user_123",
+      providerId: "codex_oauth",
+      effectiveModel: {
+        providerID: "codex_oauth",
+        modelID: "gpt-5-codex",
+      },
+      updatedAt: null,
+    },
+    reason: null,
   });
 });
 
@@ -141,6 +150,21 @@ test("isAiAccessLoadingMessage accepts localized loading copy", () => {
   assert.equal(isAiAccessLoadingMessage(AI_ACCESS_LOADING_MESSAGE), true);
   assert.equal(isAiAccessLoadingMessage("Načítám konfiguraci přístupu k AI.", tr), true);
   assert.equal(isAiAccessLoadingMessage("AI access blocked", tr), false);
+});
+
+test("resolveActionableAiAccessBlockedReason hides transient loading and keeps permanent blocks", () => {
+  const tr = (key: string) =>
+    key === AI_ACCESS_LOADING_MESSAGE_KEY ? "Načítám konfiguraci přístupu k AI." : key;
+
+  assert.equal(resolveActionableAiAccessBlockedReason(null, tr), null);
+  assert.equal(resolveActionableAiAccessBlockedReason("   ", tr), null);
+  assert.equal(resolveActionableAiAccessBlockedReason(AI_ACCESS_LOADING_MESSAGE, tr), null);
+  assert.equal(resolveActionableAiAccessBlockedReason(AI_ACCESS_LOADING_MESSAGE_KEY, tr), null);
+  assert.equal(resolveActionableAiAccessBlockedReason("Načítám konfiguraci přístupu k AI.", tr), null);
+  assert.equal(
+    resolveActionableAiAccessBlockedReason(` ${AI_ACCESS_INVALID_MESSAGE} `, tr),
+    AI_ACCESS_INVALID_MESSAGE,
+  );
 });
 
 test("resolveManagedAiAccess reports unconfigured access for missing or disabled records", () => {

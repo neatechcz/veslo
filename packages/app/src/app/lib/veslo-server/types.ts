@@ -1949,7 +1949,7 @@ export type VesloUserAiAccess = {
     provider: VesloGatewayProvider;
     model: string;
   } | null;
-  /** Legacy response fields are accepted structurally but never used as model authority. */
+  /** Legacy gateway responses may omit effectiveModel; UI resolves defaultModel as a compatibility fallback. */
   defaultModel?: string | null;
   allowedModels?: string[];
   updatedAt: string | null;

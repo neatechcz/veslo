@@ -75,7 +75,7 @@ test("managed AI access preflight uses a fresh local proof without a network ref
   );
 });
 
-test("managed AI access success writes profile/cache or clears stale access and retries", () => {
+test("managed AI access success writes profile/cache or clears authoritative stale access", () => {
   assert.deepEqual(
     resolveManagedAiAccessRefreshSuccess({
       profile,
@@ -102,7 +102,7 @@ test("managed AI access success writes profile/cache or clears stale access and 
       gatewayAccessToken: "",
       error: "No AI access",
       clearCache: true,
-      retry: true,
+      retry: false,
     },
   );
 });

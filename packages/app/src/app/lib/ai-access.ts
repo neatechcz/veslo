@@ -75,6 +75,15 @@ export function isAiAccessLoadingMessage(
   return Boolean(translated && trimmed === translated);
 }
 
+export function resolveActionableAiAccessBlockedReason(
+  message: string | null | undefined,
+  translate?: ((key: string) => string) | null,
+): string | null {
+  const trimmed = message?.trim() ?? "";
+  if (!trimmed) return null;
+  return isAiAccessLoadingMessage(trimmed, translate) ? null : trimmed;
+}
+
 export type ManagedAiAccessProfile = {
   userId: string;
   providerId: VesloGatewayProvider;
@@ -568,8 +577,11 @@ export function resolveManagedAiAccess(record: VesloUserAiAccess | null | undefi
 
   const userId = record.userId?.trim() ?? "";
   const provider = record.provider?.trim().toLowerCase() ?? "";
-  const effectiveProvider = record.effectiveModel?.provider?.trim().toLowerCase() ?? "";
-  const effectiveModelId = record.effectiveModel?.model?.trim() ?? "";
+  const legacyDefaultModelId = record.defaultModel?.trim() ?? "";
+  const effectiveProvider =
+    record.effectiveModel?.provider?.trim().toLowerCase() ??
+    (legacyDefaultModelId ? provider : "");
+  const effectiveModelId = record.effectiveModel?.model?.trim() ?? legacyDefaultModelId;
   if (
     !userId
     || !isGatewayOwnedProvider(provider)
