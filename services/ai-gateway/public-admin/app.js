@@ -353,9 +353,22 @@ function clearRouteOwnedDom() {
   [els.organizationName, els.organizationSlug, els.organizationSeatLimit].forEach((input) => {
     if (input) input.value = "";
   });
+  els.credentialCreateName.value = "";
+  els.credentialCreateBaseUrl.value = "";
+  els.credentialCreateSecret.value = "";
+  els.credentialCreateCodexCommand.value = "";
+  els.credentialCreateStatus.textContent = "";
+  els.modelPolicyStatus.textContent = "";
+  delete els.credentialCreateStatus.dataset.tone;
+  delete els.modelPolicyStatus.dataset.tone;
+  els.credentialCreateCodexCommand.classList.add("hidden");
+  els.credentialCreateCodexCopy.classList.add("hidden");
+  els.credentialCreateCodexCopy.disabled = true;
 }
 
 function clearRouteOwnedState() {
+  modelDiscoveryAbortController?.abort();
+  modelDiscoveryAbortController = null;
   state.credentials = [];
   state.alerts = [];
   state.audit = [];
@@ -402,6 +415,15 @@ function setRouteActionsDisabled(disabled) {
   els.createUserButton.disabled = true;
   els.createUserButtonInline.disabled = true;
   els.organizationSelectorInput.disabled = true;
+}
+
+function beginCurrentRouteMutation(key, route = state.route) {
+  if (state.pageLoad.status !== "ready" && state.pageLoad.status !== "empty") return null;
+  return beginAdminRouteMutation(state.mutations, key, route, state.pageLoad);
+}
+
+function isCurrentRouteMutation(mutation) {
+  return isAdminRouteMutationCurrent(state.mutations, mutation, state.route, state.pageLoad);
 }
 
 function releaseRouteActionsForCurrentRoute() {
@@ -453,6 +475,7 @@ function releaseRouteActionsForCurrentRoute() {
       els.credentialCreateCodexUpload,
     ].forEach((control) => { control.disabled = false; });
     updateCredentialCreateFields();
+    renderNewCodexCredentialUpload();
     renderCredentials();
     renderModelPolicy();
   }
@@ -499,6 +522,8 @@ function releaseRouteActionsForCurrentRoute() {
   els.pages.forEach((page) => {
     page.inert = page.dataset.page !== state.page;
   });
+  els.pageTitle.tabIndex = -1;
+  els.pageTitle.focus({ preventScroll: true });
 }
 
 function renderAdminPageState() {
@@ -514,6 +539,10 @@ function renderAdminPageState() {
   els.adminPageError.classList.toggle("hidden", !error);
   els.adminPageErrorMessage.textContent = error ? state.pageLoad.error : "";
   els.adminPageRetry.classList.toggle("hidden", !error || state.pageLoad.retryable === false);
+  if (error) {
+    els.adminPageError.tabIndex = -1;
+    els.adminPageError.focus({ preventScroll: true });
+  }
   if (!settled) setRouteActionsDisabled(true);
 }
 
@@ -1075,6 +1104,8 @@ async function saveModelPolicy() {
   if (state.session?.platformAdmin !== true) {
     return;
   }
+  const mutation = beginCurrentRouteMutation("model-policy-save");
+  if (!isCurrentRouteMutation(mutation)) return;
   const submission = beginModelPolicySave(state.modelPolicy);
   if (!submission) {
     state.modelPolicy.error = "Select one enabled model as active before saving.";
@@ -1092,14 +1123,17 @@ async function saveModelPolicy() {
         activeModel: submission.activeModel,
       }),
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     savedSuccessfully = completeModelPolicySave(state.modelPolicy, submission, saved?.policy);
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     failModelPolicySave(
       state.modelPolicy,
       submission,
       error instanceof Error ? error.message : "unknown_error",
     );
   } finally {
+    if (!isCurrentRouteMutation(mutation)) return;
     const message = savedSuccessfully
       ? state.modelPolicy.dirty
         ? "Submitted policy saved. Newer draft changes remain unsaved."
@@ -1113,6 +1147,8 @@ async function discoverModelsForPolicy() {
   if (state.session?.platformAdmin !== true) {
     return;
   }
+  const mutation = beginCurrentRouteMutation("model-policy-discovery");
+  if (!isCurrentRouteMutation(mutation)) return;
   const credential = healthyModelDiscoveryCredentials()
     .find((entry) => entry.id === els.modelPolicyCredential.value);
   if (!credential) {
@@ -1137,17 +1173,20 @@ async function discoverModelsForPolicy() {
     const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/models`, {
       signal: modelDiscoveryAbortController.signal,
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     shouldAnnounce = completeModelDiscovery(state.modelDiscovery, request, payload?.models);
     if (shouldAnnounce && state.modelDiscovery.models.length === 0) {
       state.modelDiscovery.error = "This credential did not report any models.";
     }
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     shouldAnnounce = failModelDiscovery(
       state.modelDiscovery,
       request,
       error instanceof Error ? error.message : "unknown_error",
     );
   } finally {
+    if (!isCurrentRouteMutation(mutation)) return;
     if (modelDiscoveryAbortController === controller) {
       modelDiscoveryAbortController = null;
     }
@@ -1681,49 +1720,33 @@ async function initializeAuth() {
   await bootstrapSession();
 }
 
-async function clearServerAdminSession() {
-  await api("/auth/sign-out", { method: "POST" }).catch(() => null);
+async function clearServerAdminSession(token = state.token) {
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  await api("/auth/sign-out", { method: "POST", headers }).catch(() => null);
 }
 
 async function signOut() {
+  const token = state.token;
   invalidatePendingModelPolicyLoad();
   routeLoadAbortController?.abort();
   routeLoadAbortController = null;
+  modelDiscoveryAbortController?.abort();
+  modelDiscoveryAbortController = null;
+  closeAllModals();
   state.pageLoad = createAdminPageLoadState();
-  renderAdminPageState();
-  await clearServerAdminSession();
+  clearRouteOwnedState();
   state.token = "";
   state.session = null;
   state.user = null;
-  state.credentials = [];
-  state.alerts = [];
-  state.audit = [];
-  state.users = [];
   state.organizations = [];
-  state.organizationDirectory = [];
-  state.organizationMembers = [];
-  state.organizationDomains = [];
-  state.organizationInvites = [];
-  state.organizationBilling = null;
-  state.organizationAudit = [];
-  state.usage = null;
-  state.selectedCredentialId = null;
-  state.selectedAlertId = null;
-  state.selectedAuditId = null;
-  state.selectedUserId = null;
-  state.selectedOrganizationMemberId = null;
-  state.selectedOrganizationDomainId = null;
-  state.selectedOrganizationInviteId = null;
-  state.organizationLoad = createOrganizationLoadState();
   state.mutations = createAdminMutationState();
   state.route = null;
   state.navigation = createAdminNavigationState(null);
-  state.userMode = "edit";
-  modelDiscoveryAbortController?.abort();
-  modelDiscoveryAbortController = null;
-  state.modelPolicy = createModelPolicyState();
-  state.modelDiscovery = createModelDiscoveryState();
+  setRouteActionsDisabled(true);
+  renderAdminPageState();
   localStorage.removeItem(STORAGE_KEY);
+  showLogin("Signing out...");
+  await clearServerAdminSession(token);
   window.location.assign("/admin");
 }
 
@@ -1835,9 +1858,13 @@ async function selectOrganizationFromSelector() {
   setOrganizationSaveStatus("No pending changes.");
 }
 
-async function loadOrganization() {
-  if (state.route?.area !== "organization") return;
-  await loadRouteData(state.route);
+async function loadOrganization(mutation = beginCurrentRouteMutation("organization-refresh")) {
+  if (state.route?.area !== "organization" || !isCurrentRouteMutation(mutation)) return;
+  const result = await loadOrganizationWorkspace(state.route);
+  if (!isCurrentRouteMutation(mutation)) return;
+  Object.assign(state, result);
+  renderCurrentRouteData();
+  applyAdminCapabilities();
 }
 
 async function loadOrganizationsDirectory(signal) {
@@ -1951,38 +1978,36 @@ function renderOrganizationAudit() {
   `).join("") || `<article class="list-card active"><div><strong>No organization events</strong><p>Legacy global events without organization scope are intentionally absent.</p></div></article>`;
 }
 
-async function loadOrganizationBilling(route) {
+async function loadOrganizationBilling(route, mutation = beginCurrentRouteMutation("organization-billing-load", route)) {
   const organizationId = organizationIdForRoute(route);
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-billing-load", route);
-  if (!organizationId || !mutation) return;
+  if (!organizationId || !isCurrentRouteMutation(mutation)) return;
   els.organizationBillingStatus.textContent = "Loading billing...";
   try {
     const payload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}/billing`);
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.organizationBilling = payload?.billing || null;
     renderOrganizationBilling();
     els.organizationBillingStatus.textContent = "Billing loaded.";
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.organizationBilling = null;
     renderOrganizationBilling();
     els.organizationBillingStatus.textContent = `Unable to load billing · ${formatAdminError(error)}`;
   }
 }
 
-async function loadOrganizationAudit(route) {
+async function loadOrganizationAudit(route, mutation = beginCurrentRouteMutation("organization-audit-load", route)) {
   const organizationId = organizationIdForRoute(route);
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-audit-load", route);
-  if (!organizationId || !mutation) return;
+  if (!organizationId || !isCurrentRouteMutation(mutation)) return;
   els.organizationAuditStatus.textContent = "Loading organization audit...";
   try {
     const payload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}/audit`);
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.organizationAudit = Array.isArray(payload?.events) ? payload.events : [];
     renderOrganizationAudit();
     els.organizationAuditStatus.textContent = state.organizationAudit.length ? "Organization audit loaded." : "No scoped events found.";
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.organizationAudit = [];
     renderOrganizationAudit();
     els.organizationAuditStatus.textContent = `Unable to load organization audit · ${formatAdminError(error)}`;
@@ -2190,13 +2215,12 @@ function setReadinessSignal(tone, label) {
   els.readinessLabel.textContent = label;
 }
 
-async function loadCredentials() {
-  const mutation = beginAdminRouteMutation(state.mutations, "credentials-refresh", state.route);
-  if (!mutation) return;
+async function loadCredentials(mutation = beginCurrentRouteMutation("credentials-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
     const includeDeleted = state.showDeletedCredentials ? "?includeDeleted=true" : "";
     const payload = await fetchJson(`/credentials${includeDeleted}`);
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.credentials = Array.isArray(payload?.credentials) ? payload.credentials : [];
     if (!state.selectedCredentialId || !state.credentials.some((entry) => entry.id === state.selectedCredentialId)) {
       state.selectedCredentialId = state.credentials[0]?.id || null;
@@ -2206,46 +2230,44 @@ async function loadCredentials() {
       renderModelPolicy();
     }
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadCredentials failed", error);
   }
 }
 
-async function loadAlerts() {
-  const mutation = beginAdminRouteMutation(state.mutations, "alerts-refresh", state.route);
-  if (!mutation) return;
+async function loadAlerts(mutation = beginCurrentRouteMutation("alerts-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
     const payload = await fetchJson("/alerts");
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
     if (!state.selectedAlertId || !state.alerts.some((entry) => entry.id === state.selectedAlertId)) {
       state.selectedAlertId = state.alerts[0]?.id || null;
     }
     renderAlerts();
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadAlerts failed", error);
   }
 }
 
-async function loadAudit() {
-  const mutation = beginAdminRouteMutation(state.mutations, "audit-refresh", state.route);
-  if (!mutation) return;
+async function loadAudit(mutation = beginCurrentRouteMutation("audit-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
     const payload = await fetchJson("/audit");
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.audit = Array.isArray(payload?.events) ? payload.events : [];
     if (!state.selectedAuditId || !state.audit.some((entry) => entry.id === state.selectedAuditId)) {
       state.selectedAuditId = state.audit[0]?.id || null;
     }
     renderAudit();
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadAudit failed", error);
   }
 }
 
-async function loadUserAiAccess(userId) {
+async function loadUserAiAccess(userId, mutation = null) {
   if (!canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")) {
     return null;
   }
@@ -2255,10 +2277,10 @@ async function loadUserAiAccess(userId) {
     return null;
   }
 
-  const mutation = beginAdminRouteMutation(state.mutations, `user-ai-access-load:${resolvedUserId}`, state.route);
-  if (!mutation) return null;
+  const activeMutation = mutation || beginCurrentRouteMutation(`user-ai-access-load:${resolvedUserId}`);
+  if (!isCurrentRouteMutation(activeMutation)) return null;
   const payload = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`);
-  if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return null;
+  if (!isCurrentRouteMutation(activeMutation)) return null;
   const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
   state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
     payload?.availableCredentials,
@@ -2267,10 +2289,15 @@ async function loadUserAiAccess(userId) {
   return aiAccess;
 }
 
-async function saveUserAiAccess(userId, input = null) {
+async function saveUserAiAccess(
+  userId,
+  input = null,
+  mutation = beginCurrentRouteMutation(`user-ai-access-save:${userId}`),
+) {
   if (!canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")) {
     return;
   }
+  if (!isCurrentRouteMutation(mutation)) return;
 
   const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
   if (!resolvedUserId) {
@@ -2295,6 +2322,7 @@ async function saveUserAiAccess(userId, input = null) {
       organizationId: aiAccessOrganizationIdForUser(resolvedUserId),
     }),
   });
+  if (!isCurrentRouteMutation(mutation)) return;
   state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
     saved?.availableCredentials,
   );
@@ -2306,12 +2334,11 @@ function aiAccessOrganizationIdForUser(userId) {
   return resolveAiAccessOrganizationId(state.route, user, els.userOrg.value);
 }
 
-async function loadUsers() {
-  const mutation = beginAdminRouteMutation(state.mutations, "users-refresh", state.route);
-  if (!mutation) return;
+async function loadUsers(mutation = beginCurrentRouteMutation("users-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
     const payload = await fetchJson("/users");
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.users = Array.isArray(payload?.users) ? payload.users : [];
     if (!state.selectedUserId || !state.users.some((entry) => entry.id === state.selectedUserId)) {
       state.selectedUserId = state.users[0]?.id || null;
@@ -2329,8 +2356,8 @@ async function loadUsers() {
       && state.selectedUserId
       && canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")
     ) {
-      await loadUserAiAccess(state.selectedUserId);
-      if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+      await loadUserAiAccess(state.selectedUserId, mutation);
+      if (!isCurrentRouteMutation(mutation)) return;
       const user = currentUser();
       if (user) {
         populateUserEditor(user);
@@ -2338,7 +2365,7 @@ async function loadUsers() {
     }
     setUserSaveStatus(defaultUserSaveStatusMessage());
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadUsers failed", error);
     setUserSaveStatus(
       `Unable to load users: ${error instanceof Error ? error.message : "unknown_error"}`,
@@ -2347,16 +2374,15 @@ async function loadUsers() {
   }
 }
 
-async function loadUsage() {
-  const mutation = beginAdminRouteMutation(state.mutations, "usage-refresh", state.route);
-  if (!mutation) return;
+async function loadUsage(mutation = beginCurrentRouteMutation("usage-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
     const payload = await fetchJson(usageRequestPath());
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.usage = payload;
     renderUsage();
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadUsage failed", error);
   }
 }
@@ -3060,17 +3086,21 @@ function enterCreateMode() {
   });
 }
 
-async function refreshCredentialOperations() {
+async function refreshCredentialOperations(mutation = beginCurrentRouteMutation("credential-operations-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   await Promise.all([
-    loadCredentials(),
-    loadAlerts(),
-    loadAudit(),
+    loadCredentials(mutation),
+    loadAlerts(mutation),
+    loadAudit(mutation),
   ]);
+  if (!isCurrentRouteMutation(mutation)) return;
   renderOverview();
 }
 
-async function refreshSelectedUserAiAccessOptions() {
+async function refreshSelectedUserAiAccessOptions(mutation = beginCurrentRouteMutation("selected-user-ai-access-refresh")) {
   if (
+    !isCurrentRouteMutation(mutation)
+    ||
     !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")
     || state.userMode === "create"
     || !state.selectedUserId
@@ -3078,7 +3108,8 @@ async function refreshSelectedUserAiAccessOptions() {
     return;
   }
 
-  await loadUserAiAccess(state.selectedUserId);
+  await loadUserAiAccess(state.selectedUserId, mutation);
+  if (!isCurrentRouteMutation(mutation)) return;
   const user = currentUser();
   if (user) {
     populateUserEditor(user);
@@ -3131,6 +3162,15 @@ function resetCredentialCreateForm() {
   updateCredentialCreateFields();
 }
 
+function renderNewCodexCredentialUpload() {
+  const command = state.codexAuthCredentialUpload?.command || "";
+  els.credentialCreateCodexCommand.value = command;
+  els.credentialCreateCodexCommand.classList.toggle("hidden", !command);
+  els.credentialCreateCodexCopy.classList.toggle("hidden", !command);
+  els.credentialCreateCodexCopy.disabled = !command;
+  if (state.routeActionsLocked) els.credentialCreateCodexCopy.disabled = true;
+}
+
 function updateCredentialCreateFields() {
   const provider = els.credentialCreateProvider.value.trim();
   const isOpenAiCompatible = provider === "openai_compatible";
@@ -3154,6 +3194,8 @@ async function createCredential() {
     setCredentialCreateStatus("OpenAI-compatible base URL and API key are required.", "error");
     return;
   }
+  const mutation = beginCurrentRouteMutation("credential-create");
+  if (!isCurrentRouteMutation(mutation)) return;
 
   els.credentialCreateSubmit.disabled = true;
   setCredentialCreateStatus("Creating credential", "pending");
@@ -3171,22 +3213,27 @@ async function createCredential() {
       method: "POST",
       body: JSON.stringify(requestBody),
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     state.selectedCredentialId = payload?.credential?.id || state.selectedCredentialId;
     resetCredentialCreateForm();
     setCredentialCreateStatus("Credential created and attached to the platform pool.", "success");
-    await refreshCredentialOperations();
-    await refreshSelectedUserAiAccessOptions();
+    await refreshCredentialOperations(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
+    await refreshSelectedUserAiAccessOptions(mutation);
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     setCredentialCreateStatus(
       `Unable to create credential: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    els.credentialCreateSubmit.disabled = false;
+    if (isCurrentRouteMutation(mutation)) els.credentialCreateSubmit.disabled = false;
   }
 }
 
 async function prepareNewCodexCredentialUpload() {
+  const mutation = beginCurrentRouteMutation("credential-codex-upload-prepare:new");
+  if (!isCurrentRouteMutation(mutation)) return;
   els.credentialCreateCodexUpload.disabled = true;
   setCredentialCreateStatus("Preparing Codex upload command", "pending");
 
@@ -3194,22 +3241,24 @@ async function prepareNewCodexCredentialUpload() {
     const payload = await fetchJson("/credentials/codex-auth-upload-session", {
       method: "POST",
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     state.codexAuthCredentialUpload = payload;
-    els.credentialCreateCodexCommand.value = payload.command || "";
-    els.credentialCreateCodexCommand.classList.toggle("hidden", !payload.command);
-    els.credentialCreateCodexCopy.classList.toggle("hidden", !payload.command);
+    renderNewCodexCredentialUpload();
     setCredentialCreateStatus(`Run the command locally. It expires ${formatDate(payload.upload?.expiresAt)}.`, "success");
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     setCredentialCreateStatus(
       `Unable to prepare Codex upload: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    els.credentialCreateCodexUpload.disabled = false;
+    if (isCurrentRouteMutation(mutation)) els.credentialCreateCodexUpload.disabled = false;
   }
 }
 
 async function copyNewCodexCredentialUploadCommand() {
+  const mutation = beginCurrentRouteMutation("credential-codex-upload-copy:new");
+  if (!isCurrentRouteMutation(mutation)) return;
   const command = state.codexAuthCredentialUpload?.command || els.credentialCreateCodexCommand.value.trim();
   if (!command) {
     setCredentialCreateStatus("Codex upload command is not ready.", "error");
@@ -3218,20 +3267,24 @@ async function copyNewCodexCredentialUploadCommand() {
 
   try {
     await navigator.clipboard.writeText(command);
+    if (!isCurrentRouteMutation(mutation)) return;
     setCredentialCreateStatus("Command copied.", "success");
   } catch {
+    if (!isCurrentRouteMutation(mutation)) return;
     els.credentialCreateCodexCommand.focus();
     els.credentialCreateCodexCommand.select();
     setCredentialCreateStatus("Copy failed. Select the command manually.", "error");
   }
 }
 
-async function refreshAlertOperations() {
+async function refreshAlertOperations(mutation = beginCurrentRouteMutation("alert-operations-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   await Promise.all([
-    loadCredentials(),
-    loadAlerts(),
-    loadAudit(),
+    loadCredentials(mutation),
+    loadAlerts(mutation),
+    loadAudit(mutation),
   ]);
+  if (!isCurrentRouteMutation(mutation)) return;
   renderOverview();
 }
 
@@ -3281,21 +3334,26 @@ async function runCredentialAction(action) {
   if (!confirmed) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`credential-action:${credential.id}:${action}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     const request = credentialActionRequest(credential.id, action);
     await fetchJson(request.path, {
       method: request.method,
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     if (action === "delete") {
       state.showDeletedCredentials = true;
       els.credentialsShowDeleted.checked = true;
     }
-    await refreshCredentialOperations();
+    await refreshCredentialOperations(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     if (action === "delete") {
-      await refreshSelectedUserAiAccessOptions();
+      await refreshSelectedUserAiAccessOptions(mutation);
     }
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     window.alert(`Unable to ${action} credential: ${error instanceof Error ? error.message : "unknown_error"}`);
   }
 }
@@ -3312,6 +3370,8 @@ async function renameSelectedCredential() {
     setInlineStatus(status, "Name is required.", "error");
     return;
   }
+  const mutation = beginCurrentRouteMutation(`credential-rename:${credential.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   input.disabled = true;
   setInlineStatus(status, "Saving name", "pending");
@@ -3320,14 +3380,17 @@ async function renameSelectedCredential() {
       method: "PATCH",
       body: JSON.stringify({ name }),
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     state.selectedCredentialId = payload?.credential?.id || credential.id;
     setInlineStatus(status, "Name saved.", "success");
-    await refreshCredentialOperations();
-    await refreshSelectedUserAiAccessOptions();
+    await refreshCredentialOperations(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
+    await refreshSelectedUserAiAccessOptions(mutation);
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     setInlineStatus(status, `Unable to save name: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
   } finally {
-    input.disabled = false;
+    if (isCurrentRouteMutation(mutation)) input.disabled = false;
   }
 }
 
@@ -3337,15 +3400,19 @@ async function prepareCodexAuthUpload() {
   if (!credential || credential.provider !== "codex_oauth") {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`credential-codex-upload-prepare:${credential.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   setInlineStatus(status, "Preparing command", "pending");
   try {
     const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/codex-auth-upload-session`, {
       method: "POST",
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     state.codexAuthUploadByCredentialId[credential.id] = payload;
     renderCredentials();
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     setInlineStatus(status, `Unable to prepare command: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
   }
 }
@@ -3355,6 +3422,8 @@ async function copyCodexAuthUploadCommand() {
   if (!credential) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`credential-codex-upload-copy:${credential.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
   const command = state.codexAuthUploadByCredentialId[credential.id]?.command || "";
   const status = els.credentialDetail.querySelector("[data-codex-auth-upload-status]");
   if (!command) {
@@ -3364,8 +3433,10 @@ async function copyCodexAuthUploadCommand() {
 
   try {
     await navigator.clipboard.writeText(command);
+    if (!isCurrentRouteMutation(mutation)) return;
     setInlineStatus(status, "Command copied.", "success");
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     const output = els.credentialDetail.querySelector("[data-codex-auth-upload-command]");
     output?.focus();
     output?.select();
@@ -3378,16 +3449,21 @@ async function runAlertAction(action) {
   if (!alert || !action) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`alert-action:${alert.id}:${action}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     await fetchJson(`/alerts/${encodeURIComponent(alert.id)}/${action}`, {
       method: "POST",
     });
-    await refreshAlertOperations();
+    if (!isCurrentRouteMutation(mutation)) return;
+    await refreshAlertOperations(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     if (action === "resolve") {
       closeModal(els.alertDetailModal);
     }
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     window.alert(`Unable to ${action} alert: ${error instanceof Error ? error.message : "unknown_error"}`);
   }
 }
@@ -3406,7 +3482,8 @@ async function runOrganizationBillingAction(action) {
     ? canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-platform-billing")
     : canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-organization-billing");
   if (!organizationId || !allowed) return;
-  const mutation = beginAdminRouteMutation(state.mutations, `organization-billing-${action}`, state.route);
+  const mutation = beginCurrentRouteMutation(`organization-billing-${action}`);
+  if (!isCurrentRouteMutation(mutation)) return;
   const quantities = organizationBillingQuantities();
   const manualExpiresAt = fromAdminDateTimeLocalValue(els.organizationBillingManualExpires.value);
   const platformBody = {
@@ -3431,14 +3508,14 @@ async function runOrganizationBillingAction(action) {
     platform: { method: "PATCH", body: platformBody },
   };
   const request = requests[action];
-  if (!mutation || !request) return;
+  if (!request) return;
   els.organizationBillingStatus.textContent = `Applying billing ${action}...`;
   try {
     const payload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}/billing/${action}`, {
       method: request.method,
       body: JSON.stringify(request.body),
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     const redirectUrl = payload?.checkout?.url || payload?.portal?.url;
     if (typeof redirectUrl === "string" && redirectUrl) {
       window.location.assign(redirectUrl);
@@ -3448,12 +3525,12 @@ async function runOrganizationBillingAction(action) {
       state.organizationBilling = payload.billing;
       renderOrganizationBilling();
     } else {
-      await loadOrganizationBilling(state.route);
+      await loadOrganizationBilling(state.route, mutation);
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     els.organizationBillingStatus.textContent = `Billing ${action} completed.`;
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     els.organizationBillingStatus.textContent = `Billing ${action} failed · ${formatAdminError(error)}`;
   }
 }
@@ -3463,7 +3540,8 @@ async function saveOrganization() {
   if (!orgId || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-organization-profile")) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-profile", state.route);
+  const mutation = beginCurrentRouteMutation("organization-profile");
+  if (!isCurrentRouteMutation(mutation)) return;
 
   const payload = {
     name: els.organizationName.value.trim(),
@@ -3480,6 +3558,7 @@ async function saveOrganization() {
       method: "PATCH",
       body: JSON.stringify(payload),
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     const organization = saved?.organization;
     if (organization?.id) {
       const index = state.organizations.findIndex((entry) => entry.id === organization.id);
@@ -3489,17 +3568,16 @@ async function saveOrganization() {
         state.organizations.push(organization);
       }
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     renderOrganization();
     setOrganizationSaveStatus("Organization saved.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus(
       `Unable to save organization: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    if (isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) {
+    if (isCurrentRouteMutation(mutation)) {
       els.organizationSaveButton.disabled = false;
     }
   }
@@ -3510,7 +3588,8 @@ async function saveOrganizationDomainModal() {
   if (!orgId || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-organization-domains")) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-domain-save", state.route);
+  const mutation = beginCurrentRouteMutation("organization-domain-save");
+  if (!isCurrentRouteMutation(mutation)) return;
   const domainMode = state.organizationDomainMode;
   const domainId = state.selectedOrganizationDomainId;
 
@@ -3539,22 +3618,22 @@ async function saveOrganizationDomainModal() {
         body: JSON.stringify(payload),
       });
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     closeModal(els.organizationDomainModal);
     setOrganizationSaveStatus(
       domainMode === "edit" ? "Domain saved." : "Domain added.",
       "success",
     );
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setDomainModalStatus(
       `Unable to save domain: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    if (isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) {
+    if (isCurrentRouteMutation(mutation)) {
       els.organizationDomainModalSave.disabled = false;
     }
   }
@@ -3574,19 +3653,20 @@ async function deleteOrganizationDomain(card) {
   if (!window.confirm(`Remove ${domainName}? Users from this domain will no longer match organization signup policy.`)) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, `organization-domain-delete:${domainId}`, state.route);
+  const mutation = beginCurrentRouteMutation(`organization-domain-delete:${domainId}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     setOrganizationSaveStatus("Removing domain...", "pending");
     await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(domainId)}`, {
       method: "DELETE",
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus("Domain removed.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus(
       `Unable to remove domain: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
@@ -3599,7 +3679,8 @@ async function createOrganizationInvite() {
   if (!orgId || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-organization-invites")) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-invite-create", state.route);
+  const mutation = beginCurrentRouteMutation("organization-invite-create");
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     els.organizationInviteModalSend.disabled = true;
@@ -3611,19 +3692,19 @@ async function createOrganizationInvite() {
         role: normalizeOrganizationRoleInput(els.organizationInviteModalRole.value),
       }),
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     closeModal(els.organizationInviteModal);
     setOrganizationSaveStatus("Invite sent.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setInviteModalStatus(
       `Unable to send invite: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    if (isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) {
+    if (isCurrentRouteMutation(mutation)) {
       els.organizationInviteModalSend.disabled = false;
     }
   }
@@ -3639,19 +3720,20 @@ async function resendOrganizationInvite(card) {
   ) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, `organization-invite-resend:${inviteId}`, state.route);
+  const mutation = beginCurrentRouteMutation(`organization-invite-resend:${inviteId}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     setOrganizationSaveStatus("Resending invite...", "pending");
     await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/resend`, {
       method: "POST",
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus("Invite resent.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus(
       `Unable to resend invite: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
@@ -3673,19 +3755,20 @@ async function revokeOrganizationInvite(card) {
   if (!window.confirm(`Revoke invite for ${inviteEmail}?`)) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, `organization-invite-revoke:${inviteId}`, state.route);
+  const mutation = beginCurrentRouteMutation(`organization-invite-revoke:${inviteId}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     setOrganizationSaveStatus("Revoking invite...", "pending");
     await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/revoke`, {
       method: "POST",
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus("Invite revoked.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus(
       `Unable to revoke invite: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
@@ -3717,11 +3800,10 @@ async function saveUser() {
         credentialId: readAiAccessCredentialValue(),
       }
     : null;
-  const mutation = beginAdminRouteMutation(
-    state.mutations,
+  const mutation = beginCurrentRouteMutation(
     `user-save:${targetUser?.id || "create"}`,
-    state.route,
   );
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     els.userSaveButton.disabled = true;
@@ -3729,14 +3811,14 @@ async function saveUser() {
     if (wasCreating) {
       const existingUser = findUserByEmail(payload.email);
       if (existingUser) {
-        if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+        if (!isCurrentRouteMutation(mutation)) return;
         state.userMode = "edit";
         state.selectedUserId = existingUser.id;
         renderUsers();
         if (permissions.editAiAccess) {
-          await loadUserAiAccess(existingUser.id);
+          await loadUserAiAccess(existingUser.id, mutation);
         }
-        if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+        if (!isCurrentRouteMutation(mutation)) return;
         populateUserEditor(existingUser);
         setUserSaveStatus("That email already exists. Showing the existing user record instead.", "error");
         return;
@@ -3747,7 +3829,7 @@ async function saveUser() {
         method: "POST",
         body: JSON.stringify(updatePayload),
       });
-      if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+      if (!isCurrentRouteMutation(mutation)) return;
       state.userMode = "edit";
       state.selectedUserId = created?.user?.id || null;
     } else if (updatePayload) {
@@ -3756,21 +3838,21 @@ async function saveUser() {
         body: JSON.stringify(updatePayload),
       });
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     if (canEditAiAccess) {
-      await saveUserAiAccess(targetUser.id, aiAccessInput);
+      await saveUserAiAccess(targetUser.id, aiAccessInput, mutation);
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    if (wasCreating || updatePayload) await loadUsers();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    if (wasCreating || updatePayload) await loadUsers(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     const selectedUser = state.users.find((entry) => entry.id === (targetUser?.id || state.selectedUserId)) || currentUser();
     if (selectedUser?.id) {
       populateUserEditor(selectedUser);
     }
     if (state.route?.area === "platform" && hasCapability("audit")) {
-      await loadAudit();
+      await loadAudit(mutation);
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setUserSaveStatus(
       wasCreating
         ? "User created. Review AI access separately if needed."
@@ -3783,13 +3865,13 @@ async function saveUser() {
     );
     closeModal(els.userEditorModal);
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setUserSaveStatus(
       `Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    if (isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) {
+    if (isCurrentRouteMutation(mutation)) {
       els.userSaveButton.disabled = false;
     }
   }
@@ -3804,15 +3886,20 @@ async function toggleUserDisabled() {
   if (!user) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`user-disabled:${user.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     const action = user.disabled ? "enable" : "disable";
     await fetchJson(`/users/${encodeURIComponent(user.id)}/${action}`, {
       method: "POST",
     });
-    await loadUsers();
-    await loadAudit();
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadUsers(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadAudit(mutation);
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     window.alert(`Unable to update user: ${error instanceof Error ? error.message : "unknown_error"}`);
   }
 }
@@ -3831,22 +3918,28 @@ async function deleteUser() {
   if (!confirmed) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`user-delete:${user.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     await fetchJson(`/users/${encodeURIComponent(user.id)}`, {
       method: "DELETE",
     });
+    if (!isCurrentRouteMutation(mutation)) return;
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     if (!(error instanceof Error) || error.message !== "request_failed") {
       window.alert(`Unable to delete user: ${error instanceof Error ? error.message : "unknown_error"}`);
       return;
     }
   }
 
+  if (!isCurrentRouteMutation(mutation)) return;
   state.selectedUserId = null;
   state.userMode = "edit";
-  await loadUsers();
-  await loadAudit();
+  await loadUsers(mutation);
+  if (!isCurrentRouteMutation(mutation)) return;
+  await loadAudit(mutation);
 }
 
 function bindNavigation() {

@@ -697,8 +697,8 @@ test("GET /admin/app.js atomically isolates route generations and keeps readines
     assert.match(script, /function setRouteActionsDisabled\(disabled\)/)
     for (const loaderName of ["loadCredentials", "loadAlerts", "loadAudit", "loadUsers", "loadUsage", "loadUserAiAccess"]) {
       const loader = topLevelFunctionSource(script, loaderName)
-      assert.match(loader, /beginAdminRouteMutation\(state\.mutations,/, `${loaderName} begins a route mutation`)
-      assert.match(loader, /isAdminRouteMutationCurrent\(state\.mutations, mutation, state\.route\)/, `${loaderName} guards late completion`)
+      assert.match(loader, /beginCurrentRouteMutation\(/, `${loaderName} begins a route mutation`)
+      assert.match(loader, /isCurrentRouteMutation\(/, `${loaderName} guards late completion`)
     }
   } finally {
     server.close()
@@ -784,6 +784,157 @@ test("GET /admin/app.js releases only capability-permitted controls after atomic
     assert.match(release, /adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
     assert.match(release, /canPerformAdminRouteAction\(\s*state\.route,\s*routeAccessSnapshot\(\),/)
     assert.doesNotMatch(release, /routeOwnedControls[\s\S]*disabled = false/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js synchronously clears credential secrets and generated commands", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const clearDom = topLevelFunctionSource(script, "clearRouteOwnedDom")
+    const clearState = topLevelFunctionSource(script, "clearRouteOwnedState")
+    const beginLoad = topLevelFunctionSource(script, "beginRouteDataLoad")
+
+    for (const field of ["credentialCreateName", "credentialCreateBaseUrl", "credentialCreateSecret", "credentialCreateCodexCommand"]) {
+      assert.match(clearDom, new RegExp(`els\\.${field}\\.value = ""`), field)
+    }
+    assert.match(clearDom, /els\.credentialCreateStatus\.textContent = ""/)
+    assert.match(clearDom, /els\.modelPolicyStatus\.textContent = ""/)
+    assert.match(clearDom, /delete els\.credentialCreateStatus\.dataset\.tone/)
+    assert.match(clearDom, /delete els\.modelPolicyStatus\.dataset\.tone/)
+    assert.match(clearDom, /els\.credentialCreateCodexCommand\.classList\.add\("hidden"\)/)
+    assert.match(clearDom, /els\.credentialCreateCodexCopy\.classList\.add\("hidden"\)/)
+    assert.match(clearDom, /els\.credentialCreateCodexCopy\.disabled = true/)
+    assert.match(clearState, /state\.codexAuthCredentialUpload = null/)
+    assert.match(clearState, /state\.codexAuthUploadByCredentialId = \{\}/)
+    assert.match(clearState, /modelDiscoveryAbortController\?\.abort\(\)[\s\S]*modelDiscoveryAbortController = null/)
+    assert.ok(beginLoad.indexOf("clearRouteOwnedState()") < beginLoad.indexOf("renderAdminPageState()"))
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js binds every async admin mutation to the current page generation", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    assert.match(script, /function beginCurrentRouteMutation\(key, route = state\.route\)/)
+    assert.match(script, /beginAdminRouteMutation\(state\.mutations, key, route, state\.pageLoad\)/)
+    assert.match(script, /function isCurrentRouteMutation\(mutation\)/)
+    assert.match(script, /isAdminRouteMutationCurrent\(state\.mutations, mutation, state\.route, state\.pageLoad\)/)
+
+    for (const functionName of [
+      "saveModelPolicy", "discoverModelsForPolicy", "createCredential", "prepareNewCodexCredentialUpload",
+      "copyNewCodexCredentialUploadCommand", "runCredentialAction", "renameSelectedCredential",
+      "prepareCodexAuthUpload", "copyCodexAuthUploadCommand", "runAlertAction",
+      "runOrganizationBillingAction", "saveOrganization", "saveOrganizationDomainModal", "deleteOrganizationDomain",
+      "createOrganizationInvite", "resendOrganizationInvite", "revokeOrganizationInvite", "saveUser",
+      "saveUserAiAccess", "toggleUserDisabled", "deleteUser",
+    ]) {
+      const source = topLevelFunctionSource(script, functionName)
+      assert.match(source, /beginCurrentRouteMutation\(/, `${functionName} captures page generation`)
+      assert.match(source, /isCurrentRouteMutation\(/, `${functionName} guards completion`)
+    }
+
+    for (const functionName of ["refreshCredentialOperations", "refreshAlertOperations", "refreshSelectedUserAiAccessOptions", "loadOrganization"]) {
+      const source = topLevelFunctionSource(script, functionName)
+      assert.match(source, /mutation = beginCurrentRouteMutation\(/, `${functionName} accepts one captured context`)
+    }
+    for (const functionName of ["loadCredentials", "loadAlerts", "loadAudit", "loadUsers", "loadUsage", "loadUserAiAccess"]) {
+      const source = topLevelFunctionSource(script, functionName)
+      const guardIndex = source.indexOf("isCurrentRouteMutation(")
+      const requestIndex = source.indexOf("await fetchJson(")
+      assert.ok(guardIndex !== -1 && guardIndex < requestIndex, `${functionName} rejects stale parent context before request`)
+    }
+    assert.doesNotMatch(script, /await refreshCredentialOperations\(\);/)
+    assert.doesNotMatch(script, /await refreshAlertOperations\(\);/)
+    assert.doesNotMatch(script, /await refreshSelectedUserAiAccessOptions\(\);/)
+    assert.doesNotMatch(script, /await loadOrganization\(\);/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js signs out fail-closed before the best-effort network request", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const signOut = topLevelFunctionSource(script, "signOut")
+    const networkIndex = signOut.indexOf("await clearServerAdminSession(token)")
+    assert.notEqual(networkIndex, -1)
+    for (const step of [
+      "routeLoadAbortController?.abort()",
+      "modelDiscoveryAbortController?.abort()",
+      "closeAllModals()",
+      "clearRouteOwnedState()",
+      "setRouteActionsDisabled(true)",
+      "showLogin(",
+      "localStorage.removeItem(STORAGE_KEY)",
+    ]) {
+      const index = signOut.indexOf(step)
+      assert.notEqual(index, -1, step)
+      assert.ok(index < networkIndex, `${step} must occur before sign-out network`)
+    }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js releases Codex Copy only for a current prepared command", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const renderUpload = topLevelFunctionSource(script, "renderNewCodexCredentialUpload")
+    const prepare = topLevelFunctionSource(script, "prepareNewCodexCredentialUpload")
+
+    assert.match(renderUpload, /credentialCreateCodexCopy\.disabled = !command/)
+    assert.match(renderUpload, /credentialCreateCodexCopy\.classList\.toggle\("hidden", !command\)/)
+    assert.match(renderUpload, /credentialCreateCodexCommand\.classList\.toggle\("hidden", !command\)/)
+    assert.match(prepare, /isCurrentRouteMutation\(mutation\)[\s\S]*state\.codexAuthCredentialUpload = payload[\s\S]*renderNewCodexCredentialUpload\(\)/)
+    assert.match(script, /releaseRouteActionsForCurrentRoute\(\)[\s\S]*renderNewCodexCredentialUpload\(\)/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js focuses terminal errors and successful destination headings", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const pageState = topLevelFunctionSource(script, "renderAdminPageState")
+    const release = topLevelFunctionSource(script, "releaseRouteActionsForCurrentRoute")
+    const readiness = topLevelFunctionSource(script, "loadReadiness")
+
+    assert.match(pageState, /if \(error\)[\s\S]*adminPageError\.tabIndex = -1[\s\S]*adminPageError\.focus\(/)
+    assert.match(release, /pageTitle\.tabIndex = -1[\s\S]*pageTitle\.focus\(\{ preventScroll: true \}\)/)
+    assert.doesNotMatch(readiness, /\.focus\(/)
   } finally {
     server.close()
     await once(server, "close")
@@ -1023,8 +1174,8 @@ test("GET /admin app guards organization mutation completions and marks active n
     const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
     assert.equal(response.status, 200)
     const script = await response.text()
-    assert.match(script, /beginAdminRouteMutation\(state\.mutations,/)
-    assert.match(script, /isAdminRouteMutationCurrent\(state\.mutations, mutation, state\.route\)/)
+    assert.match(script, /beginCurrentRouteMutation\(/)
+    assert.match(script, /isCurrentRouteMutation\(mutation\)/)
     assert.match(script, /item\.setAttribute\("aria-current", "page"\)/)
     assert.match(script, /item\.removeAttribute\("aria-current"\)/)
     for (const functionName of [
@@ -1038,7 +1189,7 @@ test("GET /admin app guards organization mutation completions and marks active n
     ]) {
       assert.match(
         script,
-        new RegExp(`async function ${functionName}\\([^)]*\\) \\{[\\s\\S]*beginAdminRouteMutation[\\s\\S]*isAdminRouteMutationCurrent`),
+        new RegExp(`async function ${functionName}\\([^)]*\\) \\{[\\s\\S]*beginCurrentRouteMutation[\\s\\S]*isCurrentRouteMutation`),
         functionName,
       )
     }
@@ -1071,14 +1222,14 @@ test("organization billing and audit routes render real scoped loaders and actio
     const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
     assert.match(script, /fetchJson\(`\/organizations\/\$\{encodeURIComponent\(organizationId\)\}\/billing`\)/)
     assert.match(script, /fetchJson\(`\/organizations\/\$\{encodeURIComponent\(organizationId\)\}\/audit`\)/)
-    assert.match(script, /beginAdminRouteMutation\(state\.mutations, "organization-billing-load", route\)/)
-    assert.match(script, /beginAdminRouteMutation\(state\.mutations, "organization-audit-load", route\)/)
+    assert.match(script, /beginCurrentRouteMutation\("organization-billing-load", route\)/)
+    assert.match(script, /beginCurrentRouteMutation\("organization-audit-load", route\)/)
     assert.match(script, /entry\.source === "den" \? "DEN" : "AI Gateway"/)
     assert.match(script, /entry\.actor \|\| "unknown actor"/)
     assert.match(script, /organizationId:\s*aiAccessOrganizationIdForUser\(resolvedUserId\)/)
     assert.match(script, /function aiAccessOrganizationIdForUser\(userId\)/)
     assert.match(script, /resolveAiAccessOrganizationId\(state\.route, user, els\.userOrg\.value\)/)
-    assert.match(script, /async function signOut\(\) \{\s*invalidatePendingModelPolicyLoad\(\);[\s\S]*routeLoadAbortController\?\.abort\(\);[\s\S]*await clearServerAdminSession\(\)/)
+    assert.match(script, /async function signOut\(\) \{\s*const token = state\.token;[\s\S]*routeLoadAbortController\?\.abort\(\);[\s\S]*clearRouteOwnedState\(\)[\s\S]*await clearServerAdminSession\(token\)/)
     assert.match(script, /catch \(error\) \{\s*if \(error\?\.name !== "AbortError"\) \{\s*setBackendConnectionStatus/)
     assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "manage-platform-billing"\)/)
     assert.doesNotMatch(script, /will be connected in Task 7/)
@@ -2192,15 +2343,15 @@ test("GET /admin/app.js saves user ai access without per-user model authority", 
     assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(
       script,
-      /async function saveUserAiAccess\(userId,\s*input = null\)[\s\S]*enabled: input\.enabled === true,[\s\S]*provider:[\s\S]*credentialId:[\s\S]*fetchJson\(`\/users\//,
+      /async function saveUserAiAccess\([\s\S]*input = null,[\s\S]*mutation = beginCurrentRouteMutation[\s\S]*enabled: input\.enabled === true,[\s\S]*provider:[\s\S]*credentialId:[\s\S]*fetchJson\(`\/users\//,
     )
     assert.match(
       script,
-      /async function saveUser\(\) \{[\s\S]*const canEditAiAccess = permissions\.editAiAccess && !wasCreating;[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput\)/,
+      /async function saveUser\(\) \{[\s\S]*const canEditAiAccess = permissions\.editAiAccess && !wasCreating;[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput, mutation\)/,
     )
     assert.match(
       script,
-      /if \(canEditAiAccess\) \{[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput\)/,
+      /if \(canEditAiAccess\) \{[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput, mutation\)/,
     )
   } finally {
     server.close()
@@ -2288,7 +2439,7 @@ test("GET /admin/app.js creates platform credentials from the Credentials page",
     assert.match(script, /Credential created and attached to the platform pool\./)
     assert.match(
       script,
-      /async function createCredential\(\) \{[\s\S]*await fetchJson\("\/credentials", \{\s*method: "POST"[\s\S]*await refreshSelectedUserAiAccessOptions\(\)/,
+      /async function createCredential\(\) \{[\s\S]*await fetchJson\("\/credentials", \{\s*method: "POST"[\s\S]*await refreshSelectedUserAiAccessOptions\(mutation\)/,
     )
   } finally {
     server.close()
@@ -2351,7 +2502,7 @@ test("GET /admin/app.js supports renaming credentials and preparing local Codex 
     assert.match(script, /async function prepareCodexAuthUpload\(\)/)
     assert.match(script, /async function copyCodexAuthUploadCommand\(\)/)
     assert.match(script, /navigator\.clipboard\.writeText\(command\)/)
-    assert.match(script, /await refreshSelectedUserAiAccessOptions\(\)/)
+    assert.match(script, /await refreshSelectedUserAiAccessOptions\(mutation\)/)
     assert.doesNotMatch(script, /window\.prompt\("Paste the fresh Codex auth\.json/)
   } finally {
     server.close()
