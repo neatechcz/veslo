@@ -68,6 +68,7 @@ const state = {
   organizationDirectory: [],
   organizationMembers: [],
   pageLoad: createAdminPageLoadState(),
+  routeActionsLocked: true,
   mutations: createAdminMutationState(),
   organizationLoad: createOrganizationLoadState(),
   organizationDomains: [],
@@ -386,10 +387,118 @@ function clearRouteOwnedState() {
 }
 
 function setRouteActionsDisabled(disabled) {
+  if (!disabled) return;
+  state.routeActionsLocked = true;
   els.routeOwnedControls.forEach((control) => {
-    control.disabled = disabled;
+    control.disabled = true;
   });
-  els.refreshButton.disabled = disabled;
+  els.pages.forEach((page) => {
+    page.inert = true;
+    page.querySelectorAll("button, input, select, textarea").forEach((control) => {
+      control.disabled = true;
+    });
+  });
+  els.refreshButton.disabled = true;
+  els.createUserButton.disabled = true;
+  els.createUserButtonInline.disabled = true;
+  els.organizationSelectorInput.disabled = true;
+}
+
+function releaseRouteActionsForCurrentRoute() {
+  if (state.pageLoad.status !== "ready" && state.pageLoad.status !== "empty") return;
+  const route = state.route;
+  const permissions = adminUserRoutePermissions(state.route, routeAccessSnapshot());
+  const canEditOrganization = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "edit-organization-profile",
+  );
+  const canManageDomains = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "manage-organization-domains",
+  );
+  const canManageInvites = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "manage-organization-invites",
+  );
+  const canManageBilling = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "manage-organization-billing",
+  );
+  const canManagePlatformBilling = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "manage-platform-billing",
+  );
+
+  state.routeActionsLocked = false;
+  els.refreshButton.disabled = false;
+  els.createUserButton.disabled = !permissions.createUser;
+  els.createUserButtonInline.disabled = !permissions.createUser;
+  els.organizationSelectorInput.disabled = route?.area !== "organization" || state.organizations.length <= 1;
+
+  if (route?.area === "platform" && route.page === "ai-infrastructure") {
+    [
+      els.credentialSearch,
+      els.credentialProviderFilter,
+      els.credentialStateFilter,
+      els.credentialsShowDeleted,
+      els.credentialCreateProvider,
+      els.credentialCreateName,
+      els.credentialCreateSecret,
+      els.credentialCreateSubmit,
+      els.credentialCreateCodexUpload,
+    ].forEach((control) => { control.disabled = false; });
+    updateCredentialCreateFields();
+    renderCredentials();
+    renderModelPolicy();
+  }
+  if (route?.area === "platform" && route.page === "ai-usage") {
+    [els.usageGroupBy, els.usageCredentialFilter, els.usageUserFilter, els.usageOrgFilter]
+      .forEach((control) => { control.disabled = false; });
+  }
+  if (route?.area === "platform" && route.page === "ai-alerts") {
+    els.alertStatusFilterButtons.forEach((control) => { control.disabled = false; });
+    renderAlerts();
+  }
+  if (route?.area === "platform" && route.page === "audit") {
+    [els.auditSearch, els.auditDateRange, els.auditActorFilter, els.auditEntityFilter]
+      .forEach((control) => { control.disabled = false; });
+  }
+  if (route?.page === "platform-users" || route?.page === "members" || route?.page === "ai-access") {
+    [els.userSearch, els.userStatusFilter, els.userRoleFilter]
+      .forEach((control) => { control.disabled = false; });
+    renderUsers();
+  }
+  if (route?.area === "platform" && route.page === "organizations") {
+    renderOrganizationsDirectory();
+  }
+  if (route?.area === "organization" && route.page === "overview") {
+    els.organizationName.disabled = !canEditOrganization;
+    els.organizationSlug.disabled = !canEditOrganization;
+    els.organizationSeatLimit.disabled = state.session?.platformAdmin !== true;
+    els.organizationSaveButton.disabled = !canEditOrganization;
+  }
+  if (route?.area === "organization" && route.page === "domains-invites") {
+    els.organizationDomainAddButton.disabled = !canManageDomains;
+    els.organizationInviteSendButton.disabled = !canManageInvites;
+    renderOrganization();
+  }
+  if (route?.area === "organization" && route.page === "billing") {
+    els.organizationBillingControls.forEach((node) => {
+      node.querySelectorAll("button, input, select, textarea")
+        .forEach((control) => { control.disabled = !canManageBilling; });
+    });
+    document.getElementById("organization-billing-platform-controls")
+      ?.querySelectorAll("button, input, select, textarea")
+      .forEach((control) => { control.disabled = !canManagePlatformBilling; });
+  }
+  els.pages.forEach((page) => {
+    page.inert = page.dataset.page !== state.page;
+  });
 }
 
 function renderAdminPageState() {
@@ -419,7 +528,18 @@ function beginRouteDataLoad(route) {
   renderAdminPageState();
   renderRoute();
   setRouteActionsDisabled(true);
-  return request ? { request, signal: controller.signal } : null;
+  return request ? { request, signal: controller.signal, route: { ...route } } : null;
+}
+
+function abandonRouteDataLoad(activeLoad) {
+  if (!activeLoad) return;
+  if (routeLoadAbortController?.signal === activeLoad.signal) {
+    routeLoadAbortController.abort();
+    routeLoadAbortController = null;
+  }
+  state.pageLoad = createAdminPageLoadState();
+  state.routeActionsLocked = true;
+  renderAdminPageState();
 }
 
 function setDomainModalStatus(message, tone = "neutral") {
@@ -705,13 +825,13 @@ function applyAdminCapabilities() {
   els.userMembershipControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.editMembership));
   els.seatLimitControls.forEach((node) => node.classList.toggle("hidden", !canManagePlatform));
   if (els.userPlatformAdmin) {
-    els.userPlatformAdmin.disabled = !userPermissions.setPlatformAdmin;
+    els.userPlatformAdmin.disabled = state.routeActionsLocked || !userPermissions.setPlatformAdmin;
     if (!userPermissions.setPlatformAdmin) {
       els.userPlatformAdmin.checked = false;
     }
   }
   if (els.organizationSeatLimit) {
-    els.organizationSeatLimit.disabled = !canManagePlatform;
+    els.organizationSeatLimit.disabled = state.routeActionsLocked || !canManagePlatform;
   }
   if (els.createUserButtonInline) {
     els.createUserButtonInline.classList.toggle("hidden", !userPermissions.createUser);
@@ -855,7 +975,7 @@ function renderModelDiscoveryControls() {
     modelDiscoveryAbortController = null;
     selectModelDiscoveryCredential(state.modelDiscovery, selectedId);
   }
-  const busy = state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
+  const busy = state.routeActionsLocked || state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
   els.modelPolicyCredential.innerHTML = [
     `<option value="">Select credential</option>`,
     ...credentials.map((credential) =>
@@ -883,11 +1003,11 @@ function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
 
   const rows = state.modelPolicy.draftEnabledModels.map((entry) => {
     const active = modelRefsEqual(entry, state.modelPolicy.draftActiveModel);
-    const removeDisabled = active || state.modelPolicy.saving;
+    const removeDisabled = state.routeActionsLocked || active || state.modelPolicy.saving;
     return `
       <article class="model-policy-row${active ? " active" : ""}">
         <label class="model-policy-active-control">
-          <input type="radio" name="model-policy-active" data-model-policy-active-provider="${escapeHtml(entry.provider)}" data-model-policy-active-model="${escapeHtml(entry.model)}"${active ? " checked" : ""}${state.modelPolicy.saving ? " disabled" : ""} />
+          <input type="radio" name="model-policy-active" data-model-policy-active-provider="${escapeHtml(entry.provider)}" data-model-policy-active-model="${escapeHtml(entry.model)}"${active ? " checked" : ""}${state.routeActionsLocked || state.modelPolicy.saving ? " disabled" : ""} />
           <span>${active ? "Active" : "Set active"}</span>
         </label>
         <div class="model-policy-ref">
@@ -902,12 +1022,13 @@ function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
     ? `<article class="model-policy-empty">Loading platform model policy...</article>`
     : rows || `<article class="model-policy-empty">No platform model policy configured. Discover and add a model to create one.</article>`;
   els.modelPolicySaveButton.disabled =
+    state.routeActionsLocked ||
     state.modelPolicy.loading ||
     state.modelPolicy.saving ||
     !state.modelPolicy.dirty ||
     !state.modelPolicy.draftActiveModel;
   els.modelPolicySaveButton.textContent = state.modelPolicy.saving ? "Saving..." : "Save model policy";
-  const busy = state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
+  const busy = state.routeActionsLocked || state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
   els.modelPolicyPanel.setAttribute("aria-busy", String(busy));
   els.modelPolicyList.setAttribute("aria-disabled", String(state.modelPolicy.saving));
   renderModelDiscoveryControls();
@@ -1282,6 +1403,7 @@ function renderRoute() {
   if (
     route?.area === "organization"
     && route.page === "overview"
+    && !state.routeActionsLocked
     && (state.pageLoad.status === "ready" || state.pageLoad.status === "empty")
   ) {
     els.organizationSaveButton.disabled = false;
@@ -1375,10 +1497,27 @@ function formatAdminError(error) {
   return error instanceof Error ? error.message : "unknown_error";
 }
 
-async function bootstrapSession() {
+async function bootstrapSession({ refreshVisibleRoute = false } = {}) {
+  const activeLoad = refreshVisibleRoute && state.session && state.route
+    ? beginRouteDataLoad(state.route)
+    : null;
   setStatus("Checking session", state.token ? "validating stored token" : "validating admin cookie");
-  const { response, payload } = await api("/session", { method: "GET" });
+  let response;
+  let payload;
+  try {
+    ({ response, payload } = await api("/session", {
+      method: "GET",
+      ...(activeLoad ? { signal: activeLoad.signal } : {}),
+    }));
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    abandonRouteDataLoad(activeLoad);
+    showLogin("Unable to verify session.");
+    if (state.token) setStatus("Session check failed", "stored token kept");
+    return;
+  }
   if (!response.ok) {
+    abandonRouteDataLoad(activeLoad);
     state.session = null;
     state.user = null;
     const shouldClearToken = payload?.error === "unauthorized" || payload?.error === "forbidden"
@@ -1409,6 +1548,7 @@ async function bootstrapSession() {
     ? requestedRoute
     : firstAuthorizedRoute();
   if (!authorizedRoute) {
+    abandonRouteDataLoad(activeLoad);
     showLogin("No authorized organization workspace is available for this account.");
     return;
   }
@@ -1421,7 +1561,7 @@ async function bootstrapSession() {
   );
   showApp();
   void loadReadiness();
-  await loadRouteData(state.route);
+  await loadRouteData(state.route, activeLoad);
 }
 
 function populateOrganizationOptions() {
@@ -1639,7 +1779,7 @@ function renderOrganizationSelector() {
     <option value="${escapeHtml(organizationSelectorLabel(organization))}" label="${escapeHtml(organization.slug || organization.id)}"></option>
   `).join("");
   els.organizationSelectorInput.value = selected ? organizationSelectorLabel(selected) : "";
-  els.organizationSelectorInput.disabled = organizations.length <= 1;
+  els.organizationSelectorInput.disabled = state.routeActionsLocked || organizations.length <= 1;
   els.organizationSelectorInput.title = organizations.length <= 1
     ? "Only one organization is available."
     : "Search by organization name, slug, or id.";
@@ -1958,10 +2098,10 @@ function finishRouteDataLoad(request, result, empty) {
   if (Array.isArray(result.audit)) result.selectedAuditId = result.audit[0]?.id || null;
   if (Array.isArray(result.users)) result.selectedUserId = result.users[0]?.id || null;
   Object.assign(state, result);
-  setRouteActionsDisabled(false);
   renderCurrentRouteData();
   renderAdminPageState();
   applyAdminCapabilities();
+  releaseRouteActionsForCurrentRoute();
   return true;
 }
 
@@ -1995,10 +2135,14 @@ function failRouteDataLoad(request, error) {
   return true;
 }
 
-async function loadRouteData(route) {
-  const activeLoad = beginRouteDataLoad(route);
-  if (!activeLoad) return;
-  const { request, signal } = activeLoad;
+async function loadRouteData(route, activeLoad = null) {
+  const reusableLoad = activeLoad
+    && !activeLoad.signal.aborted
+    && formatAdminRoute(activeLoad.route) === formatAdminRoute(route)
+    && isAdminPageLoadCurrent(state.pageLoad, activeLoad.request);
+  const routeLoad = reusableLoad ? activeLoad : beginRouteDataLoad(route);
+  if (!routeLoad) return;
+  const { request, signal } = routeLoad;
   try {
     const result = route.area === "platform"
       ? await loadPlatformRouteResult(route, signal)
@@ -2250,7 +2394,7 @@ function renderOrganization() {
   els.organizationSeatLimit.value = organization.seatLimit === null || organization.seatLimit === undefined
     ? ""
     : String(organization.seatLimit);
-  els.organizationSeatLimit.disabled = state.session?.platformAdmin !== true;
+  els.organizationSeatLimit.disabled = state.routeActionsLocked || state.session?.platformAdmin !== true;
 
   els.organizationDomainList.innerHTML = state.organizationDomains.map((domain) => `
     <article class="list-card active" data-domain-id="${escapeHtml(domain.id)}">
@@ -2757,7 +2901,7 @@ function renderAiAccessCredentialOptions(user, aiAccess) {
       ? aiAccess.credentialId
       : "";
   els.userAiAccessCredential.value = selectedCredentialId || "";
-  els.userAiAccessCredential.disabled =
+  els.userAiAccessCredential.disabled = state.routeActionsLocked ||
     state.userMode === "create" ||
     !user ||
     (els.userAiAccessProvider.value !== "codex_oauth" && els.userAiAccessProvider.value !== "openai_compatible") ||
@@ -2797,18 +2941,18 @@ function populateUserEditor(user) {
   els.userEditorStatus.textContent = isCreate ? "Create user" : userStatus(user);
   els.userEditorTitle.textContent = isCreate ? "New user" : (user?.name || user?.email || "User");
   els.userName.value = user?.name || "";
-  els.userName.disabled = !permissions.editProfile;
+  els.userName.disabled = state.routeActionsLocked || !permissions.editProfile;
   els.userEmail.value = user?.email || "";
-  els.userEmail.disabled = !isCreate || !permissions.createUser;
-  els.userOrg.disabled = !permissions.editMembership || Boolean(organizationId);
-  els.userRole.disabled = !permissions.editMembership;
+  els.userEmail.disabled = state.routeActionsLocked || !isCreate || !permissions.createUser;
+  els.userOrg.disabled = state.routeActionsLocked || !permissions.editMembership || Boolean(organizationId);
+  els.userRole.disabled = state.routeActionsLocked || !permissions.editMembership;
   els.userPlatformAdmin.checked = user?.platformAdmin === true;
-  els.userPlatformAdmin.disabled = !permissions.setPlatformAdmin;
+  els.userPlatformAdmin.disabled = state.routeActionsLocked || !permissions.setPlatformAdmin;
   if (!permissions.setPlatformAdmin) {
     els.userPlatformAdmin.checked = false;
   }
   els.userSendInvite.checked = true;
-  els.userSendInvite.disabled = !isCreate || !permissions.createUser;
+  els.userSendInvite.disabled = state.routeActionsLocked || !isCreate || !permissions.createUser;
   if (organizationId) {
     els.userOrg.value = organizationId;
     els.userRole.value = normalizeOrganizationRoleInput(membership?.role);
@@ -2820,13 +2964,13 @@ function populateUserEditor(user) {
     els.userRole.value = "member";
   }
   els.userDisableButton.textContent = user?.disabled ? "Enable user" : "Disable user";
-  els.userDisableButton.disabled = isCreate || !user || !permissions.disableUser;
-  els.userDeleteButton.disabled = isCreate || !user || !permissions.deleteUser;
+  els.userDisableButton.disabled = state.routeActionsLocked || isCreate || !user || !permissions.disableUser;
+  els.userDeleteButton.disabled = state.routeActionsLocked || isCreate || !user || !permissions.deleteUser;
   if (permissions.editAiAccess) {
     els.userAiAccessEnabled.checked = aiAccess.enabled;
-    els.userAiAccessEnabled.disabled = isCreate || !user;
+    els.userAiAccessEnabled.disabled = state.routeActionsLocked || isCreate || !user;
     els.userAiAccessProvider.value = aiAccess.provider || "";
-    els.userAiAccessProvider.disabled = isCreate || !user;
+    els.userAiAccessProvider.disabled = state.routeActionsLocked || isCreate || !user;
     renderAiAccessCredentialOptions(user, aiAccess);
     updateAiAccessStatusText(user, aiAccess);
   }
@@ -3731,7 +3875,7 @@ function bindActions() {
     void startBrowserAuth();
   });
   els.signOutButton.addEventListener("click", () => void signOut());
-  els.refreshButton.addEventListener("click", () => void bootstrapSession());
+  els.refreshButton.addEventListener("click", () => void bootstrapSession({ refreshVisibleRoute: true }));
   els.adminPageRetry.addEventListener("click", () => void loadRouteData(state.route));
   els.createUserButton.addEventListener("click", enterCreateMode);
   els.createUserButtonInline.addEventListener("click", enterCreateMode);

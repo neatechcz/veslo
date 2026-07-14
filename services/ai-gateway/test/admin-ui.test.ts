@@ -691,8 +691,8 @@ test("GET /admin/app.js atomically isolates route generations and keeps readines
     assert.match(script, /fetchJson\([^\n]+\{ signal \}\)/)
     assert.match(script, /Promise\.all\(/)
     assert.match(script, /adminPageRetry\.addEventListener\("click", \(\) => void loadRouteData\(state\.route\)\)/)
-    assert.match(script, /showApp\(\);\s*void loadReadiness\(\);\s*await loadRouteData\(state\.route\)/)
-    assert.doesNotMatch(script, /async function loadRouteData\(route\)[\s\S]{0,240}await loadReadiness\(\)/)
+    assert.match(script, /showApp\(\);\s*void loadReadiness\(\);\s*await loadRouteData\(state\.route, activeLoad\)/)
+    assert.doesNotMatch(script, /async function loadRouteData\(route, activeLoad = null\)[\s\S]{0,360}await loadReadiness\(\)/)
     assert.match(script, /function renderAdminPageState\(\)[\s\S]*aria-busy[\s\S]*Access denied|function renderAdminPageState\(\)/)
     assert.match(script, /function setRouteActionsDisabled\(disabled\)/)
     for (const loaderName of ["loadCredentials", "loadAlerts", "loadAudit", "loadUsers", "loadUsage", "loadUserAiAccess"]) {
@@ -700,6 +700,90 @@ test("GET /admin/app.js atomically isolates route generations and keeps readines
       assert.match(loader, /beginAdminRouteMutation\(state\.mutations,/, `${loaderName} begins a route mutation`)
       assert.match(loader, /isAdminRouteMutationCurrent\(state\.mutations, mutation, state\.route\)/, `${loaderName} guards late completion`)
     }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js clears a visible route before refresh session verification starts", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const bootstrap = topLevelFunctionSource(script, "bootstrapSession")
+    const beginIndex = bootstrap.indexOf("beginRouteDataLoad(state.route)")
+    const sessionIndex = bootstrap.indexOf('api("/session"')
+
+    assert.notEqual(beginIndex, -1)
+    assert.notEqual(sessionIndex, -1)
+    assert.ok(beginIndex < sessionIndex, "visible route load must begin before /session")
+    assert.match(bootstrap, /refreshVisibleRoute[\s\S]*activeLoad/)
+    assert.match(bootstrap, /loadRouteData\(state\.route, activeLoad\)/)
+    assert.match(bootstrap, /abandonRouteDataLoad\(activeLoad\)[\s\S]*showLogin\(/)
+    assert.match(script, /refreshButton\.addEventListener\("click", \(\) => void bootstrapSession\(\{ refreshVisibleRoute: true \}\)\)/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js loading lock disables page, topbar, and organization context actions", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const disabling = topLevelFunctionSource(script, "setRouteActionsDisabled")
+
+    assert.match(disabling, /if \(!disabled\) return/)
+    assert.match(disabling, /routeOwnedControls/)
+    assert.match(disabling, /page\.inert = true/)
+    assert.doesNotMatch(disabling, /appPanel\.inert = true/)
+    assert.match(disabling, /els\.refreshButton\.disabled = true/)
+    assert.match(disabling, /els\.createUserButton\.disabled = true/)
+    assert.match(disabling, /els\.createUserButtonInline\.disabled = true/)
+    assert.match(disabling, /els\.organizationSelectorInput\.disabled = true/)
+    assert.match(script, /beginRouteDataLoad\(route\)[\s\S]*setRouteActionsDisabled\(true\)/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js releases only capability-permitted controls after atomic render", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const finish = topLevelFunctionSource(script, "finishRouteDataLoad")
+    const release = topLevelFunctionSource(script, "releaseRouteActionsForCurrentRoute")
+    const orderedSteps = [
+      "completeAdminPageLoad(state.pageLoad, request, empty)",
+      "Object.assign(state, result)",
+      "renderCurrentRouteData()",
+      "renderAdminPageState()",
+      "applyAdminCapabilities()",
+      "releaseRouteActionsForCurrentRoute()",
+    ]
+    let previous = -1
+    for (const step of orderedSteps) {
+      const index = finish.indexOf(step)
+      assert.ok(index > previous, `${step} must follow the prior completion step`)
+      previous = index
+    }
+    assert.match(script, /routeActionsLocked:\s*true/)
+    assert.match(release, /adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
+    assert.match(release, /canPerformAdminRouteAction\(\s*state\.route,\s*routeAccessSnapshot\(\),/)
+    assert.doesNotMatch(release, /routeOwnedControls[\s\S]*disabled = false/)
   } finally {
     server.close()
     await once(server, "close")
@@ -886,7 +970,7 @@ test("GET /admin/app.js uses typed route descriptors and clears organization con
     assert.doesNotMatch(script, /\bDEFAULT_PAGES\b/)
     assert.doesNotMatch(script, /\bcurrentOrganizationId\b/)
     assert.doesNotMatch(script, /\bselectedOrganizationId\b/)
-    assert.match(script, /async function loadRouteData\(route\)/)
+    assert.match(script, /async function loadRouteData\(route, activeLoad = null\)/)
     assert.match(script, /route\.area === "platform"[\s\S]*loadPlatformRouteResult\(route, signal\)/)
     assert.match(script, /loadOrganizationWorkspace\(route, signal\)/)
     assert.match(script, /beginRouteDataLoad\(route\)/)
@@ -1330,7 +1414,7 @@ test("GET /admin/app.js validates and loads canonical direct routes after sessio
     const script = await response.text()
     assert.match(script, /const requestedRoute = parseAdminRoute\(location\.pathname\)/)
     assert.match(script, /await setAdminRoute\(authorizedRoute, \{ historyMode: "replace", load: false \}\)/)
-    assert.match(script, /showApp\(\);\s*void loadReadiness\(\);\s*await loadRouteData\(state\.route\)/)
+    assert.match(script, /showApp\(\);\s*void loadReadiness\(\);\s*await loadRouteData\(state\.route, activeLoad\)/)
   } finally {
     server.close()
     await once(server, "close")
@@ -1420,8 +1504,8 @@ test("GET /admin/app.js saves organization membership changes only from the user
     assert.match(script, /function buildUserUpdatePayload\(payload\)/)
     assert.match(script, /function buildUserRoleFilterOptions\(\)/)
     assert.match(script, /const permissions = adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
-    assert.match(script, /els\.userName\.disabled = !permissions\.editProfile/)
-    assert.match(script, /els\.userEmail\.disabled = !isCreate \|\| !permissions\.createUser/)
+    assert.match(script, /els\.userName\.disabled = state\.routeActionsLocked \|\| !permissions\.editProfile/)
+    assert.match(script, /els\.userEmail\.disabled = state\.routeActionsLocked \|\| !isCreate \|\| !permissions\.createUser/)
     assert.match(script, /data-invite-resend/)
     assert.match(script, /async function resendOrganizationInvite\(card\)/)
     assert.match(script, /\/invites\/\$\{encodeURIComponent\(inviteId\)\}\/resend/)
