@@ -1838,6 +1838,10 @@ function renderOrganizationSelector() {
 }
 
 function hasOrganizationPendingChanges() {
+  if (state.route?.area !== "organization" || state.route.page !== "overview") {
+    return false;
+  }
+
   const organization = currentOrganization();
   if (!organization) {
     return false;

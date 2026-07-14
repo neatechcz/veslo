@@ -1796,6 +1796,53 @@ test("GET /admin/app.js supports platform-admin searchable organization selectio
   }
 })
 
+test("organization pending changes only consult the Overview form on the Overview route", async () => {
+  const script = await readFile(new URL("../public-admin/app.js", import.meta.url), "utf8")
+  const functionSource = script.match(/^function hasOrganizationPendingChanges\(\) \{[\s\S]*?^\}/m)?.[0]
+  assert.ok(functionSource, "hasOrganizationPendingChanges should remain directly testable")
+
+  let overviewFormReads = 0
+  const clearedOverviewControl = {
+    get value() {
+      overviewFormReads += 1
+      return ""
+    },
+  }
+  const state = {
+    route: { area: "organization", page: "members", organizationId: "org_a" },
+    session: { platformAdmin: true },
+  }
+  const els = {
+    organizationName: clearedOverviewControl,
+    organizationSlug: clearedOverviewControl,
+    organizationSeatLimit: clearedOverviewControl,
+  }
+  const currentOrganization = () => ({
+    id: "org_a",
+    name: "Organization A",
+    slug: "organization-a",
+    seatLimit: 25,
+  })
+  const hasPendingChanges = new Function(
+    "state",
+    "els",
+    "currentOrganization",
+    `${functionSource}; return hasOrganizationPendingChanges;`,
+  )(state, els, currentOrganization)
+
+  for (const page of ["members", "domains-invites", "billing", "ai-access", "audit"]) {
+    state.route.page = page
+    overviewFormReads = 0
+    assert.equal(hasPendingChanges(), false, page)
+    assert.equal(overviewFormReads, 0, `${page} must not consult cleared Overview controls`)
+  }
+
+  state.route.page = "overview"
+  overviewFormReads = 0
+  assert.equal(hasPendingChanges(), true, "clearing an Overview value is a real edit")
+  assert.ok(overviewFormReads > 0, "Overview must compare the current form to the saved organization")
+})
+
 test("GET /admin shell excludes Sessions navigation and page UI", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
