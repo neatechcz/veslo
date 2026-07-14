@@ -92,7 +92,8 @@ type QualifiedAiAccessCalls = {
 
 function createQualifiedAiAccessApp(options: {
   session?: AdminSessionSnapshot;
-  members?: AdminOrganizationMemberRecord[];
+  members?: unknown;
+  memberResponse?: unknown;
   listMembersError?: unknown;
   upsertError?: unknown;
 } = {}) {
@@ -111,7 +112,9 @@ function createQualifiedAiAccessApp(options: {
         calls.order.push("list-members");
         calls.listMembers.push({ token, orgId });
         if (options.listMembersError) throw options.listMembersError;
-        return { members: options.members ?? [ORGANIZATION_MEMBER] };
+        return (Object.hasOwn(options, "memberResponse")
+          ? options.memberResponse
+          : { members: options.members ?? [ORGANIZATION_MEMBER] }) as any;
       },
       async getUserAiAccess(token: string, userId: string) {
         calls.order.push("get-ai-access");
@@ -176,6 +179,7 @@ async function requestQualifiedAiAccess(
 }
 
 let adminUserAccessUpsertCalls = 0;
+let adminUserAccessMemberListCalls = 0;
 let adminUserAccessOrganizationId: string | null | undefined;
 let adminUserAccessActorUserId: string | null | undefined;
 
@@ -224,8 +228,9 @@ function createSupportedModelCapabilities() {
   };
 }
 
-function createAdminUserAccessApp(options: { upsertError?: Error } = {}) {
+function createAdminUserAccessApp(options: { upsertError?: Error; members?: unknown } = {}) {
   adminUserAccessUpsertCalls = 0;
+  adminUserAccessMemberListCalls = 0;
   adminUserAccessOrganizationId = undefined;
   adminUserAccessActorUserId = undefined;
   let currentAiAccess = {
@@ -255,6 +260,10 @@ function createAdminUserAccessApp(options: { upsertError?: Error } = {}) {
       },
       async listUsers() {
         return [];
+      },
+      async listOrganizationMembers() {
+        adminUserAccessMemberListCalls += 1;
+        return { members: options.members ?? [ORGANIZATION_MEMBER] };
       },
       async createUser() {
         throw new Error("unused");
@@ -443,18 +452,119 @@ for (const method of ["GET", "PUT"] as const) {
     assert.deepEqual(calls.upsert, []);
   });
 
+  test(`${method} qualified AI access rejects inactive target memberships`, async () => {
+    for (const status of ["disabled", "removed"] as const) {
+      const { app, calls } = createQualifiedAiAccessApp({
+        members: [{ ...ORGANIZATION_MEMBER, status }],
+      });
+
+      const response = await requestQualifiedAiAccess(app, method);
+
+      assert.equal(response.status, 404);
+      assert.deepEqual(response.body, { error: "member_not_found" });
+      assert.deepEqual(calls.get, []);
+      assert.deepEqual(calls.upsert, []);
+    }
+  });
+
+  test(`${method} qualified AI access fails closed on a malformed member response`, async () => {
+    for (const memberResponse of [null, {}, { members: "not-an-array" }]) {
+      const { app, calls } = createQualifiedAiAccessApp({ memberResponse });
+
+      const response = await requestQualifiedAiAccess(app, method);
+
+      assert.equal(response.status, 502);
+      assert.deepEqual(response.body, { error: "organization_member_response_invalid" });
+      assert.deepEqual(calls.get, []);
+      assert.deepEqual(calls.upsert, []);
+    }
+  });
+
+  test(`${method} qualified AI access fails closed on malformed member records`, async () => {
+    const malformedMembers = [
+      null,
+      { userId: "user_123", status: "active" },
+      { ...ORGANIZATION_MEMBER, email: 17 },
+    ];
+    for (const malformedMember of malformedMembers) {
+      const { app, calls } = createQualifiedAiAccessApp({ members: [malformedMember] });
+
+      const response = await requestQualifiedAiAccess(app, method);
+
+      assert.equal(response.status, 502);
+      assert.deepEqual(response.body, { error: "organization_member_response_invalid" });
+      assert.deepEqual(calls.get, []);
+      assert.deepEqual(calls.upsert, []);
+    }
+  });
+
+  test(`${method} qualified AI access fails closed on missing or invalid member status`, async () => {
+    const { status: _status, ...memberWithoutStatus } = ORGANIZATION_MEMBER;
+    for (const member of [memberWithoutStatus, { ...ORGANIZATION_MEMBER, status: "pending" }]) {
+      const { app, calls } = createQualifiedAiAccessApp({ members: [member] });
+
+      const response = await requestQualifiedAiAccess(app, method);
+
+      assert.equal(response.status, 502);
+      assert.deepEqual(response.body, { error: "organization_member_response_invalid" });
+      assert.deepEqual(calls.get, []);
+      assert.deepEqual(calls.upsert, []);
+    }
+  });
+
+  test(`${method} qualified AI access fails closed on duplicate target memberships`, async () => {
+    const duplicateSets = [
+      [ORGANIZATION_MEMBER, { ...ORGANIZATION_MEMBER, membershipId: "membership_456" }],
+      [ORGANIZATION_MEMBER, {
+        ...ORGANIZATION_MEMBER,
+        membershipId: "membership_456",
+        status: "disabled",
+      }],
+    ];
+    for (const members of duplicateSets) {
+      const { app, calls } = createQualifiedAiAccessApp({ members });
+
+      const response = await requestQualifiedAiAccess(app, method);
+
+      assert.equal(response.status, 502);
+      assert.deepEqual(response.body, { error: "organization_member_response_invalid" });
+      assert.deepEqual(calls.get, []);
+      assert.deepEqual(calls.upsert, []);
+    }
+  });
+
   test(`${method} qualified AI access safely maps member-list failures before AI access`, async () => {
-    const { app, calls } = createQualifiedAiAccessApp({
-      listMembersError: new Error("private member payload"),
-    });
+    for (const listMembersError of [
+      new Error("private member payload"),
+      { status: 404, message: "private organization payload" },
+      { status: 503, message: "private DEN outage payload" },
+    ]) {
+      const { app, calls } = createQualifiedAiAccessApp({ listMembersError });
 
-    const response = await requestQualifiedAiAccess(app, method);
+      const response = await requestQualifiedAiAccess(app, method);
 
-    assert.equal(response.status, 502);
-    assert.deepEqual(response.body, { error: "organization_member_list_failed" });
-    assert.deepEqual(calls.order, ["list-members"]);
-    assert.deepEqual(calls.get, []);
-    assert.deepEqual(calls.upsert, []);
+      assert.equal(response.status, 502);
+      assert.deepEqual(response.body, { error: "organization_member_lookup_failed" });
+      assert.deepEqual(calls.order, ["list-members"]);
+      assert.deepEqual(calls.get, []);
+      assert.deepEqual(calls.upsert, []);
+    }
+  });
+
+  test(`${method} qualified AI access sanitizes upstream authorization errors`, async () => {
+    for (const [status, error] of [[401, "unauthorized"], [403, "forbidden"]] as const) {
+      const { app, calls } = createQualifiedAiAccessApp({
+        listMembersError: { status, message: "private DEN authorization payload" },
+      });
+
+      const response = await requestQualifiedAiAccess(app, method);
+
+      assert.equal(response.status, status);
+      assert.deepEqual(response.body, { error });
+      assert.deepEqual(calls.order, ["list-members"]);
+      assert.deepEqual(calls.get, []);
+      assert.deepEqual(calls.upsert, []);
+    }
   });
 }
 
@@ -630,6 +740,35 @@ test("PUT /admin/api/users/:userId/ai-access rejects a missing organization scop
   }
 });
 
+test("temporary legacy PUT requires one active scoped membership before writing", async () => {
+  const app = createAdminUserAccessApp({
+    members: [{ ...ORGANIZATION_MEMBER, status: "disabled" }],
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
+      body: JSON.stringify({
+        enabled: false,
+        provider: null,
+        credentialId: null,
+        organizationId: "org_1",
+      }),
+    });
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "member_not_found" });
+    assert.equal(adminUserAccessMemberListCalls, 1);
+    assert.equal(adminUserAccessUpsertCalls, 0);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("PUT /admin/api/users/:userId/ai-access reports audit persistence failure without success", async () => {
   const app = createAdminUserAccessApp({
     upsertError: new AiAccessAuditPersistenceError(new Error("audit unavailable")),
@@ -657,27 +796,23 @@ test("PUT /admin/api/users/:userId/ai-access reports audit persistence failure w
   }
 });
 
-test("default admin AI-access write uses the audit-coupled mutation with real actor and organization", async () => {
+test("qualified AI-access PUT uses one scoped membership lookup without listing global users", async () => {
   const mutationInputs: unknown[] = [];
-  let targetOrganizationId = "org_1";
+  let memberListCalls = 0;
+  let globalUserListCalls = 0;
   const service = createDefaultAdminService("http://den.example.test", {
     denClient: {
+      async getSession() {
+        return createPlatformAdminSession();
+      },
+      async listOrganizationMembers(_token: string, orgId: string) {
+        memberListCalls += 1;
+        assert.equal(orgId, "org_1");
+        return { members: [ORGANIZATION_MEMBER] };
+      },
       async listUsers() {
-        return [{
-          id: "user_123",
-          name: "Target User",
-          email: "target@example.test",
-          emailVerified: true,
-          platformAdmin: false,
-          disabled: false,
-          memberships: [{
-            membershipId: "membership_123",
-            orgId: targetOrganizationId,
-            orgName: "Acme",
-            orgSlug: "acme",
-            role: "member",
-          }],
-        }];
+        globalUserListCalls += 1;
+        throw new Error("global user directory must not be queried");
       },
     },
     aiAccessRepository: {
@@ -718,12 +853,31 @@ test("default admin AI-access write uses the audit-coupled mutation with real ac
     },
   } as any);
 
-  await service.upsertUserAiAccess("admin-token", "user_123", {
-    enabled: true,
-    provider: "codex_oauth",
-    credentialId: "cred_codex_123",
-  }, "org_1", "user_admin");
+  const app = createApp({ admin: service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(
+      `http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
+        body: JSON.stringify({
+          enabled: true,
+          provider: "codex_oauth",
+          credentialId: "cred_codex_123",
+        }),
+      },
+    );
+    assert.equal(response.status, 200);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
 
+  assert.equal(memberListCalls, 1);
+  assert.equal(globalUserListCalls, 0);
   assert.deepEqual(mutationInputs, [{
     actorUserId: "user_admin",
     organizationId: "org_1",
@@ -733,17 +887,6 @@ test("default admin AI-access write uses the audit-coupled mutation with real ac
     credentialId: "cred_codex_123",
     assignmentOrigin: "admin_assigned",
   }]);
-
-  targetOrganizationId = "org_2";
-  await assert.rejects(
-    service.upsertUserAiAccess("admin-token", "user_123", {
-      enabled: false,
-      provider: null,
-      credentialId: null,
-    }, "org_1", "user_admin"),
-    /user_not_in_organization/,
-  );
-  assert.equal(mutationInputs.length, 1);
 });
 
 test("default admin AI-access write prepares fallible response data before committing", async () => {
