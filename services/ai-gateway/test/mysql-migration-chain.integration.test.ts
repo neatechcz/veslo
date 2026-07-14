@@ -142,6 +142,46 @@ test(
     ) as unknown as [unknown[], unknown];
     assert.deepEqual(rerunRows, currentRows);
     assert.equal(rerunIndexes.length, 2);
+
+    await resetDatabase(connection);
+    await connection.query(`
+      CREATE TABLE \`audit_event\` (
+        \`id\` varchar(64) NOT NULL PRIMARY KEY,
+        \`org_id\` varchar(64) NOT NULL,
+        \`worker_id\` varchar(64),
+        \`actor_user_id\` varchar(64) NOT NULL,
+        \`action\` varchar(128) NOT NULL,
+        \`payload\` json,
+        \`created_at\` timestamp(3) NOT NULL DEFAULT (now())
+      )
+    `);
+    await connection.query(`
+      INSERT INTO \`audit_event\`
+        (\`id\`, \`org_id\`, \`worker_id\`, \`actor_user_id\`, \`action\`, \`payload\`, \`created_at\`)
+      VALUES
+        ('den_legacy_1', 'org_1', 'worker_1', 'actor_1', 'worker.event', '{"source":"den"}', CURRENT_TIMESTAMP(3))
+    `);
+
+    await executeMigration(connection, "0004_organization_audit_scope");
+
+    const [denLegacyRows] = await connection.query(
+      "SELECT `id`, `org_id`, `worker_id`, `action` FROM `audit_event`",
+    );
+    const [denCurrentRows] = await connection.query(
+      "SELECT `id` FROM `ai_gateway_audit_event` ORDER BY `id`",
+    );
+    const [denColumns] = await connection.query(
+      "SHOW COLUMNS FROM `ai_gateway_audit_event` LIKE 'organization_id'",
+    ) as unknown as [Array<{ Null: string }>, unknown];
+    const [denIndexes] = await connection.query(
+      "SHOW INDEX FROM `ai_gateway_audit_event` WHERE `Key_name` = 'audit_event_organization_created'",
+    ) as unknown as [unknown[], unknown];
+    assert.deepEqual(denLegacyRows, [
+      { id: "den_legacy_1", org_id: "org_1", worker_id: "worker_1", action: "worker.event" },
+    ]);
+    assert.deepEqual(denCurrentRows, []);
+    assert.equal(denColumns[0]?.Null, "YES");
+    assert.equal(denIndexes.length, 2);
   },
 );
 
