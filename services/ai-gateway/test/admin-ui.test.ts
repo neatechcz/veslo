@@ -948,6 +948,29 @@ test("GET /admin/app.js atomically isolates route generations and keeps readines
   }
 })
 
+test("GET /admin/app.js keeps an empty organization member route renderable", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const userStatus = topLevelFunctionSource(script, "userStatus")
+    const renderUsers = topLevelFunctionSource(script, "renderUsers")
+
+    assert.match(renderUsers, /populateUserEditor\(currentUser\(\)\)/)
+    assert.match(userStatus, /if \(!user\) return "No user selected"/)
+    assert.ok(
+      userStatus.indexOf("if (!user)") < userStatus.indexOf('user.status'),
+      "the empty selection guard must run before organization member status is read",
+    )
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.js keeps organization workspace data and member actions path scoped", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")

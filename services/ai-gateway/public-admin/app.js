@@ -1297,6 +1297,7 @@ function defaultUserSaveStatusMessage() {
 }
 
 function userStatus(user) {
+  if (!user) return "No user selected";
   if (state.route?.area === "organization") {
     if (user.status === "disabled") return "Disabled";
     if (user.status === "removed") return "Removed";
