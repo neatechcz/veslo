@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import * as pageLoads from "../public-admin/admin-page-load-state.js";
+import {
+  ORGANIZATION_PAGES,
+  PLATFORM_PAGES,
+} from "../public-admin/admin-route-state.js";
 
 const platformUsersRoute = {
   area: "platform",
@@ -15,12 +19,19 @@ const organizationMembersRoute = (organizationId: string) => ({
   organizationId,
 });
 
-test("route scope keys include organization identity", () => {
-  assert.equal(pageLoads.adminRouteScopeKey(platformUsersRoute), "platform:platform-users");
-  assert.equal(
-    pageLoads.adminRouteScopeKey(organizationMembersRoute("org_a")),
-    "organization:org_a:members",
-  );
+test("route scope keys cover every canonical platform and organization page", () => {
+  for (const page of PLATFORM_PAGES) {
+    assert.equal(
+      pageLoads.adminRouteScopeKey({ area: "platform", page, organizationId: null }),
+      `platform:${page}`,
+    );
+  }
+  for (const page of ORGANIZATION_PAGES) {
+    assert.equal(
+      pageLoads.adminRouteScopeKey({ area: "organization", page, organizationId: "org_a" }),
+      `organization:org_a:${page}`,
+    );
+  }
   assert.equal(
     pageLoads.adminRouteScopeKey(organizationMembersRoute(" org_a ")),
     "organization:org_a:members",
@@ -36,6 +47,20 @@ test("beginning a newer page load invalidates all older completions", () => {
   assert.equal(pageLoads.completeAdminPageLoad(state, orgA, false), false);
   assert.equal(pageLoads.failAdminPageLoad(state, orgA, new Error("late")), false);
   assert.equal(pageLoads.completeAdminPageLoad(state, orgB, false), true);
+  assert.equal(state.status, "ready");
+});
+
+test("a newer generation invalidates completion and failure for the identical route key", () => {
+  const state = pageLoads.createAdminPageLoadState();
+  const first = pageLoads.beginAdminPageLoad(state, organizationMembersRoute("org_a"));
+  const second = pageLoads.beginAdminPageLoad(state, organizationMembersRoute("org_a"));
+
+  assert.equal(first?.key, second?.key);
+  assert.notEqual(first?.generation, second?.generation);
+  assert.equal(pageLoads.isAdminPageLoadCurrent(state, first), false);
+  assert.equal(pageLoads.completeAdminPageLoad(state, first, false), false);
+  assert.equal(pageLoads.failAdminPageLoad(state, first, new Error("late")), false);
+  assert.equal(pageLoads.completeAdminPageLoad(state, second, false), true);
   assert.equal(state.status, "ready");
 });
 

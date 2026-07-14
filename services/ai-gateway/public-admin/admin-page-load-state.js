@@ -1,28 +1,17 @@
-const PLATFORM_PAGES = new Set([
-  "overview",
-  "organizations",
-  "ai-infrastructure",
-  "ai-usage",
-  "ai-alerts",
-  "platform-users",
-  "audit",
-]);
+import {
+  ORGANIZATION_PAGES,
+  PLATFORM_PAGES,
+} from "./admin-route-state.js";
 
-const ORGANIZATION_PAGES = new Set([
-  "overview",
-  "members",
-  "domains-invites",
-  "billing",
-  "ai-access",
-  "audit",
-]);
+const PLATFORM_PAGE_SET = new Set(PLATFORM_PAGES);
+const ORGANIZATION_PAGE_SET = new Set(ORGANIZATION_PAGES);
 
 export function adminRouteScopeKey(route) {
   if (!route || typeof route !== "object") return null;
   if (
     route.area === "platform"
     && route.organizationId === null
-    && PLATFORM_PAGES.has(route.page)
+    && PLATFORM_PAGE_SET.has(route.page)
   ) {
     return `platform:${route.page}`;
   }
@@ -32,7 +21,7 @@ export function adminRouteScopeKey(route) {
   if (
     route.area === "organization"
     && organizationId
-    && ORGANIZATION_PAGES.has(route.page)
+    && ORGANIZATION_PAGE_SET.has(route.page)
   ) {
     return `organization:${organizationId}:${route.page}`;
   }
