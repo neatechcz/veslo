@@ -1,0 +1,1330 @@
+import { once } from 'node:events';
+import { readFile } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { dirname, extname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { expect, test, type Page, type Route } from '@playwright/test';
+
+const ADMIN_TOKEN_STORAGE_KEY = 'veslo.ai-gateway.admin.token';
+const TEST_TOKEN = 'admin-data-isolation-token';
+const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(SPEC_DIR, '../../..');
+const ADMIN_PUBLIC_ROOT = join(REPO_ROOT, 'services/ai-gateway/public-admin');
+
+const ORG_A = organization('org-a', 'ORGANIZATION-A-NAME', 'organization-a');
+const ORG_B = organization('org-b', 'ORGANIZATION-B-NAME', 'organization-b');
+const GLOBAL_USERS = [
+  globalUser('global-alice', 'GLOBAL-ALICE', 'global-alice@example.test', ORG_A, true),
+  globalUser('global-bob', 'GLOBAL-BOB', 'global-bob@example.test', ORG_B, false),
+];
+const ORG_MEMBERS = {
+  [ORG_A.id]: [
+    organizationMember('membership-a', 'org-a/user@example.test', 'ORG-A-ALICE', 'org-a-alice@example.test'),
+    organizationMember('membership-a-second', 'org-a-second', 'ORG-A-SECOND', 'org-a-second@example.test'),
+  ],
+  [ORG_B.id]: [organizationMember('membership-b', 'org-b-bob', 'ORG-B-BOB', 'org-b-bob@example.test')],
+};
+
+let adminServer: { origin: string; server: Server };
+
+test.beforeAll(async () => {
+  adminServer = await startStaticAdminServer();
+});
+
+test.afterAll(async () => {
+  await closeServer(adminServer.server);
+});
+
+test.describe('AI Gateway admin data isolation', () => {
+  test('negative control proves the frame and mutation leak observer detects visible and semantic stale data', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    await openAdmin(page, '/admin/platform-users');
+    await expect(page.locator('#user-list').getByText('GLOBAL-ALICE', { exact: true })).toBeVisible();
+
+    await page.evaluate(() => {
+      const button = document.createElement('button');
+      button.id = 'leak-observer-negative-control';
+      button.textContent = 'Inject controlled leak';
+      button.addEventListener('click', () => {
+        const leak = document.createElement('p');
+        leak.id = 'controlled-leak';
+        leak.textContent = 'CONTROLLED-FORBIDDEN-TEXT';
+        document.body.append(leak);
+      });
+      document.body.append(button);
+    });
+
+    await armLeakObserver(page, ['CONTROLLED-FORBIDDEN-TEXT'], 'click');
+    await page.locator('#leak-observer-negative-control').click();
+    await expect.poll(() => leakRecords(page)).not.toEqual([]);
+    const records = await stopLeakObserver(page);
+
+    expect(records.some((record) => record.token === 'CONTROLLED-FORBIDDEN-TEXT')).toBe(true);
+    expect(records.some((record) => record.channel === 'visible')).toBe(true);
+    expect(records.some((record) => record.channel === 'semantic')).toBe(true);
+    expect(harness.records.some((record) => record.path === '/admin/api/users')).toBe(true);
+  });
+
+  test('initial shell is fail closed and never exposes the removed sample metrics, people, incidents, audit, or chart data', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const session = harness.delayNext('GET', '/admin/api/session');
+
+    await page.goto(`${adminServer.origin}/admin`, { waitUntil: 'domcontentloaded' });
+    await session.arrived;
+
+    await expect(page.locator('#admin-page-state')).toHaveAttribute('data-state', 'loading');
+    await expect(page.locator('#admin-page-state')).toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('#admin-page-loading')).toHaveText('Loading data...');
+    await expect(page.locator('#admin-page-skeleton')).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('#user-list')).toBeEmpty();
+    await expect(page.locator('#alert-list')).toBeEmpty();
+    await expect(page.locator('#audit-list')).toBeEmpty();
+    await expect(page.locator('#usage-chart-bars')).toBeEmpty();
+
+    const removedSeedText = [
+      '2 credential alerts',
+      '821k',
+      '412k',
+      'OpenAI org key',
+      'Credential outage',
+      'Usage spike',
+      'Vaclav Soukup',
+      'Václav Soukup',
+      'Alena Novak',
+      'Martin Kriz',
+      'alena@studio.test',
+    ];
+    const documentText = await page.locator('body').textContent();
+    for (const marker of removedSeedText) {
+      expect(documentText).not.toContain(marker);
+    }
+    await expect(page.locator('[data-page="overview"] .hero-metrics strong')).toHaveText(['', '', '']);
+
+    session.release(harness.responseFor('GET', '/admin/api/session'));
+    await expect(page.locator('#auth-state')).toHaveText('Signed in');
+  });
+
+  test('Platform Users to organization Members clears global users synchronously and reveals only scoped members atomically', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    await openAdmin(page, '/admin/platform-users');
+    const globalRequestCount = requestCount(harness.records, 'GET', '/admin/api/users');
+
+    await armLeakObserver(page, ['GLOBAL-ALICE', 'GLOBAL-BOB'], 'click');
+    await page.locator('[data-platform-route="organizations"]').click();
+    await expect(page.locator('[data-user-id="global-alice"]')).toHaveCount(0);
+    await expect(page.locator('[data-user-id="global-bob"]')).toHaveCount(0);
+    await waitForPageReady(page);
+
+    await page.locator(`[data-enter-organization-id="${ORG_A.id}"]`).click();
+    await waitForPageReady(page);
+
+    const organizationRequest = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}`);
+    const membersRequest = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}/members`);
+    await page.locator('[data-organization-route="members"]').click();
+    await Promise.all([organizationRequest.arrived, membersRequest.arrived]);
+
+    await expect(page.locator('#admin-page-state')).toHaveAttribute('data-state', 'loading');
+    await expect(page.locator('#admin-page-state')).toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('#admin-page-loading')).toHaveText('Loading data...');
+    await expect(page.locator('#admin-page-skeleton')).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('#admin-page-skeleton')).toBeVisible();
+    await expect(page.locator('#user-list')).toBeEmpty();
+    await expect(page.locator('#admin-page-skeleton [data-user-id]')).toHaveCount(0);
+
+    organizationRequest.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}`));
+    await expect(page.locator('#user-list')).toBeEmpty();
+    membersRequest.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}/members`));
+    await waitForPageReady(page);
+
+    await expect(page.locator('#user-list').getByText('ORG-A-ALICE', { exact: true })).toBeVisible();
+    await expect(page.locator('#user-list')).not.toContainText('GLOBAL-ALICE');
+    await expect(page.locator('#user-list')).not.toContainText('GLOBAL-BOB');
+    expect(await stopLeakObserver(page)).toEqual([]);
+    expect(requestCount(harness.records, 'GET', '/admin/api/users')).toBe(globalRequestCount);
+  });
+
+  test('organization A to B Members removes A in the initiating event and ignores accessible or visible stale frames', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/members`);
+    await expect(page.locator('#user-list').getByText('ORG-A-ALICE', { exact: true })).toBeVisible();
+
+    const organizationRequest = harness.delayNext('GET', `/admin/api/organizations/${ORG_B.id}`);
+    const membersRequest = harness.delayNext('GET', `/admin/api/organizations/${ORG_B.id}/members`);
+    await armLeakObserver(page, ['ORG-A-ALICE', 'org-a-alice@example.test'], 'change');
+    await switchOrganization(page, ORG_B);
+
+    await expect(page.locator('[data-user-id="org-a/user@example.test"]')).toHaveCount(0);
+    await expect(page.locator('#user-list')).toBeEmpty();
+    await Promise.all([organizationRequest.arrived, membersRequest.arrived]);
+    organizationRequest.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_B.id}`));
+    await expect(page.locator('#user-list')).toBeEmpty();
+    await expect(page.locator('#user-list')).not.toContainText('ORG-B-BOB');
+    membersRequest.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_B.id}/members`));
+    await waitForPageReady(page);
+
+    await expect(page).toHaveURL(new RegExp(`/admin/organizations/${ORG_B.id}/members$`));
+    await expect(page.locator('#user-list').getByText('ORG-B-BOB', { exact: true })).toBeVisible();
+    expect(await stopLeakObserver(page)).toEqual([]);
+  });
+
+  test('readiness delay and failure do not gate route requests or reveal, and an abandoned users response stays inert', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const readiness = harness.delayNext('GET', '/readiness');
+    const users = harness.delayNext('GET', '/admin/api/users');
+
+    await page.goto(`${adminServer.origin}/admin/platform-users`, { waitUntil: 'domcontentloaded' });
+    const [readinessRecord, usersRecord] = await Promise.all([readiness.arrived, users.arrived]);
+    expect(readinessRecord.sequence).toBeLessThan(usersRecord.sequence);
+    users.release(harness.responseFor('GET', '/admin/api/users'));
+    await waitForPageReady(page);
+    await expect(page.locator('#user-list')).toContainText('GLOBAL-ALICE');
+
+    readiness.release(json(503, { ok: false, status: 'not_ready' }));
+    await expect(page.locator('#readiness-label')).toHaveText('Inference unavailable');
+
+    await page.locator('[data-platform-route="organizations"]').click();
+    await waitForPageReady(page);
+    const lateUsers = harness.delayNext('GET', '/admin/api/users');
+    await page.locator('[data-platform-route="platform-users"]').click();
+    await lateUsers.arrived;
+    await page.locator('[data-platform-route="organizations"]').click();
+    await waitForPageReady(page);
+    lateUsers.release(harness.responseFor('GET', '/admin/api/users'));
+    await waitAnimationFrames(page, 3);
+
+    await expect(page.locator('#page-title')).toHaveText('Organizations');
+    await expect(page.locator('#user-list')).toBeEmpty();
+    await expect(page.locator('[data-user-id="global-alice"]')).toHaveCount(0);
+  });
+
+  test('AI Access uses encoded organization-qualified GET and exact PUT, and delayed success cannot mutate a new organization', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
+    const member = ORG_MEMBERS[ORG_A.id][0];
+    const qualifiedPath = qualifiedAiAccessPath(ORG_A.id, member.userId);
+    const globalRequestCount = requestCount(harness.records, 'GET', '/admin/api/users');
+
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect.poll(() => requestCount(harness.records, 'GET', qualifiedPath)).toBe(1);
+    await expect(page.locator('#user-editor-modal')).toHaveAttribute('open', '');
+    await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-A-AI-CREDENTIAL');
+    expect(qualifiedPath).toContain('%2F');
+    expect(qualifiedPath).toContain('%40');
+
+    await page.locator('#user-ai-access-enabled').uncheck();
+    await page.locator('#user-ai-access-provider').selectOption('codex_oauth');
+    await page.locator('#user-ai-access-credential').selectOption('ORG-A-AI-CREDENTIAL-id');
+    const save = harness.delayNext('PUT', qualifiedPath);
+    await page.locator('#user-save-button').click();
+    const saveRecord = await save.arrived;
+    expect(saveRecord.body).toEqual({
+      enabled: false,
+      provider: 'codex_oauth',
+      credentialId: 'ORG-A-AI-CREDENTIAL-id',
+    });
+    expect(Object.keys(saveRecord.body as Record<string, unknown>).sort()).toEqual([
+      'credentialId',
+      'enabled',
+      'provider',
+    ]);
+
+    await switchOrganization(page, ORG_B);
+    await waitForPageReady(page);
+    await expect(page.locator('#user-editor-modal')).not.toHaveAttribute('open', '');
+    save.release(harness.responseFor('PUT', qualifiedPath, saveRecord.body));
+    await waitAnimationFrames(page, 3);
+
+    await expect(page).toHaveURL(new RegExp(`/admin/organizations/${ORG_B.id}/ai-access$`));
+    await expect(page.locator('#user-list')).toContainText('ORG-B-BOB');
+    await expect(page.locator('#user-save-status')).not.toHaveText('AI access saved.');
+    expect(requestCount(harness.records, 'GET', '/admin/api/users')).toBe(globalRequestCount);
+    expect(harness.records.some((record) => /^\/admin\/api\/users\/.+\/ai-access$/.test(record.path))).toBe(false);
+  });
+
+  test('organization A to B transitions isolate domains, invites, billing, AI access, and audit until each destination is complete', async ({ page }) => {
+    test.setTimeout(60_000);
+    const harness = await installAdminHarness(page);
+    const cases: Array<{
+      page: 'domains-invites' | 'billing' | 'ai-access' | 'audit';
+      paths: string[];
+      forbidden: string[];
+      expected: string[];
+      oldSelectors: string[];
+    }> = [
+      {
+        page: 'domains-invites',
+        paths: [
+          `/admin/api/organizations/${ORG_B.id}`,
+          `/admin/api/organizations/${ORG_B.id}/domains`,
+          `/admin/api/organizations/${ORG_B.id}/invites`,
+        ],
+        forbidden: ['ORG-A-DOMAIN.example', 'ORG-A-INVITE@example.test'],
+        expected: ['ORG-B-DOMAIN.example', 'ORG-B-INVITE@example.test'],
+        oldSelectors: ['[data-domain-id="domain-a"]', '[data-invite-id="invite-a"]'],
+      },
+      {
+        page: 'billing',
+        paths: [
+          `/admin/api/organizations/${ORG_B.id}`,
+          `/admin/api/organizations/${ORG_B.id}/billing`,
+        ],
+        forbidden: ['ORG-A-BILLING'],
+        expected: ['ORG-B-BILLING'],
+        oldSelectors: ['#organization-billing-summary .metric-card'],
+      },
+      {
+        page: 'ai-access',
+        paths: [
+          `/admin/api/organizations/${ORG_B.id}`,
+          `/admin/api/organizations/${ORG_B.id}/members`,
+        ],
+        forbidden: ['ORG-A-ALICE', 'ORG-A-AI-CREDENTIAL'],
+        expected: ['ORG-B-BOB'],
+        oldSelectors: [`[data-user-id="${ORG_MEMBERS[ORG_A.id][0].userId}"]`],
+      },
+      {
+        page: 'audit',
+        paths: [
+          `/admin/api/organizations/${ORG_B.id}`,
+          `/admin/api/organizations/${ORG_B.id}/audit`,
+        ],
+        forbidden: ['ORG-A-AUDIT-ACTION', 'ORG-A-AUDIT-SUMMARY'],
+        expected: ['ORG-B-AUDIT-ACTION', 'ORG-B-AUDIT-SUMMARY'],
+        oldSelectors: ['#organization-audit-list .list-card'],
+      },
+    ];
+
+    for (const scenario of cases) {
+      await openAdmin(page, `/admin/organizations/${ORG_A.id}/${scenario.page}`);
+      for (const marker of scenario.forbidden.slice(0, scenario.page === 'ai-access' ? 1 : undefined)) {
+        await expect(page.locator('body')).toContainText(marker);
+      }
+      if (scenario.page === 'ai-access') {
+        await page.locator(`[data-user-id="${ORG_MEMBERS[ORG_A.id][0].userId}"]`).click();
+        await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-A-AI-CREDENTIAL');
+      }
+
+      const controls = scenario.paths.map((path) => harness.delayNext('GET', path));
+      await armLeakObserver(page, scenario.forbidden, 'change');
+      await switchOrganization(page, ORG_B);
+
+      for (const selector of scenario.oldSelectors) {
+        await expect(page.locator(selector)).toHaveCount(0);
+      }
+      if (scenario.page === 'ai-access') {
+        await expect(page.locator('#user-editor-modal')).not.toHaveAttribute('open', '');
+      }
+      await Promise.all(controls.map((control) => control.arrived));
+
+      for (let index = 0; index < controls.length - 1; index += 1) {
+        controls[index].release(harness.responseFor('GET', scenario.paths[index]));
+      }
+      for (const marker of scenario.expected) {
+        await expect(page.locator('body')).not.toContainText(marker);
+      }
+      const finalIndex = controls.length - 1;
+      controls[finalIndex].release(harness.responseFor('GET', scenario.paths[finalIndex]));
+      await waitForPageReady(page);
+
+      for (const marker of scenario.expected) {
+        await expect(page.locator('body')).toContainText(marker);
+      }
+      expect(await stopLeakObserver(page)).toEqual([]);
+
+      if (scenario.page === 'ai-access') {
+        await page.locator(`[data-user-id="${ORG_MEMBERS[ORG_B.id][0].userId}"]`).click();
+        await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-B-AI-CREDENTIAL');
+        await page.locator('#user-modal-close').click();
+      }
+    }
+  });
+
+  test('loading, true empty, 5xx, network failure, and Retry remain distinct without real data under the skeleton', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const organization = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}`);
+    const members = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}/members`);
+
+    await page.goto(`${adminServer.origin}/admin/organizations/${ORG_A.id}/members`, { waitUntil: 'domcontentloaded' });
+    await Promise.all([organization.arrived, members.arrived]);
+    await expect(page.locator('#admin-page-state')).toHaveAttribute('data-state', 'loading');
+    await expect(page.locator('#admin-page-state')).toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('#admin-page-loading')).toBeVisible();
+    await expect(page.locator('#admin-page-loading')).toHaveAttribute('role', 'status');
+    await expect(page.locator('#admin-page-loading')).toHaveAttribute('aria-live', 'polite');
+    await expect(page.locator('#admin-page-skeleton')).toHaveAttribute('aria-hidden', 'true');
+    await expect(page.locator('#admin-page-skeleton')).toBeVisible();
+    await expect(page.locator('#admin-page-skeleton')).toHaveText('');
+    await expect(page.locator('#user-list')).toBeEmpty();
+    const loadingStyles = await page.evaluate(() => ({
+      skeletonFilter: getComputedStyle(document.querySelector('#admin-page-skeleton') as Element).filter,
+      routeFilter: getComputedStyle(document.querySelector('[data-page="users"]') as Element).filter,
+      routeDisplay: getComputedStyle(document.querySelector('[data-page="users"]') as Element).display,
+      skeletonContainsRoute: (document.querySelector('#admin-page-skeleton') as Element)
+        .contains(document.querySelector('#user-list')),
+    }));
+    expect(loadingStyles.skeletonFilter).toContain('blur');
+    expect(loadingStyles.routeFilter).toBe('none');
+    expect(loadingStyles.routeDisplay).toBe('none');
+    expect(loadingStyles.skeletonContainsRoute).toBe(false);
+
+    organization.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}`));
+    members.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}/members`));
+    await waitForPageReady(page);
+    await expect(page.locator('#admin-page-state')).toHaveAttribute('data-state', 'ready');
+    await expect(page.locator('#user-list')).toContainText('ORG-A-ALICE');
+
+    harness.respondNext('GET', `/admin/api/organizations/${ORG_B.id}`, json(500, { error: 'controlled_5xx' }));
+    await switchOrganization(page, ORG_B);
+    await expectPageError(page, 'Unable to load data. Retry this page.', true);
+    await expect(page.locator(`[data-user-id="${ORG_MEMBERS[ORG_A.id][0].userId}"]`)).toHaveCount(0);
+    await page.locator('#admin-page-retry').click();
+    await waitForPageReady(page);
+    await expect(page.locator('#user-list')).toContainText('ORG-B-BOB');
+
+    harness.failNext('GET', `/admin/api/organizations/${ORG_A.id}`);
+    await switchOrganization(page, ORG_A);
+    await expectPageError(page, 'Unable to load data. Retry this page.', true);
+    await expect(page.locator('[data-user-id="org-b-bob"]')).toHaveCount(0);
+    await page.locator('#admin-page-retry').click();
+    await waitForPageReady(page);
+    await expect(page.locator('#user-list')).toContainText('ORG-A-ALICE');
+  });
+
+  test('true empty member response settles as empty rather than remaining loading', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    harness.state.membersByOrgId[ORG_A.id] = [];
+    await page.goto(`${adminServer.origin}/admin/organizations/${ORG_A.id}/members`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#auth-state')).toHaveText('Signed in');
+    await expect(page.locator('#admin-page-state')).toHaveAttribute('aria-busy', 'false');
+    await expect(page.locator('#admin-page-state')).toHaveAttribute('data-state', 'empty');
+    await expect(page.locator('#user-list')).toContainText('No users');
+  });
+
+  test('401 sign-in, 403 Access denied, and organization 404 are fail-closed and distinguishable', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/members`);
+
+    harness.respondNext('GET', `/admin/api/organizations/${ORG_B.id}`, json(403, { error: 'forbidden' }));
+    await switchOrganization(page, ORG_B);
+    await expectPageError(page, 'Access denied', false);
+    await expect(page.locator(`[data-user-id="${ORG_MEMBERS[ORG_A.id][0].userId}"]`)).toHaveCount(0);
+    await expect(page.locator('#login-panel')).toHaveClass(/hidden/);
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/members`);
+    harness.respondNext('GET', `/admin/api/organizations/${ORG_B.id}`, json(401, { error: 'unauthorized' }));
+    await switchOrganization(page, ORG_B);
+    await expect(page.locator('#login-panel')).not.toHaveClass(/hidden/);
+    await expect(page.locator('#login-error')).toHaveText('Your admin session has expired. Sign in again.');
+    await expect(page.locator('#app-panel')).toHaveClass(/hidden/);
+    await expect(page.locator('[data-user-id]')).toHaveCount(0);
+    expect(await page.evaluate((key) => localStorage.getItem(key), ADMIN_TOKEN_STORAGE_KEY)).toBeNull();
+
+    const missingOrg = 'org-missing';
+    harness.respondNext('GET', `/admin/api/organizations/${missingOrg}`, json(404, { error: 'organization_not_found' }));
+    await page.goto(`${adminServer.origin}/admin/organizations/${missingOrg}/members`, { waitUntil: 'domcontentloaded' });
+    await expectPageError(page, 'Organization not found', false);
+    await expect(page.locator('[data-user-id]')).toHaveCount(0);
+  });
+
+  test('route-owned dialogs close immediately and late abandoned organization responses cannot restore selected content', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/domains-invites`);
+    await page.locator('[data-domain-id="domain-a"]').click();
+    await expect(page.locator('#organization-domain-modal')).toHaveAttribute('open', '');
+
+    const membersOrganization = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}`);
+    const members = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}/members`);
+    await armLeakObserver(page, ['ORG-A-DOMAIN.example'], 'popstate');
+    await navigateWithPopstate(page, `/admin/organizations/${ORG_A.id}/members`);
+    await expect(page.locator('#organization-domain-modal')).not.toHaveAttribute('open', '');
+    await expect(page.locator('[data-domain-id="domain-a"]')).toHaveCount(0);
+    await Promise.all([membersOrganization.arrived, members.arrived]);
+    membersOrganization.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}`));
+    members.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}/members`));
+    await waitForPageReady(page);
+    expect(await stopLeakObserver(page)).toEqual([]);
+
+    await page.locator(`[data-user-id="${ORG_MEMBERS[ORG_A.id][0].userId}"]`).click();
+    await expect(page.locator('#user-editor-modal')).toHaveAttribute('open', '');
+    const lateOrganization = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}`);
+    const lateDomains = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}/domains`);
+    const lateInvites = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}/invites`);
+    await armLeakObserver(page, ['ORG-A-ALICE', 'org-a-alice@example.test'], 'popstate');
+    await navigateWithPopstate(page, `/admin/organizations/${ORG_A.id}/domains-invites`);
+    await Promise.all([lateOrganization.arrived, lateDomains.arrived, lateInvites.arrived]);
+    await expect(page.locator('#user-editor-modal')).not.toHaveAttribute('open', '');
+    await expect(page.locator(`[data-user-id="${ORG_MEMBERS[ORG_A.id][0].userId}"]`)).toHaveCount(0);
+
+    await page.locator('[data-platform-route="audit"]').click();
+    await waitForPageReady(page);
+    lateOrganization.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}`));
+    lateDomains.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}/domains`));
+    lateInvites.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}/invites`));
+    await waitAnimationFrames(page, 3);
+
+    await expect(page.locator('#page-title')).toHaveText('Global Audit');
+    await expect(page.locator('#organization-domain-modal')).not.toHaveAttribute('open', '');
+    await expect(page.locator('#user-editor-modal')).not.toHaveAttribute('open', '');
+    await expect(page.locator('[data-domain-id="domain-a"]')).toHaveCount(0);
+    expect(await stopLeakObserver(page)).toEqual([]);
+  });
+
+  test('stale qualified AI Access error after member selection change is inert and legacy unqualified routes are JSON 404', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
+    const first = ORG_MEMBERS[ORG_A.id][0];
+    const second = ORG_MEMBERS[ORG_A.id][1];
+    const firstPath = qualifiedAiAccessPath(ORG_A.id, first.userId);
+    const secondPath = qualifiedAiAccessPath(ORG_A.id, second.userId);
+    const delayedGet = harness.delayNext('GET', firstPath);
+
+    await page.locator(`[data-user-id="${first.userId}"]`).click();
+    await delayedGet.arrived;
+    await expect(page.locator('#user-ai-access-credential')).not.toContainText('ORG-A-AI-CREDENTIAL');
+    delayedGet.release(harness.responseFor('GET', firstPath));
+    await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-A-AI-CREDENTIAL');
+
+    const save = harness.delayNext('PUT', firstPath);
+    await page.locator('#user-save-button').click();
+    const saveRecord = await save.arrived;
+    expect(saveRecord.body).toEqual({
+      enabled: true,
+      provider: 'codex_oauth',
+      credentialId: 'ORG-A-AI-CREDENTIAL-id',
+    });
+    await page.locator('#user-modal-close').click();
+    await page.locator(`[data-user-id="${second.userId}"]`).click();
+    await expect.poll(() => requestCount(harness.records, 'GET', secondPath)).toBe(1);
+    await expect(page.locator('#user-editor-title')).toHaveText('ORG-A-SECOND');
+
+    save.release(json(500, { error: 'controlled_stale_save_error' }));
+    await waitAnimationFrames(page, 3);
+    await expect(page.locator('#user-editor-title')).toHaveText('ORG-A-SECOND');
+    await expect(page.locator('#user-save-status')).not.toContainText('controlled_stale_save_error');
+    await expect(page.locator('#user-save-status')).not.toHaveText('AI access saved.');
+
+    const legacyPath = `/admin/api/users/${encodeURIComponent(first.userId)}/ai-access`;
+    expect(harness.records.filter((record) => record.path === legacyPath)).toHaveLength(0);
+    const legacy = await page.evaluate(async ({ path }) => {
+      const getResponse = await fetch(path);
+      const putResponse = await fetch(path, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: true, provider: 'openai', credentialId: null }),
+      });
+      return {
+        get: { status: getResponse.status, body: await getResponse.json() },
+        put: { status: putResponse.status, body: await putResponse.json() },
+      };
+    }, { path: legacyPath });
+    expect(legacy).toEqual({
+      get: { status: 404, body: { error: 'not_found' } },
+      put: { status: 404, body: { error: 'not_found' } },
+    });
+    expect(harness.records.filter((record) => record.path === legacyPath).map((record) => record.method))
+      .toEqual(['GET', 'PUT']);
+  });
+
+  test('wrong membershipId or userId in member PATCH responses cannot show success and forces scoped recovery', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const member = ORG_MEMBERS[ORG_A.id][0];
+    const patchPath = `/admin/api/organizations/${ORG_A.id}/members/${member.membershipId}`;
+    const mismatches = [
+      { ...member, membershipId: 'wrong-membership-id', role: 'organization_admin' },
+      { ...member, userId: 'wrong-user-id', role: 'organization_admin' },
+    ];
+
+    for (const wrongMember of mismatches) {
+      await openAdmin(page, `/admin/organizations/${ORG_A.id}/members`);
+      const usersBefore = requestCount(harness.records, 'GET', '/admin/api/users');
+      await page.locator(`[data-user-id="${member.userId}"]`).click();
+      await page.locator('#user-role').selectOption('organization_admin');
+      const patchResponse = harness.respondNext('PATCH', patchPath, json(200, { member: wrongMember }));
+      const recoveryOrganization = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}`);
+      const recoveryMembers = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}/members`);
+
+      await page.locator('#user-save-button').click();
+      const patchRecord = await patchResponse.arrived;
+      expect(patchRecord.body).toEqual({ role: 'organization_admin' });
+      await Promise.all([recoveryOrganization.arrived, recoveryMembers.arrived]);
+      await expect(page.locator('#admin-page-state')).toHaveAttribute('data-state', 'loading');
+      await expect(page.locator('#user-editor-modal')).not.toHaveAttribute('open', '');
+      await expect(page.locator('#user-save-status')).not.toContainText('Organization membership saved.');
+      expect(requestCount(harness.records, 'GET', '/admin/api/users')).toBe(usersBefore);
+
+      recoveryOrganization.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}`));
+      recoveryMembers.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}/members`));
+      await waitForPageReady(page);
+      await expect(page.locator('#user-list')).toContainText('ORG-A-ALICE');
+      await expect(page.locator('#user-list')).not.toContainText('Organization membership saved.');
+    }
+  });
+});
+
+async function installAdminHarness(page: Page) {
+  const state = createHarnessState();
+  const queued = new Map<string, QueuedResponse[]>();
+
+  await page.addInitScript(
+    ({ storageKey, token }) => {
+      window.localStorage.setItem(storageKey, token);
+
+      type LeakRecord = {
+        token: string;
+        channel: 'visible' | 'semantic';
+        source: string;
+        sample: string;
+      };
+      let forbidden: string[] = [];
+      let records: LeakRecord[] = [];
+      let active = false;
+      let pendingEvent: {
+        name: string;
+        captureListener: EventListener;
+        bubbleListener: EventListener | null;
+      } | null = null;
+
+      const semanticallyHidden = (element: Element | null) => {
+        for (let current = element; current; current = current.parentElement) {
+          if (
+            current.hasAttribute('hidden')
+            || current.getAttribute('aria-hidden') === 'true'
+            || current.hasAttribute('inert')
+            || current.classList.contains('hidden')
+          ) {
+            return true;
+          }
+          const style = window.getComputedStyle(current);
+          if (style.display === 'none' || style.visibility === 'hidden') return true;
+        }
+        return false;
+      };
+
+      const record = (tokenValue: string, channel: LeakRecord['channel'], source: string, sample: string) => {
+        if (records.some((entry) => entry.token === tokenValue && entry.channel === channel)) return;
+        records.push({ token: tokenValue, channel, source, sample: sample.slice(0, 240) });
+      };
+
+      const inspect = (source: string) => {
+        if (!active || !document.body) return;
+        const visibleText = document.body.innerText || '';
+        for (const tokenValue of forbidden) {
+          if (visibleText.includes(tokenValue)) {
+            record(tokenValue, 'visible', source, visibleText);
+          }
+        }
+
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const text = node.nodeValue || '';
+          if (!text || semanticallyHidden(node.parentElement)) continue;
+          for (const tokenValue of forbidden) {
+            if (text.includes(tokenValue)) {
+              record(tokenValue, 'semantic', source, text);
+            }
+          }
+        }
+      };
+
+      const cancelPendingEvent = () => {
+        if (!pendingEvent) return;
+        document.removeEventListener(pendingEvent.name, pendingEvent.captureListener, true);
+        if (pendingEvent.bubbleListener) {
+          window.removeEventListener(pendingEvent.name, pendingEvent.bubbleListener);
+        }
+        pendingEvent = null;
+      };
+
+      const observer = new MutationObserver(() => inspect('mutation'));
+      observer.observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+
+      const frame = () => {
+        inspect('animation-frame');
+        window.requestAnimationFrame(frame);
+      };
+      window.requestAnimationFrame(frame);
+
+      Object.defineProperty(window, '__adminDataLeakObserver', {
+        configurable: false,
+        value: {
+          armOnEvent(tokens: string[], eventName: string) {
+            cancelPendingEvent();
+            forbidden = [...tokens];
+            records = [];
+            active = false;
+            const pending = {
+              name: eventName,
+              captureListener: null as unknown as EventListener,
+              bubbleListener: null as EventListener | null,
+            };
+            if (eventName === 'popstate') {
+              const bubbleListener: EventListener = () => {
+                window.removeEventListener(eventName, bubbleListener);
+                if (pendingEvent === pending) pendingEvent = null;
+                active = true;
+                inspect(`after-${eventName}`);
+              };
+              pending.captureListener = () => undefined;
+              pending.bubbleListener = bubbleListener;
+              pendingEvent = pending;
+              window.addEventListener(eventName, bubbleListener);
+              return;
+            }
+            const captureListener: EventListener = () => {
+              document.removeEventListener(eventName, captureListener, true);
+              const bubbleListener: EventListener = () => {
+                window.removeEventListener(eventName, bubbleListener);
+                if (pendingEvent === pending) pendingEvent = null;
+                active = true;
+                inspect(`after-${eventName}`);
+              };
+              pending.bubbleListener = bubbleListener;
+              window.addEventListener(eventName, bubbleListener);
+            };
+            pending.captureListener = captureListener;
+            pendingEvent = pending;
+            document.addEventListener(eventName, captureListener, true);
+          },
+          start(tokens: string[]) {
+            cancelPendingEvent();
+            forbidden = [...tokens];
+            records = [];
+            active = true;
+            inspect('manual-start');
+          },
+          records() {
+            return records.map((entry) => ({ ...entry }));
+          },
+          stop() {
+            cancelPendingEvent();
+            active = false;
+            return records.map((entry) => ({ ...entry }));
+          },
+        },
+      });
+    },
+    { storageKey: ADMIN_TOKEN_STORAGE_KEY, token: TEST_TOKEN },
+  );
+
+  await page.route(`${adminServer.origin}/readiness`, async (route) => {
+    await dispatchRoute(route, state, queued);
+  });
+  await page.route(`${adminServer.origin}/admin/api/**`, async (route) => {
+    await dispatchRoute(route, state, queued);
+  });
+
+  return {
+    state,
+    get records() {
+      return state.records;
+    },
+    delayNext(method: string, path: string) {
+      return enqueueControlledResponse(queued, method, path);
+    },
+    respondNext(method: string, path: string, response: HarnessResponse) {
+      const control = enqueueControlledResponse(queued, method, path);
+      control.release(response);
+      return control;
+    },
+    failNext(method: string, path: string) {
+      const control = enqueueControlledResponse(queued, method, path);
+      control.fail();
+      return control;
+    },
+    responseFor(method: string, path: string, body: unknown = null) {
+      return defaultResponse(state, {
+        sequence: state.records.length + 1,
+        method: method.toUpperCase(),
+        url: `${adminServer.origin}${path}`,
+        path,
+        body,
+      });
+    },
+  };
+}
+
+async function dispatchRoute(
+  route: Route,
+  state: HarnessState,
+  queued: Map<string, QueuedResponse[]>,
+) {
+  const request = route.request();
+  const url = new URL(request.url());
+  const record: RequestRecord = {
+    sequence: state.records.length + 1,
+    method: request.method(),
+    url: request.url(),
+    path: `${url.pathname}${url.search}`,
+    body: parseRequestBody(request.postData()),
+  };
+  state.records.push(record);
+
+  const key = responseKey(record.method, record.path);
+  const queue = queued.get(key) || [];
+  const controlled = queue.shift();
+  if (queue.length === 0) queued.delete(key);
+  else queued.set(key, queue);
+
+  let response: HarnessResponse;
+  if (controlled) {
+    controlled.markArrived(record);
+    response = await controlled.response;
+  } else {
+    response = defaultResponse(state, record);
+  }
+
+  if ('networkError' in response) {
+    await route.abort(response.networkError);
+    return;
+  }
+  await route.fulfill({
+    status: response.status,
+    contentType: 'application/json',
+    body: JSON.stringify(response.body),
+  });
+}
+
+function defaultResponse(state: HarnessState, record: RequestRecord): HarnessResponse {
+  const decodedPath = decodeURIComponent(record.path.split('?')[0]);
+  if (record.path === '/readiness') {
+    return json(200, { ok: true, status: 'ready' });
+  }
+  if (decodedPath === '/admin/api/session' && record.method === 'GET') {
+    return json(200, state.session);
+  }
+  if (decodedPath === '/admin/api/users' && record.method === 'GET') {
+    return json(200, { users: state.globalUsers });
+  }
+  if (decodedPath === '/admin/api/organizations' && record.method === 'GET') {
+    return json(200, { organizations: state.organizations });
+  }
+  if (decodedPath === '/admin/api/credentials' && record.method === 'GET') {
+    return json(200, { credentials: [] });
+  }
+  if (decodedPath === '/admin/api/alerts' && record.method === 'GET') {
+    return json(200, { alerts: [] });
+  }
+  if (decodedPath === '/admin/api/audit' && record.method === 'GET') {
+    return json(200, { events: [] });
+  }
+  if (decodedPath === '/admin/api/usage' && record.method === 'GET') {
+    return json(200, emptyUsage());
+  }
+
+  const organizationMatch = decodedPath.match(/^\/admin\/api\/organizations\/([^/]+)$/);
+  if (organizationMatch && record.method === 'GET') {
+    const organization = state.organizations.find((entry) => entry.id === organizationMatch[1]);
+    return organization
+      ? json(200, { organization })
+      : json(404, { error: 'organization_not_found' });
+  }
+
+  const membersMatch = decodedPath.match(/^\/admin\/api\/organizations\/([^/]+)\/members$/);
+  if (membersMatch && record.method === 'GET') {
+    return json(200, { members: state.membersByOrgId[membersMatch[1]] || [] });
+  }
+
+  const memberMatch = decodedPath.match(/^\/admin\/api\/organizations\/([^/]+)\/members\/([^/]+)$/);
+  if (memberMatch && record.method === 'PATCH') {
+    const member = (state.membersByOrgId[memberMatch[1]] || [])
+      .find((entry) => entry.membershipId === memberMatch[2]);
+    if (!member) return json(404, { error: 'membership_not_found' });
+    const role = isObject(record.body) && record.body.role === 'organization_admin'
+      ? 'organization_admin'
+      : 'member';
+    const saved = { ...member, role };
+    state.membersByOrgId[memberMatch[1]] = (state.membersByOrgId[memberMatch[1]] || [])
+      .map((entry) => entry.membershipId === saved.membershipId ? saved : entry);
+    return json(200, { member: saved });
+  }
+
+  const domainsMatch = decodedPath.match(/^\/admin\/api\/organizations\/([^/]+)\/domains$/);
+  if (domainsMatch && record.method === 'GET') {
+    return json(200, { domains: state.domainsByOrgId[domainsMatch[1]] || [] });
+  }
+
+  const invitesMatch = decodedPath.match(/^\/admin\/api\/organizations\/([^/]+)\/invites$/);
+  if (invitesMatch && record.method === 'GET') {
+    return json(200, { invites: state.invitesByOrgId[invitesMatch[1]] || [] });
+  }
+
+  const billingMatch = decodedPath.match(/^\/admin\/api\/organizations\/([^/]+)\/billing$/);
+  if (billingMatch && record.method === 'GET') {
+    return json(200, { billing: state.billingByOrgId[billingMatch[1]] || null });
+  }
+
+  const auditMatch = decodedPath.match(/^\/admin\/api\/organizations\/([^/]+)\/audit$/);
+  if (auditMatch && record.method === 'GET') {
+    return json(200, { events: state.auditByOrgId[auditMatch[1]] || [] });
+  }
+
+  const aiAccessMatch = decodedPath.match(
+    /^\/admin\/api\/organizations\/([^/]+)\/members\/(.+)\/ai-access$/,
+  );
+  if (aiAccessMatch && record.method === 'GET') {
+    return json(200, state.aiAccessByOrgAndUser[`${aiAccessMatch[1]}:${aiAccessMatch[2]}`] || {
+      aiAccess: null,
+      availableCredentials: [],
+    });
+  }
+  if (aiAccessMatch && record.method === 'PUT') {
+    const current = state.aiAccessByOrgAndUser[`${aiAccessMatch[1]}:${aiAccessMatch[2]}`] || {
+      aiAccess: null,
+      availableCredentials: [],
+    };
+    const body = isObject(record.body) ? record.body : {};
+    const saved = {
+      aiAccess: {
+        id: `ai-access-${aiAccessMatch[1]}`,
+        userId: aiAccessMatch[2],
+        enabled: body.enabled === true,
+        provider: typeof body.provider === 'string' ? body.provider : '',
+        credentialId: typeof body.credentialId === 'string' ? body.credentialId : null,
+        updatedAt: '2026-07-14T12:00:00.000Z',
+      },
+      availableCredentials: current.availableCredentials,
+    };
+    state.aiAccessByOrgAndUser[`${aiAccessMatch[1]}:${aiAccessMatch[2]}`] = saved;
+    return json(200, saved);
+  }
+
+  return json(404, { error: 'not_found' });
+}
+
+async function openAdmin(page: Page, path: string) {
+  await page.goto(`${adminServer.origin}${path}`, { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#auth-state')).toHaveText('Signed in');
+  await expect(page.locator('#admin-page-state')).toHaveAttribute('aria-busy', 'false');
+}
+
+async function waitForPageReady(page: Page) {
+  await expect(page.locator('#auth-state')).toHaveText('Signed in');
+  await expect(page.locator('#admin-page-state')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#admin-page-state')).toHaveAttribute('data-state', /^(ready|empty)$/);
+}
+
+async function expectPageError(page: Page, message: string, retryable: boolean) {
+  await expect(page.locator('#admin-page-state')).toHaveAttribute('data-state', 'error');
+  await expect(page.locator('#admin-page-state')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.locator('#admin-page-error')).toBeVisible();
+  await expect(page.locator('#admin-page-error')).toHaveAttribute('role', 'alert');
+  await expect(page.locator('#admin-page-error-message')).toHaveText(message);
+  if (retryable) await expect(page.locator('#admin-page-retry')).toBeVisible();
+  else await expect(page.locator('#admin-page-retry')).toBeHidden();
+}
+
+async function switchOrganization(page: Page, organization: TestOrganization) {
+  const value = [organization.name, organization.slug, organization.id].join(' - ');
+  await page.locator('#organization-selector-input').evaluate((input, nextValue) => {
+    const selector = input as HTMLInputElement;
+    selector.value = nextValue;
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+}
+
+async function navigateWithPopstate(page: Page, path: string) {
+  await page.evaluate((pathname) => {
+    history.pushState(null, '', pathname);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, path);
+}
+
+async function waitAnimationFrames(page: Page, count: number) {
+  await page.evaluate(async (frames) => {
+    for (let index = 0; index < frames; index += 1) {
+      await new Promise<void>((resolvePromise) => window.requestAnimationFrame(() => resolvePromise()));
+    }
+  }, count);
+}
+
+function requestCount(records: RequestRecord[], method: string, path: string) {
+  return records.filter((record) => record.method === method && record.path === path).length;
+}
+
+function qualifiedAiAccessPath(organizationId: string, userId: string) {
+  return `/admin/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(userId)}/ai-access`;
+}
+
+async function armLeakObserver(page: Page, forbidden: string[], eventName: string) {
+  await page.evaluate(
+    ({ forbiddenTokens, event }) => {
+      (window as WindowWithLeakObserver).__adminDataLeakObserver.armOnEvent(forbiddenTokens, event);
+    },
+    { forbiddenTokens: forbidden, event: eventName },
+  );
+}
+
+async function leakRecords(page: Page) {
+  return page.evaluate(() => (window as WindowWithLeakObserver).__adminDataLeakObserver.records());
+}
+
+async function stopLeakObserver(page: Page) {
+  return page.evaluate(() => (window as WindowWithLeakObserver).__adminDataLeakObserver.stop());
+}
+
+function enqueueControlledResponse(
+  queued: Map<string, QueuedResponse[]>,
+  method: string,
+  path: string,
+) {
+  let markArrived!: (record: RequestRecord) => void;
+  let release!: (response: HarnessResponse) => void;
+  const arrived = new Promise<RequestRecord>((resolvePromise) => {
+    markArrived = resolvePromise;
+  });
+  const response = new Promise<HarnessResponse>((resolvePromise) => {
+    release = resolvePromise;
+  });
+  const entry: QueuedResponse = { arrived, markArrived, response, release };
+  const key = responseKey(method, path);
+  queued.set(key, [...(queued.get(key) || []), entry]);
+  return {
+    arrived,
+    release(value: HarnessResponse = json(200, {})) {
+      release(value);
+    },
+    fail() {
+      release({ networkError: 'failed' });
+    },
+  };
+}
+
+function createHarnessState(): HarnessState {
+  const organizations = [ORG_A, ORG_B];
+  const membersByOrgId = structuredClone(ORG_MEMBERS);
+  return {
+    session: {
+      user: {
+        id: 'platform-admin',
+        email: 'platform-admin@example.test',
+        emailVerified: true,
+        name: 'PLATFORM-ADMIN',
+      },
+      platformAdmin: true,
+      activeOrgId: ORG_A.id,
+      organizations: organizations.map((entry) => ({ ...entry, role: 'organization_admin' })),
+      capabilities: [
+        'organization',
+        'users',
+        'credentials',
+        'usage',
+        'alerts',
+        'audit',
+        'billing',
+        'managedAiUserAccess',
+      ],
+      allowedPages: [
+        'overview',
+        'organization',
+        'users',
+        'credentials',
+        'usage',
+        'alerts',
+        'audit',
+        'billing',
+      ],
+    },
+    organizations,
+    globalUsers: structuredClone(GLOBAL_USERS),
+    membersByOrgId,
+    domainsByOrgId: {
+      [ORG_A.id]: [domain('domain-a', ORG_A.id, 'ORG-A-DOMAIN.example')],
+      [ORG_B.id]: [domain('domain-b', ORG_B.id, 'ORG-B-DOMAIN.example')],
+    },
+    invitesByOrgId: {
+      [ORG_A.id]: [invite('invite-a', 'ORG-A-INVITE@example.test')],
+      [ORG_B.id]: [invite('invite-b', 'ORG-B-INVITE@example.test')],
+    },
+    billingByOrgId: {
+      [ORG_A.id]: billing('ORG-A-BILLING', 11, 7),
+      [ORG_B.id]: billing('ORG-B-BILLING', 22, 13),
+    },
+    auditByOrgId: {
+      [ORG_A.id]: [auditEvent('audit-a', 'ORG-A-AUDIT-ACTION', 'ORG-A-AUDIT-SUMMARY')],
+      [ORG_B.id]: [auditEvent('audit-b', 'ORG-B-AUDIT-ACTION', 'ORG-B-AUDIT-SUMMARY')],
+    },
+    aiAccessByOrgAndUser: {
+      [`${ORG_A.id}:${ORG_MEMBERS[ORG_A.id][0].userId}`]: aiAccess(
+        ORG_MEMBERS[ORG_A.id][0].userId,
+        'ORG-A-AI-CREDENTIAL',
+      ),
+      [`${ORG_A.id}:${ORG_MEMBERS[ORG_A.id][1].userId}`]: aiAccess(
+        ORG_MEMBERS[ORG_A.id][1].userId,
+        'ORG-A-SECOND-AI-CREDENTIAL',
+      ),
+      [`${ORG_B.id}:${ORG_MEMBERS[ORG_B.id][0].userId}`]: aiAccess(
+        ORG_MEMBERS[ORG_B.id][0].userId,
+        'ORG-B-AI-CREDENTIAL',
+      ),
+    },
+    records: [],
+  };
+}
+
+function organization(id: string, name: string, slug: string) {
+  return {
+    id,
+    name,
+    slug,
+    ownerUserId: `owner-${id}`,
+    seatLimit: 50,
+  };
+}
+
+function globalUser(
+  id: string,
+  name: string,
+  email: string,
+  org: TestOrganization,
+  platformAdmin: boolean,
+) {
+  return {
+    id,
+    name,
+    email,
+    emailVerified: true,
+    platformAdmin,
+    disabled: false,
+    memberships: [{
+      membershipId: `membership-${id}`,
+      orgId: org.id,
+      orgName: org.name,
+      orgSlug: org.slug,
+      role: 'member',
+    }],
+  };
+}
+
+function organizationMember(membershipId: string, userId: string, name: string, email: string) {
+  return {
+    membershipId,
+    userId,
+    name,
+    email,
+    role: 'member',
+    status: 'active',
+    createdAt: '2026-07-14T08:00:00.000Z',
+  };
+}
+
+function domain(id: string, orgId: string, value: string) {
+  return { id, orgId, domain: value, enabled: true, selfSignupEnabled: false };
+}
+
+function invite(id: string, email: string) {
+  return {
+    id,
+    email,
+    role: 'member',
+    status: 'pending',
+    expiresAt: '2026-08-01T12:00:00.000Z',
+  };
+}
+
+function billing(marker: string, licenseLimit: number, activeUserCount: number) {
+  return {
+    marker,
+    account: {
+      mode: marker,
+      status: 'active',
+      billingInterval: 'monthly',
+      quantities: { managedAiBasic: licenseLimit, managedAiExtended: 0, localModels: 0 },
+      manualAccess: { enabled: false, expiresAt: null },
+    },
+    entitlement: {
+      effectiveMode: marker,
+      status: 'active',
+      canUseManagedAi: true,
+      managedAiBlockingReason: null,
+      licenseLimit,
+      activeUserCount,
+    },
+    licenseLimit,
+    activeUserCount,
+  };
+}
+
+function auditEvent(id: string, action: string, summary: string) {
+  return {
+    id,
+    action,
+    summary,
+    entityType: 'organization',
+    entityId: id,
+    source: 'den',
+    actor: `${id}-actor`,
+    timestamp: '2026-07-14T09:00:00.000Z',
+  };
+}
+
+function aiAccess(userId: string, credentialName: string): TestAiAccessPayload {
+  return {
+    aiAccess: {
+      id: `ai-access-${userId}`,
+      userId,
+      enabled: true,
+      provider: 'codex_oauth',
+      credentialId: `${credentialName}-id`,
+      updatedAt: '2026-07-14T10:00:00.000Z',
+    },
+    availableCredentials: [{
+      id: `${credentialName}-id`,
+      name: credentialName,
+      provider: 'codex_oauth',
+    }],
+  };
+}
+
+function emptyUsage() {
+  return {
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    totalCachedTokens: 0,
+    totalTokens: 0,
+    requests: 0,
+    series: [],
+    byCredential: [],
+  };
+}
+
+function parseRequestBody(postData: string | null): unknown {
+  if (!postData) return null;
+  try {
+    return JSON.parse(postData);
+  } catch {
+    return postData;
+  }
+}
+
+function responseKey(method: string, path: string) {
+  return `${method.toUpperCase()} ${path}`;
+}
+
+function json(status: number, body: unknown): HarnessResponse {
+  return { status, body };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+async function startStaticAdminServer() {
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    const pathname = decodeURIComponent(url.pathname);
+    const extension = extname(pathname);
+    const assetName = pathname.startsWith('/admin/') && (extension === '.js' || extension === '.css')
+      ? pathname.slice('/admin/'.length)
+      : 'index.html';
+    const assetPath = join(ADMIN_PUBLIC_ROOT, assetName);
+
+    if (!assetPath.startsWith(`${ADMIN_PUBLIC_ROOT}/`) && assetPath !== join(ADMIN_PUBLIC_ROOT, 'index.html')) {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('not found');
+      return;
+    }
+
+    try {
+      const body = await readFile(assetPath);
+      res.writeHead(200, { 'content-type': contentTypeFor(assetPath) });
+      res.end(body);
+    } catch (error) {
+      res.writeHead(500, { 'content-type': 'text/plain' });
+      res.end(error instanceof Error ? error.message : 'static admin fixture failed');
+    }
+  });
+
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address() as AddressInfo;
+  return { origin: `http://127.0.0.1:${port}`, server };
+}
+
+async function closeServer(server: Server) {
+  server.close();
+  await once(server, 'close');
+}
+
+function contentTypeFor(path: string) {
+  switch (extname(path)) {
+    case '.css':
+      return 'text/css';
+    case '.js':
+      return 'application/javascript';
+    case '.html':
+      return 'text/html';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
+type LeakRecord = {
+  token: string;
+  channel: 'visible' | 'semantic';
+  source: string;
+  sample: string;
+};
+
+type WindowWithLeakObserver = Window & typeof globalThis & {
+  __adminDataLeakObserver: {
+    armOnEvent(tokens: string[], eventName: string): void;
+    start(tokens: string[]): void;
+    records(): LeakRecord[];
+    stop(): LeakRecord[];
+  };
+};
+
+type RequestRecord = {
+  sequence: number;
+  method: string;
+  url: string;
+  path: string;
+  body: unknown;
+};
+
+type HarnessResponse =
+  | { status: number; body: unknown }
+  | { networkError: 'failed' };
+
+type QueuedResponse = {
+  arrived: Promise<RequestRecord>;
+  markArrived(record: RequestRecord): void;
+  response: Promise<HarnessResponse>;
+  release(response: HarnessResponse): void;
+};
+
+type TestOrganization = ReturnType<typeof organization>;
+type TestGlobalUser = ReturnType<typeof globalUser>;
+type TestOrganizationMember = ReturnType<typeof organizationMember>;
+type TestAiAccessPayload = {
+  aiAccess: {
+    id: string;
+    userId: string;
+    enabled: boolean;
+    provider: string;
+    credentialId: string | null;
+    updatedAt: string;
+  };
+  availableCredentials: Array<{ id: string; name: string; provider: string }>;
+};
+
+type HarnessState = {
+  session: {
+    user: { id: string; email: string; emailVerified: boolean; name: string };
+    platformAdmin: boolean;
+    activeOrgId: string;
+    organizations: Array<TestOrganization & { role: string }>;
+    capabilities: string[];
+    allowedPages: string[];
+  };
+  organizations: TestOrganization[];
+  globalUsers: TestGlobalUser[];
+  membersByOrgId: Record<string, TestOrganizationMember[]>;
+  domainsByOrgId: Record<string, Array<ReturnType<typeof domain>>>;
+  invitesByOrgId: Record<string, Array<ReturnType<typeof invite>>>;
+  billingByOrgId: Record<string, ReturnType<typeof billing>>;
+  auditByOrgId: Record<string, Array<ReturnType<typeof auditEvent>>>;
+  aiAccessByOrgAndUser: Record<string, TestAiAccessPayload>;
+  records: RequestRecord[];
+};
