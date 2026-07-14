@@ -1909,6 +1909,50 @@ test("POST workspace materialization sync degrades when configured registry does
   expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
 });
 
+test("POST workspace materialization sync treats unavailable personal-global installations as optional", async () => {
+  const registryCalls: string[] = [];
+  const registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const url = new URL(request.url);
+      registryCalls.push(url.pathname);
+      if (url.pathname === "/v1/workspaces/ws_1/skill-set") {
+        return Response.json({ workspaceId: "ws_1", skills: [] });
+      }
+      if (url.pathname === "/v1/skill-installations") {
+        return Response.json({ error: "not_found" }, { status: 404 });
+      }
+      if (url.pathname === "/v1/skill-rollout-policies") {
+        return Response.json({ policies: [], nextCursor: null });
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    },
+  });
+  runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
+  const { server } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`, {
+    method: "POST",
+    headers: { "x-veslo-host-token": "host-token" },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    status: string;
+    synced: boolean;
+    materializedSkills: unknown[];
+  };
+  expect(payload).toMatchObject({ status: "synced", synced: true });
+  expect(payload.materializedSkills).toEqual([]);
+  expect(registryCalls).toEqual([
+    "/v1/workspaces/ws_1/skill-set",
+    "/v1/skill-installations",
+    "/v1/skill-rollout-policies",
+    "/v1/skill-rollout-policies",
+  ]);
+});
+
 test("POST workspace materialization sync surfaces a missing required registry package", async () => {
   const registryCalls: string[] = [];
   const registry = Bun.serve({

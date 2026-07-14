@@ -61,7 +61,7 @@
       "name": "Veslo Codex OAuth",
       "npm": "@ai-sdk/openai-compatible",
       "options": {
-        "baseURL": "http://127.0.0.1:8787/ai-gateway/providers/codex_oauth/v1",
+        "baseURL": "http://127.0.0.1:60125/ai-gateway/providers/codex_oauth/v1",
         "headers": {
           "Authorization": "Bearer {env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}"
         },

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -696,6 +696,41 @@ describe("ai gateway proxy routes", () => {
         } finally {
           stopTestServer(server);
         }
+      });
+    } finally {
+      rmSync(traceDir, { recursive: true, force: true });
+    }
+  });
+
+  test("global runtime diagnostics switch suppresses server workflow traces", async () => {
+    const traceDir = mkdtempSync(join(tmpdir(), "veslo-ai-gateway-diagnostics-off-"));
+    const traceFile = join(traceDir, "send-workflow-trace.ndjson");
+
+    try {
+      await withEnvVar("VESLO_SEND_WORKFLOW_TRACE_FILE", traceFile, async () => {
+        await withEnvVar("VESLO_RUNTIME_DIAGNOSTICS", "0", async () => {
+          const server = startServer(createTestConfig());
+
+          try {
+            const response = await fetch(`http://127.0.0.1:${server.port}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
+              method: "POST",
+              headers: {
+                authorization: "Bearer stale-client-token",
+                "content-type": "application/json",
+                "x-veslo-send-trace-id": "trace-diagnostics-off",
+              },
+              body: JSON.stringify({
+                model: "gpt-5.5",
+                messages: [{ role: "user", content: "Hello" }],
+              }),
+            });
+
+            expect(response.status).toBe(401);
+            expect(existsSync(traceFile)).toBe(false);
+          } finally {
+            stopTestServer(server);
+          }
+        });
       });
     } finally {
       rmSync(traceDir, { recursive: true, force: true });

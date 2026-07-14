@@ -62,10 +62,13 @@ const compactDraft = (): ComposerDraft => ({
   command: { name: "compact", arguments: "" },
 });
 
+type AdmittedRunInput = Parameters<SessionSendWorkflowOptions["admitAcceptedConversationRun"]>[0];
+
 type Harness = {
   events: string[];
   progressEvents: SessionFlowProgressEvent["type"][];
   actions: string[];
+  admittedRuns: AdmittedRunInput[];
   errors: string[];
   options: SessionSendWorkflowOptions;
   sendPromptInFlightCount: () => number;
@@ -117,6 +120,7 @@ function createHarness(
   const events: string[] = [];
   const progressEvents: SessionFlowProgressEvent["type"][] = [];
   const actions: string[] = [];
+  const admittedRuns: AdmittedRunInput[] = [];
   const errors: string[] = [];
   const { emitFlowProgress: overrideEmitFlowProgress, ...optionOverrides } = overrides;
   const targetWorkspace: SendTargetWorkspaceScope = {
@@ -136,9 +140,12 @@ function createHarness(
   const liveTranscriptPolicyEvents: LiveTranscriptReadPolicyEvent[] = [];
 
   const optionsWithBridge = {
-    admitAcceptedConversationRun: (input: Parameters<SessionSendWorkflowOptions["admitAcceptedConversationRun"]>[0]) => actions.push(
-      `admit:${input.sessionId}:${input.workspaceId}:${input.conversationId}:${input.opencodeSessionId}:${input.runId}:${input.clientMessageId}`,
-    ),
+    admitAcceptedConversationRun: (input: AdmittedRunInput) => {
+      admittedRuns.push(input);
+      actions.push(
+        `admit:${input.sessionId}:${input.workspaceId}:${input.conversationId}:${input.opencodeSessionId}:${input.runId}:${input.clientMessageId}`,
+      );
+    },
     abortConversationFromVesloWriteApi: async () => null,
     abortSessionTyped: async () => undefined,
     activePendingDraftKey: () => null,
@@ -309,6 +316,7 @@ function createHarness(
     events,
     progressEvents,
     actions,
+    admittedRuns,
     errors,
     options,
     sendPromptInFlightCount: () => sendPromptInFlightCount,
@@ -923,6 +931,7 @@ test("session send workflow submits an existing local prompt through server subm
   assert.ok(harness.actions.includes(
     "admit:sess-target:ws-active:conv-target:open-target:run-submit:client-server-submit",
   ));
+  assert.equal(harness.admittedRuns[0]?.diagnosticTraceId, "trace-created");
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
@@ -1641,6 +1650,7 @@ test("session send workflow accepts first-session server submit results without 
   assert.ok(harness.actions.includes(
     "admit:sess-created:ws-active:conv-created:sess-created:run-created:client-first-server-submit",
   ));
+  assert.equal(harness.admittedRuns[0]?.diagnosticTraceId, "trace-created");
   assert.ok(harness.actions.includes("clear-pending-draft"));
   assert.ok(harness.actions.includes("refresh-pending-drafts"));
   assert.deepEqual(composerDraftCleanupCalls, ["cleanup"]);

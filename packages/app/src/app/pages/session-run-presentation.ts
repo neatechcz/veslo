@@ -1,3 +1,5 @@
+import type { SessionRunRecoveryState } from "../context/session-lifecycle-recovery";
+
 export type SessionRunPhase = "idle" | "sending" | "thinking" | "retrying" | "responding" | "error";
 
 export type SessionRunPresentation = {
@@ -5,7 +7,15 @@ export type SessionRunPresentation = {
   showIndicator: boolean;
   abortable: boolean;
   source: "local" | "lifecycle" | "engine" | null;
-  diagnosticKind: "model-retry" | "model-retry-blocked" | "lifecycle-observation-exhausted" | null;
+  diagnosticKind:
+    | "model-retry"
+    | "model-retry-blocked"
+    | "lifecycle-observation-exhausted"
+    | "connection-unavailable"
+    | "transcript-unavailable"
+    | null;
+  recoveryNotice?: "connection-unavailable" | "transcript-unavailable" | null;
+  composerMode?: "streaming" | "recovery-blocked" | "idle";
 };
 
 export type SessionRunLifecycleEvidence = {
@@ -14,7 +24,7 @@ export type SessionRunLifecycleEvidence = {
   stale: boolean;
   clientMessageId?: string | null;
   waitReason?: string | null;
-  recoveryState?: "watching" | "exhausted";
+  recoveryState?: SessionRunRecoveryState;
 };
 
 export type SessionRunPresentationInput = {
@@ -49,7 +59,9 @@ const idlePresentation = (): SessionRunPresentation => ({
 export function lifecycleKeepsRunPresentationActive(
   lifecycle: SessionRunLifecycleEvidence | null | undefined,
 ): boolean {
-  return lifecycle?.stale !== true && ACTIVE_LIFECYCLE_STATUSES.has(lifecycle?.status ?? "");
+  return lifecycle?.stale !== true &&
+    lifecycle?.recoveryState !== "connection-unavailable" &&
+    ACTIVE_LIFECYCLE_STATUSES.has(lifecycle?.status ?? "");
 }
 
 export function terminalLifecycleOwnsOptimistic(input: {
@@ -83,6 +95,28 @@ export function deriveSessionRunPresentation(input: SessionRunPresentationInput)
     acceptedRunId: input.local.acceptedRunId,
     acceptedClientMessageId: input.local.acceptedClientMessageId,
   });
+  if (lifecycle?.recoveryState === "connection-unavailable") {
+    return {
+      phase: "error",
+      showIndicator: false,
+      abortable: false,
+      source: "lifecycle",
+      diagnosticKind: "connection-unavailable",
+      recoveryNotice: "connection-unavailable",
+      composerMode: "recovery-blocked",
+    };
+  }
+  if (lifecycle?.recoveryState === "transcript-unavailable") {
+    return {
+      phase: "error",
+      showIndicator: false,
+      abortable: false,
+      source: "lifecycle",
+      diagnosticKind: "transcript-unavailable",
+      recoveryNotice: "transcript-unavailable",
+      composerMode: "idle",
+    };
+  }
   if (terminalOwnsLocal && (input.local.optimisticSending || !engineActive)) {
     return idlePresentation();
   }

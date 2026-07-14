@@ -204,8 +204,8 @@ export type SessionEventStreamControllerDeps = {
   setCommandDisplay: (messageID: string, name: string, args: string) => void;
   recordSyntheticContinueDiagnostic: (part: Part) => void;
   maybeMarkReloadRequired: (part: Part) => void;
-  maybeHandleInvalidToolError: (part: Part) => void;
-  maybeHandleChromeMcpCompletedError: (part: Part) => void;
+  maybeHandleInvalidToolError: (part: Part, workspaceId?: string | null) => void;
+  maybeHandleChromeMcpCompletedError: (part: Part, workspaceId?: string | null) => void;
   resolveTranscriptIngestWorkspaceId: (sourceWsId?: string | null) => string;
   resolveSessionIdForMessage: (messageID: string) => string | null;
   recordPendingTranscriptMessageDeletion: (
@@ -352,12 +352,25 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
     if (event.type === "session.status" && sessionID) {
       const normalized = normalizeSessionStatus(record.status);
+      const lifecycleOwnsEvent =
+        normalized === "idle" &&
+        deps.onSessionLifecycleObservation?.(sessionID, workspaceId, "session.idle") === true;
       deps.recordSessionStatusTrace("background-sse-session-status", {
         sessionId: sessionID,
-        status: normalized,
+        status: lifecycleOwnsEvent ? "lifecycle-pending" : normalized,
         sourceWorkspaceId: workspaceId,
         previous: deps.readStatusForSession(sessionID, workspaceId),
+        lifecycleOwnsEvent,
       });
+      if (lifecycleOwnsEvent) {
+        recordSendWorkflowTrace("session-sse", "session-sse:status-idle-deferred-to-lifecycle", {
+          sessionId: sessionID,
+          workspaceId,
+          background: true,
+          eventType: event.type,
+        });
+        return;
+      }
       deps.setSessionStatusForWorkspace(sessionID, normalized, workspaceId);
       deps.notifySessionBusy(sessionID, normalized, workspaceId);
       return;
@@ -529,12 +542,25 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const sessionID = extractSessionId(record);
         if (sessionID && isKnownSessionId(sessionID)) {
           const normalized = normalizeSessionStatus(record.status);
+          const lifecycleOwnsEvent =
+            normalized === "idle" &&
+            deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.idle") === true;
           deps.recordSessionStatusTrace("sse-session-status", {
             sessionId: sessionID,
-            status: normalized,
+            status: lifecycleOwnsEvent ? "lifecycle-pending" : normalized,
             sourceWorkspaceId: sourceWsId ?? null,
             previous: deps.readStatusForSession(sessionID, sourceWsId),
+            lifecycleOwnsEvent,
           });
+          if (lifecycleOwnsEvent) {
+            recordSendWorkflowTrace("session-sse", "session-sse:status-idle-deferred-to-lifecycle", {
+              sessionId: sessionID,
+              workspaceId: sourceWsId ?? null,
+              background: false,
+              eventType: event.type,
+            });
+            return;
+          }
           deps.setSessionStatusForWorkspace(sessionID, normalized, sourceWsId);
           deps.notifySessionBusy(sessionID, normalized, sourceWsId);
           if (sessionID === deps.selectedSessionId() && normalized !== "idle") {
@@ -844,8 +870,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             });
           }
           deps.maybeMarkReloadRequired(part);
-          deps.maybeHandleInvalidToolError(part);
-          deps.maybeHandleChromeMcpCompletedError(resolvedPart);
+          deps.maybeHandleInvalidToolError(part, sourceWsId);
+          deps.maybeHandleChromeMcpCompletedError(resolvedPart, sourceWsId);
         }
       }
     }

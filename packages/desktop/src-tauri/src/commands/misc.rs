@@ -258,8 +258,14 @@ pub fn reset_veslo_state(
 /// production diagnostics don't require opening DevTools.
 #[tauri::command]
 pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Option<String>) {
-    if scope == "send-workflow-trace" {
-        append_send_workflow_trace_event(&message, payload.as_deref());
+    let is_send_workflow_trace = scope == "send-workflow-trace";
+    if is_send_workflow_trace
+        && !crate::runtime_preferences::runtime_diagnostics_enabled(&app).unwrap_or(false)
+    {
+        return;
+    }
+    if is_send_workflow_trace {
+        append_send_workflow_trace_event(&app, &message, payload.as_deref());
     }
     let line = match payload.as_deref() {
         Some(p) if !p.is_empty() => format!("[ui:{}] {} {}", scope, message, p),
@@ -288,7 +294,7 @@ fn truthy_env(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn resolve_send_workflow_trace_file() -> Option<PathBuf> {
+fn resolve_send_workflow_trace_file(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("VESLO_SEND_WORKFLOW_TRACE_UI_FILE") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
@@ -302,7 +308,10 @@ fn resolve_send_workflow_trace_file() -> Option<PathBuf> {
         }
     }
     if !truthy_env("VESLO_SEND_WORKFLOW_TRACE") {
-        return None;
+        return app.path().app_log_dir().ok().map(|dir| {
+            dir.join("support-diagnostics")
+                .join("send-workflow-trace.ui.ndjson")
+        });
     }
     if let Ok(dir) = std::env::var("TAURI_PILOT_LOG_DIR") {
         let trimmed = dir.trim();
@@ -356,7 +365,7 @@ fn append_send_workflow_trace_line(path: &Path, line: &str) {
     }
 }
 
-fn append_send_workflow_trace_event(message: &str, payload: Option<&str>) {
+fn append_send_workflow_trace_event(app: &AppHandle, message: &str, payload: Option<&str>) {
     let line = match payload {
         Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
         _ => format!(
@@ -364,7 +373,7 @@ fn append_send_workflow_trace_event(message: &str, payload: Option<&str>) {
             serde_json::to_string(message).unwrap_or_else(|_| "\"ui-event\"".to_string())
         ),
     };
-    let primary = resolve_send_workflow_trace_file();
+    let primary = resolve_send_workflow_trace_file(app);
     let mirror = resolve_send_workflow_trace_mirror_file();
 
     if let Some(path) = primary.as_deref() {

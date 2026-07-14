@@ -31,6 +31,68 @@ test("active lifecycle truth wins over an idle engine observation", () => {
   });
 });
 
+test("connection-unavailable lifecycle evidence is a non-streaming recovery block", () => {
+  const projection = deriveSessionRunPresentation({
+    hasSessionScope: true,
+    engineStatus: "running",
+    lifecycle: {
+      runId: "run-a",
+      status: "submitted",
+      stale: false,
+      recoveryState: "connection-unavailable",
+    },
+    local: {
+      started: true,
+      hasBegun: true,
+      optimisticSending: true,
+      optimisticAccepted: true,
+      acceptedRunId: "run-a",
+      responseStarted: false,
+    },
+  });
+
+  assert.deepEqual(projection, {
+    phase: "error",
+    showIndicator: false,
+    abortable: false,
+    source: "lifecycle",
+    diagnosticKind: "connection-unavailable",
+    recoveryNotice: "connection-unavailable",
+    composerMode: "recovery-blocked",
+  });
+});
+
+test("transcript-unavailable lifecycle evidence keeps the composer idle without a Stop action", () => {
+  const projection = deriveSessionRunPresentation({
+    hasSessionScope: true,
+    engineStatus: "idle",
+    lifecycle: {
+      runId: "run-a",
+      status: "completed",
+      stale: false,
+      recoveryState: "transcript-unavailable",
+    },
+    local: {
+      started: false,
+      hasBegun: true,
+      optimisticSending: true,
+      optimisticAccepted: true,
+      acceptedRunId: "run-a",
+      responseStarted: false,
+    },
+  });
+
+  assert.deepEqual(projection, {
+    phase: "error",
+    showIndicator: false,
+    abortable: false,
+    source: "lifecycle",
+    diagnosticKind: "transcript-unavailable",
+    recoveryNotice: "transcript-unavailable",
+    composerMode: "idle",
+  });
+});
+
 test("terminal lifecycle state releases the run presentation", () => {
   const projection = deriveSessionRunPresentation({
     hasSessionScope: true,

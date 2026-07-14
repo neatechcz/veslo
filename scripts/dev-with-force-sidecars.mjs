@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const traceMirrorDir = resolve(repoRoot, ".tmp");
+mkdirSync(traceMirrorDir, { recursive: true });
 
 const resolvePnpmInvocation = () => {
   if (process.platform === "win32") {
@@ -29,10 +31,14 @@ const withDefaultEnv = (defaults) => {
 const runtimeLoggingEnv = withDefaultEnv({
   VESLO_TAURI_PILOT: "1",
   VESLO_E2E: "1",
+  VESLO_RUNTIME_DIAGNOSTICS: "1",
+  VITE_VESLO_RUNTIME_DIAGNOSTICS: "1",
   VESLO_RUNTIME_TRACE: "1",
   VESLO_SEND_WORKFLOW_TRACE: "1",
+  VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE: resolve(traceMirrorDir, "send-workflow-trace.ndjson"),
   VESLO_SEND_WORKFLOW_TRACE_CONSOLE: "1",
   VITE_VESLO_SEND_WORKFLOW_TRACE: "1",
+  VITE_VESLO_SESSION_UI_MUTATION_TRACE: "1",
   VESLO_OPENCODE_HEALTH_DIAG: "1",
   RUST_BACKTRACE: "1",
 });

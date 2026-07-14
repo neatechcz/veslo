@@ -854,6 +854,9 @@ pub fn orchestrator_start_detached(
     ) {
         command = command.env(key, value);
     }
+    for (key, value) in crate::runtime_preferences::runtime_diagnostics_env_overrides(&app)? {
+        command = command.env(key, value);
+    }
 
     // Start a dedicated host stack for this workspace.
     // We pass explicit tokens and a free port so the UI can connect deterministically.

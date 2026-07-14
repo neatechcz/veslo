@@ -193,6 +193,142 @@ test("hydrateTranscriptSnapshot can apply shorter authoritative snapshots", () =
   });
 });
 
+test("hydrateTranscriptSnapshot does not erase a live assistant part with an equally sized snapshot", () => {
+  const root = globalThis as unknown as Record<string, unknown>;
+  const hadWindow = Object.prototype.hasOwnProperty.call(root, "window");
+  const previousWindow = root.window;
+  const traceWindow: { __vesloSendWorkflowTraceEnabled: boolean; __vesloSendWorkflowTrace?: Array<Record<string, unknown>> } = {
+    __vesloSendWorkflowTraceEnabled: true,
+  };
+  root.window = traceWindow;
+  try {
+    createRoot((dispose) => {
+      try {
+        const { controller, store, setStore } = makeController();
+        const message = makeMessage("msg-a", 1);
+        const livePart = makeTextPart("part-a", "msg-a", "sess-a", "live response");
+
+        controller.hydrateTranscriptSnapshot({
+          workspaceId: "ws-a",
+          sessionId: "sess-a",
+          fetchedAt: 10,
+          limit: 1,
+          messages: [message],
+          partsByMessageId: { "msg-a": [] },
+        });
+        setStore("parts", "msg-a", [livePart]);
+
+        controller.hydrateTranscriptSnapshot({
+          workspaceId: "ws-a",
+          sessionId: "sess-a",
+          fetchedAt: 20,
+          limit: 1,
+          messages: [message],
+          partsByMessageId: { "msg-a": [] },
+        });
+
+        assert.deepEqual(store.parts["msg-a"], [livePart]);
+      } finally {
+        dispose();
+      }
+    });
+    assert.deepEqual(
+      (traceWindow.__vesloSendWorkflowTrace ?? [])
+        .filter((entry) => entry.event === "session-transcript:snapshot-preserved-live-parts")
+        .map(({ event, workspaceId, sessionId, preservedMessageCount, preservedPartCount }) => ({
+          event,
+          workspaceId,
+          sessionId,
+          preservedMessageCount,
+          preservedPartCount,
+        })),
+      [{
+        event: "session-transcript:snapshot-preserved-live-parts",
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        preservedMessageCount: 1,
+        preservedPartCount: 1,
+      }],
+    );
+  } finally {
+    if (hadWindow) {
+      root.window = previousWindow;
+    } else {
+      Reflect.deleteProperty(root, "window");
+    }
+  }
+});
+
+test("terminal-authoritative snapshot can clear stale live parts", () => {
+  createRoot((dispose) => {
+    try {
+      const { controller, store, setStore } = makeController();
+      const message = makeMessage("msg-a", 1);
+      const livePart = makeTextPart("part-a", "msg-a", "sess-a", "partial response");
+
+      controller.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        fetchedAt: 10,
+        limit: 1,
+        messages: [message],
+        partsByMessageId: { "msg-a": [] },
+      });
+      setStore("parts", "msg-a", [livePart]);
+
+      controller.hydrateTranscriptSnapshot(
+        {
+          workspaceId: "ws-a",
+          sessionId: "sess-a",
+          fetchedAt: 20,
+          limit: 1,
+          messages: [message],
+          partsByMessageId: { "msg-a": [] },
+        },
+        { preserveLiveParts: false },
+      );
+
+      assert.deepEqual(store.parts["msg-a"], []);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("hydrateTranscriptSnapshot still adopts non-empty snapshot parts", () => {
+  createRoot((dispose) => {
+    try {
+      const { controller, store, setStore } = makeController();
+      const message = makeMessage("msg-a", 1);
+      const livePart = makeTextPart("part-a", "msg-a", "sess-a", "live response");
+      const snapshotPart = makeTextPart("part-a", "msg-a", "sess-a", "durable response");
+
+      controller.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        fetchedAt: 10,
+        limit: 1,
+        messages: [message],
+        partsByMessageId: { "msg-a": [] },
+      });
+      setStore("parts", "msg-a", [livePart]);
+
+      controller.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        fetchedAt: 20,
+        limit: 1,
+        messages: [message],
+        partsByMessageId: { "msg-a": [snapshotPart] },
+      });
+
+      assert.deepEqual(store.parts["msg-a"], [snapshotPart]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("session transcript controller has no client snapshot writer", () => {
   assert.doesNotMatch(transcriptControllerSource, /appendTranscriptSnapshot|appendSessionTranscript/);
 });

@@ -67,6 +67,7 @@ import ShareWorkspaceModal from "../components/share-workspace-modal";
 import { parseVesloWorkspaceIdFromUrl } from "../lib/veslo-server";
 import type {
   VesloServerClient,
+  VesloServerConnectionSnapshot,
   VesloServerSettings,
   VesloServerStatus,
 } from "../lib/veslo-server";
@@ -246,11 +247,32 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
   }
 }
 
+const sessionUiMutationTraceEnabled = () => {
+  try {
+    if (!import.meta.env?.DEV) return false;
+    const value = import.meta.env?.VITE_VESLO_SESSION_UI_MUTATION_TRACE;
+    return typeof value === "string" && ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+  } catch {
+    return false;
+  }
+};
+
+const describeSessionUiMutationTarget = (node: Node) => {
+  if (!(node instanceof Element)) return node.nodeName.toLowerCase();
+  const testId = node.getAttribute("data-testid");
+  if (testId) return `[data-testid=${testId}]`;
+  if (node.id) return `#${node.id}`;
+  const classes = Array.from(node.classList).slice(0, 2);
+  return `${node.tagName.toLowerCase()}${classes.length ? `.${classes.join(".")}` : ""}`;
+};
+
 type TempRuntimeUiRenderSurface = "workspace-initial" | "conversation";
+type TempRuntimeUiMarkerKind = "initial" | "flow" | "message-blocks";
 
 type TempRuntimeUiRenderSource = {
   source: string;
   reason: string;
+  markerKind: TempRuntimeUiMarkerKind;
   surface: TempRuntimeUiRenderSurface;
   activeWorkspaceId: string;
   activeWorkspaceRoot: string;
@@ -271,6 +293,13 @@ type TempRuntimeUiRenderSource = {
   origin?: SessionSendOrigin;
   detail?: string;
   at: number;
+};
+
+type TempRuntimeUiMarkerOptions = Pick<
+  Partial<TempRuntimeUiRenderSource>,
+  "clientMessageId" | "origin" | "detail" | "markerKind"
+> & {
+  markerPayload?: Record<string, unknown>;
 };
 
 type ActiveSessionSwitchHandoff = {
@@ -339,6 +368,7 @@ export type SessionViewProps = {
   onLogout: () => Promise<void> | void;
   onSignIn: () => Promise<void> | void;
   vesloServerStatus: VesloServerStatus;
+  vesloServerConnection: VesloServerConnectionSnapshot;
   startupPreference: StartupPreference | null;
   hideTitlebar: boolean;
   vesloServerClient: VesloServerClient | null;
@@ -481,6 +511,8 @@ export type SessionViewProps = {
   historyUnavailable: SessionHistoryUnavailableView | null;
   historyUnavailableRetrying: boolean;
   retryUnavailableHistory: (sessionId: string) => Promise<void> | void;
+  retryAcceptedRunForSession: (sessionId: string, workspaceId?: string | null) => number;
+  retryTerminalTranscriptRecoveryForSession: (sessionId: string, workspaceId?: string | null) => number;
   hasEarlierMessages: boolean;
   loadingEarlierMessages: boolean;
   loadEarlierMessages: (sessionId: string) => Promise<void>;
@@ -556,6 +588,7 @@ export default function SessionView(props: SessionViewProps) {
   let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
   let sessionLayoutRootEl: HTMLDivElement | undefined;
+  const [sessionUiMutationRoot, setSessionUiMutationRoot] = createSignal<HTMLDivElement>();
   let scrollMessageIntoViewById: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null = null;
   const [isChatContainerReady, setIsChatContainerReady] = createSignal(false);
   let sessionMenuRef: HTMLDivElement | undefined;
@@ -1100,39 +1133,79 @@ export default function SessionView(props: SessionViewProps) {
   };
   const tempRuntimeUiSurface = (): TempRuntimeUiRenderSurface =>
     showWorkspaceSetupEmptyState() ? "workspace-initial" : "conversation";
+  const sessionUiDiagnosticEnabled = () => props.developerMode || sessionUiMutationTraceEnabled();
   const createTempRuntimeUiRenderSnapshot = (
     source: string,
     reason: string,
-    extras: Pick<Partial<TempRuntimeUiRenderSource>, "clientMessageId" | "origin" | "detail"> = {},
-  ): TempRuntimeUiRenderSource => ({
-    source,
-    reason,
-    surface: tempRuntimeUiSurface(),
-    activeWorkspaceId: props.activeWorkspaceId.trim(),
-    activeWorkspaceRoot: props.activeWorkspaceRoot.trim(),
-    workspacesHydrated: props.workspacesHydrated === true,
-    engineReady: props.engineReady !== false,
-    clientConnected: props.clientConnected,
-    activeWorkspaceHasRoutingEntry: props.activeWorkspaceHasRoutingEntry === true,
-    activeWorkspaceSessionsLoaded: props.activeWorkspaceSessionsLoaded === true,
-    selectedSessionId: props.selectedSessionId?.trim() || null,
-    currentSessionQueueKey: currentSessionQueueKey(),
-    messageCount: props.messages.length,
-    activePendingDraftKey: props.activePendingDraftKey ?? null,
-    ...extras,
-    at: Date.now(),
+    extras: TempRuntimeUiMarkerOptions = {},
+  ): TempRuntimeUiRenderSource => {
+    const { markerPayload: _markerPayload, ...snapshotExtras } = extras;
+    return {
+      source,
+      reason,
+      markerKind: snapshotExtras.markerKind ?? (source === "SessionView.initialRender" ? "initial" : "flow"),
+      surface: tempRuntimeUiSurface(),
+      activeWorkspaceId: props.activeWorkspaceId.trim(),
+      activeWorkspaceRoot: props.activeWorkspaceRoot.trim(),
+      workspacesHydrated: props.workspacesHydrated === true,
+      engineReady: props.engineReady !== false,
+      clientConnected: props.clientConnected,
+      activeWorkspaceHasRoutingEntry: props.activeWorkspaceHasRoutingEntry === true,
+      activeWorkspaceSessionsLoaded: props.activeWorkspaceSessionsLoaded === true,
+      selectedSessionId: props.selectedSessionId?.trim() || null,
+      currentSessionQueueKey: currentSessionQueueKey(),
+      messageCount: props.messages.length,
+      activePendingDraftKey: props.activePendingDraftKey ?? null,
+      ...snapshotExtras,
+      at: Date.now(),
+    };
+  };
+  const disabledTempRuntimeUiRenderSnapshot = (): TempRuntimeUiRenderSource => ({
+    source: "SessionView.diagnostics-disabled",
+    reason: "disabled",
+    markerKind: "initial",
+    surface: "conversation",
+    activeWorkspaceId: "",
+    activeWorkspaceRoot: "",
+    workspacesHydrated: false,
+    engineReady: false,
+    clientConnected: false,
+    activeWorkspaceHasRoutingEntry: false,
+    activeWorkspaceSessionsLoaded: false,
+    selectedSessionId: null,
+    currentSessionQueueKey: "",
+    messageCount: 0,
+    activePendingDraftKey: null,
+    at: 0,
   });
   // TEMP: runtime UI flicker diagnostic. Remove after duplicated workspace/conversation render handoff is identified.
   const [tempRuntimeUiRenderSource, setTempRuntimeUiRenderSource] = createSignal<TempRuntimeUiRenderSource>(
-    createTempRuntimeUiRenderSnapshot("SessionView.initialRender", "component-created"),
+    sessionUiDiagnosticEnabled()
+      ? createTempRuntimeUiRenderSnapshot("SessionView.initialRender", "component-created")
+      : disabledTempRuntimeUiRenderSnapshot(),
   );
   const markTempRuntimeUiRenderSource = (
     source: string,
     reason: string,
-    extras: Pick<Partial<TempRuntimeUiRenderSource>, "clientMessageId" | "origin" | "detail"> = {},
+    extras: TempRuntimeUiMarkerOptions = {},
   ) => {
-    if (!props.developerMode) return;
-    setTempRuntimeUiRenderSource(createTempRuntimeUiRenderSnapshot(source, reason, extras));
+    if (!sessionUiDiagnosticEnabled()) return;
+    const snapshot = createTempRuntimeUiRenderSnapshot(source, reason, extras);
+    setTempRuntimeUiRenderSource(snapshot);
+    if (sessionUiMutationTraceEnabled()) {
+      recordSendTrace("session-ui:render-source-mark", {
+        source: snapshot.source,
+        reason: snapshot.reason,
+        markerKind: snapshot.markerKind,
+        selectedSessionId: snapshot.selectedSessionId,
+        currentSessionQueueKey: snapshot.currentSessionQueueKey,
+        messageCount: snapshot.messageCount,
+        engineReady: snapshot.engineReady,
+        clientConnected: snapshot.clientConnected,
+        detail: snapshot.detail ?? null,
+        ...(extras.markerPayload ?? {}),
+      });
+    }
   };
   createEffect(
     on(
@@ -1164,6 +1237,7 @@ export default function SessionView(props: SessionViewProps) {
         activeWorkspaceSessionsLoaded,
         sessionKey,
       ]) => {
+        if (!sessionUiDiagnosticEnabled()) return;
         setTempRuntimeUiRenderSource((current) => ({
           ...current,
           surface: workspaceInitial ? "workspace-initial" : "conversation",
@@ -1605,6 +1679,7 @@ export default function SessionView(props: SessionViewProps) {
     !composerEntryDismissed(),
   );
   createEffect(() => {
+    if (!sessionUiDiagnosticEnabled()) return;
     const effectiveMessageCount = displayedEffectiveMessages().length;
     const workspaceSetupVisible = showWorkspaceSetupEmptyState();
     const composerEntryVisible = showComposerEntryState();
@@ -2122,7 +2197,170 @@ export default function SessionView(props: SessionViewProps) {
   const hasAbortableBackendRun = createMemo(() => runPresentation().abortable);
   const runPhase = createMemo(() => runPresentation().phase);
   const showRunIndicator = createMemo(() => runPresentation().showIndicator);
-  const showFooterRunIndicator = createMemo(() => showRunIndicator());
+  const recoveryNotice = createMemo(() => runPresentation().recoveryNotice ?? null);
+  const recoveryBlockedComposer = createMemo(() => runPresentation().composerMode === "recovery-blocked");
+  const showFooterRunIndicator = createMemo(() => showRunIndicator() || Boolean(recoveryNotice()));
+  const sessionUiStateFieldNames = [
+    "selectedSessionId",
+    "activeWorkspaceId",
+    "engineReady",
+    "clientConnected",
+    "sessionStatus",
+    "messageCount",
+    "effectiveMessageCount",
+    "workspaceSetupVisible",
+    "sessionLoadingVisible",
+    "composerEntryVisible",
+    "footerComposerVisible",
+    "runIndicatorVisible",
+    "runPhase",
+    "responseStarted",
+    "pendingDraftKey",
+    "sessionSwitchHandoffActive",
+    "loadingEarlierMessages",
+  ] as const;
+  createEffect(
+    on(
+      () =>
+        [
+          props.selectedSessionId?.trim() || null,
+          props.activeWorkspaceId.trim(),
+          props.engineReady !== false,
+          props.clientConnected,
+          props.sessionStatus,
+          props.messages.length,
+          displayedEffectiveMessages().length,
+          showWorkspaceSetupEmptyState(),
+          showSessionLoadingState(),
+          showComposerEntryState(),
+          showFooterComposerArea(),
+          showRunIndicator(),
+          runPhase(),
+          responseStarted(),
+          props.activePendingDraftKey,
+          activeSessionSwitchHandoffActive(),
+          props.loadingEarlierMessages,
+        ] as const,
+      (state, previous) => {
+        if (!sessionUiMutationTraceEnabled()) return;
+        const changedFields = previous
+          ? sessionUiStateFieldNames.filter((_, index) => state[index] !== previous[index])
+          : [...sessionUiStateFieldNames];
+        if (previous && changedFields.length === 0) return;
+        recordSendTrace("session-ui:state-change", {
+          changedFields,
+          selectedSessionId: state[0],
+          activeWorkspaceId: state[1],
+          engineReady: state[2],
+          clientConnected: state[3],
+          sessionStatus: state[4],
+          messageCount: state[5],
+          effectiveMessageCount: state[6],
+          workspaceSetupVisible: state[7],
+          sessionLoadingVisible: state[8],
+          composerEntryVisible: state[9],
+          footerComposerVisible: state[10],
+          runIndicatorVisible: state[11],
+          runPhase: state[12],
+          responseStarted: state[13],
+          pendingDraftKey: state[14],
+          sessionSwitchHandoffActive: state[15],
+          loadingEarlierMessages: state[16],
+        });
+      },
+    ),
+  );
+  createEffect(() => {
+    if (!sessionUiMutationTraceEnabled()) return;
+    const root = sessionUiMutationRoot();
+    if (!root || typeof MutationObserver === "undefined") return;
+
+    let frame: number | undefined;
+    let batchNumber = 0;
+    let recordCount = 0;
+    let childListCount = 0;
+    let attributeCount = 0;
+    let addedNodeCount = 0;
+    let removedNodeCount = 0;
+    const attributeNames = new Set<string>();
+    const targets: string[] = [];
+    const collect = (records: MutationRecord[]) => {
+      for (const record of records) {
+        recordCount += 1;
+        if (record.type === "childList") {
+          childListCount += 1;
+          addedNodeCount += record.addedNodes.length;
+          removedNodeCount += record.removedNodes.length;
+        } else if (record.type === "attributes") {
+          attributeCount += 1;
+          if (record.attributeName) attributeNames.add(record.attributeName);
+        }
+        if (targets.length < 8) {
+          const target = describeSessionUiMutationTarget(record.target);
+          if (!targets.includes(target)) targets.push(target);
+        }
+      }
+    };
+    const flush = (phase: "animation-frame" | "cleanup") => {
+      frame = undefined;
+      if (!recordCount) return;
+      const renderSource = untrack(tempRuntimeUiRenderSource);
+      recordSendTrace("session-ui:dom-mutation-batch", {
+        phase,
+        batchNumber: (batchNumber += 1),
+        recordCount,
+        childListCount,
+        attributeCount,
+        addedNodeCount,
+        removedNodeCount,
+        attributeNames: [...attributeNames].sort(),
+        targets: [...targets],
+        latestUiMarker: renderSource.source,
+        latestUiMarkerReason: renderSource.reason,
+        latestUiMarkerKind: renderSource.markerKind,
+        latestUiMarkerAt: renderSource.at,
+        latestUiMarkerAgeMs: renderSource.at > 0 ? Math.max(0, Date.now() - renderSource.at) : null,
+        selectedSessionId: renderSource.selectedSessionId,
+        currentSessionQueueKey: renderSource.currentSessionQueueKey,
+        messageCount: renderSource.messageCount,
+        effectiveMessageCount: renderSource.effectiveMessageCount ?? null,
+        engineReady: renderSource.engineReady,
+        clientConnected: renderSource.clientConnected,
+      });
+      recordCount = 0;
+      childListCount = 0;
+      attributeCount = 0;
+      addedNodeCount = 0;
+      removedNodeCount = 0;
+      attributeNames.clear();
+      targets.length = 0;
+    };
+    const observer = new MutationObserver((records) => {
+      collect(records);
+      if (frame !== undefined) return;
+      frame = window.requestAnimationFrame(() => flush("animation-frame"));
+    });
+    observer.observe(root, { attributes: true, childList: true, subtree: true });
+
+    onCleanup(() => {
+      collect(observer.takeRecords());
+      observer.disconnect();
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      flush("cleanup");
+    });
+  });
+  const retryAcceptedRunRecovery = () => {
+    const sessionId = props.selectedSessionId?.trim() ?? "";
+    const workspaceId = activeRunDiagnostic()?.workspaceId ?? null;
+    if (!sessionId) return;
+    props.retryAcceptedRunForSession(sessionId, workspaceId);
+  };
+  const retryTerminalTranscriptRecovery = () => {
+    const sessionId = props.selectedSessionId?.trim() ?? "";
+    const workspaceId = activeRunDiagnostic()?.workspaceId ?? null;
+    if (!sessionId) return;
+    props.retryTerminalTranscriptRecoveryForSession(sessionId, workspaceId);
+  };
   const operationalError = createMemo(() => props.error?.trim() || null);
   createEffect(() => {
     const sessionId = props.selectedSessionId;
@@ -3223,7 +3461,8 @@ export default function SessionView(props: SessionViewProps) {
         class="mb-3 rounded-lg border border-red-7/30 bg-red-1/80 px-3 py-2 font-mono text-[10px] leading-4 text-red-12"
         data-temp-runtime-ui-render-source={visibleSurface}
       >
-        TEMP UI render source: {tempRuntimeUiRenderSource().source} | reason: {tempRuntimeUiRenderSource().reason} |
+        TEMP UI marker: {tempRuntimeUiRenderSource().source} | kind: {tempRuntimeUiRenderSource().markerKind} |
+        reason: {tempRuntimeUiRenderSource().reason} |
         visible: {visibleSurface} | state: {tempRuntimeUiRenderSource().surface} | session:{" "}
         {tempRuntimeUiRenderSource().selectedSessionId ?? "none"} | key:{" "}
         {tempRuntimeUiRenderSource().currentSessionQueueKey} | messages: {tempRuntimeUiRenderSource().messageCount} |
@@ -3693,7 +3932,7 @@ export default function SessionView(props: SessionViewProps) {
         }}
         statusControlsProps={{
           clientConnected: props.clientConnected,
-          vesloServerStatus: props.vesloServerStatus,
+          vesloServerConnection: props.vesloServerConnection,
           runtimeAvailableWithoutClient: runtimeAvailableWithoutClient(),
           authenticatedUser: props.authenticatedUser,
           onOpenSettings: () => openSettings("general"),
@@ -3837,6 +4076,9 @@ export default function SessionView(props: SessionViewProps) {
         transcript={(
         <div
           data-testid="session-center-pane"
+          ref={(el) => {
+            setSessionUiMutationRoot(el);
+          }}
           class="flex-1 flex overflow-hidden"
         >
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
@@ -3924,6 +4166,7 @@ export default function SessionView(props: SessionViewProps) {
                         developerMode={props.developerMode}
                         busy={props.busy}
                         isStreaming={showRunIndicator()}
+                        recoveryBlocked={recoveryBlockedComposer()}
                         stopShortcutConfirmPending={escapeStopConfirmationPending()}
                         compactWidth={useCompactCenterColumn()}
                         onSend={handleSendPrompt}
@@ -4024,6 +4267,17 @@ export default function SessionView(props: SessionViewProps) {
             pendingMessageStateById={pendingMessageStateById()}
             editableUserMessage={editableUserMessage()}
             onEditUserMessage={handleEditUserMessage}
+            onMessageBlocksRecomputed={
+              sessionUiDiagnosticEnabled()
+                ? (trace) => {
+                    markTempRuntimeUiRenderSource("MessageList.messageBlocks", "recomputed", {
+                      markerKind: "message-blocks",
+                      detail: `revision=${trace.revision} blocks=${trace.blockCount} unstableKeys=${trace.unstableBlockKeyCount}`,
+                      markerPayload: { ...trace },
+                    });
+                  }
+                : undefined
+            }
             setScrollToMessageById={(handler) => {
               scrollMessageIntoViewById = handler;
             }}
@@ -4043,8 +4297,31 @@ export default function SessionView(props: SessionViewProps) {
                           runPhase() === "error" ? "bg-red-9" : "bg-gray-8 animate-pulse"
                         }`}
                       />
-                      <span class="truncate">{runDiagnosticLabel() || thinkingStatus() || runLabel()}</span>
-                      <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
+                      <span class="truncate">
+                        {recoveryNotice() === "connection-unavailable"
+                          ? tr("session.run_observation_exhausted")
+                          : recoveryNotice() === "transcript-unavailable"
+                            ? tr("session.run_transcript_unavailable")
+                            : runDiagnosticLabel() || thinkingStatus() || runLabel()}
+                      </span>
+                      <Show when={recoveryNotice()}>
+                        <button
+                          type="button"
+                          class="ml-auto shrink-0 rounded border border-red-8 px-2 py-0.5 text-[10px] font-medium text-red-11 hover:bg-red-2"
+                          onClick={() => {
+                            if (recoveryNotice() === "connection-unavailable") {
+                              retryAcceptedRunRecovery();
+                            } else {
+                              retryTerminalTranscriptRecovery();
+                            }
+                          }}
+                        >
+                          {tr("session.history_retry")}
+                        </button>
+                      </Show>
+                      <Show when={!recoveryNotice()}>
+                        <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
+                      </Show>
                     </div>
                   </div>
                 </div>
@@ -4201,6 +4478,7 @@ export default function SessionView(props: SessionViewProps) {
                 developerMode={props.developerMode}
                 busy={props.busy || aiAccessLoading()}
                 isStreaming={showRunIndicator()}
+                recoveryBlocked={recoveryBlockedComposer()}
                 stopShortcutConfirmPending={escapeStopConfirmationPending()}
                 compactTopSpacing={todoCount() > 0}
                 compactWidth={useCompactCenterColumn()}

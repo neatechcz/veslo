@@ -1,4 +1,8 @@
 import * as Sentry from "@sentry/browser";
+import {
+  normalizeVesloServerResponseDiagnostic,
+  VesloServerError,
+} from "./veslo-server/transport";
 
 type ErrorMonitoringPlatform = "desktop" | "web";
 export type ErrorMonitoringSeverity = "warning" | "error";
@@ -152,6 +156,17 @@ export function captureReportedError(
       context,
       severity,
     });
+
+    const responseDiagnostic =
+      error instanceof VesloServerError
+        ? normalizeVesloServerResponseDiagnostic(error.responseDiagnostic)
+        : undefined;
+    if (responseDiagnostic) {
+      scope.setTag("veslo.response_kind", responseDiagnostic.responseKind);
+      scope.setTag("veslo.http_status", String(responseDiagnostic.httpStatus));
+      scope.setTag("veslo.response_media_type", responseDiagnostic.mediaType);
+      scope.setContext("veslo.server_response", responseDiagnostic);
+    }
 
     if (error instanceof Error) {
       client.captureException(error);

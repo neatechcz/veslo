@@ -30,6 +30,7 @@ type RequestJsonOptions = {
   body?: unknown;
   timeoutMs?: number;
   extraHeaders?: Record<string, string>;
+  diagnosticOperation?: "session-archives:list";
 };
 
 export type ConversationsClientContext = {
@@ -67,6 +68,7 @@ export function createConversationsClient(context: ConversationsClientContext) {
         token,
         hostToken,
         extraHeaders: archiveHeaders,
+        diagnosticOperation: "session-archives:list",
       }),
 
     putArchive: (sessionId: string, payload: Omit<VesloSessionArchiveRecord, "sessionId">) =>

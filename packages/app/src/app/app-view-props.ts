@@ -31,6 +31,7 @@ import type {
 import type {
   VesloServerCapabilities,
   VesloServerClient,
+  VesloServerConnectionSnapshot,
   VesloServerDiagnostics,
   VesloServerSettings,
   VesloServerStatus,
@@ -312,6 +313,7 @@ export type AppViewPropsScope = {
   themeMode: Accessor<ThemeMode>;
   activeWorkspaceDisplay: Accessor<WorkspaceDisplay>;
   vesloServerStatus: Accessor<VesloServerStatus>;
+  vesloServerConnectionSnapshot: Accessor<VesloServerConnectionSnapshot>;
   vesloServerCanWriteSkills: Accessor<boolean>;
   vesloServerSkillRegistryAvailable: Accessor<boolean>;
   skillRegistryMaterializationAuthContext: () => VesloSkillRegistryAuthContext;
@@ -599,6 +601,8 @@ export type AppViewPropsScope = {
   selectedSessionHistoryUnavailable: () => SelectedSessionHistoryUnavailable | null;
   selectedSessionHistoryRetrying: () => boolean;
   retryUnavailableHistory: (sessionId: string) => Promise<void>;
+  retryAcceptedRunForSession: (sessionId: string, workspaceId?: string | null) => number;
+  retryTerminalTranscriptRecoveryForSession: (sessionId: string, workspaceId?: string | null) => number;
   selectedSessionHasEarlierMessages: () => boolean;
   selectedSessionLoadingEarlierMessages: () => boolean;
   loadEarlierMessages: (sessionID: string, chunk?: number) => Promise<void>;
@@ -659,6 +663,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     themeMode,
     activeWorkspaceDisplay,
     vesloServerStatus,
+    vesloServerConnectionSnapshot,
     vesloServerCanWriteSkills,
     vesloServerSkillRegistryAvailable,
     skillRegistryMaterializationAuthContext,
@@ -907,6 +912,8 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     selectedSessionHistoryUnavailable,
     selectedSessionHistoryRetrying,
     retryUnavailableHistory,
+    retryAcceptedRunForSession,
+    retryTerminalTranscriptRecoveryForSession,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
     loadEarlierMessages,
@@ -1048,6 +1055,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
   const dashboardProps = () => {
     const workspaceType = activeWorkspaceDisplay().workspaceType;
     const vesloStatus = vesloServerStatus();
+    const vesloConnection = vesloServerConnectionSnapshot();
     const dashboardAccess = resolveDashboardViewAccess({
       workspaceType,
       vesloServerStatus: vesloStatus,
@@ -1086,6 +1094,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       headerStatus: headerStatus(),
       error: error(),
       vesloServerStatus: vesloStatus,
+      vesloServerConnection: vesloConnection,
       vesloServerCanWriteSkills: vesloServerCanWriteSkills(),
       vesloServerSkillRegistryAvailable: vesloServerSkillRegistryAvailable(),
       vesloServerUrl: vesloServerUrl(),
@@ -1462,6 +1471,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     onLogout: logoutLocalDenAuth,
     onSignIn: startDesktopBrowserSignIn,
     vesloServerStatus: vesloServerStatus(),
+    vesloServerConnection: vesloServerConnectionSnapshot(),
     startupPreference: startupPreference(),
     hideTitlebar: hideTitlebar(),
     vesloServerClient: hydratedVesloServerClient(),
@@ -1585,6 +1595,8 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     historyUnavailable: selectedSessionHistoryUnavailable(),
     historyUnavailableRetrying: selectedSessionHistoryRetrying(),
     retryUnavailableHistory,
+    retryAcceptedRunForSession,
+    retryTerminalTranscriptRecoveryForSession,
     hasEarlierMessages: selectedSessionHasEarlierMessages(),
     loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
     loadEarlierMessages,

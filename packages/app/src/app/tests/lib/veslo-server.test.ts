@@ -280,6 +280,180 @@ test("session archive requests include the account id header", async () => {
   }
 });
 
+test("session archive non-JSON responses become typed, sanitized server errors", async () => {
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async () =>
+    new Response("Not Found", {
+      status: 404,
+      statusText: "upstream secret status",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      accountId: "usr_123",
+    });
+
+    await assert.rejects(
+      () => client.listSessionArchives(),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.name, "VesloServerError");
+        assert.equal(error.status, 404);
+        assert.equal(error.code, "non_json_response");
+        assert.equal(error.message, "The Veslo server returned a non-JSON response.");
+        assert.deepEqual(error.responseDiagnostic, {
+          requestMethod: "GET",
+          operation: "session-archives:list",
+          requestOrigin: "https://veslo.example",
+          requestPathname: "/session-archives",
+          httpStatus: 404,
+          mediaType: "text/plain",
+          responseContentType: "text/plain",
+          responseKind: "non_json",
+          responsePreview: "Not Found",
+        });
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("session archive transport preserves a bounded redacted non-JSON response preview", async () => {
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async () =>
+    new Response(
+      `<html>token=secret-token&workspace=private&url=https://upstream.example/failure?api_key=api-secret Authorization: Basic basic-secret ${"x".repeat(800)}</html>`,
+      {
+        status: 502,
+        headers: { "Content-Type": "text/html" },
+      },
+    );
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      accountId: "usr_123",
+    });
+
+    await assert.rejects(
+      () => client.listSessionArchives(),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.code, "non_json_response");
+        const diagnostic = error.responseDiagnostic;
+        assert.equal(diagnostic?.requestOrigin, "https://veslo.example");
+        assert.equal(diagnostic?.requestPathname, "/session-archives");
+        assert.equal(diagnostic?.responseContentType, "text/html");
+        assert.equal(diagnostic?.mediaType, "other");
+        assert.equal(diagnostic?.responseKind, "non_json");
+        assert.ok(diagnostic?.responsePreview?.includes("token=[redacted]"));
+        assert.ok((diagnostic?.responsePreview?.length ?? 0) <= 512);
+        assert.ok(diagnostic?.responsePreview?.endsWith("...[truncated]"));
+        assert.doesNotMatch(
+          JSON.stringify(diagnostic),
+          /secret-token|api-secret|api_key=api-secret|basic-secret/i,
+        );
+        assert.doesNotMatch(error.message, /secret-token|private/i);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("session archive transport classifies missing and malformed JSON responses", async () => {
+  const previousFetch = globalThis.fetch;
+  const responses = [
+    new Response('{"items":[]}', {
+      status: 200,
+      headers: { "Content-Type": "" },
+    }),
+    new Response("{not json", {
+      status: 200,
+      headers: { "Content-Type": "application/problem+json; charset=utf-8" },
+    }),
+  ];
+
+  globalThis.fetch = async () => responses.shift() as Response;
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      accountId: "usr_123",
+    });
+
+    await assert.rejects(
+      () => client.listSessionArchives(),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.code, "non_json_response");
+        assert.deepEqual(error.responseDiagnostic, {
+          requestMethod: "GET",
+          operation: "session-archives:list",
+          requestOrigin: "https://veslo.example",
+          requestPathname: "/session-archives",
+          httpStatus: 200,
+          mediaType: "missing",
+          responseContentType: "missing",
+          responseKind: "non_json",
+          responsePreview: '{"items":[]}',
+        });
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      () => client.listSessionArchives(),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.code, "malformed_json_response");
+        assert.equal(error.message, "The Veslo server returned malformed JSON.");
+        assert.deepEqual(error.responseDiagnostic, {
+          requestMethod: "GET",
+          operation: "session-archives:list",
+          requestOrigin: "https://veslo.example",
+          requestPathname: "/session-archives",
+          httpStatus: 200,
+          mediaType: "application/*+json",
+          responseContentType: "application/problem+json",
+          responseKind: "malformed_json",
+          responsePreview: "{not json",
+        });
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("empty successful JSON transport responses remain compatible with null", async () => {
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => new Response(null, { status: 204 });
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    assert.equal(await client.status(), null);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("deleteSessionArchive includes workspace scope when provided", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string | undefined }> = [];

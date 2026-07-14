@@ -332,7 +332,7 @@ test("passive conversation reads require explicit side-effect intent", () => {
   );
   assert.match(
     conversationServiceSource,
-    /policy\?\.intent === "write-follow-up" \|\|[\s\S]*policy\?\.intent === "write-control" \|\|[\s\S]*Boolean\(policy\?\.serverStartRecoveryKey\?\.trim\(\)\)/,
+    /policy\?\.intent === "write-follow-up" \|\|[\s\S]*policy\?\.intent === "write-control";/,
     "only write follow-up/control or explicit recovery policies may start or resolve the local server",
   );
   assert.match(

@@ -1,10 +1,11 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { LogIn, LogOut, Server, Settings, User } from "lucide-solid";
+import { Cpu, LogIn, LogOut, Server, Settings, User } from "lucide-solid";
 
-import type { VesloServerStatus } from "../lib/veslo-server";
+import type { VesloServerConnectionSnapshot } from "../lib/veslo-server";
 import { readDenAuth, resolveAuthenticatedDenUserLabel, subscribeDenAuthChanges } from "../lib/den-auth";
 import {
   getUnifiedStatusMeta,
+  getRuntimeReadinessMeta,
   resolveConnectedUserLabel,
   getVesloStatusMeta,
 } from "./sidebar-status-controls.model";
@@ -12,7 +13,7 @@ import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n
 
 type SidebarStatusControlsProps = {
   clientConnected: boolean;
-  vesloServerStatus: VesloServerStatus;
+  vesloServerConnection: VesloServerConnectionSnapshot;
   runtimeAvailableWithoutClient?: boolean;
   authenticatedUser?: string | null;
   onOpenSettings: () => void;
@@ -77,7 +78,12 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
     });
   });
 
-  const vesloStatusMeta = createMemo(() => getVesloStatusMeta(props.vesloServerStatus));
+  const vesloStatusMeta = createMemo(() =>
+    getVesloStatusMeta(props.vesloServerConnection.serverReachability)
+  );
+  const runtimeReadinessMeta = createMemo(() =>
+    getRuntimeReadinessMeta(props.vesloServerConnection.runtimeReadiness)
+  );
 
   const persistedAuthenticatedUserLabel = createMemo(() => {
     denAuthRevision();
@@ -96,7 +102,7 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
   const unifiedStatusMeta = createMemo(() =>
     getUnifiedStatusMeta(
       props.clientConnected,
-      props.vesloServerStatus,
+      props.vesloServerConnection.serverReachability,
       props.runtimeAvailableWithoutClient ?? false,
       isLoggedIn(),
     )
@@ -161,6 +167,18 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
                     {vesloStatusMeta().label}
                   </span>
                 </div>
+                <Show when={runtimeReadinessMeta()}>
+                  <div class="flex items-center gap-1.5 text-xs text-gray-10">
+                    <Cpu size={12} class="text-gray-9" />
+                    <span>{__vesloT("ui.literal.engine_runtime_d5h13b", __vesloCurrentLocale())}</span>
+                    <span
+                      data-testid="sidebar-runtime-readiness-status"
+                      class={`ml-auto ${runtimeReadinessMeta()?.text ?? ""}`}
+                    >
+                      {runtimeReadinessMeta()?.label}
+                    </span>
+                  </div>
+                </Show>
               </div>
             </div>
           </Show>

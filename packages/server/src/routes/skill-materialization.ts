@@ -224,6 +224,40 @@ function isWorkspaceSkillRegistryNotFound(error: unknown): error is ApiError {
   return details.registryResource === undefined || details.registryResource === "workspace-skill-set";
 }
 
+function isPersonalGlobalInstallationsUnavailable(error: unknown): error is ApiError {
+  if (!(error instanceof ApiError) || error.status !== 404 || error.code !== "skill_registry_not_found") {
+    return false;
+  }
+  const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
+    ? error.details as Record<string, unknown>
+    : {};
+  return details.registryAction === "list" &&
+    details.registryResource === "skill-installations" &&
+    details.registryScope === "personal-global" &&
+    details.source === "personal" &&
+    details.target === "personal-global";
+}
+
+async function listPersonalGlobalInstallations(
+  registryInput: ReturnType<typeof skillRegistryRequestInput>,
+) {
+  try {
+    return await listRegistrySkillInstallations({
+      ...registryInput,
+      source: "personal",
+      target: "personal-global",
+    });
+  } catch (error) {
+    // Older registries can expose workspace skill sets without supporting
+    // optional personal-global installations. Required workspace skills must
+    // still be materialized, so an absent list route means an empty list.
+    if (isPersonalGlobalInstallationsUnavailable(error)) {
+      return { installations: [], nextCursor: null };
+    }
+    throw error;
+  }
+}
+
 function isSkillRegistryApiError(error: unknown): error is ApiError {
   return error instanceof ApiError && error.code.startsWith("skill_registry_");
 }
@@ -491,11 +525,7 @@ async function fetchRegistryWorkspaceMaterializations(
     await addRegistryInstallation(installation, workspace);
   }
 
-  const personalGlobalInstallations = await listRegistrySkillInstallations({
-    ...registryInput,
-    source: "personal",
-    target: "personal-global",
-  });
+  const personalGlobalInstallations = await listPersonalGlobalInstallations(registryInput);
   if (personalGlobalInstallations.installations.length > 0) {
     personalGlobalSyncRequired = true;
   }
@@ -595,11 +625,7 @@ async function fetchRegistryPersonalGlobalMaterializations(
   }
 
   const registryInput = skillRegistryRequestInput(ctx);
-  const installations = await listRegistrySkillInstallations({
-    ...registryInput,
-    source: "personal",
-    target: "personal-global",
-  });
+  const installations = await listPersonalGlobalInstallations(registryInput);
 
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];

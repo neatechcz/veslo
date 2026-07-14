@@ -90,7 +90,7 @@ import { createSessionFlowFacade } from "./context/session-flow-facade";
 import { createSessionFlowProgressPresenter } from "./context/session-flow-progress-presenter";
 import { createSidebarSessionActivityTokenModel } from "./context/sidebar-session-activity-token";
 import { projectSidebarSessionActivity } from "./context/sidebar-session-activity-projection";
-import { buildRecentRows } from "./components/session/workspace-session-list-model";
+import { buildRecentRows, sidebarSessionOpenTargetForRow } from "./components/session/workspace-session-list-model";
 import { createComposerTargetController } from "./context/composer-target-controller";
 import { createAppShellEnvironment } from "./context/app-shell-environment";
 import { createFeedbackWorkflow } from "./context/feedback-workflow";
@@ -559,6 +559,7 @@ export default function App() {
     vesloServerUrl,
     vesloServerStatus,
     setVesloServerStatus,
+    vesloServerConnectionSnapshot,
     vesloServerCapabilities,
     setVesloServerCapabilitiesStable,
     vesloServerRecentlyReachable,
@@ -969,7 +970,7 @@ export default function App() {
     vesloServerStatus,
     isTauriRuntime,
     startupPreference,
-    ensureLocalVesloServerRunning: () => ensureLocalVesloServerRunning(),
+    ensureLocalVesloServerRunning: (options) => ensureLocalVesloServerRunning(options),
     workspaces: () => workspaceStore.workspaces(),
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId().trim(),
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
@@ -1014,6 +1015,8 @@ export default function App() {
     abortConversationFromVesloWriteApi,
     resolveConversationRunForSession,
     readConversationRunStatus,
+    recoverAcceptedConversationRunStatus,
+    recoverAcceptedConversationTranscript,
     recoverConversationTranscript,
   } = conversationService;
   const sessionStore = createSessionStore({
@@ -1099,7 +1102,6 @@ export default function App() {
         sessionId,
         limit,
         transcriptDirectory || undefined,
-        { activeVisibleSelectedSession: selectedSessionId()?.trim() === sessionId.trim() },
       );
       if (!snapshot) {
         return { status: "unavailable" as const, scope, reason: "veslo-read-api-unavailable" };
@@ -1122,7 +1124,13 @@ export default function App() {
     },
     resolveConversationRunForSession,
     readConversationRunStatus,
+    recoverAcceptedConversationRunStatus,
+    recoverAcceptedConversationTranscript,
     recoverConversationTranscript,
+    lifecycleRecoveryDiagnosticContext: () => ({
+      appWorkspaceId: workspaceStore.activeWorkspaceId().trim() || null,
+      connectionSnapshot: vesloServerConnectionSnapshot(),
+    }),
     // VSLO-86 — selectSession uses this for active-workspace
     // runtime readiness and live recovery decisions. Ordinary browse/live
     // transcript policy is gated by shouldBrowseSessionFromDb and
@@ -1168,6 +1176,8 @@ export default function App() {
     setSessions,
     setSessionStatusById,
     admitAcceptedConversationRun,
+    retryAcceptedRunForSession,
+    retryTerminalTranscriptRecoveryForSession,
     setMessages,
     setTodos,
     setPendingPermissions,
@@ -1182,6 +1192,14 @@ export default function App() {
   const [sidebarActivityTokenByScopedSessionKey, setSidebarActivityTokenByScopedSessionKey] = createSignal({});
   const sidebarActivityTokenModel = createSidebarSessionActivityTokenModel(
     setSidebarActivityTokenByScopedSessionKey,
+    (token) => {
+      recordSendWorkflowTrace("sidebar-session-activity", "sidebar-session-activity:token-pruned", {
+        tokenId: token.id,
+        generation: token.generation,
+        runId: token.runId,
+        aliases: token.aliases,
+      });
+    },
   );
 
   const [e2eFolderAccessPermissionIds, setE2eFolderAccessPermissionIds] = createSignal<Set<string>>(
@@ -2917,8 +2935,11 @@ export default function App() {
     ensureSessionInWorkspaceSidebar,
   } = sidebarWorkspaceSessions;
 
+  const sidebarSessionActivityRows = createMemo(() =>
+    buildRecentRows(sidebarWorkspaceGroups(), workspaceStore.isPrivateWorkspacePath),
+  );
   const sidebarSessionActivityShadow = createMemo(() => projectSidebarSessionActivity({
-    rows: buildRecentRows(sidebarWorkspaceGroups(), workspaceStore.isPrivateWorkspacePath),
+    rows: sidebarSessionActivityRows(),
     sessionStatusById: activeSessionStatusById(),
     workspaceBusy: busySessionByWorkspaceId(),
     diagnostics: conversationRunDiagnosticsBySessionKey(),
@@ -3037,11 +3058,28 @@ export default function App() {
     sidebarWorkspaceGroups,
     reportError,
     setError,
+    getError: error,
   });
   const archivedSessionIds = sessionArchiveStore.archivedSessionIds;
   const sessionArchives = sessionArchiveStore.sessionArchives;
   const archiveSidebarSession = sessionArchiveStore.archiveSession;
   const unarchiveSession = sessionArchiveStore.unarchiveSession;
+
+  const finalSidebarSessionActivityRows = createMemo(() => {
+    const archived = new Set(archivedSessionIds());
+    return sidebarSessionActivityRows().filter((row) => {
+      const target = sidebarSessionOpenTargetForRow(row);
+      const archiveKey = buildArchivedSidebarSessionKey({
+        workspaceId: row.workspace.id,
+        sessionId: row.session.id,
+        directory: target.directory,
+      });
+      return !archiveKey || !archived.has(archiveKey);
+    });
+  });
+  createEffect(() => {
+    sidebarActivityTokenModel.reconcileFinalRows(finalSidebarSessionActivityRows());
+  });
 
   const archivedSessionMatchesSidebarTarget = (
     workspaceId: string,
@@ -4541,6 +4579,7 @@ export default function App() {
     busyLabel,
   });
   const sidebarSessionActivityByRowKey = sidebarSessionActivityShadow;
+
   const appViewProps = createAppViewProps({
     connectedVersion,
     developerMode,
@@ -4580,6 +4619,7 @@ export default function App() {
     themeMode,
     activeWorkspaceDisplay,
     vesloServerStatus,
+    vesloServerConnectionSnapshot,
     vesloServerCanWriteSkills,
     vesloServerSkillRegistryAvailable,
     skillRegistryMaterializationAuthContext,
@@ -4828,6 +4868,8 @@ export default function App() {
     selectedSessionHistoryUnavailable,
     selectedSessionHistoryRetrying,
     retryUnavailableHistory,
+    retryAcceptedRunForSession,
+    retryTerminalTranscriptRecoveryForSession,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
     loadEarlierMessages,

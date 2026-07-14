@@ -1,6 +1,7 @@
 import { logUiEvent } from "./tauri";
 
 const SEND_WORKFLOW_TRACE_LIMIT = 2_000;
+const SUPPORT_DIAGNOSTICS_STORAGE_KEY = "veslo.supportDiagnostics";
 
 type SendWorkflowTraceRoot = typeof window & {
   __vesloActiveSendTraceId?: string | null;
@@ -18,6 +19,12 @@ const truthy = (value: unknown): boolean => {
   return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 };
 
+const falsey = (value: unknown): boolean => {
+  if (value === false || value === 0) return true;
+  if (typeof value !== "string") return false;
+  return ["0", "false", "no", "off"].includes(value.trim().toLowerCase());
+};
+
 const perfNow = () =>
   typeof performance !== "undefined" && typeof performance.now === "function"
     ? performance.now()
@@ -33,8 +40,34 @@ const envTraceEnabled = () => {
   }
 };
 
+const supportDiagnosticsOverride = (): boolean | null => {
+  try {
+    if (typeof window === "undefined") return null;
+    const stored = window.localStorage?.getItem(SUPPORT_DIAGNOSTICS_STORAGE_KEY);
+    if (stored === "1") return true;
+    if (stored === "0") return false;
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const envDiagnosticsDisabled = () => {
+  try {
+    return falsey(import.meta.env?.VITE_VESLO_RUNTIME_DIAGNOSTICS);
+  } catch {
+    return false;
+  }
+};
+
+const runtimeDiagnosticsDisabled = () => {
+  const override = supportDiagnosticsOverride();
+  return override === false || (override == null && envDiagnosticsDisabled());
+};
+
 function sendWorkflowTraceEnabled(options?: { developerMode?: boolean }): boolean {
-  if (options?.developerMode === false) return false;
+  if (runtimeDiagnosticsDisabled()) return false;
+  if (options?.developerMode === false && supportDiagnosticsOverride() !== true) return false;
   if (typeof window === "undefined") return envTraceEnabled();
   try {
     const root = window as SendWorkflowTraceRoot;

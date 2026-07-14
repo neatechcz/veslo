@@ -39,6 +39,16 @@ export function projectSidebarSessionActivity(input: {
     const token = aliases.map((key) => input.tokens[key]).find(Boolean) ?? null;
     const diagnostic = matchingDiagnostic(input.diagnostics, aliases);
     const correlated = diagnostic && token?.kind === "durable" && token.runId === diagnostic.runId;
+    if (
+      diagnostic &&
+      diagnostic.stale !== true &&
+      correlated &&
+      (diagnostic.recoveryState === "connection-unavailable" ||
+        diagnostic.recoveryState === "transcript-unavailable")
+    ) {
+      next[row.rowKey] = { active: false, phase: "error", source: "lifecycle" };
+      continue;
+    }
     if (diagnostic && diagnostic.stale !== true && correlated && terminalLifecycle.has(diagnostic.status)) {
       next[row.rowKey] = diagnostic.status === "failed"
         ? { active: false, phase: "error", source: "terminal-lifecycle" }

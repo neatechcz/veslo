@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 
 import type { AiGatewayDb } from "../db/index.js";
-import { auditEventTable, platformModelPolicyTable } from "../db/schema.js";
-import { isAiGatewayProvider } from "../providers/ids.js";
+import { auditEventTable, platformModelPolicyTable, userAiAccessPolicyTable } from "../db/schema.js";
+import { isAiGatewayProvider, type AiGatewayProvider } from "../providers/ids.js";
 import type {
   PlatformModelPolicyRecord,
   PlatformModelPolicyMutation,
@@ -54,6 +54,14 @@ export class MySqlPlatformModelPolicyRepository implements PlatformModelPolicyRe
 
     return this.db.transaction(async (tx) => {
       await tx
+        .select()
+        .from(platformModelPolicyTable)
+        .where(eq(platformModelPolicyTable.id, PLATFORM_POLICY_ID))
+        .limit(1)
+        .for("update");
+      await assertNoEnabledAssignmentsIncompatibleWithProvider(tx, activeModel.provider);
+
+      await tx
         .insert(platformModelPolicyTable)
         .values({
           id: PLATFORM_POLICY_ID,
@@ -82,6 +90,16 @@ export class PlatformModelPolicyAuditPersistenceError extends Error {
   constructor(cause: unknown) {
     super("model_policy_audit_failed", { cause });
     this.name = "PlatformModelPolicyAuditPersistenceError";
+  }
+}
+
+export class PlatformModelPolicyAssignmentConflictError extends Error {
+  readonly code = "model_policy_active_provider_has_incompatible_assignments";
+  readonly status = 409;
+
+  constructor() {
+    super("model_policy_active_provider_has_incompatible_assignments");
+    this.name = "PlatformModelPolicyAssignmentConflictError";
   }
 }
 
@@ -115,6 +133,7 @@ export class MySqlPlatformModelPolicyMutation implements PlatformModelPolicyMuta
         active_model: activeModel.model,
         updated_at: now,
       };
+      await assertNoEnabledAssignmentsIncompatibleWithProvider(tx, activeModel.provider);
 
       await tx
         .insert(platformModelPolicyTable)
@@ -153,6 +172,25 @@ export class MySqlPlatformModelPolicyMutation implements PlatformModelPolicyMuta
 
       return saved;
     }, { isolationLevel: "serializable" });
+  }
+}
+
+async function assertNoEnabledAssignmentsIncompatibleWithProvider(
+  db: Pick<AiGatewayDb, "select">,
+  provider: AiGatewayProvider,
+): Promise<void> {
+  const incompatibleAssignments = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(userAiAccessPolicyTable)
+    .where(and(
+      eq(userAiAccessPolicyTable.enabled, 1),
+      or(
+        isNull(userAiAccessPolicyTable.provider),
+        ne(userAiAccessPolicyTable.provider, provider),
+      ),
+    ));
+  if (Number(incompatibleAssignments[0]?.count ?? 0) > 0) {
+    throw new PlatformModelPolicyAssignmentConflictError();
   }
 }
 

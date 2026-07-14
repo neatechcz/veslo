@@ -123,9 +123,9 @@ export class CachedCodexCredentialStatusProvider implements CodexCredentialStatu
   constructor(deps: CachedCodexCredentialStatusProviderDeps) {
     this.loadCredentialAuthJson = deps.loadCredentialAuthJson;
     this.saveCredentialAuthJson = deps.saveCredentialAuthJson ?? null;
+    this.model = deps.model?.trim() || CODEX_DEFAULT_MODEL;
     this.ttlMs = deps.ttlMs ?? parseTimeoutMs(process.env.AI_GATEWAY_CODEX_STATUS_TTL_MS, 5 * 60 * 1000);
     this.now = deps.now ?? (() => new Date());
-    this.model = deps.model?.trim() || CODEX_DEFAULT_MODEL;
     this.probe =
       deps.probe ??
       ((input) =>

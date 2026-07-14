@@ -32,16 +32,14 @@ Session store ownership map:
 - `packages/app/src/app/context/session-store-model.ts`: pure session/message/part ordering,
   command display aliases, placeholder messages, and synthetic error-turn modeling.
 - `packages/app/src/app/context/session-transcript-controller.ts`: transcript hydration, message
-  pagination, deletion tracking, and freshness. Durable transcript ingest remains server-owned.
-- `packages/app/src/app/context/session-lifecycle-recovery.ts`: exact accepted-run observation,
-  terminal transcript recovery, scoped run diagnostics, and bounded reconnect/reselection recovery.
+  pagination, live/background transcript ingest, deletion tracking, and freshness.
 - `packages/app/src/app/context/session-runtime-prompts.ts`: permission/question refresh, active
   prompt selection, per-workspace prompt aggregation, reply routing, and stale route release.
 - `packages/app/src/app/context/session-selection-controller.ts`: session list loading, selected
   session lifecycle, offline transcript fallback, directory filtering, rename, and load-earlier.
 - `packages/app/src/app/context/session-event-stream.ts`: SSE stream fan-out, active/background
   event application, event coalescing, reconnect catch-up, unread assistant observation, and
-  lifecycle/transcript freshness observations. It does not own durable transcript ingest.
+  background transcript persistence triggers.
 - `packages/app/src/app/context/session-workspace-cache.ts`: workspace snapshot save/load/clear,
   selected-session validation, transcript metadata restore, and snapshot eviction.
 - `packages/app/src/app/context/session-reconnect.ts`: outage snapshot and reconnect notice rules.
@@ -162,16 +160,6 @@ If an existing-conversation server-submit transport loses its response, Veslo re
 idempotent `clientMessageId` once. A second transport failure is shown as an unconfirmed-delivery
 warning, not as an editable retry with a fresh id. While any transient local submission remains
 unresolved, a new normal send stays in Composer and is not dispatched without its own local owner.
-
-Every validated immediate `submitted` result is also admitted to the app's existing lifecycle
-recovery controller with the materialized UI session id, captured workspace/directory, conversation
-id, OpenCode session id, run id, and client message id. This exact-run observation is the correctness
-fallback when frontend OpenCode SSE is missed. A durable terminal result recovers the exact
-transcript and adopts the returned snapshot through the normal transcript controller, including for
-the currently selected session. If bounded observation is exhausted, Veslo keeps the accepted run
-identity, shows a scoped unverified-status diagnostic, stops polling, and retries only after a
-relevant lifecycle event, reconnect, or explicit open/reselect of that exact session; exhaustion
-never fabricates `idle` or a terminal run result.
 
 Main source of truth:
 
@@ -358,9 +346,7 @@ Codex limit exhaustion is temporary ineligibility, not a credential health failu
 
 When the gateway runs a Codex status probe from stored OAuth auth JSON, the probe uses a temporary Codex home. If Codex refreshes `auth.json` during that probe, the gateway persists the refreshed auth JSON back into the encrypted credential secret before deleting the temporary home. This keeps future probes from reusing a refresh token that Codex has already rotated.
 
-The operator credential probe is exhaustive rather than eligibility-filtered: it includes every non-deleted Codex credential, including unhealthy credentials, and checks them sequentially through one shared status provider. A failed credential is recorded without stopping later probes. Probe results are secret-safe, while any rotated auth material is persisted through the encrypted credential store. The probe does not mutate user assignments or the global platform model policy.
-
-User managed-AI access records own only enablement, provider, credential assignment, and assignment origin. The gateway composes the read-only `effectiveModel` from the current platform model policy, so historical per-user model columns cannot influence routing or API responses. Admin writes that still include legacy per-user model fields fail with `user_model_policy_not_supported`, and enabled assignments must use the active model's provider. Available assignment options and admin writes also require the selected credential itself to prove support for the complete active model reference; authoritative incompatibility is rejected without a write, while transient capability lookup failure fails closed as a service error.
+User managed-AI access records own only enablement, provider, credential assignment, and assignment origin. The gateway composes the read-only `effectiveModel` from the current platform model policy, so historical per-user model columns cannot influence routing or API responses. Admin writes that still include legacy per-user model fields fail with `user_model_policy_not_supported`, and enabled assignments must use the active model's provider. Platform model-policy writes and AI-access assignment writes serialize on the singleton model-policy row before mutating, then reject any enabled assignment/provider combination that would strand users behind `provider_not_assigned`. Readiness reports enabled assignment/provider mismatches as `ai_access_policy_provider_mismatch` instead of declaring the gateway ready. Available assignment options and admin writes also require the selected credential itself to prove support for the complete active model reference; authoritative incompatibility is rejected without a write, while transient capability lookup failure fails closed as a service error.
 
 An assigned Codex credential is repaired on the next Codex request when it is exhausted, unavailable, missing, or invalid for the assigned provider. Standalone AI Gateway can update either an `auto_assigned` or `admin_assigned` assignment to another healthy eligible Codex credential before routing, preserving enablement and the original assignment origin. Model compatibility is evaluated only against the platform active model supplied to the repair operation; rotation neither reads nor writes historical per-user model columns. If no replacement exists, the request fails explicitly and the stored assignment is kept. OpenAI-compatible credentials remain hard constraints because the assigned credential determines the upstream base URL and API key.
 

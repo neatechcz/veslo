@@ -1,8 +1,8 @@
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 
 import type { AiGatewayDb } from "../db/index.js";
-import { auditEventTable, userAiAccessPolicyTable } from "../db/schema.js";
+import { auditEventTable, platformModelPolicyTable, userAiAccessPolicyTable } from "../db/schema.js";
 import { isAiGatewayProvider } from "../providers/ids.js";
 import type {
   AiAccessAssignmentOrigin,
@@ -23,6 +23,24 @@ export class AiAccessAuditPersistenceError extends Error {
   }
 }
 
+export class AiAccessModelPolicyUnavailableError extends Error {
+  readonly status = 503;
+
+  constructor() {
+    super("platform_model_policy_not_configured");
+    this.name = "AiAccessModelPolicyUnavailableError";
+  }
+}
+
+export class AiAccessProviderMismatchError extends Error {
+  readonly status = 409;
+
+  constructor() {
+    super("ai_access_provider_mismatch");
+    this.name = "AiAccessProviderMismatchError";
+  }
+}
+
 export class MySqlAiAccessMutation implements AiAccessMutation {
   constructor(private readonly db: AiGatewayDb) {}
 
@@ -30,6 +48,11 @@ export class MySqlAiAccessMutation implements AiAccessMutation {
     input: UpsertUserAiAccessWithAuditInput,
   ): Promise<UserAiAccessPolicyRecord> {
     return this.db.transaction(async (tx) => {
+      const activeProvider = await lockPlatformActiveProvider(tx);
+      if (input.enabled && input.provider !== activeProvider) {
+        throw new AiAccessProviderMismatchError();
+      }
+
       const rows = await tx
         .select()
         .from(userAiAccessPolicyTable)
@@ -114,7 +137,22 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
     const rows = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(userAiAccessPolicyTable)
-      .where(and(eq(userAiAccessPolicyTable.enabled, 1), isNotNull(userAiAccessPolicyTable.provider)));
+      .where(eq(userAiAccessPolicyTable.enabled, 1));
+
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  async countEnabledPoliciesIncompatibleWithProvider(provider: AiAccessProvider): Promise<number> {
+    const rows = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(userAiAccessPolicyTable)
+      .where(and(
+        eq(userAiAccessPolicyTable.enabled, 1),
+        or(
+          isNull(userAiAccessPolicyTable.provider),
+          ne(userAiAccessPolicyTable.provider, provider),
+        ),
+      ));
 
     return Number(rows[0]?.count ?? 0);
   }
@@ -131,56 +169,69 @@ export class MySqlAiAccessRepository implements AiAccessRepository {
   }
 
   async upsertUserAiAccess(input: UpsertUserAiAccessPolicyInput): Promise<UserAiAccessPolicyRecord> {
-    const existing = await this.getUserAiAccess(input.userId);
-    const now = new Date();
-    const assignmentOrigin = parseAssignmentOrigin(input.assignmentOrigin);
+    return this.db.transaction(async (tx) => {
+      const activeProvider = await lockPlatformActiveProvider(tx);
+      if (input.enabled && input.provider !== activeProvider) {
+        throw new AiAccessProviderMismatchError();
+      }
 
-    if (existing) {
-      await this.db
-        .update(userAiAccessPolicyTable)
-        .set({
-          enabled: input.enabled ? 1 : 0,
+      const rows = await tx
+        .select()
+        .from(userAiAccessPolicyTable)
+        .where(eq(userAiAccessPolicyTable.user_id, input.userId))
+        .limit(1)
+        .for("update");
+      const existing = rows[0] ? mapUserAiAccessPolicy(rows[0]) : null;
+      const now = new Date();
+      const assignmentOrigin = parseAssignmentOrigin(input.assignmentOrigin);
+
+      if (existing) {
+        await tx
+          .update(userAiAccessPolicyTable)
+          .set({
+            enabled: input.enabled ? 1 : 0,
+            provider: input.provider,
+            credential_id: input.credentialId,
+            assignment_origin: assignmentOrigin,
+            updated_at: now,
+          })
+          .where(eq(userAiAccessPolicyTable.user_id, input.userId));
+
+        return {
+          ...existing,
+          enabled: input.enabled,
           provider: input.provider,
-          credential_id: input.credentialId,
-          assignment_origin: assignmentOrigin,
-          updated_at: now,
-        })
-        .where(eq(userAiAccessPolicyTable.user_id, input.userId));
+          credentialId: input.credentialId,
+          assignmentOrigin,
+          updatedAt: now,
+        };
+      }
+
+      const id = `ai_access_${randomUUID()}`;
+      await tx.insert(userAiAccessPolicyTable).values({
+        id,
+        user_id: input.userId,
+        enabled: input.enabled ? 1 : 0,
+        provider: input.provider,
+        credential_id: input.credentialId,
+        default_model: null,
+        allowed_models_json: "[]",
+        assignment_origin: assignmentOrigin,
+        created_at: now,
+        updated_at: now,
+      });
 
       return {
-        ...existing,
+        id,
+        userId: input.userId,
         enabled: input.enabled,
         provider: input.provider,
         credentialId: input.credentialId,
         assignmentOrigin,
+        createdAt: now,
         updatedAt: now,
       };
-    }
-
-    const id = `ai_access_${randomUUID()}`;
-    await this.db.insert(userAiAccessPolicyTable).values({
-      id,
-      user_id: input.userId,
-      enabled: input.enabled ? 1 : 0,
-      provider: input.provider,
-      credential_id: input.credentialId,
-      default_model: null,
-      allowed_models_json: "[]",
-      assignment_origin: assignmentOrigin,
-      created_at: now,
-      updated_at: now,
-    });
-
-    return {
-      id,
-      userId: input.userId,
-      enabled: input.enabled,
-      provider: input.provider,
-      credentialId: input.credentialId,
-      assignmentOrigin,
-      createdAt: now,
-      updatedAt: now,
-    };
+    }, { isolationLevel: "serializable" });
   }
 }
 
@@ -199,6 +250,20 @@ function mapUserAiAccessPolicy(row: typeof userAiAccessPolicyTable.$inferSelect)
 
 function parseProvider(value: string | null): AiAccessProvider | null {
   return isAiGatewayProvider(value) ? value : null;
+}
+
+async function lockPlatformActiveProvider(tx: Pick<AiGatewayDb, "select">): Promise<AiAccessProvider> {
+  const rows = await tx
+    .select({ activeProvider: platformModelPolicyTable.active_provider })
+    .from(platformModelPolicyTable)
+    .where(eq(platformModelPolicyTable.id, "platform"))
+    .limit(1)
+    .for("update");
+  const activeProvider = parseProvider(rows[0]?.activeProvider ?? null);
+  if (!activeProvider) {
+    throw new AiAccessModelPolicyUnavailableError();
+  }
+  return activeProvider;
 }
 
 function parseAssignmentOrigin(value: string | null | undefined): AiAccessAssignmentOrigin {

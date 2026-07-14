@@ -45,6 +45,11 @@ test("active background session rows render a loading spinner", () => {
   );
   assert.match(source, /const rowForcesProjectOpen = \(row: FlatSessionRow\) =>[\s\S]*return isProjectedRowActive\(row\);/);
 
+  const activityBindings = source.match(
+    /classList=\{\{ "w-\[11px\] opacity-100": isSessionActive\(\), "w-0 opacity-0": !isSessionActive\(\) \}\}/g,
+  ) ?? [];
+  assert.equal(activityBindings.length, 2, "Recent and grouped rows should gate their spinner through the shared projection helper");
+
   const spinnerUses =
     source.match(/<Loader2 size=\{11\} class="shrink-0 animate-spin text-amber-10" \/>/g) ?? [];
   assert.equal(spinnerUses.length, 2, "Recent and grouped session rows should both render a loading spinner");

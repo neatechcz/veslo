@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
-import { buildProgressRenderBlocks } from "../../../components/session/progress-grouping-model.js";
+import {
+  buildProgressRenderBlocks,
+  progressRenderBlockEntries,
+  progressRenderBlockKey,
+} from "../../../components/session/progress-grouping-model.js";
+import type { ProgressRenderBlock } from "../../../components/session/progress-grouping-model.js";
 import type { MessageWithParts } from "../../../types";
 
 function message(id: string, role: "user" | "assistant", parts: Part[]): MessageWithParts {
@@ -113,6 +118,67 @@ test("keeps progress group ids stable as later assistant activity joins the same
   if (initialGroup?.kind !== "progress-group" || updatedGroup?.kind !== "progress-group") return;
 
   assert.equal(updatedGroup.id, initialGroup.id);
+  assert.equal(progressRenderBlockKey(updatedGroup), progressRenderBlockKey(initialGroup));
+});
+
+test("derives semantic keys without depending on fresh block object identity", () => {
+  const initial = buildProgressRenderBlocks({
+    messages: [message("u1", "user", [{ type: "text", text: "Fix it" } as any])],
+    isStreaming: false,
+    showThinking: false,
+    developerMode: false,
+  });
+  const updated = buildProgressRenderBlocks({
+    messages: [message("u1", "user", [{ type: "text", text: "Fix it again" } as any])],
+    isStreaming: false,
+    showThinking: false,
+    developerMode: false,
+  });
+
+  assert.notEqual(updated[0], initial[0]);
+  assert.equal(progressRenderBlockKey(updated[0]!), progressRenderBlockKey(initial[0]!));
+  assert.deepEqual(
+    progressRenderBlockEntries(updated).map((entry) => entry.key),
+    progressRenderBlockEntries(initial).map((entry) => entry.key),
+  );
+});
+
+test("uses explicit unstable fallbacks for missing or duplicate semantic block ids", () => {
+  const blocks: ProgressRenderBlock[] = [
+    {
+      kind: "message",
+      message: message("missing", "user", [{ type: "text", text: "Missing id" } as any]),
+      renderableParts: [],
+      groups: [],
+      isUser: true,
+      messageId: "",
+    },
+    {
+      kind: "message",
+      message: message("duplicate-a", "user", [{ type: "text", text: "Duplicate A" } as any]),
+      renderableParts: [],
+      groups: [],
+      isUser: true,
+      messageId: "duplicate",
+    },
+    {
+      kind: "message",
+      message: message("duplicate-b", "user", [{ type: "text", text: "Duplicate B" } as any]),
+      renderableParts: [],
+      groups: [],
+      isUser: true,
+      messageId: "duplicate",
+    },
+  ];
+
+  const entries = progressRenderBlockEntries(blocks);
+
+  assert.deepEqual(entries.map((entry) => entry.key), [
+    "unstable:message:0",
+    "unstable:message:1",
+    "unstable:message:2",
+  ]);
+  assert.ok(entries.every((entry) => entry.unstable));
 });
 
 test("showThinking hides reasoning but keeps comments and actions", () => {

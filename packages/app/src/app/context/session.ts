@@ -24,6 +24,7 @@ import {
 } from "../utils";
 import type { WorkspaceRouting } from "./workspace-routing";
 import { perfNow, recordPerfLog } from "../lib/perf-log";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { detectChromeMcpCompletedError } from "../lib/chrome-mcp-error";
 import {
   toolNameFromPart,
@@ -102,6 +103,11 @@ function recordSessionStatusTrace(event: string, payload?: Record<string, unknow
   }
 }
 
+function recordSessionLifecycleRecoveryTrace(event: string, payload?: Record<string, unknown>) {
+  recordSessionStatusTrace(event, payload);
+  recordSendWorkflowTrace("session-lifecycle-recovery", event, payload);
+}
+
 type StoreState = {
   sessions: Session[];
   sessionStatus: Record<string, string>;
@@ -121,6 +127,20 @@ const SYNTHETIC_CONTINUE_CONTROL_PATTERN =
 const COMPACTION_DIAGNOSTIC_WINDOW_MS = 60_000;
 const COMPACTION_LOOP_WARN_THRESHOLD = 3;
 const COMPACTION_LOOP_WARN_MIN_INTERVAL_MS = 10_000;
+
+export function shouldDeferToolErrorToLifecycle(
+  sessionId: string | null | undefined,
+  workspaceId: string | null | undefined,
+  observe: ((sessionId: string, workspaceId: string) => boolean) | null | undefined,
+) {
+  const normalizedSessionId = sessionId?.trim() ?? "";
+  const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+  return Boolean(
+    normalizedSessionId &&
+    normalizedWorkspaceId &&
+    observe?.(normalizedSessionId, normalizedWorkspaceId),
+  );
+}
 
 export function createSessionStore(options: {
   client: () => Client | null;
@@ -151,12 +171,22 @@ export function createSessionStore(options: {
   readConversationRunStatus?: (
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<SessionLifecycleRecoveryStatus | null>;
+  recoverAcceptedConversationRunStatus?: (
+    scope: SessionLifecycleRecoveryScope,
+  ) => Promise<SessionLifecycleRecoveryStatus | null>;
+  recoverAcceptedConversationTranscript?: (
+    scope: SessionLifecycleRecoveryScope,
+  ) => Promise<VesloSessionTranscriptSnapshot | null>;
   recoverConversationTranscript?: (scope: {
     workspaceId: string;
     sessionId: string;
     directory?: string | null;
     expectedRunId?: string | null;
   }) => Promise<VesloSessionTranscriptSnapshot | null>;
+  lifecycleRecoveryDiagnosticContext?: () => {
+    appWorkspaceId?: string | null;
+    connectionSnapshot?: Record<string, string | null | undefined> | null;
+  };
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
@@ -357,6 +387,7 @@ export function createSessionStore(options: {
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
   const chromeMcpFailureDetectionSet = new Set<string>();
+  let observeToolErrorLifecycle = (_sessionId: string, _workspaceId: string) => false;
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
   const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
   const workspaceSessionIds = new Set<string>();
@@ -547,7 +578,7 @@ export function createSessionStore(options: {
     return __vesloIndirectT("ui.indirect.try_again_or_switch_to_an_agent_prompt_that_on_1x3e0z", __vesloIndirectLocale());
   };
 
-  const maybeHandleInvalidToolError = (part: Part) => {
+  const maybeHandleInvalidToolError = (part: Part, sourceWorkspaceId?: string | null) => {
     if (!options.setError) return;
     if (!isInvalidToolError(part)) return;
     if (!part?.id || !part.messageID) return;
@@ -556,11 +587,17 @@ export function createSessionStore(options: {
     if (invalidToolDetectionSet.has(key)) return;
     invalidToolDetectionSet.add(key);
 
-    // Ensure the UI doesn't get stuck in a "Responding" state when the model
-    // tries to call a tool that isn't available.
-    if (part.sessionID) {
-      setSessionStatusForWorkspace(part.sessionID, "idle");
-      notifySessionBusy(part.sessionID, "idle", statusWorkspaceId());
+    const workspaceId = statusWorkspaceId(sourceWorkspaceId);
+    const lifecycleOwnsError = shouldDeferToolErrorToLifecycle(
+      part.sessionID,
+      workspaceId,
+      observeToolErrorLifecycle,
+    );
+    // A known admitted run retains lifecycle ownership until its exact durable
+    // status settles. Non-owned tool failures keep the prior local fallback.
+    if (part.sessionID && !lifecycleOwnsError) {
+      setSessionStatusForWorkspace(part.sessionID, "idle", workspaceId);
+      notifySessionBusy(part.sessionID, "idle", workspaceId);
     }
 
     const toolName = toolNameFromPart(part).trim();
@@ -569,7 +606,7 @@ export function createSessionStore(options: {
     options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
   };
 
-  const maybeHandleChromeMcpCompletedError = (part: Part) => {
+  const maybeHandleChromeMcpCompletedError = (part: Part, sourceWorkspaceId?: string | null) => {
     if (!options.setError) return;
     if (!part?.id || !part.messageID) return;
 
@@ -581,11 +618,18 @@ export function createSessionStore(options: {
 
     chromeMcpFailureDetectionSet.add(key);
 
-    // Keep run state consistent with a surfaced execution failure.
+    const workspaceId = statusWorkspaceId(sourceWorkspaceId);
+    const lifecycleOwnsError = shouldDeferToolErrorToLifecycle(
+      part.sessionID,
+      workspaceId,
+      observeToolErrorLifecycle,
+    );
     if (part.sessionID) {
-      setSessionStatusForWorkspace(part.sessionID, "idle");
-      notifySessionBusy(part.sessionID, "idle", statusWorkspaceId());
-      appendSessionErrorTurn(part.sessionID, addOpencodeCacheHint(detected));
+      if (!lifecycleOwnsError) {
+        setSessionStatusForWorkspace(part.sessionID, "idle", workspaceId);
+        notifySessionBusy(part.sessionID, "idle", workspaceId);
+      }
+      appendSessionErrorTurn(part.sessionID, addOpencodeCacheHint(detected), { workspaceId });
     }
     options.setError(addOpencodeCacheHint(detected));
   };
@@ -743,8 +787,15 @@ export function createSessionStore(options: {
           selectedSessionId: options.selectedSessionId,
           resolveConversationRunForSession: options.resolveConversationRunForSession,
           readConversationRunStatus: options.readConversationRunStatus,
+          recoverAcceptedConversationRunStatus: options.recoverAcceptedConversationRunStatus,
+          recoverAcceptedConversationTranscript: options.recoverAcceptedConversationTranscript,
           recoverConversationTranscript: options.recoverConversationTranscript,
-          hydrateConversationTranscript: hydrateTranscriptSnapshot,
+          // Terminal recovery has already passed its exact durable run fence;
+          // unlike a passive browse snapshot, it is allowed to replace stale
+          // live parts with the canonical terminal snapshot.
+          hydrateConversationTranscript: (snapshot) =>
+            hydrateTranscriptSnapshot(snapshot, { preserveLiveParts: false }),
+          diagnosticContext: options.lifecycleRecoveryDiagnosticContext,
           onConversationRunStatus: updateConversationRunDiagnosticsForScope,
           onConversationRunTerminal: (scope, status) => {
             if (status.status !== "failed" || status.stale) return;
@@ -755,9 +806,15 @@ export function createSessionStore(options: {
           },
           setSessionStatusForWorkspace,
           notifySessionBusy,
-          trace: recordSessionStatusTrace,
+          trace: recordSessionLifecycleRecoveryTrace,
         })
       : null;
+  observeToolErrorLifecycle = (sessionId, workspaceId) =>
+    lifecycleRecoveryController?.observeSessionLifecycleEvent(
+      sessionId,
+      workspaceId,
+      "session.error",
+    ) === true;
   if (lifecycleRecoveryController) {
     createEffect(() => {
       lifecycleRecoveryController.reconcile();
@@ -864,6 +921,11 @@ export function createSessionStore(options: {
   const selectSession = async (sessionId: string) => {
     lifecycleRecoveryController?.resumeExhaustedWatchForSession(sessionId, resolveSessionWorkspaceId(sessionId));
     const result = await selectSessionFromController(sessionId);
+    lifecycleRecoveryController?.retryAcceptedRunForSession(sessionId, resolveSessionWorkspaceId(sessionId));
+    lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession(
+      sessionId,
+      resolveSessionWorkspaceId(sessionId),
+    );
     void lifecycleRecoveryController?.probeSelectedConversationLatestRun();
     return result;
   };
@@ -924,6 +986,7 @@ export function createSessionStore(options: {
       options.onReconnectState?.(state);
       if (state.status === "live") {
         lifecycleRecoveryController?.resumeExhaustedWatches(state.workspaceId);
+        lifecycleRecoveryController?.resumeAcceptedRunsForWorkspace(state.workspaceId);
         void lifecycleRecoveryController?.probeSelectedConversationLatestRun();
       }
     },
@@ -1019,6 +1082,9 @@ export function createSessionStore(options: {
     setSessions,
     setSessionStatusById,
     admitAcceptedConversationRun: lifecycleRecoveryController?.admitAcceptedConversationRun ?? (() => false),
+    retryAcceptedRunForSession: lifecycleRecoveryController?.retryAcceptedRunForSession ?? (() => 0),
+    retryTerminalTranscriptRecoveryForSession:
+      lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession ?? (() => 0),
     setMessages,
     setTodos,
     setPendingPermissions,

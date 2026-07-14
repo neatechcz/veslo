@@ -111,6 +111,11 @@ function makeController(options: {
     workspaceId: string | null | undefined,
     type: "session.idle" | "session.error",
   ) => boolean;
+  toolErrorCallbacks?: Array<{
+    kind: "invalid" | "chrome";
+    sessionID: string;
+    workspaceId: string | null | undefined;
+  }>;
 } = {}) {
   const [store, setStore] = makeStore();
   const workspaceSessionIds = options.workspaceSessionIds ?? new Set<string>();
@@ -166,8 +171,20 @@ function makeController(options: {
     setCommandDisplay: () => {},
     recordSyntheticContinueDiagnostic: () => {},
     maybeMarkReloadRequired: () => {},
-    maybeHandleInvalidToolError: () => {},
-    maybeHandleChromeMcpCompletedError: () => {},
+    maybeHandleInvalidToolError: (part, workspaceId) => {
+      options.toolErrorCallbacks?.push({
+        kind: "invalid",
+        sessionID: part.sessionID,
+        workspaceId,
+      });
+    },
+    maybeHandleChromeMcpCompletedError: (part, workspaceId) => {
+      options.toolErrorCallbacks?.push({
+        kind: "chrome",
+        sessionID: part.sessionID,
+        workspaceId,
+      });
+    },
     resolveTranscriptIngestWorkspaceId: (sourceWsId) => sourceWsId || "ws-a",
     resolveSessionIdForMessage: () => null,
     recordPendingTranscriptMessageDeletion: () => {},
@@ -667,6 +684,55 @@ test(
   }),
 );
 
+test("tool error callbacks retain the exact source workspace", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const toolErrorCallbacks: Array<{
+        kind: "invalid" | "chrome";
+        sessionID: string;
+        workspaceId: string | null | undefined;
+      }> = [];
+      const { controller } = makeController({
+        activeWorkspaceId: "ws-b",
+        selectedSessionId: "sess-b",
+        workspaceSessionIds: new Set(["sess-b"]),
+        toolErrorCallbacks,
+      });
+
+      await controller.applyEvent(
+        {
+          type: "message.updated",
+          properties: { info: makeMessage("sess-b", "msg-tool", "assistant") },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+      await controller.applyEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "part-tool",
+              sessionID: "sess-b",
+              messageID: "msg-tool",
+              type: "tool",
+              tool: "chrome-devtools_navigate_page",
+              state: { status: "error", error: "unknown tool" },
+            },
+          },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+
+      assert.deepEqual(toolErrorCallbacks, [
+        { kind: "invalid", sessionID: "sess-b", workspaceId: "ws-b" },
+        { kind: "chrome", sessionID: "sess-b", workspaceId: "ws-b" },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test(
   "text part trace does not infer assistant role from a placeholder message",
   withSendWorkflowTraceWindow(async (traceWindow) => {
@@ -852,6 +918,65 @@ test("lifecycle-owned foreground idle preserves the active status until durable 
   });
 });
 
+test("lifecycle-owned idle session.status preserves the active status until durable reconciliation", withSendWorkflowTraceWindow(async (traceWindow) => {
+  await createRoot(async (dispose) => {
+    try {
+      const observed: Array<{ sessionID: string; workspaceId: string | null | undefined; type: string }> = [];
+      const statusTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+      const { controller, store, setStore } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        statusTraces,
+        lifecycleObservation: (sessionID, workspaceId, type) => {
+          observed.push({ sessionID, workspaceId, type });
+          return true;
+        },
+      });
+      setStore("sessionStatus", "ws-a:sess-a", "running");
+
+      await controller.applyEvent(
+        {
+          type: "session.status",
+          properties: { sessionID: "sess-a", status: "idle" },
+        } as OpencodeEvent,
+        "ws-a",
+      );
+
+      assert.equal(store.sessionStatus["ws-a:sess-a"], "running");
+      assert.deepEqual(observed, [{ sessionID: "sess-a", workspaceId: "ws-a", type: "session.idle" }]);
+      assert.deepEqual(statusTraces, [{
+        event: "sse-session-status",
+        payload: {
+          sessionId: "sess-a",
+          status: "lifecycle-pending",
+          sourceWorkspaceId: "ws-a",
+          previous: "running",
+          lifecycleOwnsEvent: true,
+        },
+      }]);
+      assert.deepEqual(
+        (traceWindow.__vesloSendWorkflowTrace ?? [])
+          .filter((entry) => entry.event === "session-sse:status-idle-deferred-to-lifecycle")
+          .map(({ event, sessionId, workspaceId, background, eventType }) => ({
+            event,
+            sessionId,
+            workspaceId,
+            background,
+            eventType,
+          })),
+        [{
+          event: "session-sse:status-idle-deferred-to-lifecycle",
+          sessionId: "sess-a",
+          workspaceId: "ws-a",
+          background: false,
+          eventType: "session.status",
+        }],
+      );
+    } finally {
+      dispose();
+    }
+  });
+}));
+
 test("lifecycle-owned background idle preserves the scoped active status", async () => {
   await createRoot(async (dispose) => {
     try {
@@ -870,6 +995,35 @@ test("lifecycle-owned background idle preserves the scoped active status", async
       );
 
       assert.equal(store.sessionStatus["ws-b:sess-b"], "submitted");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("lifecycle-owned background idle session.status preserves the scoped active status", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const observed: Array<{ sessionID: string; workspaceId: string | null | undefined; type: string }> = [];
+      const { controller, store, setStore } = makeController({
+        activeWorkspaceId: "ws-a",
+        lifecycleObservation: (sessionID, workspaceId, type) => {
+          observed.push({ sessionID, workspaceId, type });
+          return true;
+        },
+      });
+      setStore("sessionStatus", "ws-b:sess-b", "submitted");
+
+      await controller.applyEvent(
+        {
+          type: "session.status",
+          properties: { sessionID: "sess-b", status: "idle" },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+
+      assert.equal(store.sessionStatus["ws-b:sess-b"], "submitted");
+      assert.deepEqual(observed, [{ sessionID: "sess-b", workspaceId: "ws-b", type: "session.idle" }]);
     } finally {
       dispose();
     }

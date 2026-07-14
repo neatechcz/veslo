@@ -61,6 +61,7 @@ function createFakeClient(options: {
   failWorkspaceRegistration?: boolean | "invalid-host-token";
   runStatusError?: unknown;
   runStatusResult?: Partial<VesloConversationRunStatusResult>;
+  recoverTranscriptError?: unknown;
 } = {}) {
   const calls: string[] = [];
   const submitConversationCalls: SubmitConversationCall[] = [];
@@ -215,6 +216,7 @@ function createFakeClient(options: {
       input: { expectedRunId?: string | null },
     ) => {
       calls.push(`recoverSessionTranscript:${workspaceId}:${sessionId}:${input.expectedRunId ?? ""}`);
+      if (options.recoverTranscriptError) throw options.recoverTranscriptError;
       return {
         workspaceId,
         conversationId: `conv-${sessionId}`,
@@ -260,7 +262,10 @@ function createService(options: {
   engineBaseWorkspaceId?: string;
   engineBaseUrl?: string | null;
   runStatusError?: unknown;
+  refreshedRunStatusError?: unknown;
   runStatusResult?: Partial<VesloConversationRunStatusResult>;
+  recoverTranscriptError?: unknown;
+  refreshedRecoverTranscriptError?: unknown;
   managedAiAccess?: {
     providerId?: string | null;
     defaultModel?: { modelID?: string | null } | null;
@@ -276,13 +281,15 @@ function createService(options: {
     failWorkspaceRegistration: options.failWorkspaceRegistration,
     runStatusError: options.runStatusError,
     runStatusResult: options.runStatusResult,
+    recoverTranscriptError: options.recoverTranscriptError,
   });
   const refreshedFake = options.refreshClientOnEnsure
     ? createFakeClient({
         listWorkspaceItems: options.refreshedListWorkspaceItems ?? options.listWorkspaceItems,
         addLocalWorkspaceItems: options.refreshedAddLocalWorkspaceItems ?? options.addLocalWorkspaceItems,
-        runStatusError: options.runStatusError,
+        runStatusError: options.refreshedRunStatusError,
         runStatusResult: options.runStatusResult,
+        recoverTranscriptError: options.refreshedRecoverTranscriptError,
       })
     : null;
   let serverClient: ConversationServiceClient | null = options.startDisconnected ? null : client;
@@ -291,6 +298,7 @@ function createService(options: {
     ? `http://127.0.0.1:4096/workspace/${encodeURIComponent(engineBaseWorkspaceId)}/opencode`
     : options.engineBaseUrl ?? "";
   const ensureCalls: string[] = [];
+  const ensureOptions: Array<{ requireRuntimeChainReady?: boolean } | undefined> = [];
   const rememberedScopes: RememberedScope[] = [];
   const sendTraces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
   const rememberedRuns: Array<{
@@ -347,8 +355,9 @@ function createService(options: {
     vesloServerStatus: () => serverClient ? "connected" : "disconnected",
     isTauriRuntime: () => true,
     startupPreference: () => "local",
-    ensureLocalVesloServerRunning: async () => {
+    ensureLocalVesloServerRunning: async (ensureOptionsInput) => {
       ensureCalls.push("ensure-local-server");
+      ensureOptions.push(ensureOptionsInput);
       if (options.failServerStart) return false;
       serverClient = refreshedFake?.client ?? client;
       return true;
@@ -432,6 +441,7 @@ function createService(options: {
     refreshedCalls: refreshedFake?.calls ?? [],
     submitConversationCalls,
     ensureCalls,
+    ensureOptions,
     rememberedScopes,
     rememberedRuns,
     rememberedLifecycleRuns,
@@ -505,6 +515,77 @@ test("terminal transcript recovery returns the exact fetched snapshot for sessio
   assert.equal(snapshot?.sessionId, "open-a");
   assert.ok(calls.includes("recoverSessionTranscript:server-ws:open-a:run-a"));
   assert.ok(calls.includes("getSessionTranscript:server-ws:open-a"));
+});
+
+test("accepted terminal transcript recovery reconnects once and keeps the accepted run scope", async () => {
+  const { service, calls, ensureCalls, ensureOptions } = createService({
+    startDisconnected: true,
+    runStatusResult: { status: "completed" },
+  });
+
+  const snapshot = await service.recoverAcceptedConversationTranscript({
+    workspaceId: "app-ws",
+    directory: "/repo",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    sessionId: "ses-ui",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+
+  assert.equal(snapshot?.sessionId, "open-a");
+  assert.deepEqual(ensureCalls, ["ensure-local-server"]);
+  assert.deepEqual(ensureOptions, [{ requireRuntimeChainReady: false }]);
+  assert.ok(calls.includes("getConversationRunStatus:server-ws:conv-a:run-a"));
+  assert.ok(calls.includes("recoverSessionTranscript:server-ws:open-a:run-a"));
+  assert.ok(calls.includes("getSessionTranscript:server-ws:open-a"));
+});
+
+test("accepted terminal transcript recovery uses a healthy client without an unnecessary ensure", async () => {
+  const { service, calls, ensureCalls } = createService();
+
+  const snapshot = await service.recoverAcceptedConversationTranscript({
+    workspaceId: "app-ws",
+    directory: "/repo",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    sessionId: "ses-ui",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+
+  assert.equal(snapshot?.sessionId, "open-a");
+  assert.deepEqual(ensureCalls, []);
+  assert.equal(calls.some((call) => call.startsWith("getConversationRunStatus:")), false);
+  assert.ok(calls.includes("recoverSessionTranscript:server-ws:open-a:run-a"));
+});
+
+test("accepted terminal transcript recovery refreshes a stale client after a direct transport error", async () => {
+  const { service, calls, refreshedCalls, ensureCalls, ensureOptions, sendTraces } = createService({
+    recoverTranscriptError: new Error("transport down"),
+    refreshClientOnEnsure: true,
+    runStatusResult: { status: "completed" },
+  });
+
+  const snapshot = await service.recoverAcceptedConversationTranscript({
+    workspaceId: "app-ws",
+    directory: "/repo",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    sessionId: "ses-ui",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+
+  assert.equal(snapshot?.sessionId, "open-a");
+  assert.ok(calls.includes("recoverSessionTranscript:server-ws:open-a:run-a"));
+  assert.deepEqual(ensureCalls, ["ensure-local-server"]);
+  assert.deepEqual(ensureOptions, [{ requireRuntimeChainReady: false }]);
+  assert.ok(refreshedCalls.includes("getConversationRunStatus:server-ws:conv-a:run-a"));
+  assert.ok(refreshedCalls.includes("recoverSessionTranscript:server-ws:open-a:run-a"));
+  assert.ok(sendTraces.some((entry) =>
+    entry.event === "accepted-run-transcript-recovery:direct-read-error"
+  ));
 });
 
 test("conversation write refreshes stale server workspace registration with live OpenCode URL", async () => {
@@ -816,63 +897,70 @@ test("live transcript reads do not start the local conversation server without a
   assert.equal(declined.payload?.reason, "getTranscriptFromVesloReadApi");
 });
 
-test("active visible live transcript recovery can start the local conversation server once", async () => {
-  const { service, calls, ensureCalls, sendTraces } = createService({ startDisconnected: true });
+test("exact accepted-run status recovery uses the server-only connection owner", async () => {
+  const { service, calls, ensureCalls, ensureOptions, sendTraces } = createService({ startDisconnected: true });
 
-  const result = await service.getTranscriptFromVesloReadApi(
-    "app-ws",
-    "sess-a",
-    50,
-    "/repo",
-    { activeVisibleSelectedSession: true },
-  );
-
-  assert.equal(result?.sessionId, "sess-a");
-  assert.deepEqual(ensureCalls, ["ensure-local-server"]);
-  assert.deepEqual(calls.filter((call) => call.startsWith("getSessionTranscript")), [
-    "getSessionTranscript:server-ws:sess-a",
-  ]);
-  const attempt = sendTraces.find((entry) =>
-    entry.event === "conversation-read:server-start-recovery-attempt"
-  );
-  assert.ok(attempt, "active visible transcript recovery should be traceable");
-  assert.equal(attempt.payload?.intent, "live-read");
-  assert.equal(attempt.payload?.workspaceId, "app-ws");
-});
-
-test("active visible live transcript recovery start is bounded per session workspace", async () => {
-  const { service, ensureCalls, sendTraces } = createService({
-    startDisconnected: true,
-    failServerStart: true,
+  const result = await service.recoverAcceptedConversationRunStatus({
+    workspaceId: "app-ws",
+    conversationId: "conv-a",
+    opencodeSessionId: "sess-a",
+    sessionId: "sess-a",
+    directory: "/repo",
+    runId: "run-a",
   });
 
-  const first = await service.getTranscriptFromVesloReadApi(
-    "app-ws",
-    "sess-a",
-    50,
-    "/repo",
-    { activeVisibleSelectedSession: true },
+  assert.equal(result?.runId, "run-a");
+  assert.deepEqual(ensureCalls, ["ensure-local-server"]);
+  assert.deepEqual(ensureOptions, [{ requireRuntimeChainReady: false }]);
+  assert.deepEqual(calls.filter((call) => call.startsWith("getConversationRunStatus")), [
+    "getConversationRunStatus:server-ws:conv-a:run-a",
+  ]);
+  const attempt = sendTraces.find((entry) =>
+    entry.event === "accepted-run-status-recovery:server-only-ensure-started"
   );
-  const second = await service.getTranscriptFromVesloReadApi(
-    "app-ws",
-    "sess-a",
-    50,
-    "/repo",
-    { activeVisibleSelectedSession: true },
+  assert.ok(attempt, "accepted-run server-only recovery should be traceable");
+  assert.equal(attempt.payload?.workspaceId, "app-ws");
+  assert.equal(attempt.payload?.conversationId, "conv-a");
+  assert.equal(attempt.payload?.runId, "run-a");
+});
+
+test("accepted-run recovery revalidates an existing stale client before its exact reread", async () => {
+  const { service, ensureCalls, ensureOptions, sendTraces } = createService({
+    runStatusError: new Error("transport down"),
+    refreshClientOnEnsure: true,
+  });
+
+  const result = await service.recoverAcceptedConversationRunStatus({
+    workspaceId: "app-ws",
+    conversationId: "conv-a",
+    opencodeSessionId: "sess-a",
+    sessionId: "sess-a",
+    directory: "/repo",
+    runId: "run-a",
+  });
+
+  assert.equal(result?.runId, "run-a");
+  assert.deepEqual(ensureCalls, ["ensure-local-server"]);
+  assert.deepEqual(ensureOptions, [{ requireRuntimeChainReady: false }]);
+  const attempt = sendTraces.find((entry) =>
+    entry.event === "accepted-run-status-recovery:server-only-ensure-started"
   );
+  assert.equal(attempt?.payload?.hadClientBeforeEnsure, true);
+});
+
+test("repeated selected transcript reads remain passive", async () => {
+  const { service, ensureCalls, sendTraces } = createService({ startDisconnected: true });
+
+  const first = await service.getTranscriptFromVesloReadApi("app-ws", "sess-a", 50, "/repo");
+  const second = await service.getTranscriptFromVesloReadApi("app-ws", "sess-a", 50, "/repo");
 
   assert.equal(first, null);
   assert.equal(second, null);
-  assert.deepEqual(ensureCalls, ["ensure-local-server"]);
+  assert.deepEqual(ensureCalls, []);
   assert.equal(
-    sendTraces.filter((entry) => entry.event === "conversation-read:server-start-recovery-attempt").length,
-    1,
+    sendTraces.filter((entry) => entry.event === "conversation-read:server-start-declined").length,
+    2,
   );
-  const skipped = sendTraces.find((entry) =>
-    entry.event === "conversation-read:server-start-recovery-skipped"
-  );
-  assert.ok(skipped, "duplicate active visible recovery should be bounded and traceable");
-  assert.equal(skipped.payload?.reason, "bounded-recovery-window");
 });
 
 test("status polls do not start the local conversation server", async () => {

@@ -7,7 +7,15 @@ const FLOW_LOG_ENABLED =
   process.env.VESLO_FLOW_LOG === "1" ||
   process.env.VESLO_FLOW_LOG?.toLowerCase() === "true";
 
+function opencodeHealthDiagEnabled(): boolean {
+  const runtimeDiagnostics = process.env.VESLO_RUNTIME_DIAGNOSTICS?.trim().toLowerCase();
+  if (["0", "false", "no", "off"].includes(runtimeDiagnostics ?? "")) return false;
+  const healthDiag = process.env.VESLO_OPENCODE_HEALTH_DIAG?.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(healthDiag ?? "");
+}
+
 function writeSpawnDiag(event: string, payload: Record<string, unknown>): void {
+  if (!opencodeHealthDiagEnabled()) return;
   const file = process.env.VESLO_OPENCODE_HEALTH_DIAG_FILE?.trim();
   if (!file) return;
   try {
@@ -779,8 +787,10 @@ export class EnginePool {
           hostProbe: rawProbe,
           waitForHealthyError: String(err),
         };
-        writeSpawnDiag("spawn-diag", diagPayload);
-        console.error(`[veslo:spawn-diag] engine health FAILED ${JSON.stringify(diagPayload)}`);
+        if (opencodeHealthDiagEnabled()) {
+          writeSpawnDiag("spawn-diag", diagPayload);
+          console.error(`[veslo:spawn-diag] engine health FAILED ${JSON.stringify(diagPayload)}`);
+        }
       }
       // F2Ú5 — spawn-time fail (engine never reached ready). Mark intentional
       // before stopChild so the exit handler doesn't trigger restart logic.

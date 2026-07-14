@@ -102,8 +102,8 @@ test("composer distinguishes queued Enter sends from immediate Ctrl+Enter sends"
 
   assert.match(
     composerSource,
-    /if \(props\.busy && !props\.isStreaming\) return;[\s\S]*if \(event\.ctrlKey \|\| event\.metaKey\) \{[\s\S]*?void sendDraft\(\{ sendNow: true, source: "ctrl-enter" \}\);/s,
-    "Ctrl+Enter and Meta+Enter should request immediate send only after non-streaming busy state is excluded",
+    /if \(props\.recoveryBlocked\) return;[\s\S]*if \(props\.busy && !props\.isStreaming\) return;[\s\S]*if \(event\.ctrlKey \|\| event\.metaKey\) \{[\s\S]*?void sendDraft\(\{ sendNow: true, source: "ctrl-enter" \}\);/s,
+    "Ctrl+Enter and Meta+Enter should request immediate send only outside a recovery block and non-streaming busy state",
   );
 
   assert.match(
@@ -114,8 +114,8 @@ test("composer distinguishes queued Enter sends from immediate Ctrl+Enter sends"
 
   assert.match(
     composerSource,
-    /if \(props\.busy && !props\.isStreaming\) return;/,
-    "plain Enter should still reach onSend while streaming so the parent can queue it",
+    /if \(props\.recoveryBlocked\) return;[\s\S]*if \(props\.busy && !props\.isStreaming\) return;/,
+    "plain Enter should still reach onSend while streaming, but not during explicit recovery",
   );
 });
 

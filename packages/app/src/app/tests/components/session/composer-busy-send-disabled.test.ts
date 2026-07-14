@@ -4,17 +4,17 @@ import test from "node:test";
 
 const composerSource = readFileSync(new URL("../../../components/session/composer.tsx", import.meta.url), "utf8");
 
-test("composer disables send for global busy only outside streaming mode", () => {
+test("composer disables send for recovery blocks and global busy only outside streaming mode", () => {
   assert.match(
     composerSource,
-    /const submitLocked = createMemo\(\(\) => sending\(\) && !props\.isStreaming\);/,
-    "composer should stay editable while an active run admits a server-queued follow-up",
+    /const submitLocked = createMemo\(\(\) => props\.recoveryBlocked === true \|\| \(sending\(\) && !props\.isStreaming\)\);/,
+    "composer should block submit only for a recovery block or a pre-run local handoff",
   );
 
   assert.match(
     composerSource,
-    /const sendDisabled = createMemo\(\(\) => !hasDraftContent\(\) \|\| \(props\.busy && !props\.isStreaming\)\);/,
-    "composer should allow queueing while streaming/run-indicator mode owns the global busy state",
+    /const sendDisabled = createMemo\(\(\) =>\s*props\.recoveryBlocked === true \|\| !hasDraftContent\(\) \|\| \(props\.busy && !props\.isStreaming\)\s*\);/,
+    "composer should allow queueing while streaming but block the explicit connection-recovery state",
   );
 
   assert.match(
@@ -25,8 +25,8 @@ test("composer disables send for global busy only outside streaming mode", () =>
 
   assert.match(
     composerSource,
-    /if \(\(sending\(\) && !props\.isStreaming\) \|\| \(props\.busy && !props\.isStreaming\)\) \{[\s\S]*recordSendTrace\("sendButton:blocked"/,
-    "send button click guard should only block pre-run submits and non-streaming global busy",
+    /if \(\s*props\.recoveryBlocked \|\|\s*\(sending\(\) && !props\.isStreaming\) \|\|\s*\(props\.busy && !props\.isStreaming\)\s*\) \{[\s\S]*recordSendTrace\("sendButton:blocked"/,
+    "send button click guard should block the explicit recovery state without changing streaming queueing",
   );
 
   assert.doesNotMatch(

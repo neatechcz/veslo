@@ -4,31 +4,46 @@ import test from "node:test";
 import type { AiGatewayDb } from "../src/db/index.js";
 import {
   AiAccessAuditPersistenceError,
+  AiAccessProviderMismatchError,
   MySqlAiAccessMutation,
 } from "../src/access/mysql-repository.js";
+import { platformModelPolicyTable, userAiAccessPolicyTable } from "../src/db/schema.js";
 
 type StoredRow = Record<string, unknown>;
 
 function createTransactionalAiAccessDb(options: {
   initialRow?: StoredRow | null;
   failAudit?: boolean;
+  activeProvider?: string | null;
 } = {}) {
   let row = options.initialRow ?? null;
+  const activeProvider = options.activeProvider ?? "codex_oauth";
   const policyWrites: Array<{ kind: "insert" | "update"; values: StoredRow }> = [];
   const auditWrites: StoredRow[] = [];
+  const lockedTables: string[] = [];
   let transactionCount = 0;
 
   const tx = {
     select() {
       return {
-        from() {
+        from(table: unknown) {
           return {
             where() {
               return {
                 limit() {
                   return {
                     async for() {
-                      return row ? [row] : [];
+                      if (table === platformModelPolicyTable) {
+                        lockedTables.push("platform_model_policy:update");
+                        return activeProvider
+                          ? [{ activeProvider }]
+                          : [];
+                      }
+                      if (table === userAiAccessPolicyTable) {
+                        lockedTables.push("user_ai_access_policy:update");
+                        return row ? [row] : [];
+                      }
+                      throw new Error("unexpected select table");
                     },
                   };
                 },
@@ -67,6 +82,7 @@ function createTransactionalAiAccessDb(options: {
   return {
     policyWrites,
     auditWrites,
+    lockedTables,
     get transactionCount() {
       return transactionCount;
     },
@@ -94,6 +110,10 @@ test("admin AI-access mutation writes policy and real-actor organization audit i
   });
 
   assert.equal(writable.transactionCount, 1);
+  assert.deepEqual(writable.lockedTables.slice(0, 2), [
+    "platform_model_policy:update",
+    "user_ai_access_policy:update",
+  ]);
   assert.equal(writable.policyWrites.length, 1);
   assert.equal(saved.userId, "user_123");
   assert.equal(writable.auditWrites.length, 1);
@@ -109,6 +129,31 @@ test("admin AI-access mutation writes policy and real-actor organization audit i
     created_at: saved.updatedAt,
   });
   assert.doesNotMatch(JSON.stringify(writable.auditWrites[0]), /cred_secretish/);
+});
+
+test("admin AI-access mutation rejects enabled assignments that race against a changed active provider", async () => {
+  const writable = createTransactionalAiAccessDb({ activeProvider: "openai_compatible" });
+  const mutation = new MySqlAiAccessMutation(writable.db);
+
+  await assert.rejects(
+    mutation.upsertUserAiAccessWithAudit({
+      actorUserId: "admin_real",
+      organizationId: "org_123",
+      userId: "user_123",
+      enabled: true,
+      provider: "codex_oauth",
+      credentialId: "cred_codex",
+      assignmentOrigin: "admin_assigned",
+    }),
+    (error: unknown) => error instanceof AiAccessProviderMismatchError
+      && error.message === "ai_access_provider_mismatch"
+      && (error as { status?: number }).status === 409,
+  );
+
+  assert.equal(writable.transactionCount, 1);
+  assert.deepEqual(writable.lockedTables, ["platform_model_policy:update"]);
+  assert.deepEqual(writable.policyWrites, []);
+  assert.deepEqual(writable.auditWrites, []);
 });
 
 test("admin AI-access mutation fails closed with a typed error when audit persistence fails", async () => {

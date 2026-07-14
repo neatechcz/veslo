@@ -320,6 +320,10 @@ Do not build a separate conversation model only for sandboxed execution.
     keeps its client admission identity out of the OpenCode request body.
 11. Events and transcript data are mirrored back to the conversation and run.
 
+Passive transcript snapshots may fill gaps after selection, prefetch, or recovery,
+but they must not erase non-empty message parts already observed through the live
+event stream unless an explicit removal event has done so first.
+
 When several sends share the same unmaterialized pending chat, the app keeps
 one in-flight materialization for that pending-session key. Followers wait for
 the first submit's server-owned handoff, then submit against the resulting
@@ -342,6 +346,9 @@ local echo with that transcript content before pending cleanup runs.
 Run presentation may not reset from a transient scoped `idle` observation while
 the same session has fresh durable lifecycle evidence of `submitted`, `running`,
 or `blocked`; terminal or stale lifecycle evidence releases that guard.
+Both `session.idle` and `session.status: idle` enter that lifecycle arbitration
+before they can update the scoped session status, for foreground and background
+workspace streams alike.
 
 The session capabilities sidebar projects the app-owned shared skill inventory;
 it never triggers its own filesystem scan. The app shell loads that inventory
@@ -397,10 +404,10 @@ live-read enabled.
   another run.
 - Active run conflict: reject or surface the active run id; do not submit a
   second active run to the same conversation.
-- Stale/no-progress active run: if lifecycle status is stale or past the
-  configured no-progress budget, mark the run failed through the lifecycle
-  owner and wake the conversation queue. Do not let queue drain poll forever
-  behind a zombie active run.
+- Stale/no-progress active run: a queued successor must not make a generic
+  stale or no-progress active run fail early. Queue drain hands it to the
+  ordinary exact-run lifecycle reconciler; only that configured conservative
+  policy may mark it failed and then wake the conversation queue.
 
 ## Validation Requirements
 

@@ -572,11 +572,17 @@ test("MCP auto refresh scheduler keeps UI wiring thin", () => {
   );
 });
 
-test("active visible transcript recovery opt-in stays scoped to selected-session reads", () => {
+test("selected transcript reads stay passive while accepted-run recovery owns server start", () => {
+  assert.doesNotMatch(
+    source,
+    /activeVisibleSelectedSession|serverStartRecoveryKey/,
+    "ordinary selected-session transcript reads must not obtain local-server-start authority",
+  );
+
   assert.match(
     source,
-    /loadOfflineTranscript: async \(sessionId, limit\) => \{[\s\S]*const snapshot = await getTranscriptFromVesloReadApi\([\s\S]*transcriptWorkspaceId,[\s\S]*sessionId,[\s\S]*limit,[\s\S]*transcriptDirectory \|\| undefined,[\s\S]*\{ activeVisibleSelectedSession: selectedSessionId\(\)\?\.trim\(\) === sessionId\.trim\(\) \},[\s\S]*\);/s,
-    "visible selected-session transcript reads should explicitly opt into bounded recovery",
+    /recoverAcceptedConversationRunStatus,/,
+    "the accepted-run lifecycle owner should receive the dedicated recovery executor",
   );
 
   assert.match(
