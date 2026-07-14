@@ -554,6 +554,104 @@ test("GET /admin/app.js renders inference readiness from the readiness endpoint"
   }
 })
 
+test("GET /admin serves one fail-closed loading and error surface without realistic seed data", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+
+    assert.equal(html.match(/id="admin-page-state"/g)?.length, 1)
+    assert.match(html, /id="admin-page-state"[^>]*aria-busy="true"/)
+    assert.match(
+      html,
+      /id="admin-page-loading"[^>]*role="status"[^>]*aria-live="polite"[^>]*>[\s\S]*?Loading data\.\.\./,
+    )
+    assert.match(html, /id="admin-page-skeleton"[^>]*class="admin-page-skeleton"[^>]*aria-hidden="true"/)
+    assert.match(html, /id="admin-page-error"[^>]*class="[^"]*hidden[^"]*"[^>]*role="alert"/)
+    assert.match(html, /id="admin-page-error-message"/)
+    assert.match(html, /id="admin-page-retry"[^>]*>Retry<\/button>/)
+
+    const skeletonStart = html.indexOf('<div id="admin-page-skeleton"')
+    const skeletonEnd = html.indexOf("<!-- /admin-page-skeleton -->", skeletonStart)
+    assert.notEqual(skeletonStart, -1)
+    assert.notEqual(skeletonEnd, -1)
+    const skeleton = html.slice(skeletonStart, skeletonEnd)
+    assert.equal(skeleton.replace(/<[^>]*>/g, "").trim(), "")
+    assert.doesNotMatch(skeleton, /aria-label=|data-[\w-]+=|style=/)
+
+    assert.doesNotMatch(html, /<strong>\s*(?:18|2|41)\s*<\/strong>/)
+    for (const realisticSeed of [
+      "Stable",
+      "2 credential alerts",
+      "Credential outage",
+      "Usage spike",
+      "Vaclav Soukup",
+      "Václav Soukup",
+      "Alena Novak",
+      "Martin Kriz",
+      "821k",
+      "412k",
+      "OpenAI org key",
+      "Anthropic shared key",
+      "route_1884",
+      "+12% vs yesterday",
+      "Credential inventory will load after sign-in.",
+      "Credential usage will load after sign-in.",
+    ]) {
+      assert.doesNotMatch(html, new RegExp(realisticSeed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+    }
+    assert.doesNotMatch(html, /id="usage-chart-bars"[^>]*>[\s\S]*?<span[^>]*style=/)
+    assert.doesNotMatch(html, /id="(?:alert-list|user-list|audit-list)"[^>]*>[\s\S]*?<article/)
+
+    assert.match(html, /id="refresh-button"[^>]*disabled/)
+    assert.match(html, /id="organization-save-button"[^>]*disabled/)
+    assert.match(html, /id="model-policy-save-button"[^>]*disabled/)
+    assert.match(html, /id="credential-search"[^>]*disabled/)
+    assert.match(html, /id="usage-group-by"[^>]*disabled/)
+    assert.match(html, /id="create-user-button-inline"[^>]*disabled/)
+    assert.match(html, /id="audit-search"[^>]*disabled/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.css softens only neutral skeletons and keeps page-state actions accessible", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.css`)
+
+    assert.equal(response.status, 200)
+    const css = await response.text()
+    assert.match(css, /--admin-skeleton-fill:/)
+    assert.match(css, /\.admin-page-skeleton\s*\{[^}]*filter:\s*blur\(/s)
+    assert.match(css, /\.admin-page-skeleton-shape\s*\{[^}]*background:\s*var\(--admin-skeleton-fill\)/s)
+    assert.match(css, /#admin-page-state\[data-state="loading"\]\s*~\s*\[data-page\][\s\S]*?#admin-page-state\[data-state="error"\]\s*~\s*\[data-page\][^{]*\{[^}]*display:\s*none\s*!important/s)
+    assert.match(css, /#admin-page-loading[\s\S]*#admin-page-error\s*\{[^}]*filter:\s*none/s)
+    assert.match(css, /#admin-page-retry:focus-visible\s*\{[^}]*outline:/s)
+    assert.doesNotMatch(css, /\[data-page\][^{]*\{[^}]*filter:\s*blur\(/s)
+    assert.match(
+      css,
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.admin-page-skeleton-shape\s*\{[^}]*animation:\s*none/s,
+    )
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin/app.js checks the HTTP-only admin cookie before showing the login panel", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")

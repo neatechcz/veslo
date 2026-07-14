@@ -50,7 +50,6 @@
               <span class="dot info" id="readiness-dot"></span>
               <span id="readiness-label">Checking inference readiness</span>
             </div>
-            <div class="pill-row"><span class="dot warn"></span> 2 credential alerts</div>
           </div>
         </section>
       </aside>
@@ -63,7 +62,7 @@
             <p class="page-description" id="page-description">Inspect credentials, usage, alerts, users, and audit events from one place.</p>
           </div>
           <div class="topbar-actions">
-            <button id="refresh-button" class="button button-secondary" type="button">Refresh</button>
+            <button id="refresh-button" class="button button-secondary" type="button" disabled>Refresh</button>
             <button id="create-user-button" class="button button-primary hidden" type="button">Create user</button>
           </div>
         </header>
@@ -75,7 +74,7 @@
           </div>
           <label id="organization-selector-control" class="organization-selector">
             <span>Switch organization</span>
-            <input id="organization-selector-input" class="input" type="search" list="organization-selector-options" autocomplete="off" placeholder="Search authorized organization" />
+            <input id="organization-selector-input" class="input" type="search" list="organization-selector-options" autocomplete="off" placeholder="Search authorized organization" disabled />
             <datalist id="organization-selector-options"></datalist>
           </label>
           <nav class="organization-subnav" aria-label="Organization workspace sections">
@@ -103,29 +102,65 @@
         </section>
 
         <section id="app-panel" class="app-grid hidden" aria-live="polite">
+          <section id="admin-page-state" class="admin-page-state" data-state="loading" aria-busy="true">
+            <div id="admin-page-loading" class="admin-page-message" role="status" aria-live="polite" aria-atomic="true">
+              Loading data...
+            </div>
+            <div id="admin-page-error" class="admin-page-message admin-page-error hidden" role="alert">
+              <p id="admin-page-error-message"></p>
+              <button id="admin-page-retry" class="button button-secondary" type="button">Retry</button>
+            </div>
+            <div id="admin-page-skeleton" class="admin-page-skeleton" aria-hidden="true">
+              <div class="admin-page-skeleton-cards">
+                <span class="admin-page-skeleton-shape admin-page-skeleton-card"></span>
+                <span class="admin-page-skeleton-shape admin-page-skeleton-card"></span>
+                <span class="admin-page-skeleton-shape admin-page-skeleton-card"></span>
+              </div>
+              <div class="admin-page-skeleton-body">
+                <div class="admin-page-skeleton-rows">
+                  <span class="admin-page-skeleton-shape admin-page-skeleton-row"></span>
+                  <span class="admin-page-skeleton-shape admin-page-skeleton-row"></span>
+                  <span class="admin-page-skeleton-shape admin-page-skeleton-row"></span>
+                  <span class="admin-page-skeleton-shape admin-page-skeleton-row"></span>
+                </div>
+                <div class="admin-page-skeleton-form">
+                  <span class="admin-page-skeleton-shape admin-page-skeleton-field"></span>
+                  <span class="admin-page-skeleton-shape admin-page-skeleton-field"></span>
+                  <span class="admin-page-skeleton-shape admin-page-skeleton-field"></span>
+                </div>
+              </div>
+              <div class="admin-page-skeleton-chart">
+                <span class="admin-page-skeleton-shape admin-page-skeleton-bar"></span>
+                <span class="admin-page-skeleton-shape admin-page-skeleton-bar"></span>
+                <span class="admin-page-skeleton-shape admin-page-skeleton-bar"></span>
+                <span class="admin-page-skeleton-shape admin-page-skeleton-bar"></span>
+                <span class="admin-page-skeleton-shape admin-page-skeleton-bar"></span>
+              </div>
+            </div><!-- /admin-page-skeleton -->
+          </section>
+
           <section class="panel hero-panel" data-page="overview">
             <div class="hero-head">
               <div>
                 <p class="eyebrow">Control summary</p>
                 <h2>Operator dashboard</h2>
               </div>
-              <span class="status-chip success">Stable</span>
             </div>
             <div class="hero-metrics">
               <article class="metric-card">
                 <span class="metric-label">Credentials</span>
-                <strong>18</strong>
-                <span class="metric-note">Provider bindings in the shared pool</span>
+                <strong></strong>
+                <span class="metric-note"></span>
               </article>
               <article class="metric-card">
                 <span class="metric-label">Unhealthy credentials</span>
-                <strong>2</strong>
-                <span class="metric-note">1 OAuth refresh failure, 1 revoked key</span>
+                <strong></strong>
+                <span class="metric-note"></span>
               </article>
               <article class="metric-card">
                 <span class="metric-label">Tracked users</span>
-                <strong>41</strong>
-                <span class="metric-note">13 platform admins in directory</span>
+                <strong></strong>
+                <span class="metric-note"></span>
               </article>
             </div>
           </section>
@@ -148,7 +183,7 @@
                 <h2>Organization details</h2>
               </div>
               <div class="section-actions organization-page-actions">
-                <button id="organization-save-button" class="button button-primary" type="button">Save organization</button>
+                <button id="organization-save-button" class="button button-primary" type="button" disabled>Save organization</button>
               </div>
             </div>
             <div class="split-layout organization-layout">
@@ -158,18 +193,18 @@
                 <form class="editor-form">
                   <label>
                     <span>Name</span>
-                    <input id="organization-name" class="input" type="text" />
+                    <input id="organization-name" class="input" type="text" disabled />
                   </label>
                   <label>
                     <span>Slug</span>
-                    <input id="organization-slug" class="input" type="text" />
+                    <input id="organization-slug" class="input" type="text" disabled />
                   </label>
                   <label data-seat-limit-control>
                     <span>Seat limit</span>
-                    <input id="organization-seat-limit" class="input" type="number" min="0" />
+                    <input id="organization-seat-limit" class="input" type="number" min="0" disabled />
                   </label>
                 </form>
-                <p id="organization-save-status" class="editor-note muted">No pending changes.</p>
+                <p id="organization-save-status" class="editor-note muted"></p>
               </aside>
               <div class="stack" data-organization-section="domains-invites">
                 <section class="detail-card">
@@ -178,7 +213,7 @@
                       <p class="eyebrow">Domains</p>
                       <h3>Enabled domains</h3>
                     </div>
-                    <button id="organization-domain-add-button" class="button button-secondary" type="button">Add domain</button>
+                    <button id="organization-domain-add-button" class="button button-secondary" type="button" disabled>Add domain</button>
                   </div>
                   <div id="organization-domain-list" class="list-cards"></div>
                 </section>
@@ -188,7 +223,7 @@
                       <p class="eyebrow">Invites</p>
                       <h3>Pending invites</h3>
                     </div>
-                    <button id="organization-invite-send-button" class="button button-secondary" type="button">Send invite</button>
+                    <button id="organization-invite-send-button" class="button button-secondary" type="button" disabled>Send invite</button>
                   </div>
                   <div id="organization-invite-list" class="list-cards"></div>
                 </section>
@@ -200,36 +235,36 @@
             <article id="organization-billing-content" class="stack hidden" data-organization-placeholder="billing">
               <p class="eyebrow">Organization billing</p>
               <h2>Plan and access</h2>
-              <p id="organization-billing-status" class="editor-note muted" role="status" aria-live="polite">Loading billing...</p>
+              <p id="organization-billing-status" class="editor-note muted" role="status" aria-live="polite"></p>
               <div id="organization-billing-summary" class="hero-metrics"></div>
               <section class="detail-card" data-organization-billing-control>
                 <div class="toolbar">
-                  <select id="organization-billing-interval" class="input"><option value="monthly">Monthly</option><option value="annual">Annual</option></select>
-                  <input id="organization-billing-basic" class="input" type="number" min="0" value="0" aria-label="Basic licenses" />
-                  <input id="organization-billing-extended" class="input" type="number" min="0" value="0" aria-label="Extended licenses" />
+                  <select id="organization-billing-interval" class="input" disabled><option value="monthly">Monthly</option><option value="annual">Annual</option></select>
+                  <input id="organization-billing-basic" class="input" type="number" min="0" value="0" aria-label="Basic licenses" disabled />
+                  <input id="organization-billing-extended" class="input" type="number" min="0" value="0" aria-label="Extended licenses" disabled />
                 </div>
                 <div class="button-row">
-                  <button id="organization-billing-checkout" class="button button-primary" type="button">Start checkout</button>
-                  <button id="organization-billing-plan-save" class="button button-secondary" type="button">Update plan</button>
-                  <button id="organization-billing-portal" class="button button-secondary" type="button">Open billing portal</button>
-                  <button id="organization-billing-cancel" class="button button-secondary" type="button">Cancel at period end</button>
+                  <button id="organization-billing-checkout" class="button button-primary" type="button" disabled>Start checkout</button>
+                  <button id="organization-billing-plan-save" class="button button-secondary" type="button" disabled>Update plan</button>
+                  <button id="organization-billing-portal" class="button button-secondary" type="button" disabled>Open billing portal</button>
+                  <button id="organization-billing-cancel" class="button button-secondary" type="button" disabled>Cancel at period end</button>
                 </div>
               </section>
               <section id="organization-billing-platform-controls" class="detail-card" data-platform-admin-control>
                 <p class="eyebrow">Platform-only billing controls</p>
                 <div class="toolbar">
-                  <select id="organization-billing-platform-mode" class="input"><option value="none">None</option><option value="managed_ai">Managed AI</option><option value="local_models">Local Models</option><option value="manual_access">Manual access</option></select>
-                  <select id="organization-billing-platform-status" class="input"><option value="none">None</option><option value="active">Active</option><option value="trialing">Trialing</option><option value="past_due">Past due</option><option value="unpaid">Unpaid</option><option value="incomplete">Incomplete</option><option value="canceled">Canceled</option></select>
-                  <label><input id="organization-billing-manual-enabled" type="checkbox" /> Manual access enabled</label>
-                  <label><span>Manual access expires</span><input id="organization-billing-manual-expires" class="input" type="datetime-local" /></label>
-                  <button id="organization-billing-platform-save" class="button button-secondary" type="button">Save platform billing</button>
+                  <select id="organization-billing-platform-mode" class="input" disabled><option value="none">None</option><option value="managed_ai">Managed AI</option><option value="local_models">Local Models</option><option value="manual_access">Manual access</option></select>
+                  <select id="organization-billing-platform-status" class="input" disabled><option value="none">None</option><option value="active">Active</option><option value="trialing">Trialing</option><option value="past_due">Past due</option><option value="unpaid">Unpaid</option><option value="incomplete">Incomplete</option><option value="canceled">Canceled</option></select>
+                  <label><input id="organization-billing-manual-enabled" type="checkbox" disabled /> Manual access enabled</label>
+                  <label><span>Manual access expires</span><input id="organization-billing-manual-expires" class="input" type="datetime-local" disabled /></label>
+                  <button id="organization-billing-platform-save" class="button button-secondary" type="button" disabled>Save platform billing</button>
                 </div>
               </section>
             </article>
             <article id="organization-audit-content" class="stack hidden" data-organization-placeholder="audit">
               <p class="eyebrow">Organization audit</p>
               <h2>Scoped activity</h2>
-              <p id="organization-audit-status" class="editor-note muted" role="status" aria-live="polite">Loading organization audit...</p>
+              <p id="organization-audit-status" class="editor-note muted" role="status" aria-live="polite"></p>
               <div id="organization-audit-list" class="list-cards"></div>
             </article>
           </section>
@@ -251,17 +286,17 @@
                   <h3>Enabled models and active routing</h3>
                   <p class="editor-note muted">The active model applies to every managed user. Models can only be added from a healthy credential's authoritative discovery response.</p>
                 </div>
-                <button id="model-policy-save-button" class="button button-primary" type="button">Save model policy</button>
+                <button id="model-policy-save-button" class="button button-primary" type="button" disabled>Save model policy</button>
               </div>
               <div id="model-policy-list" class="model-policy-list" aria-live="polite"></div>
               <div class="model-policy-discovery">
                 <label>
                   <span>Healthy credential</span>
-                  <select id="model-policy-credential" class="input">
+                  <select id="model-policy-credential" class="input" disabled>
                     <option value="">Select credential</option>
                   </select>
                 </label>
-                <button id="model-policy-discover-button" class="button button-secondary" type="button">Discover models</button>
+                <button id="model-policy-discover-button" class="button button-secondary" type="button" disabled>Discover models</button>
                 <label>
                   <span>Discovered model</span>
                   <select id="model-policy-discovered-model" class="input" disabled>
@@ -270,7 +305,7 @@
                 </label>
                 <button id="model-policy-add-button" class="button button-secondary" type="button" disabled>Add enabled model</button>
               </div>
-              <p id="model-policy-status" class="editor-note muted" role="status" aria-live="polite" aria-atomic="true">Loading platform model policy...</p>
+              <p id="model-policy-status" class="editor-note muted" role="status" aria-live="polite" aria-atomic="true"></p>
             </section>
             <div class="section-head compact credential-inventory-head">
               <div>
@@ -279,15 +314,15 @@
               </div>
             </div>
             <div class="toolbar credentials-toolbar">
-              <input id="credential-search" class="input" type="search" name="credential-search" placeholder="Search provider, state, or secret ref" />
-              <select id="credential-provider-filter" class="input" name="credential-provider-filter">
+              <input id="credential-search" class="input" type="search" name="credential-search" placeholder="Search provider, state, or secret ref" disabled />
+              <select id="credential-provider-filter" class="input" name="credential-provider-filter" disabled>
                 <option value="">All providers</option>
                 <option value="openai">OpenAI</option>
                 <option value="anthropic">Anthropic</option>
                 <option value="codex_oauth">Codex / ChatGPT</option>
                 <option value="openai_compatible">OpenAI-compatible provider</option>
               </select>
-              <select id="credential-state-filter" class="input" name="credential-state-filter">
+              <select id="credential-state-filter" class="input" name="credential-state-filter" disabled>
                 <option value="">All states</option>
                 <option value="healthy">Healthy</option>
                 <option value="degraded">Degraded</option>
@@ -297,7 +332,7 @@
                 <option value="deleted">Deleted</option>
               </select>
               <label class="checkbox-row">
-                <input id="credentials-show-deleted" type="checkbox" />
+                <input id="credentials-show-deleted" type="checkbox" disabled />
                 <span>Show deleted</span>
               </label>
             </div>
@@ -307,7 +342,7 @@
               <div class="credential-create-grid">
                 <label>
                   <span>Provider</span>
-                  <select class="input" id="credential-create-provider">
+                  <select class="input" id="credential-create-provider" disabled>
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
                     <option value="codex_oauth">Codex / ChatGPT runtime</option>
@@ -316,20 +351,20 @@
                 </label>
                 <label>
                   <span>Display name</span>
-                  <input class="input" id="credential-create-name" type="text" placeholder="Production OpenAI key" />
+                  <input class="input" id="credential-create-name" type="text" disabled />
                 </label>
                 <label>
                   <span>Base URL</span>
-                  <input class="input" id="credential-create-base-url" type="url" placeholder="https://provider.example.com/v1" />
+                  <input class="input" id="credential-create-base-url" type="url" disabled />
                 </label>
               </div>
               <label class="credential-create-secret-field">
                 <span>Credential secret</span>
-                <textarea class="input ai-access-textarea" id="credential-create-secret" placeholder="Paste the provider API key or the full Codex auth.json."></textarea>
+                <textarea class="input ai-access-textarea" id="credential-create-secret" placeholder="Paste the provider API key or the full Codex auth.json." disabled></textarea>
               </label>
               <div class="button-row">
-                <button class="button button-primary" id="credential-create-submit" type="button">Create credential</button>
-                <button class="button button-secondary" id="credential-create-codex-upload" type="button">Prepare Codex account upload</button>
+                <button class="button button-primary" id="credential-create-submit" type="button" disabled>Create credential</button>
+                <button class="button button-secondary" id="credential-create-codex-upload" type="button" disabled>Prepare Codex account upload</button>
                 <button class="button button-secondary hidden" id="credential-create-codex-copy" type="button">Copy command</button>
                 <p class="editor-note credential-create-status" id="credential-create-status">Secrets are stored encrypted and assigned to the provider platform pool. For Codex / ChatGPT runtime, paste the full Codex <code>auth.json</code> with <code>id_token</code>, <code>access_token</code>, <code>refresh_token</code>, and <code>account_id</code>.</p>
               </div>
@@ -351,11 +386,7 @@
                       <th>Codex limits</th>
                     </tr>
                   </thead>
-                  <tbody id="credentials-table-body">
-                    <tr>
-                      <td colspan="9">Credential inventory will load after sign-in.</td>
-                    </tr>
-                  </tbody>
+                  <tbody id="credentials-table-body"></tbody>
                 </table>
               </div>
             </div>
@@ -371,23 +402,23 @@
             </div>
             <div class="toolbar usage-toolbar">
               <div class="segmented">
-                <button class="segment active" type="button">24h</button>
-                <button class="segment" type="button">7d</button>
-                <button class="segment" type="button">30d</button>
+                <button class="segment active" type="button" disabled>24h</button>
+                <button class="segment" type="button" disabled>7d</button>
+                <button class="segment" type="button" disabled>30d</button>
               </div>
-              <select id="usage-group-by" class="input">
+              <select id="usage-group-by" class="input" disabled>
                 <option value="total">Total usage</option>
                 <option value="credential">Credential</option>
                 <option value="user">User</option>
                 <option value="org">Org</option>
               </select>
-              <select id="usage-filter-credential" class="input">
+              <select id="usage-filter-credential" class="input" disabled>
                 <option value="">All credentials</option>
               </select>
-              <select id="usage-filter-user" class="input">
+              <select id="usage-filter-user" class="input" disabled>
                 <option value="">All users</option>
               </select>
-              <select id="usage-filter-org" class="input">
+              <select id="usage-filter-org" class="input" disabled>
                 <option value="">All orgs</option>
               </select>
             </div>
@@ -402,18 +433,18 @@
               <div class="hero-metrics">
                 <article class="metric-card">
                   <span class="metric-label">5h remaining</span>
-                  <strong id="usage-capacity-five-hour">Unknown</strong>
-                  <span class="metric-note" id="usage-capacity-five-hour-note">Waiting for Codex limit status</span>
+                  <strong id="usage-capacity-five-hour"></strong>
+                  <span class="metric-note" id="usage-capacity-five-hour-note"></span>
                 </article>
                 <article class="metric-card">
                   <span class="metric-label">Weekly remaining</span>
-                  <strong id="usage-capacity-weekly">Unknown</strong>
-                  <span class="metric-note" id="usage-capacity-weekly-note">Waiting for Codex limit status</span>
+                  <strong id="usage-capacity-weekly"></strong>
+                  <span class="metric-note" id="usage-capacity-weekly-note"></span>
                 </article>
                 <article class="metric-card">
                   <span class="metric-label">Measured credentials</span>
-                  <strong id="usage-capacity-measured">0/0</strong>
-                  <span class="metric-note" id="usage-capacity-measured-note">No Codex credentials measured</span>
+                  <strong id="usage-capacity-measured"></strong>
+                  <span class="metric-note" id="usage-capacity-measured-note"></span>
                 </article>
               </div>
               <div id="usage-capacity-credentials" class="list-cards"></div>
@@ -425,32 +456,23 @@
                     <p class="eyebrow">Total usage</p>
                     <h3>Token volume trend</h3>
                   </div>
-                  <span class="status-chip success">+12% vs yesterday</span>
                 </div>
-                <div id="usage-chart-bars" class="fake-chart">
-                  <span style="height: 44%"></span>
-                  <span style="height: 66%"></span>
-                  <span style="height: 58%"></span>
-                  <span style="height: 78%"></span>
-                  <span style="height: 50%"></span>
-                  <span style="height: 88%"></span>
-                  <span style="height: 74%"></span>
-                </div>
+                <div id="usage-chart-bars" class="fake-chart"></div>
               </article>
               <article class="metric-card tall">
                 <span class="metric-label">Prompt tokens</span>
-                <strong id="usage-total-tokens">821k</strong>
-                <span class="metric-note">Collected across credentials, users, and orgs</span>
+                <strong id="usage-total-tokens"></strong>
+                <span class="metric-note"></span>
               </article>
               <article class="metric-card tall">
                 <span class="metric-label">Requests</span>
-                <strong id="usage-total-requests">412k</strong>
-                <span class="metric-note">Can be grouped by credential or user</span>
+                <strong id="usage-total-requests"></strong>
+                <span class="metric-note"></span>
               </article>
               <article class="metric-card tall">
                 <span class="metric-label">Top credential</span>
-                <strong id="usage-top-credential">OpenAI org key</strong>
-                <span class="metric-note">53% of current rolling usage</span>
+                <strong id="usage-top-credential"></strong>
+                <span class="metric-note"></span>
               </article>
             </div>
             <div id="usage-series" class="list-cards"></div>
@@ -478,11 +500,7 @@
                       <th>Upstream status</th>
                     </tr>
                   </thead>
-                  <tbody id="usage-credential-table-body">
-                    <tr>
-                      <td colspan="10">Credential usage will load after sign-in.</td>
-                    </tr>
-                  </tbody>
+                  <tbody id="usage-credential-table-body"></tbody>
                 </table>
               </div>
             </section>
@@ -495,36 +513,13 @@
                 <h2>Incident triage board</h2>
               </div>
               <div class="segmented" id="alert-status-filters">
-                <button class="segment active" type="button" data-alert-status-filter="active">Active</button>
-                <button class="segment" type="button" data-alert-status-filter="acknowledged">Acknowledged</button>
-                <button class="segment" type="button" data-alert-status-filter="resolved">Resolved</button>
+                <button class="segment active" type="button" data-alert-status-filter="active" disabled>Active</button>
+                <button class="segment" type="button" data-alert-status-filter="acknowledged" disabled>Acknowledged</button>
+                <button class="segment" type="button" data-alert-status-filter="resolved" disabled>Resolved</button>
               </div>
             </div>
             <div class="alerts-layout modal-list-layout">
-              <div id="alert-list" class="alert-queue">
-                <article class="alert-card critical active">
-                  <div class="alert-head">
-                    <strong>Credential outage</strong>
-                    <span class="status-chip danger">Critical</span>
-                  </div>
-                  <p>OpenAI org key has failed 11 refresh attempts and now impacts 6 active routes.</p>
-                  <div class="alert-meta">
-                    <span>Credential: OpenAI org key</span>
-                    <span>First seen: 09:12</span>
-                  </div>
-                </article>
-                <article class="alert-card">
-                  <div class="alert-head">
-                    <strong>Usage spike</strong>
-                    <span class="status-chip warning">High</span>
-                  </div>
-                  <p>Anthropic shared key exceeded baseline on worker `assistant-runner`.</p>
-                  <div class="alert-meta">
-                    <span>Credential: Anthropic shared key</span>
-                    <span>Routes: 4</span>
-                  </div>
-                </article>
-              </div>
+              <div id="alert-list" class="alert-queue"></div>
             </div>
           </section>
 
@@ -534,47 +529,25 @@
                 <p class="eyebrow">Users</p>
                 <h2>Directory and account management</h2>
               </div>
-              <button id="create-user-button-inline" class="button button-primary" type="button" data-platform-admin-control data-platform-only>Create user</button>
+              <button id="create-user-button-inline" class="button button-primary" type="button" data-platform-admin-control data-platform-only disabled>Create user</button>
             </div>
             <div class="users-layout modal-list-layout">
               <div>
                 <div class="toolbar">
-                  <input id="user-search" class="input" type="search" placeholder="Search by name or email" />
-                  <select id="user-status-filter" class="input">
+                  <input id="user-search" class="input" type="search" placeholder="Search by name or email" disabled />
+                  <select id="user-status-filter" class="input" disabled>
                     <option value="">All statuses</option>
                     <option>Active</option>
                     <option>Invited</option>
                     <option>Disabled</option>
                   </select>
-                  <select id="user-role-filter" class="input">
+                  <select id="user-role-filter" class="input" disabled>
                     <option value="">Role</option>
                     <option value="platform_admin">Platform admin</option>
                     <option value="member">Member</option>
                   </select>
                 </div>
-                <div id="user-list" class="list-cards">
-                  <article class="list-card active">
-                    <div>
-                      <strong>Vaclav Soukup</strong>
-                      <p>vaclav.soukup@neatec.cz · Platform admin · owner in Personal</p>
-                    </div>
-                    <span class="status-chip success">Active</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>Alena Novak</strong>
-                      <p>alena@studio.test · member in Product · invited 2 days ago</p>
-                    </div>
-                    <span class="status-chip info">Invited</span>
-                  </article>
-                  <article class="list-card">
-                    <div>
-                      <strong>Martin Kriz</strong>
-                      <p>martin@studio.test · disabled by admin</p>
-                    </div>
-                    <span class="status-chip danger">Disabled</span>
-                  </article>
-                </div>
+                <div id="user-list" class="list-cards"></div>
               </div>
             </div>
           </section>
@@ -591,11 +564,11 @@
                 <div class="stack tight">
                   <label>
                     <span class="eyebrow">Search</span>
-                    <input id="audit-search" class="input" type="search" placeholder="Actor, action, entity" />
+                    <input id="audit-search" class="input" type="search" placeholder="Actor, action, entity" disabled />
                   </label>
                   <label>
                     <span class="eyebrow">Date range</span>
-                    <select id="audit-date-range" class="input">
+                    <select id="audit-date-range" class="input" disabled>
                       <option>Last 24h</option>
                       <option>Last 7 days</option>
                       <option>Last 30 days</option>
@@ -603,7 +576,7 @@
                   </label>
                   <label>
                     <span class="eyebrow">Actor</span>
-                    <select id="audit-actor-filter" class="input">
+                    <select id="audit-actor-filter" class="input" disabled>
                       <option>All actors</option>
                       <option>Platform admin</option>
                       <option>Member</option>
@@ -611,7 +584,7 @@
                   </label>
                   <label>
                     <span class="eyebrow">Entity type</span>
-                    <select id="audit-entity-filter" class="input">
+                    <select id="audit-entity-filter" class="input" disabled>
                       <option>All entities</option>
                       <option>User</option>
                       <option>Credential</option>
@@ -620,33 +593,11 @@
                   </label>
                 </div>
                 <div class="button-row">
-                  <button class="button button-secondary" type="button">Reset</button>
-                  <button class="button button-primary" type="button">Apply</button>
+                  <button class="button button-secondary" type="button" disabled>Reset</button>
+                  <button class="button button-primary" type="button" disabled>Apply</button>
                 </div>
               </aside>
-              <section id="audit-list" class="audit-stream">
-                <article class="audit-row active">
-                  <div>
-                    <strong>User invited</strong>
-                    <p>Václav Soukup created `alena@studio.test` and sent an invite.</p>
-                  </div>
-                  <span>14:21</span>
-                </article>
-                <article class="audit-row">
-                  <div>
-                    <strong>Credential rotated</strong>
-                    <p>OpenAI org key moved to draining and a replacement binding was assigned.</p>
-                  </div>
-                  <span>13:58</span>
-                </article>
-                <article class="audit-row">
-                  <div>
-                    <strong>Route rebinding</strong>
-                    <p>route_1884 switched to Anthropic shared key after failure classification.</p>
-                  </div>
-                  <span>13:31</span>
-                </article>
-              </section>
+              <section id="audit-list" class="audit-stream"></section>
             </div>
           </section>
         </section>
@@ -721,11 +672,7 @@
           </div>
           <button id="credential-detail-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close credential detail">Close</button>
         </div>
-        <div id="credential-detail" class="modal-detail">
-          <p class="eyebrow">Selected credential</p>
-          <h3>No credential selected</h3>
-          <p class="editor-note muted">Select a credential to inspect capacity, actions, and alerts.</p>
-        </div>
+        <div id="credential-detail" class="modal-detail"></div>
       </div>
     </dialog>
 
@@ -738,11 +685,7 @@
           </div>
           <button id="alert-detail-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close alert detail">Close</button>
         </div>
-        <div id="alert-detail" class="modal-detail">
-          <p class="eyebrow">Runbook</p>
-          <h3>No alert selected</h3>
-          <p class="editor-note muted">Select an alert to acknowledge, resolve, or inspect the related audit trail.</p>
-        </div>
+        <div id="alert-detail" class="modal-detail"></div>
       </div>
     </dialog>
 
@@ -766,9 +709,7 @@
           </label>
           <label data-user-membership-control>
             <span>Organization</span>
-            <select id="user-org" class="input">
-              <option>Personal</option>
-            </select>
+            <select id="user-org" class="input"></select>
           </label>
           <label data-user-membership-control>
             <span>Organization role</span>
@@ -832,11 +773,7 @@
           </div>
           <button id="audit-detail-modal-close" class="button button-secondary modal-close" type="button" aria-label="Close audit detail">Close</button>
         </div>
-        <div id="audit-detail" class="modal-detail">
-          <p class="eyebrow">Event detail</p>
-          <h3>No event selected</h3>
-          <p class="editor-note muted">Select an audit event to inspect its payload snapshot.</p>
-        </div>
+        <div id="audit-detail" class="modal-detail"></div>
       </div>
     </dialog>
 
