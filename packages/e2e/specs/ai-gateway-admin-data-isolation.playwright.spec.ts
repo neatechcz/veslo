@@ -12,8 +12,8 @@ const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SPEC_DIR, '../../..');
 const ADMIN_PUBLIC_ROOT = join(REPO_ROOT, 'services/ai-gateway/public-admin');
 
-const ORG_A = organization('org-a', 'ORGANIZATION-A-NAME', 'organization-a');
-const ORG_B = organization('org-b', 'ORGANIZATION-B-NAME', 'organization-b');
+const ORG_A = organization('org-a', 'ORGANIZATION-A-NAME', 'organization-a', 11_001);
+const ORG_B = organization('org-b', 'ORGANIZATION-B-NAME', 'organization-b', 22_002);
 const GLOBAL_USERS = [
   globalUser('global-alice', 'GLOBAL-ALICE', 'global-alice@example.test', ORG_A, true),
   globalUser('global-bob', 'GLOBAL-BOB', 'global-bob@example.test', ORG_B, false),
@@ -27,6 +27,19 @@ const ORG_MEMBERS = {
 };
 
 let adminServer: { origin: string; server: Server };
+const unexpectedPageErrors = new WeakMap<Page, string[]>();
+
+test.beforeEach(async ({ page }) => {
+  const errors: string[] = [];
+  unexpectedPageErrors.set(page, errors);
+  page.on('pageerror', (error) => {
+    errors.push(error.stack || error.message);
+  });
+});
+
+test.afterEach(async ({ page }) => {
+  expect(unexpectedPageErrors.get(page) || [], 'unexpected browser page errors').toEqual([]);
+});
 
 test.beforeAll(async () => {
   adminServer = await startStaticAdminServer();
@@ -64,6 +77,35 @@ test.describe('AI Gateway admin data isolation', () => {
     expect(records.some((record) => record.channel === 'visible')).toBe(true);
     expect(records.some((record) => record.channel === 'semantic')).toBe(true);
     expect(harness.records.some((record) => record.path === '/admin/api/users')).toBe(true);
+  });
+
+  test('negative control proves the observer detects semantic-only stale data outside visible text', async ({ page }) => {
+    await installAdminHarness(page);
+    await openAdmin(page, '/admin/platform-users');
+
+    await page.evaluate(() => {
+      const trigger = document.createElement('button');
+      trigger.id = 'semantic-leak-observer-negative-control';
+      trigger.textContent = 'Inject semantic-only leak';
+      trigger.addEventListener('click', () => {
+        const leak = document.createElement('button');
+        leak.id = 'controlled-semantic-leak';
+        leak.textContent = 'Unrelated visible action';
+        leak.setAttribute('aria-label', 'CONTROLLED-SEMANTIC-ONLY');
+        document.body.append(leak);
+      });
+      document.body.append(trigger);
+    });
+
+    await armLeakObserver(page, ['CONTROLLED-SEMANTIC-ONLY'], 'click');
+    await page.locator('#semantic-leak-observer-negative-control').click();
+    await waitAnimationFrames(page, 2);
+    const records = await stopLeakObserver(page);
+
+    await expect(page.locator('body')).not.toContainText('CONTROLLED-SEMANTIC-ONLY');
+    expect(records.some((record) => record.token === 'CONTROLLED-SEMANTIC-ONLY')).toBe(true);
+    expect(records.some((record) => record.channel === 'semantic')).toBe(true);
+    expect(records.some((record) => record.channel === 'visible')).toBe(false);
   });
 
   test('initial shell is fail closed and never exposes the removed sample metrics, people, incidents, audit, or chart data', async ({ page }) => {
@@ -242,16 +284,31 @@ test.describe('AI Gateway admin data isolation', () => {
     expect(harness.records.some((record) => /^\/admin\/api\/users\/.+\/ai-access$/.test(record.path))).toBe(false);
   });
 
-  test('organization A to B transitions isolate domains, invites, billing, AI access, and audit until each destination is complete', async ({ page }) => {
+  test('organization A to B transitions isolate Overview, domains, invites, billing, AI access, and audit until each destination is complete', async ({ page }) => {
     test.setTimeout(60_000);
     const harness = await installAdminHarness(page);
     const cases: Array<{
-      page: 'domains-invites' | 'billing' | 'ai-access' | 'audit';
+      page: 'overview' | 'domains-invites' | 'billing' | 'ai-access' | 'audit';
       paths: string[];
       forbidden: string[];
       expected: string[];
       oldSelectors: string[];
+      initialVisible?: string[];
+      initialValues?: Array<{ selector: string; value: string }>;
+      clearedSelectors?: string[];
+      expectedValues?: Array<{ selector: string; value: string }>;
     }> = [
+      {
+        page: 'overview',
+        paths: [`/admin/api/organizations/${ORG_B.id}`],
+        forbidden: [String(ORG_A.seatLimit)],
+        expected: [],
+        oldSelectors: [],
+        initialVisible: [],
+        initialValues: [{ selector: '#organization-seat-limit', value: String(ORG_A.seatLimit) }],
+        clearedSelectors: ['#organization-seat-limit'],
+        expectedValues: [{ selector: '#organization-seat-limit', value: String(ORG_B.seatLimit) }],
+      },
       {
         page: 'domains-invites',
         paths: [
@@ -297,8 +354,13 @@ test.describe('AI Gateway admin data isolation', () => {
 
     for (const scenario of cases) {
       await openAdmin(page, `/admin/organizations/${ORG_A.id}/${scenario.page}`);
-      for (const marker of scenario.forbidden.slice(0, scenario.page === 'ai-access' ? 1 : undefined)) {
+      const initialVisible = scenario.initialVisible
+        ?? scenario.forbidden.slice(0, scenario.page === 'ai-access' ? 1 : undefined);
+      for (const marker of initialVisible) {
         await expect(page.locator('body')).toContainText(marker);
+      }
+      for (const control of scenario.initialValues || []) {
+        await expect(page.locator(control.selector)).toHaveValue(control.value);
       }
       if (scenario.page === 'ai-access') {
         await page.locator(`[data-user-id="${ORG_MEMBERS[ORG_A.id][0].userId}"]`).click();
@@ -312,6 +374,9 @@ test.describe('AI Gateway admin data isolation', () => {
       for (const selector of scenario.oldSelectors) {
         await expect(page.locator(selector)).toHaveCount(0);
       }
+      for (const selector of scenario.clearedSelectors || []) {
+        await expect(page.locator(selector)).toHaveValue('');
+      }
       if (scenario.page === 'ai-access') {
         await expect(page.locator('#user-editor-modal')).not.toHaveAttribute('open', '');
       }
@@ -323,12 +388,18 @@ test.describe('AI Gateway admin data isolation', () => {
       for (const marker of scenario.expected) {
         await expect(page.locator('body')).not.toContainText(marker);
       }
+      for (const control of scenario.expectedValues || []) {
+        await expect(page.locator(control.selector)).not.toHaveValue(control.value);
+      }
       const finalIndex = controls.length - 1;
       controls[finalIndex].release(harness.responseFor('GET', scenario.paths[finalIndex]));
       await waitForPageReady(page);
 
       for (const marker of scenario.expected) {
         await expect(page.locator('body')).toContainText(marker);
+      }
+      for (const control of scenario.expectedValues || []) {
+        await expect(page.locator(control.selector)).toHaveValue(control.value);
       }
       expect(await stopLeakObserver(page)).toEqual([]);
 
@@ -470,7 +541,7 @@ test.describe('AI Gateway admin data isolation', () => {
     expect(await stopLeakObserver(page)).toEqual([]);
   });
 
-  test('stale qualified AI Access error after member selection change is inert and legacy unqualified routes are JSON 404', async ({ page }) => {
+  test('stale qualified AI Access error after member selection change is inert and the client never calls legacy routes', async ({ page }) => {
     const harness = await installAdminHarness(page);
     await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
     const first = ORG_MEMBERS[ORG_A.id][0];
@@ -506,24 +577,7 @@ test.describe('AI Gateway admin data isolation', () => {
 
     const legacyPath = `/admin/api/users/${encodeURIComponent(first.userId)}/ai-access`;
     expect(harness.records.filter((record) => record.path === legacyPath)).toHaveLength(0);
-    const legacy = await page.evaluate(async ({ path }) => {
-      const getResponse = await fetch(path);
-      const putResponse = await fetch(path, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ enabled: true, provider: 'openai', credentialId: null }),
-      });
-      return {
-        get: { status: getResponse.status, body: await getResponse.json() },
-        put: { status: putResponse.status, body: await putResponse.json() },
-      };
-    }, { path: legacyPath });
-    expect(legacy).toEqual({
-      get: { status: 404, body: { error: 'not_found' } },
-      put: { status: 404, body: { error: 'not_found' } },
-    });
-    expect(harness.records.filter((record) => record.path === legacyPath).map((record) => record.method))
-      .toEqual(['GET', 'PUT']);
+    expect(harness.records.some((record) => /^\/admin\/api\/users\/.+\/ai-access$/.test(record.path))).toBe(false);
   });
 
   test('wrong membershipId or userId in member PATCH responses cannot show success and forces scoped recovery', async ({ page }) => {
@@ -606,6 +660,22 @@ async function installAdminHarness(page: Page) {
         records.push({ token: tokenValue, channel, source, sample: sample.slice(0, 240) });
       };
 
+      const inspectSemanticValue = (element: Element, value: string | null | undefined, source: string) => {
+        if (!value || semanticallyHidden(element)) return;
+        for (const tokenValue of forbidden) {
+          if (value.includes(tokenValue)) {
+            record(tokenValue, 'semantic', source, value);
+          }
+        }
+      };
+
+      const referencedText = (ids: string | null) => (ids || '')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((id) => document.getElementById(id)?.textContent || '')
+        .join(' ');
+
       const inspect = (source: string) => {
         if (!active || !document.body) return;
         const visibleText = document.body.innerText || '';
@@ -622,6 +692,48 @@ async function installAdminHarness(page: Page) {
           for (const tokenValue of forbidden) {
             if (text.includes(tokenValue)) {
               record(tokenValue, 'semantic', source, text);
+            }
+          }
+        }
+
+        const semanticAttributes = ['aria-label', 'title', 'alt', 'aria-valuetext', 'placeholder'];
+        for (const element of document.body.querySelectorAll('*')) {
+          if (semanticallyHidden(element)) continue;
+          for (const attribute of semanticAttributes) {
+            inspectSemanticValue(element, element.getAttribute(attribute), `${source}:${attribute}`);
+          }
+          inspectSemanticValue(
+            element,
+            referencedText(element.getAttribute('aria-labelledby')),
+            `${source}:aria-labelledby`,
+          );
+          inspectSemanticValue(
+            element,
+            referencedText(element.getAttribute('aria-describedby')),
+            `${source}:aria-describedby`,
+          );
+
+          if (element instanceof HTMLInputElement) {
+            if (element.type !== 'password') {
+              inspectSemanticValue(element, element.value, `${source}:input-value`);
+            }
+            for (const label of Array.from(element.labels || [])) {
+              inspectSemanticValue(element, label.textContent, `${source}:input-label`);
+            }
+          } else if (element instanceof HTMLTextAreaElement) {
+            inspectSemanticValue(element, element.value, `${source}:textarea-value`);
+            for (const label of Array.from(element.labels || [])) {
+              inspectSemanticValue(element, label.textContent, `${source}:textarea-label`);
+            }
+          } else if (element instanceof HTMLSelectElement) {
+            inspectSemanticValue(element, element.value, `${source}:select-value`);
+            inspectSemanticValue(
+              element,
+              Array.from(element.selectedOptions).map((option) => option.textContent || '').join(' '),
+              `${source}:selected-option`,
+            );
+            for (const label of Array.from(element.labels || [])) {
+              inspectSemanticValue(element, label.textContent, `${source}:select-label`);
             }
           }
         }
@@ -1003,7 +1115,12 @@ function createHarnessState(): HarnessState {
       },
       platformAdmin: true,
       activeOrgId: ORG_A.id,
-      organizations: organizations.map((entry) => ({ ...entry, role: 'organization_admin' })),
+      organizations: organizations.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        slug: entry.slug,
+        role: 'organization_admin',
+      })),
       capabilities: [
         'organization',
         'users',
@@ -1062,13 +1179,13 @@ function createHarnessState(): HarnessState {
   };
 }
 
-function organization(id: string, name: string, slug: string) {
+function organization(id: string, name: string, slug: string, seatLimit: number) {
   return {
     id,
     name,
     slug,
     ownerUserId: `owner-${id}`,
-    seatLimit: 50,
+    seatLimit,
   };
 }
 
@@ -1314,7 +1431,7 @@ type HarnessState = {
     user: { id: string; email: string; emailVerified: boolean; name: string };
     platformAdmin: boolean;
     activeOrgId: string;
-    organizations: Array<TestOrganization & { role: string }>;
+    organizations: Array<Pick<TestOrganization, 'id' | 'name' | 'slug'> & { role: string }>;
     capabilities: string[];
     allowedPages: string[];
   };
