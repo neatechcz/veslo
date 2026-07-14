@@ -3,6 +3,7 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
+import type { AiAccessRepository } from "../src/access/repository.js";
 import type { AuditRepository, RecordAuditEventInput } from "../src/audit/repository.js";
 import type { AdminCredentialRecord } from "../src/credentials/repository.js";
 import type { StoredSecret } from "../src/credentials/secret-store.js";
@@ -109,6 +110,8 @@ function createHarness(input: {
   }) => Promise<CodexUsageStatus>;
   capabilityConcurrency?: number;
   capabilityTimeoutMs?: number;
+  incompatibleAssignmentCount?: number;
+  failAssignmentCompatibilityRead?: boolean;
 } = {}) {
   const modelPolicy = new MemoryModelPolicyRepository(input.policy ?? null);
   const auditEvents: RecordAuditEventInput[] = [];
@@ -120,6 +123,23 @@ function createHarness(input: {
     activeModel: PlatformModelRef;
   }> = [];
   let modelDiscoveryCalls = 0;
+  const assignmentProviderChecks: string[] = [];
+  const aiAccessRepository: AiAccessRepository = {
+    async getUserAiAccess() {
+      return null;
+    },
+    async upsertUserAiAccess() {
+      throw new Error("unused");
+    },
+    async countEnabledPolicies() {
+      return 0;
+    },
+    async countEnabledPoliciesIncompatibleWithProvider(provider) {
+      assignmentProviderChecks.push(provider);
+      if (input.failAssignmentCompatibilityRead) throw new Error("ai_access_policy_store_down");
+      return input.incompatibleAssignmentCount ?? 0;
+    },
+  };
   const auditRepository: AuditRepository = {
     async recordEvent(event) {
       auditAttempts.push(event);
@@ -198,6 +218,7 @@ function createHarness(input: {
         return platformAdminSession();
       },
     } as never,
+    aiAccessRepository,
     modelPolicyRepository: modelPolicy,
     credentialReadRepository: {
       async listAdminCredentials() {
@@ -266,6 +287,7 @@ function createHarness(input: {
     auditEvents,
     auditAttempts,
     mutationCalls,
+    assignmentProviderChecks,
     get modelDiscoveryCalls() {
       return modelDiscoveryCalls;
     },
@@ -327,7 +349,7 @@ test("replacePlatformModelPolicy normalizes duplicates and writes the global aud
     enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
     activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
   });
-  const { service, auditEvents, mutationCalls } = createHarness({ policy: previous });
+  const { service, auditEvents, mutationCalls, assignmentProviderChecks } = createHarness({ policy: previous });
 
   const response = await service.replacePlatformModelPolicy("admin-token", {
     enabledModels: [
@@ -360,7 +382,74 @@ test("replacePlatformModelPolicy normalizes duplicates and writes the global aud
     enabledModels: expectedPolicy.enabledModels,
     activeModel: expectedPolicy.activeModel,
   }]);
+  assert.deepEqual(assignmentProviderChecks, ["codex_oauth"]);
   assert.doesNotMatch(JSON.stringify(auditEvents), /test-key|secret_/);
+});
+
+test("replacePlatformModelPolicy rejects active provider changes that would strand enabled assignments", async () => {
+  const previous = policyRecord({
+    enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
+    activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
+  });
+  const harness = createHarness({
+    policy: previous,
+    credentials: [credential({ id: "cred_custom", provider: "openai_compatible" })],
+    openAiCompatibleModels: ["custom/model-v1"],
+    incompatibleAssignmentCount: 1,
+  });
+
+  await assert.rejects(
+    harness.service.replacePlatformModelPolicy("admin-token", {
+      enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+      activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+    }, "user_platform_admin"),
+    (error: unknown) =>
+      (error as { message?: string; status?: number }).message
+        === "model_policy_active_provider_has_incompatible_assignments"
+      && (error as { status?: number }).status === 409,
+  );
+
+  assert.deepEqual(harness.assignmentProviderChecks, ["openai_compatible"]);
+  assert.equal(harness.modelPolicy.current, previous);
+  assert.equal(harness.mutationCalls.length, 0);
+  assert.deepEqual(harness.auditEvents, []);
+});
+
+test("replacePlatformModelPolicy fails closed when assignment compatibility cannot be verified", async () => {
+  const previous = policyRecord({
+    enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
+    activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
+  });
+  const harness = createHarness({
+    policy: previous,
+    failAssignmentCompatibilityRead: true,
+  });
+  const consoleErrors: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    consoleErrors.push(args);
+  };
+
+  try {
+    await assert.rejects(
+      harness.service.replacePlatformModelPolicy("admin-token", {
+        enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
+        activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+      }, "user_platform_admin"),
+      (error: unknown) =>
+        (error as { message?: string; status?: number }).message
+          === "model_policy_assignment_compatibility_unavailable"
+        && (error as { status?: number }).status === 503,
+    );
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(consoleErrors[0]?.[0], "model_policy_assignment_compatibility_check_failed");
+  assert.deepEqual(harness.assignmentProviderChecks, ["codex_oauth"]);
+  assert.equal(harness.modelPolicy.current, previous);
+  assert.equal(harness.mutationCalls.length, 0);
+  assert.deepEqual(harness.auditEvents, []);
 });
 
 test("replacePlatformModelPolicy rejects empty enabled models before persistence", async () => {

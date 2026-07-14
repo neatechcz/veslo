@@ -22,6 +22,9 @@ function createReadyDependencies() {
       async countEnabledPolicies() {
         return 2;
       },
+      async countEnabledPoliciesIncompatibleWithProvider() {
+        return 0;
+      },
     },
     modelCapabilities: {
       async checkHealthyCredentialForModel() {
@@ -156,6 +159,41 @@ test("readiness reports the configured active model", async () => {
   assert.deepEqual(payload.checks.modelPolicy, {
     ok: true,
     activeModel: { provider: "openai", model: "gpt-5.4" },
+  });
+});
+
+test("readiness reports enabled AI access policies that do not match the active provider", async () => {
+  const payload = await checkReadiness({
+    ...createReadyDependencies(),
+    aiAccess: {
+      async countEnabledPolicies() {
+        return 3;
+      },
+      async countEnabledPoliciesIncompatibleWithProvider(provider) {
+        assert.equal(provider, "openai");
+        return 1;
+      },
+    },
+    modelPolicy: {
+      async getPolicy() {
+        return {
+          id: "platform" as const,
+          enabledModels: [{ provider: "openai" as const, model: "gpt-5.4" }],
+          activeModel: { provider: "openai" as const, model: "gpt-5.4" },
+          createdAt: new Date("2026-07-12T09:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T09:00:00.000Z"),
+        };
+      },
+    },
+  });
+
+  assert.equal(payload.ok, false);
+  assert.equal(payload.status, "not_ready");
+  assert.deepEqual(payload.checks.aiAccessPolicies, {
+    ok: false,
+    enabledPolicyCount: 3,
+    incompatibleProviderPolicyCount: 1,
+    reason: "ai_access_policy_provider_mismatch",
   });
 });
 

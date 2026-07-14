@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { AiGatewayDb } from "../src/db/index.js";
-import { MySqlPlatformModelPolicyRepository } from "../src/model-policy/mysql-repository.js";
+import { auditEventTable, platformModelPolicyTable, userAiAccessPolicyTable } from "../src/db/schema.js";
+import {
+  MySqlPlatformModelPolicyMutation,
+  MySqlPlatformModelPolicyRepository,
+  PlatformModelPolicyAssignmentConflictError,
+} from "../src/model-policy/mysql-repository.js";
 
 type ModelPolicyRow = {
   id: "platform";
@@ -13,9 +18,13 @@ type ModelPolicyRow = {
   updated_at: Date | string;
 };
 
-function createModelPolicyDb(initialRow: ModelPolicyRow | null = null) {
+function createModelPolicyDb(
+  initialRow: ModelPolicyRow | null = null,
+  options: { incompatibleAssignmentCount?: number } = {},
+) {
   let row = initialRow;
   const transactions: unknown[] = [];
+  const lockedTables: string[] = [];
   const writes: Array<{
     values: Record<string, unknown>;
     set: Record<string, unknown>;
@@ -24,12 +33,26 @@ function createModelPolicyDb(initialRow: ModelPolicyRow | null = null) {
   const db = {
     select() {
       return {
-        from() {
+        from(table: unknown) {
           return {
             where() {
+              if (table === userAiAccessPolicyTable) {
+                return Promise.resolve([{ count: options.incompatibleAssignmentCount ?? 0 }]);
+              }
+
               return {
-                async limit() {
-                  return row ? [row] : [];
+                limit() {
+                  const result = Promise.resolve(row ? [row] : []) as Promise<ModelPolicyRow[]> & {
+                    for(mode: string): Promise<ModelPolicyRow[]>;
+                  };
+                  result.for = async () => {
+                    if (table !== platformModelPolicyTable) {
+                      throw new Error("unexpected locking select table");
+                    }
+                    lockedTables.push("platform_model_policy:update");
+                    return row ? [row] : [];
+                  };
+                  return result;
                 },
               };
             },
@@ -64,8 +87,85 @@ function createModelPolicyDb(initialRow: ModelPolicyRow | null = null) {
   };
 
   return {
+    lockedTables,
     transactions,
     writes,
+    db,
+  };
+}
+
+function createModelPolicyMutationDb(options: {
+  initialRow?: ModelPolicyRow | null;
+  incompatibleAssignmentCount?: number;
+} = {}) {
+  let row = options.initialRow ?? {
+    id: "platform" as const,
+    enabled_models_json: JSON.stringify([{ provider: "codex_oauth", model: "gpt-5.4" }]),
+    active_provider: "codex_oauth",
+    active_model: "gpt-5.4",
+    created_at: new Date("2026-07-12T08:00:00.000Z"),
+    updated_at: new Date("2026-07-12T08:00:00.000Z"),
+  };
+  const lockedTables: string[] = [];
+  const policyWrites: Array<{ values: Record<string, unknown>; set: Record<string, unknown> }> = [];
+  const auditWrites: Record<string, unknown>[] = [];
+
+  const db = {
+    select() {
+      return {
+        from(table: unknown) {
+          return {
+            where() {
+              if (table === userAiAccessPolicyTable) {
+                return Promise.resolve([{ count: options.incompatibleAssignmentCount ?? 0 }]);
+              }
+
+              return {
+                limit() {
+                  return {
+                    async for() {
+                      if (table !== platformModelPolicyTable) {
+                        throw new Error("unexpected locking select table");
+                      }
+                      lockedTables.push("platform_model_policy:update");
+                      return row ? [row] : [];
+                    },
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+    insert(table: unknown) {
+      return {
+        values(values: Record<string, unknown>) {
+          if (table === auditEventTable) {
+            auditWrites.push(values);
+            return Promise.resolve();
+          }
+
+          return {
+            async onDuplicateKeyUpdate(input: { set: Record<string, unknown> }) {
+              policyWrites.push({ values, set: input.set });
+              row = row
+                ? ({ ...row, ...input.set } as ModelPolicyRow)
+                : (values as ModelPolicyRow);
+            },
+          };
+        },
+      };
+    },
+    async transaction(callback: (tx: unknown) => Promise<unknown>) {
+      return callback(db);
+    },
+  };
+
+  return {
+    auditWrites,
+    lockedTables,
+    policyWrites,
     db,
   };
 }
@@ -98,6 +198,7 @@ test("normalizes and stores multiple unique provider and model references", asyn
   ]);
   assert.deepEqual(policy.activeModel, { provider: "openai", model: "gpt-5.4" });
   assert.equal(policy.id, "platform");
+  assert.deepEqual(writable.lockedTables, ["platform_model_policy:update"]);
 });
 
 test("rejects empty policies and active models outside the enabled model set", async () => {
@@ -172,6 +273,44 @@ test("round-trips providers, models, and timestamps from the singleton row", asy
     createdAt: new Date("2026-07-12T08:00:00.000Z"),
     updatedAt: new Date("2026-07-12T08:05:00.000Z"),
   });
+});
+
+test("audited model policy mutation rejects active providers that would strand enabled assignments", async () => {
+  const writable = createModelPolicyMutationDb({ incompatibleAssignmentCount: 1 });
+  const mutation = new MySqlPlatformModelPolicyMutation(writable.db as AiGatewayDb);
+
+  await assert.rejects(
+    mutation.replacePolicyWithAudit({
+      actorUserId: "user_platform_admin",
+      enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+      activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+    }),
+    (error: unknown) => error instanceof PlatformModelPolicyAssignmentConflictError
+      && error.message === "model_policy_active_provider_has_incompatible_assignments"
+      && (error as { status?: number }).status === 409,
+  );
+
+  assert.deepEqual(writable.lockedTables, ["platform_model_policy:update"]);
+  assert.deepEqual(writable.policyWrites, []);
+  assert.deepEqual(writable.auditWrites, []);
+});
+
+test("non-audited model policy replacement rejects active providers that would strand enabled assignments", async () => {
+  const writable = createModelPolicyDb(null, { incompatibleAssignmentCount: 1 });
+  const repository = new MySqlPlatformModelPolicyRepository(writable.db as AiGatewayDb);
+
+  await assert.rejects(
+    repository.replacePolicy({
+      enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+      activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+    }),
+    (error: unknown) => error instanceof PlatformModelPolicyAssignmentConflictError
+      && error.message === "model_policy_active_provider_has_incompatible_assignments"
+      && (error as { status?: number }).status === 409,
+  );
+
+  assert.deepEqual(writable.lockedTables, ["platform_model_policy:update"]);
+  assert.deepEqual(writable.writes, []);
 });
 
 test("fails closed when stored enabled models are malformed", async () => {

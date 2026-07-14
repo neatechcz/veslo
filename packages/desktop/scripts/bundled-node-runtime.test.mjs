@@ -118,7 +118,9 @@ test("atomically publishes regular executable bundled Node copies", () => {
       assert.equal(readFileSync(target, "utf8"), "verified node executable");
       assert.equal(lstatSync(target).isFile(), true);
       assert.equal(lstatSync(target).isSymbolicLink(), false);
-      assert.notEqual(lstatSync(target).mode & 0o111, 0);
+      if (process.platform !== "win32") {
+        assert.notEqual(lstatSync(target).mode & 0o111, 0);
+      }
     }
     assert.deepEqual(readdirSync(sidecarDir).sort(), [
       "veslo-node",

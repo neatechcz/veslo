@@ -240,6 +240,12 @@ function createPersistentRuntime() {
       async upsertUserAiAccess() {
         throw new Error("unused");
       },
+      async countEnabledPolicies() {
+        return 1;
+      },
+      async countEnabledPoliciesIncompatibleWithProvider() {
+        return 0;
+      },
     } satisfies AiAccessRepository,
     credentials: new PersistentCredentialRepository(),
     secrets: new PersistentSecretStore(),

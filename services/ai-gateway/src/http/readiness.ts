@@ -14,7 +14,7 @@ export type ReadinessProviderProbe = {
 export type ReadinessDependencies = {
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
   credentials: Pick<CredentialRepository, "listHealthyCredentialRecordIds">;
-  aiAccess?: Pick<AiAccessRepository, "countEnabledPolicies">;
+  aiAccess?: Pick<AiAccessRepository, "countEnabledPolicies" | "countEnabledPoliciesIncompatibleWithProvider">;
   modelPolicy: Pick<PlatformModelPolicyRepository, "getPolicy">;
   modelCapabilities: PlatformModelCapabilityVerifier;
   probes?: ReadinessProviderProbe[];
@@ -45,6 +45,7 @@ export type ReadinessPayload = {
     aiAccessPolicies: {
       ok: boolean;
       enabledPolicyCount: number;
+      incompatibleProviderPolicyCount?: number;
       reason?: string;
     };
     modelPolicy: {
@@ -75,16 +76,18 @@ export function createReadinessRouter(deps: ReadinessDependencies) {
 }
 
 export async function checkReadiness(deps: ReadinessDependencies): Promise<ReadinessPayload> {
-  const [providerReachability, aiAccessPolicies, modelPolicy] = await Promise.all([
+  const [providerReachability, modelPolicy] = await Promise.all([
     checkProviderReachability(deps),
-    checkAiAccessPolicies(deps.aiAccess),
     checkModelPolicy(deps.modelPolicy),
   ]);
-  const credentials = await checkCredentials(
-    deps.credentials,
-    deps.modelCapabilities,
-    modelPolicy.activeModel,
-  );
+  const [aiAccessPolicies, credentials] = await Promise.all([
+    checkAiAccessPolicies(deps.aiAccess, modelPolicy.activeModel),
+    checkCredentials(
+      deps.credentials,
+      deps.modelCapabilities,
+      modelPolicy.activeModel,
+    ),
+  ]);
 
   const ok = providerReachability.ok && credentials.ok && aiAccessPolicies.ok && modelPolicy.ok;
 
@@ -190,7 +193,8 @@ async function checkCredentials(
 }
 
 async function checkAiAccessPolicies(
-  aiAccess: Pick<AiAccessRepository, "countEnabledPolicies"> | undefined,
+  aiAccess: Pick<AiAccessRepository, "countEnabledPolicies" | "countEnabledPoliciesIncompatibleWithProvider"> | undefined,
+  activeModel: PlatformModelRef | null,
 ): Promise<ReadinessPayload["checks"]["aiAccessPolicies"]> {
   if (!aiAccess?.countEnabledPolicies) {
     return {
@@ -202,10 +206,36 @@ async function checkAiAccessPolicies(
 
   try {
     const count = await aiAccess.countEnabledPolicies();
+    if (count <= 0) {
+      return {
+        ok: false,
+        enabledPolicyCount: count,
+        reason: "no_enabled_ai_access_policies",
+      };
+    }
+
+    if (activeModel) {
+      if (!aiAccess.countEnabledPoliciesIncompatibleWithProvider) {
+        return {
+          ok: false,
+          enabledPolicyCount: count,
+          reason: "ai_access_policy_provider_compatibility_unavailable",
+        };
+      }
+      const incompatibleCount = await aiAccess.countEnabledPoliciesIncompatibleWithProvider(activeModel.provider);
+      if (incompatibleCount > 0) {
+        return {
+          ok: false,
+          enabledPolicyCount: count,
+          incompatibleProviderPolicyCount: incompatibleCount,
+          reason: "ai_access_policy_provider_mismatch",
+        };
+      }
+    }
+
     return {
-      ok: count > 0,
+      ok: true,
       enabledPolicyCount: count,
-      reason: count > 0 ? undefined : "no_enabled_ai_access_policies",
     };
   } catch {
     return {
