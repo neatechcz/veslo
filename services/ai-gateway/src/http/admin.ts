@@ -4350,6 +4350,86 @@ export function createAdminRouter(adminService: AdminService) {
     }
   });
 
+  const confirmOrganizationAiAccessMember = async (
+    res: express.Response,
+    orgId: string,
+    userId: string,
+  ): Promise<boolean> => {
+    try {
+      const { members } = await adminService.listOrganizationMembers(
+        res.locals.adminToken as string,
+        orgId,
+      );
+      if (!members.some((member) => member.userId === userId)) {
+        res.status(404).json({ error: "member_not_found" });
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return false;
+      }
+      res.status(502).json({ error: "organization_member_list_failed" });
+      return false;
+    }
+  };
+
+  router.get("/admin/api/organizations/:orgId/members/:userId/ai-access", async (req, res) => {
+    if (
+      !requireAdminCapability(res, "managedAiUserAccess")
+      || !requireOrganizationAccess(res, req.params.orgId)
+    ) return;
+
+    if (!await confirmOrganizationAiAccessMember(res, req.params.orgId, req.params.userId)) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.getUserAiAccess(res.locals.adminToken as string, req.params.userId);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "user_ai_access_lookup_failed" });
+    }
+  });
+
+  router.put("/admin/api/organizations/:orgId/members/:userId/ai-access", async (req, res) => {
+    if (
+      !requireAdminCapability(res, "managedAiUserAccess")
+      || !requireOrganizationAccess(res, req.params.orgId)
+    ) return;
+
+    try {
+      if (
+        req.body && typeof req.body === "object"
+        && (Object.hasOwn(req.body, "defaultModel") || Object.hasOwn(req.body, "allowedModels"))
+      ) {
+        throw new HttpError("user_model_policy_not_supported", 400);
+      }
+      if (!await confirmOrganizationAiAccessMember(res, req.params.orgId, req.params.userId)) {
+        return;
+      }
+      const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
+        enabled: req.body?.enabled === true,
+        provider: parseAiAccessProvider(req.body?.provider),
+        credentialId: typeof req.body?.credentialId === "string" ? req.body.credentialId : null,
+      }, req.params.orgId, (res.locals.adminSession as AdminSessionSnapshot).user.id);
+      res.json(payload);
+    } catch (error) {
+      if (error instanceof AiAccessAuditPersistenceError) {
+        res.status(502).json({ error: error.code });
+        return;
+      }
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "user_ai_access_update_failed" });
+    }
+  });
+
+  // TODO(admin-data-isolation): Remove these unqualified routes after every admin caller uses the organization path.
   router.get("/admin/api/users/:userId/ai-access", async (req, res) => {
     if (!requireAdminCapability(res, "managedAiUserAccess")) {
       return;
