@@ -3058,6 +3058,7 @@ export default function App() {
     sidebarWorkspaceGroups,
     reportError,
     setError,
+    getError: error,
   });
   const archivedSessionIds = sessionArchiveStore.archivedSessionIds;
   const sessionArchives = sessionArchiveStore.sessionArchives;

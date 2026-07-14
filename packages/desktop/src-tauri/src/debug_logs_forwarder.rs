@@ -816,6 +816,7 @@ fn is_direct_fallback_event(event: &serde_json::Value) -> bool {
         || event_type.starts_with("new-session:")
         || event_type.starts_with("updater:")
         || event_type.starts_with("veslo-server-launch:")
+        || event_type.starts_with("session-archives:")
         || event_type.starts_with("debug-log-delivery:")
 }
 
@@ -1304,6 +1305,11 @@ mod tests {
             "source": "Veslo bootstrap",
             "stream": "diagnostic",
             "payload": { "eventType": "new-session:disabled" },
+        })));
+        assert!(is_direct_fallback_event(&serde_json::json!({
+            "source": "Veslo bootstrap",
+            "stream": "diagnostic",
+            "payload": { "eventType": "session-archives:load-failed" },
         })));
         assert!(is_direct_fallback_event(&serde_json::json!({
             "source": "veslo-server-shell",

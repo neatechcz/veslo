@@ -22,7 +22,7 @@ test("session archive flow uses the resolved archive owner key instead of requir
 
   assert.match(
     vesloServerConnectionSource,
-    /const sessionArchiveOwnerKey = createMemo\(\(\) => vesloArchiveClientOptions\(\)\?\.accountId \?\? ""\);/,
+    /const sessionArchiveOwnerKey = createMemo\(\s*\(\) => vesloArchiveClientOptions\(\)\?\.accountId \?\? "",\s*\);/,
     "archive handlers should share the resolved owner key from client options",
   );
 
@@ -37,8 +37,8 @@ test("session archive flow uses the resolved archive owner key instead of requir
     /authenticatedAccountId\(\)/,
     "archive load/archive/unarchive must not bypass the local archive owner fallback",
   );
-  assert.match(archiveFlow, /const ownerKey = deps\.sessionArchiveOwnerKey\(\);/);
-  assert.match(archiveFlow, /writeArchiveMigrationDone\(storage, ownerKey\);/);
+  assert.match(archiveFlow, /const snapshot = syncSessionArchiveScope\(\);/);
+  assert.match(archiveFlow, /writeArchiveMigrationDone\(storage, snapshot\.ownerKey\);/);
   assert.match(
     archiveStoreSource,
     /const deleteOptions: \{ workspaceId: string; workspaceIdentity\?: string; directory\?: string \} = \{\s*workspaceId,\s*\};[\s\S]*if \(workspaceIdentity\) deleteOptions\.workspaceIdentity = workspaceIdentity;[\s\S]*if \(targetDirectory\) deleteOptions\.directory = targetDirectory;[\s\S]*client\.deleteSessionArchive\(sessionId, deleteOptions\)/,
@@ -104,25 +104,58 @@ test("startup update check waits for preferences and updater environment", () =>
 });
 
 test("session archive loader retries the same client after server readiness changes", () => {
-  const archiveLoadEffect = archiveStoreSource.match(
-    /let lastSessionArchiveClientKey = "";[\s\S]*?let sessionArchiveMigrationRunning = false;/m,
-  )?.[0] ?? "";
-
-  assert.ok(archiveLoadEffect, "session archive store should define the startup load effect");
   assert.match(
-    archiveLoadEffect,
+    archiveStoreSource,
+    /function buildSessionArchiveClientKey\([\s\S]*?JSON\.stringify\(\[client\.baseUrl, client\.token \?\? "", ownerKey\]\)/,
+    "archive identity should use a structured key instead of concatenating credential values",
+  );
+  assert.match(
+    archiveStoreSource,
+    /let sessionArchiveGeneration = 0;/,
+    "archive state should increment a generation when the active client or owner changes",
+  );
+  assert.match(
+    archiveStoreSource,
     /const archiveServerStatus = deps\.vesloServerStatus\(\);/,
     "archive startup loading should track server status so a failed initial load retries when the server becomes ready",
   );
   assert.match(
-    archiveLoadEffect,
-    /const archiveServerCheckedAt = deps\.vesloServerCheckedAt\(\);/,
+    archiveStoreSource,
+    /const archiveServerCheckedAt = deps\.vesloServerCheckedAt\(\) \?\? null;/,
     "archive startup loading should track server health checks so retryable startup failures are not stuck until a mutation",
   );
   assert.match(
-    archiveLoadEffect,
-    /failedSessionArchiveClientKey === key/,
-    "archive startup loading should remember the failed archive client key and retry that same key after readiness changes",
+    archiveStoreSource,
+    /sameSessionArchiveSnapshot\(failedSessionArchiveSnapshot, snapshot\)/,
+    "archive startup loading should retry only the failed current snapshot after a later health check",
+  );
+  assert.match(
+    archiveStoreSource,
+    /const recordsRevisionAtStart = sessionArchiveRecordsRevision;/,
+    "each list should capture the current record revision before awaiting the server",
+  );
+  assert.match(
+    archiveStoreSource,
+    /recordsRevisionAtStart !== sessionArchiveRecordsRevision/,
+    "a late list should be discarded after a same-owner archive mutation publishes newer records",
+  );
+});
+
+test("session archive loader only clears its own visible error after recovery", () => {
+  assert.match(
+    appSource,
+    /createSessionArchiveStore\(\{[\s\S]*?setError,[\s\S]*?getError: error,/,
+    "app composition should provide the archive store with the current global error before allowing it to clear recovery state",
+  );
+  assert.match(
+    archiveStoreSource,
+    /deps\.getError\?\.\(\) === SESSION_ARCHIVE_LOAD_ERROR_MESSAGE/,
+    "archive recovery must not clear a different workflow's global error",
+  );
+  assert.match(
+    archiveStoreSource,
+    /const setOwnSessionArchiveLoadError = \(\) => \{[\s\S]*?if \(currentError && currentError !== SESSION_ARCHIVE_LOAD_ERROR_MESSAGE\) return;/,
+    "a background archive-load failure must not replace a different workflow's visible error",
   );
 });
 
@@ -147,7 +180,7 @@ test("archiving the active sidebar session clears the displayed conversation onl
 
   assert.match(
     appSource,
-    /const clearArchivedActiveSession = \(sessionId: string\) => \{[\s\S]*batch\(\(\) => \{[\s\S]*setSelectedSessionId\(null\);[\s\S]*setMessages\(\[\]\);[\s\S]*setTodos\(\[\]\);[\s\S]*routeSessionSegment\?\.trim\(\) === normalizedSessionId[\s\S]*navigate\("\/session", \{ replace: true \}\);/s,
+    /const clearArchivedActiveSession = \(sessionId: string\) => \{[\s\S]*batch\(\(\) => \{[\s\S]*setSelectedSessionId\(null\);[\s\S]*setMessages\(\[\]\);[\s\S]*setTodos\(\[\]\);[\s\S]*sessionIdFromRoutePath\(location\.pathname\) === normalizedSessionId[\s\S]*navigate\("\/session", \{ replace: true \}\);/s,
     "clearing an archived active session should remove stale transcript state and canonicalize /session/:id to /session",
   );
 

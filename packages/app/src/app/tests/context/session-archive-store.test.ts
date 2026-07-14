@@ -6,12 +6,13 @@ import { createRoot, createSignal } from "solid-js";
 import {
   createSessionArchiveStore,
   LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY,
+  SESSION_ARCHIVE_LOAD_ERROR_MESSAGE,
   SESSION_ARCHIVE_MIGRATION_KEY_PREFIX,
   type SessionArchiveClient,
 } from "../../context/session-archive-store.js";
 import type { WorkspaceSessionGroup } from "../../types.js";
 import type { WorkspaceInfo } from "../../lib/tauri.js";
-import type { VesloSessionArchiveRecord } from "../../lib/veslo-server.js";
+import { VesloServerError, type VesloSessionArchiveRecord } from "../../lib/veslo-server.js";
 
 function createMemoryStorage(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial));
@@ -133,6 +134,31 @@ function createArchiveClient(initial: VesloSessionArchiveRecord[] = []) {
   };
 
   return { client, calls };
+}
+
+function archiveRecord(
+  sessionId: string,
+  overrides: Partial<VesloSessionArchiveRecord> = {},
+): VesloSessionArchiveRecord {
+  return {
+    sessionId,
+    archivedAt: 10,
+    titleSnapshot: sessionId,
+    workspaceIdAtArchive: "ws-1",
+    workspaceIdentity: "local:/repo",
+    resolvedDirectoryAtArchive: "/repo",
+    ...overrides,
+  };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function createManualEffectRunner() {
@@ -357,6 +383,403 @@ test("archive and unarchive can target duplicate session ids by directory", asyn
           directory: "/repo/a",
         },
       });
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("archive load discards a stale owner response after the archive scope changes", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const oldList = createDeferred<{ items: VesloSessionArchiveRecord[] }>();
+      const newList = createDeferred<{ items: VesloSessionArchiveRecord[] }>();
+      const oldClient: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "owner-a-token",
+        listSessionArchives: async () => oldList.promise,
+        putSessionArchive: async () => ({ items: [] }),
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const newClient: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "owner-b-token",
+        listSessionArchives: async () => newList.promise,
+        putSessionArchive: async () => ({ items: [] }),
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const [client, setClient] = createSignal<SessionArchiveClient | null>(oldClient);
+      const [ownerKey, setOwnerKey] = createSignal("owner-a");
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: client,
+        sessionArchiveOwnerKey: ownerKey,
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: () => 1,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup()],
+        reportError: () => {},
+        setError: () => {},
+        storage: createMemoryStorage(),
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+      setClient(newClient);
+      setOwnerKey("owner-b");
+      await effects.flush();
+
+      newList.resolve({ items: [archiveRecord("current-session", { titleSnapshot: "Current owner" })] });
+      await effects.flush();
+      oldList.resolve({ items: [archiveRecord("stale-session", { titleSnapshot: "Stale owner" })] });
+      await effects.flush();
+
+      assert.deepEqual(store.sessionArchives().map((item) => item.sessionId), ["current-session"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("archive load failure preserves legacy migration state and emits one typed desktop diagnostic", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const storage = createMemoryStorage({
+        [LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY]: JSON.stringify(["sess-a"]),
+      });
+      const effects = createManualEffectRunner();
+      const reported: unknown[] = [];
+      const diagnostics: Array<{ eventType: string; payload: unknown }> = [];
+      const responseError = new VesloServerError(
+        404,
+        "non_json_response",
+        "The Veslo server returned a non-JSON response.",
+        undefined,
+        {
+          requestMethod: "GET",
+          operation: "session-archives:list",
+          requestOrigin: "http://veslo.test",
+          requestPathname: "/session-archives",
+          httpStatus: 404,
+          mediaType: "text/plain",
+          responseContentType: "text/plain",
+          responseKind: "non_json",
+          responsePreview: "Not Found",
+        },
+      );
+      let listAttempts = 0;
+      const client: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "archive-token",
+        listSessionArchives: async () => {
+          listAttempts += 1;
+          if (listAttempts === 1) throw responseError;
+          return { items: [] };
+        },
+        putSessionArchive: async () => ({ items: [] }),
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const [checkedAt, setCheckedAt] = createSignal<number | null>(1);
+      let currentError: string | null = null;
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: () => client,
+        sessionArchiveOwnerKey: () => "owner-a",
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: checkedAt,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup()],
+        reportError: (error) => reported.push(error),
+        setError: (message) => {
+          currentError = message;
+        },
+        getError: () => currentError,
+        isTauriRuntime: () => true,
+        recordBootstrapDiagnostic: (eventType, payload) => {
+          diagnostics.push({ eventType, payload });
+        },
+        storage,
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+
+      assert.equal(listAttempts, 1);
+      assert.deepEqual(store.sessionArchives(), []);
+      assert.equal(currentError, SESSION_ARCHIVE_LOAD_ERROR_MESSAGE);
+      assert.deepEqual(reported, [responseError]);
+      assert.deepEqual(diagnostics, [
+        {
+          eventType: "session-archives:load-failed",
+          payload: {
+            requestMethod: "GET",
+            operation: "session-archives:list",
+            requestOrigin: "http://veslo.test",
+            requestPathname: "/session-archives",
+            httpStatus: 404,
+            mediaType: "text/plain",
+            responseContentType: "text/plain",
+            responseKind: "non_json",
+            responsePreview: "Not Found",
+          },
+        },
+      ]);
+      assert.equal(storage.getItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY), JSON.stringify(["sess-a"]));
+      assert.equal(
+        storage.getItem(SESSION_ARCHIVE_MIGRATION_KEY_PREFIX + "owner-a"),
+        null,
+      );
+
+      setCheckedAt(2);
+      await effects.flush();
+
+      assert.equal(listAttempts, 2);
+      assert.equal(currentError, null);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("archive mutation wins over an older list response in the same archive scope", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const pendingList = createDeferred<{ items: VesloSessionArchiveRecord[] }>();
+      const client: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "archive-token",
+        listSessionArchives: async () => pendingList.promise,
+        putSessionArchive: async () => ({ items: [archiveRecord("sess-a")] }),
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: () => client,
+        sessionArchiveOwnerKey: () => "owner-a",
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: () => 1,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup()],
+        reportError: () => {},
+        setError: () => {},
+        storage: createMemoryStorage(),
+        effect: effects.effect,
+      });
+
+      await settleEffects();
+      await store.archiveSession("ws-1", "sess-a");
+      assert.deepEqual(store.sessionArchives().map((item) => item.sessionId), ["sess-a"]);
+
+      pendingList.resolve({ items: [] });
+      await effects.flush();
+
+      assert.deepEqual(store.sessionArchives().map((item) => item.sessionId), ["sess-a"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("successful archive mutation confirms a scope after its initial list failure", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const storage = createMemoryStorage({
+        [LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY]: JSON.stringify(["sess-a"]),
+      });
+      const effects = createManualEffectRunner();
+      const client: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "archive-token",
+        listSessionArchives: async () => {
+          throw new Error("archive list unavailable");
+        },
+        putSessionArchive: async () => ({ items: [archiveRecord("sess-a")] }),
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: () => client,
+        sessionArchiveOwnerKey: () => "owner-a",
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: () => 1,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup()],
+        reportError: () => {},
+        setError: () => {},
+        storage,
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+      await store.archiveSession("ws-1", "sess-a");
+      await effects.flush();
+
+      assert.equal(storage.getItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY), null);
+      assert.equal(
+        storage.getItem(`${SESSION_ARCHIVE_MIGRATION_KEY_PREFIX}owner-a`),
+        "true",
+      );
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("archive load failure does not replace an unrelated global error", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      let listAttempts = 0;
+      let currentError: string | null = "A different workflow failed.";
+      const setErrorCalls: Array<string | null> = [];
+      const [checkedAt, setCheckedAt] = createSignal<number | null>(1);
+      const client: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "archive-token",
+        listSessionArchives: async () => {
+          listAttempts += 1;
+          if (listAttempts === 1) throw new Error("archive list unavailable");
+          return { items: [] };
+        },
+        putSessionArchive: async () => ({ items: [] }),
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      createSessionArchiveStore({
+        vesloArchiveClient: () => client,
+        sessionArchiveOwnerKey: () => "owner-a",
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: checkedAt,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup()],
+        reportError: () => {},
+        setError: (message) => {
+          setErrorCalls.push(message);
+          currentError = message;
+        },
+        getError: () => currentError,
+        storage: createMemoryStorage(),
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+      assert.equal(currentError, "A different workflow failed.");
+      assert.deepEqual(setErrorCalls, []);
+
+      setCheckedAt(2);
+      await effects.flush();
+      assert.equal(currentError, "A different workflow failed.");
+      assert.deepEqual(setErrorCalls, []);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("archive mutation ignores a stale response after the owner changes", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const stalePut = createDeferred<{ items: VesloSessionArchiveRecord[] }>();
+      const oldClient: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "owner-a-token",
+        listSessionArchives: async () => ({ items: [] }),
+        putSessionArchive: async () => stalePut.promise,
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const newClient: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "owner-b-token",
+        listSessionArchives: async () => ({ items: [archiveRecord("owner-b-session")] }),
+        putSessionArchive: async () => ({ items: [] }),
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const [client, setClient] = createSignal<SessionArchiveClient | null>(oldClient);
+      const [ownerKey, setOwnerKey] = createSignal("owner-a");
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: client,
+        sessionArchiveOwnerKey: ownerKey,
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: () => 1,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: () => [readyGroup()],
+        reportError: () => {},
+        setError: () => {},
+        storage: createMemoryStorage(),
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+      const archive = store.archiveSession("ws-1", "sess-a");
+      await settleEffects();
+
+      setClient(newClient);
+      setOwnerKey("owner-b");
+      await effects.flush();
+      stalePut.resolve({ items: [archiveRecord("stale-session")] });
+      await archive;
+      await effects.flush();
+
+      assert.deepEqual(store.sessionArchives().map((item) => item.sessionId), ["owner-b-session"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("legacy archive migration ignores a stale write after the owner changes", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const storage = createMemoryStorage({
+        [LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY]: JSON.stringify(["sess-a"]),
+      });
+      const effects = createManualEffectRunner();
+      const staleMigrationPut = createDeferred<{ items: VesloSessionArchiveRecord[] }>();
+      let oldMigrationCalls = 0;
+      const oldClient: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "owner-a-token",
+        listSessionArchives: async () => ({ items: [] }),
+        putSessionArchive: async () => {
+          oldMigrationCalls += 1;
+          return staleMigrationPut.promise;
+        },
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const newClient: SessionArchiveClient = {
+        baseUrl: "http://veslo.test",
+        token: "owner-b-token",
+        listSessionArchives: async () => ({ items: [] }),
+        putSessionArchive: async () => ({ items: [] }),
+        deleteSessionArchive: async () => ({ items: [] }),
+      };
+      const [client, setClient] = createSignal<SessionArchiveClient | null>(oldClient);
+      const [ownerKey, setOwnerKey] = createSignal("owner-a");
+      const [groups, setGroups] = createSignal<WorkspaceSessionGroup[]>([readyGroup()]);
+      const store = createSessionArchiveStore({
+        vesloArchiveClient: client,
+        sessionArchiveOwnerKey: ownerKey,
+        vesloServerStatus: () => "connected",
+        vesloServerCheckedAt: () => 1,
+        workspaces: () => [workspace()],
+        sidebarWorkspaceGroups: groups,
+        reportError: () => {},
+        setError: () => {},
+        storage,
+        effect: effects.effect,
+      });
+
+      await effects.flush();
+      assert.equal(oldMigrationCalls, 1);
+
+      setGroups([{ workspace: workspace(), status: "loading", error: null, sessions: [] }]);
+      setClient(newClient);
+      setOwnerKey("owner-b");
+      await effects.flush();
+      staleMigrationPut.resolve({ items: [archiveRecord("stale-session")] });
+      await effects.flush();
+
+      assert.deepEqual(store.sessionArchives(), []);
+      assert.equal(storage.getItem(LEGACY_SIDEBAR_ARCHIVED_SESSION_IDS_KEY), JSON.stringify(["sess-a"]));
+      assert.equal(storage.getItem(SESSION_ARCHIVE_MIGRATION_KEY_PREFIX + "owner-a"), null);
     } finally {
       dispose();
     }
