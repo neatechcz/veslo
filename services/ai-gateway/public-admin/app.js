@@ -363,6 +363,7 @@ function clearRouteOwnedDom() {
   delete els.modelPolicyStatus.dataset.tone;
   els.credentialCreateCodexCommand.classList.add("hidden");
   els.credentialCreateCodexCopy.classList.add("hidden");
+  els.credentialCreateCodexCommand.disabled = true;
   els.credentialCreateCodexCopy.disabled = true;
 }
 
@@ -426,7 +427,7 @@ function isCurrentRouteMutation(mutation) {
   return isAdminRouteMutationCurrent(state.mutations, mutation, state.route, state.pageLoad);
 }
 
-function releaseRouteActionsForCurrentRoute() {
+function releaseRouteActionsForCurrentRoute({ focusHeading = false } = {}) {
   if (state.pageLoad.status !== "ready" && state.pageLoad.status !== "empty") return;
   const route = state.route;
   const permissions = adminUserRoutePermissions(state.route, routeAccessSnapshot());
@@ -522,8 +523,10 @@ function releaseRouteActionsForCurrentRoute() {
   els.pages.forEach((page) => {
     page.inert = page.dataset.page !== state.page;
   });
-  els.pageTitle.tabIndex = -1;
-  els.pageTitle.focus({ preventScroll: true });
+  if (focusHeading) {
+    els.pageTitle.tabIndex = -1;
+    els.pageTitle.focus({ preventScroll: true });
+  }
 }
 
 function renderAdminPageState() {
@@ -550,14 +553,16 @@ function beginRouteDataLoad(route) {
   routeLoadAbortController?.abort();
   const controller = new AbortController();
   routeLoadAbortController = controller;
+  const previousKey = state.pageLoad.key;
   const request = beginAdminPageLoad(state.pageLoad, route);
+  const focusHeading = !previousKey || previousKey !== request?.key;
   closeAllModals();
   clearRouteOwnedState();
   state.pageLoad.retryable = true;
   renderAdminPageState();
   renderRoute();
   setRouteActionsDisabled(true);
-  return request ? { request, signal: controller.signal, route: { ...route } } : null;
+  return request ? { request, signal: controller.signal, route: { ...route }, focusHeading } : null;
 }
 
 function abandonRouteDataLoad(activeLoad) {
@@ -1472,8 +1477,8 @@ async function setAdminRoute(route, { historyMode = "push", load = true } = {}) 
   } else if (historyUpdate?.method === "replace") {
     history.replaceState(null, "", pathname);
   }
-  if (load) await loadRouteData(state.route);
-  else renderRoute();
+  if (load) return loadRouteData(state.route);
+  renderRoute();
   return true;
 }
 
@@ -2115,7 +2120,7 @@ function renderCurrentRouteData() {
   renderOrganizationSelector();
 }
 
-function finishRouteDataLoad(request, result, empty) {
+function finishRouteDataLoad(request, result, empty, focusHeading) {
   if (!isAdminPageLoadCurrent(state.pageLoad, request)) return false;
   if (!completeAdminPageLoad(state.pageLoad, request, empty)) return false;
   if (Array.isArray(result.credentials)) result.selectedCredentialId = result.credentials[0]?.id || null;
@@ -2126,7 +2131,7 @@ function finishRouteDataLoad(request, result, empty) {
   renderCurrentRouteData();
   renderAdminPageState();
   applyAdminCapabilities();
-  releaseRouteActionsForCurrentRoute();
+  releaseRouteActionsForCurrentRoute({ focusHeading });
   return true;
 }
 
@@ -2167,17 +2172,34 @@ async function loadRouteData(route, activeLoad = null) {
     && isAdminPageLoadCurrent(state.pageLoad, activeLoad.request);
   const routeLoad = reusableLoad ? activeLoad : beginRouteDataLoad(route);
   if (!routeLoad) return;
-  const { request, signal } = routeLoad;
+  const { request, signal, focusHeading } = routeLoad;
+  let completed = false;
   try {
     const result = route.area === "platform"
       ? await loadPlatformRouteResult(route, signal)
       : await loadOrganizationWorkspace(route, signal);
-    finishRouteDataLoad(request, result, routeResultIsEmpty(route, result));
+    completed = finishRouteDataLoad(
+      request,
+      result,
+      routeResultIsEmpty(route, result),
+      focusHeading,
+    );
   } catch (error) {
     failRouteDataLoad(request, error);
   } finally {
     if (routeLoadAbortController?.signal === signal) routeLoadAbortController = null;
   }
+  return completed ? routeLoad : null;
+}
+
+function isRouteLoadResultCurrent(result, route) {
+  return Boolean(
+    result?.request
+    && isAdminPageLoadCurrent(state.pageLoad, result.request)
+    && formatAdminRoute(result.route) === formatAdminRoute(route)
+    && formatAdminRoute(state.route) === formatAdminRoute(route)
+    && (state.pageLoad.status === "ready" || state.pageLoad.status === "empty")
+  );
 }
 
 async function loadReadiness() {
@@ -3071,19 +3093,21 @@ function renderAudit() {
   }
 }
 
-function enterCreateMode() {
+async function enterCreateMode() {
   if (!canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "create-user")) {
     return;
   }
 
-  state.userMode = "create";
-  state.selectedUserId = null;
-  void setAdminRoute(toPlatformRoute("platform-users")).then((changed) => {
-    if (!changed) return;
-    showApp();
-    openUserEditor(null);
-    setUserSaveStatus(defaultUserSaveStatusMessage());
-  });
+  const targetRoute = toPlatformRoute("platform-users");
+  const alreadyReady = formatAdminRoute(state.route) === formatAdminRoute(targetRoute)
+    && (state.pageLoad.status === "ready" || state.pageLoad.status === "empty");
+  const routeLoad = alreadyReady
+    ? { request: { key: state.pageLoad.key, generation: state.pageLoad.generation }, route: { ...state.route } }
+    : await setAdminRoute(targetRoute);
+  if (!isRouteLoadResultCurrent(routeLoad, targetRoute)) return;
+  showApp();
+  openUserEditor(null);
+  setUserSaveStatus(defaultUserSaveStatusMessage());
 }
 
 async function refreshCredentialOperations(mutation = beginCurrentRouteMutation("credential-operations-refresh")) {
@@ -3113,6 +3137,28 @@ async function refreshSelectedUserAiAccessOptions(mutation = beginCurrentRouteMu
   const user = currentUser();
   if (user) {
     populateUserEditor(user);
+  }
+}
+
+async function loadSelectedUserAiAccess() {
+  const selectedUserId = state.selectedUserId;
+  if (
+    !selectedUserId
+    || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")
+  ) {
+    return;
+  }
+
+  const mutation = beginCurrentRouteMutation(`user-ai-access-selection:${selectedUserId}`);
+  if (!isCurrentRouteMutation(mutation)) return;
+  try {
+    await loadUserAiAccess(selectedUserId, mutation);
+    if (!isCurrentRouteMutation(mutation) || state.selectedUserId !== selectedUserId) return;
+    const user = currentUser();
+    if (user) populateUserEditor(user);
+  } catch {
+    if (!isCurrentRouteMutation(mutation) || state.selectedUserId !== selectedUserId) return;
+    els.userAiAccessStatus.textContent = "Unable to load AI access assignment.";
   }
 }
 
@@ -3167,8 +3213,12 @@ function renderNewCodexCredentialUpload() {
   els.credentialCreateCodexCommand.value = command;
   els.credentialCreateCodexCommand.classList.toggle("hidden", !command);
   els.credentialCreateCodexCopy.classList.toggle("hidden", !command);
+  els.credentialCreateCodexCommand.disabled = !command;
   els.credentialCreateCodexCopy.disabled = !command;
-  if (state.routeActionsLocked) els.credentialCreateCodexCopy.disabled = true;
+  if (state.routeActionsLocked) {
+    els.credentialCreateCodexCommand.disabled = true;
+    els.credentialCreateCodexCopy.disabled = true;
+  }
 }
 
 function updateCredentialCreateFields() {
@@ -3970,8 +4020,8 @@ function bindActions() {
   els.signOutButton.addEventListener("click", () => void signOut());
   els.refreshButton.addEventListener("click", () => void bootstrapSession({ refreshVisibleRoute: true }));
   els.adminPageRetry.addEventListener("click", () => void loadRouteData(state.route));
-  els.createUserButton.addEventListener("click", enterCreateMode);
-  els.createUserButtonInline.addEventListener("click", enterCreateMode);
+  els.createUserButton.addEventListener("click", () => void enterCreateMode());
+  els.createUserButtonInline.addEventListener("click", () => void enterCreateMode());
   els.organizationSaveButton.addEventListener("click", () => void saveOrganization());
   els.organizationSelectorInput.addEventListener("change", () => void selectOrganizationFromSelector());
   els.organizationSelectorInput.addEventListener("keydown", (event) => {
@@ -4129,21 +4179,7 @@ function bindActions() {
     const card = event.target.closest("[data-user-id]");
     if (!card) return;
     openUserEditor(card.dataset.userId);
-    if (
-      state.selectedUserId
-      && canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")
-    ) {
-      void loadUserAiAccess(state.selectedUserId)
-        .then(() => {
-          const user = currentUser();
-          if (user) {
-            populateUserEditor(user);
-          }
-        })
-        .catch(() => {
-          els.userAiAccessStatus.textContent = "Unable to load AI access assignment.";
-        });
-    }
+    void loadSelectedUserAiAccess();
   });
 
   els.organizationDomainList.addEventListener("click", (event) => {

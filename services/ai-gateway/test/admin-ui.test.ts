@@ -686,7 +686,7 @@ test("GET /admin/app.js atomically isolates route generations and keeps readines
       assert.match(script, new RegExp(`state\\.${selectedState} = null`), selectedState)
     }
     assert.match(script, /function currentRouteSubjects\(\)/)
-    assert.match(script, /function finishRouteDataLoad\(request, result, empty\)[\s\S]*isAdminPageLoadCurrent\(state\.pageLoad, request\)[\s\S]*completeAdminPageLoad\(state\.pageLoad, request, empty\)[\s\S]*Object\.assign\(state, result\)[\s\S]*renderCurrentRouteData\(\)[\s\S]*renderAdminPageState\(\)[\s\S]*applyAdminCapabilities\(\)/)
+    assert.match(script, /function finishRouteDataLoad\(request, result, empty, focusHeading\)[\s\S]*isAdminPageLoadCurrent\(state\.pageLoad, request\)[\s\S]*completeAdminPageLoad\(state\.pageLoad, request, empty\)[\s\S]*Object\.assign\(state, result\)[\s\S]*renderCurrentRouteData\(\)[\s\S]*renderAdminPageState\(\)[\s\S]*applyAdminCapabilities\(\)/)
     assert.match(script, /function failRouteDataLoad\(request, error\)[\s\S]*AbortError[\s\S]*401[\s\S]*showLogin\([\s\S]*403[\s\S]*Access denied[\s\S]*404[\s\S]*Organization not found[\s\S]*Unable to load data[\s\S]*renderAdminPageState\(\)/)
     assert.match(script, /fetchJson\([^\n]+\{ signal \}\)/)
     assert.match(script, /Promise\.all\(/)
@@ -772,7 +772,7 @@ test("GET /admin/app.js releases only capability-permitted controls after atomic
       "renderCurrentRouteData()",
       "renderAdminPageState()",
       "applyAdminCapabilities()",
-      "releaseRouteActionsForCurrentRoute()",
+      "releaseRouteActionsForCurrentRoute({ focusHeading })",
     ]
     let previous = -1
     for (const step of orderedSteps) {
@@ -812,6 +812,7 @@ test("GET /admin/app.js synchronously clears credential secrets and generated co
     assert.match(clearDom, /els\.credentialCreateCodexCommand\.classList\.add\("hidden"\)/)
     assert.match(clearDom, /els\.credentialCreateCodexCopy\.classList\.add\("hidden"\)/)
     assert.match(clearDom, /els\.credentialCreateCodexCopy\.disabled = true/)
+    assert.match(clearDom, /els\.credentialCreateCodexCommand\.disabled = true/)
     assert.match(clearState, /state\.codexAuthCredentialUpload = null/)
     assert.match(clearState, /state\.codexAuthUploadByCredentialId = \{\}/)
     assert.match(clearState, /modelDiscoveryAbortController\?\.abort\(\)[\s\S]*modelDiscoveryAbortController = null/)
@@ -908,12 +909,14 @@ test("GET /admin/app.js releases Codex Copy only for a current prepared command"
     const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
     const renderUpload = topLevelFunctionSource(script, "renderNewCodexCredentialUpload")
     const prepare = topLevelFunctionSource(script, "prepareNewCodexCredentialUpload")
+    const release = topLevelFunctionSource(script, "releaseRouteActionsForCurrentRoute")
 
     assert.match(renderUpload, /credentialCreateCodexCopy\.disabled = !command/)
+    assert.match(renderUpload, /credentialCreateCodexCommand\.disabled = !command/)
     assert.match(renderUpload, /credentialCreateCodexCopy\.classList\.toggle\("hidden", !command\)/)
     assert.match(renderUpload, /credentialCreateCodexCommand\.classList\.toggle\("hidden", !command\)/)
     assert.match(prepare, /isCurrentRouteMutation\(mutation\)[\s\S]*state\.codexAuthCredentialUpload = payload[\s\S]*renderNewCodexCredentialUpload\(\)/)
-    assert.match(script, /releaseRouteActionsForCurrentRoute\(\)[\s\S]*renderNewCodexCredentialUpload\(\)/)
+    assert.match(release, /renderNewCodexCredentialUpload\(\)/)
   } finally {
     server.close()
     await once(server, "close")
@@ -933,8 +936,56 @@ test("GET /admin/app.js focuses terminal errors and successful destination headi
     const readiness = topLevelFunctionSource(script, "loadReadiness")
 
     assert.match(pageState, /if \(error\)[\s\S]*adminPageError\.tabIndex = -1[\s\S]*adminPageError\.focus\(/)
-    assert.match(release, /pageTitle\.tabIndex = -1[\s\S]*pageTitle\.focus\(\{ preventScroll: true \}\)/)
+    assert.match(release, /focusHeading[\s\S]*pageTitle\.tabIndex = -1[\s\S]*pageTitle\.focus\(\{ preventScroll: true \}\)/)
+    assert.match(script, /beginRouteDataLoad\(route\)[\s\S]*const focusHeading = !previousKey \|\| previousKey !== request\?\.key/)
+    assert.match(script, /finishRouteDataLoad\(request, result, empty, focusHeading\)[\s\S]*releaseRouteActionsForCurrentRoute\(\{ focusHeading \}\)/)
     assert.doesNotMatch(readiness, /\.focus\(/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js opens Create User only for the owning Platform Users generation", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const enter = topLevelFunctionSource(script, "enterCreateMode")
+    const load = topLevelFunctionSource(script, "loadRouteData")
+
+    assert.match(script, /function isRouteLoadResultCurrent\(result, route\)/)
+    assert.match(enter, /const targetRoute = toPlatformRoute\("platform-users"\)/)
+    assert.match(enter, /formatAdminRoute\(state\.route\) === formatAdminRoute\(targetRoute\)[\s\S]*state\.pageLoad\.status === "ready" \|\| state\.pageLoad\.status === "empty"/)
+    assert.match(enter, /await setAdminRoute\(targetRoute\)/)
+    assert.match(enter, /if \(!isRouteLoadResultCurrent\(routeLoad, targetRoute\)\) return;[\s\S]*openUserEditor\(null\)/)
+    assert.doesNotMatch(enter, /\.then\(/)
+    assert.match(load, /return completed \? routeLoad : null/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js rejects stale AI access selection completions and errors", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    const selection = topLevelFunctionSource(script, "loadSelectedUserAiAccess")
+
+    assert.match(selection, /const selectedUserId = state\.selectedUserId/)
+    assert.match(selection, /const mutation = beginCurrentRouteMutation\(`user-ai-access-selection:\$\{selectedUserId\}`\)/)
+    assert.ok(selection.indexOf("selectedUserId = state.selectedUserId") < selection.indexOf("await loadUserAiAccess(selectedUserId, mutation)"))
+    assert.match(selection, /if \(!isCurrentRouteMutation\(mutation\) \|\| state\.selectedUserId !== selectedUserId\) return;/)
+    assert.match(selection, /catch[\s\S]*if \(!isCurrentRouteMutation\(mutation\) \|\| state\.selectedUserId !== selectedUserId\) return;[\s\S]*Unable to load AI access assignment/)
+    assert.match(script, /openUserEditor\(card\.dataset\.userId\);\s*void loadSelectedUserAiAccess\(\);/)
   } finally {
     server.close()
     await once(server, "close")
