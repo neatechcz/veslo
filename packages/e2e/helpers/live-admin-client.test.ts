@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   createAdminUser,
@@ -120,7 +121,7 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
         ],
       });
     }
-    if (url.endsWith('/admin/api/users/user_123/ai-access')) {
+    if (url.endsWith('/admin/api/organizations/org%2F123/members/user%2F123/ai-access')) {
       return jsonResponse(200, {
         aiAccess: {
           id: 'ai_access_123',
@@ -149,7 +150,7 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
       orgId: null,
       orgRole: 'member',
     }),
-    upsertAdminUserAiAccess(fetchImpl, gatewayBase, token, 'user_123', {
+    upsertAdminUserAiAccess(fetchImpl, gatewayBase, token, 'org/123', 'user/123', {
       enabled: true,
       provider: 'codex_oauth',
       credentialId: 'cred_codex_shared_1',
@@ -171,11 +172,28 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
     }
   }
 
-  const aiAccessCall = calls.find((call) => call.url.endsWith('/admin/api/users/user_123/ai-access'));
+  const aiAccessCall = calls.find((call) => call.url.endsWith('/admin/api/organizations/org%2F123/members/user%2F123/ai-access'));
   assert.equal(aiAccessCall?.init?.method, 'PUT');
   assert.deepEqual(JSON.parse(String(aiAccessCall?.init?.body)), {
     enabled: true,
     provider: 'codex_oauth',
     credentialId: 'cred_codex_shared_1',
   });
+  assert.equal(Object.hasOwn(JSON.parse(String(aiAccessCall?.init?.body)), 'organizationId'), false);
+});
+
+test('live admin check resolves one explicit active organization before applying AI access', async () => {
+  const source = await readFile(new URL('../scripts/check-live-admin-user.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /VESLO_ADMIN_CHECK_ORGANIZATION_ID/);
+  assert.match(source, /arg === '--organization-id'/);
+  assert.match(source, /admin_ai_access_target_not_active_in_requested_organization/);
+  assert.match(source, /admin_ai_access_target_has_no_active_organization/);
+  assert.match(source, /admin_ai_access_target_organization_ambiguous/);
+  assert.match(source, /const orgId =\s*organizationId\s*\|\|/);
+  assert.match(
+    source,
+    /upsertAdminUserAiAccess\(fetch, gatewayBase, token, aiAccessOrganizationId!, targetUser\.id/,
+  );
+  assert.doesNotMatch(source, /upsertAdminUserAiAccess\(fetch, gatewayBase, token, targetUser\.id/);
 });

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
@@ -644,36 +645,52 @@ test("PUT qualified AI access maps audit persistence failures", async () => {
   assert.deepEqual(calls.order, ["list-members", "upsert-ai-access"]);
 });
 
-test("GET /admin/api/users/:userId/ai-access returns the stored ai access policy", async () => {
-  const app = createAdminUserAccessApp();
-  const server = app.listen(0, "127.0.0.1");
-  await once(server, "listening");
+test("unqualified admin AI-access GET and PUT return JSON 404 without service calls", async () => {
+  for (const method of ["GET", "PUT"] as const) {
+    const { app, calls } = createQualifiedAiAccessApp();
+    const server = app.listen(0, "127.0.0.1");
+    await once(server, "listening");
 
-  try {
-    const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
-      headers: ADMIN_AUTHORIZATION,
-    });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+        method,
+        headers: method === "PUT"
+          ? { "content-type": "application/json", ...ADMIN_AUTHORIZATION }
+          : ADMIN_AUTHORIZATION,
+        ...(method === "PUT"
+          ? { body: JSON.stringify({ enabled: true, provider: "codex_oauth", credentialId: "cred_codex_123" }) }
+          : {}),
+      });
 
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      aiAccess: AI_ACCESS_PAYLOAD,
-      availableCredentials: AVAILABLE_CREDENTIALS,
-    });
-  } finally {
-    server.close();
-    await once(server, "close");
+      assert.equal(response.status, 404, method);
+      assert.equal(response.headers.get("content-type")?.includes("application/json"), true, method);
+      assert.deepEqual(await response.json(), { error: "not_found" }, method);
+      assert.deepEqual(calls.order, [], method);
+    } finally {
+      server.close();
+      await once(server, "close");
+    }
   }
 });
 
-test("PUT /admin/api/users/:userId/ai-access rejects legacy user model fields without writing", async () => {
+test("admin server source contains no unqualified AI-access business handlers", async () => {
+  const source = await readFile(new URL("../src/http/admin.ts", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /router\.get\("\/admin\/api\/users\/:userId\/ai-access"/);
+  assert.doesNotMatch(source, /router\.put\("\/admin\/api\/users\/:userId\/ai-access"/);
+  assert.match(source, /router\.get\("\/admin\/api\/organizations\/:orgId\/members\/:userId\/ai-access"/);
+  assert.match(source, /router\.put\("\/admin\/api\/organizations\/:orgId\/members\/:userId\/ai-access"/);
+});
+
+test("PUT qualified AI access rejects legacy user model fields without writing", async () => {
   const app = createAdminUserAccessApp();
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
 
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
       method: "PUT",
       headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
       body: JSON.stringify({
@@ -694,20 +711,19 @@ test("PUT /admin/api/users/:userId/ai-access rejects legacy user model fields wi
   }
 });
 
-test("PUT /admin/api/users/:userId/ai-access forwards authorized organization scope and real actor", async () => {
+test("PUT qualified AI access forwards path organization scope and real actor", async () => {
   const app = createAdminUserAccessApp();
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
       method: "PUT",
       headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
       body: JSON.stringify({
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_123",
-        organizationId: "org_1",
       }),
     });
     assert.equal(response.status, 200);
@@ -719,28 +735,7 @@ test("PUT /admin/api/users/:userId/ai-access forwards authorized organization sc
   }
 });
 
-test("PUT /admin/api/users/:userId/ai-access rejects a missing organization scope before writing", async () => {
-  const app = createAdminUserAccessApp();
-  const server = app.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  try {
-    const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
-      method: "PUT",
-      headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
-      body: JSON.stringify({ enabled: false, provider: null, credentialId: null }),
-    });
-
-    assert.equal(response.status, 400);
-    assert.deepEqual(await response.json(), { error: "organization_context_required" });
-    assert.equal(adminUserAccessUpsertCalls, 0);
-  } finally {
-    server.close();
-    await once(server, "close");
-  }
-});
-
-test("temporary legacy PUT requires one active scoped membership before writing", async () => {
+test("qualified PUT requires one active scoped membership before writing", async () => {
   const app = createAdminUserAccessApp({
     members: [{ ...ORGANIZATION_MEMBER, status: "disabled" }],
   });
@@ -748,14 +743,13 @@ test("temporary legacy PUT requires one active scoped membership before writing"
   await once(server, "listening");
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
       method: "PUT",
       headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
       body: JSON.stringify({
         enabled: false,
         provider: null,
         credentialId: null,
-        organizationId: "org_1",
       }),
     });
 
@@ -769,7 +763,7 @@ test("temporary legacy PUT requires one active scoped membership before writing"
   }
 });
 
-test("PUT /admin/api/users/:userId/ai-access reports audit persistence failure without success", async () => {
+test("PUT qualified AI access reports audit persistence failure without success", async () => {
   const app = createAdminUserAccessApp({
     upsertError: new AiAccessAuditPersistenceError(new Error("audit unavailable")),
   });
@@ -777,14 +771,13 @@ test("PUT /admin/api/users/:userId/ai-access reports audit persistence failure w
   await once(server, "listening");
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
       method: "PUT",
       headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
       body: JSON.stringify({
         enabled: false,
         provider: null,
         credentialId: null,
-        organizationId: "org_1",
       }),
     });
 
@@ -1580,14 +1573,14 @@ test("PUT qualified AI access rejects ineligible codex credentials", async () =>
   }
 });
 
-test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy", async () => {
+test("PUT qualified AI access persists the admin managed policy", async () => {
   const app = createAdminUserAccessApp();
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
 
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
       method: "PUT",
       headers: {
         "content-type": "application/json",
@@ -1597,7 +1590,6 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
         enabled: true,
         provider: "anthropic",
         credentialId: "cred_openai_123",
-        organizationId: "org_1",
       }),
     });
 
@@ -1618,14 +1610,14 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
   }
 });
 
-test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", async () => {
+test("PUT qualified AI access accepts codex_oauth provider", async () => {
   const app = createAdminUserAccessApp();
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
 
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
       method: "PUT",
       headers: {
         "content-type": "application/json",
@@ -1635,7 +1627,6 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
         enabled: true,
         provider: "codex_oauth",
         credentialId: "cred_codex_123",
-        organizationId: "org_1",
       }),
     });
 
@@ -1687,7 +1678,7 @@ test("admin ai access updates flow through to the signed-in user's effective pol
 
   try {
     const { port } = server.address() as AddressInfo;
-    const updateResponse = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+    const updateResponse = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
       method: "PUT",
       headers: {
         "content-type": "application/json",
@@ -1697,7 +1688,6 @@ test("admin ai access updates flow through to the signed-in user's effective pol
         enabled: false,
         provider: "anthropic",
         credentialId: "cred_openai_123",
-        organizationId: "org_1",
       }),
     });
 

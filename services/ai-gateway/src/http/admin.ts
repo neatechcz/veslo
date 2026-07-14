@@ -129,7 +129,7 @@ export type AdminOrganizationMemberRecord = {
   name: string;
   email: string;
   role: CurrentAdminOrganizationRole;
-  status?: "active" | "disabled" | "removed";
+  status: "active" | "disabled" | "removed";
   createdAt: string;
 };
 
@@ -4470,65 +4470,6 @@ export function createAdminRouter(adminService: AdminService) {
     }
   });
 
-  // TODO(admin-data-isolation): Remove these unqualified routes after every admin caller uses the organization path.
-  router.get("/admin/api/users/:userId/ai-access", async (req, res) => {
-    if (!requireAdminCapability(res, "managedAiUserAccess")) {
-      return;
-    }
-
-    try {
-      const payload = await adminService.getUserAiAccess(res.locals.adminToken as string, req.params.userId);
-      res.json(payload);
-    } catch (error) {
-      if (mapHttpError(error, res)) {
-        return;
-      }
-      res.status(502).json({ error: "user_ai_access_lookup_failed" });
-    }
-  });
-
-  router.put("/admin/api/users/:userId/ai-access", async (req, res) => {
-    if (!requireAdminCapability(res, "managedAiUserAccess")) {
-      return;
-    }
-
-    try {
-      if (
-        req.body && typeof req.body === "object"
-        && (Object.hasOwn(req.body, "defaultModel") || Object.hasOwn(req.body, "allowedModels"))
-      ) {
-        throw new HttpError("user_model_policy_not_supported", 400);
-      }
-      const organizationId = typeof req.body?.organizationId === "string"
-        ? req.body.organizationId.trim()
-        : null;
-      if (!organizationId) {
-        throw new HttpError("organization_context_required", 400);
-      }
-      if (!requireOrganizationAccess(res, organizationId)) {
-        return;
-      }
-      if (!await confirmOrganizationAiAccessMember(res, organizationId, req.params.userId)) {
-        return;
-      }
-      const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
-        enabled: req.body?.enabled === true,
-        provider: parseAiAccessProvider(req.body?.provider),
-        credentialId: typeof req.body?.credentialId === "string" ? req.body.credentialId : null,
-      }, organizationId, (res.locals.adminSession as AdminSessionSnapshot).user.id);
-      res.json(payload);
-    } catch (error) {
-      if (error instanceof AiAccessAuditPersistenceError) {
-        res.status(502).json({ error: error.code });
-        return;
-      }
-      if (mapHttpError(error, res)) {
-        return;
-      }
-      res.status(502).json({ error: "user_ai_access_update_failed" });
-    }
-  });
-
   router.post("/admin/api/users/:userId/disable", async (req, res) => {
     if (!requireAdminCapability(res, "users") || !requirePlatformAdmin(res)) {
       return;
@@ -4575,6 +4516,10 @@ export function createAdminRouter(adminService: AdminService) {
       }
       res.status(502).json({ error: "user_delete_failed" });
     }
+  });
+
+  router.use("/admin/api", (_req, res) => {
+    res.status(404).json({ error: "not_found" });
   });
 
   const sendAdminShell = (_req: express.Request, res: express.Response) => {

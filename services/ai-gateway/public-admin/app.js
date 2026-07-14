@@ -32,7 +32,6 @@ import {
   organizationIdForRoute,
   parseAdminRoute,
   planAdminHistoryUpdate,
-  resolveAiAccessOrganizationId,
   isAdminRouteMutationCurrent,
   switchOrganizationRoute,
   toAdminDateTimeLocalValue,
@@ -1298,6 +1297,11 @@ function defaultUserSaveStatusMessage() {
 }
 
 function userStatus(user) {
+  if (state.route?.area === "organization") {
+    if (user.status === "disabled") return "Disabled";
+    if (user.status === "removed") return "Removed";
+    return "Active";
+  }
   return user.disabled ? "Disabled" : user.emailVerified ? "Active" : "Invited";
 }
 
@@ -2325,15 +2329,21 @@ async function loadUserAiAccess(userId, mutation = null) {
   }
 
   const activeMutation = mutation || beginCurrentRouteMutation(`user-ai-access-load:${resolvedUserId}`);
-  if (!isCurrentRouteMutation(activeMutation)) return null;
-  const payload = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`);
-  if (!isCurrentRouteMutation(activeMutation)) return null;
-  const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
-  state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
-    payload?.availableCredentials,
-  );
-  state.userAiAccessByUserId[resolvedUserId] = aiAccess;
-  return aiAccess;
+  const selection = captureAiAccessMemberSelection(resolvedUserId);
+  if (!selection || !isCurrentRouteMutation(activeMutation)) return null;
+  try {
+    const payload = await fetchJson(aiAccessMemberPath(selection));
+    if (!isCurrentRouteMutation(activeMutation) || !isAiAccessMemberSelectionCurrent(selection)) return null;
+    const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
+    state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
+      payload?.availableCredentials,
+    );
+    state.userAiAccessByUserId[resolvedUserId] = aiAccess;
+    return aiAccess;
+  } catch (error) {
+    if (!isCurrentRouteMutation(activeMutation) || !isAiAccessMemberSelectionCurrent(selection)) return null;
+    throw error;
+  }
 }
 
 async function saveUserAiAccess(
@@ -2348,8 +2358,10 @@ async function saveUserAiAccess(
 
   const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
   if (!resolvedUserId) {
-    return;
+    return false;
   }
+  const selection = captureAiAccessMemberSelection(resolvedUserId);
+  if (!selection) return false;
 
   const aiAccessInput = input && typeof input === "object"
     ? {
@@ -2362,23 +2374,63 @@ async function saveUserAiAccess(
         credentialId: readAiAccessCredentialValue(),
       };
 
-  const saved = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`, {
-    method: "PUT",
-    body: JSON.stringify({
-      ...aiAccessInput,
-      organizationId: aiAccessOrganizationIdForUser(resolvedUserId),
-    }),
-  });
-  if (!isCurrentRouteMutation(mutation)) return;
-  state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
-    saved?.availableCredentials,
-  );
-  state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
+  try {
+    const saved = await fetchJson(aiAccessMemberPath(selection), {
+      method: "PUT",
+      body: JSON.stringify(aiAccessInput),
+    });
+    if (!isCurrentRouteMutation(mutation) || !isAiAccessMemberSelectionCurrent(selection)) return false;
+    state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
+      saved?.availableCredentials,
+    );
+    state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
+    return true;
+  } catch (error) {
+    if (!isCurrentRouteMutation(mutation) || !isAiAccessMemberSelectionCurrent(selection)) return false;
+    throw error;
+  }
 }
 
-function aiAccessOrganizationIdForUser(userId) {
-  const user = currentRouteSubjects().find((entry) => entry.id === userId);
-  return resolveAiAccessOrganizationId(state.route, user, els.userOrg.value);
+function captureAiAccessMemberSelection(userId) {
+  const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+  if (
+    !resolvedUserId
+    || state.route?.area !== "organization"
+    || state.route.page !== "ai-access"
+    || (state.pageLoad.status !== "ready" && state.pageLoad.status !== "empty")
+    || state.routeActionsLocked
+    || state.selectedUserId !== resolvedUserId
+  ) {
+    return null;
+  }
+  const organizationId = organizationIdForRoute(state.route);
+  const member = state.organizationMembers.find(
+    (member) => member.userId === resolvedUserId && member.status === "active",
+  );
+  if (!organizationId || !member?.membershipId) return null;
+  return {
+    organizationId,
+    userId: member.userId,
+    membershipId: member.membershipId,
+    pageKey: state.pageLoad.key,
+    pageGeneration: state.pageLoad.generation,
+  };
+}
+
+function isAiAccessMemberSelectionCurrent(selection) {
+  if (!selection || state.route?.area !== "organization" || state.route.page !== "ai-access") return false;
+  const member = state.organizationMembers.find((entry) => entry.userId === selection.userId);
+  if (!member) return false;
+  return organizationIdForRoute(state.route) === selection.organizationId
+    && selection.pageGeneration === state.pageLoad.generation
+    && selection.pageKey === state.pageLoad.key
+    && state.selectedUserId === selection.userId
+    && member.membershipId === selection.membershipId
+    && member.status === "active";
+}
+
+function aiAccessMemberPath(selection) {
+  return `/organizations/${encodeURIComponent(selection.organizationId)}/members/${encodeURIComponent(selection.userId)}/ai-access`;
 }
 
 async function loadUsers(mutation = beginCurrentRouteMutation("users-refresh")) {
@@ -2894,7 +2946,6 @@ function organizationMemberToRouteSubject(member, organization) {
     email: member?.email || "",
     role,
     status,
-    emailVerified: status !== "removed",
     disabled: status === "disabled" || status === "removed",
     platformAdmin: false,
     memberships: [{
@@ -3191,7 +3242,8 @@ async function refreshSelectedUserAiAccessOptions(mutation = beginCurrentRouteMu
     return;
   }
 
-  await loadUserAiAccess(state.selectedUserId, mutation);
+  const loaded = await loadUserAiAccess(state.selectedUserId, mutation);
+  if (!loaded) return;
   if (!isCurrentRouteMutation(mutation)) return;
   const user = currentUser();
   if (user) {
@@ -3211,7 +3263,8 @@ async function loadSelectedUserAiAccess() {
   const mutation = beginCurrentRouteMutation(`user-ai-access-selection:${selectedUserId}`);
   if (!isCurrentRouteMutation(mutation)) return;
   try {
-    await loadUserAiAccess(selectedUserId, mutation);
+    const loaded = await loadUserAiAccess(selectedUserId, mutation);
+    if (!loaded) return;
     if (!isCurrentRouteMutation(mutation) || state.selectedUserId !== selectedUserId) return;
     const user = currentUser();
     if (user) populateUserEditor(user);
@@ -3959,12 +4012,20 @@ async function saveUser() {
         },
       );
       if (!isCurrentRouteMutation(mutation)) return;
-      if (saved?.member?.membershipId === targetUser.membershipId) {
-        state.organizationMembers = state.organizationMembers.map((member) =>
-          member.membershipId === targetUser.membershipId ? saved.member : member
-        );
-        state.selectedOrganizationMemberId = targetUser.membershipId;
+      const savedMember = saved?.member;
+      if (
+        !savedMember
+        || savedMember.membershipId !== targetUser.membershipId
+        || savedMember.userId !== targetUser.userId
+      ) {
+        setUserSaveStatus("Unable to save membership: the scoped membership response did not match the selected member.", "error");
+        await loadRouteData(state.route);
+        return;
       }
+      state.organizationMembers = state.organizationMembers.map((member) =>
+        member.membershipId === targetUser.membershipId ? savedMember : member
+      );
+      state.selectedOrganizationMemberId = targetUser.membershipId;
     } else if (updatePayload) {
       await fetchJson(`/users/${encodeURIComponent(targetUser.id)}`, {
         method: "PATCH",
@@ -3973,7 +4034,8 @@ async function saveUser() {
     }
     if (!isCurrentRouteMutation(mutation)) return;
     if (canEditAiAccess) {
-      await saveUserAiAccess(targetUser.id, aiAccessInput, mutation);
+      const savedAiAccess = await saveUserAiAccess(targetUser.id, aiAccessInput, mutation);
+      if (!savedAiAccess) return;
     }
     if (!isCurrentRouteMutation(mutation)) return;
     if (!organizationMembershipSave && (wasCreating || updatePayload)) await loadUsers(mutation);

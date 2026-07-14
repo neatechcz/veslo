@@ -44,6 +44,11 @@ export type AdminUserRecord = {
   status?: string;
   platformAdmin?: boolean;
   disabled?: boolean;
+  memberships?: Array<{
+    membershipId?: string;
+    orgId?: string;
+    status?: 'active' | 'disabled' | 'removed';
+  }>;
 };
 
 export type AdminCredentialRecord = {
@@ -262,12 +267,13 @@ export async function upsertAdminUserAiAccess(
   fetchImpl: FetchLike,
   gatewayBase: string,
   token: string,
+  organizationId: string,
   userId: string,
   input: UpsertAdminUserAiAccessInput,
 ): Promise<AdminUserAiAccessRecord> {
   const payload = await requestJson(fetchImpl, {
     method: 'PUT',
-    url: `${normalizeBaseUrl(gatewayBase)}/admin/api/users/${encodeURIComponent(userId)}/ai-access`,
+    url: `${normalizeBaseUrl(gatewayBase)}/admin/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(userId)}/ai-access`,
     token,
     body: {
       enabled: input.enabled,

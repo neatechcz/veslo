@@ -19,6 +19,10 @@ type AdminUserRecord = {
   role?: string;
   status?: string;
   isPlatformAdmin?: boolean;
+  memberships?: Array<{
+    orgId?: string;
+    status?: 'active' | 'disabled' | 'removed';
+  }>;
 };
 
 function parseArgs(argv: string[]) {
@@ -33,6 +37,7 @@ function parseArgs(argv: string[]) {
     provider: process.env.VESLO_ADMIN_CHECK_PROVIDER?.trim() || '',
     credentialId: process.env.VESLO_ADMIN_CHECK_CREDENTIAL_ID?.trim() || '',
     disableAiAccess: process.env.VESLO_ADMIN_CHECK_DISABLE_AI_ACCESS === '1',
+    organizationId: process.env.VESLO_ADMIN_CHECK_ORGANIZATION_ID?.trim() || '',
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -85,10 +90,38 @@ function parseArgs(argv: string[]) {
     }
     if (arg === '--disable-ai-access') {
       result.disableAiAccess = true;
+      continue;
+    }
+    if (arg === '--organization-id' && argv[index + 1]) {
+      result.organizationId = argv[index + 1].trim();
+      index += 1;
     }
   }
 
   return result;
+}
+
+function resolveTargetAiAccessOrganizationId(user: AdminUserRecord, requestedOrganizationId: string): string {
+  const activeOrganizationIds = Array.from(new Set(
+    (Array.isArray(user.memberships) ? user.memberships : [])
+      .filter((membership) => !membership.status || membership.status === 'active')
+      .map((membership) => membership.orgId?.trim() || '')
+      .filter(Boolean),
+  ));
+
+  if (requestedOrganizationId) {
+    if (!activeOrganizationIds.includes(requestedOrganizationId)) {
+      throw new Error(`admin_ai_access_target_not_active_in_requested_organization:${requestedOrganizationId}`);
+    }
+    return requestedOrganizationId;
+  }
+  if (activeOrganizationIds.length === 0) {
+    throw new Error('admin_ai_access_target_has_no_active_organization');
+  }
+  if (activeOrganizationIds.length > 1) {
+    throw new Error('admin_ai_access_target_organization_ambiguous');
+  }
+  return activeOrganizationIds[0]!;
 }
 
 function randomBase64Url(size: number) {
@@ -132,6 +165,7 @@ async function main() {
     provider,
     credentialId,
     disableAiAccess,
+    organizationId,
   } = parseArgs(process.argv.slice(2));
   const state = randomBase64Url(32);
   const codeVerifier = randomBase64Url(32);
@@ -184,6 +218,7 @@ async function main() {
   let createdUser: AdminUserRecord | null = null;
   if (attemptCreate && createTargetEmail && !match) {
     const orgId =
+      organizationId ||
       (typeof sessionPayload?.activeOrgId === 'string' && sessionPayload.activeOrgId.trim()) ||
       (typeof organizations[0]?.id === 'string' ? organizations[0].id : '') ||
       null;
@@ -198,8 +233,11 @@ async function main() {
 
   const targetUser = match ?? createdUser;
   const shouldUpsertAiAccess = disableAiAccess || provider;
+  const aiAccessOrganizationId = shouldUpsertAiAccess && targetUser?.id
+    ? resolveTargetAiAccessOrganizationId(targetUser, organizationId)
+    : null;
   const aiAccess = shouldUpsertAiAccess && targetUser?.id
-    ? await upsertAdminUserAiAccess(fetch, gatewayBase, token, targetUser.id, {
+    ? await upsertAdminUserAiAccess(fetch, gatewayBase, token, aiAccessOrganizationId!, targetUser.id, {
         enabled: !disableAiAccess,
         provider: disableAiAccess ? null : provider || null,
         credentialId: disableAiAccess ? null : credentialId || null,
@@ -221,6 +259,7 @@ async function main() {
         credentialCount: credentials.length,
         credentials,
         aiAccessApplied: Boolean(aiAccess),
+        aiAccessOrganizationId,
         aiAccess,
         targetUser,
       },

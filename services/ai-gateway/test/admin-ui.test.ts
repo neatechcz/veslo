@@ -1285,10 +1285,15 @@ test("GET /admin/app.js rejects stale AI access selection completions and errors
     const { port } = server.address() as AddressInfo
     const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
     const selection = topLevelFunctionSource(script, "loadSelectedUserAiAccess")
+    const loadAccess = topLevelFunctionSource(script, "loadUserAiAccess")
 
     assert.match(selection, /const selectedUserId = state\.selectedUserId/)
     assert.match(selection, /const mutation = beginCurrentRouteMutation\(`user-ai-access-selection:\$\{selectedUserId\}`\)/)
     assert.ok(selection.indexOf("selectedUserId = state.selectedUserId") < selection.indexOf("await loadUserAiAccess(selectedUserId, mutation)"))
+    assert.match(loadAccess, /const selection = captureAiAccessMemberSelection\(resolvedUserId\)/)
+    assert.match(loadAccess, /if \(!selection \|\| !isCurrentRouteMutation\(activeMutation\)\) return null;/)
+    assert.match(loadAccess, /if \(!isCurrentRouteMutation\(activeMutation\) \|\| !isAiAccessMemberSelectionCurrent\(selection\)\) return null;/)
+    assert.match(loadAccess, /catch \(error\)[\s\S]*if \(!isCurrentRouteMutation\(activeMutation\) \|\| !isAiAccessMemberSelectionCurrent\(selection\)\) return null;[\s\S]*throw error/)
     assert.match(selection, /if \(!isCurrentRouteMutation\(mutation\) \|\| state\.selectedUserId !== selectedUserId\) return;/)
     assert.match(selection, /catch[\s\S]*if \(!isCurrentRouteMutation\(mutation\) \|\| state\.selectedUserId !== selectedUserId\) return;[\s\S]*Unable to load AI access assignment/)
     assert.match(script, /openUserEditor\(card\.dataset\.userId\);\s*void loadSelectedUserAiAccess\(\);/)
@@ -1583,9 +1588,6 @@ test("organization billing and audit routes render real scoped loaders and actio
     assert.match(script, /beginCurrentRouteMutation\("organization-audit-load", route\)/)
     assert.match(script, /entry\.source === "den" \? "DEN" : "AI Gateway"/)
     assert.match(script, /entry\.actor \|\| "unknown actor"/)
-    assert.match(script, /organizationId:\s*aiAccessOrganizationIdForUser\(resolvedUserId\)/)
-    assert.match(script, /function aiAccessOrganizationIdForUser\(userId\)/)
-    assert.match(script, /resolveAiAccessOrganizationId\(state\.route, user, els\.userOrg\.value\)/)
     assert.match(script, /async function signOut\(\) \{\s*const token = state\.token;[\s\S]*routeLoadAbortController\?\.abort\(\);[\s\S]*clearRouteOwnedState\(\)[\s\S]*await clearServerAdminSession\(token\)/)
     assert.match(script, /catch \(error\) \{\s*if \(error\?\.name !== "AbortError"\) \{\s*setBackendConnectionStatus/)
     assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "manage-platform-billing"\)/)
@@ -2145,8 +2147,6 @@ test("organization admins are forbidden from platform-only gateway admin API rou
     ["POST", "/admin/api/alerts/alert_1/acknowledge"],
     ["POST", "/admin/api/alerts/alert_1/resolve"],
     ["GET", "/admin/api/audit"],
-    ["GET", "/admin/api/users/user_1/ai-access"],
-    ["PUT", "/admin/api/users/user_1/ai-access"],
     ["POST", "/admin/api/users"],
     ["POST", "/admin/api/users/user_1/disable"],
     ["POST", "/admin/api/users/user_1/enable"],
@@ -2682,7 +2682,30 @@ test("GET /admin/app.js saves user ai access without per-user model authority", 
 
     assert.equal(response.status, 200)
     const script = await response.text()
-    assert.match(script, /\/users\/\$\{encodeURIComponent\([^)]+\)\}\/ai-access/)
+    const captureSelection = topLevelFunctionSource(script, "captureAiAccessMemberSelection")
+    const selectionCurrent = topLevelFunctionSource(script, "isAiAccessMemberSelectionCurrent")
+    const loadAccess = topLevelFunctionSource(script, "loadUserAiAccess")
+    const saveAccess = topLevelFunctionSource(script, "saveUserAiAccess")
+    const memberAdapter = topLevelFunctionSource(script, "organizationMemberToRouteSubject")
+    const userStatusSource = topLevelFunctionSource(script, "userStatus")
+    const saveUserSource = topLevelFunctionSource(script, "saveUser")
+
+    assert.match(captureSelection, /state\.route\?\.area !== "organization"/)
+    assert.match(captureSelection, /state\.route\.page !== "ai-access"/)
+    assert.match(captureSelection, /organizationIdForRoute\(state\.route\)/)
+    assert.match(captureSelection, /state\.pageLoad\.status !== "ready" && state\.pageLoad\.status !== "empty"/)
+    assert.match(captureSelection, /state\.routeActionsLocked/)
+    assert.match(captureSelection, /state\.organizationMembers\.find/)
+    assert.match(captureSelection, /member\.userId === resolvedUserId/)
+    assert.match(selectionCurrent, /selection\.pageGeneration === state\.pageLoad\.generation/)
+    assert.match(selectionCurrent, /selection\.pageKey === state\.pageLoad\.key/)
+    assert.match(selectionCurrent, /state\.selectedUserId === selection\.userId/)
+    assert.match(selectionCurrent, /member\.membershipId === selection\.membershipId/)
+    assert.match(loadAccess, /aiAccessMemberPath\(selection\)/)
+    assert.match(saveAccess, /aiAccessMemberPath\(selection\)/)
+    assert.doesNotMatch(script, /\/users\/\$\{encodeURIComponent\([^)]+\)\}\/ai-access/)
+    assert.match(saveAccess, /body:\s*JSON\.stringify\(aiAccessInput\)/)
+    assert.doesNotMatch(saveAccess, /body:\s*JSON\.stringify\(\{[\s\S]*organizationId/)
     assert.match(script, /user-ai-access-provider/)
     assert.match(script, /user-ai-access-credential/)
     assert.doesNotMatch(script, /user-ai-access-default-model/)
@@ -2700,7 +2723,7 @@ test("GET /admin/app.js saves user ai access without per-user model authority", 
     assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(
       script,
-      /async function saveUserAiAccess\([\s\S]*input = null,[\s\S]*mutation = beginCurrentRouteMutation[\s\S]*enabled: input\.enabled === true,[\s\S]*provider:[\s\S]*credentialId:[\s\S]*fetchJson\(`\/users\//,
+      /async function saveUserAiAccess\([\s\S]*input = null,[\s\S]*mutation = beginCurrentRouteMutation[\s\S]*enabled: input\.enabled === true,[\s\S]*provider:[\s\S]*credentialId:[\s\S]*fetchJson\(aiAccessMemberPath\(selection\)/,
     )
     assert.match(
       script,
@@ -2710,6 +2733,11 @@ test("GET /admin/app.js saves user ai access without per-user model authority", 
       script,
       /if \(canEditAiAccess\) \{[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput, mutation\)/,
     )
+    assert.doesNotMatch(memberAdapter, /emailVerified/)
+    assert.match(userStatusSource, /state\.route\?\.area === "organization"[\s\S]*user\.status/)
+    assert.match(userStatusSource, /user\.emailVerified \? "Active" : "Invited"/)
+    assert.match(saveUserSource, /savedMember\.membershipId !== targetUser\.membershipId[\s\S]*savedMember\.userId !== targetUser\.userId/)
+    assert.match(saveUserSource, /Unable to save membership:[\s\S]*await loadRouteData\(state\.route\)[\s\S]*return/)
   } finally {
     server.close()
     await once(server, "close")
