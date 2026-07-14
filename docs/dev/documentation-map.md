@@ -81,6 +81,7 @@ Use these for shipped feature semantics and non-obvious runtime behavior.
 - `docs/features/extensions-and-integrations.md`
 - `docs/features/session-runtime.md`
 - `docs/features/organization-billing.md`
+- `docs/features/admin-data-loading-and-scope-isolation.md`
 - `docs/features/workspace-config-and-sharing.md`
 - `docs/features/skill-registry-and-distribution.md`
 - `docs/features/ui-interaction-contract.md`
