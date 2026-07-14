@@ -45,8 +45,8 @@ durable statuses are:
   surface is visible, and route actions are locked;
 - `ready`: all required data succeeded for the current generation and real
   route content was revealed atomically;
-- `empty`: the required requests succeeded but the route has no records to
-  show, so a deliberate empty state is rendered;
+- `empty`: the required requests succeeded and the current route's explicit
+  empty predicate matched, so a deliberate page-level empty state is rendered;
 - `error`: the current generation failed and no previous data is used as a
   fallback.
 
@@ -80,9 +80,11 @@ not a privacy boundary around previously loaded data.
 
 When the current generation settles, `aria-busy` becomes false and the page
 atomically reveals either real data, an intentional empty state, or an error.
-The outcomes are distinct:
+Empty classification is route-specific rather than a generic check that every
+returned collection contains a row. The outcomes are distinct:
 
-- an empty successful collection renders the route's empty message;
+- a successful result that matches the route's empty predicate renders the
+  page-level empty state;
 - a network failure or retryable backend failure renders `Unable to load data`
   with Retry;
 - `401` clears the admin session and returns to sign-in;
@@ -92,6 +94,16 @@ The outcomes are distinct:
 - an aborted request renders no error because it no longer owns the page.
 
 Previous data is never an empty-state or error fallback.
+
+Page-level `empty` currently applies to an empty platform organization, alert,
+user, audit, or usage result; AI Infrastructure without credentials or a saved
+model policy; organization Members or AI Access without members; Billing
+without a billing record; and Organization Audit without events. Platform and
+Organization Overview settle `ready` after their required records succeed.
+Domains & Invites also settles `ready` after its required requests succeed,
+even when domains or invites are empty; each section renders its own empty
+message. Other `ready` pages may likewise render an empty subsection without
+changing the whole page to `empty`.
 
 ## Directory and organization boundaries
 
@@ -127,16 +139,18 @@ user response cannot publish success and forces a scoped refresh.
 ## Organization-qualified AI access
 
 Organization AI Access first loads the routed organization's member list.
-Assignment reads and writes use only these endpoints:
+The UI invokes assignment reads and writes from the canonical Organization AI
+Access workspace and uses only these endpoints:
 
 ```text
 GET /admin/api/organizations/:organizationId/members/:userId/ai-access
 PUT /admin/api/organizations/:organizationId/members/:userId/ai-access
 ```
 
-Before either operation reaches the Gateway-owned assignment repository, the
-server requires the managed-AI admin capability, access to the routed
-organization, a valid scoped member response, and exactly one active membership
+Server authorization is independent of the browser route or referrer. Before
+either operation reaches the Gateway-owned assignment repository, the server
+requires the managed-AI admin capability, access to the organization named in
+the API path, a valid scoped member response, and exactly one active membership
 for the target user in that organization. Missing, inactive, duplicate, or
 malformed membership evidence fails closed.
 
@@ -180,29 +194,43 @@ cannot hold Organizations, Members, Billing, or another admin page in loading.
 Every asynchronous admin mutation captures both the canonical route and the
 current page generation. Its completion may update status, close a dialog,
 redirect, change selection, or render data only while that same route
-generation remains current.
+generation remains current. Changing route, changing organization, refreshing
+the same route into a newer generation, or signing out therefore invalidates
+pending route-owned work.
 
-Changing route, changing organization, refreshing the same route into a newer
-generation, signing out, or selecting a different record invalidates affected
-pending work. Route actions remain locked until the scoped page is `ready` or
-`empty`, and sensitive values such as credential secrets or upload commands are
-cleared when their owning scope changes.
+AI-access loads and saves add a member-selection identity guard: organization
+id, user id, membership id, selected user, page key, and page generation must
+still match. Selecting another AI Access member therefore makes the older
+member's completion inert. This additional selection rule is specific to the
+implemented AI-access flow; selecting a different credential, alert, domain,
+invite, or other entity does not by itself promise to invalidate every pending
+operation for that entity. Those operations retain the route/page-generation
+guard and any operation-specific checks they implement.
+
+Route actions remain locked until the scoped page is `ready` or `empty`, and
+sensitive values such as credential secrets or upload commands are cleared when
+their owning route scope changes.
 
 ## No-stale-frame acceptance rule
 
-The isolation guarantee applies to every rendered transition frame and to both
-visible and semantic content. From the initiating navigation event until the
-destination settles:
+The isolation guarantee applies to every rendered transition frame and to
+user-exposed visible and accessibility-semantic content. From the initiating
+navigation event until the destination settles:
 
 - no old page or old organization record may remain in visible text;
-- no old record may remain in accessible names, labels, values, live regions,
-  hidden dialogs, selected controls, or other semantic DOM state;
+- no old record may remain in exposed accessible names, labels, values, live
+  regions, or selected controls;
 - no realistic sample content may come from the initial HTML;
-- no late response may restore data, status, selection, or a dialog owned by an
-  abandoned scope;
+- no late response may restore user-exposed data, status, selection, or an open
+  dialog owned by an abandoned scope;
 - no organization Members or AI Access transition may request the global user
   directory.
 
 The browser isolation suite uses delayed responses and frame-level plus DOM
 mutation observation to enforce this rule. Its negative controls must also
-prove that the observer detects both visible and semantic-only leaks.
+prove that the observer detects both visible and exposed semantic-only leaks.
+The observer intentionally skips descendants of closed, hidden,
+`aria-hidden`, inert, `display: none`, or `visibility: hidden` regions. Internal
+form values in such non-exposed dialog content are outside this frame-level
+observer contract unless production explicitly clears them; closing a dialog
+alone does not prove that every internal field was erased.
