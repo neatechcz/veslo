@@ -1,29 +1,18 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  type AdminUserRecord,
   createAdminUser,
   exchangeAdminBrowserSession,
   findAdminUserByEmail,
   getAdminSession,
   listAdminCredentials,
   listAdminUsers,
+  resolveAdminUserActiveOrganizationId,
   startAdminBrowserSession,
   upsertAdminUserAiAccess,
 } from '../helpers/live-admin-client.js';
 import { waitForAdminBrowserCallback } from '../helpers/live-admin-check.js';
-
-type AdminUserRecord = {
-  id?: string;
-  email?: string;
-  name?: string;
-  role?: string;
-  status?: string;
-  isPlatformAdmin?: boolean;
-  memberships?: Array<{
-    orgId?: string;
-    status?: 'active' | 'disabled' | 'removed';
-  }>;
-};
 
 function parseArgs(argv: string[]) {
   const result = {
@@ -99,29 +88,6 @@ function parseArgs(argv: string[]) {
   }
 
   return result;
-}
-
-function resolveTargetAiAccessOrganizationId(user: AdminUserRecord, requestedOrganizationId: string): string {
-  const activeOrganizationIds = Array.from(new Set(
-    (Array.isArray(user.memberships) ? user.memberships : [])
-      .filter((membership) => !membership.status || membership.status === 'active')
-      .map((membership) => membership.orgId?.trim() || '')
-      .filter(Boolean),
-  ));
-
-  if (requestedOrganizationId) {
-    if (!activeOrganizationIds.includes(requestedOrganizationId)) {
-      throw new Error(`admin_ai_access_target_not_active_in_requested_organization:${requestedOrganizationId}`);
-    }
-    return requestedOrganizationId;
-  }
-  if (activeOrganizationIds.length === 0) {
-    throw new Error('admin_ai_access_target_has_no_active_organization');
-  }
-  if (activeOrganizationIds.length > 1) {
-    throw new Error('admin_ai_access_target_organization_ambiguous');
-  }
-  return activeOrganizationIds[0]!;
 }
 
 function randomBase64Url(size: number) {
@@ -234,7 +200,7 @@ async function main() {
   const targetUser = match ?? createdUser;
   const shouldUpsertAiAccess = disableAiAccess || provider;
   const aiAccessOrganizationId = shouldUpsertAiAccess && targetUser?.id
-    ? resolveTargetAiAccessOrganizationId(targetUser, organizationId)
+    ? await resolveAdminUserActiveOrganizationId(fetch, gatewayBase, token, targetUser, organizationId)
     : null;
   const aiAccess = shouldUpsertAiAccess && targetUser?.id
     ? await upsertAdminUserAiAccess(fetch, gatewayBase, token, aiAccessOrganizationId!, targetUser.id, {

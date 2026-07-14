@@ -47,8 +47,13 @@ export type AdminUserRecord = {
   memberships?: Array<{
     membershipId?: string;
     orgId?: string;
-    status?: 'active' | 'disabled' | 'removed';
   }>;
+};
+
+export type AdminOrganizationMemberRecord = {
+  membershipId: string;
+  userId: string;
+  status: 'active' | 'disabled' | 'removed';
 };
 
 export type AdminCredentialRecord = {
@@ -215,6 +220,85 @@ export async function listAdminUsers(
   });
 
   return Array.isArray(payload?.users) ? (payload.users as AdminUserRecord[]) : [];
+}
+
+export async function listAdminOrganizationMembers(
+  fetchImpl: FetchLike,
+  gatewayBase: string,
+  token: string,
+  organizationId: string,
+): Promise<AdminOrganizationMemberRecord[]> {
+  const payload = await requestJson(fetchImpl, {
+    method: 'GET',
+    url: `${normalizeBaseUrl(gatewayBase)}/admin/api/organizations/${encodeURIComponent(organizationId)}/members`,
+    token,
+  });
+  if (!Array.isArray(payload?.members)) {
+    throw new Error('admin_organization_members_invalid_response');
+  }
+
+  const membershipIds = new Set<string>();
+  const userIds = new Set<string>();
+  return payload.members.map((value) => {
+    if (!value || typeof value !== 'object') {
+      throw new Error('admin_organization_members_invalid_response');
+    }
+    const member = value as Record<string, unknown>;
+    const membershipId = readText(member.membershipId);
+    const userId = readText(member.userId);
+    const status = readText(member.status);
+    if (
+      !membershipId
+      || !userId
+      || (status !== 'active' && status !== 'disabled' && status !== 'removed')
+      || membershipIds.has(membershipId)
+      || userIds.has(userId)
+    ) {
+      throw new Error('admin_organization_members_invalid_response');
+    }
+    membershipIds.add(membershipId);
+    userIds.add(userId);
+    return { membershipId, userId, status };
+  });
+}
+
+export async function resolveAdminUserActiveOrganizationId(
+  fetchImpl: FetchLike,
+  gatewayBase: string,
+  token: string,
+  user: AdminUserRecord,
+  preferredOrganizationId = '',
+): Promise<string> {
+  const userId = readText(user.id);
+  const preferredId = preferredOrganizationId.trim();
+  const candidateOrganizationIds = preferredId
+    ? [preferredId]
+    : Array.from(new Set(
+        (Array.isArray(user.memberships) ? user.memberships : [])
+          .map((membership) => readText(membership.orgId))
+          .filter(Boolean),
+      ));
+  if (!userId || candidateOrganizationIds.length === 0) {
+    throw new Error('admin_user_active_organization_not_found');
+  }
+
+  const scopedMemberships = await Promise.all(
+    candidateOrganizationIds.map(async (organizationId) => ({
+      organizationId,
+      members: await listAdminOrganizationMembers(fetchImpl, gatewayBase, token, organizationId),
+    })),
+  );
+  const activeOrganizationIds = scopedMemberships
+    .filter(({ members }) => members.some((member) => member.userId === userId && member.status === 'active'))
+    .map(({ organizationId }) => organizationId);
+
+  if (activeOrganizationIds.length === 0) {
+    throw new Error('admin_user_active_organization_not_found');
+  }
+  if (activeOrganizationIds.length > 1) {
+    throw new Error('admin_user_active_organization_ambiguous');
+  }
+  return activeOrganizationIds[0]!;
 }
 
 export function findAdminUserByEmail(users: AdminUserRecord[], email: string): AdminUserRecord | null {
