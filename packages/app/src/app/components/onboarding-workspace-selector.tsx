@@ -128,7 +128,7 @@ export default function OnboardingWorkspaceSelector(props: {
                     <div>
                       <div
                         class={`font-medium text-sm ${
-                          preset() === opt.id ? "text-indigo-400" : "text-zinc-200"
+                          preset() === opt.id ? "text-dls-accent" : "text-zinc-200"
                         }`}
                       >
                         {opt.name}
@@ -136,7 +136,7 @@ export default function OnboardingWorkspaceSelector(props: {
                       <div class="text-xs text-zinc-500 mt-1">{opt.desc}</div>
                     </div>
                     <Show when={preset() === opt.id}>
-                      <CheckCircle2 size={16} class="text-indigo-500" />
+                      <CheckCircle2 size={16} class="text-dls-accent" />
                     </Show>
                   </div>
                 </div>

@@ -29,7 +29,8 @@ function createAiAccessRecord(overrides: Partial<UserAiAccessPolicyRecord> = {})
   }
 }
 
-test("GET /api/me/ai-access returns the authenticated user's managed ai access", async () => {
+test("GET /api/me/ai-access returns gateway effectiveModel and ignores legacy model columns", async () => {
+  let repairCalls = 0
   const app = express()
   app.use(express.json())
   app.use(
@@ -49,7 +50,20 @@ test("GET /api/me/ai-access returns the authenticated user's managed ai access",
       aiAccess: {
         async getUserAiAccess(userId: string) {
           assert.equal(userId, "user_123")
-          return createAiAccessRecord()
+          return createAiAccessRecord({ provider: "codex_oauth", credentialId: "cred_legacy" })
+        },
+      },
+      autoAssignedCodexCredentialRotation: {
+        async repairCodexAccess(input) {
+          repairCalls += 1
+          return input.aiAccess
+        },
+      },
+      modelPolicy: {
+        async getPolicy() {
+          return {
+            activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
+          }
         },
       },
     }),
@@ -72,13 +86,54 @@ test("GET /api/me/ai-access returns the authenticated user's managed ai access",
         id: "ai_access_user_123",
         userId: "user_123",
         enabled: true,
-        provider: "openai",
-        credentialId: null,
-        defaultModel: "gpt-4o-mini",
-        allowedModels: ["gpt-4o-mini"],
+        provider: "codex_oauth",
+        credentialId: "cred_legacy",
+        effectiveModel: { provider: "codex_oauth", model: "gpt-5.4" },
         updatedAt: "2026-04-10T10:05:00.000Z",
       },
     })
+    assert.equal(repairCalls, 0)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /api/me/ai-access fails explicitly when gateway policy compatibility data is unavailable", async () => {
+  let repairCalls = 0
+  const app = express()
+  app.use(express.json())
+  app.use(
+    createUserCredentialsRouter({
+      sessionResolver: {
+        async resolveSession(token: string) {
+          return { token, user: { id: "user_123", email: "user@example.test" } }
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess() {
+          return createAiAccessRecord({ provider: "codex_oauth", credentialId: "cred_legacy" })
+        },
+      },
+      autoAssignedCodexCredentialRotation: {
+        async repairCodexAccess(input) {
+          repairCalls += 1
+          return input.aiAccess
+        },
+      },
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, {
+      headers: { authorization: "Bearer den_token_123" },
+    })
+    assert.equal(response.status, 503)
+    assert.deepEqual(await response.json(), { error: "platform_model_policy_not_configured" })
+    assert.equal(repairCalls, 0)
   } finally {
     server.close()
     await once(server, "close")

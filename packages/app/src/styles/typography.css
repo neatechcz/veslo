@@ -1,12 +1,11 @@
-@import "@fontsource-variable/source-sans-3";
-@import "@fontsource-variable/ibm-plex-sans";
-@import "@fontsource/ibm-plex-mono/400.css";
-@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource-variable/dm-sans";
+@import "@fontsource/dm-mono/400.css";
+@import "@fontsource/dm-mono/500.css";
 
 :root {
   --veslo-font-reading:
-    "Source Sans 3 Variable",
-    "Source Sans 3",
+    "DM Sans Variable",
+    "DM Sans",
     ui-sans-serif,
     system-ui,
     -apple-system,
@@ -14,8 +13,8 @@
     "Segoe UI",
     sans-serif;
   --veslo-font-product:
-    "IBM Plex Sans Variable",
-    "IBM Plex Sans",
+    "DM Sans Variable",
+    "DM Sans",
     ui-sans-serif,
     system-ui,
     -apple-system,
@@ -23,7 +22,7 @@
     "Segoe UI",
     sans-serif;
   --veslo-font-mono:
-    "IBM Plex Mono",
+    "DM Mono",
     ui-monospace,
     "SFMono-Regular",
     "SF Mono",
@@ -40,6 +39,17 @@
   --veslo-type-title-sm: 1.25rem;
   --veslo-type-title-md: 1.5rem;
   --veslo-type-title-lg: 2rem;
+}
+
+:where(h1, h2, h3) {
+  font-family: var(--veslo-font-product);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+:where(button, label) {
+  font-family: var(--veslo-font-product);
+  font-weight: 500;
 }
 
 @utility font-reading {
@@ -78,20 +88,20 @@
 @utility type-title-sm {
   font-size: var(--veslo-type-title-sm);
   line-height: 1.25;
-  font-weight: 600;
-  letter-spacing: -0.015em;
+  font-weight: 400;
+  letter-spacing: -0.02em;
 }
 
 @utility type-title-md {
   font-size: var(--veslo-type-title-md);
   line-height: 1.2;
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: -0.02em;
 }
 
 @utility type-title-lg {
   font-size: var(--veslo-type-title-lg);
   line-height: 1.1;
-  font-weight: 600;
-  letter-spacing: -0.03em;
+  font-weight: 300;
+  letter-spacing: -0.02em;
 }

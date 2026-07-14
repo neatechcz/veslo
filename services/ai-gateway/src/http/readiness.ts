@@ -2,6 +2,8 @@ import { Router } from "express";
 
 import type { AiAccessRepository } from "../access/repository.js";
 import type { CredentialRepository } from "../credentials/repository.js";
+import type { PlatformModelPolicyRepository, PlatformModelRef } from "../model-policy/repository.js";
+import type { PlatformModelCapabilityVerifier } from "../model-policy/capability-verifier.js";
 import { classifyProviderProxyFailure } from "./providers/proxy-failure-alert.js";
 
 export type ReadinessProviderProbe = {
@@ -13,6 +15,8 @@ export type ReadinessDependencies = {
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
   credentials: Pick<CredentialRepository, "listHealthyCredentialRecordIds">;
   aiAccess?: Pick<AiAccessRepository, "countEnabledPolicies">;
+  modelPolicy: Pick<PlatformModelPolicyRepository, "getPolicy">;
+  modelCapabilities: PlatformModelCapabilityVerifier;
   probes?: ReadinessProviderProbe[];
   timeoutMs?: number;
   now?: () => Date;
@@ -43,6 +47,11 @@ export type ReadinessPayload = {
       enabledPolicyCount: number;
       reason?: string;
     };
+    modelPolicy: {
+      ok: boolean;
+      activeModel: PlatformModelRef | null;
+      reason?: string;
+    };
   };
 };
 
@@ -66,13 +75,18 @@ export function createReadinessRouter(deps: ReadinessDependencies) {
 }
 
 export async function checkReadiness(deps: ReadinessDependencies): Promise<ReadinessPayload> {
-  const [providerReachability, credentials, aiAccessPolicies] = await Promise.all([
+  const [providerReachability, aiAccessPolicies, modelPolicy] = await Promise.all([
     checkProviderReachability(deps),
-    checkCredentials(deps.credentials),
     checkAiAccessPolicies(deps.aiAccess),
+    checkModelPolicy(deps.modelPolicy),
   ]);
+  const credentials = await checkCredentials(
+    deps.credentials,
+    deps.modelCapabilities,
+    modelPolicy.activeModel,
+  );
 
-  const ok = providerReachability.ok && credentials.ok && aiAccessPolicies.ok;
+  const ok = providerReachability.ok && credentials.ok && aiAccessPolicies.ok && modelPolicy.ok;
 
   return {
     ok,
@@ -83,6 +97,7 @@ export async function checkReadiness(deps: ReadinessDependencies): Promise<Readi
       providerReachability,
       credentials,
       aiAccessPolicies,
+      modelPolicy,
     },
   };
 }
@@ -141,14 +156,12 @@ async function runProviderProbe(
 
 async function checkCredentials(
   credentials: Pick<CredentialRepository, "listHealthyCredentialRecordIds">,
+  modelCapabilities: PlatformModelCapabilityVerifier,
+  activeModel: PlatformModelRef | null,
 ): Promise<ReadinessPayload["checks"]["credentials"]> {
+  let ids: string[];
   try {
-    const ids = await credentials.listHealthyCredentialRecordIds();
-    return {
-      ok: ids.length > 0,
-      healthyCredentialCount: ids.length,
-      reason: ids.length > 0 ? undefined : "no_healthy_credentials",
-    };
+    ids = await credentials.listHealthyCredentialRecordIds();
   } catch {
     return {
       ok: false,
@@ -156,6 +169,24 @@ async function checkCredentials(
       reason: "credential_repository_unavailable",
     };
   }
+
+  let compatible = ids.length > 0;
+  if (activeModel && compatible) {
+    try {
+      compatible = (await modelCapabilities.checkHealthyCredentialForModel(activeModel)).status === "supported";
+    } catch {
+      compatible = false;
+    }
+  }
+  return {
+    ok: compatible,
+    healthyCredentialCount: ids.length,
+    reason: ids.length === 0
+      ? "no_healthy_credentials"
+      : compatible
+        ? undefined
+        : "no_healthy_credential_for_active_model",
+  };
 }
 
 async function checkAiAccessPolicies(
@@ -181,6 +212,32 @@ async function checkAiAccessPolicies(
       ok: false,
       enabledPolicyCount: 0,
       reason: "ai_access_policy_repository_unavailable",
+    };
+  }
+}
+
+async function checkModelPolicy(
+  modelPolicy: Pick<PlatformModelPolicyRepository, "getPolicy">,
+): Promise<ReadinessPayload["checks"]["modelPolicy"]> {
+  try {
+    const policy = await modelPolicy.getPolicy();
+    if (!policy) {
+      return {
+        ok: false,
+        activeModel: null,
+        reason: "platform_model_policy_not_configured",
+      };
+    }
+
+    return {
+      ok: true,
+      activeModel: policy.activeModel,
+    };
+  } catch {
+    return {
+      ok: false,
+      activeModel: null,
+      reason: "platform_model_policy_lookup_failed",
     };
   }
 }

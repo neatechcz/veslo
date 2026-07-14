@@ -16,6 +16,11 @@ test("ensureAiGatewaySchema repairs managed AI tables and columns for live datab
 
   const sql = statements.join("\n");
   assert.match(sql, /CREATE TABLE IF NOT EXISTS `user_ai_access_policy`/);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS `platform_model_policy`/);
+  assert.match(sql, /`id` varchar\(32\) NOT NULL PRIMARY KEY/);
+  assert.match(sql, /`enabled_models_json` text NOT NULL,/);
+  assert.match(sql, /`active_provider` varchar\(64\) NOT NULL,/);
+  assert.match(sql, /`active_model` varchar\(128\) NOT NULL,/);
   assert.match(sql, /`id` varchar\(64\) NOT NULL PRIMARY KEY/);
   assert.match(sql, /`created_at` timestamp\(3\) NOT NULL,/);
   assert.match(sql, /`updated_at` timestamp\(3\) NOT NULL,/);
@@ -26,6 +31,8 @@ test("ensureAiGatewaySchema repairs managed AI tables and columns for live datab
   assert.match(sql, /CREATE INDEX `user_ai_access_policy_provider` ON `user_ai_access_policy` \(`provider`\)/);
   assert.match(sql, /ALTER TABLE `user_ai_access_policy` ADD COLUMN `credential_id` varchar\(64\)/);
   assert.match(sql, /ALTER TABLE `credential_record` ADD COLUMN `name` varchar\(255\)/);
+  assert.match(sql, /ALTER TABLE `ai_gateway_audit_event` ADD COLUMN `organization_id` varchar\(64\)/);
+  assert.match(sql, /CREATE INDEX `audit_event_organization_created` ON `ai_gateway_audit_event` \(`organization_id`, `created_at`\)/);
 });
 
 test("ensureAiGatewaySchema creates credential tables before repairing columns", async () => {

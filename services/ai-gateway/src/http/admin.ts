@@ -16,29 +16,36 @@ import {
   createCredentialAlertEmailMonitorRunner,
   type CredentialAlertEmailMonitorResult,
 } from "../alerts/credential-alert-email-monitor.js";
-import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
-import { MySqlAiAccessRepository } from "../access/mysql-repository.js";
-import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
+import { AiAccessAuditPersistenceError } from "../access/mysql-repository.js";
+import type { AiAccessMutation, AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js";
+import { mergeOrganizationAuditEvents } from "../audit/organization-audit.js";
 import type { AuditRepository, AuditEventRecord, ListAuditEventsInput } from "../audit/repository.js";
-import { MySqlAuditRepository } from "../audit/mysql-repository.js";
 import { getPlatformCredentialOwnerUserId } from "../credentials/platform-owner.js";
-import { MySqlCredentialRepository } from "../credentials/mysql-repository.js";
-import { MySqlSecretStore } from "../credentials/mysql-secret-store.js";
 import type { AdminCredentialRecord, CreatePlatformCredentialInput, CredentialRecord as GatewayCredentialRecord, CredentialRepository } from "../credentials/repository.js";
 import type { SecretStore, StoredSecret } from "../credentials/secret-store.js";
 import type { AiGatewayDb } from "../db/index.js";
-import { createDb } from "../db/index.js";
 import { credentialBindingTable, credentialHealthEventTable, credentialRecordTable, credentialUsageEventTable, sessionLeaseTable, userAiAccessPolicyTable, type CredentialState } from "../db/schema.js";
 import { sendAdminAlertEmail, type AdminAlertEmailInput } from "../email/admin-alert-mailer.js";
 import { env } from "../env.js";
 import type { AdminSessionRecord, LeaseProvider } from "../leases/repository.js";
-import { CODEX_DEFAULT_MODEL, listCodexModelCatalog, resolveCodexModelPolicy } from "../providers/codex-model-catalog.js";
+import { PlatformModelPolicyAuditPersistenceError } from "../model-policy/mysql-repository.js";
+import {
+  filterUnsupportedCodexModels,
+  normalizeDiscoveredModels,
+  type PlatformModelCapabilityVerifier,
+} from "../model-policy/capability-verifier.js";
+import type {
+  PlatformModelPolicyRecord,
+  PlatformModelPolicyMutation,
+  PlatformModelPolicyRepository,
+  PlatformModelRef,
+} from "../model-policy/repository.js";
+import { CODEX_DEFAULT_MODEL, listCodexModelCatalog } from "../providers/codex-model-catalog.js";
 import { formatAiGatewayProviderLabel, isAiGatewayProvider } from "../providers/ids.js";
 import { OpenAiCompatibleTransport } from "../providers/openai-compatible-transport.js";
 import { ProviderTransportError, type OpenAiCompatibleProviderTransport } from "../providers/transport.js";
 import { evaluateCodexCredentialEligibility } from "../usage/codex-eligibility.js";
 import { buildCodexCapacityOverview, type CodexCapacityCredential, type CodexCapacityOverview } from "../usage/codex-capacity.js";
-import { MySqlUsageRepository } from "../usage/mysql-repository.js";
 import { CachedCodexCredentialStatusProvider, UnavailableCodexCredentialStatusProvider, type CodexCredentialStatusProvider, type CodexUsageStatus } from "../usage/codex-status.js";
 import type { AggregateUsageInput, UsageAggregateResponse, UsageCredentialAggregate, UsageGroupBy as RepositoryUsageGroupBy, UsageRepository } from "../usage/repository.js";
 
@@ -190,8 +197,6 @@ export type AdminUserAiAccessRecord = {
   enabled: boolean;
   provider: AiAccessProvider | null;
   credentialId: string | null;
-  defaultModel: string | null;
-  allowedModels: string[];
   updatedAt: string;
 };
 
@@ -211,8 +216,6 @@ export type UpdateUserAiAccessInput = {
   enabled: boolean;
   provider: AiAccessProvider | null;
   credentialId: string | null;
-  defaultModel: string | null;
-  allowedModels: string[];
 };
 
 export type AuthPayload = {
@@ -338,6 +341,72 @@ export type ListCredentialsInput = {
   includeDeleted?: boolean;
 };
 
+export type AdminPlatformModelPolicy = {
+  enabledModels: PlatformModelRef[];
+  activeModel: PlatformModelRef;
+  updatedAt: string;
+};
+
+export type ReplacePlatformModelPolicyInput = {
+  enabledModels: PlatformModelRef[];
+  activeModel: PlatformModelRef;
+};
+
+export type AdminDenProxyResponse = {
+  status: number;
+  body: unknown;
+};
+
+const ORGANIZATION_AUDIT_SOURCE_LIMIT = 100;
+
+function readOrganizationAuditLimit(value: unknown): number {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  const parsed = typeof candidate === "string" && /^\d+$/.test(candidate)
+    ? Number(candidate)
+    : ORGANIZATION_AUDIT_SOURCE_LIMIT;
+  return Math.min(ORGANIZATION_AUDIT_SOURCE_LIMIT, Math.max(1, parsed));
+}
+
+function readDenOrganizationAuditEvents(body: unknown): AuditEventRecord[] {
+  if (!body || typeof body !== "object" || !Array.isArray((body as { events?: unknown }).events)) {
+    throw new HttpError("organization_audit_den_response_invalid", 502);
+  }
+
+  return (body as { events: unknown[] }).events.map((value) => {
+    if (!value || typeof value !== "object") {
+      throw new HttpError("organization_audit_den_response_invalid", 502);
+    }
+    const event = value as Record<string, unknown>;
+    const result = event.result;
+    if (
+      !["id", "timestamp", "actor", "action", "entityType", "entityId", "summary"].every(
+        (field) => typeof event[field] === "string",
+      )
+      || (result !== "ok" && result !== "warning" && result !== "error")
+      || !Array.isArray(event.changedFields)
+      || !event.changedFields.every((field) => typeof field === "string")
+    ) {
+      throw new HttpError("organization_audit_den_response_invalid", 502);
+    }
+    return {
+      id: event.id as string,
+      timestamp: event.timestamp as string,
+      actor: event.actor as string,
+      action: event.action as string,
+      entityType: event.entityType as string,
+      entityId: event.entityId as string,
+      result,
+      summary: event.summary as string,
+      changedFields: event.changedFields as string[],
+      ...(typeof event.organizationId === "string" || event.organizationId === null
+        ? { organizationId: event.organizationId }
+        : {}),
+    };
+  });
+}
+
+export type AdminOrganizationBillingInput = Record<string, unknown>;
+
 export interface AdminService {
   startBrowserAuth(input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload>;
   exchangeBrowserAuth(input: BrowserAuthExchangeInput): Promise<AuthPayload>;
@@ -349,6 +418,12 @@ export interface AdminService {
   listOrganizations(token: string): Promise<{ organizations: AdminOrganizationRecord[] }>;
   getOrganization(token: string, orgId: string): Promise<{ organization: AdminOrganizationRecord }>;
   updateOrganization(token: string, orgId: string, input: UpdateOrganizationInput): Promise<{ organization: AdminOrganizationRecord }>;
+  getOrganizationBilling?(token: string, orgId: string): Promise<AdminDenProxyResponse>;
+  createOrganizationBillingCheckout?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  createOrganizationBillingPortal?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  updateOrganizationBillingPlan?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  cancelOrganizationBilling?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  updatePlatformOrganizationBilling?(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
   listOrganizationMembers(token: string, orgId: string): Promise<{ members: AdminOrganizationMemberRecord[] }>;
   createOrganizationMember(token: string, orgId: string, input: CreateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
   updateOrganizationMember(token: string, orgId: string, memberId: string, input: UpdateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
@@ -369,12 +444,16 @@ export interface AdminService {
     token: string,
     userId: string,
     input: UpdateUserAiAccessInput,
+    organizationId: string | null | undefined,
+    actorUserId: string,
   ): Promise<{ aiAccess: AdminUserAiAccessRecord; availableCredentials: AdminCredentialOption[] }>;
   disableUser(token: string, userId: string): Promise<AdminUserRecord>;
   enableUser(token: string, userId: string): Promise<AdminUserRecord>;
   deleteUser(token: string, userId: string): Promise<void>;
   listCredentials(_token: string, input?: ListCredentialsInput): Promise<{ credentials: CredentialRecord[] }>;
   listCredentialModels(_token: string, credentialId: string): Promise<{ credentialId: string; models: string[]; defaultModel?: string }>;
+  getPlatformModelPolicy(token: string): Promise<{ policy: AdminPlatformModelPolicy | null }>;
+  replacePlatformModelPolicy(token: string, input: ReplacePlatformModelPolicyInput, actorUserId: string): Promise<{ policy: AdminPlatformModelPolicy }>;
   createCredential(_token: string, input: CreateCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   renameCredential(_token: string, credentialId: string, input: RenameCredentialInput, actorUserId: string | null): Promise<{ credential: CredentialRecord }>;
   createCodexAuthUploadSession(_token: string, credentialId: string, input: CreateCodexAuthUploadSessionInput, actorUserId: string | null): Promise<CodexAuthUploadSessionResponse>;
@@ -393,6 +472,7 @@ export interface AdminService {
   acknowledgeAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   resolveAlert(_token: string, alertId: string, actorUserId: string | null): Promise<{ alert: AlertRecord }>;
   listAudit(_token: string): Promise<{ events: AuditRecord[] }>;
+  listOrganizationAudit?(_token: string, orgId: string, limit?: number): Promise<AdminDenProxyResponse>;
   runCodexCapacityAlertEmailMonitor?(): Promise<CodexCapacityAlertMonitorResult>;
 }
 
@@ -405,6 +485,13 @@ class HttpError extends Error {
   }
 }
 
+function requireAdminDependency<T>(value: T | null | undefined, name: string): T {
+  if (value == null) {
+    throw new HttpError(`admin_dependency_unavailable:${name}`, 503);
+  }
+  return value;
+}
+
 type DenAdminApi = {
   startBrowserAuth(input: BrowserAuthStartInput): Promise<BrowserAuthStartPayload>;
   exchangeBrowserAuth(input: BrowserAuthExchangeInput): Promise<{ token?: string }>;
@@ -415,6 +502,13 @@ type DenAdminApi = {
   listOrganizations(token: string): Promise<{ organizations: AdminOrganizationRecord[] }>;
   getOrganization(token: string, orgId: string): Promise<{ organization: AdminOrganizationRecord }>;
   updateOrganization(token: string, orgId: string, input: UpdateOrganizationInput): Promise<{ organization: AdminOrganizationRecord }>;
+  listOrganizationAudit(token: string, orgId: string, limit: number): Promise<AdminDenProxyResponse>;
+  getOrganizationBilling(token: string, orgId: string): Promise<AdminDenProxyResponse>;
+  createOrganizationBillingCheckout(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  createOrganizationBillingPortal(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  updateOrganizationBillingPlan(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  cancelOrganizationBilling(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
+  updatePlatformOrganizationBilling(token: string, orgId: string, input: AdminOrganizationBillingInput): Promise<AdminDenProxyResponse>;
   listOrganizationMembers(token: string, orgId: string): Promise<{ members: AdminOrganizationMemberRecord[] }>;
   createOrganizationMember(token: string, orgId: string, input: CreateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
   updateOrganizationMember(token: string, orgId: string, memberId: string, input: UpdateOrganizationMemberInput): Promise<{ member: AdminOrganizationMemberRecord }>;
@@ -497,7 +591,7 @@ type CredentialSecretLookupRepository = {
   ): Promise<(Pick<GatewayCredentialRecord, "provider" | "secretRef"> & { name?: string | null }) | null>;
 };
 
-type AdminReadModelDependencies = {
+export type AdminServiceDependencies = {
   denClient?: DenAdminApi;
   credentialReadRepository?: AdminCredentialReadRepository;
   credentialActionRepository?: AdminCredentialActionRepository;
@@ -506,12 +600,16 @@ type AdminReadModelDependencies = {
   credentialRotationService?: AutoAssignedCodexCredentialRotationService;
   sessionReadRepository?: AdminSessionReadRepository;
   aiAccessRepository?: AiAccessRepository;
+  aiAccessMutation?: AiAccessMutation;
   alertRepository?: AlertRepository;
   usageRepository?: UsageRepository;
   codexStatusProvider?: CodexCredentialStatusProvider;
   auditRepository?: AuditRepository;
   secretStore?: SecretStore;
   openAiCompatibleTransport?: OpenAiCompatibleProviderTransport;
+  modelPolicyRepository?: PlatformModelPolicyRepository;
+  modelPolicyMutation?: PlatformModelPolicyMutation;
+  modelCapabilities?: PlatformModelCapabilityVerifier;
   alertEmailRecipients?: string[];
   sendAlertEmail?: (input: AdminAlertEmailInput) => Promise<void>;
   now?: () => Date;
@@ -573,7 +671,7 @@ export class MySqlAdminCredentialReadRepository implements AdminCredentialReadRe
   }
 }
 
-class MySqlAdminSessionReadRepository implements AdminSessionReadRepository {
+export class MySqlAdminSessionReadRepository implements AdminSessionReadRepository {
   constructor(private readonly db: AiGatewayDb) {}
 
   async listAdminSessions(): Promise<SessionRecord[]> {
@@ -812,46 +910,6 @@ export class MySqlAdminCredentialActionRepository implements AdminCredentialActi
   }
 }
 
-function createDefaultAdminReadRepositories() {
-  let repositories:
-    | {
-        credentialReadRepository: AdminCredentialReadRepository;
-        credentialActionRepository: AdminCredentialActionRepository;
-        credentialWriteRepository: AdminCredentialWriteRepository;
-        credentialSecretLookupRepository: CredentialSecretLookupRepository;
-        sessionReadRepository: AdminSessionReadRepository;
-        aiAccessRepository: AiAccessRepository;
-        alertRepository: AlertRepository;
-        usageRepository: UsageRepository;
-        auditRepository: AuditRepository;
-        secretStore: SecretStore;
-      }
-    | null = null;
-
-  return () => {
-    if (repositories) {
-      return repositories;
-    }
-
-    const handle = createDb(env.databaseUrl);
-    const credentialRepository = new MySqlCredentialRepository(handle.db);
-    repositories = {
-      credentialReadRepository: new MySqlAdminCredentialReadRepository(handle.db),
-      credentialActionRepository: new MySqlAdminCredentialActionRepository(handle.db),
-      credentialWriteRepository: credentialRepository,
-      credentialSecretLookupRepository: credentialRepository,
-      sessionReadRepository: new MySqlAdminSessionReadRepository(handle.db),
-      aiAccessRepository: new MySqlAiAccessRepository(handle.db),
-      alertRepository: new MySqlAlertRepository(handle.db),
-      usageRepository: new MySqlUsageRepository(handle.db),
-      auditRepository: new MySqlAuditRepository(handle.db),
-      secretStore: new MySqlSecretStore(handle.db, env.secretKey),
-    };
-
-    return repositories;
-  };
-}
-
 function formatProviderLabel(provider: string) {
   return formatAiGatewayProviderLabel(provider);
 }
@@ -1008,6 +1066,20 @@ class DenAdminClient {
     };
   }
 
+  private async proxyAdminJson(pathname: string, token: string, init: RequestInit = {}): Promise<AdminDenProxyResponse> {
+    const response = await fetch(`${this.denApiBase}${pathname}`, {
+      ...init,
+      headers: {
+        ...this.adminHeaders(token, init.body !== undefined),
+        ...(init.headers ?? {}),
+      },
+    });
+    return {
+      status: response.status,
+      body: await response.json().catch(() => null),
+    };
+  }
+
   private async requestNoContent(pathname: string, token: string) {
     const response = await fetch(`${this.denApiBase}${pathname}`, {
       method: "DELETE",
@@ -1115,6 +1187,52 @@ class DenAdminClient {
       headers: this.adminHeaders(token, true),
       body: JSON.stringify(input),
     }) as Promise<{ organization: AdminOrganizationRecord }>;
+  }
+
+  async listOrganizationAudit(token: string, orgId: string, limit: number) {
+    return this.proxyAdminJson(
+      `/v1/admin/organizations/${encodeURIComponent(orgId)}/audit?limit=${encodeURIComponent(String(limit))}`,
+      token,
+    );
+  }
+
+  async getOrganizationBilling(token: string, orgId: string) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing`, token);
+  }
+
+  async createOrganizationBillingCheckout(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/checkout`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async createOrganizationBillingPortal(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/portal`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async updateOrganizationBillingPlan(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/plan`, token, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async cancelOrganizationBilling(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/cancel`, token, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async updatePlatformOrganizationBilling(token: string, orgId: string, input: AdminOrganizationBillingInput) {
+    return this.proxyAdminJson(`/v1/admin/organizations/${encodeURIComponent(orgId)}/billing/platform`, token, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
   }
 
   async listOrganizationMembers(token: string, orgId: string) {
@@ -1275,53 +1393,68 @@ class DenAdminClient {
 
 export function createDefaultAdminService(
   denApiBase: string,
-  deps: AdminReadModelDependencies = {},
+  deps: AdminServiceDependencies = {},
 ): AdminService {
   const denClient = deps.denClient ?? new DenAdminClient(denApiBase);
-  const getDefaultRepositories = createDefaultAdminReadRepositories();
   const getCredentialReadRepository = () =>
-    deps.credentialReadRepository ?? getDefaultRepositories().credentialReadRepository;
+    requireAdminDependency(deps.credentialReadRepository, "credential_read_repository");
   const getCredentialActionRepository = () =>
-    deps.credentialActionRepository ?? getDefaultRepositories().credentialActionRepository;
+    requireAdminDependency(deps.credentialActionRepository, "credential_action_repository");
   const getCredentialWriteRepository = () =>
-    deps.credentialWriteRepository ?? getDefaultRepositories().credentialWriteRepository;
+    requireAdminDependency(deps.credentialWriteRepository, "credential_write_repository");
   const getCredentialSecretLookupRepository = () =>
-    deps.credentialSecretLookupRepository ?? getDefaultRepositories().credentialSecretLookupRepository;
+    requireAdminDependency(deps.credentialSecretLookupRepository, "credential_secret_lookup_repository");
   const getSessionReadRepository = () =>
-    deps.sessionReadRepository ?? getDefaultRepositories().sessionReadRepository;
+    requireAdminDependency(deps.sessionReadRepository, "session_read_repository");
   const getAiAccessRepository = () =>
-    deps.aiAccessRepository ?? getDefaultRepositories().aiAccessRepository;
+    requireAdminDependency(deps.aiAccessRepository, "ai_access_repository");
+  const getAiAccessMutation = () =>
+    requireAdminDependency(deps.aiAccessMutation, "ai_access_mutation");
   const getAlertRepository = () =>
-    deps.alertRepository ?? getDefaultRepositories().alertRepository;
+    requireAdminDependency(deps.alertRepository, "alert_repository");
   const getUsageRepository = () =>
-    deps.usageRepository ?? getDefaultRepositories().usageRepository;
+    requireAdminDependency(deps.usageRepository, "usage_repository");
   const getAuditRepository = () =>
-    deps.auditRepository ?? getDefaultRepositories().auditRepository;
+    requireAdminDependency(deps.auditRepository, "audit_repository");
+  const getModelPolicyRepository = () => {
+    if (!deps.modelPolicyRepository) {
+      throw new HttpError("model_policy_store_unavailable", 503);
+    }
+    return deps.modelPolicyRepository;
+  };
+  const getModelPolicyMutation = () => {
+    if (!deps.modelPolicyMutation) {
+      throw new HttpError("model_policy_store_unavailable", 503);
+    }
+    return deps.modelPolicyMutation;
+  };
+  const getModelCapabilities = () =>
+    requireAdminDependency(deps.modelCapabilities, "model_capabilities");
   const getSecretStore = () =>
-    deps.secretStore ?? getDefaultRepositories().secretStore;
+    requireAdminDependency(deps.secretStore, "secret_store");
   const openAiCompatibleTransport = deps.openAiCompatibleTransport ?? new OpenAiCompatibleTransport();
   const alertEmailRecipients = deps.alertEmailRecipients ?? env.alertEmail.recipients;
   const sendAlertEmail = deps.sendAlertEmail ?? sendAdminAlertEmail;
   const now = deps.now ?? (() => new Date());
   const codexStatusProvider =
     deps.codexStatusProvider ??
-    (getCredentialSecretLookupRepository()
+    (deps.credentialSecretLookupRepository && deps.secretStore
       ? new CachedCodexCredentialStatusProvider({
           loadCredentialAuthJson: async (credentialId) => {
-            const credential = await getCredentialSecretLookupRepository().getCredentialRecordById(credentialId);
+            const credential = await deps.credentialSecretLookupRepository!.getCredentialRecordById(credentialId);
             if (!credential) {
               return null;
             }
 
-            const secret = await getSecretStore().get(credential.secretRef).catch(() => null);
+            const secret = await deps.secretStore!.get(credential.secretRef).catch(() => null);
             return secret?.kind === "codex_auth_json" ? secret.authJson : null;
           },
           saveCredentialAuthJson: async (credentialId, authJson) => {
-            const credential = await getCredentialSecretLookupRepository().getCredentialRecordById(credentialId);
+            const credential = await deps.credentialSecretLookupRepository!.getCredentialRecordById(credentialId);
             if (!credential) {
               return;
             }
-            await getSecretStore().replace(credential.secretRef, {
+            await deps.secretStore!.replace(credential.secretRef, {
               kind: "codex_auth_json",
               authJson,
             });
@@ -1337,6 +1470,13 @@ export function createDefaultAdminService(
     | "listOrganizations"
     | "getOrganization"
     | "updateOrganization"
+    | "listOrganizationAudit"
+    | "getOrganizationBilling"
+    | "createOrganizationBillingCheckout"
+    | "createOrganizationBillingPortal"
+    | "updateOrganizationBillingPlan"
+    | "cancelOrganizationBilling"
+    | "updatePlatformOrganizationBilling"
     | "listOrganizationMembers"
     | "createOrganizationMember"
     | "updateOrganizationMember"
@@ -1371,6 +1511,7 @@ export function createDefaultAdminService(
   async function repairCodexAccessForRead(
     aiAccess: UserAiAccessPolicyRecord | null,
     availableCredentials: AdminCredentialOption[] | undefined,
+    activeModel: PlatformModelRef,
   ): Promise<UserAiAccessPolicyRecord | null> {
     if (!aiAccess || aiAccess.provider !== "codex_oauth") {
       return aiAccess;
@@ -1388,6 +1529,7 @@ export function createDefaultAdminService(
     try {
       return await getCredentialRotationService().repairCodexAccess({
         aiAccess,
+        activeModel,
         reason: "admin_ai_access_read",
       });
     } catch (error) {
@@ -1398,6 +1540,7 @@ export function createDefaultAdminService(
 
   async function recordAuditEvent(input: {
     actorUserId?: string | null;
+    organizationId?: string | null;
     entityType: string;
     entityId: string;
     action: string;
@@ -1407,6 +1550,7 @@ export function createDefaultAdminService(
     try {
       await getAuditRepository().recordEvent({
         actorUserId: input.actorUserId ?? null,
+        ...(input.organizationId ? { organizationId: input.organizationId } : {}),
         entityType: input.entityType,
         entityId: input.entityId,
         action: input.action,
@@ -1556,47 +1700,59 @@ export function createDefaultAdminService(
     return selected ?? null;
   }
 
-  async function listAvailableAssignmentCredentials(): Promise<AdminCredentialOption[]> {
-    const credentials = await getCredentialReadRepository().listAdminCredentials();
-    const options: AdminCredentialOption[] = [];
+  async function assessAssignmentCredential(
+    credential: CredentialRecord,
+    activeModel: PlatformModelRef,
+  ): Promise<"eligible" | "ineligible" | "incompatible"> {
+    if (credential.state !== "healthy" || credential.provider !== activeModel.provider) {
+      return "ineligible";
+    }
 
-    for (const credential of credentials) {
-      if (credential.state !== "healthy") {
-        continue;
-      }
-
-      if (credential.provider === "openai_compatible") {
-        options.push({
-          id: credential.id,
-          name: credential.name,
-          provider: "openai_compatible",
-        });
-        continue;
-      }
-
-      if (credential.provider !== "codex_oauth") {
-        continue;
-      }
-
+    if (credential.provider === "codex_oauth") {
       const status = await codexStatusProvider.getStatus({
         credentialId: credential.id,
         credentialName: credential.name,
       });
       if (!evaluateCodexCredentialEligibility(status, now()).eligible) {
+        return "ineligible";
+      }
+    } else if (credential.provider !== "openai_compatible") {
+      return "ineligible";
+    }
+
+    const capability = await getModelCapabilities().checkCredentialForModel(credential.id, activeModel);
+    if (capability.status === "transient") {
+      throw new HttpError("ai_access_credential_capability_unavailable", 503);
+    }
+    return capability.status === "supported" && capability.credentialId === credential.id
+      ? "eligible"
+      : "incompatible";
+  }
+
+  async function listAvailableAssignmentCredentials(activeModel: PlatformModelRef): Promise<AdminCredentialOption[]> {
+    const credentials = await getCredentialReadRepository().listAdminCredentials();
+    const options: AdminCredentialOption[] = [];
+
+    for (const credential of credentials) {
+      if (await assessAssignmentCredential(credential, activeModel) !== "eligible") {
         continue;
       }
 
       options.push({
         id: credential.id,
         name: credential.name,
-        provider: "codex_oauth",
+        provider: activeModel.provider,
       });
     }
 
     return options;
   }
 
-  async function assertAssignableCredential(provider: AiAccessProvider | null, credentialId: string | null): Promise<void> {
+  async function assertAssignableCredential(
+    provider: AiAccessProvider | null,
+    credentialId: string | null,
+    activeModel: PlatformModelRef,
+  ): Promise<void> {
     if (provider !== "codex_oauth" && provider !== "openai_compatible") {
       return;
     }
@@ -1605,12 +1761,21 @@ export function createDefaultAdminService(
       throw new HttpError("invalid_ai_access_credential_id", 400);
     }
 
-    const assignable = (await listAvailableAssignmentCredentials())
-      .some((entry) => entry.id === credentialId && entry.provider === provider);
-    if (!assignable && provider === "codex_oauth") {
+    const credential = (await getCredentialReadRepository().listAdminCredentials())
+      .find((entry) => entry.id === credentialId && entry.provider === provider);
+    if (!credential) {
+      throw new HttpError(provider === "codex_oauth"
+        ? "ineligible_ai_access_credential_id"
+        : "invalid_ai_access_credential_id", 400);
+    }
+    const assessment = await assessAssignmentCredential(credential, activeModel);
+    if (assessment === "incompatible") {
+      throw new HttpError("incompatible_ai_access_credential_id", 400);
+    }
+    if (assessment === "ineligible" && provider === "codex_oauth") {
       throw new HttpError("ineligible_ai_access_credential_id", 400);
     }
-    if (!assignable) {
+    if (assessment !== "eligible") {
       throw new HttpError("invalid_ai_access_credential_id", 400);
     }
   }
@@ -1883,29 +2048,11 @@ export function createDefaultAdminService(
       return denClient.listUsers(token);
     },
     getEligibleCodexCredentialForAutoAssign,
-    async createUser(token, input) {
-      const created = await denClient.createUser(token, input);
-      await recordAuditEvent({
-        actorUserId: "admin-ui",
-        action: "user.create",
-        entityType: "user",
-        entityId: created.id,
-        result: "ok",
-        summary: `Created user ${created.email}.`,
-      });
-      return created;
+    createUser(token, input) {
+      return denClient.createUser(token, input);
     },
-    async updateUser(token, userId, input) {
-      const updated = await denClient.updateUser(token, userId, input);
-      await recordAuditEvent({
-        actorUserId: "admin-ui",
-        action: "user.update",
-        entityType: "user",
-        entityId: updated.id,
-        result: "ok",
-        summary: `Updated user ${updated.email}.`,
-      });
-      return updated;
+    updateUser(token, userId, input) {
+      return denClient.updateUser(token, userId, input);
     },
     listOrganizations(token) {
       return requireDenOrganizationProxy("listOrganizations")(token);
@@ -1915,6 +2062,24 @@ export function createDefaultAdminService(
     },
     updateOrganization(token, orgId, input) {
       return requireDenOrganizationProxy("updateOrganization")(token, orgId, input);
+    },
+    getOrganizationBilling(token, orgId) {
+      return requireDenOrganizationProxy("getOrganizationBilling")(token, orgId);
+    },
+    createOrganizationBillingCheckout(token, orgId, input) {
+      return requireDenOrganizationProxy("createOrganizationBillingCheckout")(token, orgId, input);
+    },
+    createOrganizationBillingPortal(token, orgId, input) {
+      return requireDenOrganizationProxy("createOrganizationBillingPortal")(token, orgId, input);
+    },
+    updateOrganizationBillingPlan(token, orgId, input) {
+      return requireDenOrganizationProxy("updateOrganizationBillingPlan")(token, orgId, input);
+    },
+    cancelOrganizationBilling(token, orgId, input) {
+      return requireDenOrganizationProxy("cancelOrganizationBilling")(token, orgId, input);
+    },
+    updatePlatformOrganizationBilling(token, orgId, input) {
+      return requireDenOrganizationProxy("updatePlatformOrganizationBilling")(token, orgId, input);
     },
     listOrganizationMembers(token, orgId) {
       return requireDenOrganizationProxy("listOrganizationMembers")(token, orgId);
@@ -1953,10 +2118,13 @@ export function createDefaultAdminService(
       return requireDenOrganizationProxy("revokeOrganizationInvite")(token, orgId, inviteId);
     },
     async getUserAiAccess(_token, userId) {
-      const availableCredentials = await listAvailableAssignmentCredentials();
+      const modelPolicy = await getModelPolicyRepository().getPolicy();
+      if (!modelPolicy) throw new HttpError("platform_model_policy_not_configured", 503);
+      const availableCredentials = await listAvailableAssignmentCredentials(modelPolicy.activeModel);
       const aiAccess = await repairCodexAccessForRead(
         await getAiAccessRepository().getUserAiAccess(userId),
         availableCredentials,
+        modelPolicy.activeModel,
       );
 
       return {
@@ -1964,62 +2132,48 @@ export function createDefaultAdminService(
         availableCredentials,
       };
     },
-    async upsertUserAiAccess(_token, userId, input) {
+    async upsertUserAiAccess(token, userId, input, organizationId, actorUserId) {
+      const modelPolicy = await getModelPolicyRepository().getPolicy();
+      if (!modelPolicy) throw new HttpError("platform_model_policy_not_configured", 503);
       const validated = validateUserAiAccessInput({
         ...input,
         userId,
-      });
+      }, modelPolicy.activeModel);
       if (validated.enabled) {
-        await assertAssignableCredential(validated.provider, validated.credentialId);
+        await assertAssignableCredential(validated.provider, validated.credentialId, modelPolicy.activeModel);
       }
-      const saved = await getAiAccessRepository().upsertUserAiAccess(validated);
-      await recordAuditEvent({
-        actorUserId: "admin-ui",
-        action: "user.ai_access.update",
-        entityType: "user",
-        entityId: userId,
-        result: "ok",
-        summary: `Updated AI access for user ${userId}.`,
+      if (!actorUserId) {
+        throw new HttpError("admin_actor_required", 401);
+      }
+      if (!organizationId) {
+        throw new HttpError("organization_context_required", 400);
+      }
+      const targetUser = (await denClient.listUsers(token)).find((user) => user.id === userId);
+      if (!targetUser) {
+        throw new HttpError("user_not_found", 404);
+      }
+      if (!targetUser.memberships.some((membership) => membership.orgId === organizationId)) {
+        throw new HttpError("user_not_in_organization", 422);
+      }
+      const availableCredentials = await listAvailableAssignmentCredentials(modelPolicy.activeModel);
+      const saved = await getAiAccessMutation().upsertUserAiAccessWithAudit({
+        ...validated,
+        actorUserId,
+        organizationId,
       });
       return {
         aiAccess: toAdminUserAiAccessRecord(saved)!,
-        availableCredentials: await listAvailableAssignmentCredentials(),
+        availableCredentials,
       };
     },
-    async disableUser(token, userId) {
-      const updated = await denClient.disableUser(token, userId);
-      await recordAuditEvent({
-        actorUserId: "admin-ui",
-        action: "user.disable",
-        entityType: "user",
-        entityId: updated.id,
-        result: "warning",
-        summary: `Disabled user ${updated.email}.`,
-      });
-      return updated;
+    disableUser(token, userId) {
+      return denClient.disableUser(token, userId);
     },
-    async enableUser(token, userId) {
-      const updated = await denClient.enableUser(token, userId);
-      await recordAuditEvent({
-        actorUserId: "admin-ui",
-        action: "user.enable",
-        entityType: "user",
-        entityId: updated.id,
-        result: "ok",
-        summary: `Re-enabled user ${updated.email}.`,
-      });
-      return updated;
+    enableUser(token, userId) {
+      return denClient.enableUser(token, userId);
     },
-    async deleteUser(token, userId) {
-      await denClient.deleteUser(token, userId);
-      await recordAuditEvent({
-        actorUserId: "admin-ui",
-        action: "user.delete",
-        entityType: "user",
-        entityId: userId,
-        result: "warning",
-        summary: `Deleted user ${userId}.`,
-      });
+    deleteUser(token, userId) {
+      return denClient.deleteUser(token, userId);
     },
     async listCredentials(_token, input = {}) {
       return {
@@ -2066,6 +2220,31 @@ export function createDefaultAdminService(
         };
       } catch (error) {
         throw mapOpenAiCompatibleModelDiscoveryError(error);
+      }
+    },
+    async getPlatformModelPolicy() {
+      return {
+        policy: toAdminPlatformModelPolicy(await getModelPolicyRepository().getPolicy()),
+      };
+    },
+    async replacePlatformModelPolicy(_token, input, actorUserId) {
+      const validated = validatePlatformModelPolicyInput(input);
+      await assertEnabledModelCapabilities(validated.enabledModels);
+      try {
+        const saved = await getModelPolicyMutation().replacePolicyWithAudit({
+          actorUserId,
+          enabledModels: validated.enabledModels,
+          activeModel: validated.activeModel,
+        });
+        return { policy: toAdminPlatformModelPolicy(saved)! };
+      } catch (error) {
+        if (
+          error instanceof PlatformModelPolicyAuditPersistenceError
+          || (error && typeof error === "object" && (error as { code?: unknown }).code === "model_policy_audit_failed")
+        ) {
+          throw new HttpError("model_policy_audit_failed", 502);
+        }
+        throw error;
       }
     },
     async createCredential(_token, input, actorUserId) {
@@ -2422,6 +2601,139 @@ export function createDefaultAdminService(
       const listInput: ListAuditEventsInput = { limit: 100 };
       return { events: auditRepository.listEvents ? await auditRepository.listEvents(listInput) : [] };
     },
+    async listOrganizationAudit(token, orgId, requestedLimit = ORGANIZATION_AUDIT_SOURCE_LIMIT) {
+      const denResult = await requireDenOrganizationProxy("listOrganizationAudit")(
+        token,
+        orgId,
+        ORGANIZATION_AUDIT_SOURCE_LIMIT,
+      );
+      if (denResult.status < 200 || denResult.status >= 300) {
+        return denResult;
+      }
+      const denEvents = readDenOrganizationAuditEvents(denResult.body);
+      const auditRepository = getAuditRepository();
+      if (!auditRepository.listEvents) {
+        throw new HttpError("organization_audit_gateway_source_unavailable", 503);
+      }
+      const listInput: ListAuditEventsInput = {
+        limit: ORGANIZATION_AUDIT_SOURCE_LIMIT,
+        organizationId: orgId,
+      };
+      const gatewayEvents = await auditRepository.listEvents(listInput);
+      return {
+        status: 200,
+        body: {
+          events: mergeOrganizationAuditEvents({
+            denEvents,
+            gatewayEvents,
+            limit: readOrganizationAuditLimit(String(requestedLimit)),
+          }),
+        },
+      };
+    },
+  };
+
+  async function assertEnabledModelCapabilities(enabledModels: PlatformModelRef[]): Promise<void> {
+    for (const modelRef of enabledModels) {
+      if (modelRef.provider === "openai" || modelRef.provider === "anthropic") {
+        throw new HttpError("model_policy_activation_not_verifiable_for_provider", 422);
+      }
+    }
+
+    const results = await getModelCapabilities().checkHealthyCredentialsForModels(enabledModels);
+    if (results.length !== enabledModels.length) {
+      throw new HttpError("model_policy_capability_evidence_unavailable", 503);
+    }
+
+    for (const [index, result] of results.entries()) {
+      const expected = enabledModels[index]!;
+      if (result.model.provider !== expected.provider || result.model.model !== expected.model) {
+        throw new HttpError("model_policy_capability_evidence_unavailable", 503);
+      }
+      if (result.status === "supported") continue;
+      if (result.status === "unsupported") {
+        if (result.reason === "no_healthy_credential") {
+          throw new HttpError(
+            `model_policy_enabled_model_has_no_healthy_credential:${expected.provider}/${expected.model}`,
+            422,
+          );
+        }
+        throw new HttpError("model_policy_enabled_model_unsupported", 422);
+      }
+      throw mapModelPolicyCapabilityError(result.reason);
+    }
+  }
+}
+
+function mapModelPolicyCapabilityError(reason: string): HttpError {
+  if (reason === "capability_check_timeout") {
+    return new HttpError("model_policy_capability_check_timeout", 504);
+  }
+  if (reason === "model_discovery_timeout") {
+    return new HttpError("model_policy_model_discovery_timeout", 504);
+  }
+  if (reason === "model_discovery_unavailable") {
+    return new HttpError("model_policy_model_discovery_unavailable", 503);
+  }
+  if (reason === "model_discovery_target_not_allowed") {
+    return new HttpError("model_policy_model_discovery_target_not_allowed", 400);
+  }
+  if (reason === "model_discovery_failed") {
+    return new HttpError("model_policy_model_discovery_failed", 502);
+  }
+  if (reason === "credential_lookup_failed" || reason === "credential_lookup_unavailable") {
+    return new HttpError("model_policy_credential_lookup_failed", 503);
+  }
+  return new HttpError("model_policy_capability_evidence_unavailable", 503);
+}
+
+function validatePlatformModelPolicyInput(input: ReplacePlatformModelPolicyInput): ReplacePlatformModelPolicyInput {
+  const rawEnabledModels = Array.isArray(input?.enabledModels) ? input.enabledModels : [];
+  const enabledModels: PlatformModelRef[] = [];
+  const seen = new Set<string>();
+
+  for (const value of rawEnabledModels) {
+    const modelRef = normalizePlatformModelRef(value);
+    if (!modelRef) continue;
+    const key = `${modelRef.provider}\u0000${modelRef.model}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    enabledModels.push(modelRef);
+  }
+  if (enabledModels.length === 0) {
+    throw new HttpError("model_policy_enabled_models_required", 400);
+  }
+
+  const activeModel = normalizePlatformModelRef(input?.activeModel);
+  if (!activeModel || !enabledModels.some((model) => modelRefsEqual(model, activeModel))) {
+    throw new HttpError("model_policy_active_model_not_enabled", 400);
+  }
+  return { enabledModels, activeModel };
+}
+
+function normalizePlatformModelRef(value: PlatformModelRef | null | undefined): PlatformModelRef | null {
+  const provider = typeof value?.provider === "string" ? value.provider.trim() : "";
+  if (!isAiGatewayProvider(provider)) {
+    throw new HttpError("model_policy_invalid_provider", 400);
+  }
+  const model = typeof value?.model === "string" ? value.model.trim() : "";
+  if (!model) return null;
+  if (Array.from(model).length > 128) {
+    throw new HttpError("model_policy_model_too_long", 400);
+  }
+  return { provider, model };
+}
+
+function modelRefsEqual(left: PlatformModelRef, right: PlatformModelRef) {
+  return left.provider === right.provider && left.model === right.model;
+}
+
+function toAdminPlatformModelPolicy(policy: PlatformModelPolicyRecord | null): AdminPlatformModelPolicy | null {
+  if (!policy) return null;
+  return {
+    enabledModels: policy.enabledModels,
+    activeModel: policy.activeModel,
+    updatedAt: policy.updatedAt.toISOString(),
   };
 }
 
@@ -2502,6 +2814,7 @@ function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
 
 function validateUserAiAccessInput(
   input: UpdateUserAiAccessInput & { userId: string },
+  activeModel: PlatformModelRef,
 ): UpsertUserAiAccessPolicyInput {
   const enabled = input.enabled === true;
   const provider = parseAiAccessProvider(input.provider);
@@ -2509,31 +2822,16 @@ function validateUserAiAccessInput(
     typeof input.credentialId === "string" && input.credentialId.trim()
       ? input.credentialId.trim()
       : null;
-  let defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : "";
-  let allowedModels = normalizeAllowedModels(input.allowedModels);
-  if (enabled && provider === "codex_oauth") {
-    const resolvedPolicy = resolveCodexModelPolicy({
-      defaultModel,
-      allowedModels,
-    });
-    defaultModel = resolvedPolicy.defaultModel;
-    allowedModels = resolvedPolicy.allowedModels;
-  }
-
   if (enabled && !provider) {
     throw new HttpError("invalid_ai_access_provider", 400);
   }
 
+  if (enabled && provider !== activeModel.provider) {
+    throw new HttpError("ai_access_provider_mismatch", 400);
+  }
+
   if (enabled && (provider === "codex_oauth" || provider === "openai_compatible") && !credentialId) {
     throw new HttpError("invalid_ai_access_credential_id", 400);
-  }
-
-  if (enabled && !defaultModel) {
-    throw new HttpError("invalid_ai_access_default_model", 400);
-  }
-
-  if (allowedModels.length > 0 && defaultModel && !allowedModels.includes(defaultModel)) {
-    throw new HttpError("invalid_ai_access_allowed_models", 400);
   }
 
   return {
@@ -2541,58 +2839,12 @@ function validateUserAiAccessInput(
     enabled,
     provider,
     credentialId,
-    defaultModel: defaultModel || null,
-    allowedModels,
     assignmentOrigin: "admin_assigned",
   };
 }
 
 function parseAiAccessProvider(value: unknown): AiAccessProvider | null {
   return isAiGatewayProvider(value) ? value : null;
-}
-
-function normalizeAllowedModels(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const unique = new Set<string>();
-  for (const entry of value) {
-    if (typeof entry !== "string") continue;
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    unique.add(trimmed);
-  }
-
-  return Array.from(unique);
-}
-
-function normalizeDiscoveredModels(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const unique = new Set<string>();
-  for (const entry of value) {
-    if (typeof entry !== "string") continue;
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    unique.add(trimmed);
-  }
-
-  return Array.from(unique);
-}
-
-function filterUnsupportedCodexModels(models: string[], upstreamStatus: CodexUsageStatus | null): string[] {
-  const unsupported = new Set(
-    (upstreamStatus?.unsupportedModels ?? [])
-      .map((model) => model.trim())
-      .filter(Boolean),
-  );
-  if (unsupported.size === 0) {
-    return models;
-  }
-  return models.filter((model) => !unsupported.has(model));
 }
 
 function mapOpenAiCompatibleModelDiscoveryError(error: unknown): HttpError {
@@ -2720,8 +2972,6 @@ function toAdminUserAiAccessRecord(record: UserAiAccessPolicyRecord | null): Adm
     enabled: record.enabled,
     provider: record.provider,
     credentialId: record.credentialId,
-    defaultModel: record.defaultModel,
-    allowedModels: record.allowedModels,
     updatedAt: record.updatedAt.toISOString(),
   };
 }
@@ -2875,7 +3125,10 @@ function readAdminAuthCallback(req: express.Request): { code: string; sessionId:
 }
 
 function adminAssetRequest(pathname: string): boolean {
-  return pathname === "/admin/app.js" || pathname === "/admin/app.css";
+  return pathname === "/admin/app.js"
+    || pathname === "/admin/app.css"
+    || pathname === "/admin/admin-route-state.js"
+    || pathname === "/admin/model-policy-editor-state.js";
 }
 
 function errorStatus(error: unknown): number | null {
@@ -2884,7 +3137,43 @@ function errorStatus(error: unknown): number | null {
     : null;
 }
 
-function adminShellHtml() {
+function escapeAdminShellHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+export function adminFallbackShellHtml(session: AdminSessionSnapshot) {
+  const platformNavigation = session.platformAdmin
+    ? `<nav aria-label="Platform administration" data-nav-group="platform">
+        <h2>Platform administration</h2>
+        <a href="/admin">Overview</a>
+        <a href="/admin/organizations">Organizations</a>
+        <a href="/admin/ai-infrastructure">AI Infrastructure</a>
+        <a href="/admin/ai-infrastructure/usage">Usage</a>
+        <a href="/admin/ai-infrastructure/alerts">Alerts</a>
+        <a href="/admin/platform-users">Platform Users</a>
+        <a href="/admin/audit">Global Audit</a>
+      </nav>`
+    : "";
+  const organizationNavigation = session.organizations.map((organization) => {
+    const organizationId = encodeURIComponent(organization.id);
+    const organizationLabel = escapeAdminShellHtml(organization.name || organization.slug || organization.id);
+    return `<section data-organization-workspace="${escapeAdminShellHtml(organization.id)}">
+          <h3>${organizationLabel}</h3>
+          <nav aria-label="${organizationLabel} organization workspace">
+            <a href="/admin/organizations/${organizationId}/overview">Overview</a>
+            <a href="/admin/organizations/${organizationId}/members">Members</a>
+            <a href="/admin/organizations/${organizationId}/domains-invites">Domains &amp; invites</a>
+            <a href="/admin/organizations/${organizationId}/billing">Billing</a>
+            <a href="/admin/organizations/${organizationId}/ai-access">AI access</a>
+            <a href="/admin/organizations/${organizationId}/audit">Audit</a>
+          </nav>
+        </section>`;
+  }).join("\n");
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -2897,18 +3186,14 @@ function adminShellHtml() {
     <div id="app">
       <header>
         <h1>AI Gateway Admin</h1>
-        <p>Loading control plane...</p>
+        <p>The full admin shell is unavailable. Use a canonical workspace link to retry safely.</p>
       </header>
-      <nav aria-label="Primary">
-        <a href="/admin/organization">Organization</a>
-        <a href="/admin/credentials">Credentials</a>
-        <a href="/admin/usage">Usage</a>
-        <a href="/admin/alerts">Alerts</a>
-        <a href="/admin/users">Users</a>
-        <a href="/admin/audit">Audit</a>
-      </nav>
+      ${platformNavigation}
+      <section aria-labelledby="organization-workspaces-title">
+        <h2 id="organization-workspaces-title">Organization workspaces</h2>
+        ${organizationNavigation || "<p>No authorized organization workspace is available.</p>"}
+      </section>
     </div>
-    <script type="module" src="/admin/app.js"></script>
   </body>
 </html>`;
 }
@@ -2967,19 +3252,55 @@ function requirePlatformAdmin(res: express.Response): boolean {
   return false;
 }
 
-function pageFromAdminPath(pathname: string): AdminAllowedPage | "overview" {
-  const path = pathname.replace(/\/+$/, "");
-  if (!path || path === "/admin") {
-    return "overview";
+function requireOrganizationAccess(res: express.Response, orgId: string): boolean {
+  const session = res.locals.adminSession as AdminSessionSnapshot | undefined;
+  if (
+    session?.platformAdmin === true
+    || session?.organizations.some(
+      (organization) => organization.id === orgId && organization.role === "organization_admin",
+    )
+  ) {
+    return true;
   }
-  const page = path.split("/").pop() ?? "";
-  return PlatformAdminAllowedPages.includes(page as AdminAllowedPage)
-    ? page as AdminAllowedPage
-    : "overview";
+  res.status(403).json({ error: "forbidden" });
+  return false;
 }
 
-function firstAllowedAdminPage(session: AdminSessionSnapshot | undefined): AdminAllowedPage {
-  return adminSessionAllowedPages(session)[0] ?? "organization";
+const platformAdminShellPaths = new Set([
+  "/admin",
+  "/admin/organizations",
+  "/admin/ai-infrastructure",
+  "/admin/ai-infrastructure/usage",
+  "/admin/ai-infrastructure/alerts",
+  "/admin/platform-users",
+  "/admin/audit",
+]);
+
+function organizationIdFromAdminShellPath(pathname: string): string | null {
+  const match = pathname.match(/^\/admin\/organizations\/([^/]+)\/(overview|members|domains-invites|billing|ai-access|audit)$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1] ?? "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function adminShellRouteAllowed(pathname: string, session: AdminSessionSnapshot): boolean {
+  if (platformAdminShellPaths.has(pathname)) {
+    return session.platformAdmin === true;
+  }
+  const organizationId = organizationIdFromAdminShellPath(pathname);
+  if (!organizationId) return false;
+  return session.platformAdmin === true || session.organizations.some((organization) => organization.id === organizationId);
+}
+
+function firstAuthorizedAdminPath(session: AdminSessionSnapshot): string {
+  if (session.platformAdmin) return "/admin";
+  const organizationId = session.organizations[0]?.id;
+  return organizationId
+    ? `/admin/organizations/${encodeURIComponent(organizationId)}/overview`
+    : "/admin";
 }
 
 function hasOwn(input: unknown, key: string): boolean {
@@ -3230,6 +3551,42 @@ export function createAdminRouter(adminService: AdminService) {
     res.json(res.locals.adminSession);
   });
 
+  router.get("/admin/api/ai-infrastructure/model-policy", async (_req, res) => {
+    if (!requirePlatformAdmin(res)) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.getPlatformModelPolicy(res.locals.adminToken as string);
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "model_policy_read_failed" });
+    }
+  });
+
+  router.put("/admin/api/ai-infrastructure/model-policy", async (req, res) => {
+    if (!requirePlatformAdmin(res)) {
+      return;
+    }
+
+    try {
+      const payload = await adminService.replacePlatformModelPolicy(
+        res.locals.adminToken as string,
+        req.body as ReplacePlatformModelPolicyInput,
+        (res.locals.adminSession as AdminSessionSnapshot).user.id,
+      );
+      res.json(payload);
+    } catch (error) {
+      if (mapHttpError(error, res)) {
+        return;
+      }
+      res.status(502).json({ error: "model_policy_replace_failed" });
+    }
+  });
+
   router.get("/admin/api/organizations", async (req, res) => {
     if (!requireAdminCapability(res, "organization")) {
       return;
@@ -3280,6 +3637,87 @@ export function createAdminRouter(adminService: AdminService) {
         return;
       }
       res.status(502).json({ error: "organization_update_failed" });
+    }
+  });
+
+  const sendOrganizationBillingProxy = async (
+    req: express.Request,
+    res: express.Response,
+    operation: keyof Pick<AdminService,
+      | "getOrganizationBilling"
+      | "createOrganizationBillingCheckout"
+      | "createOrganizationBillingPortal"
+      | "updateOrganizationBillingPlan"
+      | "cancelOrganizationBilling"
+      | "updatePlatformOrganizationBilling">,
+    options: { platformOnly?: boolean } = {},
+  ) => {
+    const orgId = req.params.orgId;
+    if (!orgId) {
+      res.status(400).json({ error: "invalid_organization_id" });
+      return;
+    }
+    if (
+      !requireAdminCapability(res, "organization")
+      || !requireOrganizationAccess(res, orgId)
+      || (options.platformOnly === true && !requirePlatformAdmin(res))
+    ) return;
+    const handler = adminService[operation];
+    if (!handler) {
+      res.status(503).json({ error: "organization_billing_unavailable" });
+      return;
+    }
+    try {
+      const token = res.locals.adminToken as string;
+      const result = operation === "getOrganizationBilling"
+        ? await (handler as NonNullable<AdminService["getOrganizationBilling"]>)(token, orgId)
+        : await (handler as (
+            token: string,
+            orgId: string,
+            input: AdminOrganizationBillingInput,
+          ) => Promise<AdminDenProxyResponse>)(token, orgId, req.body ?? {});
+      res.status(result.status).json(result.body);
+    } catch (error) {
+      if (mapHttpError(error, res)) return;
+      res.status(502).json({ error: "organization_billing_proxy_failed" });
+    }
+  };
+
+  router.get("/admin/api/organizations/:orgId/billing", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "getOrganizationBilling");
+  });
+  router.post("/admin/api/organizations/:orgId/billing/checkout", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "createOrganizationBillingCheckout");
+  });
+  router.post("/admin/api/organizations/:orgId/billing/portal", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "createOrganizationBillingPortal");
+  });
+  router.patch("/admin/api/organizations/:orgId/billing/plan", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "updateOrganizationBillingPlan");
+  });
+  router.post("/admin/api/organizations/:orgId/billing/cancel", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "cancelOrganizationBilling");
+  });
+  router.patch("/admin/api/organizations/:orgId/billing/platform", (req, res) => {
+    void sendOrganizationBillingProxy(req, res, "updatePlatformOrganizationBilling", { platformOnly: true });
+  });
+
+  router.get("/admin/api/organizations/:orgId/audit", async (req, res) => {
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
+    if (!adminService.listOrganizationAudit) {
+      res.status(503).json({ error: "organization_audit_unavailable" });
+      return;
+    }
+    try {
+      const result = await adminService.listOrganizationAudit(
+        res.locals.adminToken as string,
+        req.params.orgId,
+        readOrganizationAuditLimit(req.query.limit),
+      );
+      res.status(result.status).json(result.body);
+    } catch (error) {
+      if (mapHttpError(error, res)) return;
+      res.status(502).json({ error: "organization_audit_list_failed" });
     }
   });
 
@@ -3942,15 +4380,32 @@ export function createAdminRouter(adminService: AdminService) {
     }
 
     try {
+      if (
+        req.body && typeof req.body === "object"
+        && (Object.hasOwn(req.body, "defaultModel") || Object.hasOwn(req.body, "allowedModels"))
+      ) {
+        throw new HttpError("user_model_policy_not_supported", 400);
+      }
+      const organizationId = typeof req.body?.organizationId === "string"
+        ? req.body.organizationId.trim()
+        : null;
+      if (!organizationId) {
+        throw new HttpError("organization_context_required", 400);
+      }
+      if (!requireOrganizationAccess(res, organizationId)) {
+        return;
+      }
       const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
         enabled: req.body?.enabled === true,
         provider: parseAiAccessProvider(req.body?.provider),
         credentialId: typeof req.body?.credentialId === "string" ? req.body.credentialId : null,
-        defaultModel: typeof req.body?.defaultModel === "string" ? req.body.defaultModel.trim() : null,
-        allowedModels: normalizeAllowedModels(req.body?.allowedModels),
-      });
+      }, organizationId, (res.locals.adminSession as AdminSessionSnapshot).user.id);
       res.json(payload);
     } catch (error) {
+      if (error instanceof AiAccessAuditPersistenceError) {
+        res.status(502).json({ error: error.code });
+        return;
+      }
       if (mapHttpError(error, res)) {
         return;
       }
@@ -4011,7 +4466,7 @@ export function createAdminRouter(adminService: AdminService) {
       res.sendFile(indexPath);
       return;
     }
-    res.type("html").send(adminShellHtml());
+    res.type("html").send(adminFallbackShellHtml(res.locals.adminSession as AdminSessionSnapshot));
   };
 
   const redirectToAdminLogin = async (req: express.Request, res: express.Response) => {
@@ -4103,13 +4558,8 @@ export function createAdminRouter(adminService: AdminService) {
         res.locals.adminToken = token;
         const session = await adminService.getSession(token);
         res.locals.adminSession = session;
-        const requestedPage = pageFromAdminPath(req.path);
-        const allowedPages = adminSessionAllowedPages(session);
-        if (
-          (requestedPage === "overview" && !session.platformAdmin) ||
-          (requestedPage !== "overview" && !allowedPages.includes(requestedPage))
-        ) {
-          res.redirect(302, `/admin/${firstAllowedAdminPage(session)}`);
+        if (!adminShellRouteAllowed(req.path, session)) {
+          res.redirect(302, firstAuthorizedAdminPath(session));
           return;
         }
         sendAdminShell(req, res);

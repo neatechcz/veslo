@@ -41,7 +41,7 @@ import {
   type SessionArtifactMessage,
   type SessionArtifactPart,
 } from "../session-artifacts.js";
-import type { ServerConfig, WorkspaceInfo } from "../types.js";
+import type { Actor, ServerConfig, WorkspaceInfo } from "../types.js";
 import { shortId } from "../utils.js";
 
 const SESSION_TRANSCRIPT_DEFAULT_LIMIT = 140;
@@ -128,6 +128,10 @@ export type ConversationSessionRouteDependencies = {
   loadConversationTranscriptResponse: LoadConversationTranscriptResponse;
   createConversationRunTracer(request: Request): ConversationRunTracer;
   resolveConversationExecutionTarget: ResolveConversationExecutionTarget;
+  resolveAiGatewayRuntimeAuthorizationBindingForRun(input: {
+    actor?: Actor;
+    workspaceId: string;
+  }): { actorTokenHash: string; orgId: string | null };
   deleteOpenCodeSession(input: { workspace: WorkspaceInfo; sessionId: string }): Promise<unknown>;
   loadOpenCodeSession(input: {
     workspace: WorkspaceInfo;
@@ -757,13 +761,17 @@ export function registerConversationSessionRoutes(
     const sendTraceId = ctx.request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || null;
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const body = await readJsonBody(ctx.request);
-    const runtimeAuthorizationActorTokenHash = ctx.actor?.tokenHash?.trim() || null;
     const submitResolvedRun: ConversationSubmitResolvedRunSubmitter = async ({
       request,
       resolvedRunInput,
       directory,
-      runtimeAuthorizationActorTokenHash,
     }) => {
+      const runtimeAuthorizationBinding = request.options?.expectAiGatewayStart === true
+        ? dependencies.resolveAiGatewayRuntimeAuthorizationBindingForRun({
+            ...(ctx.actor ? { actor: ctx.actor } : {}),
+            workspaceId: workspace.id,
+          })
+        : null;
       const targetId = request.target?.conversationId?.trim() ||
         request.target?.opencodeSessionId?.trim() ||
         "";
@@ -777,7 +785,8 @@ export function registerConversationSessionRoutes(
         opencodeSessionId: request.target?.opencodeSessionId ?? null,
         clientMessageId: request.clientMessageId,
         origin: request.origin,
-        runtimeAuthorizationActorTokenHashPresent: Boolean(runtimeAuthorizationActorTokenHash),
+        runtimeAuthorizationActorTokenHashPresent: Boolean(runtimeAuthorizationBinding?.actorTokenHash),
+        runtimeAuthorizationOrgIdPresent: Boolean(runtimeAuthorizationBinding?.orgId),
       });
       const target = await runTrace.step(
         "server:conversation-submit-run:resolve-target",
@@ -809,7 +818,8 @@ export function registerConversationSessionRoutes(
           origin: request.origin,
           submitQueuePolicy: request.options?.submitQueuePolicy ?? "normal",
           expectAiGatewayStart: request.options?.expectAiGatewayStart === true,
-          ...(runtimeAuthorizationActorTokenHash !== undefined ? { runtimeAuthorizationActorTokenHash } : {}),
+          runtimeAuthorizationActorTokenHash: runtimeAuthorizationBinding?.actorTokenHash ?? null,
+          runtimeAuthorizationOrgId: runtimeAuthorizationBinding?.orgId ?? null,
         });
         const payload = result.payload;
         if (payload.status === "submitted") {
@@ -1036,7 +1046,6 @@ export function registerConversationSessionRoutes(
       workspace,
       body,
       sendTraceId,
-      runtimeAuthorizationActorTokenHash,
       resolveDirectory: (requestedRaw) => resolveConversationReadDirectory(workspace, requestedRaw),
       submitResolvedRun,
     });
@@ -1119,7 +1128,12 @@ export function registerConversationSessionRoutes(
     const clientMessageId = optionalBodyString(body, "clientMessageId") || optionalBodyString(body, "messageID");
     const origin = optionalBodyString(body, "origin");
     const expectAiGatewayStart = optionalBodyBoolean(body, "expectAiGatewayStart") === true;
-    const runtimeAuthorizationActorTokenHash = ctx.actor?.tokenHash?.trim() || null;
+    const runtimeAuthorizationBinding = expectAiGatewayStart
+      ? dependencies.resolveAiGatewayRuntimeAuthorizationBindingForRun({
+          ...(ctx.actor ? { actor: ctx.actor } : {}),
+          workspaceId: workspace.id,
+        })
+      : null;
     runTrace.record("server:conversation-run:payload", {
       workspaceId: workspace.id,
       conversationId: sessionOrConversationId,
@@ -1127,7 +1141,8 @@ export function registerConversationSessionRoutes(
       clientMessageId: clientMessageId || null,
       origin: origin || null,
       expectAiGatewayStart,
-      runtimeAuthorizationActorTokenHashPresent: Boolean(runtimeAuthorizationActorTokenHash),
+      runtimeAuthorizationActorTokenHashPresent: Boolean(runtimeAuthorizationBinding?.actorTokenHash),
+      runtimeAuthorizationOrgIdPresent: Boolean(runtimeAuthorizationBinding?.orgId),
     });
     const target = await runTrace.step(
       "server:conversation-run:resolve-target",
@@ -1154,7 +1169,8 @@ export function registerConversationSessionRoutes(
       clientMessageId: clientMessageId || null,
       origin: origin || null,
       expectAiGatewayStart,
-      runtimeAuthorizationActorTokenHash,
+      runtimeAuthorizationActorTokenHash: runtimeAuthorizationBinding?.actorTokenHash ?? null,
+      runtimeAuthorizationOrgId: runtimeAuthorizationBinding?.orgId ?? null,
     });
     return jsonResponse(result.payload, result.httpStatus);
   });

@@ -42,6 +42,26 @@ test("GET /readiness reports unavailable when provider reachability fails", asyn
           return 1;
         },
       },
+      modelPolicy: {
+        async getPolicy() {
+          return {
+            id: "platform",
+            enabledModels: [{ provider: "openai", model: "gpt-5.4" }],
+            activeModel: { provider: "openai", model: "gpt-5.4" },
+            createdAt: new Date("2026-07-12T08:00:00.000Z"),
+            updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+          };
+        },
+      },
+      modelCapabilities: {
+        async checkHealthyCredentialForModel() {
+          return { status: "supported", credentialId: "cred_ready_1" };
+        },
+        async hasHealthyCredentialForModel() {
+          return true;
+        },
+        invalidateCredential() {},
+      },
     },
   } as never);
   const server = app.listen(0, "127.0.0.1");

@@ -10,7 +10,7 @@ kořen repa (`ARCHITECTURE.md`, `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`,
 | [`dev/`](dev/) | Dev guidelines, app map, testing playbook, build matrix, state reference, veslo-server contract. | Před začátkem práce na frontendu nebo backendu. |
 | [`features/`](features/) | Per-feature popisy (session-runtime, onboarding-and-auth, soul-and-automations, settings-and-preferences, workspace-config-and-sharing, extensions-and-integrations). | Když potřebuješ pochopit konkrétní feature. |
 | [`plans/`](plans/) | **Historické plány** (březen-květen 2026). Většina je deprekovaná, používej jen jako kontext rozhodnutí. | Pokud hledáš proč bylo něco rozhodnuto, ne jak to teď funguje. |
-| [`admin-managed-ai-access.md`](admin-managed-ai-access.md) | Admin-managed AI access flow (Den → veslo-server → engine). | Při práci na AI gateway. |
+| [`admin-managed-ai-access.md`](admin-managed-ai-access.md) | Managed-AI ownership and runtime flow: DEN billing/identity → local veslo-server handoff → AI Gateway global model policy and credentials. | Při práci na Managed AI, AI Gateway nebo billing gate. |
 | [`desktop-updater.md`](desktop-updater.md) | Desktop updater (auto-update flow, signing, dmg). | Při práci na release / updater. |
 
 ## Vstupní body

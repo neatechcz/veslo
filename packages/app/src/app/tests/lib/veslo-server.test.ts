@@ -993,8 +993,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
           userId: "user_123",
           enabled: true,
           provider: "codex_oauth",
-          defaultModel: "gpt-5.4",
-          allowedModels: ["gpt-5.4"],
+          effectiveModel: { provider: "codex_oauth", model: "gpt-5.4" },
           updatedAt: "2026-04-24T08:00:00.000Z",
         },
       }),
@@ -1009,6 +1008,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
     const response = await requestManagedAiAccessBundle(
       "https://veslo-ai-gateway-dev.onrender.com",
       "den-user-token",
+      "org_123",
     );
 
     assert.deepEqual(response, {
@@ -1018,8 +1018,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
         userId: "user_123",
         enabled: true,
         provider: "codex_oauth",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
+        effectiveModel: { provider: "codex_oauth", model: "gpt-5.4" },
         updatedAt: "2026-04-24T08:00:00.000Z",
       },
     });
@@ -1028,6 +1027,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
     assert.equal(calls[0]?.url, "https://veslo-ai-gateway-dev.onrender.com/api/me/ai-access");
     assert.equal(calls[0]?.method, "GET");
     assert.equal(calls[0]?.headers.get("authorization"), "Bearer den-user-token");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
     assert.equal(calls[0]?.headers.get("content-type"), "application/json");
     assert.equal(calls[0]?.body, null);
   } finally {
@@ -3860,8 +3860,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
             userId: "user_123",
             enabled: true,
             provider: "openai",
-            defaultModel: "gpt-4o-mini",
-            allowedModels: ["gpt-4o-mini", "gpt-4.1"],
+            effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
             updatedAt: "2026-04-08T12:00:00.000Z",
           },
         }),
@@ -3903,7 +3902,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
     assert.equal(typeof client.getMyAiAccess, "function");
     assert.equal(typeof client.clearMyAiGatewayRuntimeAuthorization, "function");
 
-    const response = await client.getMyAiAccess("den-user-token");
+    const response = await client.getMyAiAccess("den-user-token", "org_123", "workspace a");
     const clearResponse = await client.clearMyAiGatewayRuntimeAuthorization();
 
     assert.deepEqual(response, {
@@ -3913,8 +3912,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
         userId: "user_123",
         enabled: true,
         provider: "openai",
-        defaultModel: "gpt-4o-mini",
-        allowedModels: ["gpt-4o-mini", "gpt-4.1"],
+        effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
         updatedAt: "2026-04-08T12:00:00.000Z",
       },
     });
@@ -3922,12 +3920,13 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
 
     assert.deepEqual(calls, [
       {
-        url: "http://127.0.0.1:8787/ai-gateway/me/ai-access",
+        url: "http://127.0.0.1:8787/workspace/workspace%20a/ai-gateway/me/ai-access",
         method: "GET",
         headers: {
           authorization: "Bearer veslo-server-token",
           "content-type": "application/json",
           "x-veslo-gateway-authorization": "Bearer den-user-token",
+          "x-veslo-den-org-id": "org_123",
           "x-veslo-host-token": "veslo-host-token",
         },
         body: null,

@@ -1417,10 +1417,6 @@ async function postAutomationPrompt(
   if (agent) {
     body.agent = agent;
   }
-  const model = typeof target.model === "string" ? target.model.trim() : "";
-  if (model) {
-    body.model = model;
-  }
   const variant = typeof target.variant === "string" ? target.variant.trim() : "";
   if (variant) {
     body.variant = variant;
@@ -1675,6 +1671,8 @@ function buildActiveAiGatewayResolutionDiagnostics(input: {
 function registerAiGatewayRuntimeAuthorization(input: {
   actor?: Actor;
   authorization: string;
+  orgId?: string | null;
+  workspaceId?: string | null;
   source: AiGatewayRuntimeAuthorizationEntry["source"];
 }): void {
   aiGatewayRuntimeOwner.registerRuntimeAuthorization(input);
@@ -1688,18 +1686,29 @@ function syncAiGatewayRuntimeAuthorizationFromAccessBundle(input: {
   actor?: Actor;
   value: unknown;
   callerAuthorization: string;
+  orgId?: string | null;
+  workspaceId?: string | null;
 }): void {
   aiGatewayRuntimeOwner.syncRuntimeAuthorizationFromAccessBundle(input);
+}
+
+function resolveAiGatewayRuntimeAuthorizationBindingForRun(input: {
+  actor?: Actor;
+  workspaceId: string;
+}): { actorTokenHash: string; orgId: string | null } {
+  return aiGatewayRuntimeOwner.resolveRuntimeAuthorizationBindingForRun(input);
 }
 
 function resolveAiGatewayProviderAuthorization(input: {
   request: Request;
   actor?: Actor;
   runtimeAuthorizationActorTokenHash?: string | null;
+  runtimeAuthorizationOrgId?: string | null;
   activeRunContextPresent?: boolean;
 }): {
   authorization: string;
   source: AiGatewayRuntimeAuthorizationEntry["source"];
+  orgId?: string;
 } {
   return aiGatewayRuntimeOwner.resolveProviderAuthorization({
     ...input,
@@ -1977,6 +1986,7 @@ function buildAiGatewayFailureDetails(input: {
   response: Response;
   responseText: string;
   responseTextTruncated?: boolean;
+  orgId?: string | null;
   knownSecrets: Array<string | undefined>;
 }) {
   const contentType = input.response.headers.get(CONTENT_TYPE_HEADER) ?? "";
@@ -1984,9 +1994,7 @@ function buildAiGatewayFailureDetails(input: {
     trimmedHeader(input.request, VESLO_ACCOUNT_ID_HEADER) ??
     trimmedHeader(input.request, VESLO_USER_ID_HEADER) ??
     trimmedHeader(input.request, VESLO_DEN_USER_ID_HEADER);
-  const orgId =
-    trimmedHeader(input.request, VESLO_DEN_ORG_ID_HEADER) ??
-    trimmedHeader(input.request, VESLO_ORG_ID_HEADER);
+  const orgId = input.orgId?.trim() || undefined;
 
   const upstreamSnippet = buildAiGatewayUpstreamSnippet({
     text: input.responseText,
@@ -2063,6 +2071,7 @@ async function proxyAiGatewayRequest(input: {
   auth: "caller" | "gateway-token";
   requireSessionId?: boolean;
   preserveAiAccessToken?: boolean;
+  runtimeWorkspaceId?: string;
 }) {
   const startedAt = perfMs();
   let headersPreparedAt = startedAt;
@@ -2086,6 +2095,10 @@ async function proxyAiGatewayRequest(input: {
     ? trimmedHeader(input.request, OPENCODE_SESSION_ID_HEADER)
     : undefined;
   const incomingWorkspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
+  const incomingOrganizationId =
+    trimmedHeader(input.request, VESLO_DEN_ORG_ID_HEADER) ??
+    trimmedHeader(input.request, VESLO_ORG_ID_HEADER) ??
+    null;
   const provider = resolveAiGatewayProvider(input.gatewayPath) ?? null;
   const incomingHeaderNames = headerNamesForTrace(input.request.headers);
   const sessionResolution = input.requireSessionId
@@ -2106,6 +2119,7 @@ async function proxyAiGatewayRequest(input: {
         request: input.request,
         ...(input.actor ? { actor: input.actor } : {}),
         runtimeAuthorizationActorTokenHash: activeRunContext?.runtimeAuthorizationActorTokenHash ?? null,
+        runtimeAuthorizationOrgId: activeRunContext?.runtimeAuthorizationOrgId ?? null,
         activeRunContextPresent: Boolean(activeRunContext),
       })
     : null;
@@ -2305,6 +2319,12 @@ async function proxyAiGatewayRequest(input: {
   }
   headers.set("x-veslo-request-id", requestId);
   stripAiGatewayProxyRequestHeaders(headers);
+  const forwardedOrganizationId = input.auth === "gateway-token"
+    ? providerAuthorization?.orgId ?? null
+    : incomingOrganizationId;
+  if (forwardedOrganizationId) {
+    headers.set(VESLO_ORG_ID_HEADER, forwardedOrganizationId);
+  }
   headers.set(ACCEPT_ENCODING_HEADER, ACCEPT_ENCODING_IDENTITY);
   const forwardedHeaderNames = headerNamesForTrace(headers);
 
@@ -2541,6 +2561,7 @@ async function proxyAiGatewayRequest(input: {
       response,
       responseText: diagnostic.text,
       responseTextTruncated: diagnostic.truncated,
+      orgId: forwardedOrganizationId,
       knownSecrets: expandKnownSecrets([gatewayAccessToken, gatewayCallerAuth, authorization]),
       ...(sessionId ? { sessionId } : {}),
       ...(diagnosticModel ? { model: diagnosticModel } : {}),
@@ -2581,6 +2602,8 @@ async function proxyAiGatewayRequest(input: {
     syncAiGatewayRuntimeAuthorizationFromAccessBundle({
       value: json,
       callerAuthorization: gatewayCallerAuth,
+      orgId: incomingOrganizationId,
+      workspaceId: input.runtimeWorkspaceId,
       ...(input.actor ? { actor: input.actor } : {}),
     });
   }
@@ -4222,6 +4245,8 @@ function createRoutes(
     clearAiGatewayRuntimeAuthorization,
     proxyAiGatewayReadinessRequest,
     proxyAiGatewayRequest,
+    resolveAiGatewayWorkspaceId: async (ctx, workspaceId) =>
+      (await resolveWorkspace(ctx.config, workspaceId)).id,
   });
 
   registerAdminRoutes(routes);
@@ -4237,6 +4262,7 @@ function createRoutes(
     loadConversationTranscriptResponse,
     createConversationRunTracer,
     resolveConversationExecutionTarget,
+    resolveAiGatewayRuntimeAuthorizationBindingForRun,
     deleteOpenCodeSession: async ({ workspace, sessionId }) => {
       await fetchOpencodeJsonWithOrchestratorFallback(
         config,

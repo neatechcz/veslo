@@ -1,5 +1,6 @@
 export type RecordAuditEventInput = {
   actorUserId?: string | null;
+  organizationId?: string | null;
   entityType: string;
   entityId: string;
   action: string;
@@ -9,6 +10,7 @@ export type RecordAuditEventInput = {
 
 export type ListAuditEventsInput = {
   limit: number;
+  organizationId?: string | null;
 };
 
 export type AuditEventRecord = {
@@ -21,6 +23,7 @@ export type AuditEventRecord = {
   result: "ok" | "warning" | "error";
   summary: string;
   changedFields: string[];
+  organizationId?: string | null;
 };
 
 export interface AuditRepository {

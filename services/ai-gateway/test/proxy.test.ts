@@ -16,6 +16,7 @@ import type {
   SessionLease,
 } from "../src/leases/repository.js";
 import { createApp, type AppDependencies } from "../src/index.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 
 class InMemoryLeaseRepository implements LeaseRepository {
   private readonly leasesByKey = new Map<string, SessionLease>();
@@ -150,6 +151,23 @@ function createNoopUsageRepository() {
   };
 }
 
+function createModelPolicy(provider: "openai" | "anthropic" | "codex_oauth", model: string) {
+  return {
+    async getPolicy() {
+      return {
+        id: "platform" as const,
+        enabledModels: [{ provider, model }],
+        activeModel: { provider, model },
+        createdAt: new Date("2026-07-12T08:00:00.000Z"),
+        updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+      };
+    },
+    async replacePolicy() {
+      throw new Error("unused");
+    },
+  };
+}
+
 function createCodexAiAccess(
   credentialId = "cred_codex_assigned",
   assignmentOrigin: "auto_assigned" | "admin_assigned" = "admin_assigned",
@@ -280,6 +298,8 @@ test("POST /providers/openai/v1/chat/completions forwards with sticky openai lea
   const leaseBroker = new LeaseBroker(leases, selector);
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("openai", "gpt-test"),
       gatewaySessions: createGatewaySessions(),
       credentials: createCredentialsByBindingId({
         binding_openai_alpha: createCredentialRecord("binding_openai_alpha", "openai"),
@@ -393,6 +413,8 @@ test("POST /providers/anthropic/v1/messages forwards with sticky anthropic lease
   const leaseBroker = new LeaseBroker(leases, selector);
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("anthropic", "claude-test"),
       gatewaySessions: createGatewaySessions(),
       credentials: createCredentialsByBindingId({
         binding_anthropic_alpha: createCredentialRecord("binding_anthropic_alpha", "anthropic"),
@@ -499,6 +521,8 @@ test("permanent credential failures call handleUpstreamFailure and retry once", 
   const markedStates: MarkCredentialStateInput[] = [];
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("openai", "gpt-test"),
       gatewaySessions: createGatewaySessions(),
       credentials: {
         ...createCredentialsByBindingId({
@@ -620,6 +644,8 @@ test("transient upstream failures do not rebind", async () => {
   let transportCalls = 0;
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("openai", "gpt-test"),
       gatewaySessions: createGatewaySessions(),
       credentials: createCredentialsByBindingId({
         binding_openai_alpha: createCredentialRecord("binding_openai_alpha", "openai"),
@@ -696,6 +722,8 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("codex_oauth", "gpt-5.4"),
       aiAccess: createCodexAiAccess(),
       gatewaySessions: createGatewaySessions(),
       credentials: credentials as never,
@@ -780,6 +808,7 @@ test("POST /providers/codex_oauth/v1/chat/completions routes through the assigne
       {
         requestId: "codex_req_assigned_1",
         ownerUserId: "user_gateway",
+        orgId: "org_test",
         provider: "codex_oauth",
         sessionId: "session_codex_assigned_1",
         credentialId: "cred_codex_assigned",
@@ -806,6 +835,8 @@ test("POST /providers/codex_oauth/v1/chat/completions records an admin alert on 
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("codex_oauth", "gpt-5.4"),
       aiAccess: createCodexAiAccess(),
       gatewaySessions: createGatewaySessions(),
       credentials: credentials as never,
@@ -891,6 +922,8 @@ test("POST /providers/codex_oauth/v1/chat/completions repairs assigned access be
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("codex_oauth", "gpt-5.4"),
       aiAccess: createCodexAiAccess("cred_codex_assigned", "admin_assigned"),
       autoAssignedCodexCredentialRotation: {
         async repairCodexAccess(input: { aiAccess: { credentialId: string | null } }) {
@@ -978,6 +1011,7 @@ test("POST /providers/codex_oauth/v1/chat/completions repairs assigned access be
       {
         requestId: "codex_req_repaired_1",
         ownerUserId: "user_gateway",
+        orgId: "org_test",
         provider: "codex_oauth",
         sessionId: "session_codex_repaired_1",
         credentialId: "cred_codex_fallback",
@@ -999,6 +1033,8 @@ test("POST /providers/codex_oauth/v1/chat/completions fails when the assigned cr
   const recordProviderFailureCalls: unknown[] = [];
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("codex_oauth", "gpt-5.4"),
       aiAccess: createCodexAiAccess("cred_codex_missing"),
       gatewaySessions: createGatewaySessions(),
       credentials: {
@@ -1107,6 +1143,8 @@ test("POST /providers/openai/v1/chat/completions returns 400 when x-veslo-sessio
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("openai", "gpt-test"),
       gatewaySessions: createGatewaySessions(),
       credentials: createCredentialsByBindingId({
         binding_openai_alpha: createCredentialRecord("binding_openai_alpha", "openai"),

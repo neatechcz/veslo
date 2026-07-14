@@ -7,7 +7,7 @@
     "strict": true,
     "skipLibCheck": true,
     "outDir": "dist",
-    "rootDir": ".",
+    "rootDir": "../..",
     "types": ["node"]
   },
   "include": ["tauri-api.d.ts", "specs/**/*.ts", "helpers/**/*.ts", "scripts/**/*.ts"]

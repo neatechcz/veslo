@@ -6,6 +6,7 @@ import test from "node:test";
 import type { AiAccessRepository } from "../src/access/repository.js";
 import type { AiGatewayDb } from "../src/db/index.js";
 import { createApp, createDefaultProxyDependencies, createDefaultRuntimeState, createDefaultUserCredentialDependencies, type RuntimeState } from "../src/index.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 import { getPlatformCredentialOwnerUserId } from "../src/credentials/platform-owner.js";
 import { MySqlCredentialRepository } from "../src/credentials/mysql-repository.js";
 import { MySqlSecretStore } from "../src/credentials/mysql-secret-store.js";
@@ -13,6 +14,10 @@ import type { CredentialBinding, CredentialRecord, CredentialRepository, MarkCre
 import type { SecretStore, StoredSecret } from "../src/credentials/secret-store.js";
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import { MySqlLeaseRepository } from "../src/leases/mysql-repository.js";
+import { MySqlPlatformModelPolicyRepository } from "../src/model-policy/mysql-repository.js";
+import type { PlatformModelPolicyRepository } from "../src/model-policy/repository.js";
+import * as modelPolicyMysql from "../src/model-policy/mysql-repository.js";
+import * as defaultRuntime from "../src/runtime/default-runtime.js";
 import type {
   CreateSessionLeaseInput,
   LeaseRepository,
@@ -218,6 +223,7 @@ function leaseKey(input: ResolveLeaseInput): string {
 
 function createPersistentRuntime() {
   return {
+    db: {} as AiGatewayDb,
     aiAccess: {
       async getUserAiAccess(userId: string) {
         return {
@@ -238,6 +244,25 @@ function createPersistentRuntime() {
     credentials: new PersistentCredentialRepository(),
     secrets: new PersistentSecretStore(),
     leases: new PersistentLeaseRepository(),
+    modelPolicy: {
+      async getPolicy() {
+        return {
+          id: "platform",
+          enabledModels: [{ provider: "anthropic", model: "claude-runtime" }],
+          activeModel: { provider: "anthropic", model: "claude-runtime" },
+          createdAt: new Date("2026-07-12T08:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+        };
+      },
+      async replacePolicy() {
+        throw new Error("unused");
+      },
+    } satisfies PlatformModelPolicyRepository,
+    modelPolicyMutation: {
+      async replacePolicyWithAudit() {
+        throw new Error("unused");
+      },
+    },
     usage: {
       async recordUsage() {},
     } satisfies UsageRepository,
@@ -264,6 +289,7 @@ function createRuntimeBackedApp(input: {
       },
     }),
     proxy: createDefaultProxyDependencies(input.runtime, {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token");
@@ -310,6 +336,159 @@ test("createDefaultRuntimeState uses MySQL-backed runtime stores", () => {
   assert.ok(runtime.credentials instanceof MySqlCredentialRepository);
   assert.ok(runtime.secrets instanceof MySqlSecretStore);
   assert.ok(runtime.leases instanceof MySqlLeaseRepository);
+  assert.ok(runtime.modelPolicy instanceof MySqlPlatformModelPolicyRepository);
+  const MutationConstructor = (modelPolicyMysql as unknown as {
+    MySqlPlatformModelPolicyMutation?: new (...args: never[]) => unknown;
+  }).MySqlPlatformModelPolicyMutation;
+  assert.equal(typeof MutationConstructor, "function");
+  assert.ok(runtime.modelPolicyMutation instanceof MutationConstructor!);
+});
+
+test("default admin dependencies reuse the shared runtime model policy stores", () => {
+  const runtime = createPersistentRuntime();
+  const createDependencies = (defaultRuntime as unknown as {
+    createDefaultAdminDependencies?: (state: RuntimeState) => {
+      modelPolicyRepository: unknown;
+      modelPolicyMutation: unknown;
+      credentialWriteRepository: unknown;
+      credentialSecretLookupRepository: unknown;
+      aiAccessRepository: unknown;
+      alertRepository: unknown;
+      usageRepository: unknown;
+      auditRepository: unknown;
+      secretStore: unknown;
+    };
+  }).createDefaultAdminDependencies;
+
+  assert.equal(typeof createDependencies, "function");
+  const dependencies = createDependencies!(runtime);
+  assert.equal(dependencies.modelPolicyRepository, runtime.modelPolicy);
+  assert.equal(dependencies.modelPolicyMutation, runtime.modelPolicyMutation);
+  assert.equal(typeof dependencies.modelCapabilities?.checkCredentialForModel, "function");
+  assert.equal(typeof dependencies.modelCapabilities?.checkHealthyCredentialsForModels, "function");
+  assert.equal(dependencies.credentialWriteRepository, runtime.credentials);
+  assert.equal(dependencies.credentialSecretLookupRepository, runtime.credentials);
+  assert.equal(dependencies.aiAccessRepository, runtime.aiAccess);
+  assert.equal(dependencies.alertRepository, runtime.alerts);
+  assert.equal(dependencies.usageRepository, runtime.usage);
+  assert.equal(dependencies.auditRepository, runtime.audit);
+  assert.equal(dependencies.secretStore, runtime.secrets);
+});
+
+test("default user access dependencies reuse the shared runtime model policy store", () => {
+  const runtime = createPersistentRuntime();
+  const dependencies = createDefaultUserCredentialDependencies(runtime, {
+    sessionResolver: {
+      async resolveSession() { return null; },
+    },
+  });
+
+  assert.equal(dependencies.modelPolicy, runtime.modelPolicy);
+});
+
+test("createApp model policy PUT uses runtime mutation dependencies without a secondary database", async () => {
+  const baseRuntime = createPersistentRuntime();
+  const mutationCalls: unknown[] = [];
+  const runtime: RuntimeState = {
+    ...baseRuntime,
+    modelPolicyMutation: {
+      async replacePolicyWithAudit(input) {
+        mutationCalls.push(input);
+        return {
+          id: "platform",
+          enabledModels: input.enabledModels,
+          activeModel: input.activeModel,
+          createdAt: new Date("2026-07-12T00:00:00.000Z"),
+          updatedAt: new Date("2026-07-12T00:00:00.000Z"),
+        };
+      },
+    },
+  };
+  const app = createApp({
+    runtime,
+    adminDependencies: {
+      denClient: {
+        async getSession() {
+          return {
+            user: {
+              id: "user_runtime_admin",
+              email: "runtime-admin@example.test",
+              emailVerified: true,
+              name: "Runtime Admin",
+            },
+            platformAdmin: true,
+            activeOrgId: null,
+            organizations: [],
+          };
+        },
+      },
+      credentialReadRepository: {
+        async listAdminCredentials() {
+          return [{
+            id: "cred_runtime_codex",
+            name: "Runtime Codex",
+            provider: "codex_oauth",
+            type: "oauth",
+            state: "healthy",
+            scope: "platform",
+            activeLeases: 0,
+            alertCount: 0,
+            lastRefreshAt: "2026-07-12T00:00:00.000Z",
+            lastFailureAt: null,
+            cachedTokens: 0,
+            totalTokens: 0,
+            nextRotationAt: null,
+            linkedAlertIds: [],
+          }];
+        },
+      },
+      codexStatusProvider: {
+        async getStatus() {
+          return {
+            available: true,
+            source: "codex_status",
+            label: "Available",
+          };
+        },
+      },
+      modelCapabilities: {
+        async checkHealthyCredentialsForModels(models: Array<{ provider: "codex_oauth"; model: string }>) {
+          return models.map((model) => ({
+            model,
+            status: "supported" as const,
+            credentialId: "cred_runtime_codex",
+          }));
+        },
+      },
+    },
+  } as never);
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/ai-infrastructure/model-policy`, {
+      method: "PUT",
+      headers: {
+        authorization: "Bearer admin-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
+        activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(mutationCalls.length, 1);
+    assert.deepEqual(mutationCalls[0], {
+      actorUserId: "user_runtime_admin",
+      enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
+      activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
 });
 
 test("default runtime credential repository exposes admin credential listing for Codex rotation", () => {

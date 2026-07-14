@@ -5,11 +5,12 @@ import { createDb } from "./db/index.js";
 import { ensureAiGatewaySchema } from "./db/schema-reconcile.js";
 import { isAdminAlertEmailConfigured } from "./email/admin-alert-mailer.js";
 import { env } from "./env.js";
-import { createAdminRouter, createDefaultAdminService, type AdminService } from "./http/admin.js";
+import { createAdminRouter, createDefaultAdminService, type AdminService, type AdminServiceDependencies } from "./http/admin.js";
 import { createProxyRouter, readGatewayAccessToken, type ProxyDependencies } from "./http/proxy.js";
 import { createReadinessRouter, type ReadinessDependencies } from "./http/readiness.js";
 import { createUserCredentialsRouter, type UserCredentialDependencies } from "./http/user-credentials.js";
 import {
+  createDefaultAdminDependencies,
   createDefaultProxyDependencies,
   createDefaultReadinessDependencies,
   createDefaultRuntimeState,
@@ -19,6 +20,7 @@ import {
 
 export type AppDependencies = {
   admin?: AdminService;
+  adminDependencies?: Partial<AdminServiceDependencies>;
   proxy?: ProxyDependencies;
   readiness?: ReadinessDependencies;
   userCredentials?: UserCredentialDependencies;
@@ -42,7 +44,12 @@ export function createApp(deps: AppDependencies = {}) {
   });
 
   app.use(createReadinessRouter(deps.readiness ?? createDefaultReadinessDependencies(runtime)));
-  app.use(createAdminRouter(deps.admin ?? createDefaultAdminService(env.denApiBase)));
+  app.use(createAdminRouter(
+    deps.admin ?? createDefaultAdminService(env.denApiBase, {
+      ...createDefaultAdminDependencies(runtime),
+      ...deps.adminDependencies,
+    }),
+  ));
   app.use(createUserCredentialsRouter(deps.userCredentials ?? createDefaultUserCredentialDependencies(runtime)));
   const proxyDeps = deps.proxy ?? createDefaultProxyDependencies(runtime);
   app.use(createProxyRouter(proxyDeps));
@@ -67,8 +74,9 @@ export async function startServer() {
     await schemaDb.close();
   }
 
-  const adminService = createDefaultAdminService(env.denApiBase);
-  const app = createApp({ admin: adminService });
+  const runtime = createDefaultRuntimeState();
+  const adminService = createDefaultAdminService(env.denApiBase, createDefaultAdminDependencies(runtime));
+  const app = createApp({ admin: adminService, runtime });
   const server = app.listen(env.port, env.host, () => {
     console.log(`ai-gateway listening on http://${env.host}:${env.port}`);
   });
@@ -78,6 +86,7 @@ export async function startServer() {
 }
 
 export {
+  createDefaultAdminDependencies,
   createDefaultProxyDependencies,
   createDefaultReadinessDependencies,
   createDefaultRuntimeState,

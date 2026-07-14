@@ -83,8 +83,7 @@ type ManagedAiAccessProofCommandModelRef = {
 type ManagedAiAccessProofCommandRead = {
   fetchedAt: number;
   providerId: string;
-  defaultModel: ManagedAiAccessProofCommandModelRef;
-  allowedModels: string[];
+  effectiveModel: ManagedAiAccessProofCommandModelRef;
   updatedAt: string | null;
   runtimeConfigFingerprint?: string | null;
 };
@@ -92,16 +91,14 @@ type ManagedAiAccessProofCommandRead = {
 export type ManagedAiAccessProofRead = {
   fetchedAt: number;
   providerId: string;
-  defaultModel: ModelRef;
-  allowedModels: string[];
+  effectiveModel: ModelRef;
   updatedAt: string | null;
   runtimeConfigFingerprint?: string | null;
 };
 
 export type ManagedAiAccessProofWrite = {
   providerId: string;
-  defaultModel: ModelRef;
-  allowedModels: string[];
+  effectiveModel: ModelRef;
   updatedAt: string | null;
   runtimeConfigFingerprint?: string | null;
 };
@@ -401,8 +398,7 @@ export async function accessProofAiRead(input: {
   return {
     fetchedAt: result.fetchedAt,
     providerId: result.providerId,
-    defaultModel: fromCommandModelRef(result.defaultModel),
-    allowedModels: Array.isArray(result.allowedModels) ? result.allowedModels : [],
+    effectiveModel: fromCommandModelRef(result.effectiveModel),
     updatedAt: result.updatedAt ?? null,
     runtimeConfigFingerprint: result.runtimeConfigFingerprint ?? null,
   };
@@ -417,8 +413,7 @@ export async function accessProofAiWrite(input: {
     cacheKey: input.cacheKey,
     proof: {
       providerId: input.proof.providerId,
-      defaultModel: toCommandModelRef(input.proof.defaultModel),
-      allowedModels: input.proof.allowedModels,
+      effectiveModel: toCommandModelRef(input.proof.effectiveModel),
       updatedAt: input.proof.updatedAt,
       runtimeConfigFingerprint: input.proof.runtimeConfigFingerprint ?? null,
     },

@@ -424,6 +424,110 @@ test("CachedCodexCredentialStatusProvider shares concurrent probes for the same 
   assert.deepEqual(second, first);
 });
 
+test("CachedCodexCredentialStatusProvider propagates cancellation and does not cache an aborted probe", async () => {
+  let probeCalls = 0;
+  let aborted = 0;
+  let markProbeStarted: (() => void) | undefined;
+  const probeStarted = new Promise<void>((resolve) => {
+    markProbeStarted = resolve;
+  });
+  const provider = new CachedCodexCredentialStatusProvider({
+    ttlMs: 5 * 60 * 1000,
+    now: () => new Date("2026-04-26T12:00:00.000Z"),
+    loadCredentialAuthJson: async () => JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "rt", account_id: "acct" } }),
+    probe: async (input) => {
+      probeCalls += 1;
+      if (probeCalls === 1) {
+        markProbeStarted?.();
+        await new Promise<void>((resolve) => {
+          const fallback = setTimeout(resolve, 250);
+          input.signal?.addEventListener("abort", () => {
+            aborted += 1;
+            clearTimeout(fallback);
+            resolve();
+          }, { once: true });
+        });
+        if (input.signal?.aborted) throw new Error("probe aborted");
+      }
+      return {
+        checkedAt: "2026-04-26T12:00:00.000Z",
+        rateLimits: null,
+        ok: true,
+      };
+    },
+  });
+  const controller = new AbortController();
+  const first = provider.getStatus({
+    credentialId: "cred_codex_1",
+    credentialName: "Credential cred_codex_1",
+    signal: controller.signal,
+  });
+  await probeStarted;
+  controller.abort();
+
+  await assert.rejects(first, /aborted/i);
+  assert.equal(aborted, 1);
+
+  const second = await provider.getStatus({
+    credentialId: "cred_codex_1",
+    credentialName: "Credential cred_codex_1",
+  });
+  assert.equal(second.available, true);
+  assert.equal(probeCalls, 2, "aborted probe result was cached or left in flight");
+});
+
+test("CachedCodexCredentialStatusProvider terminates an aborted Codex subprocess and cleans probe directories", async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-status-abort-test-"));
+  const commandPath = path.join(rootDir, "hanging-codex.cjs");
+  const startedPath = path.join(rootDir, "started.txt");
+  const terminatedPath = path.join(rootDir, "terminated.txt");
+  await writeFile(
+    commandPath,
+    [
+      "#!/usr/bin/env node",
+      'const { writeFileSync } = require("node:fs");',
+      `process.on("SIGTERM", () => { writeFileSync(${JSON.stringify(terminatedPath)}, "terminated"); process.exit(0); });`,
+      `writeFileSync(${JSON.stringify(startedPath)}, "started");`,
+      "setInterval(() => {}, 1000);",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  await chmod(commandPath, 0o755);
+
+  try {
+    const provider = new CachedCodexCredentialStatusProvider({
+      loadCredentialAuthJson: async () => JSON.stringify({ auth_mode: "chatgpt", tokens: { refresh_token: "rt", account_id: "acct" } }),
+      ...nodeScriptCommand(commandPath),
+      workDir: rootDir,
+      timeoutMs: 120_000,
+    });
+    const controller = new AbortController();
+    const status = provider.getStatus({
+      credentialId: "cred_codex_abort",
+      credentialName: "Credential cred_codex_abort",
+      signal: controller.signal,
+    });
+    await waitForFile(startedPath);
+
+    const abortedAt = Date.now();
+    controller.abort();
+    await assert.rejects(status, /aborted/i);
+    const abortElapsedMs = Date.now() - abortedAt;
+
+    assert.ok(abortElapsedMs < 1_000, `Codex subprocess cancellation took ${abortElapsedMs}ms`);
+    assert.equal(await readFile(terminatedPath, "utf8"), "terminated");
+    const remaining = await readdir(rootDir);
+    assert.equal(
+      remaining.some((entry) => entry.startsWith("veslo-codex-status-home-") || entry.startsWith("veslo-codex-status-work-")),
+      false,
+      "temporary Codex probe directories were not removed",
+    );
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("CachedCodexCredentialStatusProvider persists refreshed Codex auth JSON from probes", async () => {
   const savedAuthJson: Array<{ credentialId: string; authJson: string }> = [];
   const provider = new CachedCodexCredentialStatusProvider({
@@ -998,6 +1102,19 @@ async function makeTreeWritable(root: string): Promise<void> {
       }
     }),
   );
+}
+
+async function waitForFile(filePath: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    try {
+      await readFile(filePath, "utf8");
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  throw new Error(`Timed out waiting for ${filePath}`);
 }
 
 function nodeScriptCommand(scriptPath: string): { command: string; commandArgsPrefix?: string[] } {

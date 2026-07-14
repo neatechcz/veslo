@@ -7,6 +7,7 @@ import type { CredentialRecord, CredentialRepository, MarkCredentialStateInput }
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import { createApp, type AppDependencies } from "../src/index.js";
 import type { RecordUsageInput } from "../src/usage/repository.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 
 class TestCredentialRepository implements CredentialRepository {
   constructor(private readonly recordsByBindingId: Map<string, CredentialRecord>) {}
@@ -65,9 +66,25 @@ function createGatewaySessions() {
 function createUsageApp(input: {
   credentials: CredentialRepository;
   recordUsageCalls: RecordUsageInput[];
+  activeModel: { provider: "openai" | "anthropic"; model: string };
 }) {
   return createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: {
+        async getPolicy() {
+          return {
+            id: "platform" as const,
+            enabledModels: [input.activeModel],
+            activeModel: input.activeModel,
+            createdAt: new Date("2026-07-12T08:00:00.000Z"),
+            updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+          };
+        },
+        async replacePolicy() {
+          throw new Error("unused");
+        },
+      },
       gatewaySessions: createGatewaySessions(),
       credentials: input.credentials,
       usageRepository: {
@@ -147,6 +164,7 @@ function createUsageApp(input: {
 test("successful openai proxy requests record usage with credential and token details", async () => {
   const recordUsageCalls: RecordUsageInput[] = [];
   const app = createUsageApp({
+    activeModel: { provider: "openai", model: "gpt-4o-mini" },
     recordUsageCalls,
     credentials: new TestCredentialRepository(
       new Map([
@@ -184,7 +202,7 @@ test("successful openai proxy requests record usage with credential and token de
       {
         requestId: "openai_req_usage_1",
         ownerUserId: "user_gateway",
-        orgId: null,
+        orgId: "org_test",
         provider: "openai",
         sessionId: "session_openai_usage_1",
         credentialId: "cred_openai_1",
@@ -205,6 +223,7 @@ test("successful openai proxy requests record usage with credential and token de
 test("successful anthropic proxy requests record usage with body-derived request ids", async () => {
   const recordUsageCalls: RecordUsageInput[] = [];
   const app = createUsageApp({
+    activeModel: { provider: "anthropic", model: "claude-3-7-sonnet" },
     recordUsageCalls,
     credentials: new TestCredentialRepository(
       new Map([
@@ -242,6 +261,7 @@ test("successful anthropic proxy requests record usage with body-derived request
       {
         requestId: "msg_usage_1",
         ownerUserId: "user_gateway",
+        orgId: "org_test",
         provider: "anthropic",
         sessionId: "session_anthropic_usage_1",
         credentialId: "cred_anthropic_1",

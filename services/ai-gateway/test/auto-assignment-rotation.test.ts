@@ -11,8 +11,6 @@ function createAiAccess(overrides: Partial<UserAiAccessPolicyRecord> = {}): User
     enabled: true,
     provider: "codex_oauth",
     credentialId: "cred_old",
-    defaultModel: "gpt-5.5",
-    allowedModels: ["gpt-5.5"],
     assignmentOrigin: "auto_assigned",
     createdAt: new Date("2026-05-05T09:00:00.000Z"),
     updatedAt: new Date("2026-05-05T09:00:00.000Z"),
@@ -127,6 +125,7 @@ test("rotates auto-assigned Codex access away from an exhausted credential", asy
 
   const repaired = await service.repairCodexAccess({
     aiAccess: createAiAccess(),
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
     reason: "codex_proxy_request",
   });
 
@@ -137,8 +136,6 @@ test("rotates auto-assigned Codex access away from an exhausted credential", asy
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_new",
-      defaultModel: "gpt-5.5",
-      allowedModels: ["gpt-5.5"],
       assignmentOrigin: "auto_assigned",
     },
   ]);
@@ -152,6 +149,144 @@ test("rotates auto-assigned Codex access away from an exhausted credential", asy
       summary: "Rotated Codex credential for user user_1 from cred_old to cred_new.",
     },
   ]);
+});
+
+test("does not rotate to a Codex credential that cannot serve the active model", async () => {
+  const upserts: unknown[] = [];
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() {
+        throw new Error("unused");
+      },
+      async upsertUserAiAccess(input) {
+        upserts.push(input);
+        return createAiAccess({ credentialId: input.credentialId });
+      },
+    },
+    credentials: {
+      async getCredentialRecordById(credentialId: string) {
+        return credentialId === "cred_old" ? createCredentialRecord("cred_old") : null;
+      },
+      async listAdminCredentials() {
+        return [createAdminCredential("cred_old"), createAdminCredential("cred_new")];
+      },
+    } as any,
+    codexStatusProvider: {
+      async getStatus(input) {
+        return input.credentialId === "cred_old"
+          ? { ...healthyStatus, unsupportedModels: ["gpt-5.5"] }
+          : { ...healthyStatus, unsupportedModels: ["gpt-5.5"] };
+      },
+    },
+    now: () => new Date("2026-05-05T09:30:00.000Z"),
+  });
+
+  const original = createAiAccess();
+  await assert.rejects(
+    service.repairCodexAccess({
+      aiAccess: original,
+      activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+      reason: "codex_proxy_request",
+    }),
+    { message: "assigned_credential_model_incompatible" },
+  );
+  assert.deepEqual(upserts, []);
+});
+
+test("fails closed when active-model compatibility cannot be verified", async () => {
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() { throw new Error("unused"); },
+      async upsertUserAiAccess() { throw new Error("must not write"); },
+    },
+    credentials: {
+      async getCredentialRecordById() { return createCredentialRecord("cred_old"); },
+    } as any,
+    codexStatusProvider: {
+      async getStatus() { throw new Error("probe unavailable"); },
+    },
+  });
+
+  await assert.rejects(
+    service.repairCodexAccess({
+      aiAccess: createAiAccess(),
+      activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+    }),
+    { message: "assigned_credential_unavailable" },
+  );
+});
+
+test("preserves exhausted compatible assignment for the capacity error path", async () => {
+  const upserts: unknown[] = [];
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() { throw new Error("unused"); },
+      async upsertUserAiAccess(input) { upserts.push(input); return createAiAccess(); },
+    },
+    credentials: {
+      async getCredentialRecordById() { return createCredentialRecord("cred_old"); },
+      async listAdminCredentials() { return [createAdminCredential("cred_old")]; },
+    } as any,
+    codexStatusProvider: { async getStatus() { return exhaustedStatus; } },
+    now: () => new Date("2026-05-05T09:30:00.000Z"),
+  });
+  const original = createAiAccess({ assignmentOrigin: "admin_assigned" });
+  const repaired = await service.repairCodexAccess({
+    aiAccess: original,
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+  });
+  assert.equal(repaired, original);
+  assert.equal(repaired.assignmentOrigin, "admin_assigned");
+  assert.deepEqual(upserts, []);
+});
+
+test("reports capacity when a replacement supports the model but is exhausted", async () => {
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() { throw new Error("unused"); },
+      async upsertUserAiAccess() { throw new Error("must not write"); },
+    },
+    credentials: {
+      async getCredentialRecordById() { return createCredentialRecord("cred_old"); },
+      async listAdminCredentials() { return [createAdminCredential("cred_old"), createAdminCredential("cred_new")]; },
+    } as any,
+    codexStatusProvider: {
+      async getStatus(input) {
+        return input.credentialId === "cred_old"
+          ? { ...healthyStatus, unsupportedModels: ["gpt-5.5"] }
+          : exhaustedStatus;
+      },
+    },
+    now: () => new Date("2026-05-05T09:30:00.000Z"),
+  });
+  await assert.rejects(
+    service.repairCodexAccess({
+      aiAccess: createAiAccess(),
+      activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+    }),
+    { message: "no_eligible_codex_credentials:all_codex_credentials_exhausted" },
+  );
+});
+
+test("leaves a missing assigned credential for the existing unavailable-binding path", async () => {
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() { throw new Error("unused"); },
+      async upsertUserAiAccess() { throw new Error("must not write"); },
+    },
+    credentials: {
+      async getCredentialRecordById() { return null; },
+      async listAdminCredentials() { return []; },
+    } as any,
+    codexStatusProvider: { async getStatus() { throw new Error("must not probe"); } },
+  });
+  const original = createAiAccess({ assignmentOrigin: "admin_assigned" });
+  const repaired = await service.repairCodexAccess({
+    aiAccess: original,
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+  });
+  assert.equal(repaired, original);
+  assert.equal(repaired.assignmentOrigin, "admin_assigned");
 });
 
 test("rotates admin-assigned Codex access away from an exhausted credential", async () => {
@@ -191,6 +326,7 @@ test("rotates admin-assigned Codex access away from an exhausted credential", as
 
   const repaired = await service.repairCodexAccess({
     aiAccess: createAiAccess({ assignmentOrigin: "admin_assigned" }),
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
     reason: "codex_proxy_request",
   });
 
@@ -202,14 +338,12 @@ test("rotates admin-assigned Codex access away from an exhausted credential", as
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_new",
-      defaultModel: "gpt-5.5",
-      allowedModels: ["gpt-5.5"],
       assignmentOrigin: "admin_assigned",
     },
   ]);
 });
 
-test("fills Codex catalog default when rotating a legacy policy without a model", async () => {
+test("rotation writes no model fields and preserves assignment origin", async () => {
   const upserts: unknown[] = [];
   const service = createAutoAssignedCodexCredentialRotationService({
     aiAccess: {
@@ -220,8 +354,7 @@ test("fills Codex catalog default when rotating a legacy policy without a model"
         upserts.push(input);
         return createAiAccess({
           credentialId: input.credentialId,
-          defaultModel: input.defaultModel,
-          allowedModels: input.allowedModels,
+          assignmentOrigin: input.assignmentOrigin,
           updatedAt: new Date("2026-05-05T09:01:00.000Z"),
         });
       },
@@ -246,22 +379,20 @@ test("fills Codex catalog default when rotating a legacy policy without a model"
   });
 
   const repaired = await service.repairCodexAccess({
-    aiAccess: createAiAccess({ defaultModel: null, allowedModels: [] }),
+    aiAccess: createAiAccess({ assignmentOrigin: "admin_assigned" }),
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
     reason: "codex_proxy_request",
   });
 
   assert.equal(repaired.credentialId, "cred_new");
-  assert.equal(repaired.defaultModel, "gpt-5.6-sol");
-  assert.deepEqual(repaired.allowedModels, ["gpt-5.6-sol"]);
+  assert.equal(repaired.assignmentOrigin, "admin_assigned");
   assert.deepEqual(upserts, [
     {
       userId: "user_1",
       enabled: true,
       provider: "codex_oauth",
       credentialId: "cred_new",
-      defaultModel: "gpt-5.6-sol",
-      allowedModels: ["gpt-5.6-sol"],
-      assignmentOrigin: "auto_assigned",
+      assignmentOrigin: "admin_assigned",
     },
   ]);
 });
@@ -293,7 +424,32 @@ test("does not rotate admin-assigned non-Codex access", async () => {
     provider: "openai_compatible",
     assignmentOrigin: "admin_assigned",
   });
-  const repaired = await service.repairCodexAccess({ aiAccess });
+  const repaired = await service.repairCodexAccess({
+    aiAccess,
+    activeModel: { provider: "openai_compatible", model: "custom-model" },
+  });
 
   assert.equal(repaired, aiAccess);
+});
+
+test("fails closed with a typed error when activeModel is missing at runtime", async () => {
+  const service = createAutoAssignedCodexCredentialRotationService({
+    aiAccess: {
+      async getUserAiAccess() { throw new Error("should_not_read"); },
+      async upsertUserAiAccess() { throw new Error("should_not_write"); },
+    },
+    credentials: {
+      async getCredentialRecordById() { throw new Error("should_not_read"); },
+    } as any,
+    codexStatusProvider: {
+      async getStatus() { throw new Error("should_not_probe"); },
+    },
+  });
+
+  await assert.rejects(
+    service.repairCodexAccess({ aiAccess: createAiAccess() } as never),
+    (error: unknown) => error instanceof Error
+      && error.name === "AssignedCredentialActiveModelRequiredError"
+      && error.message === "assigned_credential_active_model_required",
+  );
 });

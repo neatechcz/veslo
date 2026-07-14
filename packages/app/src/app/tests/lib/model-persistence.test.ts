@@ -67,7 +67,7 @@ test("falls back to legacy default when current is missing", () => {
   assert.deepEqual(next, CLAUDE);
 });
 
-test("collects only legacy per-session model keys from storage", () => {
+test("collects every legacy user model authority key from storage", () => {
   const storage = createStorage([
     "veslo.defaultModel",
     "veslo.sessionModels.workspace-a",
@@ -77,14 +77,17 @@ test("collects only legacy per-session model keys from storage", () => {
   ]);
 
   assert.deepEqual(collectLegacySessionModelStorageKeys(storage), [
+    "veslo.defaultModel",
     "veslo.sessionModels.workspace-a",
     "veslo.sessionModels.workspace-b",
+    "veslo.sessionModels",
   ]);
 });
 
-test("clears legacy per-session model keys without touching other preferences", () => {
+test("clears legacy global and per-session model keys without touching other preferences", () => {
   const storage = createStorage([
     "veslo.defaultModel",
+    "veslo.sessionModels",
     "veslo.sessionModels.workspace-a",
     "veslo.language",
     "veslo.sessionModels.workspace-b",
@@ -93,8 +96,10 @@ test("clears legacy per-session model keys without touching other preferences", 
   const removed = clearLegacySessionModelPersistence(storage);
 
   assert.deepEqual(removed, [
+    "veslo.defaultModel",
+    "veslo.sessionModels",
     "veslo.sessionModels.workspace-a",
     "veslo.sessionModels.workspace-b",
   ]);
-  assert.deepEqual(storage.snapshot(), ["veslo.defaultModel", "veslo.language"]);
+  assert.deepEqual(storage.snapshot(), ["veslo.language"]);
 });

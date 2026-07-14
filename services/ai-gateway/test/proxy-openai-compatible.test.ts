@@ -7,6 +7,7 @@ import type { CredentialBinding, CredentialRecord } from "../src/credentials/rep
 import type { StoredSecret } from "../src/credentials/secret-store.js";
 import { ProviderTransportError } from "../src/providers/transport.js";
 import { createApp } from "../src/index.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 
 const GATEWAY_AUTH_HEADER = {
   authorization: "Bearer gateway-access-token",
@@ -45,6 +46,7 @@ function createProxyApp(input: {
   bindingLookupError?: Error;
   secret?: StoredSecret | null;
   transport?: { chatCompletions(transportInput: unknown): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> };
+  discoveredModels?: string[];
   transportCalls?: unknown[];
   recordUsageCalls?: unknown[];
   leaseScopes?: unknown[];
@@ -54,6 +56,21 @@ function createProxyApp(input: {
   const credential = createCredentialRecord();
   return createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: {
+        async getPolicy() {
+          return {
+            id: "platform" as const,
+            enabledModels: [{ provider: "openai_compatible" as const, model: "custom-model" }],
+            activeModel: { provider: "openai_compatible" as const, model: "custom-model" },
+            createdAt: new Date("2026-07-12T08:00:00.000Z"),
+            updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+          };
+        },
+        async replacePolicy() {
+          throw new Error("unused");
+        },
+      },
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token");
@@ -169,8 +186,11 @@ function createProxyApp(input: {
           throw new Error("codex transport should not run");
         },
       },
-      openAiCompatibleTransport: input.transport ?? {
-        async chatCompletions(transportInput: unknown) {
+      openAiCompatibleTransport: {
+        async listModels() {
+          return { models: input.discoveredModels ?? ["custom-model"] };
+        },
+        ...(input.transport ?? { async chatCompletions(transportInput: unknown) {
           input.transportCalls?.push(transportInput);
           return {
             status: 200,
@@ -186,11 +206,44 @@ function createProxyApp(input: {
               },
             },
           };
-        },
+        } }),
       },
     } as never,
   });
 }
+
+test("openai-compatible proxy rejects an assigned credential that cannot serve the active model", async () => {
+  const transportCalls: unknown[] = [];
+  const leaseScopes: unknown[] = [];
+  const app = createProxyApp({
+    discoveredModels: ["other-model"],
+    transportCalls,
+    leaseScopes,
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/providers/openai_compatible/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        ...GATEWAY_AUTH_HEADER,
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_custom_incompatible",
+      },
+      body: JSON.stringify({ messages: [] }),
+    });
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "assigned_credential_model_incompatible" });
+    assert.deepEqual(leaseScopes, []);
+    assert.deepEqual(transportCalls, []);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
 
 test("POST /providers/openai_compatible/v1/chat/completions forwards assigned custom provider requests", async () => {
   const transportCalls: unknown[] = [];
@@ -246,7 +299,7 @@ test("POST /providers/openai_compatible/v1/chat/completions forwards assigned cu
       {
         requestId: "custom_req_1",
         ownerUserId: "user_gateway",
-        orgId: null,
+        orgId: "org_test",
         provider: "openai_compatible",
         sessionId: "session_custom_1",
         credentialId: "cred_custom_1",

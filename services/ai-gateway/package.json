@@ -7,6 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",
+    "test:node22-smoke": "node test/node22-openai-compatible-smoke.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "ops:codex-model-migration": "node dist/ops/migrate-codex-model.js",
@@ -18,6 +19,7 @@
     "drizzle-orm": "^0.45.1",
     "express": "^4.19.2",
     "mysql2": "^3.11.3",
+    "undici": "5.29.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

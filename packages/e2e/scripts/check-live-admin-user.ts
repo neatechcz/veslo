@@ -21,16 +21,6 @@ type AdminUserRecord = {
   isPlatformAdmin?: boolean;
 };
 
-function parseList(value: string | undefined): string[] {
-  if (!value) {
-    return [];
-  }
-  return value
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
 function parseArgs(argv: string[]) {
   const result = {
     email: process.env.VESLO_ADMIN_CHECK_EMAIL?.trim() || 'michal.sara@neatech.cz',
@@ -41,8 +31,6 @@ function parseArgs(argv: string[]) {
     createName: process.env.VESLO_ADMIN_CHECK_CREATE_NAME?.trim() || 'Codex Live Check',
     listCredentials: process.env.VESLO_ADMIN_CHECK_LIST_CREDENTIALS === '1',
     provider: process.env.VESLO_ADMIN_CHECK_PROVIDER?.trim() || '',
-    defaultModel: process.env.VESLO_ADMIN_CHECK_DEFAULT_MODEL?.trim() || '',
-    allowedModels: parseList(process.env.VESLO_ADMIN_CHECK_ALLOWED_MODELS),
     credentialId: process.env.VESLO_ADMIN_CHECK_CREDENTIAL_ID?.trim() || '',
     disableAiAccess: process.env.VESLO_ADMIN_CHECK_DISABLE_AI_ACCESS === '1',
   };
@@ -87,16 +75,6 @@ function parseArgs(argv: string[]) {
     }
     if (arg === '--provider' && argv[index + 1]) {
       result.provider = argv[index + 1].trim();
-      index += 1;
-      continue;
-    }
-    if (arg === '--default-model' && argv[index + 1]) {
-      result.defaultModel = argv[index + 1].trim();
-      index += 1;
-      continue;
-    }
-    if (arg === '--allowed-model' && argv[index + 1]) {
-      result.allowedModels.push(argv[index + 1].trim());
       index += 1;
       continue;
     }
@@ -152,8 +130,6 @@ async function main() {
     createName,
     listCredentials,
     provider,
-    defaultModel,
-    allowedModels,
     credentialId,
     disableAiAccess,
   } = parseArgs(process.argv.slice(2));
@@ -221,13 +197,11 @@ async function main() {
   }
 
   const targetUser = match ?? createdUser;
-  const shouldUpsertAiAccess = disableAiAccess || provider || defaultModel || allowedModels.length > 0;
+  const shouldUpsertAiAccess = disableAiAccess || provider;
   const aiAccess = shouldUpsertAiAccess && targetUser?.id
     ? await upsertAdminUserAiAccess(fetch, gatewayBase, token, targetUser.id, {
         enabled: !disableAiAccess,
         provider: disableAiAccess ? null : provider || null,
-        defaultModel: disableAiAccess ? null : defaultModel || null,
-        allowedModels: disableAiAccess ? [] : allowedModels,
         credentialId: disableAiAccess ? null : credentialId || null,
       })
     : null;

@@ -200,7 +200,7 @@ export default function CreateWorkspaceModal(props: {
                       }}
                       class={`p-4 rounded-xl border cursor-pointer transition-all ${
                         preset() === opt.id
-                          ? "bg-indigo-7/10 border-indigo-7/50"
+                          ? "bg-cyan-3/40 border-cyan-7/50"
                           : "bg-gray-2 border-gray-6 hover:border-gray-7"
                       } ${!selectedFolder() || submitting() ? "pointer-events-none" : ""}`.trim()}
                     >
@@ -208,7 +208,7 @@ export default function CreateWorkspaceModal(props: {
                         <div>
                           <div
                             class={`font-medium text-sm ${
-                              preset() === opt.id ? "text-indigo-11" : "text-gray-12"
+                              preset() === opt.id ? "text-cyan-11" : "text-gray-12"
                             }`}
                           >
                             {opt.name}
@@ -216,7 +216,7 @@ export default function CreateWorkspaceModal(props: {
                           <div class="text-xs text-gray-10 mt-1">{opt.desc}</div>
                         </div>
                         <Show when={preset() === opt.id}>
-                          <CheckCircle2 size={16} class="text-indigo-6" />
+                          <CheckCircle2 size={16} class="text-dls-accent" />
                         </Show>
                       </div>
                     </div>
@@ -234,7 +234,7 @@ export default function CreateWorkspaceModal(props: {
                 <div class="min-w-0">
                   <div class="text-xs font-semibold text-gray-12 flex items-center gap-2">
                     <Show when={!p().error} fallback={<XCircle size={14} class="text-red-11" />}>
-                      <Loader2 size={14} class="text-indigo-11 animate-spin" />
+                      <Loader2 size={14} class="text-dls-accent animate-spin" />
                     </Show>
                     {__vesloT("ui.literal.sandbox_setup_bh71l5", __vesloCurrentLocale())}</div>
                   <div class="mt-1 text-sm text-gray-11 leading-snug truncate">{p().stage}</div>
@@ -262,7 +262,7 @@ export default function CreateWorkspaceModal(props: {
                   {(step) => {
                     const icon = () => {
                       if (step.status === "done") return <CheckCircle2 size={16} class="text-emerald-10" />;
-                      if (step.status === "active") return <Loader2 size={16} class="text-indigo-11 animate-spin" />;
+                      if (step.status === "active") return <Loader2 size={16} class="text-dls-accent animate-spin" />;
                       if (step.status === "error") return <XCircle size={16} class="text-red-10" />;
                       return <div class="w-4 h-4 rounded-full border-2 border-gray-6" />;
                     };

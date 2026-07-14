@@ -277,7 +277,7 @@ const sessionRowClass = (isSelected: boolean, extraClass?: string) => {
   const base =
     "relative w-full appearance-none border-none bg-transparent flex items-center rounded-xl px-3 py-1 text-left transition-colors focus-visible:outline-none";
   const state = isSelected
-    ? "bg-gray-5 text-gray-12 before:content-[''] before:absolute before:left-1 before:top-1 before:bottom-1 before:w-0.5 before:rounded-full before:bg-indigo-9"
+    ? "bg-gray-5 text-gray-12 before:content-[''] before:absolute before:left-1 before:top-1 before:bottom-1 before:w-0.5 before:rounded-full before:bg-dls-accent"
     : "hover:bg-gray-3/70 text-gray-12";
   return [base, extraClass, state].filter(Boolean).join(" ");
 };
@@ -2659,10 +2659,10 @@ export default function WorkspaceSessionList(props: Props) {
                     onDrop={(event) => handleProjectDrop(event, project.key)}
                   >
                     <Show when={dropIndicatorPosition() === "before"}>
-                      <div class="pointer-events-none absolute left-2 right-2 top-0 h-[2px] rounded-full bg-indigo-8/80" />
+                      <div class="pointer-events-none absolute left-2 right-2 top-0 h-[2px] rounded-full bg-dls-accent/80" />
                     </Show>
                     <Show when={dropIndicatorPosition() === "after"}>
-                      <div class="pointer-events-none absolute left-2 right-2 bottom-0 h-[2px] rounded-full bg-indigo-8/80" />
+                      <div class="pointer-events-none absolute left-2 right-2 bottom-0 h-[2px] rounded-full bg-dls-accent/80" />
                     </Show>
                     <div
                       class="relative flex items-start gap-2"

@@ -63,6 +63,10 @@ test('e2e package exposes runnable tauri-pilot scripts used by root commands', (
     'node --import=tsx/esm ./helpers/pilot-runner.ts --suite live-inference',
   );
   assert.equal(
+    packageJson.scripts['test:pilot:global-managed-ai-model-policy'],
+    'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario global-managed-ai-model-policy',
+  );
+  assert.equal(
     rootPackageJson.scripts['test:e2e:ui:live-inference'],
     'pnpm --filter @neatech/veslo-e2e test:pilot:live-inference',
   );

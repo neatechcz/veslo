@@ -62,8 +62,7 @@ export type ManagedAiAccessStorage = {
 
 type ManagedAiAccessProofRead = {
   providerId: string;
-  defaultModel: ManagedAiAccessProfile["defaultModel"];
-  allowedModels: string[];
+  effectiveModel: ManagedAiAccessProfile["effectiveModel"];
   updatedAt?: string | null;
   fetchedAt: number;
 };
@@ -74,8 +73,7 @@ export type ManagedAiAccessProofCache = {
     cacheKey: string;
     proof: {
       providerId: string;
-      defaultModel: ManagedAiAccessProfile["defaultModel"];
-      allowedModels: string[];
+      effectiveModel: ManagedAiAccessProfile["effectiveModel"];
       updatedAt: string | null;
     };
   }) => Promise<unknown>;
@@ -115,10 +113,11 @@ export type ManagedAiAccessStoreOptions = ManagedAiAccessCacheDeps & {
   vesloServerAuth: Accessor<{ token?: string | null }>;
   activeVesloServerHostInfo: Accessor<{ baseUrl?: string | null } | null>;
   activeWorkspaceDisplay: Accessor<{ workspaceType?: string | null }>;
+  activeVesloServerWorkspaceId?: Accessor<string | null>;
   ensureLocalVesloServerRunning: (options: { ignoreStartupPreference: true }) => Promise<boolean>;
   providers: Accessor<ProviderListItem[]>;
   formatModelLabel: (
-    model: ManagedAiAccessProfile["defaultModel"],
+    model: ManagedAiAccessProfile["effectiveModel"],
     providers: ProviderListItem[],
   ) => string;
   translate: (key: string) => string;
@@ -127,6 +126,7 @@ export type ManagedAiAccessStoreOptions = ManagedAiAccessCacheDeps & {
   requestManagedAiAccessBundle?: (
     baseUrl: string,
     userToken: string,
+    orgId?: string,
   ) => Promise<VesloManagedAiAccessBundle>;
   timers?: {
     setTimeout?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
@@ -143,11 +143,11 @@ export type ManagedAiAccessStore = {
   managedAiAccessBusy: Accessor<boolean>;
   managedAiAccessError: Accessor<string | null>;
   managedAiAccessRetryScheduled: Accessor<boolean>;
-  managedAiAccessModel: Accessor<ManagedAiAccessProfile["defaultModel"] | null>;
+  managedAiAccessModel: Accessor<ManagedAiAccessProfile["effectiveModel"] | null>;
   denGatewayAccessToken: Accessor<string>;
   managedAiAccessMessage: Accessor<string>;
   managedAiAccessProviderLabel: Accessor<string | null>;
-  managedAiAccessDefaultModelLabel: Accessor<string | null>;
+  managedAiAccessEffectiveModelLabel: Accessor<string | null>;
   managedAiAccessBlockedReason: Accessor<string | null>;
   requestManagedAiAccessRefresh: () => void;
   clearManagedAiAccessCache: (cacheKey?: string | null) => void;
@@ -186,16 +186,21 @@ function defaultDocumentTarget(): ManagedAiAccessDocumentTarget | null {
 const isManagedAiAccessProfileValue = (value: unknown): value is ManagedAiAccessProfile => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Partial<ManagedAiAccessProfile>;
+  const providerId = typeof record.providerId === "string" ? record.providerId.trim() : "";
+  const effectiveProvider = typeof record.effectiveModel?.providerID === "string"
+    ? record.effectiveModel.providerID.trim()
+    : "";
+  const effectiveModelId = typeof record.effectiveModel?.modelID === "string"
+    ? record.effectiveModel.modelID.trim()
+    : "";
   return Boolean(
     typeof record.userId === "string" &&
       record.userId.trim() &&
-      typeof record.providerId === "string" &&
-      record.providerId.trim() &&
-      record.defaultModel &&
-      typeof record.defaultModel === "object" &&
-      typeof record.defaultModel.providerID === "string" &&
-      typeof record.defaultModel.modelID === "string" &&
-      Array.isArray(record.allowedModels),
+      isGatewayOwnedProvider(providerId) &&
+      record.effectiveModel &&
+      typeof record.effectiveModel === "object" &&
+      effectiveProvider === providerId &&
+      effectiveModelId,
   );
 };
 
@@ -270,8 +275,7 @@ export const writeManagedAiAccessCache = (
       cacheKey,
       proof: {
         providerId: profile.providerId,
-        defaultModel: profile.defaultModel,
-        allowedModels: profile.allowedModels,
+        effectiveModel: profile.effectiveModel,
         updatedAt: profile.updatedAt,
       },
     }).catch(() => undefined);
@@ -326,20 +330,13 @@ export const readManagedAiAccessProofCache = async (
     });
     if (!proof) return null;
     if (!isGatewayOwnedProvider(proof.providerId)) return null;
-    if (proof.defaultModel.providerID !== proof.providerId || !proof.defaultModel.modelID.trim()) {
-      return null;
-    }
-    const allowedModels = Array.isArray(proof.allowedModels)
-      ? proof.allowedModels.map((value) => value.trim()).filter(Boolean)
-      : [];
-    if (allowedModels.length > 0 && !allowedModels.includes(proof.defaultModel.modelID)) {
+    if (proof.effectiveModel.providerID !== proof.providerId || !proof.effectiveModel.modelID.trim()) {
       return null;
     }
     const profile: ManagedAiAccessProfile = {
       userId,
       providerId: proof.providerId,
-      defaultModel: proof.defaultModel,
-      allowedModels,
+      effectiveModel: proof.effectiveModel,
       updatedAt: proof.updatedAt ?? null,
     };
     if (!isManagedAiAccessProfileValue(profile)) return null;
@@ -419,7 +416,7 @@ export function createManagedAiAccessStore(
     return options.readDenAuth()?.token?.trim() ?? "";
   });
 
-  const managedAiAccessModel = createMemo(() => managedAiAccess()?.defaultModel ?? null);
+  const managedAiAccessModel = createMemo(() => managedAiAccess()?.effectiveModel ?? null);
 
   const requestManagedAiAccessRefresh = () => {
     setManagedAiAccessRefreshNonce((value) => value + 1);
@@ -495,10 +492,10 @@ export function createManagedAiAccessStore(
     return provider?.name ?? profile.providerId;
   });
 
-  const managedAiAccessDefaultModelLabel = createMemo(() => {
+  const managedAiAccessEffectiveModelLabel = createMemo(() => {
     const profile = managedAiAccess();
     if (!profile) return null;
-    return options.formatModelLabel(profile.defaultModel, options.providers());
+    return options.formatModelLabel(profile.effectiveModel, options.providers());
   });
 
   const managedAiAccessBlockedReason = createMemo(() => {
@@ -561,9 +558,11 @@ export function createManagedAiAccessStore(
     const gatewayClient = options.gatewayVesloServerClient();
     const managedAiBaseUrl = options.managedAiGatewayBaseUrl();
     const userToken = denGatewayAccessToken();
+    const denOrgId = options.readDenAuth()?.orgId?.trim() ?? "";
     const cacheContext = managedAiAccessCacheContext();
     const managedAiCacheKey = cacheContext.cacheKey;
     const gatewayLocalAuth = options.vesloServerAuth();
+    const runtimeWorkspaceId = options.activeVesloServerWorkspaceId?.()?.trim() ?? "";
     const proofCacheState = managedAiAccessProofCacheState();
     if (
       options.isTauriRuntime() &&
@@ -648,15 +647,17 @@ export function createManagedAiAccessStore(
     };
 
     const loadManagedAiAccess = loadManagedAiAccessSingleFlight(
-      managedAiCacheKey,
+      gatewayClient && runtimeWorkspaceId
+        ? `${managedAiCacheKey}|runtime-workspace:${runtimeWorkspaceId}`
+        : managedAiCacheKey,
       () => {
         if (managedAiBaseUrl) {
           if (!options.requestManagedAiAccessBundle) {
             throw new Error("managed AI access bundle requester is not configured");
           }
-          return options.requestManagedAiAccessBundle(managedAiBaseUrl, userToken);
+          return options.requestManagedAiAccessBundle(managedAiBaseUrl, userToken, denOrgId);
         }
-        return gatewayClient!.getMyAiAccess(userToken);
+        return gatewayClient!.getMyAiAccess(userToken, denOrgId, runtimeWorkspaceId || undefined);
       },
     );
 
@@ -785,7 +786,7 @@ export function createManagedAiAccessStore(
     denGatewayAccessToken,
     managedAiAccessMessage,
     managedAiAccessProviderLabel,
-    managedAiAccessDefaultModelLabel,
+    managedAiAccessEffectiveModelLabel,
     managedAiAccessBlockedReason,
     requestManagedAiAccessRefresh,
     clearManagedAiAccessCache: (cacheKey?: string | null) =>

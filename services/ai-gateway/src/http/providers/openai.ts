@@ -2,20 +2,21 @@ import { randomUUID } from "node:crypto";
 
 import { Router, type Response } from "express";
 
-import type { UserAiAccessPolicyRecord } from "../../access/repository.js";
 import type { GatewaySession } from "../../auth/gateway-session.js";
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js";
 import { classifyUpstreamFailure, getUpstreamFailureInput } from "../../leases/error-classifier.js";
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js";
+import type { PlatformModelRef } from "../../model-policy/repository.js";
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js";
-import { applyAiAccessPolicy } from "./access-policy.js";
+import { applyPlatformModelPolicy } from "./access-policy.js";
 import {
   markProviderCredentialFailure,
   readUpstreamFailureReason,
   recordProviderProxyFailureAlert,
 } from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
+import { readGatewayOrganizationId } from "./gateway-context.js";
 import type { ProxyDependencies } from "../proxy-dependencies.js";
 
 export function createOpenAiProxyRouter(
@@ -38,14 +39,12 @@ export function createOpenAiProxyRouter(
 
     const sessionId = normalizeGatewaySessionId(rawSessionId, gatewaySession.user.id, "openai");
 
-    const gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined;
-    const policyResult = gatewayAiAccess
-      ? applyAiAccessPolicy({
-          routeProvider: "openai",
-          aiAccess: gatewayAiAccess,
-          body: req.body,
-        })
-      : { ok: true as const, body: req.body as Record<string, unknown> };
+    const activeModel = res.locals.gatewayActiveModel as PlatformModelRef;
+    const policyResult = applyPlatformModelPolicy({
+      routeProvider: "openai",
+      activeModel,
+      body: req.body,
+    });
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error });
       return;
@@ -59,7 +58,7 @@ export function createOpenAiProxyRouter(
     };
 
     try {
-      const upstreamResponse = await executeWithRetry(scope, policyResult.body);
+      const upstreamResponse = await executeWithRetry(scope, policyResult.body, readGatewayOrganizationId(res));
       applyUpstreamResponse(res, upstreamResponse);
     } catch (error) {
       console.error("proxy_request_failed", error);
@@ -72,11 +71,12 @@ export function createOpenAiProxyRouter(
   async function executeWithRetry(
     scope: ResolveLeaseInput,
     body: unknown,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const initialLease = await deps.leaseBroker.getOrCreateActiveLease(scope);
 
     try {
-      return await executeLeaseRequest(initialLease, body);
+      return await executeLeaseRequest(initialLease, body, orgId);
     } catch (error) {
       const failure = getUpstreamFailureInput(error);
       if (classifyUpstreamFailure(failure) !== "permanent_credential") {
@@ -107,13 +107,14 @@ export function createOpenAiProxyRouter(
         throw error;
       }
 
-      return executeLeaseRequest(reboundLease, body);
+      return executeLeaseRequest(reboundLease, body, orgId);
     }
   }
 
   async function executeLeaseRequest(
     lease: SessionLease,
     body: unknown,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const upstreamAuth = await deps.tokenBroker.getUpstreamAuth({
       bindingId: lease.activeBindingId,
@@ -126,6 +127,7 @@ export function createOpenAiProxyRouter(
 
     await recordUsage({
       ownerUserId: lease.ownerUserId,
+      orgId,
       sessionId: lease.sessionId,
       bindingId: lease.activeBindingId,
       requestBody: body,
@@ -137,6 +139,7 @@ export function createOpenAiProxyRouter(
 
   async function recordUsage(input: {
     ownerUserId: string;
+    orgId: string | null;
     sessionId: string;
     bindingId: string;
     requestBody: unknown;
@@ -155,7 +158,7 @@ export function createOpenAiProxyRouter(
       await deps.usageRepository.recordUsage({
         requestId,
         ownerUserId: input.ownerUserId,
-        orgId: null,
+        orgId: input.orgId,
         provider: "openai",
         sessionId: input.sessionId,
         credentialId: credential.id,

@@ -48,6 +48,7 @@ export type ManagedAiRuntimeAuthPrimeDiagnosticReason =
   | "missing-user-token"
   | "non-local-workspace"
   | "provider-routing-target-missing"
+  | "workspace-registration-missing"
   | "access-profile-unavailable"
   | "request-failed";
 
@@ -64,6 +65,7 @@ const MANAGED_AI_RUNTIME_AUTH_PRIME_SUPPORT_MESSAGES: Record<
   "missing-user-token": "Sign in again to refresh managed AI authorization before sending.",
   "non-local-workspace": "Managed AI runtime authorization is only required for local workspaces.",
   "provider-routing-target-missing": "Local Veslo server routing is not ready for managed AI authorization.",
+  "workspace-registration-missing": "The local workspace is not registered with Veslo server for managed AI authorization.",
   "access-profile-unavailable": "Managed AI access is unavailable for this account. Ask an admin to verify the assignment.",
   "request-failed": "Managed AI runtime authorization could not be refreshed. Check the local Veslo server connection and retry.",
 };
@@ -119,7 +121,7 @@ export type ManagedAiRuntimeConfigVesloClient = {
 
 export type ManagedAiRuntimeConfigRuntimeClient = {
   baseUrl: string;
-  getMyAiAccess: (userToken: string) => Promise<{
+  getMyAiAccess: (userToken: string, orgId?: string, workspaceId?: string) => Promise<{
     aiAccess?: VesloUserAiAccess | null;
     accessToken?: string | null;
   }>;
@@ -136,6 +138,7 @@ export type ManagedAiRuntimeConfigSyncOptions = {
   managedAiAccessError: Accessor<string | null>;
   managedAiGatewayAccessToken: Accessor<string>;
   denGatewayAccessToken: Accessor<string>;
+  denOrgId: Accessor<string>;
   denAuthRevision: Accessor<number>;
   gatewayVesloServerClient: Accessor<ManagedAiRuntimeGatewayClient | null>;
   vesloServerClient: Accessor<ManagedAiRuntimeConfigVesloClient | null>;
@@ -242,10 +245,7 @@ function managedAiAccessConfigFingerprint(profile: ManagedAiAccessProfile | null
   if (!profile) return "";
   return JSON.stringify({
     providerId: profile.providerId,
-    defaultModel: formatModelRef(profile.defaultModel),
-    allowedModels: Array.from(
-      new Set(profile.allowedModels.map((value) => value.trim()).filter(Boolean)),
-    ).sort((a, b) => a.localeCompare(b)),
+    effectiveModel: formatModelRef(profile.effectiveModel),
   });
 }
 
@@ -714,13 +714,33 @@ export function createManagedAiRuntimeConfigSync(
     }
     const providerRoutingTarget = routing.providerRoutingTarget;
     const providerRoutingLocalHost = routing.providerRoutingLocalHost;
+    const requestedWorkspaceId = targetWorkspaceId || workspace.id?.trim() || "";
+    const runtimeWorkspaceId =
+      deps.resolveConversationServerWorkspaceId(requestedWorkspaceId)?.trim() ||
+      workspace.vesloWorkspaceId?.trim() ||
+      (requestedWorkspaceId === deps.activeWorkspaceId().trim()
+        ? deps.vesloServerWorkspaceId()?.trim() || ""
+        : "") ||
+      requestedWorkspaceId;
+    if (!runtimeWorkspaceId) {
+      const diagnostic = rememberRuntimeAuthorizationPrimeDiagnostic(
+        managedAiRuntimeAuthPrimeDiagnostic("workspace-registration-missing", {
+          ...routing.tracePayload,
+          requestedWorkspaceId: requestedWorkspaceId || null,
+        }),
+      );
+      deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:skip", diagnostic);
+      deps.setManagedAiAccessError(String(diagnostic.supportMessage));
+      return false;
+    }
 
     const runtimeAuthorizationPrimeCacheKey = [
       providerRoutingTarget.baseUrl.trim().replace(/\/+$/, ""),
-      targetWorkspaceId || workspace.id?.trim() || "",
+      runtimeWorkspaceId,
       hashRuntimeAuthorizationCachePart(providerRoutingTarget.serverClientToken),
       hashRuntimeAuthorizationCachePart(providerRoutingLocalHost?.hostToken),
       hashRuntimeAuthorizationCachePart(userToken),
+      deps.denOrgId().trim(),
       String(deps.denAuthRevision()),
     ].join("|");
 
@@ -756,7 +776,11 @@ export function createManagedAiRuntimeConfigSync(
           token: providerRoutingTarget.serverClientToken,
           hostToken: providerRoutingLocalHost?.hostToken || undefined,
         });
-        const response = await runtimeClient.getMyAiAccess(userToken);
+        const response = await runtimeClient.getMyAiAccess(
+          userToken,
+          deps.denOrgId().trim(),
+          runtimeWorkspaceId,
+        );
         const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
           aiAccess: response.aiAccess,
           accessToken: response.accessToken,
@@ -790,7 +814,7 @@ export function createManagedAiRuntimeConfigSync(
           ...routing.tracePayload,
           ok: true,
           providerId: profile.providerId,
-          defaultModelId: profile.defaultModel.modelID,
+          effectiveModelId: profile.effectiveModel.modelID,
           gatewayAccessTokenPresent: Boolean(gatewayAccessToken),
         });
         return true;
@@ -884,8 +908,7 @@ export function createManagedAiRuntimeConfigSync(
       workspaceRoot: root || null,
       vesloWorkspaceId: vesloWorkspaceId || null,
       managedProviderId: managedProfile?.providerId ?? null,
-      managedDefaultModelId: managedProfile?.defaultModel.modelID ?? null,
-      managedAllowedModelCount: managedProfile?.allowedModels.length ?? 0,
+      managedEffectiveModelId: managedProfile?.effectiveModel.modelID ?? null,
       providerRoutingReady,
       providerRoutingRequiresEngineBaseUrl: routing.providerRoutingRequiresEngineBaseUrl,
       configuredSandboxBackend: routing.runtimeSandboxState.configuredBackend,

@@ -16,8 +16,8 @@ test("active row uses subtle stronger background and a left accent strip", () =>
   assert.match(source, /bg-gray-5 text-gray-12/, "active row should use a stronger neutral background");
   assert.match(
     source,
-    /before:content-\[''\][\s\S]*before:bg-indigo-9/,
-    "active row should render a thin left accent strip via ::before pseudo-element",
+    /before:content-\[''\][\s\S]*before:bg-dls-accent/,
+    "active row should render a thin cyan left accent strip via ::before pseudo-element",
   );
   assert.match(
     source,

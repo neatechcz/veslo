@@ -12,8 +12,6 @@ export type UserAiAccessPolicyRecord = {
   enabled: boolean;
   provider: AiAccessProvider | null;
   credentialId: string | null;
-  defaultModel: string | null;
-  allowedModels: string[];
   assignmentOrigin: AiAccessAssignmentOrigin;
   createdAt: Date;
   updatedAt: Date;
@@ -24,13 +22,22 @@ export type UpsertUserAiAccessPolicyInput = {
   enabled: boolean;
   provider: AiAccessProvider | null;
   credentialId: string | null;
-  defaultModel: string | null;
-  allowedModels: string[];
   assignmentOrigin: AiAccessAssignmentOrigin;
+};
+
+export type UpsertUserAiAccessWithAuditInput = UpsertUserAiAccessPolicyInput & {
+  actorUserId: string;
+  organizationId: string | null;
 };
 
 export interface AiAccessRepository {
   getUserAiAccess(userId: string): Promise<UserAiAccessPolicyRecord | null>;
   upsertUserAiAccess(input: UpsertUserAiAccessPolicyInput): Promise<UserAiAccessPolicyRecord>;
   countEnabledPolicies?(): Promise<number>;
+}
+
+export interface AiAccessMutation {
+  upsertUserAiAccessWithAudit(
+    input: UpsertUserAiAccessWithAuditInput,
+  ): Promise<UserAiAccessPolicyRecord>;
 }
