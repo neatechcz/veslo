@@ -265,6 +265,7 @@ function serializeOrganizationBillingAccount(
     },
     manualAccess: {
       enabled: account.manualAccessEnabled,
+      unlimited: account.manualAccessUnlimited,
       expiresAt: toIsoString(account.manualAccessExpiresAt),
     },
     localModels: {
@@ -1242,7 +1243,7 @@ function readPlatformBillingUpdate(
   licenseAffectingChange: boolean
   mode: OrganizationBillingModeValue
   quantities: OrganizationBillingQuantities
-  manualAccess: { enabled: boolean; licenseLimit: number } | null
+  manualAccess: { enabled: boolean; unlimited?: boolean; licenseLimit: number } | null
 } | null {
   if (!isRecord(body)) {
     res.status(400).json({ error: "invalid_billing_update" })
@@ -1294,6 +1295,7 @@ function readPlatformBillingUpdate(
   const isManualTrialUpdate = nextMode === "manual_access" && effectiveSource === "manual_trial"
 
   let manualAccessEnabled = existing?.manualAccessEnabled ?? false
+  let manualAccessUnlimited = existing?.manualAccessUnlimited ?? false
   let manualAccessExpiresAt: Date | null | undefined = undefined
   let manualAccessLicenseLimit = quantities.managedAiBasic + quantities.managedAiExtended + quantities.localModels
   if (hasOwnProperty(body, "manualAccess")) {
@@ -1308,6 +1310,14 @@ function readPlatformBillingUpdate(
         return null
       }
       manualAccessEnabled = enabled
+    }
+    if (hasOwnProperty(body.manualAccess, "unlimited")) {
+      const unlimited = readBodyBoolean(body.manualAccess.unlimited)
+      if (unlimited === null) {
+        res.status(400).json({ error: "invalid_manual_access" })
+        return null
+      }
+      manualAccessUnlimited = unlimited
     }
     if (hasOwnProperty(body.manualAccess, "expiresAt")) {
       const expiresAt = readNullableBillingDate(body.manualAccess.expiresAt)
@@ -1334,15 +1344,30 @@ function readPlatformBillingUpdate(
 
   const effectiveManualAccessExpiresAt =
     manualAccessExpiresAt === undefined ? existing?.manualAccessExpiresAt ?? null : manualAccessExpiresAt
+  const effectiveManualAccessUnlimited = manualAccessUnlimited
   if (isManualTrialUpdate) {
     if (existing?.stripeSubscriptionId) {
       res.status(409).json({ error: "stripe_subscription_exists" })
       return null
     }
-    if (!(effectiveManualAccessExpiresAt instanceof Date) || effectiveManualAccessExpiresAt <= new Date()) {
+    if (effectiveManualAccessUnlimited && effectiveManualAccessExpiresAt !== null) {
+      res.status(400).json({ error: "unlimited_manual_access_cannot_expire" })
+      return null
+    }
+    if (!effectiveManualAccessUnlimited &&
+      (!(effectiveManualAccessExpiresAt instanceof Date) || effectiveManualAccessExpiresAt <= new Date())) {
       res.status(400).json({ error: "invalid_manual_access_expires_at" })
       return null
     }
+    if (effectiveManualAccessUnlimited) {
+      quantities.managedAiBasic = 0
+      quantities.managedAiExtended = 0
+      quantities.localModels = 0
+      manualAccessLicenseLimit = 0
+    }
+  } else if (effectiveManualAccessUnlimited) {
+    res.status(400).json({ error: "unlimited_manual_access_requires_trial" })
+    return null
   }
 
   const localModelsUnitAmount = hasOwnProperty(body, "localModelsUnitAmount")
@@ -1413,6 +1438,7 @@ function readPlatformBillingUpdate(
       ...(hasOwnProperty(body, "manualAccess")
         ? {
           manualAccessEnabled,
+          manualAccessUnlimited,
           manualAccessExpiresAt: manualAccessExpiresAt === undefined ? existing?.manualAccessExpiresAt ?? null : manualAccessExpiresAt,
         }
         : {}),
@@ -1430,6 +1456,7 @@ function readPlatformBillingUpdate(
     quantities,
     manualAccess: {
       enabled: manualAccessEnabled,
+      unlimited: manualAccessUnlimited,
       licenseLimit: manualAccessLicenseLimit,
     },
   }

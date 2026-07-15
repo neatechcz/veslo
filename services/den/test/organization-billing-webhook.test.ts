@@ -51,6 +51,7 @@ function createBillingAccount(input: Partial<OrganizationBillingAccountRecord> =
     managedAiExtendedQuantity: 0,
     localModelsQuantity: 0,
     manualAccessEnabled: false,
+    manualAccessUnlimited: false,
     manualAccessExpiresAt: null,
     localModelsUnitAmount: null,
     localModelsCurrency: null,
@@ -425,6 +426,7 @@ test("checkout.session.completed clears active platform trial manual access and 
         stripeSubscriptionId: null,
         billingInterval: null,
         manualAccessEnabled: true,
+        manualAccessUnlimited: true,
         manualAccessExpiresAt: futureTrialExpiry(),
         managedAiBasicQuantity: 2,
         managedAiExtendedQuantity: 1,
@@ -439,6 +441,7 @@ test("checkout.session.completed clears active platform trial manual access and 
   assert.equal(account?.mode, "managed_ai")
   assert.equal(account?.source, "stripe_checkout")
   assert.equal(account?.manualAccessEnabled, false)
+  assert.equal(account?.manualAccessUnlimited, false)
   assert.equal(account?.manualAccessExpiresAt, null)
   assert.equal(account?.managedAiBasicQuantity, 4)
   assert.equal(account?.managedAiExtendedQuantity, 2)
@@ -472,6 +475,7 @@ test("customer.subscription.updated clears active platform trial manual access o
         stripeSubscriptionId: "sub_123",
         billingInterval: null,
         manualAccessEnabled: true,
+        manualAccessUnlimited: true,
         manualAccessExpiresAt: futureTrialExpiry(),
         managedAiBasicQuantity: 2,
         managedAiExtendedQuantity: 1,
@@ -487,6 +491,7 @@ test("customer.subscription.updated clears active platform trial manual access o
   assert.equal(account?.source, "stripe_subscription")
   assert.equal(account?.status, "active")
   assert.equal(account?.manualAccessEnabled, false)
+  assert.equal(account?.manualAccessUnlimited, false)
   assert.equal(account?.manualAccessExpiresAt, null)
   assert.equal(account?.managedAiBasicQuantity, 3)
   assert.equal(account?.managedAiExtendedQuantity, 2)
@@ -591,6 +596,7 @@ test("invoice.payment_failed clears platform trial when parent subscription evid
         stripeSubscriptionId: "sub_123",
         billingInterval: null,
         manualAccessEnabled: true,
+        manualAccessUnlimited: true,
         manualAccessExpiresAt: futureTrialExpiry(),
         managedAiBasicQuantity: 2,
         managedAiExtendedQuantity: 1,
@@ -606,6 +612,7 @@ test("invoice.payment_failed clears platform trial when parent subscription evid
   assert.equal(account?.source, "stripe_invoice")
   assert.equal(account?.status, "past_due")
   assert.equal(account?.manualAccessEnabled, false)
+  assert.equal(account?.manualAccessUnlimited, false)
   assert.equal(account?.manualAccessExpiresAt, null)
   assert.equal(account?.paymentProblemCode, "invoice_payment_failed")
   assert.match(account?.paymentProblemMessage ?? "", /in_failed_1/)

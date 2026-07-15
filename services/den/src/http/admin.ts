@@ -273,6 +273,7 @@ export type AdminOrganizationBillingAccountRecord = {
   quantities: OrganizationBillingQuantities
   manualAccess: {
     enabled: boolean
+    unlimited: boolean
     expiresAt: string | null
   }
   localModels: {
@@ -309,7 +310,7 @@ export type AdminOrganizationBillingSummary = {
   entitlement: OrganizationBillingEntitlement
   allowedTiers: AdminOrganizationBillingTierRecord[]
   activeUserCount: number
-  licenseLimit: number
+  licenseLimit: number | null
   availableManagedAiTiers: AdminManagedAiBillingTierDefinition[]
 }
 

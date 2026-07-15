@@ -185,6 +185,7 @@ function planCheckoutSessionCompleted(
         managedAiExtendedQuantity: quantities.managedAiExtended,
         localModelsQuantity: 0,
         manualAccessEnabled: false,
+        manualAccessUnlimited: false,
         manualAccessExpiresAt: null,
         paymentProblemCode: null,
         paymentProblemMessage: null,
@@ -244,6 +245,7 @@ async function planSubscriptionUpdated(
   }
   if (shouldActivateStripeSubscription) {
     update.manualAccessEnabled = false
+    update.manualAccessUnlimited = false
     update.manualAccessExpiresAt = null
   }
 
@@ -299,6 +301,7 @@ async function planInvoicePaymentFailed(
         stripeCustomerId: readStripeId(invoice.customer) ?? resolved.account?.stripeCustomerId ?? null,
         stripeSubscriptionId: stripeSubscriptionId ?? resolved.account?.stripeSubscriptionId ?? null,
         manualAccessEnabled: false,
+        manualAccessUnlimited: false,
         manualAccessExpiresAt: null,
         paymentProblemCode: "invoice_payment_failed",
         paymentProblemMessage: `Stripe invoice ${invoiceId} payment failed`,

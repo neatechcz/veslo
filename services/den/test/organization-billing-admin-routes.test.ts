@@ -123,6 +123,7 @@ function billingAccount(input: Partial<OrganizationBillingAccountRecord> = {}): 
     managedAiExtendedQuantity: 0,
     localModelsQuantity: 0,
     manualAccessEnabled: false,
+    manualAccessUnlimited: false,
     manualAccessExpiresAt: null,
     localModelsUnitAmount: null,
     localModelsCurrency: null,
@@ -165,6 +166,7 @@ function applyBillingAccountUpdate(
     managedAiExtendedQuantity: input.managedAiExtendedQuantity ?? existing.managedAiExtendedQuantity,
     localModelsQuantity: input.localModelsQuantity ?? existing.localModelsQuantity,
     manualAccessEnabled: input.manualAccessEnabled ?? existing.manualAccessEnabled,
+    manualAccessUnlimited: input.manualAccessUnlimited ?? existing.manualAccessUnlimited,
     manualAccessExpiresAt: input.manualAccessExpiresAt !== undefined ? input.manualAccessExpiresAt : existing.manualAccessExpiresAt,
     localModelsUnitAmount: input.localModelsUnitAmount !== undefined ? input.localModelsUnitAmount : existing.localModelsUnitAmount,
     localModelsCurrency: input.localModelsCurrency !== undefined ? input.localModelsCurrency : existing.localModelsCurrency,
@@ -256,6 +258,7 @@ function runtimeRepository(
         canUseByokOrLocalProvider: true,
         canReadHistory: true,
         licenseLimit: 2,
+        isUnlimited: false,
         activeUserCount: 2,
         isInGracePeriod: false,
         warning: null,
@@ -680,7 +683,7 @@ test("runtime platform billing route grants platform trial access with quantitie
           validationCalls += 1
           assert.equal(input.mode, "manual_access")
           assert.deepEqual(input.quantities, { managedAiBasic: 2, managedAiExtended: 1, localModels: 0 })
-          assert.deepEqual(input.manualAccess, { enabled: true, licenseLimit: 3 })
+          assert.deepEqual(input.manualAccess, { enabled: true, unlimited: false, licenseLimit: 3 })
         },
         async upsertBillingAccount(input) {
           storedAccount = applyBillingAccountUpdate(storedAccount, input)
@@ -706,6 +709,146 @@ test("runtime platform billing route grants platform trial access with quantitie
     assert.equal(payload.billing.account.quantities.managedAiBasic, 2)
     assert.equal(payload.billing.account.quantities.managedAiExtended, 1)
     assert.equal(validationCalls, 1)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("runtime platform billing route grants unlimited trial without expiry or seat quantities", async () => {
+  let storedAccount = billingAccount({
+    mode: "none",
+    source: null,
+    status: "none",
+    stripeCustomerId: null,
+    stripeSubscriptionId: null,
+    billingInterval: null,
+    managedAiBasicQuantity: 0,
+    managedAiExtendedQuantity: 0,
+    localModelsQuantity: 0,
+    manualAccessEnabled: false,
+    manualAccessUnlimited: false,
+    manualAccessExpiresAt: null,
+  })
+  let validationCalls = 0
+  const { server, baseUrl } = await listen({
+    async getSessionSnapshot() {
+      return platformAdminSession()
+    },
+    ...await runtimeBillingRouteDeps({
+      repository: runtimeRepository({
+        async getBillingAccount() {
+          return storedAccount
+        },
+        async assertRequestedQuantitiesCanCoverActiveUsers(input) {
+          validationCalls += 1
+          assert.equal(input.mode, "manual_access")
+          assert.deepEqual(input.quantities, { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 })
+          assert.deepEqual(input.manualAccess, { enabled: true, unlimited: true, licenseLimit: 0 })
+        },
+        async deriveEntitlement() {
+          return deriveOrganizationBillingEntitlement({
+            mode: storedAccount.mode,
+            status: storedAccount.status,
+            grace: false,
+            manualAccess: storedAccount.manualAccessEnabled
+              ? {
+                enabled: true,
+                allowManagedAi: true,
+                unlimited: storedAccount.manualAccessUnlimited,
+                licenseLimit: 0,
+              }
+              : null,
+            quantities: { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 },
+            activeUserCount: 250,
+            policy: {
+              allowByokWithoutPaidAccess: false,
+              organizationAccessEnabled: true,
+              tierAllowed: true,
+            },
+          })
+        },
+        async upsertBillingAccount(input) {
+          storedAccount = applyBillingAccountUpdate(storedAccount, input)
+          return storedAccount
+        },
+      }),
+    }),
+  })
+
+  try {
+    const response = await fetch(`${baseUrl}/organizations/org_1/billing/platform`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "trialing",
+        manualAccess: { enabled: true, unlimited: true, expiresAt: null },
+      }),
+    })
+
+    assert.equal(response.status, 200)
+    const payload = await response.json()
+    assert.deepEqual(payload.billing.account.manualAccess, {
+      enabled: true,
+      unlimited: true,
+      expiresAt: null,
+    })
+    assert.deepEqual(payload.billing.account.quantities, {
+      managedAiBasic: 0,
+      managedAiExtended: 0,
+      localModels: 0,
+    })
+    assert.equal(payload.billing.entitlement.isUnlimited, true)
+    assert.equal(payload.billing.entitlement.licenseLimit, null)
+    assert.equal(payload.billing.entitlement.canUseManagedAi, true)
+    assert.equal(validationCalls, 1)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("runtime platform billing route rejects an expiry on an unlimited trial", async () => {
+  let upsertCalls = 0
+  const { server, baseUrl } = await listen({
+    async getSessionSnapshot() {
+      return platformAdminSession()
+    },
+    ...await runtimeBillingRouteDeps({
+      repository: runtimeRepository({
+        async getBillingAccount() {
+          return billingAccount({
+            mode: "none",
+            source: null,
+            status: "none",
+            stripeSubscriptionId: null,
+          })
+        },
+        async upsertBillingAccount(input) {
+          upsertCalls += 1
+          return billingAccount({ mode: input.mode ?? "manual_access" })
+        },
+      }),
+    }),
+  })
+
+  try {
+    const response = await fetch(`${baseUrl}/organizations/org_1/billing/platform`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "trialing",
+        manualAccess: { enabled: true, unlimited: true, expiresAt: futureBillingIsoString() },
+      }),
+    })
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: "unlimited_manual_access_cannot_expire" })
+    assert.equal(upsertCalls, 0)
   } finally {
     server.close()
     await once(server, "close")
@@ -741,7 +884,7 @@ test("runtime platform billing route preserves existing trial expiry when source
           validationCalls += 1
           assert.equal(input.mode, "manual_access")
           assert.deepEqual(input.quantities, { managedAiBasic: 3, managedAiExtended: 1, localModels: 0 })
-          assert.deepEqual(input.manualAccess, { enabled: true, licenseLimit: 4 })
+          assert.deepEqual(input.manualAccess, { enabled: true, unlimited: false, licenseLimit: 4 })
         },
         async upsertBillingAccount(input) {
           storedAccount = applyBillingAccountUpdate(storedAccount, input)
@@ -808,6 +951,7 @@ test("runtime platform billing route revokes platform trial access without activ
               ? {
                 enabled: true,
                 allowManagedAi: true,
+                unlimited: storedAccount.manualAccessUnlimited,
                 licenseLimit:
                   storedAccount.managedAiBasicQuantity +
                   storedAccount.managedAiExtendedQuantity +
@@ -851,7 +995,7 @@ test("runtime platform billing route revokes platform trial access without activ
         source: null,
         status: "none",
         quantities: { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 },
-        manualAccess: { enabled: false, expiresAt: null },
+        manualAccess: { enabled: false, unlimited: false, expiresAt: null },
       }),
     })
 
@@ -867,6 +1011,7 @@ test("runtime platform billing route revokes platform trial access without activ
     })
     assert.deepEqual(payload.billing.account.manualAccess, {
       enabled: false,
+      unlimited: false,
       expiresAt: null,
     })
     assert.equal(payload.billing.entitlement.effectiveMode, "none")
