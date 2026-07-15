@@ -331,7 +331,8 @@ test.describe('Den admin billing subscription lifecycle UI', () => {
     await expect(page.locator('#billing-organization-list')).not.toContainText('Unpaid Co');
   });
 
-  test('lets platform admins create and revoke unlimited trial access from the billing workspace', async ({ page }) => {
+  test('lets platform admins create and revoke platform trial access from the billing workspace', async ({ page }) => {
+    const trialDate = futureDateInput(14);
     const harness = await installBillingHarness(page, {
       platformAdmin: true,
       organizations: [organization(ORG_ID, 'Acme Billing')],
@@ -341,20 +342,23 @@ test.describe('Den admin billing subscription lifecycle UI', () => {
     });
 
     await openBilling(page, 'platform');
+    await page.locator('#billing-basic-quantity').fill('2');
+    await page.locator('#billing-extended-quantity').fill('1');
+    await expect(page.locator('#billing-create-trial-button')).toBeDisabled();
+    await page.locator('#billing-trial-end-date').fill(trialDate);
     await expect(page.locator('#billing-create-trial-button')).toBeEnabled();
     await page.locator('#billing-create-trial-button').click();
 
-    await expect(page.locator('#billing-action-status')).toHaveText('Unlimited trial enabled.');
-    await expect(page.locator('#billing-notice-title')).toHaveText('Unlimited trial');
-    await expect(page.locator('#billing-source')).toHaveText('Unlimited trial');
-    await expect(page.locator('#billing-license-total')).toHaveText('Unlimited');
-    await expect(page.locator('#billing-license-detail')).toHaveText('No seat limit');
-    await expect(page.locator('#billing-user-detail')).toHaveText('Unlimited capacity');
+    await expect(page.locator('#billing-action-status')).toHaveText('Trial access created.');
+    await expect(page.locator('#billing-notice-title')).toHaveText('Trial access is active');
+    await expect(page.locator('#billing-license-total')).toHaveText('3');
+    await expect(page.locator('#billing-license-detail')).toHaveText('2 Basic, 1 Extended');
     expect(harness.platformRequests[0]).toEqual({
       mode: 'manual_access',
       source: 'manual_trial',
-      status: 'trialing',
-      manualAccess: { enabled: true, unlimited: true, expiresAt: null },
+      status: 'active',
+      quantities: { managedAiBasic: 2, managedAiExtended: 1, localModels: 0 },
+      manualAccess: { enabled: true, expiresAt: trialEndDateIso(trialDate), licenseLimit: 3 },
     });
 
     await expect(page.locator('#billing-revoke-trial-button')).toBeEnabled();
@@ -367,7 +371,7 @@ test.describe('Den admin billing subscription lifecycle UI', () => {
       source: null,
       status: 'none',
       quantities: { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 },
-      manualAccess: { enabled: false, unlimited: false, expiresAt: null },
+      manualAccess: { enabled: false, expiresAt: null },
     });
 
     harness.setBilling(
@@ -644,7 +648,7 @@ async function handleAdminApi(
         source?: string | null;
         status?: string;
         quantities?: BillingQuantities & { localModels?: number };
-        manualAccess?: { enabled?: boolean; unlimited?: boolean; expiresAt?: string | null; licenseLimit?: number };
+        manualAccess?: { enabled?: boolean; expiresAt?: string | null; licenseLimit?: number };
       };
       const quantities = body.quantities ?? { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 };
       state.platformRequests.push(body);
@@ -659,7 +663,6 @@ async function handleAdminApi(
           basic: quantities.managedAiBasic,
           extended: quantities.managedAiExtended,
           expiresAt: body.manualAccess?.expiresAt ?? null,
-          unlimited: body.manualAccess?.unlimited === true,
         });
         await fulfillJson(route, 200, { billing: state.billingByOrgId[orgId] });
         return;
@@ -690,7 +693,6 @@ function billingNone(input: { activeUserCount: number }): BillingPayload {
       canUseByokOrLocalProvider: false,
       canReadHistory: true,
       licenseLimit: 0,
-      isUnlimited: false,
       activeUserCount: input.activeUserCount,
       isInGracePeriod: false,
       warning: null,
@@ -750,7 +752,6 @@ function billingAccount(input: {
       canUseByokOrLocalProvider: canUseManagedAi,
       canReadHistory: true,
       licenseLimit,
-      isUnlimited: false,
       activeUserCount: input.activeUserCount,
       isInGracePeriod: false,
       warning: null,
@@ -767,10 +768,9 @@ function billingTrialAccount(input: {
   basic: number;
   extended: number;
   expiresAt: string | null;
-  unlimited?: boolean;
   canUseManagedAi?: boolean;
 }): BillingPayload {
-  const licenseLimit = input.unlimited ? null : input.basic + input.extended;
+  const licenseLimit = input.basic + input.extended;
   const canUseManagedAi = input.canUseManagedAi ?? true;
   const blockingReason = canUseManagedAi ? null : 'payment_required';
 
@@ -787,7 +787,6 @@ function billingTrialAccount(input: {
       },
       manualAccess: {
         enabled: true,
-        unlimited: input.unlimited === true,
         expiresAt: input.expiresAt,
       },
       stripe: {
@@ -806,7 +805,6 @@ function billingTrialAccount(input: {
       canUseByokOrLocalProvider: canUseManagedAi,
       canReadHistory: true,
       licenseLimit,
-      isUnlimited: input.unlimited === true,
       activeUserCount: input.activeUserCount,
       isInGracePeriod: false,
       warning: null,
@@ -824,6 +822,20 @@ function organization(id: string, name: string): TestOrganization {
     name,
     slug: id.replace(/^org_/, ''),
   };
+}
+
+function futureDateInput(daysFromNow: number) {
+  const date = new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1000);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function trialEndDateIso(dateInput: string) {
+  const [year, month, day] = dateInput.split('-').map((part) => Number(part));
+  return new Date(year, month - 1, day, 23, 59, 59, 999).toISOString();
 }
 
 function usersForOrganizations(organizations: TestOrganization[], platformAdmin: boolean) {
@@ -939,7 +951,6 @@ type BillingPayload = {
     quantities: BillingQuantities & { localModels: number };
     manualAccess?: {
       enabled: boolean;
-      unlimited: boolean;
       expiresAt: string | null;
     };
     stripe: {
@@ -957,8 +968,7 @@ type BillingPayload = {
     canUseManagedAi: boolean;
     canUseByokOrLocalProvider: boolean;
     canReadHistory: boolean;
-    licenseLimit: number | null;
-    isUnlimited: boolean;
+    licenseLimit: number;
     activeUserCount: number;
     isInGracePeriod: boolean;
     warning: string | null;
@@ -966,5 +976,5 @@ type BillingPayload = {
     byokOrLocalProviderBlockingReason: string | null;
   };
   activeUserCount: number;
-  licenseLimit: number | null;
+  licenseLimit: number;
 };

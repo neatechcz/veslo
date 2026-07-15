@@ -1089,9 +1089,6 @@ function billingHasActiveTrial(account) {
   if (account?.mode !== "manual_access" || account?.source !== "manual_trial" || account?.manualAccess?.enabled !== true) {
     return false;
   }
-  if (account.manualAccess.unlimited === true) {
-    return true;
-  }
   if (!account.manualAccess.expiresAt) {
     return false;
   }
@@ -1161,8 +1158,7 @@ function collectBillingOrganizations() {
     const entitlement = billing?.entitlement || null;
     const quantities = account?.quantities || {};
     const activeUsers = Number(billing?.activeUserCount ?? entitlement?.activeUserCount ?? org.activeUsers ?? 0);
-    const isUnlimited = account?.manualAccess?.unlimited === true || entitlement?.isUnlimited === true;
-    const licenseLimit = isUnlimited ? null : Number(billing?.licenseLimit ?? entitlement?.licenseLimit ?? 0);
+    const licenseLimit = Number(billing?.licenseLimit ?? entitlement?.licenseLimit ?? 0);
     const status = account?.status || entitlement?.status || "none";
     const mode = account?.mode || entitlement?.effectiveMode || "none";
     const paymentProblem = account?.paymentProblem?.code || entitlement?.managedAiBlockingReason || "";
@@ -1175,7 +1171,6 @@ function collectBillingOrganizations() {
       source: account?.source || "Not configured",
       paymentProblem,
       licenseLimit,
-      isUnlimited,
       basicQuantity: Number(quantities.managedAiBasic || 0),
       extendedQuantity: Number(quantities.managedAiExtended || 0),
       interval: account?.billingInterval || "None",
@@ -1234,7 +1229,7 @@ function renderBilling() {
     <article class="billing-org-card ${org.id === state.selectedBillingOrgId ? "active" : ""}" data-billing-org-id="${escapeHtml(org.id)}">
       <div>
         <strong>${escapeHtml(org.name)}</strong>
-        <p>${escapeHtml(`${org.activeUsers}/${org.isUnlimited ? "Unlimited" : org.licenseLimit} active users · ${org.isUnlimited ? "Unlimited trial" : org.source}`)}</p>
+        <p>${escapeHtml(`${org.activeUsers}/${org.licenseLimit} active users · ${org.source}`)}</p>
       </div>
       <span class="status-chip ${billingStatusTone(org.status)}">${escapeHtml(org.status === "none" ? "Not configured" : org.status)}</span>
     </article>
@@ -1250,25 +1245,22 @@ function renderBilling() {
   const canUseManagedAi = entitlement?.canUseManagedAi === true;
   const isStripeConfigured = account?.stripe?.subscriptionConfigured === true;
   const hasActiveTrial = billingHasActiveTrial(account);
-  const isUnlimitedTrial = hasActiveTrial && org?.isUnlimited === true;
   const statusTone = billingStatusTone(org?.status || "none");
   els.billingTargetName.textContent = targetName;
-  els.billingSource.textContent = isUnlimitedTrial ? "Unlimited trial" : org?.source || "Not configured";
+  els.billingSource.textContent = org?.source || "Not configured";
   els.billingLastSync.textContent = account?.updatedAt ? formatDate(account.updatedAt) : "Awaiting Stripe event";
-  els.billingPaymentState.textContent = org?.paymentProblem ? "Payment issue" : canUseManagedAi ? "Active" : "No paid access";
+  els.billingPaymentState.textContent = org?.paymentProblem ? "Payment issue" : licenseLimit > 0 ? "Active" : "No paid access";
   els.billingAuditTarget.textContent = org?.id || "No organization selected";
-  els.billingLicenseTotal.textContent = isUnlimitedTrial ? "Unlimited" : String(licenseLimit);
-  els.billingLicenseDetail.textContent = isUnlimitedTrial ? "No seat limit" : `${org?.basicQuantity ?? 0} Basic, ${org?.extendedQuantity ?? 0} Extended`;
+  els.billingLicenseTotal.textContent = String(licenseLimit);
+  els.billingLicenseDetail.textContent = `${org?.basicQuantity ?? 0} Basic, ${org?.extendedQuantity ?? 0} Extended`;
   els.billingActiveUsers.textContent = String(activeUsers);
-  els.billingUserDetail.textContent = isUnlimitedTrial ? "Unlimited capacity" : `${Math.max(licenseLimit - activeUsers, 0)} licenses available`;
+  els.billingUserDetail.textContent = `${Math.max(licenseLimit - activeUsers, 0)} licenses available`;
   els.billingInterval.textContent = org?.interval || "None";
-  els.billingRenewal.textContent = isUnlimitedTrial ? "No expiry" : org?.renewal || "None";
-  els.billingStatusChip.textContent = isUnlimitedTrial ? "Unlimited trial" : org?.status && org.status !== "none" ? org.status : "Not configured";
+  els.billingRenewal.textContent = org?.renewal || "None";
+  els.billingStatusChip.textContent = org?.status && org.status !== "none" ? org.status : "Not configured";
   els.billingStatusChip.className = `status-chip ${statusTone}`;
-  els.billingNoticeTitle.textContent = isUnlimitedTrial ? "Unlimited trial" : hasActiveTrial ? "Trial access is active" : canUseManagedAi ? "AI inference is enabled" : "Managed AI is blocked";
-  els.billingNoticeText.textContent = isUnlimitedTrial
-    ? "No Veslo expiration, seat limit, or token cap. Usage is recorded and upstream provider limits still apply."
-    : hasActiveTrial
+  els.billingNoticeTitle.textContent = hasActiveTrial ? "Trial access is active" : canUseManagedAi ? "AI inference is enabled" : "Managed AI is blocked";
+  els.billingNoticeText.textContent = hasActiveTrial
     ? `Manual trial access ends ${account?.manualAccess?.expiresAt ? formatDate(account.manualAccess.expiresAt) : "on the selected trial date"}.`
     : canUseManagedAi
     ? "The organization has Managed AI access and enough licenses for the current entitlement."
@@ -1276,8 +1268,8 @@ function renderBilling() {
       ? "Increase the license count before re-enabling Managed AI for all active users."
       : "History and settings remain readable. Managed AI inference requires paid or platform-granted access.";
   els.billingManagedAi.textContent = canUseManagedAi ? "Allowed" : "Blocked";
-  els.billingLicenseLimit.textContent = isUnlimitedTrial ? "Unlimited" : `${licenseLimit} users`;
-  els.billingExtendedInput.textContent = isUnlimitedTrial ? "Not limited" : `${org?.extendedQuantity ?? 0} seats`;
+  els.billingLicenseLimit.textContent = `${licenseLimit} users`;
+  els.billingExtendedInput.textContent = `${org?.extendedQuantity ?? 0} seats`;
   const billingFormHasFocus = [
     els.billingBasicQuantity,
     els.billingExtendedQuantity,
@@ -1313,7 +1305,7 @@ function renderBilling() {
     els.billingRefreshButton.disabled = state.billingBusy || !org;
   }
   if (els.billingCreateTrialButton) {
-    els.billingCreateTrialButton.disabled = state.billingBusy || !org || isStripeConfigured;
+    els.billingCreateTrialButton.disabled = state.billingBusy || !org || isStripeConfigured || !els.billingTrialEndDate?.value;
     els.billingCreateTrialButton.title = isStripeConfigured
       ? "Trial creation is disabled because this organization already has a Stripe subscription."
       : "";
@@ -1398,16 +1390,33 @@ async function createBillingTrial() {
     setBillingActionStatus("Trial creation is disabled because this organization already has a Stripe subscription.", "error");
     return;
   }
+  const quantities = readBillingFormQuantities();
+  if (!quantities) {
+    setBillingActionStatus("License quantities must be whole numbers.", "error");
+    return;
+  }
+  if (quantities.managedAiBasic <= 0 && quantities.managedAiExtended <= 0) {
+    setBillingActionStatus("Choose at least one Basic or Extended license.", "error");
+    return;
+  }
+  const expiresAt = readTrialEndDateIso();
+  if (!expiresAt) {
+    setBillingActionStatus("Choose a trial end date.", "error");
+    return;
+  }
+  const licenseLimit = quantities.managedAiBasic + quantities.managedAiExtended;
+  const trialQuantities = { ...quantities, localModels: 0 };
   await submitPlatformBillingUpdate(
     org.id,
     {
       mode: "manual_access",
       source: "manual_trial",
-      status: "trialing",
-      manualAccess: { enabled: true, unlimited: true, expiresAt: null },
+      status: "active",
+      quantities: trialQuantities,
+      manualAccess: { enabled: true, expiresAt, licenseLimit },
     },
-    "Enabling unlimited trial...",
-    "Unlimited trial enabled.",
+    "Creating trial access...",
+    "Trial access created.",
   );
 }
 
@@ -1424,7 +1433,7 @@ async function revokeBillingTrial() {
       source: null,
       status: "none",
       quantities: { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 },
-      manualAccess: { enabled: false, unlimited: false, expiresAt: null },
+      manualAccess: { enabled: false, expiresAt: null },
     },
     "Revoking trial access...",
     "Trial access revoked.",
