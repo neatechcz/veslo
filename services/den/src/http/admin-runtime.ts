@@ -1345,6 +1345,10 @@ function readPlatformBillingUpdate(
   const effectiveManualAccessExpiresAt =
     manualAccessExpiresAt === undefined ? existing?.manualAccessExpiresAt ?? null : manualAccessExpiresAt
   const effectiveManualAccessUnlimited = manualAccessUnlimited
+  if (effectiveManualAccessUnlimited && !manualAccessEnabled) {
+    res.status(400).json({ error: "unlimited_manual_access_requires_enabled_access" })
+    return null
+  }
   if (isManualTrialUpdate) {
     if (existing?.stripeSubscriptionId) {
       res.status(409).json({ error: "stripe_subscription_exists" })

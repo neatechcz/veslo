@@ -1169,6 +1169,7 @@ async function ensureTables() {
 
 async function bootstrap() {
   await ensureTables()
+  await organizationBillingRepository.ensureMissingUnlimitedTrialAccounts()
   await ensureCorePlatformSkills(skillRegistryStore)
   startFeedbackProjectorDueRetryLoop(feedbackProjector)
   startDebugLogRetentionLoop(debugLogService)

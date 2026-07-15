@@ -21,7 +21,7 @@ type DefaultOrgTransaction = {
   findMembershipOrgId(userId: string): Promise<string | null>
   createOrganization(record: CreatedOrganization): Promise<void>
   createMembership(record: CreatedMembership): Promise<void>
-  createBillingAccount(record: CreatedBillingAccount): Promise<void>
+  ensureBillingAccount(record: CreatedBillingAccount): Promise<void>
 }
 
 type EnsureDefaultOrgWithStore = (
@@ -31,11 +31,15 @@ type EnsureDefaultOrgWithStore = (
   createId: () => string,
 ) => Promise<string>
 
-function createTransactionalStore(input: { existingOrgId?: string; failBilling?: boolean } = {}) {
+function createTransactionalStore(input: {
+  existingOrgId?: string
+  existingBillingAccount?: CreatedBillingAccount
+  failBilling?: boolean
+} = {}) {
   const committed = {
     organizations: [] as CreatedOrganization[],
     memberships: [] as CreatedMembership[],
-    billingAccounts: [] as CreatedBillingAccount[],
+    billingAccounts: input.existingBillingAccount ? [input.existingBillingAccount] : [] as CreatedBillingAccount[],
   }
 
   return {
@@ -57,11 +61,13 @@ function createTransactionalStore(input: { existingOrgId?: string; failBilling?:
           async createMembership(record) {
             pending.memberships.push(record)
           },
-          async createBillingAccount(record) {
+          async ensureBillingAccount(record) {
             if (input.failBilling) {
               throw new Error("billing insert failed")
             }
-            pending.billingAccounts.push(record)
+            if (!pending.billingAccounts.some((account) => account.orgId === record.orgId)) {
+              pending.billingAccounts.push(record)
+            }
           },
         }
 
@@ -113,12 +119,42 @@ test("new default organization receives unlimited trial in the same transaction"
   }])
 })
 
-test("existing default organization is returned without overwriting billing", async () => {
+test("existing default organization created during deployment receives a missing unlimited trial", async () => {
   const ensureDefaultOrgWithStore = await loadEnsureDefaultOrgWithStore()
   const { store, committed } = createTransactionalStore({ existingOrgId: "org_existing" })
 
   assert.equal(await ensureDefaultOrgWithStore(store, "user_1", "Personal", () => "unused"), "org_existing")
-  assert.deepEqual(committed, { organizations: [], memberships: [], billingAccounts: [] })
+  assert.deepEqual(committed.billingAccounts, [{
+    id: "unused",
+    orgId: "org_existing",
+    mode: "manual_access",
+    source: "manual_trial",
+    status: "trialing",
+    manualAccessEnabled: true,
+    manualAccessUnlimited: true,
+    manualAccessExpiresAt: null,
+  }])
+})
+
+test("existing default organization keeps an existing revoked billing row", async () => {
+  const ensureDefaultOrgWithStore = await loadEnsureDefaultOrgWithStore()
+  const existingBillingAccount: CreatedBillingAccount = {
+    id: "billing_existing",
+    orgId: "org_existing",
+    mode: "manual_access",
+    source: "manual_trial",
+    status: "trialing",
+    manualAccessEnabled: true,
+    manualAccessUnlimited: true,
+    manualAccessExpiresAt: null,
+  }
+  const { store, committed } = createTransactionalStore({
+    existingOrgId: "org_existing",
+    existingBillingAccount,
+  })
+
+  assert.equal(await ensureDefaultOrgWithStore(store, "user_1", "Personal", () => "unused"), "org_existing")
+  assert.deepEqual(committed.billingAccounts, [existingBillingAccount])
 })
 
 test("failed default billing insert rolls back organization and membership", async () => {

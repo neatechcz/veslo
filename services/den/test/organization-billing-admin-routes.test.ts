@@ -855,6 +855,51 @@ test("runtime platform billing route rejects an expiry on an unlimited trial", a
   }
 })
 
+test("runtime platform billing route rejects unlimited manual access when access is disabled", async () => {
+  let upsertCalls = 0
+  const { server, baseUrl } = await listen({
+    async getSessionSnapshot() {
+      return platformAdminSession()
+    },
+    ...await runtimeBillingRouteDeps({
+      repository: runtimeRepository({
+        async getBillingAccount() {
+          return billingAccount({
+            mode: "none",
+            source: null,
+            status: "none",
+            stripeSubscriptionId: null,
+          })
+        },
+        async upsertBillingAccount(input) {
+          upsertCalls += 1
+          return billingAccount({ mode: input.mode ?? "manual_access" })
+        },
+      }),
+    }),
+  })
+
+  try {
+    const response = await fetch(`${baseUrl}/organizations/org_1/billing/platform`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "trialing",
+        manualAccess: { enabled: false, unlimited: true, expiresAt: null },
+      }),
+    })
+
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: "unlimited_manual_access_requires_enabled_access" })
+    assert.equal(upsertCalls, 0)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("runtime platform billing route preserves existing trial expiry when source is resent", async () => {
   const existingExpiry = futureBillingIsoString()
   let storedAccount = billingAccount({

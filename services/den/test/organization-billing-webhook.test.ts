@@ -638,6 +638,33 @@ test("invoice.payment_succeeded clears payment problem state", async () => {
   assert.equal(harness.accounts[0]?.paymentProblemMessage, null)
 })
 
+test("invoice.payment_succeeded replaces an unlimited manual trial with paid Stripe access", async () => {
+  const harness = createMemoryBillingHarness({
+    accounts: [
+      createBillingAccount({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "trialing",
+        stripeSubscriptionId: null,
+        manualAccessEnabled: true,
+        manualAccessUnlimited: true,
+        manualAccessExpiresAt: null,
+      }),
+    ],
+  })
+
+  const result = await createProcessor(harness).processEvent(invoicePaymentSucceededEvent())
+
+  assert.equal(result.ok, true)
+  assert.equal(harness.accounts[0]?.mode, "managed_ai")
+  assert.equal(harness.accounts[0]?.source, "stripe_invoice")
+  assert.equal(harness.accounts[0]?.status, "active")
+  assert.equal(harness.accounts[0]?.stripeSubscriptionId, "sub_123")
+  assert.equal(harness.accounts[0]?.manualAccessEnabled, false)
+  assert.equal(harness.accounts[0]?.manualAccessUnlimited, false)
+  assert.equal(harness.accounts[0]?.manualAccessExpiresAt, null)
+})
+
 test("invoice.payment_succeeded before checkout is ignored instead of failing when the org is not resolvable yet", async () => {
   const harness = createMemoryBillingHarness()
   const processor = createProcessor(harness)

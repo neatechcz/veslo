@@ -134,6 +134,7 @@ export type AssertRequestedQuantitiesCanCoverActiveUsersInput = {
 }
 
 export type OrganizationBillingDataStore = {
+  ensureMissingUnlimitedTrialAccounts?(): Promise<void>
   getBillingAccount(orgId: string): Promise<OrganizationBillingAccountRecord | null>
   findBillingAccountByStripeSubscriptionId?(
     stripeSubscriptionId: string,
@@ -152,6 +153,7 @@ export type OrganizationBillingDataStore = {
 }
 
 export type OrganizationBillingRepository = {
+  ensureMissingUnlimitedTrialAccounts(): Promise<void>
   getBillingAccount(orgId: string): Promise<OrganizationBillingAccountRecord | null>
   findBillingAccountByStripeSubscriptionId(stripeSubscriptionId: string): Promise<OrganizationBillingAccountRecord | null>
   findBillingAccountByStripeCustomerId(stripeCustomerId: string): Promise<OrganizationBillingAccountRecord | null>
@@ -183,6 +185,10 @@ export function createOrganizationBillingRepository(
   const now = options.now ?? (() => new Date())
 
   return {
+    async ensureMissingUnlimitedTrialAccounts() {
+      await store.ensureMissingUnlimitedTrialAccounts?.()
+    },
+
     getBillingAccount(orgId) {
       return store.getBillingAccount(orgId)
     },
@@ -316,6 +322,23 @@ export function createOrganizationBillingRepository(
 
 export function createDrizzleOrganizationBillingStore(database: any): OrganizationBillingDataStore {
   return {
+    async ensureMissingUnlimitedTrialAccounts() {
+      await database.execute(sql.raw([
+        "INSERT INTO `organization_billing_account` (",
+        "  `id`, `org_id`, `mode`, `source`, `status`,",
+        "  `managed_ai_basic_quantity`, `managed_ai_extended_quantity`, `local_models_quantity`,",
+        "  `manual_access_enabled`, `manual_access_unlimited`, `manual_access_expires_at`,",
+        "  `cancel_at_period_end`, `created_at`, `updated_at`",
+        ")",
+        "SELECT",
+        "  CONCAT('billing_', REPLACE(UUID(), '-', '')), `org`.`id`,",
+        "  'manual_access', 'manual_trial', 'trialing',",
+        "  0, 0, 0, true, true, NULL, false, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)",
+        "FROM `org`",
+        "ON DUPLICATE KEY UPDATE `org_id` = VALUES(`org_id`)",
+      ].join("\n")))
+    },
+
     async getBillingAccount(orgId) {
       const rows = await database
         .select()

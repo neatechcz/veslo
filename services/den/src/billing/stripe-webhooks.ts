@@ -323,8 +323,7 @@ async function planInvoicePaymentSucceeded(
 
   const subscription = readObject(invoice.subscription)
   const mappedSubscriptionStatus = subscription ? mapStripeSubscriptionStatus(readString(subscription.status)) : null
-  const status = mappedSubscriptionStatus ??
-    (isPaymentFailedStatus(resolved.account?.status) ? "active" : resolved.account?.status ?? "active")
+  const status = mappedSubscriptionStatus ?? "active"
   const stripeSubscriptionId = readStripeId(invoice.subscription) ?? readInvoiceParentSubscriptionId(invoice)
   return {
     orgId: resolved.orgId,
@@ -337,6 +336,9 @@ async function planInvoicePaymentSucceeded(
         status,
         stripeCustomerId: readStripeId(invoice.customer) ?? resolved.account?.stripeCustomerId ?? null,
         stripeSubscriptionId: stripeSubscriptionId ?? resolved.account?.stripeSubscriptionId ?? null,
+        manualAccessEnabled: false,
+        manualAccessUnlimited: false,
+        manualAccessExpiresAt: null,
         paymentProblemCode: null,
         paymentProblemMessage: null,
       }).then(() => undefined),

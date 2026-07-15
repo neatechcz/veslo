@@ -1,5 +1,20 @@
-ALTER TABLE `organization_billing_account`
-  ADD `manual_access_unlimited` boolean NOT NULL DEFAULT false AFTER `manual_access_enabled`;
+SET @unlimited_trial_column_sql = IF(
+  (
+    SELECT COUNT(*)
+    FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'organization_billing_account'
+      AND COLUMN_NAME = 'manual_access_unlimited'
+  ) > 0,
+  'SELECT 1',
+  'ALTER TABLE `organization_billing_account` ADD `manual_access_unlimited` boolean NOT NULL DEFAULT false AFTER `manual_access_enabled`'
+);
+--> statement-breakpoint
+PREPARE `unlimited_trial_column_statement` FROM @unlimited_trial_column_sql;
+--> statement-breakpoint
+EXECUTE `unlimited_trial_column_statement`;
+--> statement-breakpoint
+DEALLOCATE PREPARE `unlimited_trial_column_statement`;
 --> statement-breakpoint
 INSERT INTO `organization_billing_account` (
   `id`,
@@ -35,7 +50,9 @@ SELECT
 FROM `org`
 LEFT JOIN `organization_billing_account`
   ON `organization_billing_account`.`org_id` = `org`.`id`
-WHERE `organization_billing_account`.`id` IS NULL;
+WHERE `organization_billing_account`.`id` IS NULL
+ON DUPLICATE KEY UPDATE
+  `org_id` = VALUES(`org_id`);
 --> statement-breakpoint
 UPDATE `organization_billing_account`
 SET

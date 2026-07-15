@@ -32,7 +32,7 @@ export type DefaultOrganizationTransaction = {
   findMembershipOrgId(userId: string): Promise<string | null>
   createOrganization(record: DefaultOrganizationRecord): Promise<void>
   createMembership(record: DefaultOrganizationMembershipRecord): Promise<void>
-  createBillingAccount(record: DefaultOrganizationBillingRecord): Promise<void>
+  ensureBillingAccount(record: DefaultOrganizationBillingRecord): Promise<void>
 }
 
 export type DefaultOrganizationStore = {
@@ -48,6 +48,16 @@ export async function ensureDefaultOrgWithStore(
   return store.transaction(async (transaction) => {
     const existingOrgId = await transaction.findMembershipOrgId(userId)
     if (existingOrgId) {
+      await transaction.ensureBillingAccount({
+        id: createId(),
+        orgId: existingOrgId,
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "trialing",
+        manualAccessEnabled: true,
+        manualAccessUnlimited: true,
+        manualAccessExpiresAt: null,
+      })
       return existingOrgId
     }
 
@@ -64,7 +74,7 @@ export async function ensureDefaultOrgWithStore(
       userId,
       role: "organization_admin",
     })
-    await transaction.createBillingAccount({
+    await transaction.ensureBillingAccount({
       id: createId(),
       orgId,
       mode: "manual_access",
@@ -110,17 +120,22 @@ function createDrizzleDefaultOrganizationStore(database: any): DefaultOrganizati
             role: record.role,
           })
         },
-        async createBillingAccount(record) {
-          await transaction.insert(OrganizationBillingAccountTable).values({
-            id: record.id,
-            org_id: record.orgId,
-            mode: record.mode,
-            source: record.source,
-            status: record.status,
-            manual_access_enabled: record.manualAccessEnabled,
-            manual_access_unlimited: record.manualAccessUnlimited,
-            manual_access_expires_at: record.manualAccessExpiresAt,
-          })
+        async ensureBillingAccount(record) {
+          await transaction
+            .insert(OrganizationBillingAccountTable)
+            .values({
+              id: record.id,
+              org_id: record.orgId,
+              mode: record.mode,
+              source: record.source,
+              status: record.status,
+              manual_access_enabled: record.manualAccessEnabled,
+              manual_access_unlimited: record.manualAccessUnlimited,
+              manual_access_expires_at: record.manualAccessExpiresAt,
+            })
+            .onDuplicateKeyUpdate({
+              set: { org_id: record.orgId },
+            })
         },
       }))
     },

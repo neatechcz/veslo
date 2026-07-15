@@ -121,13 +121,14 @@ test("organization billing migration is listed in the Drizzle journal", () => {
 test("unlimited trial migration adds explicit state and backfills every non-Stripe organization", () => {
   const migration = readUnlimitedTrialMigration()
 
-  assert.match(
-    migration,
-    /ADD `manual_access_unlimited` boolean NOT NULL DEFAULT false/,
-  )
+  assert.match(migration, /INFORMATION_SCHEMA\.COLUMNS/)
+  assert.match(migration, /COLUMN_NAME = 'manual_access_unlimited'/)
+  assert.match(migration, /PREPARE `unlimited_trial_column_statement`/)
+  assert.match(migration, /ADD `manual_access_unlimited` boolean NOT NULL DEFAULT false/)
   assert.match(migration, /INSERT INTO `organization_billing_account`/)
   assert.match(migration, /FROM `org`/)
-  assert.match(migration, /WHERE `organization_billing_account`\.`id` IS NULL/)
+  assert.match(migration, /ON DUPLICATE KEY UPDATE/)
+  assert.match(migration, /`org_id` = VALUES\(`org_id`\)/)
   assert.match(migration, /UPDATE `organization_billing_account`/)
   assert.match(migration, /`mode` = 'manual_access'/)
   assert.match(migration, /`source` = 'manual_trial'/)

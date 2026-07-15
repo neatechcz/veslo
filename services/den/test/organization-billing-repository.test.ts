@@ -177,6 +177,24 @@ test("organization billing repository creates and updates an account", async () 
   assert.equal(updated.managedAiBasicQuantity + updated.managedAiExtendedQuantity, 4)
 })
 
+test("organization billing repository delegates startup repair of missing unlimited trials", async () => {
+  let repairCalls = 0
+  const { repository } = createMemoryBillingRepository()
+  const repairableRepository = createOrganizationBillingRepository({
+    async getBillingAccount() { return null },
+    async upsertBillingAccount(record) { return record },
+    async listAllowedTiers() { return [] },
+    async setAllowedTiers() { return [] },
+    async countActiveUsers() { return 0 },
+    async recordBillingEvent(record) { return record },
+    async ensureMissingUnlimitedTrialAccounts() { repairCalls += 1 },
+  })
+
+  assert.equal(typeof repository.ensureMissingUnlimitedTrialAccounts, "function")
+  await repairableRepository.ensureMissingUnlimitedTrialAccounts()
+  assert.equal(repairCalls, 1)
+})
+
 test("organization billing repository preserves an existing account id on update", async () => {
   const { repository } = createMemoryBillingRepository()
 
