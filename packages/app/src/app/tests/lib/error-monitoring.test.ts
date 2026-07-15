@@ -12,6 +12,7 @@ import {
   setErrorMonitoringClientForTests,
 } from "../../lib/error-monitoring.js";
 import { reportError } from "../../lib/error-reporter.js";
+import { VesloServerError } from "../../lib/veslo-server.js";
 
 function createFakeClient() {
   const calls: Array<Record<string, unknown>> = [];
@@ -147,6 +148,55 @@ test("captured report errors include context tags without user data", () => {
       severity: "error",
     },
   });
+});
+
+test("captured archive response errors include sanitized endpoint diagnostics", () => {
+  const fake = createFakeClient();
+  const error = new VesloServerError(
+    404,
+    "non_json_response",
+    "The Veslo server returned a non-JSON response.",
+    { url: "https://veslo.example/session-archives?token=secret-token" },
+    {
+      requestMethod: "GET",
+      operation: "session-archives:list",
+      requestOrigin: "https://veslo.example",
+      requestPathname: "/session-archives",
+      httpStatus: 404,
+      mediaType: "text/plain",
+      responseContentType: "text/plain",
+      responseKind: "non_json",
+      responsePreview: "Not Found token=secret-token",
+    },
+  );
+
+  captureReportedError(error, "sessionArchives.load", "warning", fake.client);
+
+  assert.deepEqual(fake.scopes[0]?.tags, {
+    "veslo.context": "sessionArchives.load",
+    "veslo.severity": "warning",
+    "veslo.response_kind": "non_json",
+    "veslo.http_status": "404",
+    "veslo.response_media_type": "text/plain",
+  });
+  assert.deepEqual(fake.scopes[0]?.contexts, {
+    veslo: {
+      context: "sessionArchives.load",
+      severity: "warning",
+    },
+    "veslo.server_response": {
+      requestMethod: "GET",
+      operation: "session-archives:list",
+      requestOrigin: "https://veslo.example",
+      requestPathname: "/session-archives",
+      httpStatus: 404,
+      mediaType: "text/plain",
+      responseContentType: "text/plain",
+      responseKind: "non_json",
+      responsePreview: "Not Found token=[redacted]",
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(fake.scopes[0]?.contexts), /secret-token|session-archives\?/);
 });
 
 test("reportError forwards to configured monitoring client and preserves console behavior", () => {

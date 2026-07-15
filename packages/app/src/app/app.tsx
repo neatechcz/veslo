@@ -203,7 +203,6 @@ import {
   HIDE_TITLEBAR_PREF_KEY,
   LANGUAGE_PREF_KEY,
   MCP_QUICK_CONNECT,
-  MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   MAX_ENGINES_PREF_KEY,
@@ -259,7 +258,6 @@ import {
   isMacPlatform,
   isTauriRuntime,
   isWindowsPlatform,
-  lastUserModelFromMessages,
   modelEquals,
   normalizeDirectoryPath,
   normalizeDirectoryQueryPath,
@@ -2248,6 +2246,7 @@ export default function App() {
     vesloServerAuth,
     activeVesloServerHostInfo,
     activeWorkspaceDisplay: () => workspaceStore.activeWorkspaceDisplay(),
+    activeVesloServerWorkspaceId: vesloServerWorkspaceId,
     ensureLocalVesloServerRunning,
     providers,
     formatModelLabel,
@@ -2271,7 +2270,7 @@ export default function App() {
     denGatewayAccessToken,
     managedAiAccessMessage,
     managedAiAccessProviderLabel,
-    managedAiAccessDefaultModelLabel,
+    managedAiAccessEffectiveModelLabel,
     managedAiAccessBlockedReason,
   } = managedAiAccessStore;
   let lastNewSessionDisabledDiagnosticKey = "";
@@ -2304,6 +2303,7 @@ export default function App() {
     managedAiAccessError,
     managedAiGatewayAccessToken,
     denGatewayAccessToken,
+    denOrgId: () => readDenAuth()?.orgId?.trim() ?? "",
     denAuthRevision,
     gatewayVesloServerClient,
     vesloServerClient,
@@ -3058,6 +3058,7 @@ export default function App() {
     sidebarWorkspaceGroups,
     reportError,
     setError,
+    getError: error,
   });
   const archivedSessionIds = sessionArchiveStore.archivedSessionIds;
   const sessionArchives = sessionArchiveStore.sessionArchives;
@@ -3716,6 +3717,7 @@ export default function App() {
   });
 
   const DOCUMENT_RUNTIME_STATUS_POLL_MS = 30_000;
+  const DOCUMENT_RUNTIME_INSTALL_POLL_MS = 2_000;
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -3729,12 +3731,22 @@ export default function App() {
 
     let active = true;
     let inFlight = false;
+    let timeoutId: number | null = null;
+
+    const schedule = (delayMs: number) => {
+      if (!active) return;
+      timeoutId = window.setTimeout(run, delayMs);
+    };
 
     const run = async () => {
       if (inFlight) return;
       inFlight = true;
+      let nextPollMs = DOCUMENT_RUNTIME_STATUS_POLL_MS;
       try {
         const result = await client.getDocumentRuntimeStatus();
+        if (result.package.installing) {
+          nextPollMs = DOCUMENT_RUNTIME_INSTALL_POLL_MS;
+        }
         if (active && vesloServerClient() === client) {
           setDocumentRuntimeStatus(result);
         }
@@ -3744,14 +3756,14 @@ export default function App() {
         }
       } finally {
         inFlight = false;
+        schedule(nextPollMs);
       }
     };
 
     run();
-    const interval = window.setInterval(run, DOCUMENT_RUNTIME_STATUS_POLL_MS);
     onCleanup(() => {
       active = false;
-      window.clearInterval(interval);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
     });
   });
 
@@ -4169,19 +4181,10 @@ export default function App() {
     return agentForSession(id);
   });
 
-  function modelForSession(sessionId: string | null | undefined): ModelRef {
+  function modelForSession(_sessionId: string | null | undefined): ModelRef {
     const globalDefault = resolveGlobalRuntimeModel(defaultModel());
     const managedModel = managedAiAccessModel();
     if (managedModel) return managedModel;
-
-    const id = sessionId?.trim() ?? "";
-    if (!id) return globalDefault;
-
-    if (id === selectedSessionId()) {
-      const fromMessages = lastUserModelFromMessages(messages());
-      if (fromMessages) return fromMessages;
-    }
-
     return globalDefault;
   }
 
@@ -4734,7 +4737,7 @@ export default function App() {
     managedAiAccess,
     managedAiAccessMessage,
     managedAiAccessProviderLabel,
-    managedAiAccessDefaultModelLabel,
+    managedAiAccessEffectiveModelLabel,
     showThinking,
     setShowThinking,
     hideTitlebar,

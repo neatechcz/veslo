@@ -60,6 +60,7 @@ test("default managed ai proxy dependencies allow codex-only runtime without Ope
 
   const deps = createDefaultProxyDependencies(runtime)
 
+  assert.equal(deps.denInferenceMode, "retired")
   assert.equal(typeof deps.codexOAuthTransport.chatCompletions, "function")
 })
 

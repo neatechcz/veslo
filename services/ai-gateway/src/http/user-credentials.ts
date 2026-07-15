@@ -3,6 +3,7 @@ import { type NextFunction, type Request, type Response, Router } from "express"
 import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AiAccessRepository } from "../access/repository.js";
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js";
+import type { PlatformModelRef } from "../model-policy/repository.js";
 import { asyncHandler, jsonErrorHandler } from "./async-handler.js";
 
 export type UserCredentialDependencies = {
@@ -41,10 +42,17 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
   const getMyAiAccess = asyncHandler(async (_req: Request, res: Response) => {
     const session = res.locals.userSession as UserSession;
     let aiAccess = await deps.aiAccess?.getUserAiAccess(session.user.id);
-    if (aiAccess?.provider === "codex_oauth" && deps.autoAssignedCodexCredentialRotation) {
+    if (!aiAccess) {
+      res.json({ aiAccess: null });
+      return;
+    }
+    const effectiveModel = toEffectiveModel(aiAccess.provider, aiAccess.defaultModel);
+
+    if (aiAccess?.provider === "codex_oauth" && effectiveModel && deps.autoAssignedCodexCredentialRotation) {
       try {
         aiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
           aiAccess,
+          activeModel: effectiveModel,
           reason: "user_ai_access_read",
         });
       } catch (error) {
@@ -62,6 +70,7 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
             credentialId: aiAccess.credentialId,
             defaultModel: aiAccess.defaultModel,
             allowedModels: aiAccess.allowedModels,
+            effectiveModel,
             updatedAt: toIsoString(aiAccess.updatedAt),
           }
         : null,
@@ -78,4 +87,14 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
 
 function toIsoString(value: Date | string) {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function toEffectiveModel(provider: string | null, model: string | null): PlatformModelRef | null {
+  if (
+    (provider === "openai" || provider === "anthropic" || provider === "codex_oauth" || provider === "openai_compatible")
+    && model?.trim()
+  ) {
+    return { provider, model: model.trim() };
+  }
+  return null;
 }

@@ -224,6 +224,8 @@ test("session view props carry unavailable history state and retry action", () =
 test("document runtime status is wired from Veslo server client to settings", () => {
   assert.match(appSource, /createSignal<DocumentRuntimeStatusPayload \| null>\(null\)/);
   assert.match(appSource, /DOCUMENT_RUNTIME_STATUS_POLL_MS = 30_000/);
+  assert.match(appSource, /DOCUMENT_RUNTIME_INSTALL_POLL_MS = 2_000/);
+  assert.match(appSource, /result\.package\.installing/);
   assert.match(appSource, /client\.getDocumentRuntimeStatus\(\)/);
   assert.match(appSource, /client\.repairDocumentRuntime\(\)/);
   assert.match(appSource, /documentRuntimeRepairBusy\(\) \|\| anyActiveRuns\(\)/);

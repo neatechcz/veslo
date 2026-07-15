@@ -438,7 +438,7 @@ export type AppViewPropsScope = {
   managedAiAccess: Accessor<ManagedAiAccessProfile | null>;
   managedAiAccessMessage: Accessor<string>;
   managedAiAccessProviderLabel: Accessor<string | null>;
-  managedAiAccessDefaultModelLabel: Accessor<string | null>;
+  managedAiAccessEffectiveModelLabel: Accessor<string | null>;
   showThinking: Accessor<boolean>;
   setShowThinking: Setter<boolean>;
   hideTitlebar: Accessor<boolean>;
@@ -770,7 +770,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     managedAiAccess,
     managedAiAccessMessage,
     managedAiAccessProviderLabel,
-    managedAiAccessDefaultModelLabel,
+    managedAiAccessEffectiveModelLabel,
     showThinking,
     setShowThinking,
     hideTitlebar,
@@ -1260,8 +1260,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       aiAccessConfigured: Boolean(managedAiAccess()),
       aiAccessMessage: managedAiAccessMessage(),
       aiAccessProviderLabel: managedAiAccessProviderLabel(),
-      aiAccessDefaultModelLabel: managedAiAccessDefaultModelLabel(),
-      aiAccessAllowedModels: managedAiAccess()?.allowedModels ?? [],
+      aiAccessEffectiveModelLabel: managedAiAccessEffectiveModelLabel(),
       showThinking: showThinking(),
       toggleShowThinking: () => setShowThinking((v: boolean) => !v),
       hideTitlebar: hideTitlebar(),

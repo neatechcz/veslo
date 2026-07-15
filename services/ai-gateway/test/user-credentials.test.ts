@@ -94,6 +94,7 @@ function createAiAccessRecord(overrides: Partial<UserAiAccessPolicyRecord> = {})
     credentialId: null,
     defaultModel: "gpt-4o-mini",
     allowedModels: ["gpt-4o-mini"],
+    assignmentOrigin: "admin_assigned",
     createdAt: new Date("2026-04-08T10:00:00.000Z"),
     updatedAt: new Date("2026-04-08T10:05:00.000Z"),
     ...overrides,
@@ -184,6 +185,7 @@ test("GET /api/me/ai-access returns the signed-in user's admin-managed ai access
         credentialId: null,
         defaultModel: "gpt-4o-mini",
         allowedModels: ["gpt-4o-mini"],
+        effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
         updatedAt: "2026-04-08T10:05:00.000Z",
       },
     });
@@ -214,9 +216,35 @@ test("GET /ai-gateway/me/ai-access returns the signed-in user's admin-managed ai
         credentialId: null,
         defaultModel: "gpt-4o-mini",
         allowedModels: ["gpt-4o-mini"],
+        effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
         updatedAt: "2026-04-08T10:05:00.000Z",
       },
     });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("GET /api/me/ai-access reflects user access model fields without platform policy", async () => {
+  const runtime = createUserAiAccessApp({
+    aiAccess: createAiAccessRecord({
+      defaultModel: "gpt-4.1",
+      allowedModels: ["gpt-4.1", "gpt-4.1-mini"],
+    }),
+  });
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, { headers: runtime.authHeader });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.aiAccess.defaultModel, "gpt-4.1");
+    assert.deepEqual(body.aiAccess.allowedModels, ["gpt-4.1", "gpt-4.1-mini"]);
+    assert.deepEqual(body.aiAccess.effectiveModel, { provider: "openai", model: "gpt-4.1" });
   } finally {
     server.close();
     await once(server, "close");

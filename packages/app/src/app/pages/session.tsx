@@ -36,7 +36,7 @@ import {
   workspaceGrantFolderAccess,
 } from "../lib/tauri";
 import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
-import { isAiAccessLoadingMessage } from "../lib/ai-access";
+import { isAiAccessLoadingMessage, resolveActionableAiAccessBlockedReason } from "../lib/ai-access";
 
 import {
   ChevronDown,
@@ -1642,6 +1642,14 @@ export default function SessionView(props: SessionViewProps) {
       ? activeSessionSwitchHandoff()?.heldMessages ?? []
       : effectiveRenderedMessages(),
   );
+  const aiAccessLoading = createMemo(() => isAiAccessLoadingMessage(props.aiAccessBlockedReason, tr));
+  const aiAccessLoadingWithoutMessages = createMemo(() =>
+    aiAccessLoading() && displayedEffectiveMessages().length === 0
+  );
+  const visibleAiAccessBlockedReason = createMemo(() =>
+    resolveActionableAiAccessBlockedReason(props.aiAccessBlockedReason, tr)
+  );
+  const composerBusy = createMemo(() => props.busy);
   const hiddenMessageCount = transcriptViewport.hiddenMessageCount;
   const nextRevealCount = transcriptViewport.nextRevealCount;
   const hasServerEarlierMessages = transcriptViewport.hasServerEarlierMessages;
@@ -2218,6 +2226,12 @@ export default function SessionView(props: SessionViewProps) {
     "pendingDraftKey",
     "sessionSwitchHandoffActive",
     "loadingEarlierMessages",
+    "appBusy",
+    "composerBusy",
+    "aiAccessLoading",
+    "aiAccessLoadingWithoutMessages",
+    "aiAccessBlockedReason",
+    "visibleAiAccessBlockedReason",
   ] as const;
   createEffect(
     on(
@@ -2240,6 +2254,12 @@ export default function SessionView(props: SessionViewProps) {
           props.activePendingDraftKey,
           activeSessionSwitchHandoffActive(),
           props.loadingEarlierMessages,
+          props.busy,
+          composerBusy(),
+          aiAccessLoading(),
+          aiAccessLoadingWithoutMessages(),
+          props.aiAccessBlockedReason,
+          visibleAiAccessBlockedReason(),
         ] as const,
       (state, previous) => {
         if (!sessionUiMutationTraceEnabled()) return;
@@ -2266,6 +2286,12 @@ export default function SessionView(props: SessionViewProps) {
           pendingDraftKey: state[14],
           sessionSwitchHandoffActive: state[15],
           loadingEarlierMessages: state[16],
+          appBusy: state[17],
+          composerBusy: state[18],
+          aiAccessLoading: state[19],
+          aiAccessLoadingWithoutMessages: state[20],
+          aiAccessBlockedReason: state[21],
+          visibleAiAccessBlockedReason: state[22],
         });
       },
     ),
@@ -3181,8 +3207,6 @@ export default function SessionView(props: SessionViewProps) {
   const shareSkillsSetError = shareController.shareSkillsSetError;
   const publishWorkspaceProfileLink = shareController.publishWorkspaceProfileLink;
   const publishSkillsSetLink = shareController.publishSkillsSetLink;
-
-  const aiAccessLoading = createMemo(() => isAiAccessLoadingMessage(props.aiAccessBlockedReason, tr));
 
   const conversationFlow = createSessionConversationFlow({
     identity: {
@@ -4164,7 +4188,7 @@ export default function SessionView(props: SessionViewProps) {
                         initialDraft={props.composerDraft}
                         prompt={props.composerDraft.text}
                         developerMode={props.developerMode}
-                        busy={props.busy}
+                        busy={composerBusy()}
                         isStreaming={showRunIndicator()}
                         recoveryBlocked={recoveryBlockedComposer()}
                         stopShortcutConfirmPending={escapeStopConfirmationPending()}
@@ -4433,9 +4457,9 @@ export default function SessionView(props: SessionViewProps) {
         composerArea={(
       <Show when={showFooterComposerArea()}>
         <>
-              <Show when={props.aiAccessBlockedReason}>
+              <Show when={visibleAiAccessBlockedReason()}>
                 <div class="mx-auto mb-3 w-full max-w-[min(100%,72rem)] rounded-2xl border border-amber-7/30 bg-amber-2/30 px-4 py-3 text-sm text-amber-12">
-                  {props.aiAccessBlockedReason}
+                  {visibleAiAccessBlockedReason()}
                 </div>
               </Show>
               <Show when={queuedDrafts().length > 0}>
@@ -4476,7 +4500,7 @@ export default function SessionView(props: SessionViewProps) {
                 initialDraft={props.composerDraft}
                 prompt={props.composerDraft.text}
                 developerMode={props.developerMode}
-                busy={props.busy || aiAccessLoading()}
+                busy={composerBusy()}
                 isStreaming={showRunIndicator()}
                 recoveryBlocked={recoveryBlockedComposer()}
                 stopShortcutConfirmPending={escapeStopConfirmationPending()}

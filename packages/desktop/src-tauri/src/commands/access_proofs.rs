@@ -7,7 +7,7 @@ use sha1::{Digest, Sha1};
 use tauri::Manager;
 
 const ACCESS_PROOFS_FILE_NAME: &str = "access-proofs.v1.json";
-const ACCESS_PROOFS_VERSION: u32 = 1;
+const ACCESS_PROOFS_VERSION: u32 = 2;
 const MAX_MANAGED_AI_RECORDS: usize = 32;
 
 fn default_access_proofs_version() -> u32 {
@@ -31,9 +31,8 @@ struct ManagedAiAccessProofRecord {
     cache_key_hash: String,
     fetched_at: u64,
     provider_id: String,
-    default_model: ManagedAiModelRef,
     #[serde(default)]
-    allowed_models: Vec<String>,
+    effective_model: Option<ManagedAiModelRef>,
     #[serde(default)]
     updated_at: Option<String>,
     #[serde(default)]
@@ -63,9 +62,7 @@ pub struct ManagedAiModelRef {
 #[serde(rename_all = "camelCase")]
 pub struct ManagedAiAccessProofWrite {
     pub provider_id: String,
-    pub default_model: ManagedAiModelRef,
-    #[serde(default)]
-    pub allowed_models: Vec<String>,
+    pub effective_model: ManagedAiModelRef,
     #[serde(default)]
     pub updated_at: Option<String>,
     #[serde(default)]
@@ -77,8 +74,7 @@ pub struct ManagedAiAccessProofWrite {
 pub struct ManagedAiAccessProofRead {
     pub fetched_at: u64,
     pub provider_id: String,
-    pub default_model: ManagedAiModelRef,
-    pub allowed_models: Vec<String>,
+    pub effective_model: ManagedAiModelRef,
     pub updated_at: Option<String>,
     pub runtime_config_fingerprint: Option<String>,
 }
@@ -125,23 +121,12 @@ fn normalize_model_ref(value: ManagedAiModelRef) -> ManagedAiModelRef {
     }
 }
 
-fn normalize_allowed_models(values: Vec<String>) -> Vec<String> {
-    let mut out = Vec::<String>::new();
-    for value in values {
-        let trimmed = value.trim();
-        if trimmed.is_empty() || out.iter().any(|existing| existing == trimmed) {
-            continue;
-        }
-        out.push(trimmed.to_string());
-    }
-    out
-}
-
 fn valid_managed_ai_record(record: &ManagedAiAccessProofRecord) -> bool {
     !record.cache_key_hash.trim().is_empty()
         && !record.provider_id.trim().is_empty()
-        && !record.default_model.provider_id.trim().is_empty()
-        && !record.default_model.model_id.trim().is_empty()
+        && record.effective_model.as_ref().is_some_and(|model| {
+            !model.provider_id.trim().is_empty() && !model.model_id.trim().is_empty()
+        })
 }
 
 fn read_access_proofs(path: &PathBuf) -> AccessProofFile {
@@ -200,8 +185,7 @@ pub fn access_proof_ai_read(
     Ok(Some(ManagedAiAccessProofRead {
         fetched_at: record.fetched_at,
         provider_id: record.provider_id,
-        default_model: record.default_model,
-        allowed_models: record.allowed_models,
+        effective_model: record.effective_model.expect("validated effective model"),
         updated_at: record.updated_at,
         runtime_config_fingerprint: record.runtime_config_fingerprint,
     }))
@@ -218,7 +202,7 @@ pub fn access_proof_ai_write(
         return Ok(false);
     }
 
-    let model = normalize_model_ref(proof.default_model);
+    let model = normalize_model_ref(proof.effective_model);
     let provider_id = proof.provider_id.trim().to_string();
     if provider_id.is_empty() || model.provider_id.is_empty() || model.model_id.is_empty() {
         return Ok(false);
@@ -237,8 +221,7 @@ pub fn access_proof_ai_write(
             cache_key_hash,
             fetched_at: now_ms(),
             provider_id,
-            default_model: model,
-            allowed_models: normalize_allowed_models(proof.allowed_models),
+            effective_model: Some(model),
             updated_at: normalize_optional_string(proof.updated_at),
             runtime_config_fingerprint: normalize_optional_string(proof.runtime_config_fingerprint),
         },
@@ -282,7 +265,8 @@ pub fn access_proof_ai_clear(
 
 #[cfg(test)]
 mod tests {
-    use super::{hash_cache_key, normalize_allowed_models};
+    use super::{hash_cache_key, read_access_proofs};
+    use std::fs;
 
     #[test]
     fn cache_key_hash_is_stable_and_not_plaintext() {
@@ -295,15 +279,39 @@ mod tests {
     }
 
     #[test]
-    fn allowed_models_are_trimmed_and_deduped() {
-        assert_eq!(
-            normalize_allowed_models(vec![
-                " gpt-5 ".to_string(),
-                "gpt-5".to_string(),
-                "".to_string(),
-                "gpt-5-mini".to_string(),
-            ]),
-            vec!["gpt-5".to_string(), "gpt-5-mini".to_string()],
-        );
+    fn legacy_model_authority_is_discarded_without_losing_workspace_permissions() {
+        let path = std::env::temp_dir().join(format!(
+            "veslo-access-proofs-legacy-{}-{}.json",
+            std::process::id(),
+            super::now_ms(),
+        ));
+        fs::write(
+            &path,
+            r#"{
+  "version": 1,
+  "managedAi": [{
+    "cacheKeyHash": "sha1:legacy",
+    "fetchedAt": 1,
+    "providerId": "codex_oauth",
+    "defaultModel": {"providerId": "codex_oauth", "modelId": "legacy"},
+    "allowedModels": [{"providerId": "codex_oauth", "modelId": "legacy"}]
+  }],
+  "workspacePermissions": [{
+    "workspaceId": "workspace-1",
+    "pathHash": "sha1:path",
+    "authorizedRootHashes": ["sha1:root"],
+    "validatedAt": 2,
+    "source": "server"
+  }]
+}"#,
+        )
+        .expect("legacy proof fixture should be writable");
+
+        let proofs = read_access_proofs(&path);
+        let _ = fs::remove_file(&path);
+
+        assert!(proofs.managed_ai.is_empty());
+        assert_eq!(proofs.workspace_permissions.len(), 1);
+        assert_eq!(proofs.workspace_permissions[0].workspace_id, "workspace-1");
     }
 }

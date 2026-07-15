@@ -28,11 +28,15 @@ function createAiAccess(overrides: Partial<UserAiAccessPolicyRecord> = {}): User
   }
 }
 
-function createPolicyApp(aiAccess: UserAiAccessPolicyRecord | null) {
+function createPolicyApp(
+  aiAccess: UserAiAccessPolicyRecord | null,
+  options: { denInferenceMode?: unknown } = {},
+) {
   const app = express()
   app.use(express.json())
   app.use(
     createProxyRouter({
+      denInferenceMode: options.denInferenceMode,
       gatewaySessions: {
         async resolveSession() {
           return {
@@ -92,6 +96,71 @@ function createPolicyApp(aiAccess: UserAiAccessPolicyRecord | null) {
   return app
 }
 
+test("retired DEN inference rejects legacy model authority before upstream routing", async () => {
+  const server = createPolicyApp(
+    createAiAccess({
+      defaultModel: "legacy-default-model",
+      allowedModels: ["legacy-default-model", "legacy-request-model"],
+    }),
+    { denInferenceMode: "retired" },
+  ).listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/providers/anthropic/v1/messages`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer gateway-access-token",
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_retired_den_1",
+      },
+      body: JSON.stringify({
+        model: "legacy-request-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    })
+
+    assert.equal(response.status, 410)
+    assert.deepEqual(await response.json(), {
+      error: "den_managed_ai_inference_retired",
+      message: "Managed AI inference has moved to the canonical AI Gateway.",
+    })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("DEN inference stays retired when rollback mode is omitted or invalid", async () => {
+  for (const denInferenceMode of [undefined, "unexpected_mode"]) {
+    const server = createPolicyApp(createAiAccess(), { denInferenceMode }).listen(0, "127.0.0.1")
+    await once(server, "listening")
+
+    try {
+      const { port } = server.address() as AddressInfo
+      const response = await fetch(`http://127.0.0.1:${port}/providers/anthropic/v1/messages`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer gateway-access-token",
+          "content-type": "application/json",
+          "x-veslo-session-id": "session_fail_closed_den_1",
+        },
+        body: JSON.stringify({
+          model: "claude-3-7-sonnet",
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      })
+
+      assert.equal(response.status, 410)
+      assert.equal((await response.json()).error, "den_managed_ai_inference_retired")
+    } finally {
+      server.close()
+      await once(server, "close")
+    }
+  }
+})
+
 test("anthropic proxy rejects requests when provider assignment does not match the route", async () => {
   const server = createPolicyApp(
     createAiAccess({
@@ -99,6 +168,7 @@ test("anthropic proxy rejects requests when provider assignment does not match t
       defaultModel: "gpt-4o-mini",
       allowedModels: ["gpt-4o-mini"],
     }),
+    { denInferenceMode: "legacy_rollback" },
   ).listen(0, "127.0.0.1")
   await once(server, "listening")
 
@@ -126,7 +196,10 @@ test("anthropic proxy rejects requests when provider assignment does not match t
 })
 
 test("anthropic proxy rejects requests when the requested model is not allowed", async () => {
-  const server = createPolicyApp(createAiAccess()).listen(0, "127.0.0.1")
+  const server = createPolicyApp(
+    createAiAccess(),
+    { denInferenceMode: "legacy_rollback" },
+  ).listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {

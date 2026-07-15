@@ -16,9 +16,11 @@ import { isAdminAlertEmailConfigured, sendAdminAlertEmail } from "./email/admin-
 import { env } from "./env.js"
 import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
+import { createDesktopDiagnosticDumpsRouter, createDiagnosticDumpsIngestRouter } from "./http/diagnostic-dumps.js"
 import { createDesktopDiagnosticsRouter } from "./http/desktop-diagnostics.js"
 import { createInternalPlatformAdminRecipientsRouter } from "./http/internal-platform-admin-recipients.js"
 import { createOrganizationBillingWebhookRouter } from "./http/organization-billing-webhook.js"
+import { createManagedAiRuntimeEntitlementRouter } from "./http/managed-ai-runtime-entitlement.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { requireSession } from "./http/session.js"
 import { desktopAuthRouter } from "./http/desktop-auth.js"
@@ -73,6 +75,7 @@ import { createGoogleWorkspaceRouter } from "./http/google-workspace.js"
 import { createMicrosoftRouter } from "./http/microsoft.js"
 import { workersRouter } from "./http/workers.js"
 import { createYouTrackRestIssueClient } from "./integrations/youtrack-rest.js"
+import { readRequestedOrganizationId, resolveMembershipOrganizations } from "./http/org-auth.js"
 
 const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
@@ -117,6 +120,15 @@ const debugLogsIngestRouter = createDebugLogsIngestRouter({
   ingestToken: env.debugLogs.ingestToken,
   service: debugLogService,
 })
+const diagnosticDumpsIngestRouter = createDiagnosticDumpsIngestRouter({
+  ingestToken: env.debugLogs.ingestToken,
+  rootDir: env.diagnosticDumps.rootDir,
+  maxBytes: env.diagnosticDumps.maxBytes,
+})
+const desktopDiagnosticDumpsRouter = createDesktopDiagnosticDumpsRouter({
+  rootDir: env.diagnosticDumps.rootDir,
+  maxBytes: env.diagnosticDumps.maxBytes,
+})
 const desktopCorsOrigins = ["tauri://localhost", "http://localhost:1420", "http://localhost:1421"] as const
 const corsOrigins =
   env.corsOrigins.length > 0
@@ -142,6 +154,8 @@ app.use(createOrganizationBillingWebhookRouter({
 }))
 app.use("/v1", feedbackRouter)
 app.use("/v1/internal", debugLogsIngestRouter)
+app.use("/v1/internal", diagnosticDumpsIngestRouter)
+app.use("/v1", desktopDiagnosticDumpsRouter)
 app.use("/v1", createDesktopDiagnosticsRouter({ service: debugLogService }))
 app.use("/v1/internal", createInternalPlatformAdminRecipientsRouter({
   token: env.aiGatewayInternalToken,
@@ -186,6 +200,12 @@ app.get("/health", (_, res) => {
   res.json({ ok: true })
 })
 
+app.use(createManagedAiRuntimeEntitlementRouter({
+  requireSession,
+  listOrganizations: resolveMembershipOrganizations,
+  readRequestedOrganizationId,
+  deriveEntitlement: (orgId) => organizationBillingRepository.deriveEntitlement(orgId),
+}))
 
 app.get("/v1/me", asyncRoute(async (req, res) => {
   const checkedSession = await requireSession(req, res)

@@ -8,6 +8,7 @@ import type { CredentialBinding } from "../../credentials/repository.js";
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js";
 import type { StoredSecret } from "../../credentials/secret-store.js";
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js";
+import { openAiCompatibleCredentialSupportsModel } from "../../model-policy/capability-verifier.js";
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { ProviderTransportError } from "../../providers/transport.js";
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js";
@@ -17,6 +18,7 @@ import {
   recordProviderProxyFailureAlert,
 } from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
+import { readGatewayOrganizationId } from "./gateway-context.js";
 import { asyncHandler } from "../async-handler.js";
 import type { ProxyDependencies } from "../proxy-dependencies.js";
 
@@ -50,7 +52,7 @@ export function createOpenAiCompatibleProxyRouter(
           aiAccess: gatewayAiAccess,
           body: req.body,
         })
-      : { ok: true as const, body: req.body as Record<string, unknown> };
+      : { ok: true as const, body: req.body as Record<string, unknown>, model: "" };
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error });
       return;
@@ -94,6 +96,21 @@ export function createOpenAiCompatibleProxyRouter(
       res.status(503).json({ error: "invalid_custom_provider_config" });
       return;
     }
+    if (assignedSecret) {
+      try {
+        if (!(await openAiCompatibleCredentialSupportsModel({
+          transport: deps.openAiCompatibleTransport,
+          secret: assignedSecret,
+          model: policyResult.model,
+        }))) {
+          res.status(503).json({ error: "assigned_credential_model_incompatible" });
+          return;
+        }
+      } catch {
+        res.status(503).json({ error: "assigned_credential_model_incompatible" });
+        return;
+      }
+    }
 
     const scope: ResolveLeaseInput = {
       ownerUserId: gatewaySession.user.id,
@@ -104,7 +121,12 @@ export function createOpenAiCompatibleProxyRouter(
     };
 
     try {
-      const upstreamResponse = await executeRequest(scope, policyResult.body, assignedSecret);
+      const upstreamResponse = await executeRequest(
+        scope,
+        policyResult.body,
+        assignedSecret,
+        readGatewayOrganizationId(res),
+      );
       applyUpstreamResponse(res, upstreamResponse);
     } catch (error) {
       await recordProviderProxyFailureAlert({
@@ -138,15 +160,17 @@ export function createOpenAiCompatibleProxyRouter(
     scope: ResolveLeaseInput,
     body: unknown,
     secret: Extract<StoredSecret, { kind: "openai_compatible_api_key" }> | null,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const lease = await deps.leaseBroker.getOrCreateActiveLease(scope);
-    return executeLeaseRequest(lease, body, secret);
+    return executeLeaseRequest(lease, body, secret, orgId);
   }
 
   async function executeLeaseRequest(
     lease: SessionLease,
     body: unknown,
     secret: Extract<StoredSecret, { kind: "openai_compatible_api_key" }> | null,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     if (!secret) {
       throw new Error("openai_compatible_secret_unavailable");
@@ -160,6 +184,7 @@ export function createOpenAiCompatibleProxyRouter(
 
     await recordUsage({
       ownerUserId: lease.ownerUserId,
+      orgId,
       sessionId: lease.sessionId,
       bindingId: lease.activeBindingId,
       requestBody: body,
@@ -171,6 +196,7 @@ export function createOpenAiCompatibleProxyRouter(
 
   async function recordUsage(input: {
     ownerUserId: string;
+    orgId: string | null;
     sessionId: string;
     bindingId: string;
     requestBody: unknown;
@@ -189,7 +215,7 @@ export function createOpenAiCompatibleProxyRouter(
       await deps.usageRepository.recordUsage({
         requestId,
         ownerUserId: input.ownerUserId,
-        orgId: null,
+        orgId: input.orgId,
         provider: "openai_compatible",
         sessionId: input.sessionId,
         credentialId: credential.id,

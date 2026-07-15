@@ -66,6 +66,18 @@ export function tagFromPackageJson(packageJsonText) {
   return normalizeReleaseTag(data?.version ?? "");
 }
 
+export function shortSha(value) {
+  return String(value ?? "").trim().slice(0, 12);
+}
+
+export function buildTagHeadMismatchMessage(input) {
+  const tag = String(input?.tag ?? "").trim();
+  const tagCommitSha = String(input?.tagCommitSha ?? "").trim();
+  const headSha = String(input?.headSha ?? "").trim();
+  if (!tag || !tagCommitSha || !headSha || tagCommitSha === headSha) return "";
+  return `Release tag ${tag} points at ${shortSha(tagCommitSha)}, not current HEAD ${shortSha(headSha)}.`;
+}
+
 export function repoFromRemoteUrl(remoteUrl) {
   const value = String(remoteUrl ?? "").trim();
   const match = value.match(/github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?$/);
@@ -305,6 +317,12 @@ async function main() {
   const tag = validateReleaseTag(normalizeReleaseTag(options.tag || exactHeadTag || packageVersionTag));
   const ref = options.ref || tag;
   const expectedSha = runCommand("git", ["rev-parse", `${tag}^{commit}`], { cwd: root, allowFail: true });
+  const headSha = runCommand("git", ["rev-parse", "HEAD"], { cwd: root, allowFail: true });
+  const tagHeadMismatch = buildTagHeadMismatchMessage({ tag, tagCommitSha: expectedSha, headSha });
+
+  if (tagHeadMismatch && !options.allowNonHeadTag) {
+    fail(`${tagHeadMismatch} Create a fresh release tag on HEAD, or pass --allow-non-head-tag only when dispatching older code intentionally.`);
+  }
 
   if (!options.allowNonHeadTag && exactHeadTag !== tag) {
     const detail = exactHeadTag
@@ -333,11 +351,16 @@ async function main() {
   console.log(`  workflow: ${WORKFLOW_FILE}`);
   console.log(`  tag: ${tag}`);
   console.log(`  ref: ${ref}`);
+  console.log(`  head: ${shortSha(headSha) || "(unknown)"}`);
+  console.log(`  tag commit: ${shortSha(expectedSha) || "(unavailable locally)"}`);
   console.log(`  draft: ${String(options.draft)}`);
   console.log(`  prerelease: ${String(options.prerelease)}`);
   console.log(`  build_tauri: ${String(options.buildTauri)}`);
   console.log(`  publish_sidecars: ${String(options.publishSidecars)}`);
   console.log(`  publish_npm: ${String(options.publishNpm)}`);
+  if (tagHeadMismatch) {
+    console.log(`  warning: ${tagHeadMismatch} Dispatch will run the tag commit.`);
+  }
 
   runCommand("gh", ["--version"], { cwd: root, dryRun: options.dryRun });
   runCommand("gh", ["auth", "status"], { cwd: root, dryRun: options.dryRun });

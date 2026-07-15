@@ -236,6 +236,7 @@ test("codex_oauth proxy forwards through the configured transport with a sticky 
   app.use(express.json())
   app.use(
     createProxyRouter({
+      denInferenceMode: "legacy_rollback",
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -440,6 +441,7 @@ test("codex_oauth proxy repairs assigned access before resolving the assigned bi
   app.use(express.json())
   app.use(
     createProxyRouter({
+      denInferenceMode: "legacy_rollback",
       gatewaySessions: {
         async resolveSession() {
           return {
@@ -565,6 +567,7 @@ test("codex_oauth proxy fails when the assigned credential is unavailable", asyn
   app.use(express.json())
   app.use(
     createProxyRouter({
+      denInferenceMode: "legacy_rollback",
       gatewaySessions: {
         async resolveSession() {
           return {
@@ -687,6 +690,7 @@ test("codex_oauth proxy returns no eligible credential when the assigned credent
   app.use(express.json())
   app.use(
     createProxyRouter({
+      denInferenceMode: "legacy_rollback",
       gatewaySessions: {
         async resolveSession() {
           return {
@@ -786,6 +790,7 @@ test("codex_oauth proxy returns all credentials exhausted when auto-selectable c
   app.use(express.json())
   app.use(
     createProxyRouter({
+      denInferenceMode: "legacy_rollback",
       gatewaySessions: {
         async resolveSession() {
           return {
@@ -907,6 +912,7 @@ test("codex_oauth proxy preserves structured runtime incompatibility failures", 
   app.use(express.json())
   app.use(
     createProxyRouter({
+      denInferenceMode: "legacy_rollback",
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")

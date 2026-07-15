@@ -395,13 +395,26 @@ Windows path checks must tolerate extended-length prefixes such as `\\?\` and co
 
 ### AI Gateway Authorization
 
-Provider routes under `/ai-gateway/providers/...` prefer the managed runtime
-authorization registered from `/ai-gateway/me/ai-access` or from the active
-run's runtime authorization actor hash. A legacy `x-veslo-gateway-token` header
-is only a compatibility fallback when there is no active run context and no
-runtime authorization entry. Redacted placeholder gateway tokens are rejected,
-and proxy traces expose the selected `gatewayAuthorizationSource` without
-logging token material.
+For a registered workspace, the desktop primes managed runtime authorization
+through `GET /workspace/:id/ai-gateway/me/ai-access`. The server validates the
+route workspace against its workspace registry, stores authorization by local
+actor plus authenticated organization, and binds that organization to the
+validated workspace. The unscoped `/ai-gateway/me/ai-access` route remains for
+startup and legacy single-organization use only.
+
+When a server-owned run is admitted, it snapshots the actor and organization
+binding into the active run context. Provider routes under
+`/ai-gateway/providers/...` resolve the current session to that active run and
+use only its exact actor-plus-organization authorization. Incoming provider
+organization or workspace headers cannot select authorization and are stripped
+before forwarding. Re-priming another organization cannot change an existing
+run. A workspace with denied access retains its denied organization binding so
+it cannot inherit another allowed organization. Missing or ambiguous
+multi-organization context fails closed; the legacy single-organization path
+is accepted only when exactly one actor authorization exists. Clearing runtime
+authorization removes every organization and workspace binding for that actor.
+Proxy traces expose the selected `gatewayAuthorizationSource` without logging
+token material.
 
 Each `startServer()` instance clears the module-scoped AI gateway runtime owner
 state before serving requests. Runtime auth, active run contexts, and active

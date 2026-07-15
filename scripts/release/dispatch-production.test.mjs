@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 
 import {
   assertWorkflowSupportsProductionDispatch,
+  buildTagHeadMismatchMessage,
   buildWorkflowRunArgs,
   DEFAULT_REPO,
   normalizeReleaseTag,
@@ -70,6 +71,33 @@ test("repoFromRemoteUrl handles HTTPS and SSH GitHub remotes", () => {
 
 test("tagFromPackageJson derives a release tag from package version", () => {
   assert.equal(tagFromPackageJson(JSON.stringify({ version: "2026.7.9" })), "v2026.7.9");
+});
+
+test("release tag guard reports stale tag targets before dispatch", () => {
+  assert.equal(
+    buildTagHeadMismatchMessage({
+      tag: "v2026.7.9",
+      tagCommitSha: "349969b718d5879c9e9cb02d6e2d6c8ac82666da",
+      headSha: "5a640d2fee0ded85aac69e7c5c373df5580f5498",
+    }),
+    "Release tag v2026.7.9 points at 349969b718d5, not current HEAD 5a640d2fee0d.",
+  );
+  assert.equal(
+    buildTagHeadMismatchMessage({
+      tag: "v2026.7.10",
+      tagCommitSha: "5a640d2fee0ded85aac69e7c5c373df5580f5498",
+      headSha: "5a640d2fee0ded85aac69e7c5c373df5580f5498",
+    }),
+    "",
+  );
+  assert.equal(
+    buildTagHeadMismatchMessage({
+      tag: "v2026.7.10",
+      tagCommitSha: "",
+      headSha: "5a640d2fee0ded85aac69e7c5c373df5580f5498",
+    }),
+    "",
+  );
 });
 
 test("selectDispatchedRun chooses the matching workflow_dispatch run", () => {

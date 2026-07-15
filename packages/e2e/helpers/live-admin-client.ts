@@ -59,8 +59,6 @@ export type AdminUserAiAccessRecord = {
   userId?: string;
   enabled?: boolean;
   provider?: string | null;
-  defaultModel?: string | null;
-  allowedModels?: string[];
   credentialId?: string | null;
 };
 
@@ -75,8 +73,6 @@ export type CreateAdminUserInput = {
 export type UpsertAdminUserAiAccessInput = {
   enabled: boolean;
   provider: string | null;
-  defaultModel: string | null;
-  allowedModels: string[];
   credentialId?: string | null;
 };
 
@@ -276,8 +272,6 @@ export async function upsertAdminUserAiAccess(
     body: {
       enabled: input.enabled,
       provider: input.provider,
-      defaultModel: input.defaultModel,
-      allowedModels: input.allowedModels,
       credentialId: input.credentialId ?? null,
     },
   });

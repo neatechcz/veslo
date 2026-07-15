@@ -70,6 +70,7 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
     CREATE TABLE IF NOT EXISTS \`ai_gateway_audit_event\` (
       \`id\` varchar(64) NOT NULL PRIMARY KEY,
       \`actor_user_id\` varchar(64),
+      \`organization_id\` varchar(64),
       \`entity_type\` varchar(64) NOT NULL,
       \`entity_id\` varchar(64) NOT NULL,
       \`action\` varchar(64) NOT NULL,
@@ -92,6 +93,17 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
       \`created_at\` timestamp(3) NOT NULL,
       \`updated_at\` timestamp(3) NOT NULL,
       UNIQUE KEY \`user_ai_access_policy_user_id\` (\`user_id\`)
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS \`platform_model_policy\` (
+      \`id\` varchar(32) NOT NULL PRIMARY KEY,
+      \`enabled_models_json\` text NOT NULL,
+      \`active_provider\` varchar(64) NOT NULL,
+      \`active_model\` varchar(128) NOT NULL,
+      \`created_at\` timestamp(3) NOT NULL,
+      \`updated_at\` timestamp(3) NOT NULL
     )
   `);
 
@@ -179,6 +191,8 @@ export async function ensureAiGatewaySchema(db: SchemaReconcileDb) {
   await ensureIndex(db, "ai_gateway_audit_event", "audit_event_entity", ["entity_type", "entity_id"]);
   await ensureIndex(db, "ai_gateway_audit_event", "audit_event_actor", ["actor_user_id"]);
   await ensureIndex(db, "ai_gateway_audit_event", "audit_event_action", ["action"]);
+  await ensureColumn(db, "ai_gateway_audit_event", "organization_id", "varchar(64)");
+  await ensureIndex(db, "ai_gateway_audit_event", "audit_event_organization_created", ["organization_id", "created_at"]);
   await ensureIndex(db, "user_ai_access_policy", "user_ai_access_policy_provider", ["provider"]);
   await ensureColumn(db, "user_ai_access_policy", "credential_id", "varchar(64)");
   await ensureColumn(db, "user_ai_access_policy", "assignment_origin", "varchar(32) NOT NULL DEFAULT 'admin_assigned'");

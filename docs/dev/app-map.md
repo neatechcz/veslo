@@ -15,6 +15,13 @@ This document maps the main Veslo code surfaces so future coding agents can find
 - `packages/e2e`
   `tauri-pilot` scenarios and helpers for the real Tauri desktop runtime. WebdriverIO is not part of the current E2E surface.
 
+## Managed-AI Ownership
+
+- Standalone AI Gateway owns user AI-access records, the global model policy, platform credentials, runtime model enforcement, credential rotation, usage, and the canonical `/admin` UI.
+- DEN owns identity, organization membership, and billing entitlement. Its runtime managed-AI surface is the minimal authenticated entitlement facade; production provider inference routes are retired. The signup hook can consume an explicitly injected read-only Gateway policy projection, but the committed default leaves that resolver unwired and skips auto-assignment.
+- `packages/server` owns only the local-first proxy handoff. It keeps gateway authorization and authenticated organization context in actor-scoped runtime memory, never in OpenCode config, and injects that context before forwarding to AI Gateway.
+- Admin platform routes have no organization context. Organization context exists only under `/admin/organizations/:orgId/...` and is authorized by DEN-backed organization membership.
+
 ## App Entry Points
 
 - `packages/app/src/app/app.tsx`
@@ -50,7 +57,7 @@ pre-bind access is reported to bootstrap diagnostics), session id joins go throu
 These live under `packages/app/src/app/pages/` and are composed by `dashboard.tsx`.
 
 - `settings.tsx`
-  App settings, archived sessions, provider/model controls, advanced tools, and developer diagnostics.
+  App settings, archived sessions, read-only Managed-AI access/model status, advanced tools, and developer diagnostics. Managed-AI model selection is not a user control.
 - `config.tsx`
   Workspace-scoped config, reload, auto-reload, live access details, and diagnostics bundle.
 - `skills.tsx`
@@ -102,7 +109,7 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - `packages/app/src/app/context/managed-ai-access-store.ts`
   Managed-AI access profile loading, local proof cache handling, and read-only access state.
 - `packages/app/src/app/context/managed-ai-runtime-config.ts`
-  Managed-AI runtime config sync, provider/model routing repair, and OpenCode config patching.
+  Managed-AI runtime config sync, read-only global-model routing repair, organization-aware local authorization priming, and non-secret OpenCode config patching.
 - `packages/app/src/app/context/conversation-service.ts`
   Conversation read/write adapter used by app/session workflows instead of calling server APIs
   inline from `app.tsx`. Server-bound local workspace calls must use acknowledged
@@ -233,8 +240,8 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
 - `packages/server/src/server.ts`
   API route registration, auth gates, owner composition, audit, and capability reporting.
 - `packages/server/src/ai-gateway-runtime-owner.ts`
-  Local AI Gateway runtime state: runtime authorization, active run/session resolution, proxy abort
-  tracking, and provider hit watchdogs.
+  Local AI Gateway runtime state: actor-bound authorization and organization id, active run/session
+  resolution, proxy abort tracking, and provider hit watchdogs.
 - `packages/server/src/soul-controller.ts`
   Server-side Soul owner for Den context, edit permissions, read payloads, pending user edits, and
   workspace materialization orchestration.
@@ -260,7 +267,8 @@ These live under `packages/app/src/app/pages/` and are composed by `dashboard.ts
   `soul-data-store.ts`, and `packages/server/src/soul-controller.ts`.
 - Local managed-AI proxy runtime state issue: start at
   `packages/server/src/ai-gateway-runtime-owner.ts`, then the proxy transport wiring in
-  `packages/server/src/server.ts`.
+  `packages/server/src/server.ts`. For global model policy or credential routing continue in
+  `services/ai-gateway`; for billing entitlement or membership resolution continue in `services/den`.
 - Session send, queue, retry, or pending-session issue: start at `session-send-workflow.ts`,
   `session-creation-workflow.ts`, or `session-mutation-workflow.ts`, then the page wiring in `session.tsx`.
 - Send trace, preflight trace id, or native send diagnostics issue: start at `context/app-send-trace.ts`,

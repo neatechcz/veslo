@@ -1,8 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { MySqlAiAccessRepository } from "../src/access/mysql-repository.js"
+import {
+  AiAccessProviderMismatchError,
+  MySqlAiAccessRepository,
+} from "../src/access/mysql-repository.js"
 import type { AiGatewayDb } from "../src/db/index.js"
+import { platformModelPolicyTable, userAiAccessPolicyTable } from "../src/db/schema.js"
 
 function createAiAccessDb(row: Record<string, unknown>) {
   return {
@@ -24,21 +28,68 @@ function createAiAccessDb(row: Record<string, unknown>) {
   }
 }
 
-function createWritableAiAccessDb() {
-  let row: Record<string, unknown> | null = null
-  const calls: Array<{ kind: "insert" | "update"; values: Record<string, unknown> }> = []
+function createAiAccessCountDb(count: number | string) {
+  let whereCalls = 0
 
   return {
-    calls,
+    get whereCalls() {
+      return whereCalls
+    },
     db: {
       select() {
         return {
           from() {
             return {
+              async where() {
+                whereCalls += 1
+                return [{ count }]
+              },
+            }
+          },
+        }
+      },
+    },
+  }
+}
+
+function createWritableAiAccessDb(options: { activeProvider?: string | null } = {}) {
+  let row: Record<string, unknown> | null = null
+  const activeProvider = options.activeProvider ?? "codex_oauth"
+  const calls: Array<{ kind: "insert" | "update"; values: Record<string, unknown> }> = []
+  const lockedTables: string[] = []
+  let transactionCount = 0
+
+  return {
+    calls,
+    lockedTables,
+    get transactionCount() {
+      return transactionCount
+    },
+    db: {
+      select() {
+        return {
+          from(table: unknown) {
+            return {
               where() {
                 return {
-                  async limit() {
-                    return row ? [row] : []
+                  limit() {
+                    const result = Promise.resolve(row ? [row] : []) as Promise<Record<string, unknown>[]> & {
+                      for(mode: string): Promise<Record<string, unknown>[]>;
+                    }
+                    result.for = async () => {
+                      if (table === platformModelPolicyTable) {
+                        lockedTables.push("platform_model_policy:update")
+                        return activeProvider
+                          ? [{ activeProvider }]
+                          : []
+                      }
+                      if (table === userAiAccessPolicyTable) {
+                        lockedTables.push("user_ai_access_policy:update")
+                        return row ? [row] : []
+                      }
+                      throw new Error("unexpected select table")
+                    }
+                    return result
                   },
                 }
               },
@@ -87,6 +138,10 @@ function createWritableAiAccessDb() {
           },
         }
       },
+      async transaction(callback: (tx: unknown) => Promise<unknown>) {
+        transactionCount += 1
+        return callback(this)
+      },
     },
   }
 }
@@ -111,9 +166,21 @@ test("reads codex_oauth ai access policies from mysql rows", async () => {
   assert.equal(policy?.provider, "codex_oauth")
   assert.equal(policy?.credentialId, "cred_codex_1")
   assert.equal(policy?.assignmentOrigin, "admin_assigned")
+  assert.equal(Object.hasOwn(policy ?? {}, "defaultModel"), false)
+  assert.equal(Object.hasOwn(policy ?? {}, "allowedModels"), false)
 })
 
-test("upserts ai access policies with credential ids", async () => {
+test("counts enabled ai access policies incompatible with a target provider", async () => {
+  const counting = createAiAccessCountDb("2")
+  const repository = new MySqlAiAccessRepository(counting.db as AiGatewayDb)
+
+  const count = await repository.countEnabledPoliciesIncompatibleWithProvider("codex_oauth")
+
+  assert.equal(count, 2)
+  assert.equal(counting.whereCalls, 1)
+})
+
+test("inserts neutral compatibility model columns and preserves them on later user access updates", async () => {
   const writable = createWritableAiAccessDb()
   const repository = new MySqlAiAccessRepository(writable.db as AiGatewayDb)
 
@@ -122,11 +189,15 @@ test("upserts ai access policies with credential ids", async () => {
     enabled: true,
     provider: "codex_oauth",
     credentialId: "cred_codex_1",
-    defaultModel: "gpt-5.4",
-    allowedModels: ["gpt-5.4", "gpt-5.4"],
+    assignmentOrigin: "admin_assigned",
   })
 
   assert.equal(created.credentialId, "cred_codex_1")
+  assert.equal(writable.transactionCount, 1)
+  assert.deepEqual(writable.lockedTables.slice(0, 2), [
+    "platform_model_policy:update",
+    "user_ai_access_policy:update",
+  ])
   assert.deepEqual(writable.calls[0], {
     kind: "insert",
     values: {
@@ -135,8 +206,8 @@ test("upserts ai access policies with credential ids", async () => {
       enabled: 1,
       provider: "codex_oauth",
       credential_id: "cred_codex_1",
-      default_model: "gpt-5.4",
-      allowed_models_json: JSON.stringify(["gpt-5.4"]),
+      default_model: null,
+      allowed_models_json: JSON.stringify([]),
       assignment_origin: "admin_assigned",
       created_at: created.createdAt,
       updated_at: created.updatedAt,
@@ -148,21 +219,45 @@ test("upserts ai access policies with credential ids", async () => {
     enabled: false,
     provider: null,
     credentialId: null,
-    defaultModel: null,
-    allowedModels: [],
+    assignmentOrigin: "admin_assigned",
   })
 
   assert.equal(updated.credentialId, null)
+  assert.equal(writable.transactionCount, 2)
+  assert.deepEqual(writable.lockedTables.slice(2, 4), [
+    "platform_model_policy:update",
+    "user_ai_access_policy:update",
+  ])
   assert.deepEqual(writable.calls[1], {
     kind: "update",
     values: {
       enabled: 0,
       provider: null,
       credential_id: null,
-      default_model: null,
-      allowed_models_json: JSON.stringify([]),
       assignment_origin: "admin_assigned",
       updated_at: updated.updatedAt,
     },
   })
+})
+
+test("rejects enabled writes that do not match the locked active provider", async () => {
+  const writable = createWritableAiAccessDb({ activeProvider: "openai_compatible" })
+  const repository = new MySqlAiAccessRepository(writable.db as AiGatewayDb)
+
+  await assert.rejects(
+    repository.upsertUserAiAccess({
+      userId: "user_codex",
+      enabled: true,
+      provider: "codex_oauth",
+      credentialId: "cred_codex_1",
+      assignmentOrigin: "admin_assigned",
+    }),
+    (error: unknown) => error instanceof AiAccessProviderMismatchError
+      && error.message === "ai_access_provider_mismatch"
+      && (error as { status?: number }).status === 409,
+  )
+
+  assert.equal(writable.transactionCount, 1)
+  assert.deepEqual(writable.lockedTables, ["platform_model_policy:update"])
+  assert.deepEqual(writable.calls, [])
 })

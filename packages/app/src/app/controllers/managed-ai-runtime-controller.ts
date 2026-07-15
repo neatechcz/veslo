@@ -49,7 +49,7 @@ export type ManagedAiAccessRefreshSuccessDecision =
     gatewayAccessToken: "";
     error: string;
     clearCache: true;
-    retry: true;
+    retry: boolean;
   };
 
 export function resolveManagedAiAccessRefreshSuccess(input: {
@@ -72,7 +72,7 @@ export function resolveManagedAiAccessRefreshSuccess(input: {
     gatewayAccessToken: "",
     error: trim(input.reason) || AI_ACCESS_NOT_CONFIGURED_MESSAGE,
     clearCache: true,
-    retry: true,
+    retry: false,
   };
 }
 

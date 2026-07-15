@@ -1,13 +1,16 @@
 import { Router } from "express"
 
-import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js"
-import type { AiAccessRepository } from "../access/repository.js"
+import type { AiAccessProvider, AiAccessRepository } from "../access/repository.js"
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js"
 
 export type UserCredentialDependencies = {
   sessionResolver: UserSessionResolver
   aiAccess?: AiAccessRepository
-  autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService
+  modelPolicy?: {
+    getPolicy(): Promise<{
+      activeModel: { provider: AiAccessProvider; model: string }
+    } | null>
+  }
 }
 
 export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
@@ -32,31 +35,41 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
 
   router.get("/api/me/ai-access", async (_req, res) => {
     const session = res.locals.userSession as UserSession
-    let aiAccess = await deps.aiAccess?.getUserAiAccess(session.user.id)
-    if (aiAccess?.provider === "codex_oauth" && deps.autoAssignedCodexCredentialRotation) {
-      try {
-        aiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
-          aiAccess,
-          reason: "user_ai_access_read",
-        })
-      } catch (error) {
-        console.error("managed_ai_user_codex_assignment_repair_failed", error)
-      }
+    const aiAccess = await deps.aiAccess?.getUserAiAccess(session.user.id)
+
+    if (!aiAccess) {
+      res.json({ aiAccess: null })
+      return
+    }
+
+    let modelPolicy
+    try {
+      modelPolicy = await deps.modelPolicy?.getPolicy()
+    } catch (error) {
+      console.error("platform_model_policy_lookup_failed", error)
+      res.status(502).json({ error: "platform_model_policy_lookup_failed" })
+      return
+    }
+    const effectiveProvider = modelPolicy?.activeModel.provider?.trim() ?? ""
+    const effectiveModel = modelPolicy?.activeModel.model?.trim() ?? ""
+    if (!modelPolicy || !effectiveProvider || !effectiveModel) {
+      res.status(503).json({ error: "platform_model_policy_not_configured" })
+      return
     }
 
     res.json({
-      aiAccess: aiAccess
-        ? {
-            id: aiAccess.id,
-            userId: aiAccess.userId,
-            enabled: aiAccess.enabled,
-            provider: aiAccess.provider,
-            credentialId: aiAccess.credentialId,
-            defaultModel: aiAccess.defaultModel,
-            allowedModels: aiAccess.allowedModels,
-            updatedAt: toIsoString(aiAccess.updatedAt),
-          }
-        : null,
+      aiAccess: {
+        id: aiAccess.id,
+        userId: aiAccess.userId,
+        enabled: aiAccess.enabled,
+        provider: aiAccess.provider,
+        credentialId: aiAccess.credentialId,
+        effectiveModel: {
+          provider: effectiveProvider,
+          model: effectiveModel,
+        },
+        updatedAt: toIsoString(aiAccess.updatedAt),
+      },
     })
   })
 

@@ -123,22 +123,23 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
+          package-manager-cache: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.27.0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
 
@@ -187,16 +188,6 @@ jobs:
             --profile "${VESLO_DOCUMENT_RUNTIME_RELEASE_PROFILE:-local-docs-required}" \
             --json \
             --platform "${{ matrix.doc_runtime_platform }}"
-
-      - name: Assemble Windows document runtime
-        if: matrix.os_type == 'windows'
-        shell: pwsh
-        run: node scripts/document-runtime/assemble-windows.mjs
-
-      - name: Verify Windows document runtime bundle
-        if: matrix.os_type == 'windows'
-        shell: pwsh
-        run: node scripts/release/verify-document-runtime-windows.mjs --profile local-docs-required --json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

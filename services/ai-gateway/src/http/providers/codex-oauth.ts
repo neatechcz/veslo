@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto"
 import { Router, type Response } from "express"
 
 import type { UserAiAccessPolicyRecord } from "../../access/repository.js"
+import {
+  AssignedCredentialModelIncompatibleError,
+  AssignedCredentialUnavailableError,
+} from "../../access/auto-assignment-rotation.js"
 import type { GatewaySession } from "../../auth/gateway-session.js"
 import type { CredentialBinding } from "../../credentials/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js"
@@ -16,6 +20,7 @@ import {
   recordProviderProxyFailureAlert,
 } from "./proxy-failure-alert.js"
 import { normalizeGatewaySessionId } from "./session-id.js"
+import { readGatewayOrganizationId } from "./gateway-context.js"
 import { asyncHandler } from "../async-handler.js"
 import type { ProxyDependencies } from "../proxy-dependencies.js"
 
@@ -49,28 +54,48 @@ export function createCodexOAuthProxyRouter(
     const sessionId = normalizeGatewaySessionId(rawSessionId, gatewaySession.user.id, "codex_oauth")
 
     let gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined
-    if (gatewayAiAccess && deps.autoAssignedCodexCredentialRotation) {
-      try {
-        gatewayAiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
-          aiAccess: gatewayAiAccess,
-          reason: "codex_proxy_request",
-        })
-        res.locals.gatewayAiAccess = gatewayAiAccess
-      } catch (error) {
-        console.error("codex_auto_assignment_repair_failed", error)
-      }
-    }
-
     const policyResult = gatewayAiAccess
       ? applyAiAccessPolicy({
           routeProvider: "codex_oauth",
           aiAccess: gatewayAiAccess,
           body: req.body,
         })
-      : { ok: true as const, body: req.body as Record<string, unknown> }
+      : { ok: true as const, body: req.body as Record<string, unknown>, model: "" }
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error })
       return
+    }
+
+    const activeModel = policyResult.model
+      ? { provider: "codex_oauth" as const, model: policyResult.model }
+      : null
+    if (gatewayAiAccess && activeModel && deps.autoAssignedCodexCredentialRotation) {
+      try {
+        gatewayAiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
+          aiAccess: gatewayAiAccess,
+          activeModel,
+          reason: "codex_proxy_request",
+        })
+        res.locals.gatewayAiAccess = gatewayAiAccess
+      } catch (error) {
+        if (error instanceof AssignedCredentialModelIncompatibleError
+          || error instanceof AssignedCredentialUnavailableError) {
+          res.status(503).json({ error: error.message })
+          return
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.startsWith("no_eligible_codex_credentials")) {
+          res.status(503).json({
+            error: "no_eligible_codex_credentials",
+            reason: message.includes("all_codex_credentials_exhausted")
+              ? "all_codex_credentials_exhausted"
+              : "no_eligible_binding",
+            provider: "codex_oauth",
+          })
+          return
+        }
+        console.error("codex_auto_assignment_repair_failed", error)
+      }
     }
 
     const assignedBinding = gatewayAiAccess
@@ -112,7 +137,12 @@ export function createCodexOAuthProxyRouter(
     }
 
     try {
-      const upstreamResponse = await executeRequest(scope, policyResult.body, assignedAuthJson)
+      const upstreamResponse = await executeRequest(
+        scope,
+        policyResult.body,
+        assignedAuthJson,
+        readGatewayOrganizationId(res),
+      )
       await applyUpstreamResponse(res, upstreamResponse)
     } catch (error) {
       await recordProviderProxyFailureAlert({
@@ -158,15 +188,17 @@ export function createCodexOAuthProxyRouter(
     scope: ResolveLeaseInput,
     body: unknown,
     authJson: string | null,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const lease = await deps.leaseBroker.getOrCreateActiveLease(scope)
-    return executeLeaseRequest(lease, body, authJson)
+    return executeLeaseRequest(lease, body, authJson, orgId)
   }
 
   async function executeLeaseRequest(
     lease: SessionLease,
     body: unknown,
     authJson: string | null,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const upstreamResponse = await deps.codexOAuthTransport.chatCompletions({ body, authJson })
 
@@ -176,6 +208,7 @@ export function createCodexOAuthProxyRouter(
           if (!usage) return
           await recordUsage({
             ownerUserId: lease.ownerUserId,
+            orgId,
             sessionId: lease.sessionId,
             bindingId: lease.activeBindingId,
             requestBody: body,
@@ -188,6 +221,7 @@ export function createCodexOAuthProxyRouter(
     } else {
       await recordUsage({
         ownerUserId: lease.ownerUserId,
+        orgId,
         sessionId: lease.sessionId,
         bindingId: lease.activeBindingId,
         requestBody: body,
@@ -200,6 +234,7 @@ export function createCodexOAuthProxyRouter(
 
   async function recordUsage(input: {
     ownerUserId: string
+    orgId: string | null
     sessionId: string
     bindingId: string
     requestBody: unknown
@@ -218,6 +253,7 @@ export function createCodexOAuthProxyRouter(
       await deps.usageRepository.recordUsage({
         requestId,
         ownerUserId: input.ownerUserId,
+        orgId: input.orgId,
         provider: "codex_oauth",
         sessionId: input.sessionId,
         credentialId: credential.id,

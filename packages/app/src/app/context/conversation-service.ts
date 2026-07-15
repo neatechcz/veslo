@@ -200,7 +200,7 @@ export type ConversationPassiveReadPolicy = {
 
 type ConversationManagedProfile = {
   providerId?: string | null;
-  defaultModel?: {
+  effectiveModel?: {
     modelID?: string | null;
   } | null;
 };
@@ -1114,7 +1114,7 @@ export function createConversationService<Client extends ConversationServiceClie
       opencodeSessionId: scope?.opencodeSessionId?.trim() || null,
       expectAiGatewayStart,
       managedProviderId: managedProfile?.providerId ?? null,
-      managedModelId: managedProfile?.defaultModel?.modelID ?? null,
+      managedModelId: managedProfile?.effectiveModel?.modelID ?? null,
       preflightManagedAiReady: options.preflight?.managedAiReady ?? null,
       preflightRuntimeHealthOk: options.preflight?.runtimeHealthOk ?? null,
     });

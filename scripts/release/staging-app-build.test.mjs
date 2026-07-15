@@ -86,13 +86,11 @@ test("staging app workflow bakes staging endpoints and never publishes public up
   }
 });
 
-test("staging Windows build assembles document runtime before using Windows release config", () => {
+test("staging Windows build uses Windows release config without assembling document runtime into MSI", () => {
   const workflow = read(".github/workflows/build-staging-app.yml");
 
-  assert.match(
-    workflow,
-    /Assemble Windows staging document runtime[\s\S]*node scripts\/document-runtime\/assemble-windows\.mjs[\s\S]*Build Windows staging MSI/,
-  );
+  assert.doesNotMatch(workflow, /Assemble Windows staging document runtime/);
+  assert.doesNotMatch(workflow, /node scripts\/document-runtime\/assemble-windows\.mjs/);
   assert.match(
     workflow,
     /Build Windows staging MSI[\s\S]*--config src-tauri\/tauri\.windows\.release\.conf\.json/,

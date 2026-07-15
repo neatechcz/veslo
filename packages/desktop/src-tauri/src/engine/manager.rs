@@ -6,6 +6,7 @@ use crate::types::{EngineInfo, EngineRuntime, RuntimeEngineState};
 #[derive(Default)]
 pub struct EngineManager {
     pub inner: Arc<Mutex<EngineState>>,
+    pub start_queue: Arc<Mutex<()>>,
 }
 
 #[derive(Default)]

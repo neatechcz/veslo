@@ -127,8 +127,6 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
           userId: 'user_123',
           enabled: true,
           provider: 'codex_oauth',
-          defaultModel: 'gpt-5.4',
-          allowedModels: ['gpt-5.4'],
           credentialId: 'cred_codex_shared_1',
         },
       });
@@ -154,8 +152,6 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
     upsertAdminUserAiAccess(fetchImpl, gatewayBase, token, 'user_123', {
       enabled: true,
       provider: 'codex_oauth',
-      defaultModel: 'gpt-5.4',
-      allowedModels: ['gpt-5.4'],
       credentialId: 'cred_codex_shared_1',
     }),
   ]);
@@ -180,8 +176,6 @@ test('admin client lists users, credentials, and upserts ai access with bearer a
   assert.deepEqual(JSON.parse(String(aiAccessCall?.init?.body)), {
     enabled: true,
     provider: 'codex_oauth',
-    defaultModel: 'gpt-5.4',
-    allowedModels: ['gpt-5.4'],
     credentialId: 'cred_codex_shared_1',
   });
 });

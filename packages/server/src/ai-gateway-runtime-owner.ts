@@ -19,6 +19,7 @@ export type ActiveAiGatewayRunContext = {
   clientMessageId: string | null;
   origin: string | null;
   runtimeAuthorizationActorTokenHash: string | null;
+  runtimeAuthorizationOrgId: string | null;
 };
 
 export type AiGatewaySessionResolutionSource =
@@ -66,6 +67,7 @@ type AiGatewaySessionHit = {
 
 export type AiGatewayRuntimeAuthorizationEntry = {
   authorization: string;
+  orgId: string | null;
   at: number;
   source: "ai-access-token" | "caller-authorization";
 };
@@ -154,7 +156,8 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
   const activeRunsBySession = new Map<string, ActiveAiGatewayRunContext[]>();
   const activeRunsByWorkspace = new Map<string, ActiveAiGatewayRunContext[]>();
   const activeProxyRequests = new Map<string, ActiveAiGatewayProxyRequest>();
-  const runtimeAuthorizationByActorToken = new Map<string, AiGatewayRuntimeAuthorizationEntry>();
+  const runtimeAuthorizationByActorToken = new Map<string, Map<string, AiGatewayRuntimeAuthorizationEntry>>();
+  const runtimeAuthorizationOrgByActorWorkspace = new Map<string, Map<string, string>>();
 
   const summarizeRunContext = (
     context: ActiveAiGatewayRunContext,
@@ -172,6 +175,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       clientMessageId: context.clientMessageId,
       origin: context.origin,
       runtimeAuthorizationActorTokenHashPresent: Boolean(context.runtimeAuthorizationActorTokenHash),
+      runtimeAuthorizationOrgIdPresent: Boolean(context.runtimeAuthorizationOrgId),
     };
   };
 
@@ -298,32 +302,61 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
   function registerRuntimeAuthorization(input: {
     actor?: Actor;
     authorization: string;
+    orgId?: string | null;
+    workspaceId?: string | null;
     source: AiGatewayRuntimeAuthorizationEntry["source"];
   }): void {
     const key = actorRuntimeTokenKey(input.actor);
     const authorization = input.authorization.trim();
     if (!key || !authorization) return;
+    const orgId = input.orgId?.trim() || null;
     const entry = {
       authorization,
+      orgId,
       source: input.source,
       at: now(),
     };
-    runtimeAuthorizationByActorToken.set(key, entry);
+    const entries = runtimeAuthorizationByActorToken.get(key) ?? new Map<string, AiGatewayRuntimeAuthorizationEntry>();
+    entries.set(orgId ?? "", entry);
+    runtimeAuthorizationByActorToken.set(key, entries);
+    const workspaceId = input.workspaceId?.trim() ?? "";
+    if (workspaceId) {
+      const bindings = runtimeAuthorizationOrgByActorWorkspace.get(key) ?? new Map<string, string>();
+      bindings.set(workspaceId, orgId ?? "");
+      runtimeAuthorizationOrgByActorWorkspace.set(key, bindings);
+    }
   }
 
   function clearRuntimeAuthorization(actor?: Actor): void {
     const key = actorRuntimeTokenKey(actor);
     if (!key) return;
     runtimeAuthorizationByActorToken.delete(key);
+    runtimeAuthorizationOrgByActorWorkspace.delete(key);
   }
 
   function syncRuntimeAuthorizationFromAccessBundle(input: {
     actor?: Actor;
     value: unknown;
     callerAuthorization: string;
+    orgId?: string | null;
+    workspaceId?: string | null;
   }): void {
     if (!readAiAccessBundleEnabled(input.value)) {
-      clearRuntimeAuthorization(input.actor);
+      const key = actorRuntimeTokenKey(input.actor);
+      const orgId = input.orgId?.trim() ?? "";
+      const workspaceId = input.workspaceId?.trim() ?? "";
+      if (!key || !orgId) {
+        clearRuntimeAuthorization(input.actor);
+        return;
+      }
+      const entries = runtimeAuthorizationByActorToken.get(key);
+      entries?.delete(orgId);
+      if (entries?.size === 0) runtimeAuthorizationByActorToken.delete(key);
+      if (workspaceId) {
+        const bindings = runtimeAuthorizationOrgByActorWorkspace.get(key) ?? new Map<string, string>();
+        bindings.set(workspaceId, orgId);
+        runtimeAuthorizationOrgByActorWorkspace.set(key, bindings);
+      }
       return;
     }
 
@@ -332,6 +365,8 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       registerRuntimeAuthorization({
         ...(input.actor ? { actor: input.actor } : {}),
         authorization: `Bearer ${accessToken}`,
+        orgId: input.orgId,
+        workspaceId: input.workspaceId,
         source: "ai-access-token",
       });
       return;
@@ -340,8 +375,46 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     registerRuntimeAuthorization({
       ...(input.actor ? { actor: input.actor } : {}),
       authorization: input.callerAuthorization,
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
       source: "caller-authorization",
     });
+  }
+
+  function resolveRuntimeAuthorizationBindingForRun(input: {
+    actor?: Actor;
+    workspaceId: string;
+  }): { actorTokenHash: string; orgId: string | null } {
+    const actorTokenHash = actorRuntimeTokenKey(input.actor);
+    if (!actorTokenHash) {
+      throw new ApiError(
+        401,
+        "gateway_runtime_authorization_required",
+        "Managed AI gateway authorization actor is unavailable for this run",
+      );
+    }
+    const workspaceId = input.workspaceId.trim();
+    const workspaceBindings = runtimeAuthorizationOrgByActorWorkspace.get(actorTokenHash);
+    if (workspaceId && workspaceBindings?.has(workspaceId)) {
+      return {
+        actorTokenHash,
+        orgId: workspaceBindings.get(workspaceId) || null,
+      };
+    }
+
+    const entries = Array.from(runtimeAuthorizationByActorToken.get(actorTokenHash)?.values() ?? []);
+    if (entries.length === 1) {
+      return { actorTokenHash, orgId: entries[0]?.orgId ?? null };
+    }
+    if (entries.length > 1) {
+      throw new ApiError(
+        409,
+        "gateway_runtime_authorization_ambiguous",
+        "Managed AI gateway authorization is ambiguous for this workspace",
+        { workspaceId: workspaceId || null, organizationCount: entries.length },
+      );
+    }
+    return { actorTokenHash, orgId: null };
   }
 
   function resolveProviderAuthorization(input: {
@@ -349,20 +422,42 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     actor?: Actor;
     accessTokenHeader: string;
     runtimeAuthorizationActorTokenHash?: string | null;
+    runtimeAuthorizationOrgId?: string | null;
     activeRunContextPresent?: boolean;
   }): {
     authorization: string;
     source: AiGatewayRuntimeAuthorizationEntry["source"];
+    orgId?: string;
   } {
     const key = actorRuntimeTokenKey(input.actor);
     const scopedKey = input.runtimeAuthorizationActorTokenHash?.trim() ?? "";
+    const scopedOrgId = input.runtimeAuthorizationOrgId?.trim() ?? "";
     const runtimeCandidates: Array<{
       key: string;
       entry: AiGatewayRuntimeAuthorizationEntry | undefined;
       scoped: boolean;
     }> = [
-      ...(scopedKey ? [{ key: scopedKey, entry: runtimeAuthorizationByActorToken.get(scopedKey), scoped: true }] : []),
-      ...(key && key !== scopedKey ? [{ key, entry: runtimeAuthorizationByActorToken.get(key), scoped: false }] : []),
+      ...(scopedKey
+        ? [{
+            key: scopedKey,
+            entry: runtimeAuthorizationByActorToken.get(scopedKey)?.get(scopedOrgId),
+            scoped: true,
+          }]
+        : []),
+      ...(!input.activeRunContextPresent && key && key !== scopedKey
+        ? (() => {
+            const entries = Array.from(runtimeAuthorizationByActorToken.get(key)?.values() ?? []);
+            if (entries.length > 1) {
+              throw new ApiError(
+                409,
+                "gateway_runtime_authorization_ambiguous",
+                "Managed AI gateway authorization requires an organization-bound run",
+                { organizationCount: entries.length },
+              );
+            }
+            return [{ key, entry: entries[0], scoped: false }];
+          })()
+        : []),
     ];
     let expiredRuntimeAuthorization = false;
     const at = now();
@@ -372,7 +467,9 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       const ageMs = Math.max(0, at - resolvedRuntime.at);
       if (ageMs > runtimeAuthorizationMaxAgeMs) {
         expiredRuntimeAuthorization = true;
-        runtimeAuthorizationByActorToken.delete(runtimeCandidate.key);
+        const entries = runtimeAuthorizationByActorToken.get(runtimeCandidate.key);
+        entries?.delete(resolvedRuntime.orgId ?? "");
+        if (entries?.size === 0) runtimeAuthorizationByActorToken.delete(runtimeCandidate.key);
         recordTrace("server:ai-gateway-runtime-authorization:expired", {
           ageMs: roundDiagnosticMs(ageMs),
           maxAgeMs: runtimeAuthorizationMaxAgeMs,
@@ -384,6 +481,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
       return {
         authorization: resolvedRuntime.authorization,
         source: resolvedRuntime.source,
+        ...(resolvedRuntime.orgId ? { orgId: resolvedRuntime.orgId } : {}),
       };
     }
 
@@ -718,6 +816,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     activeRunsByWorkspace.clear();
     activeProxyRequests.clear();
     runtimeAuthorizationByActorToken.clear();
+    runtimeAuthorizationOrgByActorWorkspace.clear();
   }
 
   return {
@@ -731,6 +830,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     registerActiveRun,
     registerRuntimeAuthorization,
     resetForTests,
+    resolveRuntimeAuthorizationBindingForRun,
     resolveProviderAuthorization,
     resolveSession,
     syncRuntimeAuthorizationFromAccessBundle,

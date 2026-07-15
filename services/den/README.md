@@ -86,6 +86,8 @@ cp .env.development .env
 - `DEN_LOG_MASTER_KEY` master key material used to encrypt debug log payloads at ingest
 - `DEN_LOG_MASTER_KEY_VERSION` operator-managed key version stored with each encrypted payload
 - `DEN_LOG_RETENTION_DAYS` retention window for debug log events and accepted batch ids (default `30`)
+- `DEN_DIAGNOSTIC_DUMP_ROOT` server filesystem directory for streamed diagnostic dump blobs (default `/data/diagnostic-dumps`)
+- `DEN_DIAGNOSTIC_DUMP_MAX_BYTES` maximum accepted streamed diagnostic dump body size in bytes (default `52428800`)
 - `MICROSOFT_CLIENT_ID` optional OAuth app client ID for the Microsoft connector
 - `MICROSOFT_CLIENT_SECRET` optional OAuth app client secret for the Microsoft connector
 - `MICROSOFT_REDIRECT_URI` optional OAuth callback URL override for the Microsoft connector. Hosted environments can leave it blank to derive the callback from `VESLO_DEPLOYMENT_DOMAIN`.
@@ -166,6 +168,17 @@ pnpm db:migrate
   - Requires `Authorization: Bearer <DEN_LOG_INGEST_TOKEN>`.
   - Accepts `{ batchId, events }`, stores encrypted event payloads, and returns `202 { acceptedBatchIds }`.
   - Repeated `batchId` or `Idempotency-Key` values are treated as accepted retries and do not duplicate event rows.
+- `POST /v1/internal/diagnostic-dumps`
+  - Internal server-to-server route used for large diagnostic dump uploads that should not be stored as debug-log JSON event payloads.
+  - Requires `Authorization: Bearer <DEN_LOG_INGEST_TOKEN>`.
+  - Streams the request body directly to `DEN_DIAGNOSTIC_DUMP_ROOT` and writes a sibling `.metadata.json` file with source, kind, byte count, SHA-256, and storage path.
+  - The owned-server Compose stack mounts `${DIAGNOSTIC_DUMP_HOST_ROOT:-/srv/veslo/diagnostic-dumps}` into `${DEN_DIAGNOSTIC_DUMP_ROOT:-/data/diagnostic-dumps}`.
+  - Uploads are bounded by `DEN_DIAGNOSTIC_DUMP_MAX_BYTES` and return `202 { ok: true, dump }` when accepted.
+- `POST /v1/desktop-diagnostic-dumps`
+  - User-authenticated desktop route for large diagnostic dump uploads from developer/support helpers.
+  - Requires the signed-in user's Better Auth bearer token and `x-veslo-org-id`; no internal `DEN_LOG_INGEST_TOKEN` is exposed to client machines.
+  - Streams the request body directly to `DEN_DIAGNOSTIC_DUMP_ROOT/desktop/<orgId>/<userId>/<YYYY-MM-DD>/` and writes a sibling `.metadata.json`.
+  - Uploads are bounded by `DEN_DIAGNOSTIC_DUMP_MAX_BYTES` and return `202 { ok: true, dump }` when accepted.
 - `POST /v1/organization-billing/stripe/webhook`
   - Stripe webhook endpoint for organization Managed AI billing.
   - Must receive raw request bytes for signature verification.

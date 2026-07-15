@@ -18,8 +18,10 @@ export {
 
 export {
   buildManagedEnv,
+  currentDocumentRuntimePlatform,
   doctor,
   installPackageArchive,
+  installPackageFromFeed,
   packExpandedPackage,
   pathInfo,
   repairHeadless,

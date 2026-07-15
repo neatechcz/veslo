@@ -96,8 +96,7 @@ export type SettingsViewProps = {
   aiAccessConfigured: boolean;
   aiAccessMessage: string;
   aiAccessProviderLabel: string | null;
-  aiAccessDefaultModelLabel: string | null;
-  aiAccessAllowedModels: string[];
+  aiAccessEffectiveModelLabel: string | null;
   showThinking: boolean;
   toggleShowThinking: () => void;
   hideTitlebar: boolean;
@@ -220,10 +219,12 @@ export default function SettingsView(props: SettingsViewProps) {
   });
   const documentRuntimeActionLabel = createMemo(() => {
     switch (documentRuntimeRow().action) {
+      case "install":
+        return props.documentRuntimeRepairBusy ? "Installing..." : "Install office package";
       case "repair":
         return props.documentRuntimeRepairBusy ? "Repairing..." : "Repair";
       case "update":
-        return "Check updates";
+        return props.documentRuntimeRepairBusy ? "Updating..." : "Update office package";
       case "wait":
         return "Waiting";
       case "none":
@@ -232,11 +233,10 @@ export default function SettingsView(props: SettingsViewProps) {
   });
   const handleDocumentRuntimeAction = () => {
     const action = documentRuntimeRow().action;
-    if (action === "repair") {
+    if (action === "install" || action === "repair" || action === "update") {
       props.repairDocumentRuntime?.();
       return;
     }
-    if (action === "update") props.checkForUpdates();
   };
   const updateDownloadPercent = createMemo<number | null>(() => {
     const total = updateTotalBytes();
@@ -319,8 +319,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const documentRuntimeActionDisabled = createMemo(() => {
     const action = documentRuntimeRow().action;
     if (action === "wait") return true;
-    if (action === "repair") return !props.repairDocumentRuntime || Boolean(props.documentRuntimeRepairBusy) || props.anyActiveRuns;
-    if (action === "update") return generalUpdateDisabled();
+    if (action === "install" || action === "repair" || action === "update") {
+      return !props.repairDocumentRuntime || Boolean(props.documentRuntimeRepairBusy) || props.anyActiveRuns;
+    }
     return true;
   });
 
@@ -404,13 +405,6 @@ export default function SettingsView(props: SettingsViewProps) {
     if (!props.aiAccessConfigured) return "bg-amber-7/10 text-amber-11 border-amber-7/20";
     return "bg-green-7/10 text-green-11 border-green-7/20";
   });
-  const aiAccessAllowedModelsSummary = createMemo(() => {
-    const models = props.aiAccessAllowedModels.filter((value) => value.trim().length > 0);
-    if (!models.length) return translate("settings.ai_only_admin_default_model");
-    if (models.length === 1) return models[0]!;
-    return translate("settings.ai_allowed_models_count").replace("{count}", String(models.length));
-  });
-
   const handleReconnectVesloServer = async () => {
     if (props.busy || props.vesloReconnectBusy) return;
     if (!props.vesloServerUrl.trim()) return;
@@ -988,7 +982,10 @@ export default function SettingsView(props: SettingsViewProps) {
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
             <Show when={props.developerMode}>
-              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+              <div
+                data-testid="managed-ai-access-settings-card"
+                class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4"
+              >
                 <div class="flex items-start justify-between gap-4">
                   <div>
                     <div class="flex items-center gap-2">
@@ -1008,18 +1005,14 @@ export default function SettingsView(props: SettingsViewProps) {
                     when={props.aiAccessConfigured}
                     fallback={<div class="text-[11px] text-gray-8">{__vesloT("ui.literal.users_can_sign_in_but_prompts_stay_blocked_u_e6wyhu", __vesloCurrentLocale())}</div>}
                   >
-                    <div class="grid gap-3 md:grid-cols-3">
+                    <div class="grid gap-3 md:grid-cols-2">
                       <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
                         <div class="text-[11px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.provider_evz7q4", __vesloCurrentLocale())}</div>
                         <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessProviderLabel ?? translate("settings.not_assigned")}</div>
                       </div>
                       <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
-                        <div class="text-[11px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.default_model_463spj", __vesloCurrentLocale())}</div>
-                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessDefaultModelLabel ?? translate("settings.not_assigned")}</div>
-                      </div>
-                      <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2">
-                        <div class="text-[11px] uppercase tracking-wide text-gray-8">{__vesloT("ui.literal.allowed_models_tnz56v", __vesloCurrentLocale())}</div>
-                        <div class="text-sm font-medium text-gray-12 mt-1">{aiAccessAllowedModelsSummary()}</div>
+                        <div class="text-[11px] uppercase tracking-wide text-gray-8">{translate("settings.effective_model")}</div>
+                        <div class="text-sm font-medium text-gray-12 mt-1">{props.aiAccessEffectiveModelLabel ?? translate("settings.not_assigned")}</div>
                       </div>
                     </div>
                   </Show>
@@ -1084,6 +1077,14 @@ export default function SettingsView(props: SettingsViewProps) {
                     </span>
                   </div>
                   <div class="text-xs text-gray-7">{documentRuntimeRow().detail}</div>
+                  <Show when={documentRuntimeRow().progressPercent !== null}>
+                    <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-5">
+                      <div
+                        class="h-full rounded-full bg-blue-9 transition-[width] duration-300"
+                        style={{ width: `${documentRuntimeRow().progressPercent ?? 0}%` }}
+                      />
+                    </div>
+                  </Show>
                 </div>
                 <Show when={documentRuntimeActionLabel()}>
                   {(label) => (
@@ -1092,7 +1093,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       class="text-xs h-8 py-0 px-3 shrink-0"
                       onClick={handleDocumentRuntimeAction}
                       disabled={documentRuntimeActionDisabled()}
-                      title={props.anyActiveRuns && documentRuntimeRow().action === "repair" ? translate("settings.stop_runs_to_update") : ""}
+                      title={props.anyActiveRuns && ["install", "repair", "update"].includes(documentRuntimeRow().action) ? translate("settings.stop_runs_to_update") : ""}
                     >
                       {label()}
                     </Button>

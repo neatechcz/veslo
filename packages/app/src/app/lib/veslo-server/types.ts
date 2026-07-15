@@ -1945,8 +1945,13 @@ export type VesloUserAiAccess = {
   userId: string;
   enabled: boolean;
   provider: VesloGatewayProvider | null;
-  defaultModel: string | null;
-  allowedModels: string[];
+  effectiveModel: {
+    provider: VesloGatewayProvider;
+    model: string;
+  } | null;
+  /** Legacy gateway responses may omit effectiveModel; UI resolves defaultModel as a compatibility fallback. */
+  defaultModel?: string | null;
+  allowedModels?: string[];
   updatedAt: string | null;
 };
 

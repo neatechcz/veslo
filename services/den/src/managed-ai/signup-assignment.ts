@@ -1,5 +1,5 @@
 import { MySqlAiAccessRepository } from "./access/mysql-repository.js"
-import type { AiAccessRepository } from "./access/repository.js"
+import type { AiAccessProvider, AiAccessRepository } from "./access/repository.js"
 import { MySqlCredentialRepository } from "./credentials/mysql-repository.js"
 import { MySqlSecretStore } from "./credentials/mysql-secret-store.js"
 import type { CredentialRepository } from "./credentials/repository.js"
@@ -9,8 +9,6 @@ import {
   type CodexCredentialStatusProvider,
 } from "./usage/codex-status.js"
 
-export const DEFAULT_CODEX_AUTO_ASSIGN_MODEL = "gpt-5.6-sol"
-
 export type ManagedAiSignupAssignmentCredential = {
   credentialId: string
   name: string
@@ -18,6 +16,8 @@ export type ManagedAiSignupAssignmentCredential = {
 }
 
 export type ManagedAiSignupAssignmentDependencies = {
+  /** Read-only Gateway policy projection. Omission is fail-closed and skips assignment. */
+  getActiveModelProvider?: () => Promise<AiAccessProvider | null>
   aiAccess: AiAccessRepository
   credentials: CredentialRepository
   codexStatusProvider: CodexCredentialStatusProvider
@@ -88,6 +88,17 @@ export function createManagedAiSignupAssignmentService(
           return false
         }
 
+        let activeProvider: AiAccessProvider | null
+        try {
+          activeProvider = await deps.getActiveModelProvider?.() ?? null
+        } catch (error) {
+          deps.logger?.("managed ai active provider lookup failed", error)
+          return false
+        }
+        if (activeProvider !== "codex_oauth") {
+          return false
+        }
+
         const credential = await service.getEligibleCodexCredentialForAutoAssign()
         if (!credential) {
           return false
@@ -98,8 +109,6 @@ export function createManagedAiSignupAssignmentService(
           enabled: true,
           provider: "codex_oauth",
           credentialId: credential.credentialId,
-          defaultModel: DEFAULT_CODEX_AUTO_ASSIGN_MODEL,
-          allowedModels: [DEFAULT_CODEX_AUTO_ASSIGN_MODEL],
           assignmentOrigin: "auto_assigned",
         })
         return true

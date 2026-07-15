@@ -17,10 +17,6 @@ import type {
   AdminUsageResponse,
   AdminUserAiAccessRecord,
 } from "../../http/admin.js"
-import {
-  createAutoAssignedCodexCredentialRotationService,
-  type AutoAssignedCodexCredentialRotationService,
-} from "../access/auto-assignment-rotation.js"
 import type { AiAccessProvider, AiAccessRepository, UpsertUserAiAccessPolicyInput, UserAiAccessPolicyRecord } from "../access/repository.js"
 import { buildCodexCapacityAlerts } from "../alerts/codex-capacity-alerts.js"
 import type { AlertRecord, AlertRepository } from "../alerts/repository.js"
@@ -69,8 +65,6 @@ type UpdateUserAiAccessInput = {
   enabled: boolean
   provider: AiAccessProvider | null
   credentialId: string | null
-  defaultModel: string | null
-  allowedModels: string[]
 }
 
 type ManagedAiAdminRouteOptions = {
@@ -82,7 +76,6 @@ type ManagedAiAdminRouteOptions = {
   leases: LeaseRepository
   secrets: SecretStore
   usage: UsageRepository
-  autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService
   codexStatusProvider?: CodexCredentialStatusProvider | null
   now?: () => Date
 }
@@ -146,60 +139,6 @@ export function createManagedAiAdminRouteDeps(
     deps.codexStatusProvider === null
       ? null
       : deps.codexStatusProvider ?? createDefaultCodexStatusProvider(deps.credentials, deps.secrets)
-  let credentialRotationService: AutoAssignedCodexCredentialRotationService | null =
-    deps.autoAssignedCodexCredentialRotation ?? null
-
-  function getCredentialRotationService() {
-    if (!codexStatusProvider) {
-      return null
-    }
-
-    if (!credentialRotationService) {
-      credentialRotationService = createAutoAssignedCodexCredentialRotationService({
-        aiAccess: deps.aiAccess,
-        credentials: deps.credentials,
-        codexStatusProvider,
-        audit: deps.audit,
-        now,
-      })
-    }
-
-    return credentialRotationService
-  }
-
-  async function repairCodexAccessForRead(
-    aiAccess: UserAiAccessPolicyRecord | null,
-    availableCredentials: AdminCredentialOption[] | undefined,
-  ): Promise<UserAiAccessPolicyRecord | null> {
-    if (!aiAccess || aiAccess.provider !== "codex_oauth") {
-      return aiAccess
-    }
-
-    if (
-      aiAccess.credentialId &&
-      availableCredentials?.some((entry) =>
-        entry.provider === "codex_oauth" && entry.id === aiAccess.credentialId
-      )
-    ) {
-      return aiAccess
-    }
-
-    const rotationService = getCredentialRotationService()
-    if (!rotationService) {
-      return aiAccess
-    }
-
-    try {
-      return await rotationService.repairCodexAccess({
-        aiAccess,
-        reason: "admin_ai_access_read",
-      })
-    } catch (error) {
-      console.error("managed_ai_admin_codex_assignment_repair_failed", error)
-      return aiAccess
-    }
-  }
-
   async function recordAuditEvent(input: {
     actorUserId?: string | null
     entityType: string
@@ -532,10 +471,7 @@ export function createManagedAiAdminRouteDeps(
 
       try {
         const availableCredentials = await listAvailableAssignmentCredentials()
-        const aiAccess = await repairCodexAccessForRead(
-          await deps.aiAccess.getUserAiAccess(userId),
-          availableCredentials,
-        )
+        const aiAccess = await deps.aiAccess.getUserAiAccess(userId)
 
         return {
           aiAccess: toAdminUserAiAccessRecord(aiAccess),
@@ -1419,14 +1355,15 @@ function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
 }
 
 function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: string }): UpsertUserAiAccessPolicyInput {
+  if (Object.hasOwn(input, "defaultModel") || Object.hasOwn(input, "allowedModels")) {
+    throw new HttpError("user_model_policy_not_supported", 400)
+  }
   const enabled = input.enabled === true
   const provider = parseAiAccessProvider(input.provider)
   const credentialId =
     typeof input.credentialId === "string" && input.credentialId.trim()
       ? input.credentialId.trim()
       : null
-  const defaultModel = typeof input.defaultModel === "string" ? input.defaultModel.trim() : ""
-  const allowedModels = normalizeAllowedModels(input.allowedModels)
 
   if (enabled && !provider) {
     throw new HttpError("invalid_ai_access_provider", 400)
@@ -1436,21 +1373,11 @@ function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: st
     throw new HttpError("invalid_ai_access_credential_id", 400)
   }
 
-  if (enabled && !defaultModel) {
-    throw new HttpError("invalid_ai_access_default_model", 400)
-  }
-
-  if (allowedModels.length > 0 && defaultModel && !allowedModels.includes(defaultModel)) {
-    throw new HttpError("invalid_ai_access_allowed_models", 400)
-  }
-
   return {
     userId: input.userId,
     enabled,
     provider,
     credentialId,
-    defaultModel: defaultModel || null,
-    allowedModels,
     assignmentOrigin: "admin_assigned",
   }
 }
@@ -1461,26 +1388,6 @@ function parseCredentialProvider(value: unknown): LeaseProvider | null {
 
 function parseAiAccessProvider(value: unknown): AiAccessProvider | null {
   return isManagedAiProvider(value) ? value : null
-}
-
-function normalizeAllowedModels(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-
-  const unique = new Set<string>()
-  for (const entry of value) {
-    if (typeof entry !== "string") {
-      continue
-    }
-    const trimmed = entry.trim()
-    if (!trimmed) {
-      continue
-    }
-    unique.add(trimmed)
-  }
-
-  return Array.from(unique)
 }
 
 function validateCodexAuthJson(secret: string): string {
@@ -1548,8 +1455,6 @@ function toAdminUserAiAccessRecord(record: UserAiAccessPolicyRecord | null): Adm
     enabled: record.enabled,
     provider: record.provider,
     credentialId: record.credentialId,
-    defaultModel: record.defaultModel,
-    allowedModels: record.allowedModels,
     updatedAt: record.updatedAt.toISOString(),
   }
 }

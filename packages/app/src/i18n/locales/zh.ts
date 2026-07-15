@@ -886,6 +886,7 @@ export default {
   "settings.model_variant": "模型变体",
   "settings.edit": "编辑",
   "settings.default_model": "全局模型",
+  "settings.effective_model": "当前生效模型",
   "settings.session_model": "全局模型",
   "settings.model_description_default": "从您配置的提供商中选择。此模型用于所有会话。",
   "settings.model_description_session": "从您配置的提供商中选择。更改会更新所有会话使用的全局模型。",

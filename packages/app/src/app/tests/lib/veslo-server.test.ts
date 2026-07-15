@@ -280,6 +280,180 @@ test("session archive requests include the account id header", async () => {
   }
 });
 
+test("session archive non-JSON responses become typed, sanitized server errors", async () => {
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async () =>
+    new Response("Not Found", {
+      status: 404,
+      statusText: "upstream secret status",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      accountId: "usr_123",
+    });
+
+    await assert.rejects(
+      () => client.listSessionArchives(),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.name, "VesloServerError");
+        assert.equal(error.status, 404);
+        assert.equal(error.code, "non_json_response");
+        assert.equal(error.message, "The Veslo server returned a non-JSON response.");
+        assert.deepEqual(error.responseDiagnostic, {
+          requestMethod: "GET",
+          operation: "session-archives:list",
+          requestOrigin: "https://veslo.example",
+          requestPathname: "/session-archives",
+          httpStatus: 404,
+          mediaType: "text/plain",
+          responseContentType: "text/plain",
+          responseKind: "non_json",
+          responsePreview: "Not Found",
+        });
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("session archive transport preserves a bounded redacted non-JSON response preview", async () => {
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async () =>
+    new Response(
+      `<html>token=secret-token&workspace=private&url=https://upstream.example/failure?api_key=api-secret Authorization: Basic basic-secret ${"x".repeat(800)}</html>`,
+      {
+        status: 502,
+        headers: { "Content-Type": "text/html" },
+      },
+    );
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      accountId: "usr_123",
+    });
+
+    await assert.rejects(
+      () => client.listSessionArchives(),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.code, "non_json_response");
+        const diagnostic = error.responseDiagnostic;
+        assert.equal(diagnostic?.requestOrigin, "https://veslo.example");
+        assert.equal(diagnostic?.requestPathname, "/session-archives");
+        assert.equal(diagnostic?.responseContentType, "text/html");
+        assert.equal(diagnostic?.mediaType, "other");
+        assert.equal(diagnostic?.responseKind, "non_json");
+        assert.ok(diagnostic?.responsePreview?.includes("token=[redacted]"));
+        assert.ok((diagnostic?.responsePreview?.length ?? 0) <= 512);
+        assert.ok(diagnostic?.responsePreview?.endsWith("...[truncated]"));
+        assert.doesNotMatch(
+          JSON.stringify(diagnostic),
+          /secret-token|api-secret|api_key=api-secret|basic-secret/i,
+        );
+        assert.doesNotMatch(error.message, /secret-token|private/i);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("session archive transport classifies missing and malformed JSON responses", async () => {
+  const previousFetch = globalThis.fetch;
+  const responses = [
+    new Response('{"items":[]}', {
+      status: 200,
+      headers: { "Content-Type": "" },
+    }),
+    new Response("{not json", {
+      status: 200,
+      headers: { "Content-Type": "application/problem+json; charset=utf-8" },
+    }),
+  ];
+
+  globalThis.fetch = async () => responses.shift() as Response;
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+      accountId: "usr_123",
+    });
+
+    await assert.rejects(
+      () => client.listSessionArchives(),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.code, "non_json_response");
+        assert.deepEqual(error.responseDiagnostic, {
+          requestMethod: "GET",
+          operation: "session-archives:list",
+          requestOrigin: "https://veslo.example",
+          requestPathname: "/session-archives",
+          httpStatus: 200,
+          mediaType: "missing",
+          responseContentType: "missing",
+          responseKind: "non_json",
+          responsePreview: '{"items":[]}',
+        });
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      () => client.listSessionArchives(),
+      (error) => {
+        assert.ok(error instanceof VesloServerError);
+        assert.equal(error.code, "malformed_json_response");
+        assert.equal(error.message, "The Veslo server returned malformed JSON.");
+        assert.deepEqual(error.responseDiagnostic, {
+          requestMethod: "GET",
+          operation: "session-archives:list",
+          requestOrigin: "https://veslo.example",
+          requestPathname: "/session-archives",
+          httpStatus: 200,
+          mediaType: "application/*+json",
+          responseContentType: "application/problem+json",
+          responseKind: "malformed_json",
+          responsePreview: "{not json",
+        });
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("empty successful JSON transport responses remain compatible with null", async () => {
+  const previousFetch = globalThis.fetch;
+
+  globalThis.fetch = async () => new Response(null, { status: 204 });
+
+  try {
+    const client = createVesloServerClient({
+      baseUrl: "https://veslo.example",
+      token: "token-123",
+    });
+
+    assert.equal(await client.status(), null);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("deleteSessionArchive includes workspace scope when provided", async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string | undefined }> = [];
@@ -819,8 +993,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
           userId: "user_123",
           enabled: true,
           provider: "codex_oauth",
-          defaultModel: "gpt-5.4",
-          allowedModels: ["gpt-5.4"],
+          effectiveModel: { provider: "codex_oauth", model: "gpt-5.4" },
           updatedAt: "2026-04-24T08:00:00.000Z",
         },
       }),
@@ -835,6 +1008,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
     const response = await requestManagedAiAccessBundle(
       "https://veslo-ai-gateway-dev.onrender.com",
       "den-user-token",
+      "org_123",
     );
 
     assert.deepEqual(response, {
@@ -844,8 +1018,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
         userId: "user_123",
         enabled: true,
         provider: "codex_oauth",
-        defaultModel: "gpt-5.4",
-        allowedModels: ["gpt-5.4"],
+        effectiveModel: { provider: "codex_oauth", model: "gpt-5.4" },
         updatedAt: "2026-04-24T08:00:00.000Z",
       },
     });
@@ -854,6 +1027,7 @@ test("requestManagedAiAccessBundle fetches the raw managed gateway bundle with t
     assert.equal(calls[0]?.url, "https://veslo-ai-gateway-dev.onrender.com/api/me/ai-access");
     assert.equal(calls[0]?.method, "GET");
     assert.equal(calls[0]?.headers.get("authorization"), "Bearer den-user-token");
+    assert.equal(calls[0]?.headers.get("x-veslo-den-org-id"), "org_123");
     assert.equal(calls[0]?.headers.get("content-type"), "application/json");
     assert.equal(calls[0]?.body, null);
   } finally {
@@ -3686,8 +3860,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
             userId: "user_123",
             enabled: true,
             provider: "openai",
-            defaultModel: "gpt-4o-mini",
-            allowedModels: ["gpt-4o-mini", "gpt-4.1"],
+            effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
             updatedAt: "2026-04-08T12:00:00.000Z",
           },
         }),
@@ -3729,7 +3902,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
     assert.equal(typeof client.getMyAiAccess, "function");
     assert.equal(typeof client.clearMyAiGatewayRuntimeAuthorization, "function");
 
-    const response = await client.getMyAiAccess("den-user-token");
+    const response = await client.getMyAiAccess("den-user-token", "org_123", "workspace a");
     const clearResponse = await client.clearMyAiGatewayRuntimeAuthorization();
 
     assert.deepEqual(response, {
@@ -3739,8 +3912,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
         userId: "user_123",
         enabled: true,
         provider: "openai",
-        defaultModel: "gpt-4o-mini",
-        allowedModels: ["gpt-4o-mini", "gpt-4.1"],
+        effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
         updatedAt: "2026-04-08T12:00:00.000Z",
       },
     });
@@ -3748,12 +3920,13 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
 
     assert.deepEqual(calls, [
       {
-        url: "http://127.0.0.1:8787/ai-gateway/me/ai-access",
+        url: "http://127.0.0.1:8787/workspace/workspace%20a/ai-gateway/me/ai-access",
         method: "GET",
         headers: {
           authorization: "Bearer veslo-server-token",
           "content-type": "application/json",
           "x-veslo-gateway-authorization": "Bearer den-user-token",
+          "x-veslo-den-org-id": "org_123",
           "x-veslo-host-token": "veslo-host-token",
         },
         body: null,

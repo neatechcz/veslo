@@ -21,8 +21,7 @@ const model: ModelRef = {
 const profile: ManagedAiAccessProfile = {
   userId: "user-1",
   providerId: "codex_oauth",
-  defaultModel: model,
-  allowedModels: ["gpt-5"],
+  effectiveModel: model,
   updatedAt: "2026-07-01T10:00:00.000Z",
 };
 
@@ -80,6 +79,7 @@ function createOptions(
     managedAiAccessError: () => null,
     managedAiGatewayAccessToken: () => "gateway-access-token",
     denGatewayAccessToken: () => "den-token",
+    denOrgId: () => "org-1",
     denAuthRevision: () => 1,
     gatewayVesloServerClient: () => ({ baseUrl: "https://gateway.veslo.test", token: "gateway-token" }),
     vesloServerClient: () => vesloClient,
@@ -134,8 +134,7 @@ function createOptions(
           enabled: true,
           userId: profile.userId,
           provider: profile.providerId,
-          defaultModel: profile.defaultModel.modelID,
-          allowedModels: profile.allowedModels,
+          effectiveModel: { provider: profile.providerId, model: profile.effectiveModel.modelID },
           updatedAt: profile.updatedAt,
         },
         accessToken: "runtime-access-token",
@@ -153,14 +152,14 @@ test("runtime auth prime is single-flight and cached for a short success window"
   let accessCalls = 0;
   const firstAccessGate: { release?: () => void } = {};
   const traces: string[] = [];
+  const accessArguments: Array<[string, string | undefined, string | undefined]> = [];
   const response = {
     aiAccess: {
       id: "access-1",
       enabled: true,
       userId: profile.userId,
       provider: profile.providerId,
-      defaultModel: profile.defaultModel.modelID,
-      allowedModels: profile.allowedModels,
+      effectiveModel: { provider: profile.providerId, model: profile.effectiveModel.modelID },
       updatedAt: profile.updatedAt,
     },
     accessToken: "runtime-access-token",
@@ -175,7 +174,8 @@ test("runtime auth prime is single-flight and cached for a short success window"
       },
       createVesloServerClient: () => ({
         baseUrl: "http://127.0.0.1:34115",
-        getMyAiAccess: async () => {
+        getMyAiAccess: async (userToken, orgId, workspaceId) => {
+          accessArguments.push([userToken, orgId, workspaceId]);
           accessCalls += 1;
           if (accessCalls === 1) {
             await new Promise<void>((resolve) => {
@@ -214,6 +214,11 @@ test("runtime auth prime is single-flight and cached for a short success window"
   now = 7_001;
   assert.equal(await sync.ensureManagedAiRuntimeAuthorizationForSend(), true);
   assert.equal(accessCalls, 3);
+  assert.deepEqual(accessArguments, [
+    ["den-token", "org-1", "ws-active"],
+    ["den-token", "org-1", "ws-active"],
+    ["den-token", "org-1", "ws-active"],
+  ]);
 });
 
 test("runtime auth prime records request diagnostics after the success cache expires", async () => {
@@ -227,8 +232,7 @@ test("runtime auth prime records request diagnostics after the success cache exp
       enabled: true,
       userId: profile.userId,
       provider: profile.providerId,
-      defaultModel: profile.defaultModel.modelID,
-      allowedModels: profile.allowedModels,
+      effectiveModel: { provider: profile.providerId, model: profile.effectiveModel.modelID },
       updatedAt: profile.updatedAt,
     },
     accessToken: "runtime-access-token",
@@ -638,16 +642,12 @@ test("inactive workspace heal keeps config tracking across managed access metada
   assert.deepEqual(getConfigCalls, ["ws-inactive"]);
   assert.equal(patched.length, 1);
 
-  currentProfile = {
-    ...currentProfile,
-    allowedModels: ["gpt-5", "gpt-5.5"],
-    updatedAt: "2026-07-01T10:02:00.000Z",
-  };
+  currentProfile = { ...currentProfile, updatedAt: "2026-07-01T10:02:00.000Z" };
   runResetEffect();
   await sync.healInactiveManagedAiWorkspaceConfigs();
 
-  assert.deepEqual(getConfigCalls, ["ws-inactive", "ws-inactive"]);
-  assert.equal(patched.length, 2);
+  assert.deepEqual(getConfigCalls, ["ws-inactive"]);
+  assert.equal(patched.length, 1);
 });
 
 test("inactive workspace heal skips server scans while a send or run is active", async () => {

@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net"
 import test from "node:test"
 
 import { createApp } from "../src/index.js"
-import { PlatformAdminAllowedPages, PlatformAdminCapabilities } from "../src/http/admin.js"
+import { adminFallbackShellHtml, PlatformAdminAllowedPages, PlatformAdminCapabilities } from "../src/http/admin.js"
 import type {
   AdminService,
   AdminSessionSnapshot,
@@ -20,6 +20,7 @@ import type {
   UpdateUserInput,
   UsageGroupBy,
 } from "../src/http/admin.js"
+import type { PlatformModelRef } from "../src/model-policy/repository.js"
 
 const ADMIN_COOKIE = "veslo.ai-gateway.admin.token=admin-token"
 
@@ -169,6 +170,15 @@ function createAdminServiceStub(overrides: Partial<AdminService> = {}): AdminSer
     async listCredentialModels(_token: string, credentialId: string) {
       return { credentialId, models: [] }
     },
+    async getPlatformModelPolicy() {
+      return { policy: null }
+    },
+    async replacePlatformModelPolicy(
+      _token: string,
+      _input: { enabledModels: PlatformModelRef[]; activeModel: PlatformModelRef },
+    ) {
+      throw new Error("unused")
+    },
     async createCredential(_token: string, _input: CreateCredentialInput, _actorUserId: string | null) {
       throw new Error("unused")
     },
@@ -216,7 +226,7 @@ function createAdminServiceStub(overrides: Partial<AdminService> = {}): AdminSer
   return { ...service, ...overrides }
 }
 
-test("GET /admin/credentials redirects unauthenticated browsers to the existing Den login page", async () => {
+test("GET /admin/ai-infrastructure redirects unauthenticated browsers to the existing Den login page", async () => {
   const calls: BrowserAuthStartInput[] = []
   const app = createApp({
     admin: createAdminServiceStub({
@@ -235,7 +245,7 @@ test("GET /admin/credentials redirects unauthenticated browsers to the existing 
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/credentials`, { redirect: "manual" })
+    const response = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure`, { redirect: "manual" })
 
     assert.equal(response.status, 302)
     const location = response.headers.get("location")
@@ -248,7 +258,7 @@ test("GET /admin/credentials redirects unauthenticated browsers to the existing 
     assert.equal(redirect.searchParams.get("view"), "auth")
     assert.match(response.headers.get("set-cookie") ?? "", /veslo\.ai-gateway\.admin\.browser-auth=/)
     assert.equal(calls.length, 1)
-    assert.match(calls[0]!.redirectUri, new RegExp(`^http://127\\.0\\.0\\.1:${port}/admin/credentials$`))
+    assert.match(calls[0]!.redirectUri, new RegExp(`^http://127\\.0\\.0\\.1:${port}/admin/ai-infrastructure$`))
   } finally {
     server.close()
     await once(server, "close")
@@ -274,11 +284,11 @@ test("GET /admin callback exchanges Den handoff and returns to the original admi
 
   try {
     const { port } = server.address() as AddressInfo
-    const start = await fetch(`http://127.0.0.1:${port}/admin/credentials`, { redirect: "manual" })
+    const start = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure`, { redirect: "manual" })
     const pendingCookie = start.headers.get("set-cookie")?.split(";")[0] ?? ""
     assert.match(pendingCookie, /veslo\.ai-gateway\.admin\.browser-auth=/)
 
-    const callback = await fetch(`http://127.0.0.1:${port}/admin/credentials?code=code_123&sessionId=session_test`, {
+    const callback = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure?code=code_123&sessionId=session_test`, {
       redirect: "manual",
       headers: {
         cookie: pendingCookie,
@@ -286,7 +296,7 @@ test("GET /admin callback exchanges Den handoff and returns to the original admi
     })
 
     assert.equal(callback.status, 302)
-    assert.equal(callback.headers.get("location"), "/admin/credentials")
+    assert.equal(callback.headers.get("location"), "/admin/ai-infrastructure")
     const setCookie = callback.headers.get("set-cookie") ?? ""
     assert.match(setCookie, /veslo\.ai-gateway\.admin\.token=admin-token/)
     assert.match(setCookie, /veslo\.ai-gateway\.admin\.browser-auth=;/)
@@ -301,14 +311,14 @@ test("GET /admin callback exchanges Den handoff and returns to the original admi
   }
 })
 
-test("GET /admin/credentials serves the admin shell with an admin-only platform credential form", async () => {
+test("GET /admin/ai-infrastructure serves the admin shell with an admin-only platform credential form", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/credentials`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure`, {
       headers: {
         cookie: ADMIN_COOKIE,
       },
@@ -409,10 +419,9 @@ test("GET /admin/app.js preserves auth callback query params until browser excha
 
     assert.equal(response.status, 200)
     const script = await response.text()
-    assert.match(script, /const nextPath = page === "overview" \? "\/admin" : `\/admin\/\$\{page\}`/)
-    assert.match(script, /const nextUrl = `\$\{nextPath\}\$\{location\.search\}\$\{location\.hash\}`/)
-    assert.match(script, /if \(location\.pathname !== nextPath\) {\s*history\.replaceState\(null, "", nextUrl\);\s*}/)
-    assert.doesNotMatch(script, /history\.replaceState\(null, "", nextPath\)/)
+    assert.match(script, /const callback = readAuthCallbackParams\(\)/)
+    assert.match(script, /finally \{\s*clearAuthCallbackParams\(\);\s*clearPendingBrowserAuth/)
+    assert.doesNotMatch(script, /const pending = readPendingBrowserAuth\(callback\.sessionId\);\s*clearAuthCallbackParams\(\)/)
   } finally {
     server.close()
     await once(server, "close")
@@ -564,14 +573,14 @@ test("GET /admin/app.js checks the HTTP-only admin cookie before showing the log
   }
 })
 
-test("GET /admin/users includes admin-managed ai access controls in the user editor", async () => {
+test("GET /admin/platform-users keeps model choice out of the admin-managed user access editor", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/users`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/platform-users`, {
       headers: {
         cookie: ADMIN_COOKIE,
       },
@@ -583,9 +592,12 @@ test("GET /admin/users includes admin-managed ai access controls in the user edi
     assert.match(html, /id="user-ai-access-enabled"/)
     assert.match(html, /id="user-ai-access-provider"/)
     assert.match(html, /id="user-ai-access-credential"/)
-    assert.match(html, /id="user-ai-access-default-model"/)
-    assert.match(html, /id="user-ai-access-model-options"/)
-    assert.match(html, /id="user-ai-access-allowed-models"/)
+    assert.doesNotMatch(html, /id="user-ai-access-default-model"/)
+    assert.doesNotMatch(html, /id="user-ai-access-model-options"/)
+    assert.doesNotMatch(html, /id="user-ai-access-allowed-models"/)
+    assert.doesNotMatch(html, />Default model</i)
+    assert.doesNotMatch(html, />Allowed models</i)
+    assert.match(html, /Models are managed centrally in AI Infrastructure/i)
     assert.match(html, /id="user-save-status"/)
     assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
     assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
@@ -595,14 +607,251 @@ test("GET /admin/users includes admin-managed ai access controls in the user edi
   }
 })
 
-test("GET /admin includes an Organization admin page alongside existing platform pages", async () => {
+test("GET /admin/ai-infrastructure presents platform model policy controls", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/organization`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+
+    assert.equal(response.status, 200)
+    const html = await response.text()
+    assert.match(html, /data-platform-route="ai-infrastructure"[^>]*>AI Infrastructure</)
+    assert.match(html, /id="model-policy-panel"[^>]*data-platform-admin-control/)
+    assert.match(html, /id="model-policy-list"/)
+    assert.match(html, /id="model-policy-credential"/)
+    assert.match(html, /id="model-policy-discovered-model"/)
+    assert.match(html, /id="model-policy-discover-button"/)
+    assert.match(html, /id="model-policy-add-button"/)
+    assert.match(html, /id="model-policy-save-button"[^>]*>Save model policy</)
+    assert.match(html, /id="model-policy-status"[^>]*role="status"[^>]*aria-live="polite"/)
+    assert.match(html, /id="model-policy-panel"[^>]*aria-busy="false"/)
+    assert.doesNotMatch(html, /Choose your model|Switch models?|model picker/i)
+
+    const stateModuleResponse = await fetch(`http://127.0.0.1:${port}/admin/model-policy-editor-state.js`)
+    assert.equal(stateModuleResponse.status, 200)
+    assert.match(await stateModuleResponse.text(), /export function beginModelPolicySave/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin shell separates platform administration from organization workspaces", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin`, { headers: { cookie: ADMIN_COOKIE } })
+    assert.equal(response.status, 200)
+    const html = await response.text()
+
+    assert.match(html, /data-nav-group="platform"/)
+    assert.match(html, /href="\/admin"[^>]*data-platform-route="overview"/)
+    assert.match(html, /href="\/admin\/organizations"[^>]*data-platform-route="organizations"/)
+    assert.match(html, /href="\/admin\/ai-infrastructure"[^>]*data-platform-route="ai-infrastructure"/)
+    assert.match(html, /href="\/admin\/ai-infrastructure\/usage"[^>]*data-platform-route="ai-usage"/)
+    assert.match(html, /href="\/admin\/ai-infrastructure\/alerts"[^>]*data-platform-route="ai-alerts"/)
+    assert.match(html, /href="\/admin\/platform-users"[^>]*data-platform-route="platform-users"/)
+    assert.match(html, /href="\/admin\/audit"[^>]*data-platform-route="audit"/)
+    assert.match(html, /id="organization-context-header"[^>]*data-organization-context/)
+    assert.match(html, /id="operating-organization-label"[^>]*>Operating organization:/)
+    for (const page of ["overview", "members", "domains-invites", "billing", "ai-access", "audit"]) {
+      assert.match(html, new RegExp(`data-organization-route="${page}"`))
+    }
+    assert.match(html, /id="organization-billing-content"/)
+    assert.match(html, /id="organization-audit-content"/)
+    assert.match(html, /id="model-policy-panel"[^>]*data-platform-admin-control/)
+    assert.doesNotMatch(html, /href="\/admin\/(organization|credentials|users|usage|alerts)"/)
+
+    const routeModule = await fetch(`http://127.0.0.1:${port}/admin/admin-route-state.js`)
+    assert.equal(routeModule.status, 200)
+    assert.match(await routeModule.text(), /export function parseAdminRoute/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js uses typed route descriptors and clears organization context on platform navigation", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+    assert.equal(response.status, 200)
+    const script = await response.text()
+
+    assert.match(script, /from "\.\/admin-route-state\.js"/)
+    assert.match(script, /route:\s*parseAdminRoute\(location\.pathname\)/)
+    assert.match(script, /history\.pushState\(null, "", pathname\)/)
+    assert.match(script, /window\.addEventListener\("popstate"/)
+    assert.match(script, /applyAdminPopState\(state\.navigation, location\.pathname\)/)
+    assert.match(script, /planAdminHistoryUpdate\(state\.route, location, historyMode\)/)
+    assert.match(script, /setAdminRoute\(route, \{ historyMode: "replace" \}\)/)
+    assert.doesNotMatch(script, /location\.pathname !== pathname/)
+    assert.match(script, /switchOrganizationRoute\(state\.route,/)
+    assert.match(script, /item\.href = formatAdminRoute\(\{/)
+    assert.match(script, /state\.route\?\.area === "organization"/)
+    assert.match(script, /organizationIdForRoute\(state\.route\)/)
+    assert.match(script, /Operating organization:/)
+    assert.doesNotMatch(script, /\bDEFAULT_PAGES\b/)
+    assert.doesNotMatch(script, /\bcurrentOrganizationId\b/)
+    assert.doesNotMatch(script, /\bselectedOrganizationId\b/)
+    assert.match(script, /async function loadRouteData\(route\)/)
+    assert.match(script, /route\.area === "platform"[\s\S]*loadAiInfrastructure/)
+    assert.match(script, /route\.area === "organization"[\s\S]*loadOrganizationWorkspace/)
+    assert.match(script, /beginOrganizationLoad\(state\.organizationLoad, route\)/)
+    assert.match(script, /organizationLoadAbortController\?\.abort\(\)/)
+    assert.match(script, /completeOrganizationLoad\(state\.organizationLoad, request,/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin user editor scopes visibility, payloads, and actions to the canonical route", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const shellResponse = await fetch(`http://127.0.0.1:${port}/admin`, { headers: { cookie: ADMIN_COOKIE } })
+    assert.equal(shellResponse.status, 200)
+    const html = await shellResponse.text()
+    assert.match(html, /data-user-global-control[^>]*>[\s\S]*id="user-name"/)
+    assert.match(html, /data-user-membership-control[^>]*>[\s\S]*id="user-org"/)
+    assert.match(html, /data-user-ai-access-control/)
+    assert.match(html, /id="user-disable-button"[^>]*data-user-global-action/)
+    assert.match(html, /id="user-delete-button"[^>]*data-user-global-action/)
+
+    const scriptResponse = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+    assert.equal(scriptResponse.status, 200)
+    const script = await scriptResponse.text()
+    assert.match(script, /adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
+    assert.match(script, /buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload\)/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "create-user"\)/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "disable-user"\)/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "delete-user"\)/)
+    assert.doesNotMatch(script, /state\.page !== "users" \|\| state\.session\?\.platformAdmin !== true/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin app guards organization mutation completions and marks active navigation accessibly", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(script, /beginAdminRouteMutation\(state\.mutations,/)
+    assert.match(script, /isAdminRouteMutationCurrent\(state\.mutations, mutation, state\.route\)/)
+    assert.match(script, /item\.setAttribute\("aria-current", "page"\)/)
+    assert.match(script, /item\.removeAttribute\("aria-current"\)/)
+    for (const functionName of [
+      "saveOrganization",
+      "saveOrganizationDomainModal",
+      "deleteOrganizationDomain",
+      "createOrganizationInvite",
+      "resendOrganizationInvite",
+      "revokeOrganizationInvite",
+      "saveUser",
+    ]) {
+      assert.match(
+        script,
+        new RegExp(`async function ${functionName}\\([^)]*\\) \\{[\\s\\S]*beginAdminRouteMutation[\\s\\S]*isAdminRouteMutationCurrent`),
+        functionName,
+      )
+    }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("organization billing and audit routes render real scoped loaders and actions", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  try {
+    const { port } = server.address() as AddressInfo
+    const shell = await fetch(`http://127.0.0.1:${port}/admin`, { headers: { cookie: ADMIN_COOKIE } })
+    const html = await shell.text()
+    assert.match(html, /id="organization-billing-content"/)
+    assert.match(html, /id="organization-billing-checkout"/)
+    assert.match(html, /id="organization-billing-portal"/)
+    assert.match(html, /id="organization-billing-plan-save"/)
+    assert.match(html, /id="organization-billing-cancel"/)
+    assert.match(html, /id="organization-billing-platform-controls"[^>]*data-platform-admin-control/)
+    assert.match(html, /id="organization-billing-manual-enabled"/)
+    assert.match(html, /id="organization-billing-manual-expires"/)
+    assert.match(html, /id="organization-audit-list"/)
+    assert.match(html, /id="organization-audit-status"[^>]*aria-live="polite"/)
+    assert.doesNotMatch(html, /organization-billing-placeholder|organization-audit-placeholder|data-honest-placeholder/)
+
+    const script = await (await fetch(`http://127.0.0.1:${port}/admin/app.js`)).text()
+    assert.match(script, /fetchJson\(`\/organizations\/\$\{encodeURIComponent\(organizationId\)\}\/billing`\)/)
+    assert.match(script, /fetchJson\(`\/organizations\/\$\{encodeURIComponent\(organizationId\)\}\/audit`\)/)
+    assert.match(script, /beginAdminRouteMutation\(state\.mutations, "organization-billing-load", route\)/)
+    assert.match(script, /beginAdminRouteMutation\(state\.mutations, "organization-audit-load", route\)/)
+    assert.match(script, /entry\.source === "den" \? "DEN" : "AI Gateway"/)
+    assert.match(script, /entry\.actor \|\| "unknown actor"/)
+    assert.match(script, /organizationId:\s*aiAccessOrganizationIdForUser\(resolvedUserId\)/)
+    assert.match(script, /function aiAccessOrganizationIdForUser\(userId\)/)
+    assert.match(script, /resolveAiAccessOrganizationId\(state\.route, user, els\.userOrg\.value\)/)
+    assert.match(script, /async function signOut\(\) \{\s*invalidatePendingModelPolicyLoad\(\);\s*await clearServerAdminSession\(\)/)
+    assert.match(script, /catch \(error\) \{\s*if \(error\?\.name !== "AbortError"\) \{\s*setBackendConnectionStatus/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "manage-platform-billing"\)/)
+    assert.doesNotMatch(script, /will be connected in Task 7/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.css keeps the organization context responsive and keyboard visible", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.css`)
+    assert.equal(response.status, 200)
+    const css = await response.text()
+    assert.match(css, /\.organization-context\s*\{[\s\S]*grid-template-columns:/)
+    assert.match(css, /\.organization-subnav a:focus-visible/)
+    assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.organization-context\s*\{[\s\S]*grid-template-columns: 1fr/)
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\)/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin serves the canonical organization overview workspace", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/organizations/org_admin/overview`, {
       headers: {
         cookie: ADMIN_COOKIE,
       },
@@ -610,13 +859,65 @@ test("GET /admin includes an Organization admin page alongside existing platform
 
     assert.equal(response.status, 200)
     const html = await response.text()
-    assert.match(html, /data-route="organization"/)
-    assert.match(html, /data-page="organization"/)
+    assert.match(html, /data-organization-route="overview"/)
+    assert.match(html, /data-page="organization-workspace"/)
     assert.match(html, /Organization details/i)
     assert.match(html, /Enabled domains/i)
     assert.match(html, /Pending invites/i)
     assert.match(html, /id="organization-save-button"/)
     assert.match(html, /id="organization-seat-limit"/)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("organization admins are restricted to canonical routes for their authorized organizations", async () => {
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async getSession() {
+        return orgAdminSession() as AdminSessionSnapshot
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const headers = { cookie: ADMIN_COOKIE }
+    const authorized = await fetch(`http://127.0.0.1:${port}/admin/organizations/org_1/members`, {
+      headers,
+      redirect: "manual",
+    })
+    assert.equal(authorized.status, 200)
+
+    for (const pathname of ["/admin", "/admin/audit", "/admin/organizations/org_2/overview", "/admin/organization"]) {
+      const response = await fetch(`http://127.0.0.1:${port}${pathname}`, { headers, redirect: "manual" })
+      assert.equal(response.status, 302, pathname)
+      assert.equal(response.headers.get("location"), "/admin/organizations/org_1/overview", pathname)
+    }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("platform admins recover from rejected legacy flat routes at the canonical overview", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    for (const pathname of ["/admin/organization", "/admin/credentials", "/admin/users", "/admin/usage", "/admin/alerts"]) {
+      const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+        headers: { cookie: ADMIN_COOKIE },
+        redirect: "manual",
+      })
+      assert.equal(response.status, 302, pathname)
+      assert.equal(response.headers.get("location"), "/admin", pathname)
+    }
   } finally {
     server.close()
     await once(server, "close")
@@ -673,7 +974,7 @@ test("GET /admin shell exposes Overview navigation and organization command moda
 
     assert.equal(response.status, 200)
     const html = await response.text()
-    assert.match(html, /href="\/admin" data-route="overview" class="nav-item">Overview<\/a>/)
+    assert.match(html, /href="\/admin" data-platform-route="overview" class="nav-item">Overview<\/a>/)
     assert.match(html, /<dialog id="organization-domain-modal" class="modal-shell"/)
     assert.match(html, /<dialog id="organization-invite-modal" class="modal-shell"/)
     assert.match(html, /id="organization-selector-control"/)
@@ -708,10 +1009,10 @@ test("GET /admin/app.js supports platform-admin searchable organization selectio
     assert.match(script, /function renderOrganizationSelector\(\)/)
     assert.match(script, /function hasOrganizationPendingChanges\(\)/)
     assert.match(script, /async function selectOrganizationFromSelector\(\)/)
-    assert.match(script, /state\.selectedOrganizationId = selected\.id/)
+    assert.match(script, /switchOrganizationRoute\(state\.route, selected\.id\)/)
     assert.match(script, /state\.organizationDomains = \[\]/)
     assert.match(script, /state\.organizationInvites = \[\]/)
-    assert.match(script, /await loadOrganization\(\)/)
+    assert.match(script, /await setAdminRoute\(switchOrganizationRoute\(state\.route, selected\.id\)\)/)
     assert.match(script, /organizationSelectorInput\.addEventListener\("change", \(\) => void selectOrganizationFromSelector\(\)\)/)
     assert.match(script, /organizationSelectorInput\.addEventListener\("keydown"/)
     assert.match(script, /window\.confirm\("Discard unsaved organization changes before switching organization\?"\)/)
@@ -772,6 +1073,30 @@ test("AI Gateway admin server defaults exclude Sessions from visible pages and f
   assert.match(source, /router\.get\("\/admin\/api\/sessions"[\s\S]*requirePlatformAdmin\(res\)/)
 })
 
+test("fallback admin shell exposes only canonical routes for the current admin scope", () => {
+  const platformHtml = adminFallbackShellHtml(adminSession())
+  for (const pathname of [
+    "/admin",
+    "/admin/organizations",
+    "/admin/ai-infrastructure",
+    "/admin/ai-infrastructure/usage",
+    "/admin/ai-infrastructure/alerts",
+    "/admin/platform-users",
+    "/admin/audit",
+  ]) {
+    assert.match(platformHtml, new RegExp(`href="${pathname.replaceAll("/", "\\/")}"`), pathname)
+  }
+  for (const page of ["overview", "members", "domains-invites", "billing", "ai-access", "audit"]) {
+    assert.match(platformHtml, new RegExp(`href="\\/admin\\/organizations\\/org_admin\\/${page}"`), page)
+  }
+  assert.doesNotMatch(platformHtml, /href="\/admin\/(organization|credentials|usage|alerts|users)"/)
+
+  const organizationHtml = adminFallbackShellHtml(orgAdminSession() as AdminSessionSnapshot)
+  assert.doesNotMatch(organizationHtml, /data-nav-group="platform"/)
+  assert.match(organizationHtml, /href="\/admin\/organizations\/org_1\/overview"/)
+  assert.doesNotMatch(organizationHtml, /href="\/admin\/audit"/)
+})
+
 test("GET /admin/app.js gates organization-admin navigation and platform-only loads by DEN capabilities", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
@@ -783,15 +1108,13 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
 
     assert.equal(response.status, 200)
     const script = await response.text()
-    assert.match(script, /const DEFAULT_PAGES = \["organization", "credentials", "usage", "alerts", "users", "audit"\]/)
-    assert.match(script, /function allowedPages\(\)/)
+    assert.match(script, /function routeAccessSnapshot\(\)/)
     assert.match(script, /function hasCapability\(capability\)/)
     assert.match(script, /function applyAdminCapabilities\(\)/)
-    assert.match(script, /route === "overview" \? !canManagePlatform : !allowed\.has\(route\)/)
-    assert.match(script, /runAllowedLoad\("organization", loadOrganization\)/)
-    assert.match(script, /runAllowedLoad\("users", loadUsers\)/)
-    assert.match(script, /runAllowedLoad\("credentials", loadCredentials\)/)
-    assert.doesNotMatch(script, /runAllowedLoad\("sessions", loadSessions\)/)
+    assert.match(script, /canAccessAdminRoute\(requestedRoute, routeAccessSnapshot\(\)\)/)
+    assert.match(script, /els\.platformNavigation\.classList\.toggle\("hidden", !canManagePlatform\)/)
+    assert.match(script, /route\.area === "platform"[\s\S]*loadAiInfrastructure/)
+    assert.match(script, /route\.area === "organization"[\s\S]*loadOrganizationWorkspace/)
     assert.doesNotMatch(script, /\bloadSessions\(\)/)
     assert.doesNotMatch(script, /async function loadSessions\(\)/)
     assert.doesNotMatch(script, /function renderSessions\(\)/)
@@ -805,16 +1128,16 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
     assert.match(script, /String\(state\.credentials\.filter\(\(entry\) => !entry\.deletedAt\)\.length\)/)
     assert.match(script, /String\(state\.credentials\.filter\(\(entry\) => !entry\.deletedAt && entry\.state !== "healthy"\)\.length\)/)
     assert.doesNotMatch(script, /String\(state\.credentials\.length\)/)
-    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return null/)
-    assert.match(script, /if \(!hasCapability\("managedAiUserAccess"\)\) \{[\s\S]*return;/)
-    assert.match(script, /setActivePage\(firstAllowedPage\(\)\)/)
+    assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "edit-ai-access"\)/)
+    assert.match(script, /const authorizedRoute = requestedRoute && canAccessAdminRoute/)
+    assert.match(script, /firstAuthorizedRoute\(\)/)
   } finally {
     server.close()
     await once(server, "close")
   }
 })
 
-test("GET /admin/app.js reapplies the current route after session bootstrap for direct subpage loads", async () => {
+test("GET /admin/app.js validates and loads canonical direct routes after session bootstrap", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -825,10 +1148,9 @@ test("GET /admin/app.js reapplies the current route after session bootstrap for 
 
     assert.equal(response.status, 200)
     const script = await response.text()
-    assert.match(script, /function activateCurrentRoute\(\)/)
-    assert.match(script, /const requestedPage = normalizePage\(location\.pathname\)/)
-    assert.match(script, /setActivePage\(requestedPage\)/)
-    assert.match(script, /await loadAllData\(\)[\s\S]*activateCurrentRoute\(\)/)
+    assert.match(script, /const requestedRoute = parseAdminRoute\(location\.pathname\)/)
+    assert.match(script, /await setAdminRoute\(authorizedRoute, \{ historyMode: "replace", load: false \}\)/)
+    assert.match(script, /showApp\(\);\s*await loadRouteData\(state\.route\)/)
   } finally {
     server.close()
     await once(server, "close")
@@ -893,8 +1215,8 @@ test("GET /admin/app.js closes stale modals before route actions and terminal al
     const script = await response.text()
     assert.match(script, /function closeAllModals\(\)/)
     assert.match(script, /if \(routeAlerts\) \{[\s\S]*closeAllModals\(\);[\s\S]*openAlertsForSelectedCredential\(\)/)
-    assert.match(script, /function openAlertsForSelectedCredential\(\) \{[\s\S]*setActivePage\("alerts"\)/)
-    assert.match(script, /if \(routeAudit\) \{[\s\S]*closeAllModals\(\);[\s\S]*setActivePage\("audit"\)/)
+    assert.match(script, /function openAlertsForSelectedCredential\(\) \{[\s\S]*setAdminRoute\(toPlatformRoute\("ai-alerts"\)\)/)
+    assert.match(script, /if \(routeAudit\) \{[\s\S]*closeAllModals\(\);[\s\S]*setAdminRoute\(toPlatformRoute\("audit"\)\)/)
     assert.match(script, /if \(action === "resolve"\) \{[\s\S]*closeModal\(els\.alertDetailModal\)/)
   } finally {
     server.close()
@@ -917,20 +1239,20 @@ test("GET /admin/app.js saves organization membership changes only from the user
     assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
     assert.match(script, /function buildUserUpdatePayload\(payload\)/)
     assert.match(script, /function buildUserRoleFilterOptions\(\)/)
-    assert.match(script, /const canManagePlatform = state\.session\?\.platformAdmin === true/)
-    assert.match(script, /els\.userName\.disabled = !canManagePlatform/)
-    assert.match(script, /els\.userEmail\.disabled = !isCreate \|\| !canManagePlatform/)
+    assert.match(script, /const permissions = adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
+    assert.match(script, /els\.userName\.disabled = !permissions\.editProfile/)
+    assert.match(script, /els\.userEmail\.disabled = !isCreate \|\| !permissions\.createUser/)
     assert.match(script, /data-invite-resend/)
     assert.match(script, /async function resendOrganizationInvite\(card\)/)
     assert.match(script, /\/invites\/\$\{encodeURIComponent\(inviteId\)\}\/resend/)
     assert.match(script, /event\.target\.closest\("\[data-invite-resend\]"\)/)
     assert.match(
       script,
-      /if \(state\.session\?\.platformAdmin !== true\) \{[\s\S]*return \{[\s\S]*orgId: payload\.orgId,[\s\S]*orgRole: payload\.orgRole,[\s\S]*\}/,
+      /return buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload\)/,
     )
     assert.match(
       script,
-      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(user\.id\)\}`,[\s\S]*body: JSON\.stringify\(buildUserUpdatePayload\(payload\)\)/,
+      /await fetchJson\(`\/users\/\$\{encodeURIComponent\(targetUser\.id\)\}`,[\s\S]*body: JSON\.stringify\(updatePayload\)/,
     )
     assert.match(script, /<option value="organization_admin">Organization admin<\/option>/)
     assert.match(script, /createUserButtonInline[\s\S]*data-platform-only/)
@@ -944,14 +1266,14 @@ test("GET /admin/app.js saves organization membership changes only from the user
   }
 })
 
-test("GET /admin/usage includes a credential usage section", async () => {
+test("GET /admin/ai-infrastructure/usage includes a credential usage section", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/usage`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure/usage`, {
       headers: {
         cookie: ADMIN_COOKIE,
       },
@@ -978,7 +1300,7 @@ test("GET /admin shell prioritizes Codex capacity before usage drilldown", async
 
   try {
     const { port } = server.address() as AddressInfo
-    const response = await fetch(`http://127.0.0.1:${port}/admin/usage`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/ai-infrastructure/usage`, {
       headers: {
         cookie: ADMIN_COOKIE,
       },
@@ -1037,6 +1359,8 @@ test("organization admins are forbidden from platform-only gateway admin API rou
   const blockedRoutes = [
     ["GET", "/admin/api/credentials"],
     ["GET", "/admin/api/credentials/cred_1/models"],
+    ["GET", "/admin/api/ai-infrastructure/model-policy"],
+    ["PUT", "/admin/api/ai-infrastructure/model-policy"],
     ["POST", "/admin/api/credentials"],
     ["DELETE", "/admin/api/credentials/cred_1"],
     ["POST", "/admin/api/credentials/cred_1/revoke"],
@@ -1575,7 +1899,7 @@ test("GET /admin/app.js renders credential usage and Codex limits status", async
   }
 })
 
-test("GET /admin/app.js loads and saves per-user ai access assignments", async () => {
+test("GET /admin/app.js saves user ai access without per-user model authority", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -1589,32 +1913,91 @@ test("GET /admin/app.js loads and saves per-user ai access assignments", async (
     assert.match(script, /\/users\/\$\{encodeURIComponent\([^)]+\)\}\/ai-access/)
     assert.match(script, /user-ai-access-provider/)
     assert.match(script, /user-ai-access-credential/)
-    assert.match(script, /user-ai-access-default-model/)
-    assert.match(script, /userAiAccessModelOptions/)
-    assert.match(script, /user-ai-access-allowed-models/)
+    assert.doesNotMatch(script, /user-ai-access-default-model/)
+    assert.doesNotMatch(script, /userAiAccessModelOptions/)
+    assert.doesNotMatch(script, /user-ai-access-allowed-models/)
+    assert.doesNotMatch(script, /userAiAccessModelsByCredentialId/)
+    assert.doesNotMatch(script, /refreshSelectedAiAccessModels/)
+    assert.doesNotMatch(script, /defaultModel:/)
+    assert.doesNotMatch(script, /allowedModels:/)
     assert.match(script, /availableCredentials/)
     assert.match(script, /Select assigned credential/)
     assert.match(script, /No eligible Codex credential/)
     assert.match(script, /No healthy Codex credentials with OK upstream status are available for assignment\./)
-    assert.match(script, /\/credentials\/\$\{encodeURIComponent\(credentialId\)\}\/models/)
-    assert.match(script, /selectedProvider !== "codex_oauth" && selectedProvider !== "openai_compatible"/)
-    assert.match(script, /defaultModel:\s*typeof payload\?\.defaultModel === "string" \? payload\.defaultModel\.trim\(\) : ""/)
-    assert.match(script, /if \(!els\.userAiAccessDefaultModel\.value\.trim\(\) && payload\.defaultModel\) \{/)
-    assert.match(script, /Loaded \$\{payload\.models\.length\} models from the assigned credential\./)
     assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
     assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(
       script,
-      /async function saveUserAiAccess\(userId,\s*input = null\)[\s\S]*const aiAccessInput = input && typeof input === "object"[\s\S]*credentialId: readAiAccessCredentialValue\(\)/,
+      /async function saveUserAiAccess\(userId,\s*input = null\)[\s\S]*enabled: input\.enabled === true,[\s\S]*provider:[\s\S]*credentialId:[\s\S]*fetchJson\(`\/users\//,
     )
     assert.match(
       script,
-      /async function saveUser\(\) \{[\s\S]*const aiAccessInput = \{\s*\.\.\.readAiAccessFormValue\(\),\s*credentialId: readAiAccessCredentialValue\(\),\s*}\s*;[\s\S]*await loadUsers\(\);[\s\S]*await saveUserAiAccess\(selectedUser\.id,\s*aiAccessInput\)/,
+      /async function saveUser\(\) \{[\s\S]*const canEditAiAccess = permissions\.editAiAccess && !wasCreating;[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput\)/,
     )
     assert.match(
       script,
-      /if \(!wasCreating && selectedUser\?\.id\) \{[\s\S]*await saveUserAiAccess\(selectedUser\.id,\s*aiAccessInput\)/,
+      /if \(canEditAiAccess\) \{[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput\)/,
     )
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /admin/app.js manages one global model policy with discovery-backed explicit save", async () => {
+  const app = createApp()
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/app.js`)
+
+    assert.equal(response.status, 200)
+    const script = await response.text()
+    assert.match(
+      script,
+      /from "\.\/model-policy-editor-state\.js"/,
+    )
+    assert.match(script, /modelPolicy:\s*createModelPolicyState\(\)/)
+    assert.match(script, /modelDiscovery:\s*createModelDiscoveryState\(\)/)
+    assert.match(script, /fetchJson\("\/ai-infrastructure\/model-policy", \{ signal: controller\.signal \}\)/)
+    assert.match(script, /fetchJson\("\/ai-infrastructure\/model-policy", \{\s*method: "PUT"/)
+    assert.match(script, /modelPolicySaveButton\.addEventListener\("click", \(\) => void saveModelPolicy\(\)\)/)
+    assert.match(script, /const submission = beginModelPolicySave\(state\.modelPolicy\)/)
+    assert.match(script, /completeModelPolicySave\(state\.modelPolicy, submission, saved\?\.policy\)/)
+    assert.match(script, /failModelPolicySave\(\s*state\.modelPolicy,\s*submission,/)
+    assert.match(script, /async function loadModelPolicy\(\)/)
+    assert.match(script, /const request = beginModelPolicyLoad\(state\.modelPolicy\)/)
+    assert.match(script, /modelPolicyLoadAbortController\?\.abort\(\)/)
+    assert.match(script, /const controller = new AbortController\(\)/)
+    assert.match(script, /signal: controller\.signal/)
+    assert.match(script, /completeModelPolicyLoad\(state\.modelPolicy, request, payload\?\.policy\)/)
+    assert.match(script, /failModelPolicyLoad\(\s*state\.modelPolicy,\s*request,/)
+    assert.match(script, /function invalidatePendingModelPolicyLoad\(\)/)
+    assert.match(script, /invalidateModelPolicyLoad\(state\.modelPolicy\)/)
+    assert.match(script, /state\.route\?\.area === "platform"[\s\S]*state\.route\.page === "ai-infrastructure"/)
+    assert.match(script, /No platform model policy configured/)
+    assert.match(script, /Unsaved model policy changes/)
+    assert.match(script, /if \(state\.session\?\.platformAdmin !== true\) \{\s*return;/)
+    assert.match(script, /credential\.state === "healthy"/)
+    assert.match(script, /credential\.provider === "codex_oauth" \|\| credential\.provider === "openai_compatible"/)
+    assert.match(script, /fetchJson\(`\/credentials\/\$\{encodeURIComponent\(credential\.id\)\}\/models`, \{/)
+    assert.match(script, /const request = beginModelDiscovery\(state\.modelDiscovery\)/)
+    assert.match(script, /completeModelDiscovery\(state\.modelDiscovery, request, payload\?\.models\)/)
+    assert.match(script, /selectModelDiscoveryCredential\(state\.modelDiscovery,/)
+    assert.match(script, /new AbortController\(\)/)
+    assert.match(script, /signal: modelDiscoveryAbortController\.signal/)
+    assert.match(script, /function removeDraftModel\(provider, model\)/)
+    assert.match(script, /modelRefsEqual\(state\.modelPolicy\.draftActiveModel, target\)/)
+    assert.match(script, /Select a replacement active model before removing this model\./)
+    assert.match(script, /replaceModelPolicyDraft\(state\.modelPolicy,/)
+    assert.doesNotMatch(script, /state\.modelPolicy\.dirty = true/)
+    assert.match(script, /if \(state\.modelPolicy\.saving\) \{\s*return;/)
+    assert.match(script, /modelPolicyPanel\.setAttribute\("aria-busy", String\(busy\)\)/)
+    assert.match(script, /modelPolicyCredential\.disabled = busy/)
+    assert.match(script, /modelPolicyList\.setAttribute\("aria-disabled", String\(state\.modelPolicy\.saving\)\)/)
+    assert.doesNotMatch(script, /modelPolicy[^\n]*addEventListener\("change",[^\n]*saveModelPolicy/)
   } finally {
     server.close()
     await once(server, "close")

@@ -7,30 +7,42 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - The canonical managed-AI admin UI is AI Gateway admin at `/admin` on the derived AI Gateway origin: `https://ai.veslo.work/admin` in production, or `https://ai.staging.veslo.work/admin` when `VESLO_DEPLOYMENT_DOMAIN=staging.veslo.work`.
 - When documentation, YouTrack tasks, or implementation notes say "admin" for VSLO-201 managed-AI operations, they mean the AI Gateway admin and its `/admin` subpages.
 - There is no separate DEN admin UI for managed-AI operations. DEN can still own backend APIs and storage for auth, users, organizations, domains, invites, memberships, platform roles, and seat limits.
-- DEN owns the effective AI access policy for each signed-in Den user.
-- The policy is stored in the DEN-managed managed-AI policy tables and keyed by the Den `userId`.
-- The policy controls:
+- The standalone AI Gateway owns effective AI access for each signed-in Den user.
+- User assignment controls:
   - `enabled`
   - `provider`
   - `credentialId` for providers that require a specific assigned credential
-  - `defaultModel`
-  - `allowedModels`
-- `credential_record`, `credential_secret`, and `credential_binding` own the Codex connection identity, encrypted OAuth authentication, binding, and health lifecycle. A model rollout does not rewrite those credential records.
-- `user_ai_access_policy.default_model` and `user_ai_access_policy.allowed_models_json` own the model assigned to a user. Updating all Codex connections to a new model therefore means migrating every `provider='codex_oauth'` policy row, including disabled rows, while preserving `enabled`, the credential id, encrypted secret, binding, health state, and `assignment_origin`.
+- The global platform model policy separately controls the enabled backend models and exactly one active model.
+- There are no per-user or per-organization Managed-AI model overrides. A request model is either omitted and replaced with the active platform model, or rejected when it differs.
 
 ## Runtime flow
 
 1. The user signs into the Veslo app with the existing browser-based Den flow.
-2. The app calls `GET /ai-gateway/me/ai-access` on `packages/server`.
-3. `packages/server` proxies that to the configured managed-AI service's `GET /api/me/ai-access` endpoint using the caller's Den bearer token. Defaults derive the standalone AI Gateway from `VESLO_DEPLOYMENT_DOMAIN`, using `https://ai.veslo.work` for production and `https://ai.staging.veslo.work` for staging unless a full URL override is set.
+2. The app calls `GET /ai-gateway/me/ai-access` on `packages/server` with the Den bearer token and authenticated organization id.
+3. `packages/server` proxies that to the standalone AI Gateway's `GET /api/me/ai-access` endpoint. Defaults derive the gateway from `VESLO_DEPLOYMENT_DOMAIN`, using `https://ai.veslo.work` for production and `https://ai.staging.veslo.work` for staging unless a full URL override is set.
 4. The app treats the returned provider/model as read-only admin-managed state.
 5. Prompt traffic still goes through the local Veslo server compatibility path.
-6. The local Veslo server forwards managed prompt traffic to the configured managed-AI service.
-7. The managed-AI service enforces provider/model policy, selects the platform credential, forwards upstream, and records usage/audit state.
+6. The local Veslo server forwards managed prompt traffic to standalone AI Gateway.
+7. AI Gateway evaluates the provider request in this order: authenticated session, DEN billing entitlement, user enablement/provider assignment, global model resolution, then credential selection and brokerage. Denial or unavailable billing stops before user access, model, lease, credential, or provider work.
+8. AI Gateway forwards the active global model upstream and records usage/audit state against the resolved user, organization, session, and credential.
+
+Credential selection and rotation are separate from model selection. The global policy chooses one provider/model for all managed users; credential health, capability, assignment, and capacity decide which compatible platform credential can serve it.
 
 Local Veslo server runtime state for this proxy path is owned by
 `packages/server/src/ai-gateway-runtime-owner.ts`. The HTTP transport remains
 wired through `packages/server/src/server.ts`.
+
+## Global model policy rollout
+
+Deploy the global-model transition in this order:
+
+1. Deploy schema, repository, and API support for the global policy while retaining the historical per-user model columns.
+2. Configure and verify exactly one active platform model.
+3. Enable runtime enforcement and the simplified user-assignment contracts that contain only access, provider, and credential state.
+4. Remove per-user model controls from the app and admin UI.
+5. Remove the historical database columns only in a separately approved cleanup after the rollback window closes.
+
+The retained `default_model` and `allowed_models_json` values are rollback-only data. New DEN access records store neutral compatibility values, updates preserve historical values without changing them, and the standalone AI Gateway never uses those columns as runtime model authority. DEN provider inference defaults to `denInferenceMode: "retired"` and returns `den_managed_ai_inference_retired`. The old per-user policy path is available only when a caller explicitly constructs the DEN proxy with the code-level dependency `denInferenceMode: "legacy_rollback"`; there is currently no operator environment switch for that mode. A temporary DEN self-access endpoint may return an injected gateway-owned `effectiveModel`; when no gateway policy resolver is configured, it fails explicitly instead of falling back to the retained columns. The committed default DEN signup bootstrap does not inject an active-provider resolver, so account creation continues but automatic AI-access assignment is skipped. An integration may explicitly inject a read-only Gateway policy projection; assignment is then still skipped for a missing, unavailable, or non-Codex active policy.
 
 ## App behavior
 
@@ -40,28 +52,32 @@ wired through `packages/server/src/server.ts`.
 - If no admin policy is assigned, the user can sign in but cannot send prompts.
 - The desktop app caches a non-secret local proof of the user's managed-AI policy for 3 days in `${VESLO_APP_DATA_DIR or app_data_dir()}/access-proofs.v1.json`. This avoids repeatedly calling `GET /ai-gateway/me/ai-access` during normal app flow and restart without adding UI. The file stores policy metadata only; Den and gateway bearer tokens are never persisted there.
 - Generated project OpenCode config must also stay non-secret: provider routing points at the local Veslo server and references `{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}` for local auth. Managed gateway bearer tokens stay in local Veslo server runtime memory and are attached by the proxy.
-- Den/AI Gateway remain authoritative for inference. Prompt traffic still uses the current Den auth or local Veslo server token at runtime, and failed/no-access refreshes clear the cached proof for that identity.
+- The authenticated Den organization id follows the same local runtime-only boundary. Access priming binds it to the actor token in memory; provider proxying strips caller-supplied organization headers and injects the bound id. It is never written to OpenCode provider config.
+- Standalone AI Gateway is authoritative for inference, AI-access assignments, the global model, credentials, and usage. DEN remains authoritative for identity, organization membership, and billing entitlement. Prompt traffic still carries the current DEN auth or local Veslo server token at runtime, and failed/no-access refreshes clear the cached proof for that identity.
 
 ## Admin behavior
 
-- The AI Gateway admin `Users` page includes an `AI access` editor.
-- The AI Gateway admin `Organization` page is shared by Platform Admins and Organization Admins. Platform Admins can switch the edited organization with the searchable organization selector on that page; Organization Admins only see their active organization and do not see the selector or seat-limit controls.
-- Platform admins can enable/disable access, pick the assigned provider, set the default model, and optionally restrict allowed models.
-- New DEN sign-ups are auto-assigned to Codex / ChatGPT inference with GPT-5.6 Sol, canonical model id `gpt-5.6-sol`, when at least one eligible Codex OAuth inference credential exists. The moving `gpt-5.6` alias is not used. These rows are marked `auto_assigned`. When multiple credentials are eligible, DEN selects the one with the fewest active leases and uses deterministic tie-breaking.
+- The organization-scoped AI Gateway admin `AI Access` workspace includes the assignment editor. Platform Users remains global and does not perform organization-scoped AI-access mutations.
+- Platform pages (`/admin/overview`, `/admin/organizations`, `/admin/ai-infrastructure`, `/admin/platform-users`, and global audit) never retain organization context. Organization context exists only inside `/admin/organizations/:orgId/...`; its selector preserves the current organization subpage, and organization admins see only authorized organizations.
+- Platform admins can enable/disable user access and pick the assigned provider and credential only inside the explicit Organization AI Access workspace, and manage the global enabled/active model policy under AI Infrastructure. User assignments contain no model fields.
+- Global model-policy loads are generation-scoped and abortable. A response from an older request, a previous admin route, or a load that began before the draft became dirty cannot replace the current editor draft or publish a stale error.
+- Admin AI-access writes require the canonical Organization AI Access route and an authorized organization context that matches one of the target user's DEN memberships. All fallible response preparation completes before the Gateway transaction; the transaction then persists the assignment and its success audit together. The audit uses the authenticated admin user id and validated organization id; if the audit insert fails, the policy write rolls back and the request fails.
+- Organization Audit is a fail-closed facade over DEN-owned organization events and Gateway-owned AI-access events. The Gateway fetches both sources, labels each row with its source, assigns a stable source-qualified id, merges newest-first, and applies one final hard limit. It never returns a partial history when either source is unavailable. Mutations owned by DEN are audited only in DEN and are not duplicated as synthetic Gateway rows.
+- The committed default DEN signup bootstrap has no active-provider resolver and therefore skips automatic AI-access assignment without failing account creation. An integration may explicitly inject a read-only Gateway policy projection; only a `codex_oauth` active provider plus an eligible Codex OAuth inference credential creates an `auto_assigned` row. A non-Codex, missing, or unavailable projection skips assignment. The active platform model applies to assigned users like every other managed-AI user.
 - Admin edits are marked `admin_assigned`. Non-Codex admin assignments remain explicit credential choices.
-- Assigned Codex access is lazily repaired on the next Codex request, including both `auto_assigned` and `admin_assigned` rows. If the assigned credential is missing, no longer healthy, revoked, permanently unavailable, or currently exhausted, DEN selects another healthy eligible Codex credential and updates the user's policy before routing the request. If no replacement exists, the request fails explicitly and the existing assignment is kept.
+- Assigned Codex access is lazily repaired by the canonical AI Gateway on the next Codex request, including both `auto_assigned` and `admin_assigned` rows. If the assigned credential is missing, no longer healthy, revoked, permanently unavailable, or currently exhausted, the Gateway selects another healthy eligible Codex credential and updates the user's policy before routing the request. DEN compatibility reads are mutation-free. If no replacement exists, the request fails explicitly and the existing assignment is kept.
 - Codex credential assignment options only include credentials whose provider is `codex_oauth`, whose stored state is `healthy`, and whose latest upstream status probe reports OK. A successful `codex | OK` probe is eligible even when rate-limit windows cannot be parsed; revoked, draining, unhealthy, invalid-grant, or probe-failing credentials are hidden from assignment.
 - When no eligible Codex credential exists, user creation still succeeds and AI access remains unassigned until an eligible credential is available.
-- The DEN admin and standalone AI Gateway admin `Credentials` pages are the place to connect/reconnect OpenAI and create/rotate shared Anthropic, Codex OAuth inference, and OpenAI-compatible credentials.
+- The standalone AI Gateway admin `Credentials` page is the only managed-AI admin surface for connecting, reconnecting, creating, and rotating platform credentials. DEN has no separate managed-AI credential UI.
 - Codex OAuth credentials are refreshed from the selected credential detail. Admins can rename the credential, prepare a short-lived local upload command, run `node scripts/admin/codex-auth-upload.mjs` from a Veslo checkout, complete Codex device login locally, and upload the resulting `auth.json` through the one-time URL. The helper stores local Codex login material under `~/.veslo/codex-auth/<credential>` by default, validates that `id_token`, `access_token`, `refresh_token`, and `account_id` are present, uploads the full JSON to the selected admin service, and the service replaces the encrypted secret for the existing credential record while preserving credential id, usage, audit, alert, and assignment history.
 - New Codex OAuth credentials can be added from the standalone AI Gateway `Credentials` page with `Prepare Codex account upload`. That creates the same short-lived local helper command without a credential id. After the user completes Codex device login locally, the server reads the account email from the uploaded `id_token`, creates a new shared `codex_oauth` platform credential named `<email> Codex`, and stores the uploaded auth JSON as the encrypted secret. Uploads that do not contain a usable account email are rejected instead of creating an ambiguously named credential.
 - Codex OAuth credentials should use a dedicated server/runtime ChatGPT account. Do not reuse the same login material in another long-running runtime. If the Codex status probe reports that a refresh token was already used, the admin service marks that credential unhealthy so it is hidden from new assignments and eligible users can fail over to another healthy Codex credential.
 - OpenAI-compatible credentials require a display name, custom HTTP(S) `/v1` base URL, and bearer API key. Local `http://localhost`, `http://127.0.0.1`, and `http://[::1]` URLs are allowed for development; hosted/non-loopback URLs must use HTTPS.
 - OpenAI-compatible user access requires assigning a healthy `openai_compatible` credential. DEN does not automatically pick from a mixed custom-provider pool because the assigned credential determines the upstream base URL.
-- When an OpenAI-compatible credential is selected in the user AI access editor, the admin UI asks that credential's `/models` endpoint for available model IDs and uses the result as suggestions for the default model field. Admins can still type a model manually when discovery fails or the upstream returns an empty list.
+- OpenAI-compatible credential model discovery is infrastructure evidence for the global platform model catalog and compatibility checks; it is not exposed as a user-assignment model field.
 - The hosted admin `Usage` page shows recorded usage for every credential, including credentials with zero recorded traffic.
 - The hosted admin `Usage` and `Credentials` pages show best-effort Codex upstream status for inference credentials. The Codex status probe runs the gateway's default Codex model so it does not inherit an unsupported CLI default model from the bundled Codex runtime. When the Codex probe returns parseable 5h and weekly windows, both pages show those windows and reset times. When the probe succeeds but no windows are parsed, both pages show `Codex OK, limits unknown` without making the credential ineligible. Any healthy Codex credential with unknown or unavailable limits creates a Codex capacity visibility alert so admins are notified even when other credentials still report measurable limits. Authentication failures such as `invalid_grant`, reused refresh tokens, or 401 responses remain visible as unavailable upstream status and require reconnecting or rotating the credential.
-- Authentication-failing, exhausted, and otherwise permanently ineligible Codex credentials are reported for reconnect or recovery. On a runtime request, lazy repair can replace such an assigned credential with another healthy eligible credential while retaining `gpt-5.6-sol`; inference fails only when no eligible replacement exists. Target-model unsupported is different: the status intentionally leaves that credential eligible, so it does not trigger lazy repair. A GPT-5.6 Sol probe or request can therefore fail on the selected credential even when another credential exists. The admin must explicitly reassign the policy to a credential that supports `gpt-5.6-sol`, or explicitly select a supported credential/model outside this forced rollout. The rollout never falls back automatically to GPT-5.5 or silently changes the migrated model policy, and the unsupported model is removed from that credential's normal admin model choices.
+- If a Codex probe reports that a specific model is unsupported for the credential's ChatGPT account, the credential remains usable and the unsupported model is removed from that credential's admin model choices. Admins should assign another listed Codex model for that credential instead of reconnecting it.
 - Provider proxy network failures, such as container outbound DNS, firewall/NAT, or upstream reachability timeouts, create a critical admin alert titled `AI inference upstream is unreachable` linked to the affected credential.
 - The hosted admin UI shows a bottom-right connection status whenever it is waiting for `/admin/api` responses. If the browser cannot reach the backend, the status remains visible and tells the admin that it is still trying to connect.
 
@@ -76,7 +92,7 @@ Credential/account fault emails are sent for the first active unresolved alert p
 ## Platform credential pools
 
 - Upstream provider credentials are selected from platform-owned pools, not from the signed-in end user's ID.
-- DEN resolves bindings from these owner IDs:
+- Standalone AI Gateway resolves credential bindings from these owner IDs:
   - `platform:openai`
   - `platform:anthropic`
   - `platform:codex_oauth`
@@ -90,14 +106,6 @@ OpenAI-compatible proxy transport failures are reported separately from upstream
 ## Manual setup
 
 Before this flow works in a live environment, make sure healthy provider bindings exist for the platform pool owner that matches the assigned provider. If the managed-AI tables still only contain legacy per-user BYOK bindings, prompts will fail with `no_eligible_bindings`.
-
-## GPT-5.6 Sol policy migration and credential probe
-
-Run this rollout only after the target AI Gateway revision is deployed. Use the complete copy/paste sequence in [GPT-5.6 Sol rollout](dev/cloud-deployments.md#gpt-56-sol-rollout); it requires the reviewed environment file and existing Compose project, defines the scoped `compose` wrapper, creates and verifies both database backups with `zstd` and checksums, and only then runs the guarded migration and probe operations.
-
-In that sequence, the first migration command is a dry run. Apply updates `default_model`, `allowed_models_json`, and `updated_at` on each changed Codex policy, setting `allowed_models_json` to exactly `["gpt-5.6-sol"]`. It includes disabled rows while preserving `enabled`, credential ids, credential records and encrypted auth, bindings, health state, and assignment origin. The post-apply dry run must report `changedCount: 0`; otherwise the rollout is not idempotent and probing must not start.
-
-The credential probe tests every non-deleted `codex_oauth` credential, including credentials already stored as unhealthy. It uses one shared status provider and awaits credentials sequentially so only one credential probe is active at a time. It persists rotated `auth.json` through the existing encrypted secret store, prints only the target model, credential identity, health, safe outcome labels, counts, and elapsed time, and continues after each failure. After all results are printed, the command exits non-zero if any credential is unsupported, exhausted, authentication-failing, or otherwise failed. It does not print credential secrets and does not alter the GPT-5.6 Sol model policy.
 
 ## Verification tooling
 
@@ -124,21 +132,21 @@ Use these commands when verifying the admin-managed flow locally or against the 
 - Assign a live user to OpenAI before a live OpenAI desktop roundtrip:
 
   ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai --default-model gpt-4o-mini --allowed-model gpt-4o-mini
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=gpt-4o-mini pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 
 - Assign a live user to Anthropic before a live Anthropic desktop roundtrip:
 
   ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider anthropic --default-model claude-3-7-sonnet-latest --allowed-model claude-3-7-sonnet-latest
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider anthropic
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=anthropic VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=claude-3-7-sonnet-latest pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 
 - Assign a live user to an OpenAI-compatible credential before a live custom-provider desktop roundtrip:
 
   ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai_compatible --credential-id <credential-id> --default-model <custom-model> --allowed-model <custom-model>
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai_compatible --credential-id <credential-id>
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai_compatible VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=<custom-model> pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 
@@ -186,7 +194,7 @@ Use these commands when verifying the admin-managed flow locally or against the 
   - `POST /ai-gateway/providers/anthropic/v1/messages`
   - `POST /ai-gateway/providers/codex_oauth/v1/chat/completions`
   - `POST /ai-gateway/providers/openai_compatible/v1/chat/completions`
-- DEN hosted provider routes:
+- Retired DEN hosted provider routes (return `410 den_managed_ai_inference_retired` in the production runtime):
   - `POST /providers/openai/v1/chat/completions`
   - `POST /providers/anthropic/v1/messages`
   - `POST /providers/codex_oauth/v1/chat/completions`

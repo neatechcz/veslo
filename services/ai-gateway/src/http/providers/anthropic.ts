@@ -16,6 +16,7 @@ import {
   recordProviderProxyFailureAlert,
 } from "./proxy-failure-alert.js";
 import { normalizeGatewaySessionId } from "./session-id.js";
+import { readGatewayOrganizationId } from "./gateway-context.js";
 import type { ProxyDependencies } from "../proxy-dependencies.js";
 
 export function createAnthropicProxyRouter(
@@ -45,7 +46,7 @@ export function createAnthropicProxyRouter(
           aiAccess: gatewayAiAccess,
           body: req.body,
         })
-      : { ok: true as const, body: req.body as Record<string, unknown> };
+      : { ok: true as const, body: req.body as Record<string, unknown>, model: "" };
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error });
       return;
@@ -59,7 +60,7 @@ export function createAnthropicProxyRouter(
     };
 
     try {
-      const upstreamResponse = await executeWithRetry(scope, policyResult.body);
+      const upstreamResponse = await executeWithRetry(scope, policyResult.body, readGatewayOrganizationId(res));
       applyUpstreamResponse(res, upstreamResponse);
     } catch (error) {
       console.error("proxy_request_failed", error);
@@ -72,11 +73,12 @@ export function createAnthropicProxyRouter(
   async function executeWithRetry(
     scope: ResolveLeaseInput,
     body: unknown,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const initialLease = await deps.leaseBroker.getOrCreateActiveLease(scope);
 
     try {
-      return await executeLeaseRequest(initialLease, body);
+      return await executeLeaseRequest(initialLease, body, orgId);
     } catch (error) {
       const failure = getUpstreamFailureInput(error);
       if (classifyUpstreamFailure(failure) !== "permanent_credential") {
@@ -107,13 +109,14 @@ export function createAnthropicProxyRouter(
         throw error;
       }
 
-      return executeLeaseRequest(reboundLease, body);
+      return executeLeaseRequest(reboundLease, body, orgId);
     }
   }
 
   async function executeLeaseRequest(
     lease: SessionLease,
     body: unknown,
+    orgId: string | null,
   ): Promise<ProviderTransportResponse> {
     const upstreamAuth = await deps.tokenBroker.getUpstreamAuth({
       bindingId: lease.activeBindingId,
@@ -126,6 +129,7 @@ export function createAnthropicProxyRouter(
 
     await recordUsage({
       ownerUserId: lease.ownerUserId,
+      orgId,
       sessionId: lease.sessionId,
       bindingId: lease.activeBindingId,
       requestBody: body,
@@ -137,6 +141,7 @@ export function createAnthropicProxyRouter(
 
   async function recordUsage(input: {
     ownerUserId: string;
+    orgId: string | null;
     sessionId: string;
     bindingId: string;
     requestBody: unknown;
@@ -155,6 +160,7 @@ export function createAnthropicProxyRouter(
       await deps.usageRepository.recordUsage({
         requestId,
         ownerUserId: input.ownerUserId,
+        orgId: input.orgId,
         provider: "anthropic",
         sessionId: input.sessionId,
         credentialId: credential.id,

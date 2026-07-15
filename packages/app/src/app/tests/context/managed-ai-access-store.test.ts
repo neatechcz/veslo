@@ -3,7 +3,11 @@ import test from "node:test";
 
 import { createRoot } from "solid-js";
 
-import type { ManagedAiAccessProfile } from "../../lib/ai-access.js";
+import {
+  AI_ACCESS_NOT_CONFIGURED_MESSAGE,
+  AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY,
+  type ManagedAiAccessProfile,
+} from "../../lib/ai-access.js";
 import {
   buildManagedAiAccessCacheKey,
   clearManagedAiAccessCache,
@@ -38,11 +42,10 @@ function managedProfile(overrides: Partial<ManagedAiAccessProfile> = {}): Manage
   return {
     userId: "user-1",
     providerId: "codex_oauth",
-    defaultModel: {
+    effectiveModel: {
       providerID: "codex_oauth",
       modelID: "gpt-5",
     },
-    allowedModels: ["gpt-5"],
     updatedAt: "2026-07-01T10:00:00.000Z",
     ...overrides,
   };
@@ -105,6 +108,29 @@ function createStoreOptions(
   return options;
 }
 
+test("managed AI access refresh sends the authenticated DEN organization and server workspace", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const calls: Array<[string, string | undefined, string | undefined]> = [];
+      createManagedAiAccessStore(createStoreOptions({
+        activeVesloServerWorkspaceId: () => "workspace-1",
+        gatewayVesloServerClient: () => ({
+          baseUrl: "https://gateway.veslo.test",
+          getMyAiAccess: async (userToken, orgId, workspaceId) => {
+            calls.push([userToken, orgId, workspaceId]);
+            return { aiAccess: null, accessToken: "" };
+          },
+        }),
+      }));
+
+      await settleEffects();
+      assert.deepEqual(calls, [["den-token", "org-1", "workspace-1"]]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("managed AI access cache hydrates, expires, and clears browser records", () => {
   const storage = createMemoryStorage();
   const profile = managedProfile();
@@ -151,6 +177,36 @@ test("managed AI access cache hydrates, expires, and clears browser records", ()
     isTauriRuntime: () => false,
   });
   assert.deepEqual(storage.removals, ["veslo.managedAiAccess.v1"]);
+});
+
+test("managed AI browser cache rejects malformed or mismatched effective models", () => {
+  const cacheKey = "user-1|org-1|https://gateway.veslo.test";
+  const invalidProfiles = [
+    managedProfile({ effectiveModel: { providerID: "codex_oauth", modelID: "" } }),
+    managedProfile({ effectiveModel: { providerID: "openai", modelID: "gpt-5" } }),
+    managedProfile({
+      providerId: "local_development" as ManagedAiAccessProfile["providerId"],
+      effectiveModel: { providerID: "local_development", modelID: "gpt-5" },
+    }),
+  ];
+
+  for (const profile of invalidProfiles) {
+    const storage = createMemoryStorage();
+    writeManagedAiAccessCache(cacheKey, profile, "gateway-token", {
+      storage,
+      isTauriRuntime: () => false,
+      now: () => 1_000,
+    });
+
+    assert.equal(
+      readManagedAiAccessCache(cacheKey, {
+        storage,
+        isTauriRuntime: () => false,
+        now: () => 1_000,
+      }),
+      null,
+    );
+  }
 });
 
 test("managed AI access single-flight reuses loads for the same cache key", async () => {
@@ -213,6 +269,43 @@ test("managed AI access store applies cached access before retrying a gateway fa
       assert.equal(store.managedAiAccessBusy(), false);
       assert.equal(store.managedAiAccessRetryScheduled(), true);
       assert.equal(scheduledTimers.length, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("managed AI access store surfaces authoritative missing access without retry loading", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const scheduledTimers: Array<() => void> = [];
+      let loadCalls = 0;
+      const store = createManagedAiAccessStore(createStoreOptions({
+        gatewayVesloServerClient: () => ({
+          baseUrl: "https://gateway.veslo.test",
+          getMyAiAccess: async () => {
+            loadCalls += 1;
+            return { aiAccess: null, accessToken: "" };
+          },
+        }),
+        timers: {
+          setTimeout: (callback) => {
+            scheduledTimers.push(callback);
+            return scheduledTimers.length as unknown as ReturnType<typeof setTimeout>;
+          },
+          clearTimeout: () => undefined,
+        },
+      }));
+
+      await settleEffects();
+
+      assert.equal(loadCalls, 1);
+      assert.equal(store.managedAiAccess(), null);
+      assert.equal(store.managedAiAccessError(), AI_ACCESS_NOT_CONFIGURED_MESSAGE);
+      assert.equal(store.managedAiAccessBusy(), false);
+      assert.equal(store.managedAiAccessRetryScheduled(), false);
+      assert.equal(store.managedAiAccessBlockedReason(), AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY);
+      assert.equal(scheduledTimers.length, 0);
     } finally {
       dispose();
     }

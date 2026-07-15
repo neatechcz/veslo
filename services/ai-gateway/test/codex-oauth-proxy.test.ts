@@ -8,6 +8,7 @@ import type { UserAiAccessPolicyRecord } from "../src/access/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../src/credentials/platform-owner.js"
 import type { CredentialBinding, CredentialRecord } from "../src/credentials/repository.js"
 import { createApp } from "../src/index.js"
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js"
 import { ProviderTransportError } from "../src/providers/transport.js"
 import type { RecordUsageInput } from "../src/usage/repository.js"
 
@@ -36,6 +37,23 @@ function createAiAccess(): UserAiAccessPolicyRecord {
     allowedModels: ["gpt-5.4"],
     createdAt: new Date("2026-04-10T10:00:00.000Z"),
     updatedAt: new Date("2026-04-10T10:00:00.000Z"),
+  }
+}
+
+function createModelPolicy(model = "gpt-5.4") {
+  return {
+    async getPolicy() {
+      return {
+        id: "platform" as const,
+        enabledModels: [{ provider: "codex_oauth" as const, model }],
+        activeModel: { provider: "codex_oauth" as const, model },
+        createdAt: new Date("2026-07-12T08:00:00.000Z"),
+        updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+      }
+    },
+    async replacePolicy() {
+      throw new Error("unused")
+    },
   }
 }
 
@@ -88,6 +106,8 @@ test("codex_oauth proxy forwards through the configured transport with a sticky 
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -245,6 +265,7 @@ test("codex_oauth proxy forwards through the configured transport with a sticky 
       {
         requestId: "codex_req_usage_1",
         ownerUserId: "user_gateway",
+        orgId: "org_test",
         provider: "codex_oauth",
         sessionId: "session_codex_1",
         credentialId: "cred_codex_1",
@@ -269,6 +290,8 @@ test("codex_oauth proxy records usage metadata from streaming transport response
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -402,6 +425,7 @@ test("codex_oauth proxy records usage metadata from streaming transport response
       {
         requestId: "codex_req_stream_usage_1",
         ownerUserId: "user_gateway",
+        orgId: "org_test",
         provider: "codex_oauth",
         sessionId: "session_codex_stream_1",
         credentialId: "cred_codex_1",
@@ -430,6 +454,8 @@ test("codex_oauth proxy rewrites unresolved opencode session placeholders to a u
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -581,6 +607,8 @@ test("codex_oauth proxy rewrites unresolved opencode session placeholders to a u
 test("codex_oauth proxy returns structured runtime incompatibility failures for authenticated callers", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy("gpt-5.5"),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -729,6 +757,8 @@ test("codex_oauth proxy preserves transport failures with colliding exhaustion m
   const recordProviderFailureCalls: unknown[] = []
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -879,6 +909,8 @@ test("codex_oauth proxy preserves transport failures with colliding exhaustion m
 test("codex_oauth proxy returns structured failure when assigned binding lookup throws", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -988,6 +1020,8 @@ test("codex_oauth proxy returns structured failure when assigned binding lookup 
 test("codex_oauth proxy returns no eligible credential when the assigned credential is exhausted", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")
@@ -1106,6 +1140,8 @@ test("codex_oauth proxy returns no eligible credential when the assigned credent
 test("codex_oauth proxy returns all credentials exhausted when auto-selectable credentials are exhausted", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      modelPolicy: createModelPolicy(),
       gatewaySessions: {
         async resolveSession(token: string) {
           assert.equal(token, "gateway-access-token")

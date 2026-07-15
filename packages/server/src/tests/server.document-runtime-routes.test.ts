@@ -210,4 +210,116 @@ describe("Document runtime routes", () => {
     expect(repair.status).toBe("missing");
     expect(repair.repair.lastAttemptAt).toBe("2026-07-02T12:04:00.000Z");
   });
+
+  test("provider dependencies start feed package install without blocking repair responses", async () => {
+    const calls: string[] = [];
+    let installed = false;
+    let finishInstall: (() => void) | null = null;
+    const deps = createDocumentRuntimeProviderDependencies(async () => ({
+      doctor: () => {
+        calls.push("doctor");
+        return installed
+          ? {
+              ok: true,
+              status: "ready",
+              packageVersion: "2026.7.0",
+              activePath: "/runtime/active",
+            }
+          : {
+              ok: false,
+              status: "missing",
+              checks: [{ ok: false, error: "active pointer missing" }],
+            };
+      },
+      repairHeadless: () => {
+        calls.push("repair");
+        return { ok: false, status: "missing", repaired: false };
+      },
+      installPackageFromFeed: (options) => {
+        calls.push("install");
+        options?.onProgress?.({
+          phase: "downloading",
+          artifactName: "veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+          downloadedBytes: 25,
+          totalBytes: 100,
+          percent: 25,
+          message: "Downloading office document package.",
+        });
+        return new Promise((resolve) => {
+          finishInstall = () => {
+            installed = true;
+            resolve({
+              ok: true,
+              status: "ready",
+              repaired: true,
+              doctor: {
+                ok: true,
+                status: "ready",
+                packageVersion: "2026.7.0",
+                activePath: "/runtime/active",
+              },
+            });
+          };
+        });
+      },
+    }), {
+      now: () => new Date("2026-07-02T12:05:00.000Z"),
+      platform: "win32",
+    });
+
+    const missing = await deps.readStatus!({} as RequestContext);
+    const repair = await deps.repair!({} as RequestContext);
+    const installing = await deps.readStatus!({} as RequestContext);
+
+    expect(missing.status).toBe("missing");
+    expect(missing.repair.available).toBe(true);
+    expect(repair.status).toBe("package_installing");
+    expect(repair.repair.inProgress).toBe(true);
+    expect(installing.status).toBe("package_installing");
+    expect(installing.package.progress?.phase).toBe("downloading");
+    expect(installing.package.progress?.percent).toBe(25);
+    expect(calls).toEqual(["doctor", "install"]);
+
+    const resolveInstall = finishInstall ?? (() => {
+      throw new Error("Expected document runtime package install to start.");
+    });
+    resolveInstall();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const ready = await deps.readStatus!({} as RequestContext);
+
+    expect(ready.status).toBe("ready");
+    expect(ready.ready).toBe(true);
+    expect(calls).toEqual(["doctor", "install", "doctor"]);
+  });
+
+  test("provider dependencies do not offer package install in remote-only mode", async () => {
+    const calls: string[] = [];
+    const deps = createDocumentRuntimeProviderDependencies(async () => ({
+      doctor: () => {
+        calls.push("doctor");
+        return { ok: false, status: "missing" };
+      },
+      repairHeadless: () => {
+        calls.push("repair");
+        return { ok: false, status: "missing", repaired: false };
+      },
+      installPackageFromFeed: () => {
+        calls.push("install");
+        return { ok: true, status: "ready", repaired: true };
+      },
+    }), {
+      env: { VESLO_DOCUMENT_RUNTIME_MODE: "remote-docs-only" },
+      now: () => new Date("2026-07-02T12:06:00.000Z"),
+      platform: "win32",
+    });
+
+    const status = await deps.readStatus!({} as RequestContext);
+    const repair = await deps.repair!({} as RequestContext);
+
+    expect(status.status).toBe("remote_only");
+    expect(status.repair.available).toBe(false);
+    expect(repair.status).toBe("remote_only");
+    expect(repair.repair.available).toBe(false);
+    expect(calls).toEqual([]);
+  });
 });

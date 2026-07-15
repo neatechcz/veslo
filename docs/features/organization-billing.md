@@ -4,7 +4,7 @@ Den owns organization billing state, Stripe payment events, and the entitlement 
 
 ## Admin Flow
 
-Organization admins can use Den Admin Billing to:
+Organization admins use the organization-scoped Billing page in standalone AI Gateway admin to:
 
 - read billing status, entitlement state, active user count, and license limit
 - start a Stripe Checkout subscription for Basic and Extended Managed AI seats
@@ -13,6 +13,8 @@ Organization admins can use Den Admin Billing to:
 - request cancellation at period end
 
 Platform admins can also set manual access, local-model billing metadata, billing status, and per-organization tier allowlists.
+
+The standalone AI Gateway admin exposes these controls through organization-scoped facades backed by Den's canonical admin billing API. It forwards the signed-in Den token and preserves Den's response status and body, including validation details. Stripe configuration and mutations remain owned by Den; the gateway does not store Stripe secrets or duplicate Stripe logic. Self-service billing actions are available to an authorized administrator of that organization, while manual/platform billing controls are both hidden from organization admins and rejected server-side unless the caller is a platform admin.
 
 ## Platform Trials
 
@@ -69,8 +71,12 @@ Stripe webhook application also owns the handoff from platform trial to paid sub
 
 ## Entitlements
 
-Managed AI proxy requests are organization-billing gated before AI-access policy lookup, lease acquisition, token brokerage, or upstream provider calls.
+DEN is the billing source of truth and exposes the user-authenticated minimal facade `GET /v1/managed-ai/entitlement`. The response contains only `orgId` and `canUseManagedAi`; it does not expose subscription, payment, seat, or Stripe details. A single active membership can resolve automatically. Multi-organization users must provide an explicit organization id, while inactive or cross-organization ids fail with safe organization-context errors.
 
-Unpaid, canceled, missing-payment, or local-model-only organizations receive HTTP `402` with `error: "payment_required"` for Den Managed AI inference. History/settings reads remain allowed by the entitlement model. Local Models mode can allow BYOK/local-provider usage without granting Den Managed AI inference.
+AI Gateway resolves each Managed AI proxy request in this order: authenticated session, billing entitlement, user enablement/provider assignment, global active model, then credential/lease/token brokerage. It briefly caches both allow and deny decisions and coalesces concurrent lookups, but does not cache failed or malformed DEN responses.
+
+An organization that is resolved successfully but cannot use Managed AI receives HTTP `402` with `error: "managed_ai_entitlement_denied"`. DEN/network/malformed-response failure receives HTTP `503` with `error: "managed_ai_entitlement_unavailable"`. Both stop before AI-access, model, credential, lease, or provider calls. History/settings reads remain allowed by the entitlement model. Local Models mode can allow BYOK/local-provider usage without granting Managed AI inference.
+
+Organization context exists only inside an explicit organization workspace in admin. Platform pages never retain an organization id, and the runtime organization id is bound to authenticated in-memory authorization rather than accepted from a later provider request.
 
 The active license limit is the sum of Basic and Extended quantities. License validation uses active organization memberships and excludes removed/disabled memberships and globally disabled users.

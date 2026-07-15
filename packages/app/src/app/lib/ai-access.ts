@@ -75,11 +75,19 @@ export function isAiAccessLoadingMessage(
   return Boolean(translated && trimmed === translated);
 }
 
+export function resolveActionableAiAccessBlockedReason(
+  message: string | null | undefined,
+  translate?: ((key: string) => string) | null,
+): string | null {
+  const trimmed = message?.trim() ?? "";
+  if (!trimmed) return null;
+  return isAiAccessLoadingMessage(trimmed, translate) ? null : trimmed;
+}
+
 export type ManagedAiAccessProfile = {
   userId: string;
   providerId: VesloGatewayProvider;
-  defaultModel: ModelRef;
-  allowedModels: string[];
+  effectiveModel: ModelRef;
   updatedAt: string | null;
 };
 
@@ -569,18 +577,17 @@ export function resolveManagedAiAccess(record: VesloUserAiAccess | null | undefi
 
   const userId = record.userId?.trim() ?? "";
   const provider = record.provider?.trim().toLowerCase() ?? "";
-  const defaultModelId = record.defaultModel?.trim() ?? "";
-  if (!userId || !isGatewayOwnedProvider(provider) || !defaultModelId) {
-    return { profile: null, reason: AI_ACCESS_INVALID_MESSAGE };
-  }
-
-  const allowedModels = Array.isArray(record.allowedModels)
-    ? record.allowedModels
-        .map((value) => (typeof value === "string" ? value.trim() : ""))
-        .filter(Boolean)
-    : [];
-
-  if (allowedModels.length > 0 && !allowedModels.includes(defaultModelId)) {
+  const legacyDefaultModelId = record.defaultModel?.trim() ?? "";
+  const effectiveProvider =
+    record.effectiveModel?.provider?.trim().toLowerCase() ??
+    (legacyDefaultModelId ? provider : "");
+  const effectiveModelId = record.effectiveModel?.model?.trim() ?? legacyDefaultModelId;
+  if (
+    !userId
+    || !isGatewayOwnedProvider(provider)
+    || effectiveProvider !== provider
+    || !effectiveModelId
+  ) {
     return { profile: null, reason: AI_ACCESS_INVALID_MESSAGE };
   }
 
@@ -588,11 +595,10 @@ export function resolveManagedAiAccess(record: VesloUserAiAccess | null | undefi
     profile: {
       userId,
       providerId: provider,
-      defaultModel: {
+      effectiveModel: {
         providerID: provider,
-        modelID: defaultModelId,
+        modelID: effectiveModelId,
       },
-      allowedModels,
       updatedAt: typeof record.updatedAt === "string" && record.updatedAt.trim()
         ? record.updatedAt
         : null,
@@ -681,14 +687,14 @@ export function formatManagedAiAccessConfig(
     workspaceId?: string | null;
   },
 ): string {
-  const withDefaultModel = formatConfigWithDefaultModel(content ?? "", input.profile.defaultModel);
+  const withDefaultModel = formatConfigWithDefaultModel(content ?? "", input.profile.effectiveModel);
   return `${applyGatewayProviderRouting(withDefaultModel, {
     providerId: input.profile.providerId,
     serverBaseUrl: input.engineBaseUrl?.trim() || input.serverBaseUrl,
     serverClientToken: input.serverClientToken,
     gatewayAccessToken: input.gatewayAccessToken,
     workspaceId: input.workspaceId,
-    models: [input.profile.defaultModel.modelID, ...input.profile.allowedModels],
+    models: [input.profile.effectiveModel.modelID],
     trace: false,
   })}\n`;
 }

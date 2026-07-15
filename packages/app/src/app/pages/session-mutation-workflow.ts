@@ -399,7 +399,6 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
           attachments: [],
         },
         options: {
-          model,
           variant: deps.modelVariant() ?? null,
           submitQueuePolicy: "normal",
         },
@@ -599,7 +598,6 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
         draft: conversationSubmitDraftFromComposerDraft(draft),
         options: {
           replaceMessageId: messageID,
-          model: deps.selectedSessionModel(),
           variant: deps.modelVariant() ?? null,
           submitQueuePolicy: "normal",
         },

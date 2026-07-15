@@ -332,9 +332,6 @@ const AutomationCard = (props: {
           <Show when={target()?.agent}>
             <div class="text-xs text-gray-9">{tr("scheduled.agent")} <span class="text-gray-12">{target()?.agent}</span></div>
           </Show>
-          <Show when={target()?.model}>
-            <div class="text-xs text-gray-9">{tr("scheduled.model")} <span class="text-gray-12">{target()?.model}</span></div>
-          </Show>
         </div>
       </div>
 
@@ -372,7 +369,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const [automationPrompt, setAutomationPrompt] = createSignal(tr("scheduled.default_prompt"));
   const [automationWorkspaceId, setAutomationWorkspaceId] = createSignal("");
   const [automationAgent, setAutomationAgent] = createSignal("");
-  const [automationModel, setAutomationModel] = createSignal("");
   const [automationVariant, setAutomationVariant] = createSignal("");
   const [automationStatus, setAutomationStatus] = createSignal<VesloAutomationStatus>("active");
   const [automationEnabled, setAutomationEnabled] = createSignal(true);
@@ -490,7 +486,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     setAutomationName(tr("scheduled.default_name"));
     setAutomationPrompt(tr("scheduled.default_prompt"));
     setAutomationAgent("");
-    setAutomationModel("");
     setAutomationVariant("");
     setAutomationStatus("active");
     setAutomationEnabled(true);
@@ -513,7 +508,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     setAutomationProject(tr(template.nameKey));
     setAutomationWorkspaceId(defaultWorkspaceId());
     setAutomationAgent("");
-    setAutomationModel("");
     setAutomationVariant("");
     setAutomationStatus("active");
     setAutomationEnabled(true);
@@ -527,7 +521,6 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     setAutomationPrompt(item.automation.prompt);
     setAutomationProject(target?.fallbackTitle ?? target?.preferredSessionId ?? item.automation.name);
     setAutomationAgent(target?.agent ?? "");
-    setAutomationModel(target?.model ?? "");
     setAutomationVariant(target?.variant ?? "");
     setAutomationStatus(item.automation.status);
     setAutomationEnabled(item.automation.enabled);
@@ -558,7 +551,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       const targetPayload = {
         fallbackTitle: automationProject().trim() || undefined,
         agent: automationAgent().trim() || undefined,
-        model: automationModel().trim() || null,
+        model: null,
         variant: automationVariant().trim() || null,
       };
       await props.updateAutomation(workspaceId, target.automation.id, {
@@ -1061,22 +1054,13 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 />
               </div>
 
-              <div class="grid gap-4 md:grid-cols-3">
+              <div class="grid gap-4 md:grid-cols-2">
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.agent")}</label>
                   <input
                     type="text"
                     value={automationAgent()}
                     onInput={(event) => setAutomationAgent(event.currentTarget.value)}
-                    class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
-                  />
-                </div>
-                <div>
-                  <label class="mb-2 block text-[11px] font-bold uppercase text-gray-8">{tr("scheduled.model")}</label>
-                  <input
-                    type="text"
-                    value={automationModel()}
-                    onInput={(event) => setAutomationModel(event.currentTarget.value)}
                     class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-blue-7 focus:outline-none focus:ring-1 focus:ring-blue-9/20"
                   />
                 </div>

@@ -469,12 +469,12 @@ test("backend runtime prepare owns orchestrator attach fallback decisions", () =
   );
   assert.match(
     engineCommandSource,
-    /orchestrator_workspace_activate[\s\S]*falling back to fresh start[\s\S]*engine_start/s,
+    /orchestrator_workspace_activate_blocking[\s\S]*falling back to fresh start[\s\S]*engine_start_reserved/s,
     "backend prepare should fall back from orchestrator attach to fresh start inside Rust",
   );
   assert.match(
     engineCommandSource,
-    /engine_start\([\s\S]*\)\?;[\s\S]*Fresh orchestrator start only boots the daemon[\s\S]*orchestrator_workspace_activate[\s\S]*\.await\?;[\s\S]*engine_info/s,
+    /start_queue[\s\S]*\.lock\(\)[\s\S]*engine_start_reserved\([\s\S]*\)\?;[\s\S]*Fresh orchestrator start only boots the daemon[\s\S]*orchestrator_workspace_activate_blocking[\s\S]*engine_info/s,
     "fresh orchestrator start must activate the target workspace before returning engine_info",
   );
   assert.match(

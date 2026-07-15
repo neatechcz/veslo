@@ -182,7 +182,7 @@ test("managed AI bootstrap primes runtime authorization after config validation"
   );
   assert.match(
     runtimeConfigSource,
-    /const ensureManagedAiRuntimeAuthorizationForSend = async[\s\S]*const routing = buildProviderRoutingContext[\s\S]*const providerRoutingTarget = routing\.providerRoutingTarget;[\s\S]*deps\.createVesloServerClient\(\{[\s\S]*baseUrl: providerRoutingTarget\.baseUrl,[\s\S]*token: providerRoutingTarget\.serverClientToken,[\s\S]*\}\);[\s\S]*runtimeClient\.getMyAiAccess\(userToken\)/,
+    /const ensureManagedAiRuntimeAuthorizationForSend = async[\s\S]*const routing = buildProviderRoutingContext[\s\S]*const providerRoutingTarget = routing\.providerRoutingTarget;[\s\S]*const runtimeWorkspaceId =[\s\S]*deps\.resolveConversationServerWorkspaceId\(requestedWorkspaceId\)[\s\S]*deps\.createVesloServerClient\(\{[\s\S]*baseUrl: providerRoutingTarget\.baseUrl,[\s\S]*token: providerRoutingTarget\.serverClientToken,[\s\S]*\}\);[\s\S]*runtimeClient\.getMyAiAccess\([\s\S]*userToken,[\s\S]*deps\.denOrgId\(\)\.trim\(\),[\s\S]*runtimeWorkspaceId/,
     "app should prime the same local Veslo server runtime used by managed provider routing",
   );
   assert.match(
@@ -236,7 +236,7 @@ test("managed AI access refresh uses single-flight per cache key", () => {
   );
   assert.match(
     storeSource,
-    /const loadManagedAiAccess = loadManagedAiAccessSingleFlight\(\s*managedAiCacheKey,/,
+    /const loadManagedAiAccess = loadManagedAiAccessSingleFlight\([\s\S]*runtime-workspace:\$\{runtimeWorkspaceId\}[\s\S]*managedAiCacheKey,/,
     "managed AI refresh effect should run through the single-flight helper",
   );
 });

@@ -32,6 +32,7 @@ export type ConversationSubmitService = {
     body: Record<string, unknown>;
     sendTraceId?: string | null;
     runtimeAuthorizationActorTokenHash?: string | null;
+    runtimeAuthorizationOrgId?: string | null;
     resolveDirectory: (requestedRaw: string | null) => Promise<string | null>;
     submitResolvedRun?: ConversationSubmitResolvedRunSubmitter | null;
   }): Promise<ConversationSubmitServiceResponse>;
@@ -49,6 +50,7 @@ export type ConversationSubmitResolvedRunSubmitter = (input: {
   directory: string | null;
   sendTraceId?: string | null;
   runtimeAuthorizationActorTokenHash?: string | null;
+  runtimeAuthorizationOrgId?: string | null;
 }) => Promise<{
   payload:
     | ConversationSubmitSubmittedResult
@@ -84,6 +86,7 @@ export function createConversationSubmitService(input: {
       body,
       sendTraceId,
       runtimeAuthorizationActorTokenHash,
+      runtimeAuthorizationOrgId,
       resolveDirectory,
       submitResolvedRun,
     }) {
@@ -279,6 +282,7 @@ export function createConversationSubmitService(input: {
               directory,
               sendTraceId: sendTraceId ?? null,
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
+              runtimeAuthorizationOrgId: runtimeAuthorizationOrgId ?? null,
             });
             if (result.payload.status === "blocked" || result.payload.status === "failed") {
               const payload = result.payload.status === "failed"
@@ -372,6 +376,7 @@ export function createConversationSubmitService(input: {
               directory,
               sendTraceId: sendTraceId ?? null,
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
+              runtimeAuthorizationOrgId: runtimeAuthorizationOrgId ?? null,
             });
             if (result.payload.status === "blocked" || result.payload.status === "failed") {
               const resultPayload = result.payload.status === "failed"

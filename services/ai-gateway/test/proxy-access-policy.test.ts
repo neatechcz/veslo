@@ -8,6 +8,8 @@ import { getPlatformCredentialOwnerUserId } from "../src/credentials/platform-ow
 import type { CredentialRecord } from "../src/credentials/repository.js";
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
 import { createApp, type AppDependencies } from "../src/index.js";
+import type { PlatformModelPolicyRecord } from "../src/model-policy/repository.js";
+import { allowManagedAiEntitlement } from "./support/managed-ai-entitlement.js";
 
 const GATEWAY_AUTH_HEADER = {
   authorization: "Bearer gateway-access-token",
@@ -37,6 +39,23 @@ function createAiAccess(overrides: Partial<UserAiAccessPolicyRecord> = {}): User
   };
 }
 
+function createModelPolicy(provider: "openai" | "anthropic" | "codex_oauth" | "openai_compatible", model: string) {
+  return {
+    async getPolicy() {
+      return {
+        id: "platform" as const,
+        enabledModels: [{ provider, model }],
+        activeModel: { provider, model },
+        createdAt: new Date("2026-07-12T08:00:00.000Z"),
+        updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+      };
+    },
+    async replacePolicy() {
+      throw new Error("unused");
+    },
+  };
+}
+
 function createCredentialRecord(bindingId: string, provider: "openai" | "anthropic"): CredentialRecord {
   return {
     id: `cred_${bindingId}`,
@@ -51,9 +70,126 @@ function createCredentialRecord(bindingId: string, provider: "openai" | "anthrop
   };
 }
 
+function createPolicyBoundaryApp(input: {
+  getPolicy: () => Promise<PlatformModelPolicyRecord | null>;
+  aiAccessByUser?: Record<string, UserAiAccessPolicyRecord>;
+  modelCalls?: Array<{ userId: string; body: Record<string, unknown> }>;
+  leaseCalls?: string[];
+}) {
+  let currentUserId = "";
+  return createApp({
+    proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
+      gatewaySessions: {
+        async resolveSession(token: string) {
+          currentUserId = token === "gateway-user-two" ? "user_two" : "user_one";
+          return {
+            token,
+            user: { id: currentUserId, email: `${currentUserId}@example.test` },
+          };
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess(userId: string) {
+          return input.aiAccessByUser?.[userId] ?? createAiAccess({
+            id: `ai_access_${userId}`,
+            userId,
+            provider: "openai",
+          });
+        },
+        async upsertUserAiAccess() {
+          throw new Error("unused");
+        },
+      },
+      modelPolicy: {
+        getPolicy: input.getPolicy,
+        async replacePolicy() {
+          throw new Error("unused");
+        },
+      },
+      credentials: {
+        async getCredentialRecordById() {
+          return null;
+        },
+        async listHealthyCredentialRecordIds() {
+          return [];
+        },
+        async getCredentialRecordByBindingId(bindingId: string) {
+          return createCredentialRecord(bindingId, "openai");
+        },
+        async markCredentialState() {},
+      },
+      usageRepository: { async recordUsage() {} },
+      leaseBroker: {
+        async getOrCreateActiveLease() {
+          input.leaseCalls?.push(currentUserId);
+          return {
+            id: `lease_${currentUserId}`,
+            ownerUserId: currentUserId,
+            provider: "openai" as const,
+            sessionId: `session_${currentUserId}`,
+            activeBindingId: `binding_${currentUserId}`,
+          };
+        },
+        async handleUpstreamFailure() {
+          throw new Error("unused");
+        },
+      } as never,
+      tokenBroker: {
+        async getUpstreamAuth() {
+          return { kind: "oauth" as const, value: "oauth-live" };
+        },
+      },
+      openAiTransport: {
+        async chatCompletions(request: { body: Record<string, unknown> }) {
+          input.modelCalls?.push({ userId: currentUserId, body: request.body });
+          return {
+            status: 200,
+            body: { id: `response_${currentUserId}`, model: request.body.model },
+          };
+        },
+      },
+      anthropicTransport: {
+        async messages() {
+          throw new Error("anthropic transport should not run");
+        },
+      },
+    } as any,
+  });
+}
+
+async function requestOpenAi(app: ReturnType<typeof createApp>, input: {
+  token?: string;
+  path?: string;
+  body?: Record<string, unknown>;
+}) {
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}${input.path ?? "/providers/openai/v1/chat/completions"}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${input.token ?? "gateway-user-one"}`,
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_policy_boundary",
+      },
+      body: JSON.stringify(input.body ?? { messages: [] }),
+    });
+    return {
+      status: response.status,
+      body: await response.json(),
+    };
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+}
+
 test("provider proxy rejects prompt requests when no ai access policy is assigned", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();
@@ -67,6 +203,7 @@ test("provider proxy rejects prompt requests when no ai access policy is assigne
           throw new Error("unused");
         },
       },
+      modelPolicy: createModelPolicy("openai", "gpt-5.4"),
       credentials: {
         async getCredentialRecordById() {
           return null;
@@ -137,6 +274,7 @@ test("provider proxy rejects prompt requests when no ai access policy is assigne
 test("provider proxy rejects prompt requests when the assigned provider does not match the route", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();
@@ -154,6 +292,7 @@ test("provider proxy rejects prompt requests when the assigned provider does not
           throw new Error("unused");
         },
       },
+      modelPolicy: createModelPolicy("openai", "gpt-5.4"),
       credentials: {
         async getCredentialRecordById() {
           return null;
@@ -221,9 +360,10 @@ test("provider proxy rejects prompt requests when the assigned provider does not
   }
 });
 
-test("provider proxy rejects prompt requests when the requested model is not allowed", async () => {
+test("provider proxy rejects a requested model that is not allowed by user access", async () => {
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();
@@ -241,6 +381,7 @@ test("provider proxy rejects prompt requests when the requested model is not all
           throw new Error("unused");
         },
       },
+      modelPolicy: createModelPolicy("openai", "gpt-4o-mini"),
       credentials: {
         async getCredentialRecordById() {
           return null;
@@ -308,7 +449,7 @@ test("provider proxy rejects prompt requests when the requested model is not all
   }
 });
 
-test("provider proxy applies the admin default model when the request omits model", async () => {
+test("provider proxy applies the user access default model when the request omits model", async () => {
   const openAiCalls: Array<{ upstreamAuth: UpstreamAuth; body: Record<string, unknown> }> = [];
   const leaseScopes: Array<{
     ownerUserId: string;
@@ -319,6 +460,7 @@ test("provider proxy applies the admin default model when the request omits mode
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();
@@ -336,6 +478,7 @@ test("provider proxy applies the admin default model when the request omits mode
           throw new Error("unused");
         },
       },
+      modelPolicy: createModelPolicy("openai", "gpt-5.4"),
       credentials: {
         async getCredentialRecordById() {
           return null;
@@ -433,11 +576,12 @@ test("provider proxy applies the admin default model when the request omits mode
   }
 });
 
-test("desktop-compatible provider proxy alias applies the admin default model", async () => {
+test("desktop-compatible provider proxy alias applies the user access default model", async () => {
   const openAiCalls: Array<{ upstreamAuth: UpstreamAuth; body: Record<string, unknown> }> = [];
 
   const app = createApp({
     proxy: {
+      managedAiEntitlement: allowManagedAiEntitlement,
       gatewaySessions: {
         async resolveSession() {
           return createGatewaySessionUser();
@@ -455,6 +599,7 @@ test("desktop-compatible provider proxy alias applies the admin default model", 
           throw new Error("unused");
         },
       },
+      modelPolicy: createModelPolicy("openai", "gpt-5.4"),
       credentials: {
         async getCredentialRecordById() {
           return null;
@@ -541,4 +686,97 @@ test("desktop-compatible provider proxy alias applies the admin default model", 
     server.close();
     await once(server, "close");
   }
+});
+
+test("provider proxy does not require platform model policy for runtime calls", async () => {
+  const modelCalls: Array<{ userId: string; body: Record<string, unknown> }> = [];
+  const app = createPolicyBoundaryApp({
+    async getPolicy() {
+      return null;
+    },
+    modelCalls,
+  });
+
+  const response = await requestOpenAi(app, {});
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { id: "response_user_one", model: "gpt-4o-mini" });
+  assert.deepEqual(modelCalls, [
+    { userId: "user_one", body: { messages: [], model: "gpt-4o-mini" } },
+  ]);
+});
+
+test("provider proxy ignores platform model policy read failures on runtime calls", async () => {
+  const modelCalls: Array<{ userId: string; body: Record<string, unknown> }> = [];
+  const app = createPolicyBoundaryApp({
+    async getPolicy() {
+      throw new Error("database unavailable");
+    },
+    modelCalls,
+  });
+
+  const response = await requestOpenAi(app, {});
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { id: "response_user_one", model: "gpt-4o-mini" });
+  assert.deepEqual(modelCalls, [
+    { userId: "user_one", body: { messages: [], model: "gpt-4o-mini" } },
+  ]);
+});
+
+test("every provider route and desktop alias rejects a route that does not match assigned user provider", async () => {
+  const leaseCalls: string[] = [];
+  const app = createPolicyBoundaryApp({
+    getPolicy: createModelPolicy("openai", "gpt-5.4").getPolicy,
+    leaseCalls,
+  });
+
+  for (const path of [
+    "/providers/anthropic/v1/messages",
+    "/providers/codex_oauth/v1/chat/completions",
+    "/providers/openai_compatible/v1/chat/completions",
+    "/ai-gateway/providers/anthropic/v1/messages",
+    "/ai-gateway/providers/codex_oauth/v1/chat/completions",
+    "/ai-gateway/providers/openai_compatible/v1/chat/completions",
+  ]) {
+    const response = await requestOpenAi(app, { path });
+    assert.equal(response.status, 403, path);
+    assert.deepEqual(response.body, { error: "provider_not_assigned" }, path);
+  }
+  assert.deepEqual(leaseCalls, []);
+});
+
+test("two enabled users receive their assigned user access model fields", async () => {
+  const modelCalls: Array<{ userId: string; body: Record<string, unknown> }> = [];
+  const app = createPolicyBoundaryApp({
+    async getPolicy() {
+      assert.fail("runtime call should not read platform policy");
+      return createModelPolicy("openai", "gpt-5.4").getPolicy();
+    },
+    aiAccessByUser: {
+      user_one: createAiAccess({
+        id: "ai_access_user_one",
+        userId: "user_one",
+        defaultModel: "historical-model-one",
+        allowedModels: ["historical-model-one"],
+      }),
+      user_two: createAiAccess({
+        id: "ai_access_user_two",
+        userId: "user_two",
+        defaultModel: "historical-model-two",
+        allowedModels: ["historical-model-two"],
+      }),
+    },
+    modelCalls,
+  });
+
+  const first = await requestOpenAi(app, { token: "gateway-user-one" });
+  const second = await requestOpenAi(app, { token: "gateway-user-two" });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.deepEqual(modelCalls, [
+    { userId: "user_one", body: { messages: [], model: "historical-model-one" } },
+    { userId: "user_two", body: { messages: [], model: "historical-model-two" } },
+  ]);
 });

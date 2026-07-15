@@ -53,7 +53,7 @@ The app may send:
 - workspace id,
 - conversation id when continuing a known conversation,
 - message content,
-- user-selected model, agent, or variant choices.
+- user-selected agent or variant choices.
 
 The app must not send:
 
@@ -61,6 +61,8 @@ The app must not send:
 - a raw OpenCode directory override,
 - a run target based only on the currently selected workspace,
 - global busy or error state that represents a different workspace run.
+- a user, session, automation, or transcript-derived model override. Managed AI
+  resolves the effective model from the gateway's global active platform model.
 
 When the user sends the first message, the app should show a prepared local
 message and let the runtime attach the workspace and create the conversation in
@@ -165,6 +167,15 @@ requests. This keeps `traceId`, `runId`, `workspaceId`, conversation id, and
 OpenCode session id attached to AI gateway proxy events through the whole send
 workflow.
 
+Managed-AI authorization is bound at the same server-owned run boundary. A
+workspace-scoped access prime associates the authenticated organization with a
+workspace identity already validated by the local server. Run admission copies
+that actor-plus-organization binding into active run context. Provider requests
+then resolve authorization from the registered OpenCode session and active run,
+not from caller-supplied organization or workspace headers. Concurrent runs for
+different organizations therefore keep distinct authorization and accounting
+scope, and missing or ambiguous multi-organization binding fails closed.
+
 Server-controlled writes must remain expressible through Veslo server APIs.
 Avoid adding Tauri-only filesystem mutations for behavior that changes
 `.opencode/` state.
@@ -200,6 +211,13 @@ an isolation strategy, not the only mechanism for parallel workspace execution.
 ### Desktop Shell
 
 The desktop shell owns the local Veslo server process lifecycle.
+
+Engine startup is single-owner. Debug scratch autostart must reserve the same
+startup queue as explicit workspace startup and skip when an explicit startup
+is already active or ready. A runtime prepare keeps that reservation through
+daemon boot and target-workspace activation. Two concurrent orchestrator
+daemons can split workspace registration from the lifecycle endpoint used by
+the local server, so desktop boot must never allow that race.
 
 The local Veslo server must be able to reach a ready state without an active
 workspace. Starting, recovering, or refreshing the local server must not be a
