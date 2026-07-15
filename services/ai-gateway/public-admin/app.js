@@ -153,6 +153,7 @@ const els = {
   organizationBillingPlatformMode: document.getElementById("organization-billing-platform-mode"),
   organizationBillingPlatformStatus: document.getElementById("organization-billing-platform-status"),
   organizationBillingManualEnabled: document.getElementById("organization-billing-manual-enabled"),
+  organizationBillingManualUnlimited: document.getElementById("organization-billing-manual-unlimited"),
   organizationBillingManualExpires: document.getElementById("organization-billing-manual-expires"),
   organizationBillingPlatformSave: document.getElementById("organization-billing-platform-save"),
   organizationAuditStatus: document.getElementById("organization-audit-status"),
@@ -1675,9 +1676,10 @@ function renderOrganizationBilling() {
   }
   const account = billing.account || {};
   const entitlement = billing.entitlement || {};
+  const unlimitedTrial = account.manualAccess?.unlimited === true || entitlement.isUnlimited === true;
   els.organizationBillingSummary.innerHTML = [
-    ["Status", account.status || entitlement.status || "none", account.mode || entitlement.effectiveMode || "none"],
-    ["Licenses", billing.licenseLimit ?? entitlement.licenseLimit ?? 0, `${billing.activeUserCount ?? entitlement.activeUserCount ?? 0} active users`],
+    ["Status", unlimitedTrial ? "Unlimited trial" : account.status || entitlement.status || "none", account.mode || entitlement.effectiveMode || "none"],
+    ["Licenses", unlimitedTrial ? "Unlimited" : billing.licenseLimit ?? entitlement.licenseLimit ?? 0, `${billing.activeUserCount ?? entitlement.activeUserCount ?? 0} active users`],
     ["Managed AI", entitlement.canUseManagedAi ? "Enabled" : "Blocked", entitlement.managedAiBlockingReason || "Access available"],
   ].map(([label, value, note]) => `<article class="metric-card"><span class="metric-label">${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><span class="metric-note">${escapeHtml(note)}</span></article>`).join("");
   els.organizationBillingBasic.value = String(account.quantities?.managedAiBasic ?? 0);
@@ -1686,7 +1688,20 @@ function renderOrganizationBilling() {
   els.organizationBillingPlatformMode.value = account.mode || "none";
   els.organizationBillingPlatformStatus.value = account.status || "none";
   els.organizationBillingManualEnabled.checked = account.manualAccess?.enabled === true;
+  els.organizationBillingManualUnlimited.checked = unlimitedTrial;
   els.organizationBillingManualExpires.value = toAdminDateTimeLocalValue(account.manualAccess?.expiresAt);
+  syncUnlimitedTrialControls();
+}
+
+function syncUnlimitedTrialControls() {
+  const unlimitedTrial = els.organizationBillingManualUnlimited.checked;
+  els.organizationBillingManualExpires.disabled = unlimitedTrial;
+  if (unlimitedTrial) {
+    els.organizationBillingPlatformMode.value = "manual_access";
+    els.organizationBillingPlatformStatus.value = "trialing";
+    els.organizationBillingManualEnabled.checked = true;
+    els.organizationBillingManualExpires.value = "";
+  }
 }
 
 function renderOrganizationAudit() {
@@ -3001,19 +3016,20 @@ async function runOrganizationBillingAction(action) {
   const mutation = beginAdminRouteMutation(state.mutations, `organization-billing-${action}`, state.route);
   const quantities = organizationBillingQuantities();
   const manualExpiresAt = fromAdminDateTimeLocalValue(els.organizationBillingManualExpires.value);
+  const unlimitedTrial = els.organizationBillingManualUnlimited.checked;
+  const selectedMode = els.organizationBillingPlatformMode.value;
+  const manualAccessMode = selectedMode === "manual_access";
   const platformBody = {
-    mode: els.organizationBillingPlatformMode.value,
-    status: els.organizationBillingPlatformStatus.value,
-    quantities,
-    ...(els.organizationBillingPlatformMode.value === "manual_access"
-      ? {
-        manualAccess: {
-          enabled: els.organizationBillingManualEnabled.checked,
-          expiresAt: manualExpiresAt,
-          licenseLimit: quantities.managedAiBasic + quantities.managedAiExtended,
-        },
-      }
-      : {}),
+    mode: unlimitedTrial ? "manual_access" : selectedMode,
+    source: unlimitedTrial ? "manual_trial" : null,
+    status: unlimitedTrial ? "trialing" : els.organizationBillingPlatformStatus.value,
+    quantities: unlimitedTrial ? { managedAiBasic: 0, managedAiExtended: 0 } : quantities,
+    manualAccess: {
+      enabled: unlimitedTrial ? true : manualAccessMode && els.organizationBillingManualEnabled.checked,
+      unlimited: unlimitedTrial,
+      expiresAt: unlimitedTrial ? null : manualAccessMode ? manualExpiresAt : null,
+      licenseLimit: unlimitedTrial ? 0 : quantities.managedAiBasic + quantities.managedAiExtended,
+    },
   };
   const requests = {
     checkout: { method: "POST", body: { interval: els.organizationBillingInterval.value, quantities } },
@@ -3494,6 +3510,7 @@ function bindActions() {
   els.organizationBillingPortal.addEventListener("click", () => void runOrganizationBillingAction("portal"));
   els.organizationBillingPlanSave.addEventListener("click", () => void runOrganizationBillingAction("plan"));
   els.organizationBillingCancel.addEventListener("click", () => void runOrganizationBillingAction("cancel"));
+  els.organizationBillingManualUnlimited.addEventListener("change", syncUnlimitedTrialControls);
   els.organizationBillingPlatformSave.addEventListener("click", () => void runOrganizationBillingAction("platform"));
   els.credentialCreateProvider.addEventListener("change", updateCredentialCreateFields);
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
