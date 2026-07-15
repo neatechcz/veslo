@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "check:live-admin-user": "node --import=tsx/esm ./scripts/check-live-admin-user.ts",
     "seed:live-auth": "node --import=tsx/esm ./scripts/seed-live-den-auth.ts",
     "test": "node --import=tsx/esm ./helpers/pilot-runner.ts --suite current-gate",
@@ -37,6 +38,7 @@
     "test:live-codex-auth-upload": "playwright test ./specs/live-admin-codex-auth-upload.playwright.spec.ts"
   },
   "devDependencies": {
+    "@neatech/ai-gateway": "workspace:*",
     "@playwright/test": "^1.61.0",
     "@types/node": "^22.19.7",
     "tsx": "^4",

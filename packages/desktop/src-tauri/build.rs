@@ -248,10 +248,11 @@ fn ensure_orchestrator_sidecar() {
         return;
     }
 
-    if target_dest_path.exists() && !dest_path.exists() {
-        if copy_sidecar(&target_dest_path, &dest_path, &target) {
-            return;
-        }
+    if target_dest_path.exists()
+        && !dest_path.exists()
+        && copy_sidecar(&target_dest_path, &dest_path, &target)
+    {
+        return;
     }
 
     let source_path = env::var("VESLO_ORCHESTRATOR_BIN_PATH")
@@ -345,10 +346,11 @@ fn ensure_opencode_sidecar() {
         return;
     }
 
-    if target_dest_path.exists() && !dest_path.exists() {
-        if copy_sidecar(&target_dest_path, &dest_path, &target) {
-            return;
-        }
+    if target_dest_path.exists()
+        && !dest_path.exists()
+        && copy_sidecar(&target_dest_path, &dest_path, &target)
+    {
+        return;
     }
 
     let source_path = env::var("OPENCODE_BIN_PATH")
@@ -427,10 +429,8 @@ fn ensure_veslo_server_sidecar() {
         return;
     }
 
-    if target_dest_path.exists() {
-        if copy_sidecar(&target_dest_path, &dest_path, &target) {
-            return;
-        }
+    if target_dest_path.exists() && copy_sidecar(&target_dest_path, &dest_path, &target) {
+        return;
     }
 
     let source_path = env::var("VESLO_SERVER_BIN_PATH")
@@ -520,10 +520,8 @@ fn ensure_opencode_router_sidecar() {
         return;
     }
 
-    if target_dest_path.exists() {
-        if copy_sidecar(&target_dest_path, &dest_path, &target) {
-            return;
-        }
+    if target_dest_path.exists() && copy_sidecar(&target_dest_path, &dest_path, &target) {
+        return;
     }
 
     let source_path = env::var("OPENCODE_ROUTER_BIN_PATH")
@@ -599,10 +597,8 @@ fn copy_sidecar(source_path: &PathBuf, dest_path: &PathBuf, target: &str) -> boo
     }
 
     #[cfg(windows)]
-    if !copied {
-        if fs::hard_link(source_path, dest_path).is_ok() {
-            copied = true;
-        }
+    if !copied && fs::hard_link(source_path, dest_path).is_ok() {
+        copied = true;
     }
 
     if copied {

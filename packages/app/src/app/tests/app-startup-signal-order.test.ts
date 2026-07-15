@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
+const developerModeSource = readFileSync(
+  new URL("../lib/developer-mode.ts", import.meta.url),
+  "utf8",
+);
 
 test("startup effects only read visibility/debug signals after they are declared", () => {
   for (const signalName of ["developerMode", "documentVisible"] as const) {
@@ -29,7 +33,7 @@ test("developer mode is gated by the debug URL parameter", () => {
     "developer mode should be derived from the current route search string",
   );
   assert.match(
-    source,
+    developerModeSource,
     /function resolveDeveloperModeFromSearch\(search: string\)[\s\S]*new URLSearchParams\(search\.startsWith\("\?"\) \? search\.slice\(1\) : search\)[\s\S]*params\.has\("debug"\)/,
     "the debug URL parameter should be the explicit developer-mode entry point",
   );

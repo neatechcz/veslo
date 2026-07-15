@@ -7,6 +7,7 @@ import {
 } from "../src/access/mysql-repository.js"
 import type { AiGatewayDb } from "../src/db/index.js"
 import { platformModelPolicyTable, userAiAccessPolicyTable } from "../src/db/schema.js"
+import { CODEX_DEFAULT_MODEL } from "../src/providers/codex-model-catalog.js"
 
 function createAiAccessDb(row: Record<string, unknown>) {
   return {
@@ -146,7 +147,7 @@ function createWritableAiAccessDb(options: { activeProvider?: string | null } = 
   }
 }
 
-test("reads codex_oauth ai access policies from mysql rows", async () => {
+test("reads codex_oauth ai access model fields from mysql rows", async () => {
   const repository = new MySqlAiAccessRepository(
     createAiAccessDb({
       id: "ai_access_user_codex",
@@ -166,8 +167,8 @@ test("reads codex_oauth ai access policies from mysql rows", async () => {
   assert.equal(policy?.provider, "codex_oauth")
   assert.equal(policy?.credentialId, "cred_codex_1")
   assert.equal(policy?.assignmentOrigin, "admin_assigned")
-  assert.equal(Object.hasOwn(policy ?? {}, "defaultModel"), false)
-  assert.equal(Object.hasOwn(policy ?? {}, "allowedModels"), false)
+  assert.equal(policy?.defaultModel, "gpt-5.4")
+  assert.deepEqual(policy?.allowedModels, ["gpt-5.4"])
 })
 
 test("counts enabled ai access policies incompatible with a target provider", async () => {
@@ -180,7 +181,7 @@ test("counts enabled ai access policies incompatible with a target provider", as
   assert.equal(counting.whereCalls, 1)
 })
 
-test("inserts neutral compatibility model columns and preserves them on later user access updates", async () => {
+test("fills runtime model fields and clears them on later disabled user access updates", async () => {
   const writable = createWritableAiAccessDb()
   const repository = new MySqlAiAccessRepository(writable.db as AiGatewayDb)
 
@@ -206,8 +207,8 @@ test("inserts neutral compatibility model columns and preserves them on later us
       enabled: 1,
       provider: "codex_oauth",
       credential_id: "cred_codex_1",
-      default_model: null,
-      allowed_models_json: JSON.stringify([]),
+      default_model: CODEX_DEFAULT_MODEL,
+      allowed_models_json: JSON.stringify([CODEX_DEFAULT_MODEL]),
       assignment_origin: "admin_assigned",
       created_at: created.createdAt,
       updated_at: created.updatedAt,
@@ -234,6 +235,8 @@ test("inserts neutral compatibility model columns and preserves them on later us
       enabled: 0,
       provider: null,
       credential_id: null,
+      default_model: null,
+      allowed_models_json: JSON.stringify([]),
       assignment_origin: "admin_assigned",
       updated_at: updated.updatedAt,
     },

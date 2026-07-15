@@ -152,7 +152,7 @@ fn parse_keep_signed_in(raw: &str) -> Option<bool> {
 #[cfg(any(target_os = "macos", test))]
 fn decode_hex(input: &str) -> Option<Vec<u8>> {
     let trimmed = input.trim();
-    if trimmed.is_empty() || trimmed.len() % 2 != 0 {
+    if trimmed.is_empty() || !trimmed.len().is_multiple_of(2) {
         return None;
     }
 

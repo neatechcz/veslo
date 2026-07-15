@@ -582,6 +582,12 @@ test('runtime cold-start handoff pilot scenario disables debug dev autostart', (
     true,
   );
   assert.equal(
+    scenarioSelectionDisablesDevAutostart(
+      resolvePilotScenarioSelection({ scenario: ['vslo-235-local-host-child-exit'] }, e2eRoot),
+    ),
+    true,
+  );
+  assert.equal(
     scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );

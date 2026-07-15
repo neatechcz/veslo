@@ -24,12 +24,12 @@ function inactiveWorkspaceBaseUrlHealEffectSource(): string {
 test("Veslo server polling stores stable capability and host-info signal values", () => {
   assert.match(
     connectionSource,
-    /const setVesloServerCapabilitiesStable = \(next: VesloServerCapabilities \| null\) => \{[\s\S]*setVesloServerCapabilities\(\(current\) =>[\s\S]*stateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
+    /const setVesloServerCapabilitiesStable = \(\s*next: VesloServerCapabilities \| null,?\s*\) => \{[\s\S]*setVesloServerCapabilities\(\(current\) =>[\s\S]*stateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
     "capabilities should keep the previous signal value when polled content is unchanged",
   );
   assert.match(
     connectionSource,
-    /const setVesloServerHostInfoStable = \(next: VesloServerInfo \| null\) => \{[\s\S]*setVesloServerHostInfo\(\(current\) =>[\s\S]*stateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
+    /const setVesloServerHostInfoStable = \(\s*next: VesloServerInfo \| null,?\s*\) => \{[\s\S]*setVesloServerHostInfo\(\(current\) =>[\s\S]*stateKey\(current\) === nextKey \? current : next[\s\S]*\};/,
     "host info should keep the previous signal value when polled content is unchanged",
   );
   assert.equal(

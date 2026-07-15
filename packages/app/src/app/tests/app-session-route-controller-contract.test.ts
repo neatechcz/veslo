@@ -21,7 +21,7 @@ test("app delegates session route decisions to the session route controller", ()
   );
   assert.match(
     appSource,
-    /import \{ createSessionRouteSync \} from "\.\/context\/session-route-sync";[\s\S]*const sessionRouteSync = createSessionRouteSync\(\{[\s\S]*onSessionRoute: sessionRouteSync\.handleSessionRoute,/,
+    /import \{\s*createSessionRouteSync(?:,\s*sessionIdFromRoutePath)?\s*\} from "\.\/context\/session-route-sync";[\s\S]*const sessionRouteSync = createSessionRouteSync\(\{[\s\S]*onSessionRoute: sessionRouteSync\.handleSessionRoute,/,
     "app.tsx should wire session route effects through the route sync module",
   );
 });

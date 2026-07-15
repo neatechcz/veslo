@@ -724,7 +724,7 @@ impl DebugLogsForwarder {
         let _guard = self
             .write_lock
             .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "lock poisoned"))?;
+            .map_err(|_| std::io::Error::other("lock poisoned"))?;
 
         if !self.pending_path.exists() {
             return Ok(None);

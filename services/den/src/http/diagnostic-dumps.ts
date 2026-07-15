@@ -5,10 +5,18 @@ import { mkdir, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
+import {
+  DESKTOP_DUMP_ORG_HEADERS,
+  VESLO_DUMP_FILENAME_HEADER,
+  VESLO_DUMP_KIND_HEADER,
+  VESLO_DUMP_SHA256_HEADER,
+  VESLO_DUMP_SOURCE_HEADER,
+  VESLO_DUMP_UNCOMPRESSED_BYTES_HEADER,
+  VESLO_DUMP_WORKSPACE_ID_HEADER,
+} from "./diagnostic-dump-headers.js"
 import type { ResolvedOrganizationContext } from "./org-auth.js"
 
 const DEFAULT_MAX_BYTES = 50 * 1024 * 1024
-const DESKTOP_DUMP_ORG_HEADERS = ["x-veslo-org-id", "x-veslo-den-org-id", "x-veslo-dump-org-id"] as const
 
 type DesktopDiagnosticDumpsAuthorize = (
   req: express.Request,
@@ -141,14 +149,14 @@ async function handleDiagnosticDumpUpload(
   const rootDir = path.resolve(options.rootDir)
   const createdAt = options.now()
   const dumpId = `ddump_${options.randomId()}`
-  const source = sanitizeLabel(readHeader(req, "x-veslo-dump-source", "unknown"), "unknown")
-  const kind = sanitizeLabel(readHeader(req, "x-veslo-dump-kind", "diagnostic-dump"), "diagnostic-dump")
-  const originalFilename = readHeader(req, "x-veslo-dump-filename", "")
+  const source = sanitizeLabel(readHeader(req, VESLO_DUMP_SOURCE_HEADER, "unknown"), "unknown")
+  const kind = sanitizeLabel(readHeader(req, VESLO_DUMP_KIND_HEADER, "diagnostic-dump"), "diagnostic-dump")
+  const originalFilename = readHeader(req, VESLO_DUMP_FILENAME_HEADER, "")
   const contentType = readHeader(req, "content-type", "application/octet-stream")
   const contentEncoding = readHeader(req, "content-encoding", "")
-  const reportedSha256 = readHeader(req, "x-veslo-dump-sha256", "")
-  const reportedUncompressedBytes = readHeader(req, "x-veslo-dump-uncompressed-bytes", "")
-  const workspaceId = readHeader(req, "x-veslo-dump-workspace-id", "")
+  const reportedSha256 = readHeader(req, VESLO_DUMP_SHA256_HEADER, "")
+  const reportedUncompressedBytes = readHeader(req, VESLO_DUMP_UNCOMPRESSED_BYTES_HEADER, "")
+  const workspaceId = readHeader(req, VESLO_DUMP_WORKSPACE_ID_HEADER, "")
   const ext = contentEncoding.toLowerCase() === "gzip" || /\.gz$/i.test(originalFilename) ? ".gz" : ".bin"
   const dayDir = path.join(rootDir, ...storageSegments(options.identity), datePath(createdAt))
   const fileName = `${dumpId}-${kind}-${source}${ext}`

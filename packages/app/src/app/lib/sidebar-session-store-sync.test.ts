@@ -65,5 +65,9 @@ test("upserts incoming rows without duplicating retained sidebar rows", () => {
     rows.map((item) => item.id),
     ["old-b", "new-session", "old-a", "old-c"],
   );
-  assert.equal(rows[0]?.time?.updated, 500);
+  assert.equal(
+    rows[0]?.time?.updated,
+    200,
+    "runtime session updates must not rewrite the stored sidebar activity time",
+  );
 });

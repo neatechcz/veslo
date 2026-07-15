@@ -211,7 +211,7 @@ export type DashboardViewProps = {
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
   scheduledJobsUpdatedAt: number | null;
-  refreshScheduledJobs: (options?: { force?: boolean }) => void;
+  refreshScheduledJobs: (options?: { force?: boolean }) => Promise<void>;
   createAutomation: (workspaceId: string, payload: VesloAutomationCreatePayload) => Promise<void> | void;
   updateAutomation: (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) => Promise<void> | void;
   deleteAutomation: (workspaceId: string, automationId: string) => Promise<void> | void;
@@ -225,15 +225,15 @@ export type DashboardViewProps = {
   skillRegistryAuthContext: VesloSkillRegistryAuthContext;
   soulWorkspaceMap: Record<string, string>;
   soulError: string | null;
-  refreshSoulData: (options?: { force?: boolean }) => void;
+  refreshSoulData: (options?: { force?: boolean }) => Promise<void>;
   activeWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
-  refreshSkills: (options?: { force?: boolean }) => void;
-  refreshSkillInventory: (options?: { force?: boolean }) => void;
-  refreshSkillImportCandidates: (options?: { force?: boolean }) => void;
-  refreshHubSkills: (options?: { force?: boolean }) => void;
-  refreshPlugins: (scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) => void;
-  refreshMcpServers: () => void;
+  refreshSkills: (options?: { force?: boolean }) => Promise<void>;
+  refreshSkillInventory: (options?: { force?: boolean }) => Promise<void>;
+  refreshSkillImportCandidates: (options?: { force?: boolean }) => Promise<void>;
+  refreshHubSkills: (options?: { force?: boolean }) => Promise<void>;
+  refreshPlugins: (scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) => Promise<void>;
+  refreshMcpServers: () => Promise<void>;
   skills: SkillCard[];
   skillsStatus: string | null;
   skillInventory: SkillInventoryItem[];
@@ -613,7 +613,7 @@ export default function DashboardView(props: DashboardViewProps) {
       }
     };
 
-    doRefresh();
+    void doRefresh();
 
     onCleanup(() => {
       cancelled = true;

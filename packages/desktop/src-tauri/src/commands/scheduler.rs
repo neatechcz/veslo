@@ -179,7 +179,7 @@ fn collect_jobs_for_scope_root(scope_root: Option<&str>) -> Result<Vec<JobEntry>
     out.extend(collect_scoped_jobs(&scopes_dir));
     out.extend(collect_legacy_jobs(&legacy_dir));
 
-    let filter_root = scope_root.map(|s| normalize_path(s)).unwrap_or_default();
+    let filter_root = scope_root.map(normalize_path).unwrap_or_default();
     if !filter_root.is_empty() {
         out.retain(|entry| {
             entry
@@ -191,7 +191,7 @@ fn collect_jobs_for_scope_root(scope_root: Option<&str>) -> Result<Vec<JobEntry>
         });
     }
 
-    out.sort_by(|a, b| a.job.name.to_lowercase().cmp(&b.job.name.to_lowercase()));
+    out.sort_by_key(|entry| entry.job.name.to_lowercase());
     Ok(out)
 }
 

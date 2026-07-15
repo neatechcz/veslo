@@ -516,7 +516,11 @@ test("CachedCodexCredentialStatusProvider terminates an aborted Codex subprocess
     const abortElapsedMs = Date.now() - abortedAt;
 
     assert.ok(abortElapsedMs < 1_000, `Codex subprocess cancellation took ${abortElapsedMs}ms`);
-    assert.equal(await readFile(terminatedPath, "utf8"), "terminated");
+    // Windows implements child.kill("SIGTERM") as a forced process termination,
+    // so a POSIX SIGTERM handler cannot reliably write the sentinel file there.
+    if (process.platform !== "win32") {
+      assert.equal(await readFile(terminatedPath, "utf8"), "terminated");
+    }
     const remaining = await readdir(rootDir);
     assert.equal(
       remaining.some((entry) => entry.startsWith("veslo-codex-status-home-") || entry.startsWith("veslo-codex-status-work-")),

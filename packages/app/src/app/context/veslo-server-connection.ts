@@ -1195,7 +1195,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       }
     };
 
-    run();
+    void run();
     onCleanup(() => {
       active = false;
       if (timeoutId) window.clearTimeout(timeoutId);
@@ -1284,8 +1284,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       }
     };
 
-    run();
-    const interval = window.setInterval(run, 10_000);
+    void run();
+    const interval = window.setInterval(() => {
+      void run();
+    }, 10_000);
     onCleanup(() => {
       active = false;
       window.clearInterval(interval);
@@ -1305,13 +1307,17 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       busy = true;
       try {
         await deps.workspace?.refreshEngine?.();
+      } catch (error) {
+        deps.reportError?.(error, "vesloServer.refreshEngine.poll");
       } finally {
         busy = false;
       }
     };
 
-    run();
-    const interval = window.setInterval(run, 10_000);
+    void run();
+    const interval = window.setInterval(() => {
+      void run();
+    }, 10_000);
     onCleanup(() => {
       window.clearInterval(interval);
     });
@@ -1336,8 +1342,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       }
     };
 
-    run();
-    const interval = window.setInterval(run, 10_000);
+    void run();
+    const interval = window.setInterval(() => {
+      void run();
+    }, 10_000);
     onCleanup(() => {
       active = false;
       window.clearInterval(interval);
@@ -1363,8 +1371,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       }
     };
 
-    run();
-    const interval = window.setInterval(run, 10_000);
+    void run();
+    const interval = window.setInterval(() => {
+      void run();
+    }, 10_000);
     onCleanup(() => {
       active = false;
       window.clearInterval(interval);
@@ -1383,8 +1393,10 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         if (active) setOrchestratorEnginesState([]);
       }
     };
-    run();
-    const interval = window.setInterval(run, 30_000);
+    void run();
+    const interval = window.setInterval(() => {
+      void run();
+    }, 30_000);
     onCleanup(() => {
       active = false;
       window.clearInterval(interval);

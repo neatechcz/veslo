@@ -60,7 +60,7 @@ Legacy `veslo.defaultModel`, `veslo.sessionModels`, and per-workspace
 hydrate or recreate them, and prompt submission never serializes them as model
 authority. Managed AI gets its read-only effective model from the gateway.
 
-Developer-only UI surfaces are not enabled by default. The app derives developer mode from the current URL search string, and only a `debug` parameter with no value or a truthy value (`1`, `true`, `yes`, `on`) exposes debug-only panels, badges, and diagnostics. The separate `veslo:workspace-debug` local storage flag keeps workspace tracing available without showing developer-only UI.
+Developer-only UI surfaces are not enabled by default. The app derives developer mode from the current URL search string, and only a `debug` parameter with no value or a truthy value (`1`, `true`, `yes`, `on`) exposes debug-only panels, badges, and diagnostics. In Vite development builds the same explicit mode also attaches the Solid Devtools overlay; its autoname transform and overlay are excluded from production builds. The separate `veslo:workspace-debug` local storage flag keeps workspace tracing available without showing developer-only UI.
 
 Session archive records are loaded through the Veslo server archive API. When a cloud account is available, archive requests use that account id as the owner key. In local desktop mode without cloud auth, loopback Veslo server archive requests use the local desktop owner key `local:desktop`; remote archive requests still require a cloud account id.
 
@@ -123,6 +123,8 @@ Veslo can send application errors to a Sentry-compatible service such as the int
 
 Release desktop builds get their GlitchTip DSN from the public, release-owned `VESLO_GLITCHTIP_DSN` GitHub Actions variable. The same value is passed to `VITE_VESLO_GLITCHTIP_DSN` for the frontend build and embedded into the native Tauri shell at compile time for installed macOS and Windows apps. This DSN is not a secret, but it is not user-configurable and the application must not expose a setting to change it. Release and prerelease publish jobs set `VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV=1` so missing monitoring values fail closed; ad-hoc validation builds can run the same verifier in warning mode.
 
+Publish jobs also run a release-only frontend source-map pipeline. It builds hidden Vite maps once, injects GlitchTip debug IDs, uploads the matching maps under the same `veslo@<version>` release used by the browser SDK, removes maps and source-map references, and then starts the Tauri bundle. The upload token is CI-only and never reaches Vite, the Tauri binary, or installer payloads. Manual validation builds do not enable this pipeline unless explicitly requested and can remain warning-only when upload credentials are unavailable.
+
 Frontend environment variables:
 
 - `VITE_VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for browser/Solid errors. Required to enable frontend monitoring.
@@ -138,6 +140,12 @@ Desktop shell environment variables:
 - `VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` in release builds and `development` in debug builds.
 - `VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
 - `VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV` - release verifier strict-mode flag. Use `1` in publishing workflows that must fail when release monitoring values are missing.
+- `VESLO_GLITCHTIP_SOURCE_MAPS` - CI-only switch that asks the desktop frontend build helper to generate hidden maps for upload. Do not set it in user runtime configuration.
+- `VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD` - CI-only strict-mode flag. Use `1` in publish workflows so a missing source-map credential, unavailable upload CLI, or failed upload blocks packaging.
+- `VESLO_STAGING_RENDERER_CANARY` - CI-only compile-time flag used only by the manual staging workflow's `monitoring_canary` input. When set, Vite includes one renderer component that deliberately throws during rendering so the existing ErrorBoundary sends the controlled event. The build helper rejects it outside the `staging` monitoring environment and verifies that regular frontend output contains no canary marker. It is not a `VITE_*` user setting and cannot be enabled after packaging.
+- `SENTRY_URL` - CI-only GlitchTip instance URL used by the source-map uploader. It comes from the release-owned `VESLO_GLITCHTIP_URL` GitHub Actions variable and must use HTTPS.
+- `SENTRY_AUTH_TOKEN` - CI-only GlitchTip upload token from the `VESLO_GLITCHTIP_AUTH_TOKEN` GitHub secret. It must not be placed in an app environment file, binary, installer, or ticket evidence.
+- `SENTRY_ORG` and `SENTRY_PROJECT` - CI-only uploader coordinates from the release-owned `VESLO_GLITCHTIP_ORG` and `VESLO_GLITCHTIP_PROJECT` variables.
 - `VESLO_SEND_WORKFLOW_TRACE` - enables native send workflow trace file writes when UI events are forwarded through Tauri.
 - `VESLO_SEND_WORKFLOW_TRACE_FILE` - primary send workflow trace NDJSON path. `pnpm dev` writes this under the timestamped `dev-specific/tauri-pilot/...` runtime directory.
 - `VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE` - optional mirror NDJSON path for quick local inspection. `pnpm dev` defaults this to `.tmp/send-workflow-trace.ndjson`, which is gitignored. App-forwarded events, server events, and orchestrator events write to the same mirror when they inherit this environment variable.

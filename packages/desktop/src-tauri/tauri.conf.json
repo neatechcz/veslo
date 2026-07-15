@@ -5,7 +5,7 @@
   "identifier": "com.neatech.veslo",
   "build": {
     "beforeDevCommand": "node ./scripts/tauri-before-dev.mjs",
-    "beforeBuildCommand": "pnpm -C ../.. --filter @neatech/veslo run prepare:sidecar && pnpm -w build:ui",
+    "beforeBuildCommand": "pnpm -C ../.. --filter @neatech/veslo run prepare:sidecar && pnpm -C ../.. build:desktop-ui",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../app/dist"
   },

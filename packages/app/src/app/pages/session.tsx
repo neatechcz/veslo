@@ -4198,7 +4198,7 @@ export default function SessionView(props: SessionViewProps) {
                         onDraftChange={handleDraftChange}
                         selectedAgent={props.selectedSessionAgent}
                         onSelectAgent={(agent) => {
-                          applySessionAgent(agent);
+                          void applySessionAgent(agent);
                         }}
                         showNotionBanner={props.showTryNotionPrompt}
                         onNotionBannerClick={props.onTryNotionPrompt}
@@ -4511,7 +4511,7 @@ export default function SessionView(props: SessionViewProps) {
                 onDraftChange={handleDraftChange}
                 selectedAgent={props.selectedSessionAgent}
                 onSelectAgent={(agent) => {
-                  applySessionAgent(agent);
+                  void applySessionAgent(agent);
                 }}
                 showNotionBanner={props.showTryNotionPrompt}
                 onNotionBannerClick={props.onTryNotionPrompt}

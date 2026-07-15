@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "audit:legacy": "node scripts/legacy-symbol-audit.mjs",
     "test:unit": "node --test --import=tsx/esm src/app/**/*.test.ts",
+    "test:reactivity": "node --conditions=browser --test --import=tsx/esm src/app/tests/context/session-queue-drain-controller.test.ts",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/app/**/*.ts --test-coverage-include=src/app/**/*.tsx --test-coverage-exclude=src/app/**/*.test.ts --test-coverage-exclude=src/app/tests/** --test-coverage-exclude=src/app/**/*.d.ts --import=tsx/esm src/app/**/*.test.ts",
     "test:health": "node scripts/health.mjs",
     "test:mention-send": "node scripts/mention-send.mjs",
@@ -80,7 +81,9 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@solid-devtools/overlay": "0.33.5",
     "@tailwindcss/vite": "^4.1.18",
+    "solid-devtools": "0.34.5",
     "tailwindcss": "^4.1.18",
     "tsx": "^4.21.0",
     "typescript": "^5.6.3",

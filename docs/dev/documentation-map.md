@@ -65,6 +65,7 @@ Use these for coding-agent work, implementation changes, and system maintenance.
 - `docs/dev/conversation-workflow-contract.md`
 - `docs/dev/opencode-workspace-runtime-architecture.md`
 - `docs/dev/testing-playbook.md`
+- `docs/dev/engineering-quality-gates.md`
 - `docs/dev/build-and-rebuild-matrix.md`
 - `docs/dev/development-startup.md`
 - `docs/dev/cloud-deployments.md`

@@ -433,13 +433,13 @@ pub async fn opencodeRouter_status(
     let telegram_items: Vec<serde_json::Value> = status
         .get("telegram")
         .and_then(|value| value.as_array())
-        .map(|arr| arr.iter().cloned().collect())
+        .map(|arr| arr.to_vec())
         .unwrap_or_default();
 
     let slack_items: Vec<serde_json::Value> = status
         .get("slack")
         .and_then(|value| value.as_array())
-        .map(|arr| arr.iter().cloned().collect())
+        .map(|arr| arr.to_vec())
         .unwrap_or_default();
 
     let opencode_url = status

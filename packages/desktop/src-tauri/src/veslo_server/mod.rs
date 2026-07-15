@@ -131,10 +131,7 @@ pub(crate) fn resolve_engine_url(port: u16) -> Option<String> {
     {
         let mut candidates = Vec::new();
         if let Ok(interfaces) = list_afinet_netifas() {
-            candidates.extend(resolve_engine_urls_from_interfaces(
-                port,
-                interfaces.into_iter(),
-            ));
+            candidates.extend(resolve_engine_urls_from_interfaces(port, interfaces));
         }
         if let Some(url) = resolve_engine_url_from_wsl_interface(port) {
             candidates.push(url);
@@ -721,7 +718,7 @@ pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServer
     read_persisted_veslo_server_info_with_cleanup(
         dir,
         server_health_identity,
-        |pid| kill_stale_veslo_server_process(pid),
+        kill_stale_veslo_server_process,
         |_, _| {},
     )
 }
@@ -982,7 +979,7 @@ pub fn recover_persisted_veslo_server_info(
     let from_disk = read_persisted_veslo_server_info_with_cleanup(
         &dir,
         server_health_identity,
-        |pid| kill_stale_veslo_server_process(pid),
+        kill_stale_veslo_server_process,
         |pid, error| {
             append_veslo_server_launch_diagnostic(
                 app,
@@ -1192,6 +1189,10 @@ fn client_token_for_spawn(previous: Option<String>, requested: Option<String>) -
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The test helper mirrors the launch-configuration comparison inputs."
+)]
 fn launch_config_matches(
     state: &manager::VesloServerState,
     _workspace_paths: &[String],
@@ -1215,6 +1216,10 @@ fn launch_config_matches(
     .is_empty()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each launch input is compared independently to produce actionable restart reasons."
+)]
 fn launch_config_mismatch_reasons(
     state: &manager::VesloServerState,
     _workspace_paths: &[String],
@@ -1297,6 +1302,10 @@ fn launch_decision_payload(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The desktop server owner keeps explicit launch inputs at its process boundary."
+)]
 pub fn start_veslo_server(
     app: &AppHandle,
     manager: &VesloServerManager,
@@ -1457,7 +1466,12 @@ pub fn start_veslo_server(
         } else {
             "veslo-server-launch:start-accepted"
         },
-        launch_decision_payload(launch_decision, &state, &start_reasons, workspace_paths.len()),
+        launch_decision_payload(
+            launch_decision,
+            &state,
+            &start_reasons,
+            workspace_paths.len(),
+        ),
     );
     let previous_client_token = state.client_token.clone();
     let previous_host_token = state.host_token.clone();
@@ -1736,12 +1750,11 @@ mod tests {
         client_token_for_spawn, discover_external_host_token, launch_config_matches,
         launch_config_mismatch_reasons, launch_decision_payload, normalize_launch_token,
         normalize_launch_url, parse_macos_lsof_current_dir, publishes_external_urls,
-        read_persisted_veslo_server_info,
-        read_persisted_veslo_server_info_with_cleanup, ready_signal_bound_port,
-        ready_signal_instance_id, resolve_engine_url_for_bind_host, should_bind_wsl_bridge,
-        start_decision_reasons, unix_kill_term_args, veslo_server_state_event_payload,
-        windows_taskkill_args, HealthIdentity, PersistedVesloServerState, StaleProcessMetadata,
-        StaleProcessOwner,
+        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
+        ready_signal_bound_port, ready_signal_instance_id, resolve_engine_url_for_bind_host,
+        should_bind_wsl_bridge, start_decision_reasons, unix_kill_term_args,
+        veslo_server_state_event_payload, windows_taskkill_args, HealthIdentity,
+        PersistedVesloServerState, StaleProcessMetadata, StaleProcessOwner,
     };
     #[cfg(windows)]
     use super::{

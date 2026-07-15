@@ -27,22 +27,22 @@ test("message list exposes a latest-user-message edit action next to copy", () =
   );
   assert.match(
     source,
-    /const editableMessage = \(\) =>\s*props\.editableUserMessage\?\.messageId === block\.messageId \? props\.editableUserMessage : null;/,
+    /const editableMessage = \(\) =>\s*props\.editableUserMessage\?\.messageId === messageBlock\(\)\.messageId \? props\.editableUserMessage : null;/,
     "edit affordance should be scoped to the exact editable message id",
   );
   assert.match(
     source,
-    /const pendingMessageState = \(\) => props\.pendingMessageStateById\?\.\[block\.messageId\] \?\? null;/,
+    /const pendingMessageState = \(\) => props\.pendingMessageStateById\?\.\[messageBlock\(\)\.messageId\] \?\? null;/,
     "pending status should be scoped to the exact message id",
   );
   assert.match(
     source,
-    /<Show when=\{block\.isUser && pendingMessageError\(\)\}>[\s\S]*pendingSubmitFailureLabel\(pendingMessageError\(\)\?\.error\)/s,
+    /<Show when=\{messageBlock\(\)\.isUser && pendingMessageError\(\)\}>[\s\S]*pendingSubmitFailureLabel\(pendingMessageError\(\)\?\.error\)/s,
     "pending user messages should render only failed handoff status, not a sending/responding footnote",
   );
   assert.match(
     source,
-    /<Show when=\{block\.isUser && pendingMessageSyncWarning\(\)\}>[\s\S]*pendingSubmitSyncWarningLabel\(pendingMessageSyncWarning\(\)\?\.reason\)/s,
+    /<Show when=\{messageBlock\(\)\.isUser && pendingMessageSyncWarning\(\)\}>[\s\S]*pendingSubmitSyncWarningLabel\(pendingMessageSyncWarning\(\)\?\.reason\)/s,
     "accepted submissions with unresolved transcript sync should render a neutral typed warning",
   );
   assert.match(

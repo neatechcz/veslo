@@ -102,6 +102,12 @@ jobs:
       VESLO_RUNTIME_DIAGNOSTICS: "0"
       VITE_VESLO_RUNTIME_DIAGNOSTICS: "0"
       VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV: "1"
+      VESLO_GLITCHTIP_SOURCE_MAPS: "1"
+      VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: "1"
+      SENTRY_URL: ${{ vars.VESLO_GLITCHTIP_URL }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.VESLO_GLITCHTIP_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ vars.VESLO_GLITCHTIP_ORG }}
+      SENTRY_PROJECT: ${{ vars.VESLO_GLITCHTIP_PROJECT }}
 
     strategy:
       fail-fast: false
@@ -194,6 +200,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Install GlitchTip source-map CLI
+        run: cargo install glitchtip-cli --version 1.0.0 --locked
 
       - name: Resolve OpenCode version
         id: opencode-version
@@ -516,6 +525,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm --filter @neatech/veslo exec tauri build --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
+
+      - name: Upload GlitchTip source-map evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: glitchtip-source-map-evidence-${{ matrix.target }}
+          path: ${{ runner.temp }}/veslo-glitchtip-source-map-evidence.json
+          if-no-files-found: warn
 
       - name: Resolve Windows bundle paths
         if: matrix.os_type == 'windows'

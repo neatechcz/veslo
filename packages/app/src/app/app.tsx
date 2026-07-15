@@ -26,6 +26,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
 import { reportError } from "./lib/error-reporter";
+import { resolveDeveloperModeFromSearch } from "./lib/developer-mode";
 import { recordSendWorkflowTrace } from "./lib/send-workflow-trace";
 import { resolveRunningVesloServerHostInfo } from "./lib/veslo-server-host";
 import {
@@ -407,13 +408,6 @@ type CommandListScope = {
 
 const SEND_TRACE_LIMIT = 500;
 const E2E_APP_IDENTIFIER = "com.neatech.veslo.e2e";
-
-function resolveDeveloperModeFromSearch(search: string) {
-  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
-  if (!params.has("debug")) return false;
-  const value = params.get("debug")?.trim().toLowerCase() ?? "";
-  return value === "" || value === "1" || value === "true" || value === "yes" || value === "on";
-}
 
 export default function App() {
   const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
@@ -3760,7 +3754,7 @@ export default function App() {
       }
     };
 
-    run();
+    void run();
     onCleanup(() => {
       active = false;
       if (timeoutId !== null) window.clearTimeout(timeoutId);

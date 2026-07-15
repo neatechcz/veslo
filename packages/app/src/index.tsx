@@ -1,15 +1,18 @@
 /* @refresh reload */
+import { ErrorBoundary, lazy, Suspense } from "solid-js";
 import { render } from "solid-js/web";
 import { HashRouter, Route, Router } from "@solidjs/router";
 
 import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
 import AppEntry from "./app/entry";
+import { RendererErrorFallback } from "./app/components/renderer-error-boundary";
 import packageJson from "../package.json";
 import { PlatformProvider, type Platform } from "./app/context/platform";
 import { isTauriRuntime } from "./app/utils";
 import { initErrorMonitoring } from "./app/lib/error-monitoring";
 import { reportError } from "./app/lib/error-reporter";
+import { resolveDeveloperModeFromWindowLocation } from "./app/lib/developer-mode";
 import { recordPerfLog } from "./app/lib/perf-log";
 import {
   installStartupRequestAudit,
@@ -21,11 +24,20 @@ bootstrapTheme();
 initLocale();
 
 const appPlatform = isTauriRuntime() ? "desktop" : "web";
+const StagingRendererCanary = __VESLO_STAGING_RENDERER_CANARY__
+  ? lazy(() => import("./app/components/staging-renderer-canary"))
+  : () => null;
 
 initErrorMonitoring(import.meta.env, {
   appVersion: packageJson.version,
   platform: appPlatform,
 });
+
+if (import.meta.env.DEV && resolveDeveloperModeFromWindowLocation(window.location)) {
+  void import("@solid-devtools/overlay")
+    .then(({ attachDevtoolsOverlay }) => attachDevtoolsOverlay())
+    .catch((error: unknown) => reportError(error, "init.solidDevtools"));
+}
 
 const readStoredRequestAuditWindowMs = () => {
   try {
@@ -125,11 +137,24 @@ render(
     });
 
     return (
-      <PlatformProvider value={platform}>
-        <RouterComponent root={AppEntry}>
-          <Route path="*all" component={() => null} />
-        </RouterComponent>
-      </PlatformProvider>
+      <ErrorBoundary
+        fallback={(error) => (
+          <RendererErrorFallback
+            error={error}
+            restart={platform.restart}
+            reload={() => window.location.reload()}
+          />
+        )}
+      >
+        <Suspense>
+          <StagingRendererCanary />
+        </Suspense>
+        <PlatformProvider value={platform}>
+          <RouterComponent root={AppEntry}>
+            <Route path="*all" component={() => null} />
+          </RouterComponent>
+        </PlatformProvider>
+      </ErrorBoundary>
     );
   },
   root,

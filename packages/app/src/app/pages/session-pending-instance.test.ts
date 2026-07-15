@@ -331,8 +331,8 @@ test("implicit skill confirmation keeps an immutable snapshot scoped to its orig
   );
   assert.match(
     sessionSource,
-    /onCancel=\{\(\) => void sendImplicitSkillAsPrompt\(\)\}[\s\S]*onClose=\{\(\) => undefined\}/,
-    "closing the confirmation must keep its snapshot owner until the user explicitly chooses a send path",
+    /onCancel=\{\(\) => void sendImplicitSkillAsPrompt\(\)\}[\s\S]*onClose=\{\(\) => \{[\s\S]*const pending = implicitSkillConfirmation\(\);[\s\S]*if \(pending\) removeImplicitSkillConfirmation\(pending\);/,
+    "closing the confirmation must discard only its scoped snapshot instead of leaving a stale prompt open",
   );
 });
 

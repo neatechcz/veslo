@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: ""
+      monitoring_canary:
+        description: "Build the staging-only renderer crash canary (intentionally shows recovery UI on launch)."
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -39,6 +44,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_REF: ${{ inputs.ref || github.ref_name }}
+          MONITORING_CANARY: ${{ inputs.monitoring_canary }}
         run: |
           set -euo pipefail
 
@@ -58,6 +64,9 @@ jobs:
             printf -- '- Staging endpoints are baked into the app.\n'
             printf -- '- macOS artifacts are signed, notarized, and stapled with the Apple Developer ID certificate.\n'
             printf -- '- Updater publishing is disabled; this release is not mirrored to the public updater repository.\n'
+            if [ "$MONITORING_CANARY" = "true" ]; then
+              printf -- '- Includes the staging-only renderer monitoring canary; opening it intentionally shows renderer recovery.\n'
+            fi
           } > "$body_file"
 
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -108,6 +117,14 @@ jobs:
       VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE: ${{ vars.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE || '0' }}
       VESLO_RUNTIME_DIAGNOSTICS: "0"
       VITE_VESLO_RUNTIME_DIAGNOSTICS: "0"
+      VESLO_STAGING_RENDERER_CANARY: ${{ inputs.monitoring_canary && '1' || '0' }}
+      VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV: ${{ inputs.monitoring_canary && '1' || '0' }}
+      VESLO_GLITCHTIP_SOURCE_MAPS: ${{ inputs.monitoring_canary && '1' || '0' }}
+      VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: ${{ inputs.monitoring_canary && '1' || '0' }}
+      SENTRY_URL: ${{ vars.VESLO_GLITCHTIP_URL }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.VESLO_GLITCHTIP_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ vars.VESLO_GLITCHTIP_ORG }}
+      SENTRY_PROJECT: ${{ vars.VESLO_GLITCHTIP_PROJECT }}
 
     strategy:
       fail-fast: false
@@ -165,6 +182,14 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Verify GlitchTip staging canary env
+        if: inputs.monitoring_canary
+        run: node scripts/release/verify-glitchtip-release-env.mjs
+
+      - name: Install GlitchTip source-map CLI
+        if: inputs.monitoring_canary
+        run: cargo install glitchtip-cli --version 1.0.0 --locked
 
       - name: Review release packaging
         run: pnpm release:review --strict
@@ -342,6 +367,14 @@ jobs:
             --config src-tauri/tauri.windows.staging.conf.json `
             --target $env:TARGET_TRIPLE `
             --bundles msi
+
+      - name: Upload GlitchTip staging-canary source-map evidence
+        if: always() && inputs.monitoring_canary
+        uses: actions/upload-artifact@v7
+        with:
+          name: glitchtip-staging-canary-source-map-evidence-${{ matrix.target }}
+          path: ${{ runner.temp }}/veslo-glitchtip-source-map-evidence.json
+          if-no-files-found: warn
 
       - name: Verify bundled Windows staging sidecars
         if: matrix.os_type == 'windows'

@@ -119,6 +119,21 @@ pnpm test
 
 The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 
+### Focused local-host recovery gate
+
+For a server-child lifecycle or recovery change, follow the Desktop Test Runtime
+Preflight and run the focused quality command from the repository root:
+
+```bash
+pnpm check:desktop-recovery
+```
+
+It rebuilds the server binary and the pilot-enabled E2E Tauri binary, prepares
+sidecars, and runs only `vslo-235-local-host-child-exit` against a fresh profile.
+Run it twice when changing this contract. It is the `Quality / Desktop recovery`
+Windows CI job, not a replacement for the wider Pilot suite or installed-MSI VM
+verification.
+
 ### Windows production-shaped packaged smoke
 
 After the Desktop Test Runtime Preflight, run this Windows-only developer gate:

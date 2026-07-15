@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 
-import { createApp } from '../../../services/ai-gateway/src/index.js';
+import { createAiGatewayTestApp } from '@neatech/ai-gateway/test-support';
 
 export const E2E_MANAGED_AI_USER_ID = 'user_veslo_e2e_managed_ai';
 export const E2E_MANAGED_AI_SECOND_USER_ID = 'user_veslo_e2e_managed_ai_second';
@@ -182,6 +182,8 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
         enabled: true,
         provider: 'codex_oauth' as const,
         credentialId: CREDENTIAL_ID,
+        defaultModel: ACTIVE_MODEL.model,
+        allowedModels: ENABLED_MODELS.map((entry) => entry.model),
         assignmentOrigin: 'admin_assigned' as const,
         createdAt: now,
         updatedAt: now,
@@ -316,7 +318,7 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
     anthropicTransport: { async messages() { throw new Error('unused'); } },
     openAiCompatibleTransport: { async chatCompletions() { throw new Error('unused'); } },
   };
-  const app = createApp({
+  const app = createAiGatewayTestApp({
     runtime: {} as never,
     admin: {} as never,
     readiness: {
@@ -327,12 +329,15 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
       modelPolicy,
       modelCapabilities: {
         async checkHealthyCredentialForModel() { return { status: 'supported' as const, credentialId: CREDENTIAL_ID }; },
+        async checkHealthyCredentialsForModels(models) {
+          return models.map((model) => ({ model, status: 'supported' as const, credentialId: CREDENTIAL_ID }));
+        },
         async checkCredentialForModel() { return { status: 'supported' as const, credentialId: CREDENTIAL_ID }; },
         async hasHealthyCredentialForModel() { return true; },
         invalidateCredential() {},
       },
     },
-    userCredentials: { sessionResolver, aiAccess, modelPolicy },
+    userCredentials: { sessionResolver, aiAccess },
     proxy: proxy as never,
   });
 

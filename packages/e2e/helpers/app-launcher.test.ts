@@ -311,6 +311,8 @@ test("Windows managed child cleanup is scoped to the launched app tree, known Ve
   assert.match(script, /veslo-orchestrator\.exe/);
   assert.match(script, /veslo-code-router\.exe/);
   assert.match(script, /Get-Process -Id \$_/);
+  assert.match(script, /\[DateTime\]::UtcNow\.AddSeconds\(2\)/);
+  assert.match(script, /Start-Sleep -Milliseconds 100/);
   assert.match(script, /remaining/);
   assert.doesNotMatch(script, /Stop-Process -Name/);
 });

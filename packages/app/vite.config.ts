@@ -1,6 +1,7 @@
 import os from "node:os";
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
+import devtools from "solid-devtools/vite";
 import solid from "vite-plugin-solid";
 
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
@@ -23,10 +24,19 @@ if (shortHostname && shortHostname !== hostname) {
   addHost(shortHostname);
 }
 const packagedSmokeBuild = process.env.VESLO_PACKAGED_SMOKE?.trim() === "1";
+const releaseSourceMaps = /^(1|true|yes)$/i.test(process.env.VESLO_GLITCHTIP_SOURCE_MAPS ?? "");
+const stagingRendererCanary = /^(1|true|yes)$/i.test(process.env.VESLO_STAGING_RENDERER_CANARY ?? "");
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   ...(packagedSmokeBuild ? { envDir: false } : {}),
-  plugins: [tailwindcss(), solid()],
+  define: {
+    __VESLO_STAGING_RENDERER_CANARY__: JSON.stringify(stagingRendererCanary),
+  },
+  plugins: [
+    ...(command === "serve" ? [devtools({ autoname: true })] : []),
+    tailwindcss(),
+    solid(),
+  ],
   server: {
     port: devPort,
     strictPort: true,
@@ -37,5 +47,6 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
+    sourcemap: releaseSourceMaps ? "hidden" : false,
   },
-});
+}));

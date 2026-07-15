@@ -373,7 +373,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
           return;
         }
         // Only start auth on initial open, not on every prop change
-        startAuth(false);
+        void startAuth(false);
       },
       { defer: true } // Defer to avoid double-firing on mount
     )
@@ -408,7 +408,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
         }
         setReloadSatisfied(true);
         setAwaitingReload(false);
-        startAuth(false, false);
+        await startAuth(false, false);
       } catch (err) {
         const message = err instanceof Error ? err.message : translate("mcp.auth.reload_failed");
         setAwaitingReload(false);
@@ -421,7 +421,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   });
 
   const handleRetry = () => {
-    startAuth(true);
+    void startAuth(true);
   };
 
   const handleReopenBrowser = () => {
@@ -435,7 +435,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       if (!proceed) return;
     }
     await props.onReloadEngine();
-    startAuth(true);
+    await startAuth(true);
   };
 
   const handleForceStopSession = async (

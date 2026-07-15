@@ -10,6 +10,7 @@ Use this matrix to decide what must be rebuilt after a code change.
 | `packages/app/src` with desktop-only behavior assumptions | Run through Tauri desktop runtime | Browser-only checks are not authoritative |
 | `packages/server/src` | `pnpm --filter veslo-server build:bin` | Orchestrator uses the built server binary, not TS sources |
 | `packages/desktop/src-tauri` | Rebuild desktop runtime | Native commands and shell behavior live in Tauri |
+| Local host child lifecycle/recovery | `pnpm check:desktop-recovery` after desktop preflight | Rebuilds the focused E2E binary and proves VSLO-235 child exit/restart with a fresh profile |
 | `packages/e2e` | Re-run targeted `tauri-pilot` scenario | Runtime expectations changed |
 | Windows MSI payload or startup contract | Run extracted-MSI verification, then the disposable-VM installed-MSI gate | An administrative extraction cannot prove Program Files startup, profile isolation, or second-start behavior |
 | `packages/orchestrator/src` | Re-run orchestrator tests and relevant host flows | Sidecar orchestration is CLI-owned |
@@ -42,6 +43,18 @@ pnpm dev
 cd packages/desktop
 pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e
 ```
+
+### Focused desktop recovery quality gate
+
+After the Desktop Test Runtime Preflight, run:
+
+```bash
+pnpm check:desktop-recovery
+```
+
+This is the same Windows CI command behind `Quality / Desktop recovery`. It builds the
+server binary and E2E Tauri app, prepares sidecars, then runs only
+`vslo-235-local-host-child-exit`; it does not substitute the broader Pilot suite.
 
 ### tauri-pilot
 

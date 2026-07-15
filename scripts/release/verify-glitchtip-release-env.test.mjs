@@ -12,6 +12,12 @@ const glitchTipKeys = [
   "VESLO_GLITCHTIP_TRACES_SAMPLE_RATE",
   "VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE",
   "VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV",
+  "VESLO_GLITCHTIP_SOURCE_MAPS",
+  "VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD",
+  "SENTRY_URL",
+  "SENTRY_AUTH_TOKEN",
+  "SENTRY_ORG",
+  "SENTRY_PROJECT",
 ];
 
 const envFor = (overrides = {}) => {
@@ -67,4 +73,25 @@ test("GlitchTip release env verifier accepts complete strict release values", ()
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /GlitchTip release monitoring environment is configured/);
+});
+
+test("GlitchTip release env verifier fails closed for an incomplete required source-map upload", () => {
+  const result = runVerifier({
+    VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: "1",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Missing GlitchTip source-map upload env/);
+});
+
+test("GlitchTip release env verifier accepts complete required source-map upload credentials", () => {
+  const result = runVerifier({
+    VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: "1",
+    SENTRY_URL: "https://glitchtip.example.invalid",
+    SENTRY_AUTH_TOKEN: "source-map-upload-token",
+    SENTRY_ORG: "neatech",
+    SENTRY_PROJECT: "veslo",
+  });
+
+  assert.equal(result.status, 0);
 });

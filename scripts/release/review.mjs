@@ -55,6 +55,8 @@ const prereleaseWorkflow = readText(resolve(root, ".github", "workflows", "prere
 const buildDesktopWorkflow = readText(resolve(root, ".github", "workflows", "build-desktop.yml"));
 const buildWindowsMsiWorkflow = readText(resolve(root, ".github", "workflows", "build-windows-msi.yml"));
 const buildStagingWorkflow = readText(resolve(root, ".github", "workflows", "build-staging-app.yml"));
+const viteConfig = readText(resolve(root, "packages", "app", "vite.config.ts"));
+const desktopUiBuildHelper = readText(resolve(root, "scripts", "release", "build-desktop-ui.mjs"));
 const releaseDoc = readText(resolve(root, "RELEASE.md"));
 const stateConfigDoc = readText(resolve(root, "docs", "dev", "state-and-config-reference.md"));
 const applicationLogsDoc = readText(resolve(root, "docs", "dev", "veslo-application-logs.md"));
@@ -150,6 +152,30 @@ const hasGlitchTipReleaseEnv = (text, options = {}) => {
     (!requireStrict || /VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV:\s*["']?1["']?/.test(text))
   );
 };
+
+const hasGlitchTipSourceMapUpload = (text) =>
+  /VESLO_GLITCHTIP_SOURCE_MAPS:\s*["']?1["']?/.test(text) &&
+  /VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD:\s*["']?1["']?/.test(text) &&
+  /SENTRY_URL:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_URL\s*\}\}/.test(text) &&
+  /SENTRY_AUTH_TOKEN:\s*\$\{\{\s*secrets\.VESLO_GLITCHTIP_AUTH_TOKEN\s*\}\}/.test(text) &&
+  /SENTRY_ORG:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_ORG\s*\}\}/.test(text) &&
+  /SENTRY_PROJECT:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_PROJECT\s*\}\}/.test(text) &&
+  /Install GlitchTip source-map CLI/.test(text) &&
+  /cargo install glitchtip-cli --version 1\.0\.0 --locked/.test(text);
+
+const hasStagingRendererCanary = () => [
+  "monitoring_canary:",
+  "VESLO_STAGING_RENDERER_CANARY: ${{ inputs.monitoring_canary && '1' || '0' }}",
+  "VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV: ${{ inputs.monitoring_canary && '1' || '0' }}",
+  "VESLO_GLITCHTIP_SOURCE_MAPS: ${{ inputs.monitoring_canary && '1' || '0' }}",
+  "VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: ${{ inputs.monitoring_canary && '1' || '0' }}",
+  "Verify GlitchTip staging canary env",
+  "Upload GlitchTip staging-canary source-map evidence",
+].every(fragment => buildStagingWorkflow.includes(fragment)) &&
+  /__VESLO_STAGING_RENDERER_CANARY__/.test(viteConfig) &&
+  /assertStagingRendererCanaryBuildPolicy/.test(desktopUiBuildHelper) &&
+  /assertStagingRendererCanaryOutput/.test(desktopUiBuildHelper) &&
+  /VESLO_STAGING_RENDERER_CANARY/.test(releaseDocsText);
 
 const hasOrderedFragments = (text, fragments) => {
   let cursor = 0;
@@ -437,6 +463,32 @@ addCheck(
   "Release docs describe GlitchTip DSN as public and release-owned",
   releaseDocsDescribeGlitchTipDsn,
   "RELEASE.md + docs/dev",
+);
+addCheck(
+  "Publish workflows fail closed for GlitchTip source-map upload",
+  hasGlitchTipSourceMapUpload(releaseMacosTauriJob) &&
+    hasGlitchTipSourceMapUpload(releaseWindowsTauriJob) &&
+    hasGlitchTipSourceMapUpload(prereleaseTauriJob),
+  "release-macos-aarch64.yml + prerelease.yml",
+);
+addCheck(
+  "Tauri bundles the injected hidden-source-map frontend build",
+  tauriConfig.build?.beforeBuildCommand?.includes("build:desktop-ui") &&
+    /sourcemap:\s*releaseSourceMaps\s*\?\s*"hidden"\s*:\s*false/.test(viteConfig) &&
+    hasOrderedFragments(desktopUiBuildHelper, [
+      'buildUi({ ...env, VESLO_GLITCHTIP_SOURCE_MAPS: "1" });',
+      '["sourcemaps", "inject", "--ext", "js", distDirectory]',
+      '"upload",',
+      "removeSourceMapReferences();",
+      "removeSourceMaps();",
+      "assertNoSourceMapsRemain();",
+    ]),
+  "one Vite build -> inject -> upload -> strip maps -> Tauri bundle",
+);
+addCheck(
+  "Staging renderer canary is opt-in and absent from regular desktop builds",
+  hasStagingRendererCanary(),
+  "manual Build Staging App input only; build output is checked for the canary marker",
 );
 
 const deprecatedCheckoutRefs = findDeprecatedActionRefs("actions/checkout");

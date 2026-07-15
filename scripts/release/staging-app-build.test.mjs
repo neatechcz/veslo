@@ -86,6 +86,30 @@ test("staging app workflow bakes staging endpoints and never publishes public up
   }
 });
 
+test("staging monitoring canary is explicit, fail-closed, and compile-time only", () => {
+  const workflow = read(".github/workflows/build-staging-app.yml");
+
+  for (const requiredText of [
+    "monitoring_canary:",
+    "type: boolean",
+    "default: false",
+    "VESLO_STAGING_RENDERER_CANARY: ${{ inputs.monitoring_canary && '1' || '0' }}",
+    "VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV: ${{ inputs.monitoring_canary && '1' || '0' }}",
+    "VESLO_GLITCHTIP_SOURCE_MAPS: ${{ inputs.monitoring_canary && '1' || '0' }}",
+    "VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: ${{ inputs.monitoring_canary && '1' || '0' }}",
+    "Verify GlitchTip staging canary env",
+    "Install GlitchTip source-map CLI",
+    "Upload GlitchTip staging-canary source-map evidence",
+  ]) {
+    assert.ok(workflow.includes(requiredText), `staging canary workflow must include ${requiredText}`);
+  }
+
+  assert.match(
+    workflow,
+    /MONITORING_CANARY[\s\S]*Includes the staging-only renderer monitoring canary/,
+  );
+});
+
 test("staging Windows build uses Windows release config without assembling document runtime into MSI", () => {
   const workflow = read(".github/workflows/build-staging-app.yml");
 

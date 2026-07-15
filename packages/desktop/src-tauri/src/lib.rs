@@ -432,16 +432,16 @@ pub fn run() {
     // orchestrator/veslo-code/veslo-server processes and stale ports.
     app.run(|app_handle, event| match event {
         tauri::RunEvent::ExitRequested { .. } => {
-            stop_managed_services_for_exit(&app_handle, "exit_requested");
+            stop_managed_services_for_exit(app_handle, "exit_requested");
         }
         tauri::RunEvent::Exit => {
-            stop_managed_services_for_exit(&app_handle, "exit");
+            stop_managed_services_for_exit(app_handle, "exit");
         }
         tauri::RunEvent::WindowEvent {
             event: tauri::WindowEvent::CloseRequested { .. },
             ..
         } => {
-            stop_managed_services_for_exit(&app_handle, "window_close_requested");
+            stop_managed_services_for_exit(app_handle, "window_close_requested");
         }
         _ => {}
     });

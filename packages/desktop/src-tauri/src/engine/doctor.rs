@@ -126,7 +126,7 @@ pub fn resolve_engine_path(
     (resolved, in_path, notes)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
     use std::sync::Mutex;

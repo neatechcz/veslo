@@ -350,7 +350,7 @@ fn report_workspace_registry_diagnostic(app: &AppHandle, message: &str) {
     eprintln!("[workspace] {message}");
     if let Some(manager) = app.try_state::<VesloServerManager>() {
         if let Ok(mut state) = manager.inner.lock() {
-            state.last_stderr = Some(truncate_output(&message, 8000));
+            state.last_stderr = Some(truncate_output(message, 8000));
         }
     }
 }

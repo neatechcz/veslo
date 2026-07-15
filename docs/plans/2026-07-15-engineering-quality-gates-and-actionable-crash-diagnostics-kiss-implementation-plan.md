@@ -2,11 +2,12 @@
 title: Veslo engineering quality gates and actionable crash diagnostics — highest-leverage KISS implementation plan
 date: 2026-07-15
 target: veslo-main non-desktop quality gate, required CI, focused desktop recovery proof, and actionable frontend crashes
-status: ready-for-implementation
+status: implementation-in-progress
 done: false
 base_branch: main
 base_commit: 0029edef42817b1a889fb3f83b458137e61672fc
 baseline_worktree: dirty
+implementation_checkpoint: 2026-07-16
 supersedes:
   - docs/plans/2026-07-15-engineering-quality-gates-and-crash-diagnostics-plan.md
   - docs/plans/2026-07-15-engineering-quality-gates-and-crash-prevention-implementation-plan.md
@@ -166,6 +167,7 @@ Report-only command může běžet scheduled nebo ručně. Nesmí být součást
 ### QG00 — Udělat baseline pravdivou a zelenou (P0)
 
 done: false
+implementation_status: local repair is implemented; clean-checkout acceptance remains unverified
 
 Nejdřív pracovat v čistém checkoutu integrovaného commitu. Současný dirty
 worktree nepoužívat jako důkaz base branch a nepřepisovat v něm rozpracované
@@ -207,6 +209,7 @@ release/MSI změny.
 ### QG01 — Jeden malý `pnpm check` (P0)
 
 done: false
+implementation_status: root composition works locally; Solid reactivity baseline and clean-checkout proof remain pending
 
 #### Typecheck coverage guard
 
@@ -300,6 +303,7 @@ format. Pokud později vznikne konkrétní problém s cleanupem nebo diagnostiko
 ### QG02 — Required GitHub gate pro `main` i `dev` (P0)
 
 done: false
+implementation_status: workflow is implemented and locally contract-checked; GitHub ruleset and blocked-PR proof remain pending
 
 Přidat jeden quality workflow se čtyřmi stabilními job names:
 
@@ -333,7 +337,8 @@ Přidat jeden quality workflow se čtyřmi stabilními job names:
 
 ### QG03 — Povýšit existující desktop recovery důkaz (P1)
 
-done: false
+done: true
+implementation_status: local acceptance passed twice; GitHub workflow execution remains unobserved
 
 Nevytvářet nový scénář ani nový kill mechanismus. Použít existující:
 
@@ -372,6 +377,7 @@ user-visible send/recovery flow.
 ### QG04 — Akční frontend crash diagnostika (P1)
 
 done: false
+implementation_status: boundary, release map pipeline, and staging canary are locally verified; DOM fallback, authorized upload/alert, and installer proof remain pending
 
 Rozšířit existující GlitchTip browser SDK a release env verifikaci. Nepřidávat
 nový backend ani nový obecný logger.
@@ -436,6 +442,39 @@ monitoring pipeline, SDK, build pořadí nebo alert pravidla.
 - alert reálně dorazí ownerovi;
 - monitoring payload projde redaction kontrolou;
 - release-required build bez map uploadu nepublikuje.
+
+## Implementation checkpoint — 2026-07-16
+
+The plan is now partially implemented in the current integrated worktree, not merely
+ready for implementation. The local evidence is deliberately narrower than the final
+done criteria:
+
+- `pnpm check` exits 0 after lint, workspace typechecks, explicit unit/contract
+  suites, Rust checks, and hard architecture audits;
+- the focused QG03 desktop recovery scenario passed twice in real debug+E2E runs,
+  each with a fresh profile and no launcher-owned process left behind;
+- the quality workflow has the stable aggregate contract locally checked, and its
+  desktop lane calls the same root recovery command;
+- source-map/release tests, strict release review, renderer boundary tests, and
+  focused launcher/runner tests pass; the normal build output contains neither maps
+  nor public `sourceMappingURL` comments.
+- the manual staging workflow has an opt-in compile-time renderer canary; a normal
+  build asserts the marker is absent, while a canary build requires it and uses the
+  staging-only monitoring/source-map contract.
+
+One deterministic test issue was corrected while validating the gate: its 150 ms
+HTTP race was sensitive to Node test-worker scheduling and left a request alive after
+timeout. It now has a bounded cancellable deadline while still proving timeout,
+cancellation, no mutation, and no audit side effect.
+
+The following are intentionally still incomplete and must not be reported as done:
+
+1. all clean-checkout acceptance evidence, including the required two full baseline
+   runs, because this worktree was already dirty;
+2. the remaining Solid reactivity baseline required before enabling that rule;
+3. actual GitHub branch ruleset enforcement and a real blocked-PR proof;
+4. a rendered DOM fallback test, authorized GlitchTip upload and alert drill, and
+   final published-installer inspection.
 
 ## Odložený native symbol follow-up
 

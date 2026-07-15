@@ -871,7 +871,7 @@ export default function MessageList(props: MessageListProps) {
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            handleCopy(partToText(commentProps.item.part), commentCopyId());
+            void handleCopy(partToText(commentProps.item.part), commentCopyId());
           }}
         >
           <Show when={copyingId() === commentCopyId()} fallback={<Copy size={12} />}>
@@ -1449,7 +1449,7 @@ export default function MessageList(props: MessageListProps) {
                                                     onClick={(event) => {
                                                       event.preventDefault();
                                                       event.stopPropagation();
-                                                      handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
+                                                      void handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
                                                     }}
                                                   >
                                                     <Show when={copyingId() === detailCopyId} fallback={<Copy size={12} />}>
@@ -1700,7 +1700,7 @@ export default function MessageList(props: MessageListProps) {
               onClick={() => {
                 const current = messageBlock();
                 const text = current.renderableParts.map((part) => partToText(part)).join("\n");
-                handleCopy(text, current.messageId);
+                void handleCopy(text, current.messageId);
               }}
             >
               <Show when={copyingId() === messageBlock().messageId} fallback={<Copy size={12} />}>

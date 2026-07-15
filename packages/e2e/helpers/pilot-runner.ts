@@ -331,6 +331,7 @@ export function scenarioSelectionDisablesDevAutostart(scenarios: string[]): bool
   return scenarios.some((scenario) => {
     const normalized = scenario.replaceAll('\\', '/');
     return normalized.endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
+      normalized.endsWith('/pilot-scenarios/vslo-235-local-host-child-exit.toml') ||
       normalized.endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml') ||
       normalized.endsWith('/pilot-scenarios/global-managed-ai-model-policy.toml') ||
       normalized.endsWith('/pilot-scenarios/packaged-smoke.toml') ||

@@ -566,6 +566,10 @@ pub fn spawn_orchestrator_daemon(
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::items_after_test_module,
+    reason = "The module keeps public runtime status functions below focused unit tests for historical source locality."
+)]
 mod tests {
     use super::{
         build_orchestrator_env_overrides, request_orchestrator_shutdown,
@@ -709,7 +713,7 @@ mod tests {
         )
         .expect("write manifest");
 
-        let version = resolve_manifest_opencode_version(&[dir.clone()]);
+        let version = resolve_manifest_opencode_version(std::slice::from_ref(&dir));
         assert_eq!(version.as_deref(), Some("1.17.13"));
 
         let _ = fs::remove_dir_all(dir);
@@ -747,7 +751,7 @@ mod tests {
         )
         .expect("write real manifest");
 
-        let resolved = resolve_opencode_managed_deps_manifest(&[dir.clone()])
+        let resolved = resolve_opencode_managed_deps_manifest(std::slice::from_ref(&dir))
             .expect("resolve managed deps manifest");
         assert_eq!(resolved, target_manifest);
 

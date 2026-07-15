@@ -34,27 +34,14 @@ function createOrderedProxyApp(input: {
             enabled: true,
             provider: "openai",
             credentialId: null,
+            defaultModel: "gpt-5.4",
+            allowedModels: ["gpt-5.4"],
             assignmentOrigin: "admin_assigned",
             createdAt: new Date(),
             updatedAt: new Date(),
           }
         },
         async upsertUserAiAccess() {
-          throw new Error("unused")
-        },
-      },
-      modelPolicy: {
-        async getPolicy() {
-          input.events.push("model")
-          return {
-            id: "platform" as const,
-            enabledModels: [{ provider: "openai" as const, model: "gpt-5.4" }],
-            activeModel: { provider: "openai" as const, model: "gpt-5.4" },
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          }
-        },
-        async replacePolicy() {
           throw new Error("unused")
         },
       },
@@ -122,7 +109,7 @@ async function request(app: ReturnType<typeof createApp>) {
   }
 }
 
-test("Gateway resolves session and entitlement before user access, global model, and credential", async () => {
+test("Gateway resolves session and entitlement before user access, lease, and credential", async () => {
   const events: string[] = []
   const response = await request(createOrderedProxyApp({
     events,
@@ -132,7 +119,7 @@ test("Gateway resolves session and entitlement before user access, global model,
   }))
 
   assert.equal(response.status, 200)
-  assert.deepEqual(events, ["session", "entitlement", "access", "model", "lease", "credential", "transport"])
+  assert.deepEqual(events, ["session", "entitlement", "access", "lease", "credential", "transport"])
 })
 
 test("denied entitlement returns stable 402 before user access or model resolution", async () => {

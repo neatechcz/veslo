@@ -109,6 +109,9 @@ test("release review verifies GlitchTip release monitoring wiring", () => {
     "Prerelease desktop builds embed GlitchTip DSN for frontend and native monitoring",
     "Manual Windows MSI workflows embed GlitchTip DSN for frontend and native monitoring",
     "Release docs describe GlitchTip DSN as public and release-owned",
+    "Publish workflows fail closed for GlitchTip source-map upload",
+    "Tauri bundles the injected hidden-source-map frontend build",
+    "Staging renderer canary is opt-in and absent from regular desktop builds",
   ]) {
     assert.ok(labels.has(label), `expected release review to report: ${label}`);
     assert.equal(
@@ -142,6 +145,9 @@ test("release review verifies GlitchTip release monitoring wiring", () => {
     reviewSource,
     /hasGlitchTipReleaseEnv\(prereleaseTauriJob,\s*\{\s*requireStrict:\s*true\s*\}\)/,
   );
+  assert.match(reviewSource, /hasGlitchTipSourceMapUpload\(releaseMacosTauriJob\)/);
+  assert.match(reviewSource, /hasGlitchTipSourceMapUpload\(releaseWindowsTauriJob\)/);
+  assert.match(reviewSource, /hasGlitchTipSourceMapUpload\(prereleaseTauriJob\)/);
 });
 
 test("release review verifies document runtime metadata preflight and desktop bundle gates", () => {

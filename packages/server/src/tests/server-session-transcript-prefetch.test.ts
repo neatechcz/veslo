@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
+import { normalizeConversationDirectoryKey } from "../conversation-binding-store.js";
 import { startServer } from "../server.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
@@ -553,7 +554,7 @@ describe("session transcript prefetch routes", () => {
     expect(warmPrefetchPayload.queuedSessionIds).toEqual([]);
     expect(warmPrefetchPayload.items.length).toBe(1);
     expect(warmPrefetchPayload.items[0]?.sessionId).toBe("sess-a");
-    expect(warmPrefetchPayload.items[0]?.directory).toBe(workspaceRoot);
+    expect(warmPrefetchPayload.items[0]?.directory).toBe(normalizeConversationDirectoryKey(workspaceRoot));
     expect(warmPrefetchPayload.items[0]?.conversationId).toBe(sessionA?.conversationId);
     expect(warmPrefetchPayload.items[0]?.opencodeSessionId).toBe("sess-a");
     expect(warmPrefetchPayload.items[0]?.limit).toBe(12);

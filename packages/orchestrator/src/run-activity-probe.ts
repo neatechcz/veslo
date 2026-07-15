@@ -294,6 +294,9 @@ export function createRunActivityProbe<Engine>(deps: {
       if (status.ok) {
         const activity = deriveRunActivityFromSessionStatus(status.payload, record.engineSessionId);
         if (activity && !("unreachable" in activity)) {
+          if (!activity.active) {
+            return activity;
+          }
           const messages = await fetchJson(
             engine,
             record,
@@ -303,9 +306,6 @@ export function createRunActivityProbe<Engine>(deps: {
           if (!messages.ok) return { unreachable: true };
           const messageActivity = deriveRunActivityFromSessionMessages(messages.payload);
           if ("unreachable" in messageActivity) return messageActivity;
-          if (!activity.active) {
-            return activity;
-          }
           // OpenCode can leave /session/status at busy briefly after it has written a
           // terminal assistant message. For one server-owned run, explicit transcript
           // completion is stronger evidence than that stale status; otherwise the UI

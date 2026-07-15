@@ -318,7 +318,7 @@ fn collect_user_skill_dirs_by_name(name: &str, user_skill_roots: &[PathBuf]) -> 
             dirs.push(direct);
         }
 
-        let Ok(entries) = fs::read_dir(&root) else {
+        let Ok(entries) = fs::read_dir(root) else {
             continue;
         };
         for entry in entries.flatten() {
@@ -486,7 +486,7 @@ fn remove_private_workspace_user_skill_copies_with_roots(
             continue;
         };
 
-        for user_skill_dir in collect_user_skill_dirs_by_name(name, &user_skill_roots) {
+        for user_skill_dir in collect_user_skill_dirs_by_name(name, user_skill_roots) {
             if skill_dirs_have_identical_files(&workspace_skill_dir, &user_skill_dir)? {
                 fs::remove_dir_all(&workspace_skill_dir).map_err(|e| {
                     format!(
@@ -595,7 +595,7 @@ pub fn ensure_workspace_files(
     seed_veslo_agent(&agents_dir)?;
     seed_plan_agent(&agents_dir)?;
     let central_packs_dir = app_data_dir
-        .map(|dir| crate::workspace::internal_provision::provision_central_packs(dir))
+        .map(crate::workspace::internal_provision::provision_central_packs)
         .transpose()?;
     let provision = provision_internal_workspace_assets(&root, central_packs_dir.as_deref())?;
     let provision_status = match provision.status {

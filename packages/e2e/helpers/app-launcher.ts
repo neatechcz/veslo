@@ -433,9 +433,16 @@ export function buildWindowsManagedChildCleanupScript(
     "$targets = @($descendants | Where-Object { $names -contains $_.Name });",
     "$targetIds = @($targets | ForEach-Object { [int]$_.ProcessId });",
     "foreach ($target in $targets) { Stop-Process -Id $target.ProcessId -Force -ErrorAction SilentlyContinue; }",
-    "if ($targetIds.Count -gt 0) { Start-Sleep -Milliseconds 100; }",
-    "$remaining = @($targetIds | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }).Count;",
-    "[pscustomobject]@{ stopped = $targetIds.Count; remaining = $remaining } | ConvertTo-Json -Compress;",
+    "$remaining = @();",
+    "if ($targetIds.Count -gt 0) {",
+    "  $deadline = [DateTime]::UtcNow.AddSeconds(2);",
+    "  do {",
+    "    $remaining = @($targetIds | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue });",
+    "    if ($remaining.Count -eq 0) { break; }",
+    "    Start-Sleep -Milliseconds 100;",
+    "  } while ([DateTime]::UtcNow -lt $deadline);",
+    "}",
+    "[pscustomobject]@{ stopped = $targetIds.Count; remaining = $remaining.Count } | ConvertTo-Json -Compress;",
   ].join(" ");
 }
 

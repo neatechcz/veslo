@@ -573,7 +573,7 @@ pub fn engine_info(
         .and_then(|active| status.workspaces.iter().find(|ws| &ws.id == active))
         .map(|ws| ws.path.clone())
         .or_else(|| state_project_dir.clone())
-        .or_else(|| auth_project_dir);
+        .or(auth_project_dir);
 
     let effective_base_url = if running { base_url.clone() } else { None };
     let effective_port = if running {
@@ -620,6 +620,10 @@ pub fn engine_info(
 }
 
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The desktop IPC command keeps its established frontend argument contract."
+)]
 pub async fn runtime_prepare_workspace(
     app: AppHandle,
     project_dir: String,
@@ -654,6 +658,10 @@ pub async fn runtime_prepare_workspace(
     .map_err(|error| format!("runtime_prepare_workspace join error: {error}"))?
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "This blocking helper intentionally mirrors the stable IPC command inputs."
+)]
 fn runtime_prepare_workspace_blocking(
     app: AppHandle,
     project_dir: String,
@@ -883,12 +891,12 @@ pub fn engine_doctor(
 pub fn engine_install() -> Result<ExecResult, String> {
     #[cfg(windows)]
     {
-        return Ok(ExecResult {
-      ok: false,
-      status: -1,
-      stdout: String::new(),
-      stderr: "Guided install is not supported on Windows yet. Install OpenCode via Scoop/Chocolatey or https://opencode.ai/install, then restart Veslo.".to_string(),
-    });
+        Ok(ExecResult {
+            ok: false,
+            status: -1,
+            stdout: String::new(),
+            stderr: "Guided install is not supported on Windows yet. Install OpenCode via Scoop/Chocolatey or https://opencode.ai/install, then restart Veslo.".to_string(),
+        })
     }
 
     #[cfg(not(windows))]
@@ -916,6 +924,10 @@ pub fn engine_install() -> Result<ExecResult, String> {
 }
 
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The desktop IPC command keeps its established frontend argument contract."
+)]
 pub fn engine_start(
     app: AppHandle,
     manager: State<EngineManager>,
@@ -951,6 +963,10 @@ pub fn engine_start(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "This reservation helper intentionally mirrors the stable IPC command inputs."
+)]
 fn engine_start_reserved(
     app: AppHandle,
     manager: State<EngineManager>,

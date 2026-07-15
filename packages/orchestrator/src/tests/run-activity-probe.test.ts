@@ -255,7 +255,7 @@ describe("run activity probe HTTP behavior", () => {
     await expect(probe(record)).resolves.toEqual({ active: false });
   });
 
-  test("idle session status checks transcript before returning completion", async () => {
+  test("idle session status returns completion without fetching the transcript", async () => {
     const urls: string[] = [];
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),
@@ -268,15 +268,12 @@ describe("run activity probe HTTP behavior", () => {
         if (String(input).endsWith("/session/status")) {
           return Response.json({ "sess-a": { type: "idle" } });
         }
-        return Response.json([user(), assistant({ completed: 2_000 })]);
+        throw new Error("idle status must not fetch the transcript");
       }) as typeof fetch,
     });
 
     await expect(probe(record)).resolves.toMatchObject({ active: false, activityKind: "idle" });
-    expect(urls).toEqual([
-      "http://engine/session/status",
-      "http://engine/session/sess-a/message",
-    ]);
+    expect(urls).toEqual(["http://engine/session/status"]);
   });
 
   test("busy session yields to an explicitly completed assistant transcript", async () => {

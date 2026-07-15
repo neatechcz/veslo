@@ -17,6 +17,7 @@ The skill must resolve beta vs production, generate public-safe release notes fr
 - Every distributed macOS release must be notarized and stapled before upload. Do not ship signed-only macOS builds.
 - If you are building sidecar assets, set `SOURCE_DATE_EPOCH` to the tag timestamp for deterministic manifests.
 - Confirm the public, release-owned GitHub Actions variable `VESLO_GLITCHTIP_DSN` is configured before desktop release builds. It is intentionally public in the packaged app, but it is not user-configurable and must not be exposed as an application setting. Release and prerelease publish jobs set `VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV=1` so missing monitoring values fail closed; manual validation builds may warn instead.
+- Before publishing, configure the release-only GlitchTip source-map values `VESLO_GLITCHTIP_URL`, `VESLO_GLITCHTIP_ORG`, and `VESLO_GLITCHTIP_PROJECT` as GitHub Actions variables plus `VESLO_GLITCHTIP_AUTH_TOKEN` as a secret. Publish jobs reject missing upload credentials, build the frontend once, inject debug IDs, upload that build's maps under `veslo@<version>`, remove every `.map`, and only then let Tauri package the frontend. The token must never be exposed to the packaged application, release evidence, or a user setting.
 
 ## App release (desktop)
 
@@ -47,6 +48,7 @@ Use this path for manual staging desktop builds that should be downloadable by t
 
 1. Dispatch the manual staging build workflow from the source branch or commit:
    - `gh workflow run build-staging-app.yml --repo neatechcz/veslo --ref <branch> -f ref=<branch>`
+   - Add `-f monitoring_canary=true` only for an authorized renderer-monitoring drill. That artifact intentionally opens the recovery screen on launch, requires source-map upload credentials, and is not a normal tester build.
 2. The workflow creates or updates a private prerelease in `neatechcz/veslo` named `staging-YYYY-MM-DD-<short-sha>`.
 3. The workflow uploads installable staging assets to that prerelease and also keeps GitHub Actions artifacts as a fallback.
 4. macOS staging builds are signed with the Apple Developer ID Application certificate, notarized, stapled, and verified before upload. `codesign --verify --deep --strict --verbose=2` verifies the `.app` bundle, `codesign --verify --verbose=2` verifies the `.dmg`, and `xcrun stapler validate` verifies the notarization ticket. The expected certificate identity is `Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)`. If Apple notarization credentials are unavailable, the macOS release is blocked rather than shipped signed-only.

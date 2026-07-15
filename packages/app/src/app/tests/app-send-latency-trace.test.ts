@@ -504,7 +504,7 @@ test("pending permission interval skips active sends and single-client mode cove
   );
   assert.match(
     composerSource,
-    /setActiveSendTraceId\(options\.sendTraceId \?\? null\);[\s\S]*sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*finally \{[\s\S]*setActiveSendTraceId\(null\);/,
+    /setActiveSendTraceId\(options\.sendTraceId \?\? null\);\s*sendPromise = props\.onSend\(submittedDraft, sendOptions\);[\s\S]*?sendResult = await sendPromise;[\s\S]*?finally \{\s*finishSending\(\);\s*setActiveSendTraceId\(null\);/,
     "composer should keep the active send trace id set while onSend is pending",
   );
   assert.match(

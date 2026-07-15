@@ -2,9 +2,13 @@
   "name": "@neatech/ai-gateway",
   "private": true,
   "type": "module",
+  "exports": {
+    "./test-support": "./src/test-support.ts"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",
     "test:node22-smoke": "node test/node22-openai-compatible-smoke.mjs",
