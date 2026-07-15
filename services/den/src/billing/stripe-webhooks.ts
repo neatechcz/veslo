@@ -321,10 +321,28 @@ async function planInvoicePaymentSucceeded(
     }
   }
 
-  const subscription = readObject(invoice.subscription)
+  const subscription = readInvoiceSubscriptionObject(invoice)
   const mappedSubscriptionStatus = subscription ? mapStripeSubscriptionStatus(readString(subscription.status)) : null
   const status = mappedSubscriptionStatus ?? "active"
   const stripeSubscriptionId = readStripeId(invoice.subscription) ?? readInvoiceParentSubscriptionId(invoice)
+  const isExistingManualTrial =
+    resolved.account?.mode === "manual_access" &&
+    resolved.account.source === "manual_trial" &&
+    resolved.account.manualAccessEnabled
+  if (isExistingManualTrial && !isActiveStripeSubscriptionStatus(status)) {
+    return {
+      orgId: resolved.orgId,
+      status: "applied",
+      apply: () =>
+        input.repository.upsertBillingAccount({
+          orgId: resolved.orgId,
+          stripeCustomerId: readStripeId(invoice.customer) ?? resolved.account?.stripeCustomerId ?? null,
+          stripeSubscriptionId: stripeSubscriptionId ?? resolved.account?.stripeSubscriptionId ?? null,
+          paymentProblemCode: null,
+          paymentProblemMessage: null,
+        }).then(() => undefined),
+    }
+  }
   return {
     orgId: resolved.orgId,
     status: "applied",

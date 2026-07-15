@@ -665,6 +665,43 @@ test("invoice.payment_succeeded replaces an unlimited manual trial with paid Str
   assert.equal(harness.accounts[0]?.manualAccessExpiresAt, null)
 })
 
+test("invoice.payment_succeeded preserves an unlimited trial when the expanded parent subscription is not active", async () => {
+  const event = invoicePaymentSucceededEvent("evt_invoice_succeeded_parent_past_due")
+  event.data.object.parent.subscription_details.subscription = {
+    id: "sub_123",
+    customer: "cus_123",
+    status: "past_due",
+  }
+  const harness = createMemoryBillingHarness({
+    accounts: [
+      createBillingAccount({
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "trialing",
+        stripeSubscriptionId: null,
+        manualAccessEnabled: true,
+        manualAccessUnlimited: true,
+        manualAccessExpiresAt: null,
+        paymentProblemCode: "invoice_payment_failed",
+        paymentProblemMessage: "Previous invoice failed",
+      }),
+    ],
+  })
+
+  const result = await createProcessor(harness).processEvent(event)
+
+  assert.equal(result.ok, true)
+  assert.equal(harness.accounts[0]?.mode, "manual_access")
+  assert.equal(harness.accounts[0]?.source, "manual_trial")
+  assert.equal(harness.accounts[0]?.status, "trialing")
+  assert.equal(harness.accounts[0]?.stripeSubscriptionId, "sub_123")
+  assert.equal(harness.accounts[0]?.manualAccessEnabled, true)
+  assert.equal(harness.accounts[0]?.manualAccessUnlimited, true)
+  assert.equal(harness.accounts[0]?.manualAccessExpiresAt, null)
+  assert.equal(harness.accounts[0]?.paymentProblemCode, null)
+  assert.equal(harness.accounts[0]?.paymentProblemMessage, null)
+})
+
 test("invoice.payment_succeeded before checkout is ignored instead of failing when the org is not resolvable yet", async () => {
   const harness = createMemoryBillingHarness()
   const processor = createProcessor(harness)
