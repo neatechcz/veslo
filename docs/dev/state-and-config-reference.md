@@ -331,6 +331,10 @@ Legacy DEN managed-AI persistence uses `MANAGED_AI_DATABASE_URL`. Standalone AI 
 
 ### Organization Billing Config
 
+Organization billing accounts store unlimited platform-trial state explicitly as manual access with source `manual_trial`, status `trialing`, enabled and unlimited flags set, a null expiry, and zero synthetic license quantities. The billing migration applies that state to every existing organization without a configured Stripe subscription. New personal organizations receive the same state transactionally at creation. A Stripe subscription remains authoritative and clears the platform-trial fields when it becomes active or trialing.
+
+The unlimited trial removes Veslo-defined expiration, seat, and token caps only. Usage accounting remains enabled, and the normal organization, user-assignment, model-policy, credential, provider-capacity, rate-limit, and weekly-limit checks remain in force.
+
 Den organization billing is disabled unless `STRIPE_ORG_BILLING_ENABLED=true`. The Stripe integration uses the same environment variable names for sandbox and live mode; switching later means replacing test keys, webhook secret, and test `price_` ids with live values, not changing code.
 
 Required when enabled:

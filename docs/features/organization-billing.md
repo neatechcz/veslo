@@ -18,18 +18,24 @@ The standalone AI Gateway admin exposes these controls through organization-scop
 
 ## Platform Trials
 
-Platform trials are temporary platform-admin grants for organizations that need free Managed AI access before or outside Stripe billing. In Den Admin Billing, platform admins use the same Basic and Extended license quantity controls as checkout, choose a trial end date, and click `Create trial`.
+Every organization currently receives an unlimited platform trial for Managed AI. Existing organizations without a configured Stripe subscription are backfilled during the billing migration, and the canonical personal-organization creation path writes the trial in the same transaction as the organization and owner membership. Existing Stripe subscription accounts remain Stripe-owned.
+
+The default trial has no Veslo-defined expiration, seat cap, or token cap. Managed-AI usage is still recorded, and upstream Codex/provider account capacity, rate, and weekly limits continue to apply. This is an organization entitlement, not a gateway bypass: user assignment, active model policy, credential eligibility, and organization context are still enforced.
+
+In Admin Billing, the state is labeled `Unlimited trial` and its license capacity is displayed as `Unlimited`. Platform admins can enable or revoke it explicitly.
 
 Trial rules:
 
 - platform trials are stored as manual access with source `manual_trial`
+- unlimited trials store an explicit unlimited flag, a null expiry, and zero synthetic seat quantities
 - only platform admins can create or revoke them
-- a trial requires a future end date and a Basic/Extended seat count
+- the current default trial requires neither an end date nor a Basic/Extended seat count
+- the API retains finite-trial support for historical or future policy changes; finite trials require a future end date and enough seats
 - a trial cannot be granted while the organization already has a Stripe subscription configured
 - an organization can still start Stripe Checkout while the trial is active
-- once Stripe reports an active or trialing subscription, Stripe-owned billing clears the platform trial immediately
+- once Stripe reports an active or trialing subscription, Stripe-owned billing clears the enabled, unlimited, and expiry fields immediately
 - revoking a trial disables access immediately and behaves like unpaid access with no grace period
-- after a trial expires, entitlement derivation treats the organization as unpaid unless another active billing source exists
+- after a finite trial expires, entitlement derivation treats the organization as unpaid unless another active billing source exists
 
 ## Stripe Sandbox and Live Switch
 
@@ -67,7 +73,7 @@ It is mounted before the global JSON parser so Stripe signature verification use
 
 Den records Stripe event ids for idempotency. Duplicate applied or ignored events do not apply mutations twice. Failed application attempts stay retryable for Stripe redelivery.
 
-Stripe webhook application also owns the handoff from platform trial to paid subscription. Checkout completion clears active trial fields, and subscription or invoice events clear them only when the event carries active or trialing subscription evidence. Non-active Stripe events preserve an active platform trial until Stripe becomes active or the trial is revoked or expires.
+Stripe webhook application also owns the handoff from platform trial to paid subscription. Checkout completion clears active trial fields, and subscription or invoice events clear them only when the event carries active or trialing subscription evidence. Non-active Stripe events preserve an active platform trial until Stripe becomes active or the trial is revoked; finite trials can also expire.
 
 ## Entitlements
 
@@ -79,4 +85,4 @@ An organization that is resolved successfully but cannot use Managed AI receives
 
 Organization context exists only inside an explicit organization workspace in admin. Platform pages never retain an organization id, and the runtime organization id is bound to authenticated in-memory authorization rather than accepted from a later provider request.
 
-The active license limit is the sum of Basic and Extended quantities. License validation uses active organization memberships and excludes removed/disabled memberships and globally disabled users.
+For paid and finite-trial access, the active license limit is the sum of Basic and Extended quantities. License validation uses active organization memberships and excludes removed/disabled memberships and globally disabled users. Unlimited trials expose `isUnlimited=true` and a null license limit instead of a synthetic high number.
