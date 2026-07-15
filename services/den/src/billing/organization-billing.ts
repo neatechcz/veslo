@@ -27,6 +27,7 @@ export interface OrganizationBillingQuantities {
 export interface OrganizationManualAccess {
   enabled: boolean
   allowManagedAi: boolean
+  unlimited?: boolean
   licenseLimit: number
 }
 
@@ -53,7 +54,8 @@ export interface OrganizationBillingEntitlement {
   canUseManagedAi: boolean
   canUseByokOrLocalProvider: boolean
   canReadHistory: boolean
-  licenseLimit: number
+  licenseLimit: number | null
+  isUnlimited: boolean
   activeUserCount: number
   isInGracePeriod: boolean
   warning: OrganizationBillingWarning | null
@@ -83,8 +85,9 @@ export function deriveOrganizationBillingEntitlement(
   const activeUserCount = normalizeCount(input.activeUserCount)
   const manualAccess = input.manualAccess?.enabled === true ? input.manualAccess : null
   const effectiveMode: OrganizationBillingMode = manualAccess ? "manual_access" : nonManualBillingMode(input.mode)
+  const isUnlimited = effectiveMode === "manual_access" && manualAccess?.unlimited === true
   const licenseLimit = deriveLicenseLimit(input, effectiveMode, manualAccess)
-  const hasEnoughLicenses = licenseLimit >= activeUserCount
+  const hasEnoughLicenses = isUnlimited || (licenseLimit !== null && licenseLimit >= activeUserCount)
   const organizationAccessEnabled = input.policy.organizationAccessEnabled ?? true
   const tierAllowed = input.policy.tierAllowed ?? true
   const isInGracePeriod = input.status === "past_due" && input.grace
@@ -117,6 +120,7 @@ export function deriveOrganizationBillingEntitlement(
     canUseByokOrLocalProvider: byokOrLocalProviderBlockingReason === null,
     canReadHistory: organizationAccessEnabled,
     licenseLimit,
+    isUnlimited,
     activeUserCount,
     isInGracePeriod,
     warning: isInGracePeriod ? "payment_past_due" : null,
@@ -151,7 +155,7 @@ function deriveLicenseLimit(
   manualAccess: OrganizationManualAccess | null,
 ) {
   if (effectiveMode === "manual_access" && manualAccess) {
-    return normalizeCount(manualAccess.licenseLimit)
+    return manualAccess.unlimited === true ? null : normalizeCount(manualAccess.licenseLimit)
   }
 
   if (effectiveMode === "managed_ai") {

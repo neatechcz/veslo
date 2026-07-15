@@ -100,6 +100,37 @@ test("manual access overrides absent Stripe billing", () => {
   assert.equal(entitlement.licenseLimit, 4)
   assert.equal(entitlement.managedAiBlockingReason, null)
   assert.equal(entitlement.byokOrLocalProviderBlockingReason, null)
+  assert.equal(entitlement.isUnlimited, false)
+})
+
+test("unlimited manual trial ignores seat counts without inventing a license limit", () => {
+  const entitlement = deriveOrganizationBillingEntitlement({
+    mode: "manual_access",
+    status: "trialing",
+    grace: false,
+    manualAccess: {
+      enabled: true,
+      allowManagedAi: true,
+      unlimited: true,
+      licenseLimit: 0,
+    },
+    quantities: { managedAiBasic: 0, managedAiExtended: 0, localModels: 0 },
+    activeUserCount: 10_000,
+    policy: {
+      allowByokWithoutPaidAccess: false,
+      organizationAccessEnabled: true,
+      tierAllowed: true,
+    },
+  })
+
+  assert.equal(entitlement.effectiveMode, "manual_access")
+  assert.equal(entitlement.canUseManagedAi, true)
+  assert.equal(entitlement.canUseByokOrLocalProvider, true)
+  assert.equal(entitlement.isUnlimited, true)
+  assert.equal(entitlement.licenseLimit, null)
+  assert.equal(entitlement.activeUserCount, 10_000)
+  assert.equal(entitlement.managedAiBlockingReason, null)
+  assert.equal(entitlement.byokOrLocalProviderBlockingReason, null)
 })
 
 test("manual-access mode without an enabled manual grant behaves like no billing access", () => {
