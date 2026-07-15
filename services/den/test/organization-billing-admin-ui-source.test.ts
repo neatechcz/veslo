@@ -14,13 +14,16 @@ test("admin billing UI calls real billing API endpoints instead of static placeh
   assert.match(app, /window\.location\.assign\(checkout\.url\)/)
   assert.match(app, /window\.location\.assign\(portal\.url\)/)
   assert.match(app, /Trial access is active/)
+  assert.match(app, /Unlimited trial/)
+  assert.match(app, /manualAccess: \{ enabled: true, unlimited: true, expiresAt: null \}/)
+  assert.match(app, /manualAccess: \{ enabled: false, unlimited: false, expiresAt: null \}/)
   assert.match(app, /Trial creation is disabled because this organization already has a Stripe subscription/)
+  assert.doesNotMatch(app, /Choose a trial end date/)
   assert.doesNotMatch(app, /No Stripe event";/)
 
   for (const id of [
     "billing-basic-quantity",
     "billing-extended-quantity",
-    "billing-trial-end-date",
     "billing-update-button",
     "billing-portal-button",
     "billing-create-trial-button",
@@ -30,4 +33,5 @@ test("admin billing UI calls real billing API endpoints instead of static placeh
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `missing ${id}`)
   }
+  assert.doesNotMatch(html, /id="billing-trial-end-date"/)
 })

@@ -207,12 +207,9 @@
                 <button class="operation-card" type="button"><strong>Stop renewal</strong><span>Cancel at period end. Paid access remains active until the current period closes.</span></button>
                 <button class="operation-card danger" type="button"><strong>Revoke access now</strong><span>Immediately cancel or release the Stripe subscription and block Managed AI entitlement.</span></button>
               </div>
-              <div class="billing-local-grid">
-                <label><span>Trial end date</span><input class="input" id="billing-trial-end-date" type="date" required /></label>
-              </div>
               <div class="billing-operation-grid">
-                <button class="operation-card" id="billing-create-trial-button" type="button"><strong>Create trial</strong><span>Grant manual trial access using the Basic and Extended license quantities above.</span></button>
-                <button class="operation-card danger" id="billing-revoke-trial-button" type="button"><strong>Revoke trial</strong><span>Disable manual trial access immediately.</span></button>
+                <button class="operation-card" id="billing-create-trial-button" type="button"><strong>Enable unlimited trial</strong><span>Grant Managed AI access with no Veslo expiration, seat cap, or token cap.</span></button>
+                <button class="operation-card danger" id="billing-revoke-trial-button" type="button"><strong>Revoke trial</strong><span>Disable unlimited trial access immediately.</span></button>
               </div>
               <p class="editor-note" id="billing-trial-helper"></p>
             </div>
