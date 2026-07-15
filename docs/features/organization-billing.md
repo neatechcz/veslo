@@ -18,7 +18,7 @@ The standalone AI Gateway admin exposes these controls through organization-scop
 
 ## Platform Trials
 
-Every organization currently receives an unlimited platform trial for Managed AI. Existing organizations without a configured Stripe subscription are backfilled during the billing migration, and the canonical personal-organization creation path writes the trial in the same transaction as the organization and owner membership. Existing Stripe subscription accounts remain Stripe-owned.
+Every organization currently receives an unlimited platform trial for Managed AI. Existing organizations without a configured Stripe subscription are backfilled during the retry-safe billing migration, and Den startup inserts any still-missing billing rows without changing existing billing accounts. The canonical personal-organization creation path writes the trial in the same transaction as the organization and owner membership and repairs a missing row when it encounters an existing personal organization. Existing Stripe subscription accounts remain Stripe-owned.
 
 The default trial has no Veslo-defined expiration, seat cap, or token cap. Managed-AI usage is still recorded, and upstream Codex/provider account capacity, rate, and weekly limits continue to apply. This is an organization entitlement, not a gateway bypass: user assignment, active model policy, credential eligibility, and organization context are still enforced.
 
