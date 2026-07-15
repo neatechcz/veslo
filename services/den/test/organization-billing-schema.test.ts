@@ -3,11 +3,17 @@ import { existsSync, readFileSync } from "node:fs"
 import test from "node:test"
 
 const migrationUrl = new URL("../drizzle/0018_organization_stripe_billing.sql", import.meta.url)
+const unlimitedTrialMigrationUrl = new URL("../drizzle/0020_unlimited_organization_trial.sql", import.meta.url)
 const journalUrl = new URL("../drizzle/meta/_journal.json", import.meta.url)
 
 function readMigration() {
   assert.equal(existsSync(migrationUrl), true, "missing organization billing migration")
   return readFileSync(migrationUrl, "utf8")
+}
+
+function readUnlimitedTrialMigration() {
+  assert.equal(existsSync(unlimitedTrialMigrationUrl), true, "missing unlimited organization trial migration")
+  return readFileSync(unlimitedTrialMigrationUrl, "utf8")
 }
 
 function tableBlock(migration: string, tableName: string) {
@@ -110,4 +116,41 @@ test("organization billing migration is listed in the Drizzle journal", () => {
       breakpoints: true,
     },
   )
+})
+
+test("unlimited trial migration adds explicit state and backfills every non-Stripe organization", () => {
+  const migration = readUnlimitedTrialMigration()
+
+  assert.match(
+    migration,
+    /ADD `manual_access_unlimited` boolean NOT NULL DEFAULT false/,
+  )
+  assert.match(migration, /INSERT INTO `organization_billing_account`/)
+  assert.match(migration, /FROM `org`/)
+  assert.match(migration, /WHERE `organization_billing_account`\.`id` IS NULL/)
+  assert.match(migration, /UPDATE `organization_billing_account`/)
+  assert.match(migration, /`mode` = 'manual_access'/)
+  assert.match(migration, /`source` = 'manual_trial'/)
+  assert.match(migration, /`status` = 'trialing'/)
+  assert.match(migration, /`manual_access_enabled` = true/)
+  assert.match(migration, /`manual_access_unlimited` = true/)
+  assert.match(migration, /`manual_access_expires_at` = NULL/)
+  assert.match(migration, /WHERE `stripe_subscription_id` IS NULL/)
+})
+
+test("unlimited trial migration is listed after the latest Drizzle migration", () => {
+  const journal = JSON.parse(readFileSync(journalUrl, "utf8")) as {
+    entries?: Array<{ idx?: unknown; tag?: unknown; breakpoints?: unknown }>
+  }
+  const entry = journal.entries?.find((candidate) => candidate.tag === "0020_unlimited_organization_trial")
+
+  assert.deepEqual(entry && {
+    idx: entry.idx,
+    tag: entry.tag,
+    breakpoints: entry.breakpoints,
+  }, {
+    idx: 21,
+    tag: "0020_unlimited_organization_trial",
+    breakpoints: true,
+  })
 })
