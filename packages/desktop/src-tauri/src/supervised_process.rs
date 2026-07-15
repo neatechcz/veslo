@@ -12,6 +12,7 @@ use tauri_plugin_shell::ShellExt;
 pub type SupervisedProcessReceiver = Receiver<CommandEvent>;
 pub const ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV: &str =
     "VESLO_DESKTOP_ALLOW_EXTERNAL_RUNTIME_BINARIES";
+pub const PACKAGED_SMOKE_ENV: &str = "VESLO_PACKAGED_SMOKE";
 
 #[derive(Debug)]
 pub struct SupervisedCommand {
@@ -52,11 +53,29 @@ pub fn external_runtime_binaries_allowed_from_env(
     debug_assertions || parse_env_flag(value)
 }
 
+pub fn packaged_smoke_mode_from_env(value: Option<&str>) -> bool {
+    parse_env_flag(value)
+}
+
+pub fn external_runtime_binaries_allowed_for_mode(
+    value: Option<&str>,
+    packaged_smoke: Option<&str>,
+    debug_assertions: bool,
+) -> bool {
+    !packaged_smoke_mode_from_env(packaged_smoke)
+        && external_runtime_binaries_allowed_from_env(value, debug_assertions)
+}
+
+pub fn packaged_smoke_mode() -> bool {
+    packaged_smoke_mode_from_env(std::env::var(PACKAGED_SMOKE_ENV).ok().as_deref())
+}
+
 pub fn external_runtime_binaries_allowed() -> bool {
-    external_runtime_binaries_allowed_from_env(
+    external_runtime_binaries_allowed_for_mode(
         std::env::var(ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV)
             .ok()
             .as_deref(),
+        std::env::var(PACKAGED_SMOKE_ENV).ok().as_deref(),
         cfg!(debug_assertions),
     )
 }
@@ -198,6 +217,20 @@ mod tests {
         assert!(external_runtime_binaries_allowed_from_env(
             Some("true"),
             false
+        ));
+    }
+
+    #[test]
+    fn packaged_smoke_disables_path_fallback_even_for_debug_e2e_builds() {
+        assert!(!external_runtime_binaries_allowed_for_mode(
+            Some("1"),
+            Some("1"),
+            true
+        ));
+        assert!(!external_runtime_binaries_allowed_for_mode(
+            None,
+            Some("true"),
+            true
         ));
     }
 }

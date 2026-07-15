@@ -35,7 +35,7 @@
     },
     "windows": {
       "webviewInstallMode": {
-        "type": "skip"
+        "type": "embedBootstrapper"
       },
       "wix": {
         "upgradeCode": "d7c34db0-c7b1-5844-91a5-7beada0715b0",
@@ -44,13 +44,7 @@
           "cs-CZ": {
             "localePath": "windows/locales/cs-CZ.wxl"
           }
-        },
-        "fragmentPaths": [
-          "windows/wsl2-sandbox-installer.wxs"
-        ],
-        "componentGroupRefs": [
-          "VesloWslProvisioningInstallerComponents"
-        ]
+        }
       },
       "nsis": {
         "installMode": "currentUser",
@@ -60,8 +54,7 @@
         ],
         "customLanguageFiles": {
           "Czech": "windows/locales/Czech.nsh"
-        },
-        "installerHooks": "windows/nsis-hooks.nsh"
+        }
       }
     },
     "icon": [
@@ -83,11 +76,7 @@
     ],
     "resources": {
       "../package.json": "package.json",
-      "sidecars/chrome-devtools-mcp-package": "chrome-devtools-mcp-package",
-      "../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1": "windows-wsl2-sandbox-provision.ps1",
-      "windows/wsl2-prerequisite-installer.ps1": "wsl2-prerequisite-installer.ps1",
-      "windows/wsl2-client-installer.ps1": "wsl2-client-installer.ps1",
-      "windows/wsl2-sandbox-installer.ps1": "wsl2-sandbox-installer.ps1"
+      "sidecars/chrome-devtools-mcp-package": "chrome-devtools-mcp-package"
     }
   },
   "plugins": {

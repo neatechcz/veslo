@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { sha256WindowsAuthenticodeFile } from "./windows-authenticode-hash.mjs";
 
 const REQUIRED_EXECUTABLE_SIDECARS = [
   "veslo-code",
@@ -34,7 +37,9 @@ const candidateRoots = (bundlePath) =>
     : [bundlePath];
 
 const candidateManifestPaths = (bundlePath, targetTriple) => {
-  const suffixes = targetTriple ? ["", `-${targetTriple}`, `-${targetTriple}.exe`] : [""];
+  const suffixes = targetTriple
+    ? ["", `-${targetTriple}`, `-${targetTriple}.exe`, ".exe"]
+    : ["", ".exe"];
   const roots = candidateRoots(bundlePath);
 
   return roots.flatMap((root) => suffixes.map((suffix) => join(root, `versions.json${suffix}`)));
@@ -113,6 +118,10 @@ const readVersionsManifest = (manifestPath) => {
 };
 
 const sha256File = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
+const sha256ManifestSidecar = (path, targetTriple, key) =>
+  targetTriple?.includes("windows") && key !== "opencode-managed-deps"
+    ? sha256WindowsAuthenticodeFile(path)
+    : sha256File(path);
 
 const assertVersionsManifestEntries = (manifestPath, manifest) => {
   for (const key of REQUIRED_MANIFEST_ENTRIES) {
@@ -124,7 +133,12 @@ const assertVersionsManifestEntries = (manifestPath, manifest) => {
   }
 };
 
-const assertBundledManifestHashes = (manifestPath, manifest, sidecars) => {
+const assertBundledManifestHashes = (
+  manifestPath,
+  manifest,
+  sidecars,
+  targetTriple,
+) => {
   const sidecarPathsByName = new Map(sidecars.map((sidecar) => [sidecar.name, sidecar.path]));
 
   for (const key of REQUIRED_MANIFEST_ENTRIES) {
@@ -135,7 +149,7 @@ const assertBundledManifestHashes = (manifestPath, manifest, sidecars) => {
     }
 
     const expected = manifest[key].sha256.trim().toLowerCase();
-    const actual = sha256File(sidecarPath).toLowerCase();
+    const actual = sha256ManifestSidecar(sidecarPath, targetTriple, key).toLowerCase();
     if (actual !== expected) {
       throw new Error(
         `Bundled versions manifest ${manifestPath} sha256 mismatch for ${key}: ${actual} vs ${expected}`,
@@ -163,7 +177,7 @@ export const verifyBundledSidecars = (extractRoot, { targetTriple } = {}) => {
   });
 
   const sidecars = [...executables, ...dataFiles];
-  assertBundledManifestHashes(manifestPath, manifest, sidecars);
+  assertBundledManifestHashes(manifestPath, manifest, sidecars, targetTriple);
 
   return {
     appPath,
@@ -173,7 +187,10 @@ export const verifyBundledSidecars = (extractRoot, { targetTriple } = {}) => {
 };
 
 const maybeRunCli = () => {
-  if (process.argv[1] !== new URL(import.meta.url).pathname) {
+  if (
+    !process.argv[1] ||
+    resolve(process.argv[1]) !== fileURLToPath(import.meta.url)
+  ) {
     return;
   }
 

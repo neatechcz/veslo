@@ -1022,23 +1022,39 @@ jobs:
             throw "Windows bundle directory not found: $bundleDir"
           }
 
-          $msi = Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          $msiSig = Get-ChildItem -Path $bundleDir -Filter '*.msi.sig' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter '*.msi' -File)
+          $msiSigFiles = @(Get-ChildItem -Path $bundleDir -Filter '*.msi.sig' -File)
           $appExe = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\veslo.exe'
 
-          if (-not $msi) {
-            throw "No MSI bundle found in $bundleDir"
+          if ($msiFiles.Count -ne 1) {
+            throw "Expected exactly one MSI bundle in $bundleDir; found $($msiFiles.Count)"
           }
-          if (-not $msiSig) {
-            throw "No MSI updater signature found in $bundleDir"
+          if ($msiSigFiles.Count -ne 1) {
+            throw "Expected exactly one MSI updater signature in $bundleDir; found $($msiSigFiles.Count)"
           }
           if (-not (Test-Path $appExe)) {
             throw "Signed Windows app executable not found at $appExe"
           }
 
-          "VESLO_WINDOWS_MSI_PATH=$($msi.FullName)" >> $env:GITHUB_ENV
-          "VESLO_WINDOWS_MSI_SIG_PATH=$($msiSig.FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_MSI_PATH=$($msiFiles[0].FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_MSI_SIG_PATH=$($msiSigFiles[0].FullName)" >> $env:GITHUB_ENV
           "VESLO_WINDOWS_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
+
+      - name: Verify extracted MSI payload runtime
+        shell: pwsh
+        run: |
+          $summaryPath = Join-Path $env:RUNNER_TEMP 'veslo-windows-msi-runtime-summary.json'
+          ./scripts/release/verify-windows-msi-runtime.ps1 -MsiPath $env:VESLO_WINDOWS_MSI_PATH -SummaryPath $summaryPath
+
+      - name: Upload extracted Windows MSI payload verification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: veslo-windows-msi-runtime-verification
+          path: |
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json.msi-extract.log
+          if-no-files-found: warn
 
       - name: Verify Windows signatures
         shell: pwsh

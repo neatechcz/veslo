@@ -159,18 +159,34 @@ jobs:
             throw "Windows bundle directory not found: $bundleDir"
           }
 
-          $msi = Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter '*.msi' -File)
           $appExe = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\veslo.exe"
 
-          if (-not $msi) {
-            throw "No MSI bundle found in $bundleDir"
+          if ($msiFiles.Count -ne 1) {
+            throw "Expected exactly one MSI bundle in $bundleDir; found $($msiFiles.Count)"
           }
           if (-not (Test-Path $appExe)) {
             throw "Signed Windows app executable not found at $appExe"
           }
 
-          "VESLO_WINDOWS_MSI_PATH=$($msi.FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_MSI_PATH=$($msiFiles[0].FullName)" >> $env:GITHUB_ENV
           "VESLO_WINDOWS_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
+
+      - name: Verify extracted MSI payload runtime
+        shell: pwsh
+        run: |
+          $summaryPath = Join-Path $env:RUNNER_TEMP 'veslo-windows-msi-runtime-summary.json'
+          ./scripts/release/verify-windows-msi-runtime.ps1 -MsiPath $env:VESLO_WINDOWS_MSI_PATH -SummaryPath $summaryPath
+
+      - name: Upload extracted Windows MSI payload verification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: veslo-windows-msi-runtime-verification
+          path: |
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json.msi-extract.log
+          if-no-files-found: warn
 
       - name: Verify Windows signatures
         shell: pwsh

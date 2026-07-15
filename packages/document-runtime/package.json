@@ -4,11 +4,15 @@
   "private": true,
   "description": "Veslo document runtime package manifest and updater feed contract",
   "type": "module",
+  "types": "./src/index.d.mts",
   "bin": {
     "veslo-document-runtime": "src/cli.mjs"
   },
   "exports": {
-    ".": "./src/index.mjs"
+    ".": {
+      "types": "./src/index.d.mts",
+      "default": "./src/index.mjs"
+    }
   },
   "scripts": {
     "test": "node --test src/**/*.test.mjs",

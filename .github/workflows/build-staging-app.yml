@@ -343,6 +343,64 @@ jobs:
             --target $env:TARGET_TRIPLE `
             --bundles msi
 
+      - name: Verify bundled Windows staging sidecars
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: node scripts/release/verify-bundled-versions.mjs "packages/desktop/src-tauri/target/$env:TARGET_TRIPLE/release" "$env:TARGET_TRIPLE"
+
+      - name: Resolve Windows staging bundle paths
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: |
+          $bundleDir = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\bundle\msi"
+          if (-not (Test-Path $bundleDir)) {
+            throw "Windows staging bundle directory not found: $bundleDir"
+          }
+
+          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter '*.msi' -File)
+          $appExe = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\veslo.exe"
+          if ($msiFiles.Count -ne 1) {
+            throw "Expected exactly one Windows staging MSI in $bundleDir; found $($msiFiles.Count)"
+          }
+          if (-not (Test-Path $appExe)) {
+            throw "Signed Windows staging app executable not found at $appExe"
+          }
+
+          "VESLO_WINDOWS_STAGING_MSI_PATH=$($msiFiles[0].FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_STAGING_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
+
+      - name: Verify extracted Windows staging MSI payload runtime
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: |
+          $summaryPath = Join-Path $env:RUNNER_TEMP 'veslo-windows-staging-msi-runtime-summary.json'
+          ./scripts/release/verify-windows-msi-runtime.ps1 -MsiPath $env:VESLO_WINDOWS_STAGING_MSI_PATH -SummaryPath $summaryPath
+
+      - name: Upload extracted Windows staging MSI payload verification
+        if: always() && matrix.os_type == 'windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: veslo-windows-staging-msi-runtime-verification
+          path: |
+            ${{ runner.temp }}/veslo-windows-staging-msi-runtime-summary.json
+            ${{ runner.temp }}/veslo-windows-staging-msi-runtime-summary.json.msi-extract.log
+          if-no-files-found: warn
+
+      - name: Verify Windows staging signatures
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: |
+          foreach ($file in @($env:VESLO_WINDOWS_STAGING_APP_EXE_PATH, $env:VESLO_WINDOWS_STAGING_MSI_PATH)) {
+            $signature = Get-AuthenticodeSignature -FilePath $file
+            if ($signature.Status -ne 'Valid') {
+              $signature | Format-List * | Out-String | Write-Host
+              throw "Authenticode signature is not valid for $file"
+            }
+
+            Write-Host "Valid signature for $file"
+            Write-Host "Signer: $($signature.SignerCertificate.Subject)"
+          }
+
       - name: Resolve staging artifact path
         shell: bash
         run: |

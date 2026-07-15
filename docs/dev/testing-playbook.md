@@ -119,6 +119,73 @@ pnpm test
 
 The E2E launcher uses an isolated app profile under `packages/e2e/.tmp-veslo-home` by default so local desktop state does not leak into tests. Set `E2E_USE_EXISTING_PROFILE=1` only when a test explicitly needs the current user profile.
 
+### Windows production-shaped packaged smoke
+
+After the Desktop Test Runtime Preflight, run this Windows-only developer gate:
+
+```bash
+pnpm desktop:smoke-packaged
+```
+
+The command forces the UI and sidecar rebuild, then builds the real desktop
+binary with the normal Windows and release configuration plus the E2E-only
+Pilot overlay. The binary is debug-mode only because Pilot requires it; the
+explicit packaged-smoke mode disables dev-server adoption and all external
+runtime/PATH fallbacks and debug-only orchestrator autostart, and Vite ignores
+project environment files for this build.
+
+The test owns a fresh desktop profile, waits for the redacted durable
+`desktop-bootstrap-ready.json` marker, and uses a loopback-only
+OpenAI-compatible fixture for the first workspace and first server-owned send.
+It removes inherited `E2E_*`, `VESLO_*`, `VITE_*`, `OPENCODE_*`, provider, and
+credential inputs before the build, then rejects direct scenario execution with
+such overrides. The harness only terminates recognized Veslo sidecars descended
+from its launched app process and verifies their exit.
+
+This is not an MSI installer acceptance test. It is the fast production-shaped
+desktop regression gate; clean install, upgrade, and second-start evidence
+belongs to the installed-MSI VM gate.
+
+### Windows installed-MSI VM gate
+
+Run this only in an elevated, disposable Windows VM against one exact signed
+MSI. It is intentionally not a Tauri Pilot test and it does not rely on a
+repository dev server, host Node, npm, Bun, or a pre-existing Veslo profile.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/release/verify-windows-msi-installed.ps1 -Scenario clean -MsiPath <exact-signed-msi> -ReleaseTag <tag> -Commit <commit> -SummaryPath C:\VesloEvidence\clean.json
+```
+
+For the observation-only `updater` scenario, record an ISO-8601 UTC timestamp
+immediately before initiating the real in-app update and pass it as
+`-UpdaterLogNotBeforeUtc <timestamp>`. This rejects an old successful updater
+log from a previous transaction.
+
+The JSON output contains the tag/commit, MSI SHA-256, Windows build, WebView2
+and WSL state, installed `versions.json`, Program Files process evidence,
+authenticated runtime status, document-runtime status, and the redacted ready
+diagnostic. The command keeps the verbose `msiexec` log beside the requested
+summary. Before `/i`, it also rejects a candidate MSI whose extracted payload or
+`CustomAction` table mentions WSL/`VesloSandbox`; this candidate-only check does
+not retroactively reject the historical baseline in an upgrade test. It is a
+failure for `msiexec` to return zero without the ready signal.
+
+Run each scenario from a suitable VM snapshot:
+
+| Scenario | Required additional input | What it proves |
+| --- | --- | --- |
+| `clean` | fresh Windows user and no host Node/npm/Bun | first install and first owned startup |
+| `clean-no-wsl` | clean image with WSL optional feature disabled | default local runtime does not depend on WSL |
+| `upgrade` | `-BaselineMsiPath <26.6.26-msi>` | new Program Files payload replaces the old version |
+| `normal-second-start` | none | a normal close leaves a second startup healthy |
+| `forced-runtime-second-start` | none | a hard stop of the verifier-owned runtime reconciles on next start |
+| `foreign-listener` | none | the app leaves an occupant of port 8787 alive and uses its safe branch |
+| `updater` | run after a real in-app update | installed payload matches the target MSI and `C:\ProgramData\veslo-updater-msi.log` records the actual updater transaction |
+
+`updater` never invokes `msiexec` itself, so it cannot forge updater evidence.
+The harness only terminates desktop or listener process trees that it launched;
+an existing Veslo process or port occupant causes a safe failure instead.
+
 For live Den auth, Tauri Pilot accepts the same production desktop snapshot input as the app:
 
 ```bash

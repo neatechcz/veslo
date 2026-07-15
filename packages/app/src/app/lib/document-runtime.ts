@@ -1,3 +1,5 @@
+import { sanitizeBootstrapDiagnosticPayload } from "./bootstrap-diagnostics";
+
 const DOCUMENT_RUNTIME_ID = "veslo-document-runtime" as const;
 
 const documentRuntimeStatuses = [
@@ -42,6 +44,7 @@ export type DocumentRuntimeStatusPayload = {
   ready: boolean;
   updatedAt: string;
   source: "server" | "desktop" | "updater";
+  providerMode?: "bundled" | "module_override";
   skills: DocumentRuntimeSkillReadiness[];
   package: {
     installedVersion: string | null;
@@ -80,6 +83,31 @@ const documentRuntimeSkillFormats: Record<DocumentRuntimeFormat, DocumentRuntime
   pptx: "veslo-pptx",
 };
 
+function firstNonEmptyDocumentRuntimeDetail(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function redactDocumentRuntimeDetail(value: string | null | undefined, fallback: string): string {
+  return sanitizeBootstrapDiagnosticPayload(value?.trim() || fallback);
+}
+
+function documentRuntimeBlockedDetail(status: DocumentRuntimeStatusPayload, fallback: string): string {
+  const detail = status.repair.blockedReason === "document_runtime_provider_unavailable"
+    ? firstNonEmptyDocumentRuntimeDetail(status.repair.lastError, status.repair.blockedReason)
+    : firstNonEmptyDocumentRuntimeDetail(status.repair.blockedReason, status.repair.lastError);
+  return redactDocumentRuntimeDetail(detail, fallback);
+}
+
+export function redactDocumentRuntimeStatus(
+  status: DocumentRuntimeStatusPayload | null | undefined,
+): DocumentRuntimeStatusPayload | null {
+  return status ? sanitizeBootstrapDiagnosticPayload(status) : null;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -99,11 +127,11 @@ function documentRuntimeProgressDetail(progress: DocumentRuntimePackageInstallPr
   if (progress.phase === "cached") return "Using cached office package.";
   if (progress.phase === "verifying") return "Verifying office package.";
   if (progress.phase === "installing") return "Installing office package.";
-  if (progress.phase === "selected") return progress.message ?? "Office package selected.";
+  if (progress.phase === "selected") return redactDocumentRuntimeDetail(progress.message, "Office package selected.");
   if (progress.phase === "feed") return "Loading office package feed.";
-  if (progress.phase === "failed") return progress.message ?? "Office package install failed.";
+  if (progress.phase === "failed") return redactDocumentRuntimeDetail(progress.message, "Office package install failed.");
   if (progress.phase === "ready") return "Office package is ready.";
-  return progress.message;
+  return progress.message ? redactDocumentRuntimeDetail(progress.message, "") : null;
 }
 
 export function documentRuntimeSkillReady(
@@ -138,9 +166,9 @@ export function documentRuntimeTaskBlockReason(
     case "disabled_by_product_policy":
       return "Document runtime is disabled by product policy for this install.";
     case "blocked":
-      return status.repair.blockedReason ?? "Document runtime repair is blocked.";
+      return documentRuntimeBlockedDetail(status, "Document runtime repair is blocked.");
     case "failed":
-      return status.repair.lastError ?? "Document runtime failed its readiness check.";
+      return redactDocumentRuntimeDetail(status.repair.lastError, "Document runtime failed its readiness check.");
     case "ready":
       return "Document runtime is not ready for this file type.";
   }
@@ -196,7 +224,7 @@ export function documentRuntimeSettingsRow(status: DocumentRuntimeStatusPayload 
         status: status.status,
         tone: "danger",
         title: "Document runtime",
-        detail: status.repair.lastError ?? "Office document package is not installed.",
+        detail: redactDocumentRuntimeDetail(status.repair.lastError, "Office document package is not installed."),
         action: status.repair.available ? "install" : "none",
         progressPercent: null,
       };
@@ -205,7 +233,7 @@ export function documentRuntimeSettingsRow(status: DocumentRuntimeStatusPayload 
         status: status.status,
         tone: "danger",
         title: "Document runtime",
-        detail: status.repair.lastError ?? "Runtime package is not available.",
+        detail: redactDocumentRuntimeDetail(status.repair.lastError, "Runtime package is not available."),
         action: status.repair.available ? "repair" : "none",
         progressPercent: null,
       };
@@ -224,7 +252,7 @@ export function documentRuntimeSettingsRow(status: DocumentRuntimeStatusPayload 
         status: status.status,
         tone: "warning",
         title: "Document runtime",
-        detail: status.repair.blockedReason ?? "Runtime is blocked by policy.",
+        detail: documentRuntimeBlockedDetail(status, "Runtime is blocked by policy."),
         action: "none",
         progressPercent: null,
       };

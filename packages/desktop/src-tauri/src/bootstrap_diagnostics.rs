@@ -11,10 +11,18 @@ fn with_forwarder(app: &AppHandle, action: impl FnOnce(&DebugLogsForwarder)) {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn record_bootstrap_diagnostic(app: AppHandle, event_type: String, payload: serde_json::Value) {
-    with_forwarder(&app, |forwarder| {
-        forwarder.append_bootstrap_diagnostic(&event_type, payload);
-    });
+pub fn record_bootstrap_diagnostic(
+    app: AppHandle,
+    event_type: String,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    let forwarder = app
+        .try_state::<Arc<DebugLogsForwarder>>()
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
+    forwarder
+        .inner()
+        .as_ref()
+        .append_bootstrap_diagnostic(&event_type, payload)
 }
 
 #[tauri::command(rename_all = "camelCase")]

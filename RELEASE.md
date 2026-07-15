@@ -50,8 +50,9 @@ Use this path for manual staging desktop builds that should be downloadable by t
 2. The workflow creates or updates a private prerelease in `neatechcz/veslo` named `staging-YYYY-MM-DD-<short-sha>`.
 3. The workflow uploads installable staging assets to that prerelease and also keeps GitHub Actions artifacts as a fallback.
 4. macOS staging builds are signed with the Apple Developer ID Application certificate, notarized, stapled, and verified before upload. `codesign --verify --deep --strict --verbose=2` verifies the `.app` bundle, `codesign --verify --verbose=2` verifies the `.dmg`, and `xcrun stapler validate` verifies the notarization ticket. The expected certificate identity is `Developer ID Application: Neatech s.r.o. (D7XT3SG9WA)`. If Apple notarization credentials are unavailable, the macOS release is blocked rather than shipped signed-only.
-5. Staging builds keep the updater disabled and must not publish to `neatechcz/veslo-updates`, generate `latest.json`, or become the production latest release.
-6. Verify:
+5. Windows staging builds run the extracted-MSI payload/runtime gate and Authenticode verification before either the GitHub Actions artifact or the private prerelease upload.
+6. Staging builds keep the updater disabled and must not publish to `neatechcz/veslo-updates`, generate `latest.json`, or become the production latest release.
+7. Verify:
    - `gh run list --repo neatechcz/veslo --workflow "Build Staging App" --limit 5`
    - `gh release view <staging-tag> --repo neatechcz/veslo`
 
@@ -62,13 +63,52 @@ Windows desktop builds are signed in GitHub Actions through Azure Artifact Signi
 - Secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
 - Variables: `AZURE_ARTIFACT_SIGNING_ENDPOINT`, `AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME`, `AZURE_ARTIFACT_SIGNING_CERT_PROFILE_NAME`
 
-The Azure principal behind `AZURE_CLIENT_ID` must have `Artifact Signing Certificate Profile Signer` on the certificate profile. Windows workflows install the Artifact Signing dlib package, call the Tauri Windows `signCommand`, then verify Authenticode signatures on the app executable and MSI before upload. The bundled `versions.json` sidecar manifest is intentionally skipped by the sign command because Tauri packages it through `externalBin` even though it is not an executable.
+The Azure principal behind `AZURE_CLIENT_ID` must have `Artifact Signing Certificate Profile Signer` on the certificate profile. Windows workflows install the Artifact Signing dlib package, call the Tauri Windows `signCommand`, then verify the extracted MSI payload/runtime and Authenticode signatures on the app executable and MSI before upload. The bundled `versions.json` sidecar manifest is intentionally skipped by the sign command because Tauri packages it through `externalBin` even though it is not an executable.
 
 Windows workflows authenticate with `azure/login` and keep `AzureCliCredential` as the only Artifact Signing credential provider. Their metadata lists every other `DefaultAzureCredential` provider in `ExcludeCredentials`, which makes credential selection deterministic and removes unnecessary provider probes.
 
 Each Windows workflow performs a real signed-executable preflight before starting the desktop bundle. Every `signtool` invocation is bounded by `VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS` (default `120`) and retried up to `VESLO_WINDOWS_SIGNING_MAX_ATTEMPTS` times (default `2`), limiting an upstream stall to about four minutes per file instead of blocking a release for tens of minutes. Signing metadata includes the GitHub run attempt so reruns can be distinguished in diagnostics.
 
 If an Azure Artifact Signing request stops at `Submitting digest for signing...` without returning an `OperationId`, Azure did not create a signing operation visible to the client. Preserve the GitHub run, job, timestamps, and correlation ID. Use the Artifact Signing `SignTransactions` diagnostic category for service-side investigation; GitHub logs alone cannot identify the internal Azure failure after the request leaves `signtool`.
+
+## Windows final-MSI gate
+
+Do not promote a Windows release because `msiexec` returned zero. Keep evidence
+for one exact public signed MSI and run both gates below.
+
+1. Validate the exact payload on the build/release machine:
+
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/release/verify-windows-msi-runtime.ps1 -MsiPath <exact-signed-msi> -SummaryPath <evidence-dir>\payload.json
+   ```
+
+2. On an elevated disposable Windows VM, run
+   `scripts/release/verify-windows-msi-installed.ps1` with the release tag,
+   commit, hash-bearing MSI, and a durable `-SummaryPath`. Run `clean`,
+   `clean-no-wsl`, `upgrade` from `26.6.26`, `normal-second-start`,
+   `forced-runtime-second-start`, `foreign-listener`, and `updater` from their
+   appropriate snapshots. The updater scenario is observation-only: capture an
+   ISO-8601 UTC timestamp before triggering the real in-app update, pass it as
+   `-UpdaterLogNotBeforeUtc`, and read the resulting
+   `C:\ProgramData\veslo-updater-msi.log`; never create that log with a direct
+   `msiexec` call.
+
+   Run the clean-install branch against the same MSI hash with WebView2 both
+   present and absent. The release configuration uses Tauri
+   `embedBootstrapper`, which needs network access to obtain WebView2 when it
+   is absent; `skip` is not a valid fresh-install fallback.
+
+The VM summary must show the installed Program Files process, main window,
+authenticated local status, bundled document-runtime status of `missing` or
+`ready`, and the redacted durable `desktop-bootstrap-ready.json` marker.
+Preserve its verbose MSI log with the JSON. Block the release for a
+manifest/payload mismatch, stale binary after upgrade, missing ready diagnostic,
+provider `blocked`, a foreign-process kill, or a default no-WSL startup failure.
+The extracted payload must not contain the WSL sandbox provisioner or any
+`wsl2-*-installer.ps1` helper, and it must not include WSL WiX or NSIS setup
+hooks.
+Tauri Pilot remains a repository E2E tool and must not be used as final
+production-MSI evidence.
 
 ## macOS signing and notarization
 

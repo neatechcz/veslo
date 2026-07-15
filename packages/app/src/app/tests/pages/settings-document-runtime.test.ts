@@ -7,6 +7,7 @@ const enLocaleSource = readFileSync(new URL("../../../i18n/locales/en.ts", impor
 
 test("settings exposes document runtime diagnostics through the shared model", () => {
   assert.match(settingsSource, /documentRuntimeSettingsRow/);
+  assert.match(settingsSource, /redactDocumentRuntimeStatus/);
   assert.match(settingsSource, /type DocumentRuntimeStatusPayload/);
   assert.match(settingsSource, /documentRuntimeStatus\?: DocumentRuntimeStatusPayload \| null/);
   assert.match(settingsSource, /repairDocumentRuntime\?: \(\) => void/);
@@ -22,4 +23,8 @@ test("settings exposes document runtime diagnostics through the shared model", (
   assert.match(settingsSource, /bg-blue-9/);
   assert.match(settingsSource, /props\.repairDocumentRuntime\?\.\(\)/);
   assert.match(settingsSource, /props\.checkForUpdates\(\)/);
+  assert.match(settingsSource, /documentRuntime: redactDocumentRuntimeStatus\(props\.documentRuntimeStatus\)/);
+  assert.match(settingsSource, /runtimeSandbox: runtimeSandboxReport\(\)/);
+  assert.match(settingsSource, /bootstrap: sanitizeBootstrapDiagnosticPayload\(/);
+  assert.match(settingsSource, /lastServerLaunch:/);
 });

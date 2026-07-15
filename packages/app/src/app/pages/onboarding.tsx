@@ -7,7 +7,6 @@ import Button from "../components/button";
 import OnboardingWorkspaceSelector from "../components/onboarding-workspace-selector";
 import VesloLogo from "../components/veslo-logo";
 import TextInput from "../components/text-input";
-import WindowsSandboxRepair from "../components/windows-sandbox-repair";
 import { isTauriRuntime, isWindowsPlatform } from "../utils/index";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
@@ -143,7 +142,6 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
   return (
     <>
-    <WindowsSandboxRepair />
     <Switch>
       <Match when={props.onboardingStep === "connecting"}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative overflow-hidden">

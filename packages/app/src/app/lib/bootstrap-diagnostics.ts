@@ -62,16 +62,28 @@ export function sanitizeBootstrapDiagnosticPayload<T>(value: T): T {
   return sanitizeValue(value) as T;
 }
 
-export async function recordBootstrapDiagnostic(eventType: DiagnosticsLane | string, payload: unknown = {}): Promise<void> {
+export async function tryRecordBootstrapDiagnostic(
+  eventType: DiagnosticsLane | string,
+  payload: unknown = {},
+): Promise<boolean> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("record_bootstrap_diagnostic", {
       eventType,
       payload: sanitizeBootstrapDiagnosticPayload(payload),
     });
+    return true;
   } catch {
-    // Diagnostics must never interrupt the app flow they are describing.
+    return false;
   }
+}
+
+export async function recordBootstrapDiagnostic(
+  eventType: DiagnosticsLane | string,
+  payload: unknown = {},
+): Promise<void> {
+  // Diagnostics must never interrupt the app flow they are describing.
+  await tryRecordBootstrapDiagnostic(eventType, payload);
 }
 
 export function normalizeBootstrapDiagnosticsCloudContext(

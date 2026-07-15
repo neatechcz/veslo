@@ -14,6 +14,7 @@ use crate::veslo_server::manager::VesloServerManager;
 
 const PENDING_FILE: &str = "pending.jsonl";
 const FLUSHING_PREFIX: &str = "flushing-";
+const BOOTSTRAP_READY_MARKER_FILE: &str = "desktop-bootstrap-ready.json";
 const SPOOL_MAX_BYTES: u64 = 50 * 1024 * 1024; // 50 MB before retention drop
 const RETENTION_LOW_BYTES: u64 = 35 * 1024 * 1024; // truncate down to ~35 MB
 const MAX_EVENTS_PER_BATCH: usize = 500;
@@ -522,10 +523,14 @@ impl DebugLogsForwarder {
         );
     }
 
-    pub fn append_bootstrap_diagnostic(&self, event_type: &str, payload: serde_json::Value) {
+    pub fn append_bootstrap_diagnostic(
+        &self,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), String> {
         let event_type = event_type.trim();
         if event_type.is_empty() {
-            return;
+            return Ok(());
         }
         let sanitized = sanitize_diagnostic_payload(payload);
         let mut payload = match sanitized {
@@ -540,12 +545,53 @@ impl DebugLogsForwarder {
             "eventType".to_string(),
             serde_json::Value::String(event_type.to_string()),
         );
+        let ready_marker_payload = (event_type == "desktop-bootstrap:ready")
+            .then(|| serde_json::Value::Object(payload.clone()));
         self.append_event(
             "Veslo bootstrap",
             LogStream::Diagnostic,
             serde_json::Value::Object(payload),
             self.cloud_context_snapshot(),
         );
+        if let Some(marker_payload) = ready_marker_payload {
+            self.write_bootstrap_ready_marker(marker_payload)?;
+        }
+        Ok(())
+    }
+
+    fn write_bootstrap_ready_marker(&self, payload: serde_json::Value) -> Result<(), String> {
+        let marker_path = self.spool_dir.join(BOOTSTRAP_READY_MARKER_FILE);
+        let temporary_path = self.spool_dir.join(format!(
+            ".{BOOTSTRAP_READY_MARKER_FILE}.{}.tmp",
+            Uuid::new_v4()
+        ));
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let marker = serde_json::json!({
+            "source": "Veslo bootstrap",
+            "stream": "diagnostic",
+            "timestamp": timestamp,
+            "bootId": self.boot_id,
+            "payload": payload,
+        });
+        let serialized = serde_json::to_vec(&marker)
+            .map_err(|error| format!("could not serialize bootstrap readiness marker: {error}"))?;
+        fs::write(&temporary_path, serialized)
+            .map_err(|error| format!("could not write bootstrap readiness marker: {error}"))?;
+        if marker_path.exists() {
+            fs::remove_file(&marker_path).map_err(|error| {
+                format!("could not replace bootstrap readiness marker: {error}")
+            })?;
+        }
+        if let Err(error) = fs::rename(&temporary_path, &marker_path) {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(format!(
+                "could not finalize bootstrap readiness marker: {error}"
+            ));
+        }
+        Ok(())
     }
 
     fn append_event(
@@ -1248,13 +1294,15 @@ mod tests {
             Some("workspace-1".to_string()),
         );
 
-        forwarder.append_bootstrap_diagnostic(
-            "bootstrap.server_unavailable",
-            serde_json::json!({
-                "message": "server unavailable",
-                "stderrTail": "failed with token=secret-token",
-            }),
-        );
+        forwarder
+            .append_bootstrap_diagnostic(
+                "bootstrap.server_unavailable",
+                serde_json::json!({
+                    "message": "server unavailable",
+                    "stderrTail": "failed with token=secret-token",
+                }),
+            )
+            .unwrap();
 
         let raw = fs::read_to_string(dir.path().join(PENDING_FILE)).unwrap();
         let event: serde_json::Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
@@ -1283,6 +1331,34 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("secret-token"));
+    }
+
+    #[test]
+    fn desktop_bootstrap_ready_writes_a_durable_redacted_marker() {
+        let dir = tempdir().unwrap();
+        let forwarder = DebugLogsForwarder::new(dir.path().to_path_buf());
+
+        forwarder
+            .append_bootstrap_diagnostic(
+                "desktop-bootstrap:ready",
+                serde_json::json!({
+                    "serverStatus": "connected",
+                    "runtimeReadiness": "ready",
+                    "apiToken": "secret-token",
+                }),
+            )
+            .unwrap();
+
+        let raw = fs::read_to_string(dir.path().join(BOOTSTRAP_READY_MARKER_FILE)).unwrap();
+        let marker: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(marker["source"], "Veslo bootstrap");
+        assert_eq!(marker["stream"], "diagnostic");
+        assert!(marker["timestamp"].as_u64().unwrap_or(0) > 0);
+        assert_eq!(marker["bootId"], forwarder.boot_id());
+        assert_eq!(marker["payload"]["eventType"], "desktop-bootstrap:ready");
+        assert_eq!(marker["payload"]["serverStatus"], "connected");
+        assert_eq!(marker["payload"]["runtimeReadiness"], "ready");
+        assert_eq!(marker["payload"]["apiToken"], "[redacted]");
     }
 
     #[test]

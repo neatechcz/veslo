@@ -33,6 +33,7 @@ import {
   type VesloServerStatus,
 } from "../lib/veslo-server";
 import { resolveManagedAiGatewayBaseUrl } from "../lib/ai-access";
+import { tryRecordBootstrapDiagnostic } from "../lib/bootstrap-diagnostics";
 import { recordPerfLog, runtimePerfAuditEnabled } from "../lib/perf-log";
 import { truncateErrorField } from "../lib/session-error";
 import { resolveRunningVesloServerHostInfo } from "../lib/veslo-server-host";
@@ -418,6 +419,34 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     Promise<boolean>
   >();
   let lastLocalVesloEnsureKey = "";
+  let desktopBootstrapReadyRecorded = false;
+  let desktopBootstrapReadyRecording = false;
+
+  const recordDesktopBootstrapReady = async (): Promise<boolean> => {
+    if (
+      desktopBootstrapReadyRecorded ||
+      desktopBootstrapReadyRecording ||
+      !deps.isTauriRuntime()
+    ) {
+      return false;
+    }
+    if (vesloServerStatus() !== "connected" || vesloRuntimeReadiness() !== "ready") {
+      return false;
+    }
+
+    desktopBootstrapReadyRecording = true;
+    try {
+      const recorded = await tryRecordBootstrapDiagnostic("desktop-bootstrap:ready", {
+        serverStatus: vesloServerStatus(),
+        runtimeReadiness: vesloRuntimeReadiness(),
+        workspaceType: deps.workspace?.activeWorkspaceDisplay().workspaceType ?? null,
+      });
+      if (recorded) desktopBootstrapReadyRecorded = true;
+      return recorded;
+    } finally {
+      desktopBootstrapReadyRecording = false;
+    }
+  };
 
   const markVesloServerReachable = (status: VesloServerStatus, at = now()) => {
     if (isReachableVesloServerStatus(status)) {
@@ -1382,7 +1411,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     if (nextKey === lastLocalVesloEnsureKey) return;
 
     const scheduledKey = nextKey;
-    void ensureLocalVesloServerRunning()
+    void ensureLocalVesloServerRunning({ requireRuntimeChainReady: true })
       .then((ok) => {
         if (ok) {
           lastLocalVesloEnsureKey = scheduledKey;
@@ -1394,6 +1423,29 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         deps.setError?.(deps.addOpencodeCacheHint?.(message) ?? message);
         deps.reportError?.(error, "veslo-server.ensure.effect");
       });
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!deps.isTauriRuntime()) return;
+    if (deps.startupPreference() === "server") return;
+    if (deps.workspace?.activeWorkspaceDisplay().workspaceType !== "local") return;
+    if (vesloServerStatus() !== "connected" || vesloRuntimeReadiness() !== "ready") return;
+
+    let active = true;
+    let retryTimer: number | undefined;
+    const attemptRecord = () => {
+      void recordDesktopBootstrapReady().then((recorded) => {
+        if (!active || recorded || desktopBootstrapReadyRecorded) return;
+        retryTimer = window.setTimeout(attemptRecord, 1_000);
+      });
+    };
+
+    attemptRecord();
+    onCleanup(() => {
+      active = false;
+      if (retryTimer) window.clearTimeout(retryTimer);
+    });
   });
 
   return {

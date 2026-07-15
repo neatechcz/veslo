@@ -2,11 +2,7 @@
   "bundle": {
     "resources": {
       "../package.json": "package.json",
-      "sidecars/chrome-devtools-mcp-package": "chrome-devtools-mcp-package",
-      "../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1": "windows-wsl2-sandbox-provision.ps1",
-      "windows/wsl2-prerequisite-installer.ps1": "wsl2-prerequisite-installer.ps1",
-      "windows/wsl2-client-installer.ps1": "wsl2-client-installer.ps1",
-      "windows/wsl2-sandbox-installer.ps1": "wsl2-sandbox-installer.ps1"
+      "sidecars/chrome-devtools-mcp-package": "chrome-devtools-mcp-package"
     },
     "windows": {
       "signCommand": {

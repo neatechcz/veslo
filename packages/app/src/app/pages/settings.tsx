@@ -4,7 +4,6 @@ import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } fr
 
 import Button from "../components/button";
 import DashboardTabRail, { type DashboardTabRailDashboardTab } from "../components/dashboard-tab-rail";
-import WindowsSandboxRepair from "../components/windows-sandbox-repair";
 import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X } from "lucide-solid";
 import type { OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
@@ -46,8 +45,10 @@ import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import {
   documentRuntimeSettingsRow,
+  redactDocumentRuntimeStatus,
   type DocumentRuntimeStatusPayload,
 } from "../lib/document-runtime";
+import { sanitizeBootstrapDiagnosticPayload } from "../lib/bootstrap-diagnostics";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
@@ -879,7 +880,19 @@ export default function SettingsView(props: SettingsViewProps) {
     },
     diagnostics: props.vesloServerDiagnostics,
     capabilities: props.vesloServerCapabilities,
+    documentRuntime: redactDocumentRuntimeStatus(props.documentRuntimeStatus),
     runtimeSandbox: runtimeSandboxReport(),
+    bootstrap: sanitizeBootstrapDiagnosticPayload({
+      serverStatus: props.vesloServerStatus,
+      headerStatus: props.headerStatus,
+      lastServerLaunch: props.vesloServerHostInfo
+        ? {
+            running: props.vesloServerHostInfo.running,
+            lifecycleStatus: props.vesloServerHostInfo.lifecycleStatus ?? null,
+            lifecycleReason: props.vesloServerHostInfo.lifecycleReason ?? null,
+          }
+        : null,
+    }),
     pendingPermissions: props.pendingPermissions,
     recentEvents: props.events,
     workspaceDebugEvents: props.workspaceDebugEvents,
@@ -1442,8 +1455,6 @@ export default function SettingsView(props: SettingsViewProps) {
                 )}
               </Show>
             </div>
-
-            <WindowsSandboxRepair />
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
               <div class="flex items-start justify-between gap-4">

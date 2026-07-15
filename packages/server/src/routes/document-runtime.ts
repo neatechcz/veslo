@@ -1,5 +1,6 @@
 import { jsonResponse } from "../route-helpers.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
+import * as bundledDocumentRuntimeProvider from "veslo-document-runtime";
 
 export const DOCUMENT_RUNTIME_ID = "veslo-document-runtime";
 
@@ -35,12 +36,22 @@ export type DocumentRuntimePackageInstallProgress = {
   message: string | null;
 };
 
+export type DocumentRuntimePackageInstallProgressInput = {
+  phase: DocumentRuntimePackageInstallProgress["phase"];
+  artifactName?: string | null;
+  downloadedBytes?: number | null;
+  totalBytes?: number | null;
+  percent?: number | null;
+  message?: string | null;
+};
+
 export type DocumentRuntimeStatusPayload = {
   runtimeId: typeof DOCUMENT_RUNTIME_ID;
   status: DocumentRuntimeStatus;
   ready: boolean;
   updatedAt: string;
   source: "server" | "desktop" | "updater";
+  providerMode: "bundled" | "module_override";
   skills: DocumentRuntimeSkillReadiness[];
   package: {
     installedVersion: string | null;
@@ -93,7 +104,7 @@ export type DocumentRuntimeProvider = {
   repairHeadless: (options?: { env?: NodeJS.ProcessEnv }) => Promise<DocumentRuntimeRepairResult> | DocumentRuntimeRepairResult;
   installPackageFromFeed?: (options?: {
     env?: NodeJS.ProcessEnv;
-    onProgress?: (progress: DocumentRuntimePackageInstallProgress) => void;
+    onProgress?: (progress: DocumentRuntimePackageInstallProgressInput) => void;
   }) => Promise<DocumentRuntimeRepairResult> | DocumentRuntimeRepairResult;
 };
 
@@ -110,6 +121,10 @@ function isRemoteOnlyMode(env: NodeJS.ProcessEnv): boolean {
     .toLowerCase()
     .replace(/_/g, "-");
   return mode === "remote-only" || mode === "remote-docs-only";
+}
+
+function documentRuntimeProviderMode(env: NodeJS.ProcessEnv): "bundled" | "module_override" {
+  return env.VESLO_DOCUMENT_RUNTIME_MODULE?.trim() ? "module_override" : "bundled";
 }
 
 function normalizeDocumentRuntimeStatus(value: string | null | undefined): DocumentRuntimeStatus {
@@ -145,6 +160,7 @@ export function createDocumentRuntimeStatusPayload(
     ready,
     updatedAt: now.toISOString(),
     source: "server",
+    providerMode: documentRuntimeProviderMode(env),
     skills: DOCUMENT_RUNTIME_SKILLS.map((skill) => ({
       ...skill,
       ready,
@@ -231,10 +247,7 @@ function providerUnavailablePayload(error: unknown, dependencies: Partial<Docume
   });
 }
 
-async function loadDefaultDocumentRuntimeProvider(): Promise<DocumentRuntimeProvider> {
-  const moduleOverride = process.env.VESLO_DOCUMENT_RUNTIME_MODULE?.trim();
-  const moduleUrl = moduleOverride || new URL("../../../document-runtime/src/index.mjs", import.meta.url).href;
-  const loaded = await import(moduleUrl) as Partial<DocumentRuntimeProvider>;
+function documentRuntimeProviderFromModule(loaded: Partial<DocumentRuntimeProvider>): DocumentRuntimeProvider {
   if (typeof loaded.doctor !== "function" || typeof loaded.repairHeadless !== "function") {
     throw new Error("Document runtime provider does not export doctor() and repairHeadless().");
   }
@@ -243,6 +256,15 @@ async function loadDefaultDocumentRuntimeProvider(): Promise<DocumentRuntimeProv
     repairHeadless: loaded.repairHeadless,
     ...(typeof loaded.installPackageFromFeed === "function" ? { installPackageFromFeed: loaded.installPackageFromFeed } : {}),
   };
+}
+
+export async function loadDefaultDocumentRuntimeProvider(
+  moduleOverride = process.env.VESLO_DOCUMENT_RUNTIME_MODULE?.trim(),
+): Promise<DocumentRuntimeProvider> {
+  const loaded = moduleOverride
+    ? await import(moduleOverride) as Partial<DocumentRuntimeProvider>
+    : bundledDocumentRuntimeProvider;
+  return documentRuntimeProviderFromModule(loaded);
 }
 
 export function createDocumentRuntimeProviderDependencies(
@@ -254,7 +276,7 @@ export function createDocumentRuntimeProviderDependencies(
   let lastInstallError: string | null = null;
   let installProgress: DocumentRuntimePackageInstallProgress | null = null;
 
-  const setInstallProgress = (progress: DocumentRuntimePackageInstallProgress): void => {
+  const setInstallProgress = (progress: DocumentRuntimePackageInstallProgressInput): void => {
     installProgress = {
       phase: progress.phase,
       artifactName: progress.artifactName ?? null,

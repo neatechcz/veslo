@@ -29,6 +29,7 @@ import {
   validateBundledNodeArchiveEntries,
   verifyBundledNodeArchiveChecksum,
 } from "./bundled-node-runtime.mjs";
+import { sha256WindowsAuthenticodeFile } from "../../../scripts/release/windows-authenticode-hash.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -417,6 +418,11 @@ const sha256File = (filePath) => {
   hash.update(readFileSync(filePath));
   return hash.digest("hex");
 };
+
+const sha256ManifestExecutable = (filePath) =>
+  resolvedTargetTriple?.includes("windows")
+    ? sha256WindowsAuthenticodeFile(filePath)
+    : sha256File(filePath);
 
 const readJsonFile = (filePath) => JSON.parse(readFileSync(filePath, "utf8"));
 
@@ -1356,23 +1362,26 @@ try {
 const versions = {
   "veslo-code": {
     version: normalizedOpencodeVersion,
-    sha256: vesloCodeCandidatePath && existsSync(vesloCodeCandidatePath) ? sha256File(vesloCodeCandidatePath) : null,
+    sha256:
+      vesloCodeCandidatePath && existsSync(vesloCodeCandidatePath)
+        ? sha256ManifestExecutable(vesloCodeCandidatePath)
+        : null,
   },
   "veslo-server": {
     version: vesloServerVersion,
-    sha256: existsSync(vesloServerPath) ? sha256File(vesloServerPath) : null,
+    sha256: existsSync(vesloServerPath) ? sha256ManifestExecutable(vesloServerPath) : null,
   },
   "veslo-code-router": {
     version: expectedOpenCodeRouterVersion,
-    sha256: existsSync(vesloCodeRouterPath) ? sha256File(vesloCodeRouterPath) : null,
+    sha256: existsSync(vesloCodeRouterPath) ? sha256ManifestExecutable(vesloCodeRouterPath) : null,
   },
   "veslo-orchestrator": {
     version: orchestratorVersion,
-    sha256: existsSync(orchestratorPath) ? sha256File(orchestratorPath) : null,
+    sha256: existsSync(orchestratorPath) ? sha256ManifestExecutable(orchestratorPath) : null,
   },
   "chrome-devtools-mcp": {
     version: chromeDevtoolsMcpVersion,
-    sha256: existsSync(chromeDevtoolsPath) ? sha256File(chromeDevtoolsPath) : null,
+    sha256: existsSync(chromeDevtoolsPath) ? sha256ManifestExecutable(chromeDevtoolsPath) : null,
   },
   "opencode-managed-deps": {
     version: normalizedOpencodeVersion,

@@ -25,6 +25,7 @@
     "test:e2e": "pnpm --filter @neatech/veslo-ui test:e2e",
     "test:e2e:ui": "pnpm --filter @neatech/veslo-e2e test",
     "test:e2e:ui:smoke": "pnpm --filter @neatech/veslo-e2e test:pilot:smoke",
+    "desktop:smoke-packaged": "node scripts/desktop-smoke-packaged.mjs",
     "test:e2e:ui:navigation": "pnpm --filter @neatech/veslo-e2e test:pilot:navigation",
     "test:e2e:ui:live-inference": "pnpm --filter @neatech/veslo-e2e test:pilot:live-inference",
     "test:e2e:ui:soul-dashboard": "pnpm --filter @neatech/veslo-e2e test:pilot:soul-dashboard",

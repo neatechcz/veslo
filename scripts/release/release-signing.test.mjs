@@ -254,25 +254,46 @@ test("prerelease workflow supports Apple ID macOS notarization", () => {
   assert.match(workflow, /APPLE_TEAM_ID/);
 });
 
-test("all Windows desktop workflows route bundles through Azure Artifact Signing", () => {
-  const workflowPaths = [
-    "../../.github/workflows/build-desktop.yml",
-    "../../.github/workflows/build-windows-msi.yml",
-    "../../.github/workflows/prerelease.yml",
-    "../../.github/workflows/release-macos-aarch64.yml",
+test("all shipping Windows workflows route bundles through Azure Artifact Signing", () => {
+  const workflows = [
+    {
+      path: "../../.github/workflows/build-desktop.yml",
+      metadata: "veslo-artifact-signing-metadata.json",
+      signatureStep: "Verify Windows signatures",
+    },
+    {
+      path: "../../.github/workflows/build-windows-msi.yml",
+      metadata: "veslo-artifact-signing-metadata.json",
+      signatureStep: "Verify Windows signatures",
+    },
+    {
+      path: "../../.github/workflows/prerelease.yml",
+      metadata: "veslo-artifact-signing-metadata.json",
+      signatureStep: "Verify Windows signatures",
+    },
+    {
+      path: "../../.github/workflows/release-macos-aarch64.yml",
+      metadata: "veslo-artifact-signing-metadata.json",
+      signatureStep: "Verify Windows signatures",
+    },
+    {
+      path: "../../.github/workflows/build-staging-app.yml",
+      metadata: "veslo-staging-artifact-signing-metadata.json",
+      signatureStep: "Verify Windows staging signatures",
+    },
   ];
 
-  for (const workflowPath of workflowPaths) {
-    const workflow = readFileSync(resolve(import.meta.dirname, workflowPath), "utf8");
+  for (const { path, metadata, signatureStep } of workflows) {
+    const workflow = readFileSync(resolve(import.meta.dirname, path), "utf8");
 
     assert.match(workflow, /id-token:\s*write/);
     assert.match(workflow, /environment:\s*release-signing/);
     assert.match(workflow, /release-signing\.mjs/);
     assert.match(workflow, /azure\/login@/);
     assert.match(workflow, /Artifact Signing dlib package/);
-    assert.match(workflow, /veslo-artifact-signing-metadata\.json/);
+    assert.match(workflow, new RegExp(metadata.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(workflow, /tauri\.windows\.release\.conf\.json/);
-    assert.match(workflow, /Verify Windows signatures/);
+    assert.match(workflow, new RegExp(signatureStep.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(workflow, /Get-AuthenticodeSignature/);
   }
 });

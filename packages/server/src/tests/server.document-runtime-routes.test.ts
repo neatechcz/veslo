@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   createDocumentRuntimeProviderDependencies,
   createDocumentRuntimeStatusPayload,
   createDocumentRuntimeStatusPayloadFromDoctor,
   createDocumentRuntimeStatusPayloadFromRepair,
+  loadDefaultDocumentRuntimeProvider,
   registerDocumentRuntimeRoutes,
   type DocumentRuntimeStatusPayload,
 } from "../routes/document-runtime.js";
@@ -39,6 +44,7 @@ describe("Document runtime routes", () => {
     expect(payload.status).toBe("missing");
     expect(payload.ready).toBe(false);
     expect(payload.updatedAt).toBe("2026-07-02T12:00:00.000Z");
+    expect(payload.providerMode).toBe("bundled");
     expect(payload.package.remoteOnly).toBe(false);
     expect(payload.policy.windowsWslRuntime).toBe("disabled_by_product_policy");
     expect(payload.skills.map((skill) => [skill.id, skill.ready, skill.reason])).toEqual([
@@ -59,8 +65,19 @@ describe("Document runtime routes", () => {
     expect(payload.status).toBe("remote_only");
     expect(payload.ready).toBe(false);
     expect(payload.package.remoteOnly).toBe(true);
+    expect(payload.providerMode).toBe("bundled");
     expect(payload.policy.windowsWslRuntime).toBe("not_applicable");
     expect(payload.skills.every((skill) => !skill.ready && skill.reason === "remote_only")).toBe(true);
+  });
+
+  test("reports an explicit provider override without exposing its module path", () => {
+    const payload = createDocumentRuntimeStatusPayload({
+      env: { VESLO_DOCUMENT_RUNTIME_MODULE: "file:///C:/Users/alice/private-provider.mjs" },
+      now: () => new Date("2026-07-02T12:00:00.000Z"),
+    });
+
+    expect(payload.providerMode).toBe("module_override");
+    expect(JSON.stringify(payload)).not.toContain("private-provider.mjs");
   });
 
   test("status and repair handlers can be backed by injected runtime providers", async () => {
@@ -209,6 +226,30 @@ describe("Document runtime routes", () => {
     expect(status.status).toBe("ready");
     expect(repair.status).toBe("missing");
     expect(repair.repair.lastAttemptAt).toBe("2026-07-02T12:04:00.000Z");
+  });
+
+  test("default provider comes from the bundled workspace dependency and supports an explicit override", async () => {
+    const root = await mkdtemp(join(tmpdir(), "veslo-document-runtime-provider-"));
+    try {
+      const bundled = await loadDefaultDocumentRuntimeProvider("");
+      const bundledDoctor = await bundled.doctor({
+        env: { VESLO_DOCUMENT_RUNTIME_ROOT: root },
+      });
+
+      expect(bundledDoctor.status).toBe("missing");
+      expect(typeof bundled.installPackageFromFeed).toBe("function");
+
+      const overridePath = join(root, "provider.mjs");
+      await writeFile(overridePath, [
+        'export async function doctor() { return { ok: true, status: "ready" }; }',
+        'export async function repairHeadless() { return { ok: true, status: "ready", repaired: false }; }',
+      ].join("\n"), "utf8");
+
+      const override = await loadDefaultDocumentRuntimeProvider(pathToFileURL(overridePath).href);
+      expect((await override.doctor()).status).toBe("ready");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("provider dependencies start feed package install without blocking repair responses", async () => {

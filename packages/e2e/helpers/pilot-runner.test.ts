@@ -29,6 +29,8 @@ import {
   scenarioSelectionNeedsRelaunchReconnectCheck,
   scenarioSelectionNeedsSessionQueueRuntimeFixture,
   assertSessionQueueRuntimeFixtureProfileIsolation,
+  assertPackagedSmokeProfileIsolation,
+  scenarioSelectionNeedsPackagedSmokeFixture,
   scenarioSelectionNeedsNoWorkspaceProfile,
   scenarioSelectionNeedsPortContentionFixture,
   scenarioSelectionRequiresLiveManagedAiAuth,
@@ -583,6 +585,10 @@ test('runtime cold-start handoff pilot scenario disables debug dev autostart', (
     scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
+  assert.equal(
+    scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: ['packaged-smoke'] }, e2eRoot)),
+    true,
+  );
 });
 
 test('session queue durability uses its isolated deterministic runtime fixture', () => {
@@ -713,6 +719,69 @@ test('VSLO-235 port contention scenario requests a held local server port', () =
     scenarioSelectionNeedsPortContentionFixture(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
+});
+
+test('packaged smoke requires its isolated production-shaped launch contract', () => {
+  const e2eRoot = '/repo/packages/e2e';
+  const scenarios = resolvePilotScenarioSelection({ scenario: ['packaged-smoke'] }, e2eRoot);
+
+  assert.equal(scenarioSelectionNeedsPackagedSmokeFixture(scenarios), true);
+  assert.throws(
+    () => assertPackagedSmokeProfileIsolation(scenarios, {}),
+    /desktop:smoke-packaged/,
+  );
+  assert.throws(
+    () => assertPackagedSmokeProfileIsolation(scenarios, {
+      VESLO_PACKAGED_SMOKE: '1',
+      VESLO_DEV_SERVER_URL: 'http://127.0.0.1:8787',
+    }),
+    /VESLO_DEV_SERVER_URL/,
+  );
+  assert.throws(
+    () => assertPackagedSmokeProfileIsolation(scenarios, {
+      VESLO_PACKAGED_SMOKE: '1',
+      OPENROUTER_API_KEY: 'not-for-smoke',
+    }),
+    /OPENROUTER_API_KEY/,
+  );
+  assert.throws(
+    () => assertPackagedSmokeProfileIsolation(scenarios, {
+      VESLO_PACKAGED_SMOKE: '1',
+      E2E_LAUNCH_TIMEOUT: '60000',
+    }),
+    /E2E_LAUNCH_TIMEOUT/,
+  );
+  assert.throws(
+    () => assertPackagedSmokeProfileIsolation(scenarios, {
+      VESLO_PACKAGED_SMOKE: '1',
+      VESLO_DEN_API_BASE: 'https://den.example.test',
+    }),
+    /VESLO_DEN_API_BASE/,
+  );
+  assert.throws(
+    () => assertPackagedSmokeProfileIsolation(scenarios, {
+      VESLO_PACKAGED_SMOKE: '1',
+      VESLO_DOCUMENT_RUNTIME_MODULE: 'file:///C:/checkout/provider.mjs',
+    }),
+    /VESLO_DOCUMENT_RUNTIME_MODULE/,
+  );
+  assert.throws(
+    () => assertPackagedSmokeProfileIsolation(scenarios, {
+      VESLO_PACKAGED_SMOKE: '1',
+      OPENCODE_ROUTER_BIN_PATH: 'C:\\checkout\\veslo-code-router.exe',
+    }),
+    /OPENCODE_ROUTER_BIN_PATH/,
+  );
+  assert.throws(
+    () => assertPilotScenarioSelectionIsolated([
+      ...scenarios,
+      ...resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot),
+    ]),
+    /focused pilot scenario/,
+  );
+  assert.doesNotThrow(() => assertPackagedSmokeProfileIsolation(scenarios, {
+    VESLO_PACKAGED_SMOKE: '1',
+  }));
 });
 
 test('VSLO-271 pilot scenario requires live managed-AI auth and not the fixture', () => {

@@ -22,8 +22,10 @@ const shortHostname = hostname.split(".")[0];
 if (shortHostname && shortHostname !== hostname) {
   addHost(shortHostname);
 }
+const packagedSmokeBuild = process.env.VESLO_PACKAGED_SMOKE?.trim() === "1";
 
 export default defineConfig({
+  ...(packagedSmokeBuild ? { envDir: false } : {}),
   plugins: [tailwindcss(), solid()],
   server: {
     port: devPort,

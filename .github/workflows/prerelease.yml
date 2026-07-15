@@ -88,6 +88,7 @@ jobs:
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
       VESLO_SIDECAR_FORCE_BUILD: "1"
+      TARGET_TRIPLE: ${{ matrix.target }}
       TAURI_WINDOWS_RELEASE_CONFIG: src-tauri/tauri.windows.release.conf.json
       VESLO_WINDOWS_SIGNING_DESCRIPTION: Veslo by Neatech
       VESLO_WINDOWS_SIGNING_TIMEOUT_SECONDS: 120
@@ -507,59 +508,71 @@ jobs:
           args: ${{ matrix.args }}
           retryAttempts: 3
 
-      - name: Build + upload
+      - name: Build Windows MSI
         if: matrix.os_type == 'windows'
-        uses: tauri-apps/tauri-action@v0.5.17
+        shell: pwsh
         env:
           CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm --filter @neatech/veslo exec tauri build --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
 
-          # macOS signing
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
-          prerelease: true
-          releaseDraft: false
-          projectPath: packages/desktop
-          tauriScript: pnpm exec tauri -vvv
-          args: ${{ matrix.args }}
-          retryAttempts: 3
+      - name: Resolve Windows bundle paths
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: |
+          $bundleDir = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\bundle\msi"
+          if (-not (Test-Path $bundleDir)) {
+            throw "Windows bundle directory not found: $bundleDir"
+          }
+
+          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter '*.msi' -File)
+          $msiSigFiles = @(Get-ChildItem -Path $bundleDir -Filter '*.msi.sig' -File)
+          $appExe = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\veslo.exe"
+
+          if ($msiFiles.Count -ne 1) {
+            throw "Expected exactly one MSI bundle in $bundleDir; found $($msiFiles.Count)"
+          }
+          if ($msiSigFiles.Count -ne 1) {
+            throw "Expected exactly one MSI updater signature in $bundleDir; found $($msiSigFiles.Count)"
+          }
+          if (-not (Test-Path $appExe)) {
+            throw "Signed Windows app executable not found at $appExe"
+          }
+
+          "VESLO_WINDOWS_MSI_PATH=$($msiFiles[0].FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_MSI_SIG_PATH=$($msiSigFiles[0].FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
 
       - name: Verify bundled sidecars
         if: matrix.os_type == 'windows'
         shell: pwsh
         run: node scripts/release/verify-bundled-versions.mjs "packages/desktop/src-tauri/target/${{ matrix.target }}/release" "${{ matrix.target }}"
 
+      - name: Verify extracted MSI payload runtime
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: |
+          $summaryPath = Join-Path $env:RUNNER_TEMP 'veslo-windows-msi-runtime-summary.json'
+          ./scripts/release/verify-windows-msi-runtime.ps1 -MsiPath $env:VESLO_WINDOWS_MSI_PATH -SummaryPath $summaryPath
+
+      - name: Upload extracted Windows MSI payload verification
+        if: always() && matrix.os_type == 'windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: veslo-windows-msi-runtime-verification
+          path: |
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json.msi-extract.log
+          if-no-files-found: warn
+
       - name: Verify Windows signatures
         if: matrix.os_type == 'windows'
         shell: pwsh
         run: |
-          $bundleDir = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi'
-          if (-not (Test-Path $bundleDir)) {
-            throw "Windows bundle directory not found: $bundleDir"
-          }
-
-          $msi = Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          $appExe = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\veslo.exe'
-
-          if (-not $msi) {
-            throw "No MSI bundle found in $bundleDir"
-          }
-          if (-not (Test-Path $appExe)) {
-            throw "Signed Windows app executable not found at $appExe"
-          }
-
           $files = @(
-            $appExe,
-            $msi.FullName
+            $env:VESLO_WINDOWS_APP_EXE_PATH,
+            $env:VESLO_WINDOWS_MSI_PATH
           )
 
           foreach ($file in $files) {
@@ -572,3 +585,15 @@ jobs:
             Write-Host "Valid signature for $file"
             Write-Host "Signer: $($signature.SignerCertificate.Subject)"
           }
+
+      - name: Upload Windows prerelease assets
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload $env:RELEASE_TAG `
+            $env:VESLO_WINDOWS_MSI_PATH `
+            $env:VESLO_WINDOWS_MSI_SIG_PATH `
+            --repo $env:GITHUB_REPOSITORY `
+            --clobber

@@ -86,11 +86,9 @@ const commandExists = (binDir, command) => {
   });
 };
 
-const verifyWslPolicy = ({ repoRoot, checks }) => {
+const verifyWindowsInstallerPolicy = ({ repoRoot, checks }) => {
   const tauriConfigPath = resolve(repoRoot, "packages/desktop/src-tauri/tauri.conf.json");
   const windowsReleaseConfigPath = resolve(repoRoot, "packages/desktop/src-tauri/tauri.windows.release.conf.json");
-  const wxsPath = resolve(repoRoot, "packages/desktop/src-tauri/windows/wsl2-sandbox-installer.wxs");
-  const nsisPath = resolve(repoRoot, "packages/desktop/src-tauri/windows/nsis-hooks.nsh");
 
   const tauriConfig = existsSync(tauriConfigPath) ? readJson(tauriConfigPath) : {};
   const windowsReleaseConfig = existsSync(windowsReleaseConfigPath) ? readJson(windowsReleaseConfigPath) : {};
@@ -98,26 +96,31 @@ const verifyWslPolicy = ({ repoRoot, checks }) => {
     ...(tauriConfig.bundle?.resources ?? {}),
     ...(windowsReleaseConfig.bundle?.resources ?? {}),
   };
-  const wxs = existsSync(wxsPath) ? readText(wxsPath) : "";
-  const nsis = existsSync(nsisPath) ? readText(nsisPath) : "";
-
-  add(
-    checks,
-    "Windows document runtime keeps WSL installer disabled by default",
-    /Property\s+Id="VESLO_ENABLE_WSL_INSTALLER"\s+Value="0"/.test(wxs) &&
-      /Custom Action="VesloProvisionWslSandbox"\s+After="InstallFiles"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT REMOVE~="ALL"\]\]><\/Custom>/.test(wxs) &&
-      /!ifdef VESLO_ENABLE_WSL_INSTALLER/.test(nsis) &&
-      /Skipping Veslo WSL runtime preparation/.test(nsis),
-    wxsPath,
+  const hasWslSandboxPayload = Object.entries(resources).some(([source, destination]) =>
+    /(?:wsl2-|windows-wsl2-|veslosandbox)/i.test(`${source}\n${destination}`),
+  );
+  const windowsConfigs = [tauriConfig, windowsReleaseConfig];
+  const hasWslSandboxWix = windowsConfigs
+    .flatMap((entry) => {
+      const wix = entry.bundle?.windows?.wix ?? {};
+      return [...(wix.fragmentPaths ?? []), ...(wix.componentGroupRefs ?? [])];
+    })
+    .some((entry) => /(?:wsl|sandbox)/i.test(entry));
+  const hasWslSandboxNsisHook = windowsConfigs.some((entry) =>
+    /(?:wsl|sandbox)/i.test(entry.bundle?.windows?.nsis?.installerHooks ?? ""),
   );
 
   add(
     checks,
-    "Windows document runtime does not use WSL scripts as package readiness",
-    resources["windows/wsl2-client-installer.ps1"] === "wsl2-client-installer.ps1" &&
-      resources[WINDOWS_RUNTIME_RESOURCE_KEY] === undefined &&
-      !/document-runtime/i.test(nsis) &&
-      !/veslo-document-runtime/i.test(wxs),
+    "Windows document runtime installer excludes WSL sandbox payload and hooks",
+    !hasWslSandboxPayload && !hasWslSandboxWix && !hasWslSandboxNsisHook,
+    `${tauriConfigPath}; ${windowsReleaseConfigPath}`,
+  );
+
+  add(
+    checks,
+    "Windows document runtime stays outside the MSI payload",
+    resources[WINDOWS_RUNTIME_RESOURCE_KEY] === undefined,
     `${tauriConfigPath}; ${windowsReleaseConfigPath}`,
   );
 };
@@ -168,7 +171,7 @@ export function verifyDocumentRuntimeWindows(options = {}) {
   const feedPath = options.feedPath || resolve(repoRoot, "packages/document-runtime/manifests/package-feed.example.json");
   const resourceDir = options.resourceDir || options.packageDir || resolve(repoRoot, "packages/desktop/src-tauri/resources/document-runtime/windows-native-x64");
 
-  verifyWslPolicy({ repoRoot, checks });
+  verifyWindowsInstallerPolicy({ repoRoot, checks });
 
   let targetManifest = null;
   try {

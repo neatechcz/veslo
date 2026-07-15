@@ -5,6 +5,7 @@ import {
   documentRuntimeSettingsRow,
   documentRuntimeSkillReady,
   documentRuntimeTaskBlockReason,
+  redactDocumentRuntimeStatus,
   type DocumentRuntimeStatus,
   type DocumentRuntimeStatusPayload,
 } from "../../lib/document-runtime.js";
@@ -123,4 +124,62 @@ test("maintenance and update states map to wait or update actions", () => {
   assert.equal(documentRuntimeSettingsRow(payload("package_rollback")).action, "wait");
   assert.equal(documentRuntimeSettingsRow(payload("outdated")).action, "update");
   assert.equal(documentRuntimeSettingsRow(payload("package_update_available")).action, "update");
+});
+
+test("provider failures preserve a useful redacted error while keeping unsupported repair disabled", () => {
+  const status = payload("blocked", {
+    providerMode: "module_override",
+    package: {
+      installedVersion: null,
+      activePackage: "C:\\Users\\alice\\veslo\\document-runtime\\active.json",
+      updateAvailable: false,
+      installing: false,
+      rollback: false,
+      remoteOnly: false,
+      progress: null,
+    },
+    repair: {
+      available: false,
+      inProgress: false,
+      blockedReason: "document_runtime_provider_unavailable",
+      lastAttemptAt: null,
+      lastError: "Cannot find module C:\\Users\\alice\\private-provider.mjs; Authorization: Bearer secret-provider-token",
+    },
+  });
+
+  const row = documentRuntimeSettingsRow(status);
+  const taskBlockReason = documentRuntimeTaskBlockReason(status, "docx") ?? "";
+  const redactedStatus = redactDocumentRuntimeStatus(status);
+
+  assert.equal(row.action, "none");
+  assert.match(row.detail, /Cannot find module/);
+  assert.match(taskBlockReason, /Cannot find module/);
+  assert.doesNotMatch(row.detail, /alice|secret-provider-token/);
+  assert.doesNotMatch(taskBlockReason, /alice|secret-provider-token/);
+  assert.equal(redactedStatus?.providerMode, "module_override");
+  assert.doesNotMatch(JSON.stringify(redactedStatus), /alice|secret-provider-token/);
+});
+
+test("repair affordances follow the server-provided availability", () => {
+  const install = documentRuntimeSettingsRow(payload("missing", {
+    repair: {
+      available: true,
+      inProgress: false,
+      blockedReason: null,
+      lastAttemptAt: null,
+      lastError: null,
+    },
+  }));
+  const repair = documentRuntimeSettingsRow(payload("failed", {
+    repair: {
+      available: true,
+      inProgress: false,
+      blockedReason: null,
+      lastAttemptAt: null,
+      lastError: "Package verification failed.",
+    },
+  }));
+
+  assert.equal(install.action, "install");
+  assert.equal(repair.action, "repair");
 });

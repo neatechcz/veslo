@@ -10,7 +10,12 @@ import {
   resolvePilotSocketPath,
   startApp,
   stopApp,
+  waitForDesktopBootstrapReady,
 } from './app-launcher.js';
+import {
+  startPackagedSmokeModelFixture,
+  type PackagedSmokeModelFixture,
+} from './packaged-smoke-model-fixture.js';
 import {
   startSessionQueueRuntimeFixture,
   type SessionQueueRuntimeFixture,
@@ -328,6 +333,7 @@ export function scenarioSelectionDisablesDevAutostart(scenarios: string[]): bool
     return normalized.endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
       normalized.endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml') ||
       normalized.endsWith('/pilot-scenarios/global-managed-ai-model-policy.toml') ||
+      normalized.endsWith('/pilot-scenarios/packaged-smoke.toml') ||
       MANAGED_AI_INFERENCE_SCENARIO_NAMES.some((name) =>
         normalized.endsWith(`/pilot-scenarios/${name}.toml`),
       );
@@ -397,6 +403,12 @@ export function scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios: stri
   );
 }
 
+export function scenarioSelectionNeedsPackagedSmokeFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/packaged-smoke.toml'),
+  );
+}
+
 export function scenarioSelectionRequiresExplicitSessionRuntimeActivation(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
     ['session-render-stability', 'session-run-truthfulness']
@@ -418,6 +430,11 @@ export function assertPilotScenarioSelectionIsolated(scenarios: string[]): void 
   if (scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios) && scenarios.length > 1) {
     throw new Error(
       'session-queue-durability must run as a focused pilot scenario because it owns a deterministic OpenCode and lifecycle fixture.',
+    );
+  }
+  if (scenarioSelectionNeedsPackagedSmokeFixture(scenarios) && scenarios.length > 1) {
+    throw new Error(
+      'packaged-smoke must run as a focused pilot scenario because it owns the deterministic local model fixture.',
     );
   }
 }
@@ -449,6 +466,67 @@ export function assertSessionQueueRuntimeFixtureProfileIsolation(
   ) {
     throw new Error(
       'session queue deterministic acceptance coverage must not use E2E_USE_EXISTING_PROFILE=1. Use the manual live-user Pilot smoke path separately.',
+    );
+  }
+}
+
+export function assertPackagedSmokeProfileIsolation(
+  scenarios: string[],
+  env: Record<string, string | undefined> = process.env,
+): void {
+  if (!scenarioSelectionNeedsPackagedSmokeFixture(scenarios)) return;
+  if (env.VESLO_PACKAGED_SMOKE?.trim() !== '1') {
+    throw new Error('packaged-smoke must be launched through pnpm desktop:smoke-packaged.');
+  }
+
+  const explicitlyDisallowed = [
+    'E2E_USE_EXISTING_PROFILE',
+    'E2E_OPENCODE_HOME',
+    'E2E_TAURI_BINARY',
+    'E2E_PRESERVE_ISOLATED_PROFILE',
+    'VESLO_DEV_SERVER_URL',
+    'VESLO_DEV_SERVER_TOKEN',
+    'VESLO_DESKTOP_ALLOW_EXTERNAL_RUNTIME_BINARIES',
+    'OPENCODE_BIN_PATH',
+    'VESLO_DEN_API_BASE',
+    'VESLO_DEN_AUTH_SNAPSHOT_PATH',
+    'VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE',
+    'E2E_DEN_AUTH_SNAPSHOT_FILE',
+    'VESLO_E2E_DEN_AUTH_JSON',
+    'E2E_DEN_AUTH_JSON',
+    'VESLO_MANAGED_AI_BASE_URL',
+    'VESLO_AI_GATEWAY_BASE_URL',
+  ];
+  const inheritedE2eConfiguration = Object.entries(env)
+    .filter(([name, value]) => (
+      name.startsWith('E2E_')
+      && name !== 'E2E_TAURI_PILOT_BIN'
+      && Boolean(value?.trim())
+    ))
+    .map(([name]) => name);
+  const inheritedCredential = Object.entries(env)
+    .filter(([name, value]) => (
+      /(?:^|_)(?:API_KEY|TOKENS?|SECRETS?|PASSWORDS?|CREDENTIALS?|AUTH(?:ORIZATION)?)(?:_|$)/i.test(name)
+      && Boolean(value?.trim())
+    ))
+    .map(([name]) => name);
+  const inheritedRuntimeOverride = Object.entries(env)
+    .filter(([name, value]) => (
+      (name.startsWith('VESLO_') &&
+        !['VESLO_PACKAGED_SMOKE', 'VESLO_SIDECAR_FORCE_BUILD', 'VESLO_DISABLE_DEV_AUTOSTART'].includes(name)) ||
+      name.startsWith('VITE_') ||
+      name.startsWith('OPENCODE_')
+    ) && Boolean(value?.trim()))
+    .map(([name]) => name);
+  const disallowed = [...new Set([
+    ...explicitlyDisallowed.filter((name) => Boolean(env[name]?.trim())),
+    ...inheritedE2eConfiguration,
+    ...inheritedCredential,
+    ...inheritedRuntimeOverride,
+  ])];
+  if (disallowed.length > 0) {
+    throw new Error(
+      'packaged-smoke rejects inherited dev, profile, binary, auth, or provider overrides: ' + disallowed.join(', ') + '.',
     );
   }
 }
@@ -931,6 +1009,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   }
   assertPilotScenarioSelectionIsolated(scenarios);
   assertSessionQueueRuntimeFixtureProfileIsolation(scenarios);
+  assertPackagedSmokeProfileIsolation(scenarios);
   assertManagedAiGatewayFixtureProfileIsolation(scenarios);
   assertLiveManagedAiAuthForScenarioSelection(scenarios);
 
@@ -977,7 +1056,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   }
   let portContentionFixture: PortContentionFixture | null = null;
   let sessionQueueRuntimeFixture: SessionQueueRuntimeFixture | null = null;
+  let packagedSmokeModelFixture: PackagedSmokeModelFixture | null = null;
   let restoreSessionQueueFixtureEnvironment: EnvironmentRestore | null = null;
+  let restorePackagedSmokeFixtureEnvironment: EnvironmentRestore | null = null;
 
   try {
     if (scenarioSelectionNeedsPortContentionFixture(scenarios)) {
@@ -1001,6 +1082,20 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
       console.log(`[e2e] Session queue runtime fixture: ${sessionQueueRuntimeFixture.baseUrl}`);
     }
 
+    if (scenarioSelectionNeedsPackagedSmokeFixture(scenarios)) {
+      packagedSmokeModelFixture = await startPackagedSmokeModelFixture();
+      restorePackagedSmokeFixtureEnvironment = setEnvironmentForFixture({
+        E2E_PACKAGED_SMOKE_MODEL_BASE_URL: packagedSmokeModelFixture.baseUrl,
+        E2E_PACKAGED_SMOKE_MODEL_ID: packagedSmokeModelFixture.modelId,
+        VESLO_E2E_DEN_AUTH_JSON: '',
+        E2E_DEN_AUTH_JSON: '',
+        VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: '',
+        E2E_DEN_AUTH_SNAPSHOT_FILE: '',
+        VESLO_DEN_AUTH_SNAPSHOT_PATH: '',
+      });
+      console.log('[e2e] Packaged smoke model fixture started on loopback.');
+    }
+
     const queueRuntimeFixtureForLaunch = sessionQueueRuntimeFixture;
     await startApp(queueRuntimeFixtureForLaunch
       ? {
@@ -1017,6 +1112,22 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
       : undefined);
     await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
     await seedPilotDenAuthIfConfigured({ binary, socket, cwd: e2eRoot, timeoutMs });
+    if (scenarioSelectionNeedsPackagedSmokeFixture(scenarios)) {
+      try {
+        await waitForDesktopBootstrapReady({ timeoutMs: 180_000 });
+      } catch (error) {
+        await collectPilotFailureDiagnostics({
+          binary,
+          socket,
+          cwd: e2eRoot,
+          e2eRoot,
+          scenario: scenarios[0],
+          error,
+          timeoutMs,
+        });
+        throw error;
+      }
+    }
     for (const scenario of scenarios) {
       console.log(`[e2e] Running tauri-pilot scenario: ${scenario}`);
       try {
@@ -1072,7 +1183,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     await stopApp();
     await stopPortContentionFixture(portContentionFixture);
     await sessionQueueRuntimeFixture?.stop();
+    await packagedSmokeModelFixture?.stop();
     restoreSessionQueueFixtureEnvironment?.();
+    restorePackagedSmokeFixtureEnvironment?.();
     restoreManagedAiFixtureEnvironment?.();
   }
 }

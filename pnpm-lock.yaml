@@ -326,6 +326,9 @@ importers:
       minimatch:
         specifier: ^10.0.1
         version: 10.1.1
+      veslo-document-runtime:
+        specifier: workspace:*
+        version: link:../document-runtime
       yaml:
         specifier: ^2.6.1
         version: 2.8.2

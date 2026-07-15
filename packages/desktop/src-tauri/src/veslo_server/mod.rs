@@ -49,7 +49,7 @@ fn append_veslo_server_launch_diagnostic(
     payload: serde_json::Value,
 ) {
     if let Some(forwarder) = app.try_state::<Arc<DebugLogsForwarder>>() {
-        forwarder.append_bootstrap_diagnostic(event_type, payload);
+        let _ = forwarder.append_bootstrap_diagnostic(event_type, payload);
     }
 }
 
@@ -1004,9 +1004,11 @@ pub fn recover_persisted_veslo_server_info(
     // If the dev scripts expose `VESLO_DEV_SERVER_URL` we probe it and persist
     // explicit env auth so subsequent reads stay consistent. Skipped in release
     // builds (env var unset by default).
-    if let Some(info) = discover_external_veslo_server() {
-        let _ = persist_veslo_server_info(app, &info);
-        return Ok(Some(info));
+    if !crate::supervised_process::packaged_smoke_mode() {
+        if let Some(info) = discover_external_veslo_server() {
+            let _ = persist_veslo_server_info(app, &info);
+            return Ok(Some(info));
+        }
     }
 
     Ok(None)
