@@ -192,10 +192,10 @@ git commit -m "feat(den): expose unlimited trial controls"
 ### Task 5: Render and control unlimited trial in Admin
 
 **Files:**
-- Modify: `services/den/public-admin/index.html`
-- Modify: `services/den/public-admin/app.js`
-- Modify: `services/den/test/organization-billing-admin-ui-source.test.ts`
-- Modify: `packages/e2e/specs/den-admin-billing-lifecycle.playwright.spec.ts`
+- Modify: `services/ai-gateway/public-admin/index.html`
+- Modify: `services/ai-gateway/public-admin/app.js`
+- Modify: `services/ai-gateway/test/admin-ui.test.ts`
+- Create: `packages/e2e/specs/ai-gateway-admin-unlimited-trial.playwright.spec.ts`
 
 **Step 1: Write failing UI source and E2E assertions**
 
@@ -203,15 +203,15 @@ Require the source to send `manualAccess: { enabled: true, unlimited: true, expi
 
 **Step 2: Run tests to verify they fail**
 
-Run: `npx -y pnpm@10.27.0 exec tsx --test test/organization-billing-admin-ui-source.test.ts`
-Expected: FAIL because the UI still requires a trial end date and finite quantities.
+Run: `npx -y pnpm@10.27.0 --dir services/ai-gateway exec tsx --test test/admin-ui.test.ts`
+Expected: FAIL because the active standalone Admin does not expose unlimited trial controls.
 
-Run: `npx -y pnpm@10.27.0 --filter @neatech/veslo-e2e exec playwright test specs/den-admin-billing-lifecycle.playwright.spec.ts`
+Run: `npx -y pnpm@10.27.0 --filter @neatech/veslo-e2e exec playwright test specs/ai-gateway-admin-unlimited-trial.playwright.spec.ts`
 Expected: FAIL on the unlimited trial assertions.
 
 **Step 3: Implement UI behavior**
 
-Make active-trial detection accept explicit unlimited trials. Display `Unlimited trial`, `Unlimited` license total/limit/availability, and explanatory no-expiry text. Change the platform action to create an unlimited trial without an end date or selected license count. Preserve finite trial rendering for historical records and keep revoke available.
+Make active-trial detection accept explicit unlimited trials in the standalone AI Gateway Admin. Display `Unlimited trial` and `Unlimited` capacity, create the trial without an end date or selected license count, and provide one atomic revoke action. Retire the redirect-only legacy Den Admin frontend while preserving Den admin APIs.
 
 **Step 4: Run tests to verify they pass**
 
@@ -221,7 +221,7 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add services/den/public-admin services/den/test/organization-billing-admin-ui-source.test.ts packages/e2e/specs/den-admin-billing-lifecycle.playwright.spec.ts
+git add services/ai-gateway/public-admin services/ai-gateway/test/admin-ui.test.ts packages/e2e/specs/ai-gateway-admin-unlimited-trial.playwright.spec.ts services/den/public-admin services/den/test/admin-managed-ai-ui.test.ts
 git commit -m "feat(admin): manage unlimited organization trials"
 ```
 
@@ -247,7 +247,7 @@ Expected: exit 0 with no TypeScript errors.
 
 **Step 4: Run the primary E2E scenario**
 
-Run: `npx -y pnpm@10.27.0 --filter @neatech/veslo-e2e exec playwright test specs/den-admin-billing-lifecycle.playwright.spec.ts`
+Run: `npx -y pnpm@10.27.0 --filter @neatech/veslo-e2e exec playwright test specs/ai-gateway-admin-unlimited-trial.playwright.spec.ts`
 Expected: PASS.
 
 **Step 5: Commit**

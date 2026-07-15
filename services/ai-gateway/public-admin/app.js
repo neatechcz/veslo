@@ -156,6 +156,7 @@ const els = {
   organizationBillingManualUnlimited: document.getElementById("organization-billing-manual-unlimited"),
   organizationBillingManualExpires: document.getElementById("organization-billing-manual-expires"),
   organizationBillingPlatformSave: document.getElementById("organization-billing-platform-save"),
+  organizationBillingUnlimitedRevoke: document.getElementById("organization-billing-unlimited-revoke"),
   organizationAuditStatus: document.getElementById("organization-audit-status"),
   organizationAuditList: document.getElementById("organization-audit-list"),
   organizationDomainModal: document.getElementById("organization-domain-modal"),
@@ -1690,6 +1691,7 @@ function renderOrganizationBilling() {
   els.organizationBillingManualEnabled.checked = account.manualAccess?.enabled === true;
   els.organizationBillingManualUnlimited.checked = unlimitedTrial;
   els.organizationBillingManualExpires.value = toAdminDateTimeLocalValue(account.manualAccess?.expiresAt);
+  els.organizationBillingUnlimitedRevoke.disabled = !unlimitedTrial;
   syncUnlimitedTrialControls();
 }
 
@@ -3066,6 +3068,16 @@ async function runOrganizationBillingAction(action) {
   }
 }
 
+async function revokeUnlimitedOrganizationTrial() {
+  els.organizationBillingManualUnlimited.checked = false;
+  els.organizationBillingPlatformMode.value = "none";
+  els.organizationBillingPlatformStatus.value = "none";
+  els.organizationBillingManualEnabled.checked = false;
+  els.organizationBillingManualExpires.value = "";
+  syncUnlimitedTrialControls();
+  await runOrganizationBillingAction("platform");
+}
+
 async function saveOrganization() {
   const orgId = organizationIdForRoute(state.route);
   if (!orgId || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-organization-profile")) {
@@ -3512,6 +3524,7 @@ function bindActions() {
   els.organizationBillingCancel.addEventListener("click", () => void runOrganizationBillingAction("cancel"));
   els.organizationBillingManualUnlimited.addEventListener("change", syncUnlimitedTrialControls);
   els.organizationBillingPlatformSave.addEventListener("click", () => void runOrganizationBillingAction("platform"));
+  els.organizationBillingUnlimitedRevoke.addEventListener("click", () => void revokeUnlimitedOrganizationTrial());
   els.credentialCreateProvider.addEventListener("change", updateCredentialCreateFields);
   els.credentialCreateSubmit.addEventListener("click", () => void createCredential());
   els.credentialCreateCodexUpload.addEventListener("click", () => void prepareNewCodexCredentialUpload());

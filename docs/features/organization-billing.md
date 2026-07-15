@@ -16,6 +16,8 @@ Platform admins can also set manual access, local-model billing metadata, billin
 
 The standalone AI Gateway admin exposes these controls through organization-scoped facades backed by Den's canonical admin billing API. It forwards the signed-in Den token and preserves Den's response status and body, including validation details. Stripe configuration and mutations remain owned by Den; the gateway does not store Stripe secrets or duplicate Stripe logic. Self-service billing actions are available to an authorized administrator of that organization, while manual/platform billing controls are both hidden from organization admins and rejected server-side unless the caller is a platform admin.
 
+The former Den-hosted admin frontend is retired. Den preserves its admin API routes, but browser requests under `/admin` redirect to the standalone AI Gateway Admin so there is only one shipped billing UI.
+
 ## Platform Trials
 
 Every organization currently receives an unlimited platform trial for Managed AI. Existing organizations without a configured Stripe subscription are backfilled during the retry-safe billing migration, and Den startup inserts any still-missing billing rows without changing existing billing accounts. The canonical personal-organization creation path writes the trial in the same transaction as the organization and owner membership and repairs a missing row when it encounters an existing personal organization. Existing Stripe subscription accounts remain Stripe-owned.

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { once } from "node:events"
+import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
@@ -14,6 +15,12 @@ Object.assign(process.env, {
 
 const { createManagedAiAdminUiRouter } = await import("../src/managed-ai/http/admin.js")
 const denIndexSource = await readFile(new URL("../src/index.ts", import.meta.url), "utf8")
+
+test("legacy DEN admin frontend assets are retired in favor of canonical AI Gateway Admin", () => {
+  for (const asset of ["index.html", "app.js", "app.css"]) {
+    assert.equal(existsSync(new URL(`../public-admin/${asset}`, import.meta.url)), false)
+  }
+})
 
 function createSession() {
   return {

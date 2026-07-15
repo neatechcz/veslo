@@ -87,10 +87,8 @@ test('platform admin grants, sees, and revokes an unlimited organization trial',
     manualAccess: { enabled: true, unlimited: true, expiresAt: null, licenseLimit: 0 },
   });
 
-  await page.locator('#organization-billing-manual-unlimited').uncheck();
-  await page.locator('#organization-billing-platform-mode').selectOption('none');
-  await page.locator('#organization-billing-platform-status').selectOption('none');
-  await page.locator('#organization-billing-platform-save').click();
+  await expect(page.locator('#organization-billing-unlimited-revoke')).toBeVisible();
+  await page.locator('#organization-billing-unlimited-revoke').click();
 
   await expect(page.locator('#organization-billing-summary')).toContainText('Blocked');
   await expect(page.locator('#organization-billing-manual-unlimited')).not.toBeChecked();

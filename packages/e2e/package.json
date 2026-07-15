@@ -30,9 +30,6 @@
     "test:pilot:den-managed-openai-anthropic": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario den-managed-openai-anthropic",
     "test:update-baselines": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario visual-regression",
     "test:feedback-youtrack-live": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario feedback-youtrack-live",
-    "test:den-admin-billing-integrated": "playwright test ./specs/den-admin-billing-integrated.playwright.spec.ts",
-    "test:den-admin-billing-lifecycle": "playwright test ./specs/den-admin-billing-lifecycle.playwright.spec.ts",
-    "test:den-admin-billing-stripe-live": "playwright test ./specs/den-admin-billing-stripe-live.playwright.spec.ts",
     "test:ai-gateway-admin-unlimited-trial": "playwright test ./specs/ai-gateway-admin-unlimited-trial.playwright.spec.ts",
     "test:live-codex-auth-upload": "playwright test ./specs/live-admin-codex-auth-upload.playwright.spec.ts"
   },
