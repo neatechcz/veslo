@@ -40,6 +40,10 @@ export type LiveTranscriptReadPolicyOptions = {
   record?: (event: string, payload?: Record<string, unknown>) => void;
 };
 
+type LiveTranscriptReadAllowancesByWorkspaceId = Partial<
+  Record<string, LiveTranscriptReadAllowance>
+>;
+
 export type LiveTranscriptReadPolicy = {
   emit: (event: LiveTranscriptReadPolicyEvent) => void;
   isAllowedForWorkspace: (workspaceId?: string | null) => boolean;
@@ -52,7 +56,7 @@ export function createLiveTranscriptReadPolicy(
 ): LiveTranscriptReadPolicy {
   const now = options.now ?? (() => Date.now());
   const [allowancesByWorkspaceId, setAllowancesByWorkspaceId] =
-    createSignal<Record<string, LiveTranscriptReadAllowance>>({});
+    createSignal<LiveTranscriptReadAllowancesByWorkspaceId>({});
 
   const resolveWorkspaceId = (workspaceId?: string | null) =>
     workspaceId?.trim() || options.activeWorkspaceId().trim();
@@ -66,7 +70,7 @@ export function createLiveTranscriptReadPolicy(
     const workspaceId = resolveWorkspaceId(event.workspaceId);
     if (!workspaceId) return;
     setAllowancesByWorkspaceId((current) => {
-      if (current[workspaceId]) return current;
+      if (Object.hasOwn(current, workspaceId)) return current;
       const allowance: LiveTranscriptReadAllowance = {
         workspaceId,
         reason: event.reason,

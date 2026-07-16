@@ -5292,23 +5292,14 @@ describe("conversation routes", () => {
       },
       body: JSON.stringify({ model: "gpt-5.5", messages: [{ role: "user", content: "Ambiguous" }] }),
     });
-    expect(providerResponse.status).toBe(200);
-
-    await waitForCondition(
-      () => providerRequests.length > 0,
-      { timeoutMs: 1_000, message: "expected ambiguous provider request to be proxied" },
-    );
-    expect(providerRequests).toEqual([
-      {
-        authorization: "Bearer gateway-access-token",
-        sessionId: "${OPENCODE_SESSION_ID}",
-        workspaceId: null,
-        body: {
-          model: "gpt-5.5",
-          messages: [{ role: "user", content: "Ambiguous" }],
-        },
-      },
-    ]);
+    expect(providerResponse.status).toBe(400);
+    expect(await providerResponse.json()).toMatchObject({
+      code: "gateway_session_unresolved",
+    });
+    // Two active runs in one workspace make the placeholder inherently
+    // ambiguous. It must be rejected before it can be forwarded without a
+    // concrete run correlation.
+    expect(providerRequests).toEqual([]);
 
     const [firstRun, secondRun] = await Promise.all([firstRunPromise, secondRunPromise]);
     expect(firstRun.status).toBe(200);

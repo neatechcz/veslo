@@ -1,7 +1,6 @@
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -17,10 +16,34 @@ import {
   type PackagedSmokeModelFixture,
 } from './packaged-smoke-model-fixture.js';
 import {
+  buildPilotCommand,
+  executePilotCommand,
+  pilotCommandSucceeded,
+  type PilotCommandResult,
+} from './pilot-command.js';
+import {
+  PILOT_RUNS_DIRNAME,
+  createPilotRunContext,
+  prunePilotRunHistory,
+  type PilotRunContext,
+} from './pilot-run-store.js';
+import {
+  redactPilotCommandArgs,
+  redactPilotDiagnosticText,
+} from './pilot-redaction.js';
+import {
+  buildPilotSelectionPlan,
+  type PilotSelectionPlan,
+  type PilotSelectionSignals,
+} from './pilot-scenario-plan.js';
+import {
   startSessionQueueRuntimeFixture,
   type SessionQueueRuntimeFixture,
 } from './session-queue-runtime-fixture.js';
 import { createSessionRenderArtifactManifest } from './session-render-fixture.js';
+
+export { buildPilotCommand } from './pilot-command.js';
+export { redactPilotCommandArgs, redactPilotDiagnosticText } from './pilot-redaction.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -83,12 +106,6 @@ const PILOT_SCENARIO_SUITES = {
   ],
 } as const;
 
-type BuildPilotCommandOptions = {
-  binary: string;
-  socket: string;
-  args: string[];
-};
-
 type RunPilotCommandOptions = {
   binary?: string;
   socket?: string;
@@ -97,17 +114,6 @@ type RunPilotCommandOptions = {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   inheritStdio?: boolean;
-};
-
-type PilotCommandCaptureResult = {
-  command: string;
-  args: string[];
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-  timedOut: boolean;
-  error: string | null;
 };
 
 type PilotFailureDiagnosticCommand = {
@@ -124,6 +130,7 @@ type ResolvePilotScenarioSelectionOptions = {
 
 type RunPilotScenariosOptions = ResolvePilotScenarioSelectionOptions & {
   e2eRoot?: string;
+  runRoot?: string;
   binary?: string;
   socket?: string;
   timeoutMs?: number;
@@ -135,11 +142,6 @@ type PortContentionFixture = {
 };
 
 type PilotSuccessArtifactCommand = PilotFailureDiagnosticCommand;
-
-const SENSITIVE_DIAGNOSTIC_KEY = /^(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)$/i;
-const SENSITIVE_DIAGNOSTIC_INLINE_VALUE = /((?:["']?)(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)(?:["']?)\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^,\s}\]]+)/gi;
-const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
-const SENSITIVE_QUERY_VALUE = /([?&](?:token|access_token|refresh_token|api_key|apikey|secret|password)=)[^&\s]+/gi;
 
 const SESSION_RENDER_ARTIFACT_VIEWPORTS = [
   { width: 390, height: 844 },
@@ -157,15 +159,88 @@ type DenAuthSummary = {
   token: string | null;
 };
 
+type LiveInferenceBrowserDiagnostic = {
+  clickAt: number | null;
+  sendStartedAt: number | null;
+  serverAcceptedAt: number | null;
+  firstAssistantTextAt: number | null;
+  firstAssistantTextSource: "session-sse" | "visible-render" | null;
+  traceId: string | null;
+  sessionId: string | null;
+  runId: string | null;
+  modelVariant: string | null;
+  runtimeRecoveryEvents: string[];
+};
+
+type LiveInferenceTraceEntry = Record<string, unknown>;
+
+type LiveInferenceDiagnosticsInput = {
+  scenario: string;
+  browser: unknown;
+  serverTrace: LiveInferenceTraceEntry[];
+  appStderr: string;
+  env: Record<string, string | undefined>;
+};
+
+export type LiveInferenceDiagnosticSummary = {
+  schema: "tauri-pilot-live-inference-diagnostic/v1";
+  scenario: string;
+  diagnosticsComplete: boolean;
+  simulatedFailureInputs: {
+    managedAiGatewayFixture: boolean;
+    managedAiResponseDelay: boolean;
+    runActivityProbe: boolean;
+  };
+  runtimeShape: {
+    devAutostartDisabled: boolean;
+    modelVariant: string | null;
+  };
+  timingMs: {
+    clickToSendStart: number | null;
+    clickToServerAccepted: number | null;
+    serverAcceptedToProviderHit: number | null;
+    providerHitToUpstreamHeaders: number | null;
+    upstreamHeadersToFirstAssistantText: number | null;
+    providerHitToFirstAssistantText: number | null;
+    clickToFirstAssistantText: number | null;
+  };
+  latencyDiagnosis: {
+    dominantStage: 'app-submit' | 'engine-before-provider' | 'upstream-first-headers' | 'stream-to-first-text' | null;
+    dominantStageMs: number | null;
+  };
+  provider: string | null;
+  evidence: {
+    providerHit: boolean;
+    upstreamHeaders: boolean;
+    firstAssistantText: boolean;
+  };
+  fallbacks: string[];
+  startupDatabaseMissingCount: number;
+};
+
 export function resolvePilotBinary(env: Record<string, string | undefined> = process.env): string {
   return env.E2E_TAURI_PILOT_BIN?.trim() || 'tauri-pilot';
 }
 
-export function buildPilotCommand(options: BuildPilotCommandOptions): { command: string; args: string[] } {
-  return {
-    command: options.binary,
-    args: ['--socket', options.socket, ...options.args],
-  };
+export function resolveCanonicalLiveParityRuntimePreferencesSource(
+  env: Record<string, string | undefined> = process.env,
+  options: {
+    platform?: NodeJS.Platform;
+    fileExists?: (path: string) => boolean;
+  } = {},
+): string {
+  const explicit = env.E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE?.trim();
+  if (explicit) return explicit;
+  if ((options.platform ?? process.platform) !== 'win32') return '';
+
+  const appData = env.APPDATA?.trim();
+  if (!appData) return '';
+  const source = win32.join(
+    appData,
+    'com.neatech.veslo.dev',
+    'runtime-preferences.json',
+  );
+  return (options.fileExists ?? existsSync)(source) ? source : '';
 }
 
 export function resolvePilotScenarioCommandTimeoutMs(env: Record<string, string | undefined> = process.env): number {
@@ -202,36 +277,333 @@ export function tailText(value: string, maxLength = 20_000): string {
   return `${value.slice(0, 1_000)}\n...<truncated ${value.length - maxLength} chars>...\n${value.slice(-maxLength + 1_000)}`;
 }
 
-function redactPilotDiagnosticValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactPilotDiagnosticValue);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [
-        key,
-        SENSITIVE_DIAGNOSTIC_KEY.test(key) ? '<redacted>' : redactPilotDiagnosticValue(child),
-      ]),
-    );
-  }
-  return typeof value === 'string' ? redactPilotDiagnosticText(value) : value;
+function safePilotRunFailureReason(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return tailText(redactPilotDiagnosticText(raw), 1_000);
 }
 
-export function redactPilotDiagnosticText(value: string): string {
-  try {
-    return JSON.stringify(redactPilotDiagnosticValue(JSON.parse(value)), null, 2);
-  } catch {
-    return value
-      .replace(BEARER_VALUE, 'Bearer <redacted>')
-      .replace(SENSITIVE_DIAGNOSTIC_INLINE_VALUE, '$1<redacted>')
-      .replace(SENSITIVE_QUERY_VALUE, '$1<redacted>');
-  }
+function pilotRunLaunchDiagnostics(
+  runContext: PilotRunContext,
+  launchNumber: number,
+): {
+  traceDir: string;
+  appLogDir: string;
+  runId: string;
+  launchId: string;
+} {
+  return {
+    traceDir: runContext.traceDir,
+    appLogDir: runContext.appLogDir,
+    runId: runContext.runId,
+    launchId: `launch-${String(launchNumber).padStart(2, '0')}`,
+  };
 }
 
-export function redactPilotCommandArgs(args: string[]): string[] {
-  const evalIndex = args.indexOf('eval');
-  return args.map((arg, index) => {
-    if (evalIndex >= 0 && index > evalIndex) return '<redacted-eval-script>';
-    return redactPilotDiagnosticText(arg);
-  });
+function diagnosticRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function diagnosticText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function diagnosticTimestamp(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function diagnosticDuration(end: number | null, start: number | null): number | null {
+  if (end === null || start === null) return null;
+  const duration = end - start;
+  return Number.isFinite(duration) && duration >= 0 ? Math.round(duration * 100) / 100 : null;
+}
+
+function diagnosticModelVariant(value: unknown): string | null {
+  const variant = diagnosticText(value);
+  return variant && /^[a-z0-9_-]{1,32}$/i.test(variant) ? variant : null;
+}
+
+function diagnosticEvent(entry: LiveInferenceTraceEntry): string | null {
+  return diagnosticText(entry.event);
+}
+
+function diagnosticEntryTimestamp(entry: LiveInferenceTraceEntry): number | null {
+  return diagnosticTimestamp(entry.ts);
+}
+
+function normalizeLiveInferenceBrowserDiagnostic(value: unknown): LiveInferenceBrowserDiagnostic {
+  const record = diagnosticRecord(value) ?? {};
+  const recoveryEvents = Array.isArray(record.runtimeRecoveryEvents)
+    ? record.runtimeRecoveryEvents
+      .map(diagnosticText)
+      .filter((event): event is string => Boolean(event))
+      .slice(0, 16)
+    : [];
+  const source = diagnosticText(record.firstAssistantTextSource);
+  return {
+    clickAt: diagnosticTimestamp(record.clickAt),
+    sendStartedAt: diagnosticTimestamp(record.sendStartedAt),
+    serverAcceptedAt: diagnosticTimestamp(record.serverAcceptedAt),
+    firstAssistantTextAt: diagnosticTimestamp(record.firstAssistantTextAt),
+    firstAssistantTextSource: source === 'session-sse' || source === 'visible-render'
+      ? source
+      : null,
+    traceId: diagnosticText(record.traceId),
+    sessionId: diagnosticText(record.sessionId),
+    runId: diagnosticText(record.runId),
+    modelVariant: diagnosticModelVariant(record.modelVariant),
+    runtimeRecoveryEvents: recoveryEvents,
+  };
+}
+
+export function parseLiveInferenceTraceEntries(value: string): LiveInferenceTraceEntry[] {
+  const entries: LiveInferenceTraceEntry[] = [];
+  for (const line of value.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const entry = diagnosticRecord(JSON.parse(line));
+      if (entry) entries.push(entry);
+    } catch {
+      // A process can be terminated while appending its last trace line.
+    }
+  }
+  return entries;
+}
+
+export function parsePilotJsonOutput(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const candidates = [trimmed, ...trimmed.split(/\r?\n/).reverse()];
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Continue with a single JSON line when Pilot adds a human-readable prefix.
+    }
+  }
+  return null;
+}
+
+/**
+ * This deliberately returns correlation ids only to the local runner. They are
+ * used to join traces, then omitted from the persisted summary.
+ */
+export function buildPilotLiveInferenceDiagnosticScript(): string {
+  return `(function () {
+  const records = (value) => Array.isArray(value) ? value.filter((entry) => entry && typeof entry === "object") : [];
+  const text = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
+  const timestamp = (value) => typeof value === "number" && Number.isFinite(value) ? value : null;
+  const event = (entry) => text(entry && entry.event);
+  const at = (entry) => timestamp(entry && entry.ts);
+  const isExplicitRuntimeRecoveryEvent = (eventName) =>
+    /(?:^|:)(?:(?:create|conversation-run)-)?runtime-recovery-(?:start|ensure-engine|result|ok)$/i.test(eventName || "") ||
+    eventName === "sendPrompt:runtime-recovery:validation-failed" ||
+    eventName === "sse-session-error-local-runtime-recovery-result";
+  const appTrace = records(window.__vesloSendTrace);
+  const workflowTrace = records(window.__vesloSendWorkflowTrace);
+  const nativeClick = window.__vesloMessageSendRegistryDegradedNativeClick || null;
+  const clickAt = timestamp(nativeClick && nativeClick.atMs);
+  const sendStart = [...appTrace].reverse().find((entry) => event(entry) === "sendPrompt:start") || null;
+  const traceId = text(sendStart && sendStart.traceId);
+  const sendStartedAt = at(sendStart);
+  const accepted = appTrace.find((entry) => {
+    if (event(entry) !== "sendPrompt:server-submit-first-success") return false;
+    if (traceId && text(entry.traceId) !== traceId) return false;
+    const entryAt = at(entry);
+    return !sendStartedAt || !entryAt || entryAt >= sendStartedAt;
+  }) || null;
+  const serverAcceptedAt = at(accepted);
+  const sessionId = text(accepted && (accepted.sessionID || accepted.sessionId));
+  const runId = text(accepted && accepted.runId);
+  const sessionAssistantText = workflowTrace.find((entry) => {
+    if (event(entry) !== "session-sse:assistant-part-updated") return false;
+    if (!sessionId || text(entry.sessionID) !== sessionId) return false;
+    if (entry.hasText !== true && !(typeof entry.textLength === "number" && entry.textLength > 0)) return false;
+    const entryAt = at(entry);
+    return !serverAcceptedAt || !entryAt || entryAt >= serverAcceptedAt;
+  }) || null;
+  const progress = window.__vesloMessageSendRegistryDegradedProgress || null;
+  const visibleRenderedAt = progress && progress.stage === "production-managed-ai-response-rendered"
+    ? Date.parse(String(progress.at || ""))
+    : NaN;
+  const firstAssistantTextAt = at(sessionAssistantText) ?? (Number.isFinite(visibleRenderedAt) ? visibleRenderedAt : null);
+  const firstAssistantTextSource = sessionAssistantText
+    ? "session-sse"
+    : Number.isFinite(visibleRenderedAt)
+      ? "visible-render"
+      : null;
+  const recoveryEvents = [...appTrace, ...workflowTrace]
+    .filter((entry) => {
+      const entryAt = at(entry);
+      return (!clickAt || !entryAt || entryAt >= clickAt) && isExplicitRuntimeRecoveryEvent(event(entry));
+    })
+    .map(event)
+    .filter(Boolean);
+  return {
+    clickAt,
+    sendStartedAt,
+    serverAcceptedAt,
+    firstAssistantTextAt,
+    firstAssistantTextSource,
+    traceId,
+    sessionId,
+    runId,
+    modelVariant: text(window.localStorage.getItem("veslo.modelVariant")),
+    runtimeRecoveryEvents: [...new Set(recoveryEvents)].slice(0, 16),
+  };
+})()`;
+}
+
+function sameLiveInferenceContext(
+  entry: LiveInferenceTraceEntry,
+  browser: LiveInferenceBrowserDiagnostic,
+): boolean {
+  const traceId = diagnosticText(entry.traceId);
+  if (browser.traceId && traceId === browser.traceId) return true;
+  const runId = diagnosticText(entry.runId);
+  if (browser.runId && runId === browser.runId) return true;
+  const sessionId = diagnosticText(entry.sessionId) ?? diagnosticText(entry.sessionID);
+  return Boolean(browser.sessionId && sessionId === browser.sessionId);
+}
+
+function traceHasModelRetry(entries: LiveInferenceTraceEntry[]): boolean {
+  return entries.some((entry) =>
+    diagnosticText(entry.activityKind) === 'model_retry' ||
+    diagnosticText(entry.waitReason) === 'model_retry_no_output' ||
+    diagnosticEvent(entry)?.includes('model-retry') === true,
+  );
+}
+
+function isExplicitUiRuntimeRecoveryEvent(event: string): boolean {
+  return /(?:^|:)(?:(?:create|conversation-run)-)?runtime-recovery-(?:start|ensure-engine|result|ok)$/i.test(event) ||
+    event === 'sendPrompt:runtime-recovery:validation-failed' ||
+    event === 'sse-session-error-local-runtime-recovery-result';
+}
+
+function diagnoseLiveInferenceLatency(timingMs: LiveInferenceDiagnosticSummary['timingMs']): LiveInferenceDiagnosticSummary['latencyDiagnosis'] {
+  const candidates: Array<{
+    stage: NonNullable<LiveInferenceDiagnosticSummary['latencyDiagnosis']['dominantStage']>;
+    durationMs: number | null;
+  }> = [
+    { stage: 'app-submit', durationMs: timingMs.clickToServerAccepted },
+    { stage: 'engine-before-provider', durationMs: timingMs.serverAcceptedToProviderHit },
+    { stage: 'upstream-first-headers', durationMs: timingMs.providerHitToUpstreamHeaders },
+    { stage: 'stream-to-first-text', durationMs: timingMs.upstreamHeadersToFirstAssistantText },
+  ];
+  const observed = candidates.filter((candidate): candidate is { stage: typeof candidate.stage; durationMs: number } =>
+    candidate.durationMs !== null,
+  );
+  if (observed.length === 0) {
+    return { dominantStage: null, dominantStageMs: null };
+  }
+  const dominant = observed.reduce((current, candidate) =>
+    candidate.durationMs > current.durationMs ? candidate : current,
+  );
+  return { dominantStage: dominant.stage, dominantStageMs: dominant.durationMs };
+}
+
+export function summarizeLiveInferenceDiagnostics(input: LiveInferenceDiagnosticsInput): LiveInferenceDiagnosticSummary {
+  const browser = normalizeLiveInferenceBrowserDiagnostic(input.browser);
+  const contextualEntries = input.serverTrace
+    .filter((entry) => sameLiveInferenceContext(entry, browser))
+    .sort((left, right) => (diagnosticEntryTimestamp(left) ?? 0) - (diagnosticEntryTimestamp(right) ?? 0));
+  const entryAfterAccepted = (entry: LiveInferenceTraceEntry) => {
+    const timestamp = diagnosticEntryTimestamp(entry);
+    return browser.serverAcceptedAt === null || timestamp === null || timestamp >= browser.serverAcceptedAt;
+  };
+  const providerHit = contextualEntries.find((entry) =>
+    diagnosticEvent(entry) === 'server:ai-gateway:provider-hit' && entryAfterAccepted(entry),
+  ) ?? null;
+  const providerHitAt = providerHit ? diagnosticEntryTimestamp(providerHit) : null;
+  const providerRequestId = providerHit ? diagnosticText(providerHit.requestId) : null;
+  const upstreamHeaders = contextualEntries.find((entry) =>
+    diagnosticEvent(entry) === 'server:ai-gateway:upstream-headers' &&
+    (providerRequestId
+      ? diagnosticText(entry.requestId) === providerRequestId
+      : providerHitAt === null || (diagnosticEntryTimestamp(entry) ?? 0) >= providerHitAt),
+  ) ?? null;
+  const upstreamHeadersAt = upstreamHeaders ? diagnosticEntryTimestamp(upstreamHeaders) : null;
+  const fallbackSet = new Set<string>();
+  if (/orchestrator activate failed, falling back to fresh start/i.test(input.appStderr)) {
+    fallbackSet.add('orchestrator-activate-fresh-start');
+  }
+  if (contextualEntries.some((entry) => diagnosticEvent(entry) === 'server:conversation-run:ai-gateway-provider-start-watch:timeout')) {
+    fallbackSet.add('provider-start-watch-timeout');
+  }
+  if (contextualEntries.some((entry) => diagnosticEvent(entry) === 'server:opencode-json:fallback-orchestrator')) {
+    fallbackSet.add('opencode-fallback-orchestrator');
+  }
+  if (contextualEntries.some((entry) => diagnosticEvent(entry) === 'server:ai-gateway:sessionless-forward')) {
+    fallbackSet.add('ai-gateway-sessionless-forward');
+  }
+  if (browser.runtimeRecoveryEvents.some(isExplicitUiRuntimeRecoveryEvent)) {
+    fallbackSet.add('ui-runtime-recovery');
+  }
+  if (traceHasModelRetry(contextualEntries)) {
+    fallbackSet.add('model-retry');
+  }
+  const firstAssistantTextObserved = browser.firstAssistantTextAt !== null;
+  const providerHitObserved = providerHitAt !== null;
+  const upstreamHeadersObserved = upstreamHeadersAt !== null;
+  const timingMs = {
+    clickToSendStart: diagnosticDuration(browser.sendStartedAt, browser.clickAt),
+    clickToServerAccepted: diagnosticDuration(browser.serverAcceptedAt, browser.clickAt),
+    serverAcceptedToProviderHit: diagnosticDuration(providerHitAt, browser.serverAcceptedAt),
+    providerHitToUpstreamHeaders: diagnosticDuration(upstreamHeadersAt, providerHitAt),
+    upstreamHeadersToFirstAssistantText: diagnosticDuration(browser.firstAssistantTextAt, upstreamHeadersAt),
+    providerHitToFirstAssistantText: diagnosticDuration(browser.firstAssistantTextAt, providerHitAt),
+    clickToFirstAssistantText: diagnosticDuration(browser.firstAssistantTextAt, browser.clickAt),
+  };
+  return {
+    schema: 'tauri-pilot-live-inference-diagnostic/v1',
+    scenario: input.scenario,
+    diagnosticsComplete: browser.clickAt !== null &&
+      browser.serverAcceptedAt !== null &&
+      providerHitObserved &&
+      upstreamHeadersObserved &&
+      firstAssistantTextObserved,
+    simulatedFailureInputs: {
+      managedAiGatewayFixture: input.env.E2E_MANAGED_AI_GATEWAY_FIXTURE?.trim() === '1',
+      managedAiResponseDelay: Boolean(input.env.E2E_MANAGED_AI_RESPONSE_DELAY_MS?.trim()),
+      runActivityProbe: Boolean(input.env.E2E_RUN_ACTIVITY_PROBE_MODE?.trim()),
+    },
+    runtimeShape: {
+      devAutostartDisabled: input.env.VESLO_DISABLE_DEV_AUTOSTART?.trim() === '1',
+      modelVariant: browser.modelVariant,
+    },
+    timingMs,
+    latencyDiagnosis: diagnoseLiveInferenceLatency(timingMs),
+    provider: providerHit ? diagnosticText(providerHit.provider) : null,
+    evidence: {
+      providerHit: providerHitObserved,
+      upstreamHeaders: upstreamHeadersObserved,
+      firstAssistantText: firstAssistantTextObserved,
+    },
+    fallbacks: [...fallbackSet],
+    startupDatabaseMissingCount: Array.from(input.appStderr.matchAll(/"reason":"database_missing"/g)).length,
+  };
+}
+
+function formatLiveInferenceTiming(value: number | null): string {
+  return value === null ? 'n/a' : `${Math.round(value)}ms`;
+}
+
+export function formatLiveInferenceDiagnosticSummary(summary: LiveInferenceDiagnosticSummary): string {
+  const simulated = Object.values(summary.simulatedFailureInputs).some(Boolean) ? 'yes' : 'no';
+  return [
+    `click→accepted=${formatLiveInferenceTiming(summary.timingMs.clickToServerAccepted)}`,
+    `accepted→provider=${formatLiveInferenceTiming(summary.timingMs.serverAcceptedToProviderHit)}`,
+    `provider→headers=${formatLiveInferenceTiming(summary.timingMs.providerHitToUpstreamHeaders)}`,
+    `headers→first-text=${formatLiveInferenceTiming(summary.timingMs.upstreamHeadersToFirstAssistantText)}`,
+    `click→first-text=${formatLiveInferenceTiming(summary.timingMs.clickToFirstAssistantText)}`,
+    `bottleneck=${summary.latencyDiagnosis.dominantStage ?? 'unobserved'}:${formatLiveInferenceTiming(summary.latencyDiagnosis.dominantStageMs)}`,
+    `provider=${summary.provider ?? 'unobserved'}`,
+    `variant=${summary.runtimeShape.modelVariant ?? 'default/unknown'}`,
+    `simulated=${simulated}`,
+    `fallbacks=${summary.fallbacks.join(',') || 'none'}`,
+    `diagnostics=${summary.diagnosticsComplete ? 'complete' : 'partial'}`,
+  ].join('; ');
 }
 
 export function buildPilotStorageSummaryScript(scope: 'local' | 'session'): string {
@@ -435,14 +807,15 @@ export function scenarioSelectionNeedsModelStreamRetryFixture(scenarios: string[
 export function scenarioSelectionDisablesDevAutostart(scenarios: string[]): boolean {
   return scenarios.some((scenario) => {
     const normalized = scenario.replaceAll('\\', '/');
+    const isCanonicalLiveInference = normalized.endsWith('/pilot-scenarios/message-send-registry-degraded.toml');
     return normalized.endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
       normalized.endsWith('/pilot-scenarios/vslo-235-local-host-child-exit.toml') ||
       normalized.endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml') ||
       normalized.endsWith('/pilot-scenarios/global-managed-ai-model-policy.toml') ||
       normalized.endsWith('/pilot-scenarios/packaged-smoke.toml') ||
-      MANAGED_AI_INFERENCE_SCENARIO_NAMES.some((name) =>
+      (!isCanonicalLiveInference && MANAGED_AI_INFERENCE_SCENARIO_NAMES.some((name) =>
         normalized.endsWith(`/pilot-scenarios/${name}.toml`),
-      );
+      ));
   });
 }
 
@@ -667,6 +1040,16 @@ export function configureManagedAiGatewayFixtureEnvironment(
   }, targetEnv);
 }
 
+export function configureLiveParityRuntimePreferencesEnvironment(
+  targetEnv: NodeJS.ProcessEnv = process.env,
+): EnvironmentRestore {
+  const source = resolveCanonicalLiveParityRuntimePreferencesSource(targetEnv);
+  if (!source) return () => {};
+  return setEnvironmentForFixture({
+    E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE: source,
+  }, targetEnv);
+}
+
 export function configureCanonicalLiveInferenceEnvironment(
   targetEnv: NodeJS.ProcessEnv = process.env,
 ): EnvironmentRestore {
@@ -680,6 +1063,17 @@ export function configureCanonicalLiveInferenceEnvironment(
     E2E_RUN_ACTIVITY_PROBE_MODE: '',
     E2E_MANAGED_AI_RESPONSE_DELAY_MS: '',
     E2E_SKILL_REGISTRY_EVENTS_MODE: '',
+    // The canonical suite measures the debug development path. Cold-start
+    // lifecycle coverage owns the intentionally disabled-autostart variant.
+    VESLO_DISABLE_DEV_AUTOSTART: '',
+    // Persist only redacted timing/fallback evidence in the harness-owned
+    // profile. These flags do not alter provider selection or auth.
+    // Keep the stdout/stderr capture in the harness, but make the normal
+    // success signal the redacted diagnostic line. A user can opt back into
+    // live app-log forwarding with E2E_FORWARD_APP_LOGS=1.
+    E2E_FORWARD_APP_LOGS: targetEnv.E2E_FORWARD_APP_LOGS?.trim() || '0',
+    VESLO_SEND_WORKFLOW_TRACE: '1',
+    VESLO_SEND_WORKFLOW_TRACE_CONSOLE: '',
   }, targetEnv);
 }
 
@@ -702,6 +1096,62 @@ export function scenarioSelectionRequiresLiveManagedAiAuth(scenarios: string[]):
       normalized.endsWith(`/pilot-scenarios/${name}.toml`),
     );
   });
+}
+
+export type LegacyPilotSelectionContractOptions = {
+  scenarios: string[];
+  suite?: string | null;
+  env?: Record<string, string | undefined>;
+};
+
+/**
+ * This adapter intentionally derives signals from the pre-refactor predicate
+ * graph. Characterization tests compare it to the independent compiler before
+ * the runner delegates any launch topology to the new SelectionPlan.
+ */
+export function legacyPilotSelectionSignals(
+  options: LegacyPilotSelectionContractOptions,
+): PilotSelectionSignals {
+  const env = options.env ?? process.env;
+  const needsPackagedSmokeFixture = scenarioSelectionNeedsPackagedSmokeFixture(options.scenarios);
+  const profileMode = env.E2E_USE_EXISTING_PROFILE?.trim() === '1'
+    ? 'existing-profile'
+    : env.E2E_OPENCODE_HOME?.trim()
+      ? 'custom-opencode-home'
+      : needsPackagedSmokeFixture
+        ? 'packaged-smoke'
+        : 'isolated';
+
+  return {
+    scenarioNames: options.scenarios.map((scenario) => basename(scenario.replaceAll('\\', '/')).replace(/\.toml$/i, '')),
+    suite: options.suite?.trim() || null,
+    profileMode,
+    hasPackagedSmokeLaunch: env.VESLO_PACKAGED_SMOKE?.trim() === '1',
+    needsAutomationSecondaryWorkspace: scenarioSelectionNeedsAutomationSecondaryWorkspace(options.scenarios),
+    needsSkillRegistryAuthFixture: scenarioSelectionNeedsSkillRegistryAuthFixture(options.scenarios),
+    needsLegacySoulRuntime: scenarioSelectionNeedsLegacySoulRuntime(options.scenarios),
+    needsSkillEnableInventoryFixture: scenarioSelectionNeedsSkillEnableInventoryFixture(options.scenarios),
+    needsGoogleMcpCatalogFixture: scenarioSelectionNeedsGoogleMcpCatalogFixture(options.scenarios),
+    needsSharePointMcpCatalogFixture: scenarioSelectionNeedsSharePointMcpCatalogFixture(options.scenarios),
+    needsManagedAiGatewayFixture: scenarioSelectionNeedsManagedAiGatewayFixture(options.scenarios),
+    needsModelStreamRetryFixture: scenarioSelectionNeedsModelStreamRetryFixture(options.scenarios),
+    disablesDevAutostart: scenarioSelectionDisablesDevAutostart(options.scenarios),
+    needsSkillRegistryWorkspaceEventFixture: scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(options.scenarios),
+    needsRelaunchReconnectCheck: scenarioSelectionNeedsRelaunchReconnectCheck(options.scenarios),
+    needsSessionQueueRuntimeFixture: scenarioSelectionNeedsSessionQueueRuntimeFixture(options.scenarios),
+    requiresExplicitSessionRuntimeActivation:
+      scenarioSelectionRequiresExplicitSessionRuntimeActivation(options.scenarios),
+    needsPackagedSmokeFixture,
+    needsNoWorkspaceProfile: scenarioSelectionNeedsNoWorkspaceProfile(options.scenarios),
+    needsPortContentionFixture: scenarioSelectionNeedsPortContentionFixture(options.scenarios),
+    requiresLiveManagedAiAuth: scenarioSelectionRequiresLiveManagedAiAuth(options.scenarios),
+  };
+}
+
+export function legacyPilotSelectionContract(
+  options: LegacyPilotSelectionContractOptions,
+): PilotSelectionPlan {
+  return buildPilotSelectionPlan(legacyPilotSelectionSignals(options));
 }
 
 function normalizeOptionalText(value: unknown): string | null {
@@ -856,122 +1306,117 @@ async function stopPortContentionFixture(fixture: PortContentionFixture | null):
   });
 }
 
-export async function runPilotCommand(options: RunPilotCommandOptions): Promise<void> {
+function pilotCommandFailure(options: RunPilotCommandOptions, result: PilotCommandResult): Error | null {
+  if (pilotCommandSucceeded(result)) return null;
   const binary = options.binary ?? resolvePilotBinary(options.env);
   const socket = options.socket ?? resolvePilotSocketPath({ runtimeDir: resolvePilotRuntimeDir() });
   const { command, args } = buildPilotCommand({ binary, socket, args: options.args });
   const safeArgs = redactPilotCommandArgs(args).join(' ');
-
-  await new Promise<void>((resolveCommand, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const output: Uint8Array[] = [];
-    const errors: Uint8Array[] = [];
-    let timeout: NodeJS.Timeout | null = null;
-    let settled = false;
-
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      if (timeout) clearTimeout(timeout);
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolveCommand();
-    };
-
-    child.stdout?.on('data', (chunk: Uint8Array) => {
-      output.push(chunk);
-      if (options.inheritStdio) process.stdout.write(chunk);
-    });
-    child.stderr?.on('data', (chunk: Uint8Array) => {
-      errors.push(chunk);
-      if (options.inheritStdio) process.stderr.write(chunk);
-    });
-
-    if (options.timeoutMs) {
-      timeout = setTimeout(() => {
-        child.kill(process.platform === 'win32' ? undefined : 'SIGKILL');
-        finish(new Error(`tauri-pilot command timed out after ${options.timeoutMs}ms: ${safeArgs}`));
-      }, options.timeoutMs);
-    }
-
-    child.on('error', (error) => {
-      finish(error);
-    });
-
-    child.on('exit', (code, signal) => {
-      if (code === 0) {
-        finish();
-        return;
-      }
-
-      const stderr = Buffer.concat(errors).toString().trim();
-      const stdout = Buffer.concat(output).toString().trim();
-      const detail = redactPilotDiagnosticText([stderr, stdout].filter(Boolean).join('\n'));
-      finish(new Error(`tauri-pilot exited with ${code ?? signal}: ${safeArgs}${detail ? `\n${tailText(detail)}` : ''}`));
-    });
-  });
+  if (result.timedOut) {
+    return new Error(`tauri-pilot command timed out after ${options.timeoutMs ?? 'the configured'}ms: ${safeArgs}`);
+  }
+  const detail = redactPilotDiagnosticText([
+    result.error,
+    result.stderr,
+    result.stdout,
+  ].filter((value): value is string => Boolean(value?.trim())).join('\n')).trim();
+  return new Error(
+    `tauri-pilot exited with ${result.exitCode ?? result.signal ?? 'an unknown status'}: ${safeArgs}` +
+    (detail ? `\n${tailText(detail)}` : ''),
+  );
 }
 
-async function runPilotCommandCapture(options: Omit<RunPilotCommandOptions, 'inheritStdio'>): Promise<PilotCommandCaptureResult> {
+async function runPilotCommandCapture(options: RunPilotCommandOptions): Promise<PilotCommandResult> {
   const binary = options.binary ?? resolvePilotBinary(options.env);
   const socket = options.socket ?? resolvePilotSocketPath({ runtimeDir: resolvePilotRuntimeDir() });
   const { command, args } = buildPilotCommand({ binary, socket, args: options.args });
-
-  return await new Promise<PilotCommandCaptureResult>((resolveCommand) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const output: Uint8Array[] = [];
-    const errors: Uint8Array[] = [];
-    let timeout: NodeJS.Timeout | null = null;
-    let timedOut = false;
-
-    child.stdout?.on('data', (chunk: Uint8Array) => output.push(chunk));
-    child.stderr?.on('data', (chunk: Uint8Array) => errors.push(chunk));
-
-    if (options.timeoutMs) {
-      timeout = setTimeout(() => {
-        timedOut = true;
-        child.kill(process.platform === 'win32' ? undefined : 'SIGKILL');
-      }, options.timeoutMs);
-    }
-
-    child.on('error', (error) => {
-      if (timeout) clearTimeout(timeout);
-      resolveCommand({
-        command,
-        args,
-        stdout: Buffer.concat(output).toString(),
-        stderr: Buffer.concat(errors).toString(),
-        exitCode: null,
-        signal: null,
-        timedOut,
-        error: error.message,
-      });
-    });
-
-    child.on('exit', (code, signal) => {
-      if (timeout) clearTimeout(timeout);
-      resolveCommand({
-        command,
-        args,
-        stdout: Buffer.concat(output).toString(),
-        stderr: Buffer.concat(errors).toString(),
-        exitCode: code,
-        signal,
-        timedOut,
-        error: null,
-      });
-    });
+  return await executePilotCommand({
+    command,
+    args,
+    cwd: options.cwd,
+    env: options.env,
+    timeoutMs: options.timeoutMs,
+    inheritStdio: options.inheritStdio,
   });
+}
+
+export async function runPilotCommand(options: RunPilotCommandOptions): Promise<PilotCommandResult> {
+  const result = await runPilotCommandCapture(options);
+  const failure = pilotCommandFailure(options, result);
+  if (failure) throw failure;
+  return result;
+}
+
+function persistPilotScenarioCommandResult(options: {
+  outputDir: string;
+  scenario: string;
+  result: PilotCommandResult;
+  junitPath: string;
+}): void {
+  const stdout = redactPilotDiagnosticText(options.result.stdout).trim();
+  const stderr = redactPilotDiagnosticText(options.result.stderr).trim();
+  const error = options.result.error ? redactPilotDiagnosticText(options.result.error) : null;
+  writeFileSync(join(options.outputDir, 'pilot.stdout.log'), stdout ? `${stdout}\n` : '', 'utf8');
+  writeFileSync(join(options.outputDir, 'pilot.stderr.log'), stderr ? `${stderr}\n` : '', 'utf8');
+
+  let junitCaptured = false;
+  if (existsSync(options.junitPath)) {
+    const junit = readPilotDiagnosticFile(options.junitPath);
+    writeFileSync(options.junitPath, junit ? `${redactPilotDiagnosticText(junit).trim()}\n` : '', 'utf8');
+    junitCaptured = true;
+  }
+
+  writeFileSync(join(options.outputDir, 'result.json'), `${JSON.stringify({
+    schema: 'tauri-pilot-command-result/v1',
+    scenario: sanitizePilotArtifactName(options.scenario),
+    command: options.result.command,
+    args: redactPilotCommandArgs(options.result.args),
+    startedAt: options.result.startedAt,
+    finishedAt: options.result.finishedAt,
+    durationMs: options.result.durationMs,
+    exitCode: options.result.exitCode,
+    signal: options.result.signal,
+    timedOut: options.result.timedOut,
+    error,
+    junitCaptured,
+  }, null, 2)}\n`, 'utf8');
+}
+
+async function runPilotScenarioWithArtifacts(options: {
+  binary: string;
+  socket: string;
+  cwd: string;
+  scenario: string;
+  timeoutMs: number;
+  runContext: PilotRunContext;
+}): Promise<string> {
+  const outputDir = options.runContext.scenarioDir(options.scenario);
+  const junitPath = join(outputDir, 'pilot.junit.xml');
+  const args = ['run', '--junit', junitPath, options.scenario];
+  const result = await runPilotCommandCapture({
+    binary: options.binary,
+    socket: options.socket,
+    args,
+    cwd: options.cwd,
+    timeoutMs: options.timeoutMs,
+    inheritStdio: true,
+  });
+  persistPilotScenarioCommandResult({
+    outputDir,
+    scenario: options.scenario,
+    result,
+    junitPath,
+  });
+  const failure = pilotCommandFailure({
+    binary: options.binary,
+    socket: options.socket,
+    args,
+    cwd: options.cwd,
+    timeoutMs: options.timeoutMs,
+    inheritStdio: true,
+  }, result);
+  if (failure) throw failure;
+  return outputDir;
 }
 
 async function collectPilotFailureDiagnostics(options: {
@@ -980,13 +1425,18 @@ async function collectPilotFailureDiagnostics(options: {
   cwd: string;
   e2eRoot: string;
   scenario: string;
+  outputDir?: string;
   error: unknown;
   timeoutMs: number;
 }): Promise<void> {
   if (process.env.E2E_PILOT_FAILURE_DIAGNOSTICS?.trim() === '0') return;
 
   const scenarioName = sanitizePilotArtifactName(options.scenario);
-  const outputDir = join(options.e2eRoot, 'tauri-pilot-failures', `diagnostics-${Date.now()}-${scenarioName}`);
+  const outputDir = options.outputDir ?? join(
+    options.e2eRoot,
+    'tauri-pilot-failures',
+    `diagnostics-${Date.now()}-${scenarioName}`,
+  );
   mkdirSync(outputDir, { recursive: true });
 
   const rawErrorText = options.error instanceof Error
@@ -1048,14 +1498,77 @@ async function collectPilotFailureDiagnostics(options: {
   console.error(`[e2e] Pilot failure diagnostics captured: ${outputDir}`);
 }
 
+function readPilotDiagnosticFile(path: string): string {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+async function collectLiveInferenceSuccessDiagnostics(options: {
+  binary: string;
+  socket: string;
+  cwd: string;
+  e2eRoot: string;
+  scenario: string;
+  outputDir?: string;
+  logDir?: string;
+  appLogDir?: string;
+  timeoutMs: number;
+}): Promise<void> {
+  const outputDir = options.outputDir ?? join(
+    options.e2eRoot,
+    'tauri-pilot-artifacts',
+    `live-inference-diagnostic-${Date.now()}-${sanitizePilotArtifactName(options.scenario)}`,
+  );
+  mkdirSync(outputDir, { recursive: true });
+  const browserCapture = await runPilotCommandCapture({
+    binary: options.binary,
+    socket: options.socket,
+    cwd: options.cwd,
+    args: ['--window', 'main', 'eval', '--json', buildPilotLiveInferenceDiagnosticScript()],
+    timeoutMs: Math.min(10_000, Math.max(1_000, options.timeoutMs)),
+  });
+  const browser = browserCapture.exitCode === 0 && !browserCapture.timedOut && !browserCapture.error
+    ? parsePilotJsonOutput(browserCapture.stdout)
+    : null;
+  const logDir = options.logDir ?? join(options.e2eRoot, '.tmp-opencode-home', '.veslo', 'e2e-logs');
+  const serverTrace = parseLiveInferenceTraceEntries(
+    readPilotDiagnosticFile(join(logDir, 'send-workflow-trace.server.ndjson')),
+  );
+  const appStderr = options.appLogDir
+    ? readdirSync(options.appLogDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.stderr.log'))
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .map((entry) => readPilotDiagnosticFile(join(options.appLogDir!, entry.name)))
+      .filter(Boolean)
+      .join('\n')
+    : readPilotDiagnosticFile(join(logDir, 'app-stderr.log'));
+  const summary = summarizeLiveInferenceDiagnostics({
+    scenario: options.scenario,
+    browser,
+    serverTrace,
+    appStderr,
+    env: process.env,
+  });
+  writeFileSync(join(outputDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+  console.log(`[e2e] Live inference diagnostic: ${formatLiveInferenceDiagnosticSummary(summary)}`);
+  console.log(`[e2e] Live inference diagnostic artifact: ${outputDir}`);
+  if (!summary.diagnosticsComplete) {
+    console.warn('[e2e] Live inference diagnostics are partial; inspect the redacted summary before using this run as a latency baseline.');
+  }
+}
+
 async function collectSessionRenderSuccessArtifacts(options: {
   binary: string;
   socket: string;
   cwd: string;
   e2eRoot: string;
+  outputDir?: string;
   timeoutMs: number;
 }): Promise<void> {
-  const outputDir = join(options.e2eRoot, 'tauri-pilot-artifacts', `session-render-stability-${Date.now()}`);
+  const outputDir = options.outputDir ?? join(options.e2eRoot, 'tauri-pilot-artifacts', `session-render-stability-${Date.now()}`);
   mkdirSync(outputDir, { recursive: true });
   const commands = pilotSessionRenderSuccessArtifactCommands(outputDir);
   const results: Array<{ name: string; outputFile: string; command: string; args: string[] }> = [];
@@ -1159,8 +1672,59 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   assertManagedAiGatewayFixtureProfileIsolation(scenarios);
   assertLiveManagedAiAuthForScenarioSelection(scenarios);
 
+  const requiresLiveManagedAiAuth = scenarioSelectionRequiresLiveManagedAiAuth(scenarios);
+  const usesManagedAiGatewayFixture = scenarioSelectionNeedsManagedAiGatewayFixture(scenarios);
+  const usesSessionQueueRuntimeFixture = scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios);
+  const usesPackagedSmokeFixture = scenarioSelectionNeedsPackagedSmokeFixture(scenarios);
+  const runRoot = options.runRoot ?? join(e2eRoot, PILOT_RUNS_DIRNAME);
+  prunePilotRunHistory({
+    rootDir: runRoot,
+    warn: (message) => console.warn(message),
+  });
+  const runContext = createPilotRunContext({
+    rootDir: runRoot,
+    suite: options.suite ?? null,
+    scenarios: scenarios.map(sanitizePilotArtifactName),
+    binary,
+    profileMode: process.env.E2E_USE_EXISTING_PROFILE?.trim() === '1'
+      ? 'real-profile'
+      : process.env.E2E_OPENCODE_HOME?.trim()
+        ? 'custom-opencode-home'
+        : usesPackagedSmokeFixture
+          ? 'packaged-smoke'
+          : 'isolated',
+    authMode: requiresLiveManagedAiAuth
+      ? 'live-den'
+      : usesManagedAiGatewayFixture
+        ? 'fixture'
+        : 'none',
+    fixtures: [
+      scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios) ? 'automation-secondary-workspace' : null,
+      scenarioSelectionNeedsSkillRegistryAuthFixture(scenarios) ? 'skill-registry-auth' : null,
+      scenarioSelectionNeedsLegacySoulRuntime(scenarios) ? 'legacy-soul-runtime' : null,
+      scenarioSelectionNeedsSkillEnableInventoryFixture(scenarios) ? 'skill-enable-inventory' : null,
+      scenarioSelectionNeedsGoogleMcpCatalogFixture(scenarios) ? 'google-mcp-catalog' : null,
+      scenarioSelectionNeedsSharePointMcpCatalogFixture(scenarios) ? 'sharepoint-mcp-catalog' : null,
+      usesManagedAiGatewayFixture ? 'managed-ai-gateway' : null,
+      scenarioSelectionNeedsModelStreamRetryFixture(scenarios) ? 'model-stream-retry' : null,
+      usesSessionQueueRuntimeFixture ? 'session-queue-runtime' : null,
+      usesPackagedSmokeFixture ? 'packaged-smoke-model' : null,
+      scenarioSelectionNeedsPortContentionFixture(scenarios) ? 'port-contention' : null,
+    ].filter((fixture): fixture is string => Boolean(fixture)),
+  });
+  const stopRunHeartbeat = runContext.startHeartbeat();
+  let runCompleted = false;
+  let failureReason: string | null = null;
+  runContext.record('run.policy', {
+    canonicalLiveInference: isCanonicalLiveInferenceSuite,
+    requiresLiveManagedAiAuth,
+    devAutostartDisabled: scenarioSelectionDisablesDevAutostart(scenarios),
+  });
   const restoreManagedAiFixtureEnvironment = scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)
     ? configureManagedAiGatewayFixtureEnvironment()
+    : null;
+  const restoreLiveParityRuntimePreferencesEnvironment = requiresLiveManagedAiAuth
+    ? configureLiveParityRuntimePreferencesEnvironment()
     : null;
   const restoreCanonicalLiveInferenceEnvironment = isCanonicalLiveInferenceSuite
     ? configureCanonicalLiveInferenceEnvironment()
@@ -1191,7 +1755,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS ||= '90000';
     process.env.VESLO_MODEL_RETRY_NO_PROGRESS_HARD_MS ||= '10000';
   }
-  if (scenarioSelectionRequiresLiveManagedAiAuth(scenarios)) {
+  if (requiresLiveManagedAiAuth) {
     process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS ||= '90000';
   }
   if (scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios)) {
@@ -1211,9 +1775,12 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
 
   try {
     if (scenarioSelectionNeedsPortContentionFixture(scenarios)) {
+      runContext.record('fixture.starting', { fixture: 'port-contention' });
       portContentionFixture = await startPortContentionFixture();
+      runContext.record('fixture.started', { fixture: 'port-contention' });
     }
     if (scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios)) {
+      runContext.record('fixture.starting', { fixture: 'session-queue-runtime' });
       sessionQueueRuntimeFixture = await startSessionQueueRuntimeFixture();
       restoreSessionQueueFixtureEnvironment = setEnvironmentForFixture({
         E2E_SESSION_QUEUE_FIXTURE_BASE_URL: sessionQueueRuntimeFixture.baseUrl,
@@ -1229,9 +1796,11 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         VESLO_DISABLE_DEV_AUTOSTART: '1',
       });
       console.log(`[e2e] Session queue runtime fixture: ${sessionQueueRuntimeFixture.baseUrl}`);
+      runContext.record('fixture.started', { fixture: 'session-queue-runtime' });
     }
 
     if (scenarioSelectionNeedsPackagedSmokeFixture(scenarios)) {
+      runContext.record('fixture.starting', { fixture: 'packaged-smoke-model' });
       packagedSmokeModelFixture = await startPackagedSmokeModelFixture();
       restorePackagedSmokeFixtureEnvironment = setEnvironmentForFixture({
         E2E_PACKAGED_SMOKE_MODEL_BASE_URL: packagedSmokeModelFixture.baseUrl,
@@ -1243,12 +1812,16 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         VESLO_DEN_AUTH_SNAPSHOT_PATH: '',
       });
       console.log('[e2e] Packaged smoke model fixture started on loopback.');
+      runContext.record('fixture.started', { fixture: 'packaged-smoke-model' });
     }
 
     const queueRuntimeFixtureForLaunch = sessionQueueRuntimeFixture;
-    await startApp(queueRuntimeFixtureForLaunch
-      ? {
-          beforeLaunch: async ({ profileRoot, opencodeHome }) => {
+    runContext.record('app.launch.starting');
+    await startApp({
+      pilotDiagnostics: pilotRunLaunchDiagnostics(runContext, 1),
+      ...(queueRuntimeFixtureForLaunch
+        ? {
+            beforeLaunch: async ({ profileRoot, opencodeHome }) => {
             if (!profileRoot || !opencodeHome) {
               throw new Error('Session queue fixture requires the isolated E2E profile and OPENCODE_HOME.');
             }
@@ -1256,12 +1829,17 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
               workspacePath: join(profileRoot, 'workspaces', 'visual-workspace'),
               dataDir: join(opencodeHome, '.veslo', 'session-queue-server'),
             });
-          },
-        }
-      : undefined);
+            },
+          }
+        : {}),
+    });
+    runContext.record('app.launch.started');
     await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
-    if (scenarioSelectionRequiresLiveManagedAiAuth(scenarios)) {
+    runContext.record('pilot.ready');
+    if (requiresLiveManagedAiAuth) {
+      runContext.record('auth.hydration.starting');
       await verifyPilotDesktopAuthHydration({ binary, socket, cwd: e2eRoot, timeoutMs });
+      runContext.record('auth.hydration.verified');
     }
     if (scenarioSelectionNeedsPackagedSmokeFixture(scenarios)) {
       try {
@@ -1273,6 +1851,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
           cwd: e2eRoot,
           e2eRoot,
           scenario: scenarios[0],
+          outputDir: join(runContext.scenarioDir(scenarios[0]), 'failure'),
           error,
           timeoutMs,
         });
@@ -1281,20 +1860,55 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     }
     for (const scenario of scenarios) {
       console.log(`[e2e] Running tauri-pilot scenario: ${scenario}`);
+      runContext.record('scenario.starting', { scenario: sanitizePilotArtifactName(scenario) });
       try {
-        await runPilotCommand({
+        const scenarioOutputDir = await runPilotScenarioWithArtifacts({
           binary,
           socket,
-          args: ['run', scenario],
           cwd: e2eRoot,
+          scenario,
           timeoutMs: scenarioCommandTimeoutMs,
-          inheritStdio: true,
+          runContext,
         });
-        if (scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/session-render-stability.toml')) {
-          await collectSessionRenderSuccessArtifacts({ binary, socket, cwd: e2eRoot, e2eRoot, timeoutMs });
+        if (isCanonicalLiveInferenceSuite) {
+          await collectLiveInferenceSuccessDiagnostics({
+            binary,
+            socket,
+            cwd: e2eRoot,
+            e2eRoot,
+            scenario,
+            outputDir: join(scenarioOutputDir, 'success'),
+            logDir: runContext.traceDir,
+            appLogDir: runContext.appLogDir,
+            timeoutMs,
+          });
         }
+        if (scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/session-render-stability.toml')) {
+          await collectSessionRenderSuccessArtifacts({
+            binary,
+            socket,
+            cwd: e2eRoot,
+            e2eRoot,
+            outputDir: join(scenarioOutputDir, 'success'),
+            timeoutMs,
+          });
+        }
+        runContext.record('scenario.passed', { scenario: sanitizePilotArtifactName(scenario) });
       } catch (error) {
-        await collectPilotFailureDiagnostics({ binary, socket, cwd: e2eRoot, e2eRoot, scenario, error, timeoutMs });
+        runContext.record('scenario.failed', {
+          scenario: sanitizePilotArtifactName(scenario),
+          reason: safePilotRunFailureReason(error),
+        });
+        await collectPilotFailureDiagnostics({
+          binary,
+          socket,
+          cwd: e2eRoot,
+          e2eRoot,
+          scenario,
+          outputDir: join(runContext.scenarioDir(scenario), 'failure'),
+          error,
+          timeoutMs,
+        });
         throw error;
       }
       if (scenarioSelectionNeedsRelaunchReconnectCheck([scenario])) {
@@ -1303,26 +1917,38 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
           throw new Error(`tauri-pilot scenario not found: ${reconnectScenario}`);
         }
         console.log('[e2e] Restarting app for VSLO-270 relaunch reconnect check...');
+        runContext.record('app.relaunch.starting');
         await stopApp();
-        await startApp({ preserveIsolatedProfile: true });
+        await startApp({
+          preserveIsolatedProfile: true,
+          pilotDiagnostics: pilotRunLaunchDiagnostics(runContext, 2),
+        });
         await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
+        runContext.record('app.relaunch.ready');
         console.log(`[e2e] Running tauri-pilot scenario: ${reconnectScenario}`);
+        runContext.record('scenario.starting', { scenario: sanitizePilotArtifactName(reconnectScenario) });
         try {
-          await runPilotCommand({
+          await runPilotScenarioWithArtifacts({
             binary,
             socket,
-            args: ['run', reconnectScenario],
             cwd: e2eRoot,
+            scenario: reconnectScenario,
             timeoutMs: scenarioCommandTimeoutMs,
-            inheritStdio: true,
+            runContext,
           });
+          runContext.record('scenario.passed', { scenario: sanitizePilotArtifactName(reconnectScenario) });
         } catch (error) {
+          runContext.record('scenario.failed', {
+            scenario: sanitizePilotArtifactName(reconnectScenario),
+            reason: safePilotRunFailureReason(error),
+          });
           await collectPilotFailureDiagnostics({
             binary,
             socket,
             cwd: e2eRoot,
             e2eRoot,
             scenario: reconnectScenario,
+            outputDir: join(runContext.scenarioDir(reconnectScenario), 'failure'),
             error,
             timeoutMs,
           });
@@ -1330,15 +1956,42 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         }
       }
     }
+    runCompleted = true;
+  } catch (error) {
+    failureReason = safePilotRunFailureReason(error);
+    runContext.record('run.failed', { reason: failureReason });
+    throw error;
   } finally {
-    await stopApp();
-    await stopPortContentionFixture(portContentionFixture);
-    await sessionQueueRuntimeFixture?.stop();
-    await packagedSmokeModelFixture?.stop();
-    restoreSessionQueueFixtureEnvironment?.();
-    restorePackagedSmokeFixtureEnvironment?.();
-    restoreCanonicalLiveInferenceEnvironment?.();
-    restoreManagedAiFixtureEnvironment?.();
+    stopRunHeartbeat();
+    try {
+      await stopApp();
+      await stopPortContentionFixture(portContentionFixture);
+      await sessionQueueRuntimeFixture?.stop();
+      await packagedSmokeModelFixture?.stop();
+      restoreSessionQueueFixtureEnvironment?.();
+      restorePackagedSmokeFixtureEnvironment?.();
+      restoreCanonicalLiveInferenceEnvironment?.();
+      restoreLiveParityRuntimePreferencesEnvironment?.();
+      restoreManagedAiFixtureEnvironment?.();
+    } catch (error) {
+      if (!failureReason) {
+        failureReason = safePilotRunFailureReason(error);
+        runContext.record('cleanup.failed', { reason: failureReason });
+      }
+      throw error;
+    } finally {
+      runContext.finish(runCompleted && !failureReason ? 'passed' : 'failed', {
+        reason: failureReason,
+      });
+      try {
+        prunePilotRunHistory({
+          rootDir: runRoot,
+          warn: (message) => console.warn(message),
+        });
+      } catch (error) {
+        console.warn(`[e2e] Could not prune Pilot run history: ${safePilotRunFailureReason(error)}`);
+      }
+    }
   }
 }
 

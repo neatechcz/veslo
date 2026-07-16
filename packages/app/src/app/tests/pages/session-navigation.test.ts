@@ -440,7 +440,7 @@ test("app routes selected session browsing through DB scope", () => {
   );
 });
 
-test("app activates selected session workspace at send time, not browse time", () => {
+test("app activates the authoritative send target at send time while browse scope remains read-only", () => {
   assert.match(
     sendPromptSource,
     /const selectedSessionScopeForSend = selectedSessionCandidate[\s\S]*resolveSelectedSessionBrowseScope\(selectedSessionCandidate\)[\s\S]*const selectedSessionBelongsToActiveWorkspace =[\s\S]*selectedSessionScopeWorkspaceId === activeWorkspaceIdForSend;[\s\S]*const selectedRealSessionId =[\s\S]*isPendingSessionInstanceKey\(selectedSessionCandidate\) \|\| !selectedSessionBelongsToActiveWorkspace[\s\S]*\? null[\s\S]*: selectedSessionCandidate;/s,
@@ -453,12 +453,12 @@ test("app activates selected session workspace at send time, not browse time", (
   );
   assert.match(
     workspaceSendTargetSource,
-    /const browseScope = options\.resolveSelectedSessionBrowseScope[\s\S]*options\.resolveSelectedSessionBrowseScope\(sessionId\)[\s\S]*const sendTargetScope = browseScope[\s\S]*options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*const transcriptScope = browseScope \?\?[\s\S]*sendTargetWorkspaceId === activeWorkspaceId[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId, \{ origin: "send-target:selected-session-workspace" \}\)/s,
-    "send path should activate the workspace from the selected browse scope, falling back to the send target scope",
+    /const browseScope = options\.resolveSelectedSessionBrowseScope[\s\S]*options\.resolveSelectedSessionBrowseScope\(sessionId\)[\s\S]*const sendTargetScope = resolvedTarget \?\? options\.resolveSessionSendTargetScope\(sessionId\);[\s\S]*const transcriptScope = options\.resolveSelectedSessionBrowseScope && !browseScope[\s\S]*sendTargetWorkspaceId === activeWorkspaceId[\s\S]*\? null[\s\S]*: sendTargetScope;[\s\S]*options\.sendTraceStep\(\s*"sendPrompt:activate-scoped-workspace-call",[\s\S]*options\.activateWorkspace\(targetWorkspaceId, \{ origin: "send-target:selected-session-workspace" \}\)/s,
+    "send path should activate only the authoritative target while preserving the browse-only fallback guard",
   );
   assert.match(
     sendPromptSource,
-    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*deps\.sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId\)[\s\S]*deps\.recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return sessionSubmitBlockedResult\(\{[\s\S]*code: "workspace_scope_unavailable",[\s\S]*\}\);[\s\S]*const shouldUseServerSubmitBeforeFrontendSkillResolution = Boolean\(/s,
+    /const scopedSessionID = sessionID\?\.trim\(\) \|\| "";[\s\S]*if \([\s\S]*scopedSessionID &&[\s\S]*deps\.sendTraceStep\(\s*"sendPrompt:ensure-scoped-workspace-active",[\s\S]*deps\.ensureSelectedSessionWorkspaceActiveForSend\(scopedSessionID, sendTraceId, sendTargetWorkspace\)[\s\S]*deps\.recordSendTrace\("sendPrompt:blocked-scoped-workspace",[\s\S]*?\);[\s\S]*return sessionSubmitBlockedResult\(\{[\s\S]*code: "workspace_scope_unavailable",[\s\S]*\}\);[\s\S]*const shouldUseServerSubmitBeforeFrontendSkillResolution = Boolean\(/s,
     "scoped workspace activation should run during send before workspace-sensitive prompt routing",
   );
 });

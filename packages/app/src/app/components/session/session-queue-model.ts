@@ -47,7 +47,7 @@ export function appendQueuedDraft(
 }
 
 export function firstQueuedDraft(queue: QueuedDraft[]): QueuedDraft | null {
-  const head = queue[0];
+  const head = queue.at(0);
   return head && isDrainEligible(head) ? head : null;
 }
 

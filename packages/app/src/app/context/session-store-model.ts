@@ -180,9 +180,9 @@ export function appendSessionErrorTurnModel(input: {
   if (durableRunId && existing.some((turn) => turn.durableRunId === durableRunId)) {
     return existing;
   }
-  const lastMessage = input.messages.length > 0 ? input.messages[input.messages.length - 1] : null;
+  const lastMessage = input.messages.at(-1) ?? null;
   const afterMessageID = lastMessage?.id ?? null;
-  const previous = existing[existing.length - 1];
+  const previous = existing.at(-1);
   if (previous && previous.text === text && previous.afterMessageID === afterMessageID) {
     return existing;
   }

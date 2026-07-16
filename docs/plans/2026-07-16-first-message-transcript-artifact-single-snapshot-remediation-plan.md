@@ -1,10 +1,10 @@
 ---
 title: First-Message Transcript Read Coordination and Artifact Projection Remediation Plan
 date: 2026-07-16
-status: proposed
+status: implementation-verified-awaiting-desktop-trace
 done: false
-repository_snapshot: commit b43047201b82d40d1780ab50737dd98bf18d57e0 with a scoped dirty working tree
-repository_commit: b43047201b82d40d1780ab50737dd98bf18d57e0
+repository_snapshot: commit 771b14377936fb624dbcfd93b63c5870b3717ecd with a dirty working tree; this plan's implementation is intentionally uncommitted alongside unrelated user changes
+repository_commit: 771b14377936fb624dbcfd93b63c5870b3717ecd
 related_completed_plan: docs/plans/2026-07-16-first-message-send-request-fanout-audit-and-remediation-plan.md
 scope: coordinate every first-message transcript reader, remove the standalone latest-run artifact request, and preserve pagination, alias, lifecycle, and read-only contracts
 ---
@@ -31,6 +31,33 @@ an isolated UI fix. The implementation has three coordinated decisions:
 
 This retains the defensive transcript fallback and the server-owned submit
 contract. It removes a duplicate data-read path, not a prompt path.
+
+## Implementation checkpoint — 2026-07-16
+
+TRP01 through TRP06 are implemented and their automated contract coverage is
+green in the current checkout. `done` deliberately remains `false`: the only
+remaining completion evidence is a **fresh desktop** first-message trace with
+both a controlled-cold and a warm source cache. No older trace is accepted as
+evidence for that gate.
+
+The implemented shape is the one specified below:
+
+- the server owns one 200-message source cache and slices each response to its
+  requested display limit;
+- selection and terminal recovery request an optional transcript artifact
+  projection instead of the render-driven artifact timer;
+- a selected/reserved session is excluded from generic sidebar prefetch and
+  its defensive hydration path;
+- projection publication is fenced by canonical identity, selection version,
+  and lifecycle run identity; and
+- app and server projection trace events identify caller, display limit, source
+  limit, cache outcome (server), and bounded timing without content or paths.
+
+The full automated quality components have passed: focused app and server
+contracts, both package typechecks, `check:lint`, `check:types`,
+`check:architecture`, `check:unit` (including its server binary rebuild), and
+`check:rust`. The exact remaining desktop-trace procedure is retained in
+[Focused verification](#focused-verification).
 
 ## Why this plan exists
 
@@ -322,7 +349,8 @@ payloads.
 
 ### TRP01 - make the server cache source/view aware
 
-**Status:** pending
+**Status:** implemented; source/view, cold/join/warm, invalidation, and
+display-limit contracts are covered by focused server tests.
 
 Owners:
 
@@ -357,7 +385,8 @@ Acceptance:
 
 ### TRP02 - add the projection response at the server boundary
 
-**Status:** pending
+**Status:** implemented; route projection and artifact-derived response
+contracts are covered by focused server tests.
 
 Owners:
 
@@ -395,7 +424,8 @@ Acceptance:
 
 ### TRP03 - coordinate sidebar prefetch with selected-session ownership
 
-**Status:** pending
+**Status:** implemented; selected-session reservation, alias filtering, and
+defensive background-hydration contracts are covered by focused app tests.
 
 Owners:
 
@@ -437,7 +467,8 @@ Acceptance:
 
 ### TRP04 - expose typed projection and trace options
 
-**Status:** pending
+**Status:** implemented; typed include/caller/trace options and the absence of
+a production standalone-artifact caller are covered by focused app tests.
 
 Owners:
 
@@ -481,7 +512,8 @@ Acceptance:
 
 ### TRP05 - publish projections through selection and lifecycle owners
 
-**Status:** pending
+**Status:** implemented; selection and terminal-recovery publication are
+fenced by scope, selection version, and durable run id in focused app tests.
 
 Owners:
 
@@ -545,7 +577,8 @@ Acceptance:
 
 ### TRP06 - make the budget observable and prove behavior
 
-**Status:** pending
+**Status:** implemented in code and automated tests; fresh desktop cold/warm
+trace evidence remains pending before this plan can be marked done.
 
 Owners:
 
@@ -605,15 +638,22 @@ pnpm --filter veslo-server exec bun test src/tests/server.conversation-session-r
 pnpm --filter @neatech/veslo-ui typecheck
 pnpm --filter veslo-server typecheck
 pnpm check
+pnpm --filter veslo-server build:bin
 ```
 
 `veslo-server` is the real package name. `@neatech/veslo-server` is invalid and
 fails before server tests run.
 
-After focused tests, run one fresh content-free desktop first-message trace
-with the existing send-workflow trace variables. Verify the controlled-cold
-budget above, then repeat with a warm source cache to prove that the trace
-reports `warm` and zero new cold loads. Do not use an older trace as evidence.
+The current checkout has passed the focused app suite (203 tests), focused
+server suite (43 tests), both package typechecks, and all constituent quality
+gates listed above. `check:unit` rebuilt `veslo-server` through
+`check:services`; the explicit final `build:bin` command keeps the binary used
+by the desktop trace current if the trace is run later.
+
+After those checks, run one fresh content-free desktop first-message trace with
+the existing send-workflow trace variables. Verify the controlled-cold budget
+above, then repeat with a warm source cache to prove that the trace reports
+`warm` and zero new cold loads. Do not use an older trace as evidence.
 
 ## Completion definition
 

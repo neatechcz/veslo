@@ -32,6 +32,8 @@ const appendQueuedDraft = (
 ) => appendQueuedDraftModel(queue, nextDraft, { clientMessageId: `client-${id}` }, now, id);
 
 test("queue model appends and returns the first drain-eligible item", () => {
+  assert.equal(firstQueuedDraft([]), null);
+
   const queue = appendQueuedDraft([], draft("one"), 100);
   const next = appendQueuedDraft(queue, draft("two"), 200);
 

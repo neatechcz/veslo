@@ -121,7 +121,7 @@ export default function SidebarContextMenu(props: SidebarContextMenuProps) {
       }
 
       if (event.key !== "Enter" && event.key !== " ") return;
-      const activeButton = buttons[currentIndex];
+      const activeButton = buttons.at(currentIndex);
       if (!activeButton) return;
       event.preventDefault();
       activeButton.click();

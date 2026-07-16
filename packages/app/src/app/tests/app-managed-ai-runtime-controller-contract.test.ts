@@ -34,7 +34,7 @@ test("managed AI access refresh effect executes controller decisions", () => {
 
   assert.match(
     effectSource,
-    /const refreshPreflight = resolveManagedAiAccessRefreshPreflight\(\{[\s\S]*hasGatewayClient: Boolean\(gatewayClient\),[\s\S]*managedAiBaseUrl,[\s\S]*userToken,[\s\S]*deferForLocalGateway:[\s\S]*cachedAccessPresent: Boolean\(cachedAccess\),[\s\S]*freshCachedAccessPresent: Boolean\(proofCachedAccess\?\.gatewayAccessToken\),[\s\S]*\}\);/,
+    /const refreshPreflight = resolveManagedAiAccessRefreshPreflight\(\{[\s\S]*hasGatewayClient: Boolean\(gatewayClient\),[\s\S]*managedAiBaseUrl,[\s\S]*userToken,[\s\S]*deferForLocalGateway(?:,|:)[\s\S]*cachedAccessPresent: Boolean\(cachedAccess\),[\s\S]*freshCachedAccessPresent: Boolean\(proofCachedAccess\?\.gatewayAccessToken\),[\s\S]*\}\);/,
     "access refresh preflight should be delegated to the runtime controller",
   );
   assert.match(

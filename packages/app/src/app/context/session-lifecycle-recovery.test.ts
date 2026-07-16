@@ -6,6 +6,7 @@ import {
   createSessionLifecycleRecoveryController,
   type SessionLifecycleRecoveryStatus,
 } from "./session-lifecycle-recovery.js";
+import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
 
 type Timer = {
   delayMs: number;
@@ -489,6 +490,115 @@ test("terminal transcript recovery retries the same accepted run once without na
 
   assert.equal(recoveryAttempts, 2);
   assert.deepEqual(hydrated, ["ses-ui"]);
+});
+
+test("terminal transcript recovery does not hydrate a selected snapshot after its projection is rejected", async () => {
+  let selectedSessionId = "ses-a";
+  let selectionVersion = 1;
+  let resolveTranscript!: (snapshot: VesloSessionTranscriptSnapshot) => void;
+  const transcript = new Promise<VesloSessionTranscriptSnapshot>((resolve) => {
+    resolveTranscript = resolve;
+  });
+  const hydrated: string[] = [];
+  const discarded: string[] = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => selectedSessionId,
+    currentSelectionVersion: () => selectionVersion,
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => ({ runId: "run-a", status: "completed", stale: false }),
+    isAcceptedRunVisible: (scope) => scope.sessionId === selectedSessionId,
+    recoverAcceptedConversationTranscript: async () => await transcript,
+    publishTranscriptProjection: () => false,
+    hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot.sessionId),
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    trace: (event) => {
+      if (event === "session-lifecycle-recovery:terminal-transcript-discarded") {
+        discarded.push(event);
+      }
+    },
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  }), true);
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  selectedSessionId = "ses-b";
+  selectionVersion = 2;
+  resolveTranscript({
+    workspaceId: "ws-a",
+    sessionId: "open-a",
+    limit: 140,
+    messages: [],
+    partsByMessageId: {},
+    source: "sqlite",
+    latestRunArtifacts: {
+      workspaceId: "ws-a",
+      sessionId: "open-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "open-a",
+      runId: "run-a",
+      items: [],
+    },
+  });
+  await waitForAsyncPoll();
+
+  assert.deepEqual(hydrated, []);
+  assert.equal(discarded.length, 1);
+});
+
+test("terminal transcript recovery leaves a session selected mid-flight to its selection owner", async () => {
+  let selectedSessionId = "ses-b";
+  let selectionVersion = 1;
+  let resolveTranscript!: (snapshot: VesloSessionTranscriptSnapshot) => void;
+  const transcript = new Promise<VesloSessionTranscriptSnapshot>((resolve) => {
+    resolveTranscript = resolve;
+  });
+  const hydrated: string[] = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => selectedSessionId,
+    currentSelectionVersion: () => selectionVersion,
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => ({ runId: "run-a", status: "completed", stale: false }),
+    recoverConversationTranscript: async () => await transcript,
+    hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot.sessionId),
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  }), true);
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  selectedSessionId = "ses-a";
+  selectionVersion = 2;
+  resolveTranscript({
+    workspaceId: "ws-a",
+    sessionId: "open-a",
+    limit: 140,
+    messages: [],
+    partsByMessageId: {},
+    source: "sqlite",
+  });
+  await waitForAsyncPoll();
+
+  assert.deepEqual(hydrated, []);
 });
 
 test("terminal transcript recovery publishes one retryable unavailable diagnostic after two safe misses", async () => {

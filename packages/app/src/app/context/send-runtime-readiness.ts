@@ -256,22 +256,21 @@ export async function withLocalRuntimeHealthTimeout<T>(
   timeoutMs = 3_000,
   onTimeout?: () => void,
 ): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let rejectTimeout!: (reason?: unknown) => void;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(
-      () => {
-        onTimeout?.();
-        reject(new Error(localRuntimeHealthTimeoutMessage));
-      },
-      timeoutMs,
-    );
+    rejectTimeout = reject;
   });
+  const timeoutId = setTimeout(
+    () => {
+      onTimeout?.();
+      rejectTimeout(new Error(localRuntimeHealthTimeoutMessage));
+    },
+    timeoutMs,
+  );
   try {
     return await Promise.race([promise, timeoutPromise]);
   } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
+    clearTimeout(timeoutId);
   }
 }
 

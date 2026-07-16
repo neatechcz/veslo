@@ -138,7 +138,9 @@ import type {
   VesloSessionArtifactItem,
   VesloSessionLatestRunArtifacts,
   VesloSessionTranscriptSnapshot,
+  VesloSessionTranscriptReadOptions,
   VesloSessionTranscriptPrefetchInput,
+  VesloSessionTranscriptPrefetchClientOptions,
   VesloSessionTranscriptPrefetchResult,
   VesloConversationList,
   VesloConversationCreateResult,
@@ -543,17 +545,17 @@ export function createVesloServerClient(options: {
     listConversationQueue: conversations.listQueue,
     getConversationQueueItem: conversations.getQueueItem,
     getSessionLatestRunArtifacts: conversations.getLatestRunArtifacts,
-    prefetchSessionTranscripts: conversations.prefetchTranscripts,
+    prefetchSessionTranscripts: (
+      workspaceId: string,
+      input: VesloSessionTranscriptPrefetchInput,
+      _clientOptions?: VesloSessionTranscriptPrefetchClientOptions,
+    ) => conversations.prefetchTranscripts(workspaceId, input),
     getSessionTranscript: (
       workspaceId: string,
       sessionId: string,
       limit = 140,
       directory?: string,
-      options?: {
-        includeLatestRunArtifacts?: boolean;
-        caller?: "passive-selection" | "terminal-recovery";
-        sendTraceId?: string | null;
-      },
+      options?: VesloSessionTranscriptReadOptions,
     ) => conversations.getTranscript(workspaceId, sessionId, { limit, directory, ...options }),
     recoverSessionTranscript: conversations.recoverTranscript,
     exportWorkspace: workspace.export,

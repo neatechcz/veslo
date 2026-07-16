@@ -244,21 +244,26 @@ describe("session transcript prefetch core", () => {
     expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })?.sessionId).toBe("sess-a");
   });
 
-  test("caches loaded snapshots under the requested workspace and session", async () => {
+  test("caches a source snapshot under the canonical OpenCode session", async () => {
     const store = createSessionTranscriptPrefetchStore({
       loadTranscript: async () => ({
         workspaceId: "ws_wrong",
         sessionId: "sess-wrong",
+        opencodeSessionId: "sess-canonical",
         messages: [{ id: "m1" }],
         partsByMessageId: {},
       }),
     });
 
-    const snapshot = await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140 });
+    const snapshot = await store.getOrLoad({
+      workspaceId: "ws_local",
+      sessionId: "sess-canonical",
+      limit: 140,
+    });
 
     expect(snapshot.workspaceId).toBe("ws_local");
-    expect(snapshot.sessionId).toBe("sess-a");
-    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })?.messages).toEqual([
+    expect(snapshot.sessionId).toBe("sess-canonical");
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-canonical" })?.messages).toEqual([
       { id: "m1" },
     ]);
     expect(store.getWarmSnapshot({ workspaceId: "ws_wrong", sessionId: "sess-wrong" })).toBeNull();

@@ -245,11 +245,26 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     prune(activeRunsByWorkspace);
   }
 
-  function latestRunBySession(sessionId?: string | null): ActiveAiGatewayRunContext | null {
+  function latestRunBySession(sessionId?: string | null, workspaceId?: string | null): ActiveAiGatewayRunContext | null {
     const normalizedSessionId = normalizeAiGatewaySessionId(sessionId);
     if (!normalizedSessionId) return null;
     const bySession = activeRunsBySession.get(normalizedSessionId) ?? [];
-    return bySession[bySession.length - 1] ?? null;
+    const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+    if (!normalizedWorkspaceId) {
+      return new Set(bySession.map((context) => context.workspaceId)).size <= 1
+        ? bySession[bySession.length - 1] ?? null
+        : null;
+    }
+
+    const inWorkspace = bySession.filter((context) => context.workspaceId === normalizedWorkspaceId);
+    if (inWorkspace.length) return inWorkspace[inWorkspace.length - 1] ?? null;
+
+    // Preserve the server-owned binding for a normal globally unique OpenCode
+    // session even if a caller lies about its workspace header. If a malformed
+    // upstream ever reuses the ID across workspaces, however, do not guess.
+    return new Set(bySession.map((context) => context.workspaceId)).size <= 1
+      ? bySession[bySession.length - 1] ?? null
+      : null;
   }
 
   function latestRunByWorkspace(workspaceId?: string | null): ActiveAiGatewayRunContext | null {
@@ -278,7 +293,8 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     const normalizedIncomingSessionId = normalizeAiGatewaySessionId(input.incomingSessionId);
     const workspaceId = input.workspaceId?.trim() ?? "";
     const sessionCandidates = normalizedIncomingSessionId
-      ? activeRunsBySession.get(normalizedIncomingSessionId) ?? []
+      ? (activeRunsBySession.get(normalizedIncomingSessionId) ?? [])
+        .filter((context) => !workspaceId || context.workspaceId === workspaceId)
       : [];
     const workspaceCandidates = workspaceId
       ? activeRunsByWorkspace.get(workspaceId) ?? []
@@ -584,7 +600,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     const workspaceId = input.workspaceId?.trim() ?? "";
 
     if (incomingSessionId) {
-      const activeRunContext = latestRunBySession(incomingSessionId);
+      const activeRunContext = latestRunBySession(incomingSessionId, workspaceId);
       return {
         sessionId: incomingSessionId,
         activeRunContext,
@@ -594,7 +610,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     }
 
     if (openCodeSessionId) {
-      const activeRunContext = latestRunBySession(openCodeSessionId);
+      const activeRunContext = latestRunBySession(openCodeSessionId, workspaceId);
       return {
         sessionId: openCodeSessionId,
         activeRunContext,

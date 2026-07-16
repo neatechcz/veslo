@@ -1353,6 +1353,8 @@ export type VesloSessionTranscriptReadOptions = {
   includeLatestRunArtifacts?: boolean;
   caller?: "passive-selection" | "terminal-recovery";
   sendTraceId?: string | null;
+  // Client-side ownership metadata; never serialized into the transcript route.
+  appWorkspaceId?: string | null;
 };
 
 export type VesloSessionTranscriptPrefetchInput = {
@@ -1367,6 +1369,12 @@ export type VesloSessionTranscriptPrefetchInput = {
   directory?: string | null;
   sessionDirectoriesById?: Record<string, string | null | undefined>;
   limit?: number;
+};
+
+// Kept out of the HTTP payload: this describes the app workspace that owns a
+// prefetch request after its server workspace id has been resolved.
+export type VesloSessionTranscriptPrefetchClientOptions = {
+  appWorkspaceId?: string | null;
 };
 
 export type VesloSessionTranscriptPrefetchResult = {

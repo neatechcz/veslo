@@ -203,7 +203,6 @@ export const mergeSidebarSessionItemsByActivity = (
       return;
     }
     const existing = items[existingIndex];
-    if (!existing) return;
     items[existingIndex] = mergeSidebarSessionItem(existing, item);
   };
 

@@ -280,7 +280,7 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
 
   assert.match(
     source,
-    /prefetchSessionTranscripts:\s*async\s*\(workspaceId,\s*input\)\s*=>/,
+    /prefetchSessionTranscripts:\s*async\s*\(workspaceId,\s*input,\s*clientOptions\)\s*=>/,
     "app should wrap prefetchSessionTranscripts so warm snapshots hydrate immediately",
   );
   assert.match(
@@ -290,8 +290,8 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
   );
   assert.match(
     source,
-    /rememberConversationScopeFromTranscript\(workspaceId,\s*undefined,\s*item\);/s,
-    "prefetch responses should register conversation scope sidecars before hydration",
+    /const appWorkspaceId = clientOptions\?\.appWorkspaceId\?\.trim\(\) \|\| "";[\s\S]*if \(appWorkspaceId\) \{[\s\S]*rememberConversationScopeFromTranscript\(appWorkspaceId,\s*undefined,\s*item\);/s,
+    "prefetch responses should register scope sidecars only under their caller-provided app workspace",
   );
   assert.match(
     source,
@@ -305,8 +305,18 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
   );
   assert.match(
     source,
-    /rememberConversationScopeFromTranscript\(workspaceId,\s*directory,\s*snapshot\);/s,
-    "direct transcript fetches should register conversation scope sidecars",
+    /const appWorkspaceId = options\?\.appWorkspaceId\?\.trim\(\) \|\| "";[\s\S]*if \(appWorkspaceId\) \{[\s\S]*rememberConversationScopeFromTranscript\(appWorkspaceId,\s*directory,\s*snapshot\);/s,
+    "direct transcript fetches should register scope sidecars only with an explicit app workspace",
+  );
+  assert.match(
+    source,
+    /readScopedSessionStatus\(readSessionStatusForTranscriptProjection\(\), appWorkspaceId, sessionId\)/,
+    "projection activity guards must use the strict app-workspace scoped session status",
+  );
+  assert.doesNotMatch(
+    source,
+    /readSessionStatusForTranscriptProjection\(\)\[sessionId\]/,
+    "projection activity guards must not read an unscoped session-status key directly",
   );
   assert.doesNotMatch(source, /appendTranscriptSnapshot|appendSessionTranscript/);
   assert.doesNotMatch(eventStreamSource, /scheduleTranscriptIngestion|scheduleBackgroundTranscriptIngestion/);

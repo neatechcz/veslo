@@ -377,6 +377,39 @@ test("selectSession passes its versioned projection context to the offline reade
   });
 });
 
+test("selectSession can defer the first transcript read after submitted-run admission", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let liveMessageCalls = 0;
+      let offlineTranscriptCalls = 0;
+      const { controller, selectedSessionId, hydratedSnapshots } = makeController({
+        shouldBrowseSessionFromDb: () => true,
+        activeClient: {
+          session: {
+            messages: async () => {
+              liveMessageCalls += 1;
+              return ok([makeMessage("sess-first")]);
+            },
+          },
+        },
+        loadOfflineTranscript: async (sessionID) => {
+          offlineTranscriptCalls += 1;
+          return makeTranscriptSnapshot(sessionID);
+        },
+      });
+
+      await controller.selectSession("sess-first", { skipTranscriptRead: true });
+
+      assert.equal(selectedSessionId(), "sess-first");
+      assert.equal(liveMessageCalls, 0);
+      assert.equal(offlineTranscriptCalls, 0);
+      assert.equal(hydratedSnapshots.length, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("selectSession preserves canonical nested latest-run artifact identity when the transcript uses the UI id", async () => {
   await createRoot(async (dispose) => {
     try {

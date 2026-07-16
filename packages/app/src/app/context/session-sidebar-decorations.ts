@@ -98,7 +98,7 @@ function nextSubagentColor(existingSessions: SubagentDecorationPersistentSession
     if (!usedColors.has(color)) return color;
   }
   let attempt = usedColors.size + 1;
-  while (true) {
+  for (;;) {
     const generated = `hsl(${(attempt * 47) % 360} 72% 46%)`;
     if (!usedColors.has(generated)) return generated;
     attempt += 1;

@@ -80,6 +80,7 @@ const aliasesMatchScope = (
   if (expectedConversationId && normalize(snapshot.conversationId) !== expectedConversationId) return false;
   const expectedOpenCodeSessionId = normalize(scope.opencodeSessionId);
   if (expectedOpenCodeSessionId && normalize(snapshot.opencodeSessionId) !== expectedOpenCodeSessionId) return false;
+  if (expectedOpenCodeSessionId && normalize(snapshot.sessionId) !== expectedOpenCodeSessionId) return false;
 
   if (expectedConversationId || expectedOpenCodeSessionId) return true;
 

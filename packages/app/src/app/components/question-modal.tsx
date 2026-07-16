@@ -32,7 +32,7 @@ export default function QuestionModal(props: QuestionModalProps) {
         }
     });
 
-    const currentQuestion = createMemo(() => props.questions[currentIndex()]);
+    const currentQuestion = createMemo(() => props.questions.at(currentIndex()));
     const isLastQuestion = createMemo(() => currentIndex() === props.questions.length - 1);
     const canProceed = createMemo(() => {
         const q = currentQuestion();

@@ -45,7 +45,7 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
   let disposed = false;
 
   const stopPolling = () => {
-    if (timer) clearTimer(timer);
+    if (timer !== null) clearTimer(timer);
     timer = null;
     pollingScope = null;
     pollingAttempt = 0;
@@ -81,7 +81,7 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
       stopPollingFor(scope);
       return;
     }
-    if (timer && scopesMatch(scope, pollingScope)) return;
+    if (timer !== null && scopesMatch(scope, pollingScope)) return;
     if (!scopesMatch(scope, pollingScope)) {
       stopPolling();
       pollingScope = scope;

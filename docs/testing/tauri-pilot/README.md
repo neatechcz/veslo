@@ -200,8 +200,10 @@ pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario smoke
 For managed-AI/inference acceptance, add the live seed and keep the fixture
 disabled. `test:pilot:live-inference` is the canonical production-path suite:
 it runs the visible message-send flow only, requires `codex_oauth`, and caps
-the scenario at 95 seconds (with five seconds of runner grace to collect a
-failure result).
+the scenario at 180 seconds (with five seconds of runner grace to collect a
+failure result). This is an observation budget for a cold real-provider
+response, not a product latency target; the independent desktop boot cap stays
+at 95 seconds.
 
 ```powershell
 $env:VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = "C:\Users\jajse\.veslo\den-auth.json"
@@ -216,7 +218,7 @@ pnpm test:e2e:ui:live-inference
 ```
 
 The longer cold-start handoff check remains available as explicitly separate
-lifecycle coverage; it is not acceptance evidence for the 95-second canonical
+lifecycle coverage; it is not acceptance evidence for the canonical
 live-inference gate:
 
 ```powershell
@@ -248,9 +250,17 @@ production.
 - For managed-AI/inference scenarios, read Den auth from WebView storage first
   and then from `den_auth_snapshot_read`; never use a hardcoded
   `veslo-e2e-*` token.
+- Pilot's current `type` bridge is value-element oriented. For a
+  `contenteditable` composer, use the canonical narrow adapter: focus the
+  visible target and use the WebView's own `document.execCommand("insertText")`
+  editing path. Do not write Solid state or `textContent`, dispatch a synthetic
+  `InputEvent`, or invoke the send button directly; retain a native Pilot
+  `click` for submission. Raw OS-level `press` remains useful for keyboard
+  accelerator checks, but it is not the canonical text-entry mechanism on
+  Windows because foreground key delivery can be intermittent.
 - Keep lifecycle/recovery checks outside `test:pilot:live-inference` unless
   their TOML `global_timeout_ms` and step `timeout_ms` values are at most
-  95000.
+  180000.
 
 ## Automatic Failure Diagnostics
 
@@ -300,6 +310,14 @@ The E2E runner does not behave like `pnpm dev`.
   copied Den snapshot. The child desktop environment also removes
   `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_API_BASE` so a host API-key
   configuration cannot turn the gate into a direct OpenAI fallback.
+- On Windows, every isolated live managed-AI scenario additionally mirrors the
+  dev profile's `runtime-preferences.json` when it exists at
+  `%APPDATA%\com.neatech.veslo.dev\runtime-preferences.json`. It copies only
+  `sharedUnsandboxedEngine` and `supportDiagnostics` into the isolated app
+  config; unknown fields, auth/access-proof files, workspaces, and WebView
+  storage are never copied. Set
+  `E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE` to select another explicit
+  `runtime-preferences.json` source.
 
 For live Den auth in the E2E runner, use the same production desktop snapshot
 path accepted by the app:

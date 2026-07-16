@@ -97,7 +97,11 @@ export type SessionMutationWorkflowDeps = {
   selectedSession: () => Session | null | undefined;
   messages: () => MessageWithParts[];
   setPrompt: (value: string) => void;
-  ensureSelectedSessionWorkspaceActiveForSend: (sessionId: string, sendTraceId?: string) => Promise<boolean>;
+  ensureSelectedSessionWorkspaceActiveForSend: (
+    sessionId: string,
+    sendTraceId?: string,
+    resolvedTarget?: SendTargetWorkspaceScope | null,
+  ) => Promise<boolean>;
   routedClient: (workspaceId?: string | null) => SessionMutationClient | null;
   abortSessionSafe?: (client: SessionMutationClient, sessionId: string) => Promise<unknown>;
   revertSession?: (client: SessionMutationClient, sessionId: string, messageId: string) => Promise<Session>;
@@ -326,7 +330,8 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     if (!sessionID) {
       throw new Error("Select a session before compacting.");
     }
-    if (!(await deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+    const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
+    if (!(await deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID, undefined, sendTargetWorkspace))) {
       return;
     }
 
@@ -346,16 +351,14 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     });
 
     try {
-      const directory = deps.sessionDirectoryOverrideById()[sessionID] ?? (deps.workspaceProjectDir().trim() || undefined);
       const scope = deps.resolveSelectedSessionBrowseScope(sessionID);
-      const workspaceId = scope?.workspaceId?.trim() || deps.activeWorkspaceId().trim();
+      const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
       const workspaceType = deps.workspaces().find((workspace) => workspace.id === workspaceId)?.workspaceType ?? null;
       const submitConversation = deps.submitConversationFromVesloWriteApi;
       const submitDirectory =
-        scope?.directory?.trim() ||
-        directory?.trim() ||
-        scope?.workspaceRoot?.trim() ||
-        deps.workspaceRootForId(workspaceId, deps.activeWorkspaceRoot()).trim();
+        sendTargetWorkspace?.directory?.trim() ||
+        sendTargetWorkspace?.workspaceRoot?.trim() ||
+        "";
       if (!submitConversation || !workspaceId || workspaceType !== "local" || !submitDirectory) {
         deps.recordSendTrace("compactSession:server-submit-unavailable", {
           sessionID,
@@ -369,7 +372,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       const preflight = deps.createSendPreflightContext();
       preflight.targetWorkspace = {
         workspaceId,
-        workspaceRoot: scope?.workspaceRoot?.trim() || deps.workspaceRootForId(workspaceId, submitDirectory),
+        workspaceRoot: sendTargetWorkspace?.workspaceRoot?.trim() || submitDirectory,
         directory: submitDirectory,
       };
       const clientMessageId = deps.createClientMessageId();
@@ -534,18 +537,11 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       engineReady: deps.engineReady(),
       hasClient: Boolean(deps.client()),
     });
-    if (!(await deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
-      deps.recordSendTrace("replaceUserMessage:blocked-scoped-workspace", { sessionID });
-      return sessionSubmitBlockedResult({
-        code: "workspace_scope_unavailable",
-        message: "The selected session workspace is not ready for replacement.",
-      });
-    }
-
+    const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
     if (
       !(await deps.sendTraceStep(
         "replaceUserMessage:ensure-scoped-workspace-active",
-        () => deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID, sendTraceId),
+        () => deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID, sendTraceId, sendTargetWorkspace),
         { traceId: sendTraceId, sessionID },
       ))
     ) {
@@ -555,23 +551,18 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
         message: "The selected session workspace is not ready for replacement.",
       });
     }
-    const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
     replacePreflight.targetWorkspace = sendTargetWorkspace;
     const submitConversation = deps.submitConversationFromVesloWriteApi;
     const scope = deps.resolveSelectedSessionBrowseScope(sessionID);
-    const workspaceId = scope?.workspaceId?.trim() || deps.activeWorkspaceId().trim();
+    const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
     const submitDirectory =
-      scope?.directory?.trim() ||
-      deps.sessionDirectoryOverrideById()[sessionID]?.trim() ||
       sendTargetWorkspace?.directory?.trim() ||
       sendTargetWorkspace?.workspaceRoot?.trim() ||
-      scope?.workspaceRoot?.trim() ||
-      deps.workspaceRootForId(workspaceId, deps.activeWorkspaceRoot()).trim();
+      "";
     if (submitConversation && workspaceId && submitDirectory) {
       replacePreflight.targetWorkspace = {
         workspaceId,
-        workspaceRoot: scope?.workspaceRoot?.trim() || sendTargetWorkspace?.workspaceRoot?.trim() ||
-          deps.workspaceRootForId(workspaceId, submitDirectory),
+        workspaceRoot: sendTargetWorkspace?.workspaceRoot?.trim() || submitDirectory,
         directory: submitDirectory,
       };
       replacePreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(replacePreflight.targetWorkspace);
@@ -762,10 +753,11 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
   async function undoLastUserMessage() {
     const sessionID = (deps.selectedSessionId() ?? "").trim();
     if (!sessionID) return;
-    if (!(await deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+    const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
+    if (!(await deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID, undefined, sendTargetWorkspace))) {
       return;
     }
-    const c = deps.routedClient();
+    const c = deps.routedClientForSendTarget(sendTargetWorkspace);
     if (!c) return;
 
     await abortSessionSafe(c, sessionID);
@@ -799,10 +791,11 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
   async function redoLastUserMessage() {
     const sessionID = (deps.selectedSessionId() ?? "").trim();
     if (!sessionID) return;
-    if (!(await deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID))) {
+    const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
+    if (!(await deps.ensureSelectedSessionWorkspaceActiveForSend(sessionID, undefined, sendTargetWorkspace))) {
       return;
     }
-    const c = deps.routedClient();
+    const c = deps.routedClientForSendTarget(sendTargetWorkspace);
     if (!c) return;
 
     await abortSessionSafe(c, sessionID);
@@ -856,22 +849,27 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     if (!trimmed) {
       throw new Error("Session name is required");
     }
-    const targetWorkspaceId =
-      deps.resolveSelectedSessionBrowseScope(sessionID)?.workspaceId?.trim() ||
-      deps.activeWorkspaceId().trim();
+    const targetWorkspaceId = deps.resolveSendTargetWorkspaceScope(sessionID)?.workspaceId?.trim() || "";
+    if (!targetWorkspaceId) {
+      throw new Error("Session workspace is unavailable for rename.");
+    }
 
-    await deps.renameSession(sessionID, trimmed, targetWorkspaceId || undefined);
-    await deps.refreshSidebarWorkspaceSessions(targetWorkspaceId || deps.activeWorkspaceId())
+    await deps.renameSession(sessionID, trimmed, targetWorkspaceId);
+    await deps.refreshSidebarWorkspaceSessions(targetWorkspaceId)
       .catch(e => deps.reportError(e, "sidebar.refreshSessions"));
   }
 
   async function deleteSessionById(sessionID: string, workspaceID?: string) {
     const trimmed = sessionID.trim();
     if (!trimmed) return;
+    const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(trimmed);
     const workspaceId =
       (workspaceID ?? "").trim() ||
-      deps.resolveSelectedSessionBrowseScope(trimmed)?.workspaceId?.trim() ||
-      deps.activeWorkspaceId().trim();
+      sendTargetWorkspace?.workspaceId?.trim() ||
+      "";
+    if (!workspaceId) {
+      throw new Error("Session workspace is unavailable for deletion.");
+    }
     const c = deps.routedClient(workspaceId);
     if (!c) {
       throw new Error("Target workspace is not connected to a server");
@@ -884,10 +882,13 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
       ? workspace.workspaceType === "local"
         ? workspace.path?.trim() ?? ""
         : workspace.directory?.trim() ?? ""
-      : deps.activeWorkspaceRoot().trim();
+      : deps.workspaceRootForId(workspaceId, "").trim();
+    const targetWorkspaceRoot = sendTargetWorkspace?.workspaceId?.trim() === workspaceId
+      ? sendTargetWorkspace.directory?.trim() || sendTargetWorkspace.workspaceRoot?.trim() || ""
+      : "";
 
     const overrideDir = deps.sessionDirectoryOverride()[trimmed] ?? "";
-    const root = normalizeDirectoryPath(overrideDir) || workspaceRoot;
+    const root = normalizeDirectoryPath(overrideDir) || targetWorkspaceRoot || workspaceRoot;
 
     const params = root ? { sessionID: trimmed, directory: root } : { sessionID: trimmed };
     unwrap(await c.session.delete(params));
@@ -895,7 +896,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     deps.persistSessionDirectoryOverride(trimmed, null);
     deps.setSessions(deps.sessions().filter((s) => s.id !== trimmed));
     deps.setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, trimmed));
-    const sidebarWorkspaceId = workspace?.id ?? workspaceId ?? deps.activeWorkspaceId();
+    const sidebarWorkspaceId = workspace?.id ?? workspaceId;
     deps.removeSessionFromWorkspaceSidebar(sidebarWorkspaceId, trimmed);
 
     try {
@@ -909,10 +910,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
 
     if (deps.selectedSessionId() === trimmed) {
       deps.setSelectedSessionId(null);
-      const activeWorkspace = deps.activeWorkspaceId().trim();
-      if (activeWorkspace) {
-        deps.clearWorkspaceLastSessionIfSelected(activeWorkspace, trimmed);
-      }
+      deps.clearWorkspaceLastSessionIfSelected(sidebarWorkspaceId, trimmed);
     }
 
     const nextStatus = withoutSessionStatus(deps.sessionStatusById(), sidebarWorkspaceId, trimmed);
@@ -954,7 +952,11 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
   }
 
   async function saveSessionExport(sessionID: string) {
-    const c = deps.routedClient();
+    const sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(sessionID);
+    if (!sendTargetWorkspace?.workspaceId?.trim()) {
+      throw new Error("Session workspace is unavailable for export.");
+    }
+    const c = deps.routedClientForSendTarget(sendTargetWorkspace);
     if (!c) {
       throw new Error("Not connected to a server");
     }

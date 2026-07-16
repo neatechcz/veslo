@@ -5,6 +5,8 @@
 .tmp-live-feedback-youtrack/
 .tmp-opencode-home-live/
 tauri-pilot-failures/
+tauri-pilot-artifacts/
+.pilot-runs/
 __snapshots__/**/actual/
 __snapshots__/**/diff/
 __snapshots__/switch-scenario/

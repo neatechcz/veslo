@@ -226,7 +226,7 @@ export function createSessionAttachmentStaging<
       });
 
       const result = await client.readFileBatch(fileSessionId, [candidatePath]);
-      const item = result.items[0];
+      const item = result.items.at(0);
       if (item?.ok) {
         knownCollisions.add(candidatePath);
         attempt += 1;

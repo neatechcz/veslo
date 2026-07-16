@@ -11,14 +11,20 @@ import {
   assertPilotScenarioSelectionIsolated,
   buildPilotCommand,
   buildPilotDesktopAuthHydrationCheckScript,
+  buildPilotLiveInferenceDiagnosticScript,
   buildPilotStorageSummaryScript,
+  configureLiveParityRuntimePreferencesEnvironment,
   defaultPilotScenarios,
+  formatLiveInferenceDiagnosticSummary,
+  parseLiveInferenceTraceEntries,
+  parsePilotJsonOutput,
   pilotScenarioSuiteNames,
   pilotFailureDiagnosticCommands,
   pilotSessionRenderSuccessArtifactCommands,
   pilotReadinessProbeCommands,
   resolvePilotBinary,
   resolveCanonicalLiveInferenceCommandTimeoutMs,
+  resolveCanonicalLiveParityRuntimePreferencesSource,
   resolvePilotScenarioCommandTimeoutMs,
   resolvePilotScenarioSelection,
   redactPilotCommandArgs,
@@ -42,6 +48,7 @@ import {
   scenarioSelectionNeedsLegacySoulRuntime,
   scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture,
   scenarioSelectionNeedsAutomationSecondaryWorkspace,
+  summarizeLiveInferenceDiagnostics,
 } from './pilot-runner.js';
 
 const MANAGED_AI_INFERENCE_SCENARIOS = [
@@ -85,6 +92,15 @@ test('resolvePilotScenarioCommandTimeoutMs bounds tauri-pilot scenario runs whil
   );
 });
 
+test('runner passes each app launch the run-owned trace and app-log context', () => {
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /pilotDiagnostics: pilotRunLaunchDiagnostics\(runContext, 1\)/);
+  assert.match(source, /pilotDiagnostics: pilotRunLaunchDiagnostics\(runContext, 2\)/);
+  assert.match(source, /logDir: runContext\.traceDir/);
+  assert.match(source, /appLogDir: runContext\.appLogDir/);
+});
+
 test('canonical live inference observes a cold real response with diagnostic collection grace', () => {
   assert.equal(resolveCanonicalLiveInferenceCommandTimeoutMs({}), 185_000);
   assert.equal(
@@ -94,6 +110,149 @@ test('canonical live inference observes a cold real response with diagnostic col
   assert.equal(
     resolveCanonicalLiveInferenceCommandTimeoutMs({ E2E_PILOT_SCENARIO_TIMEOUT_MS: '900000' }),
     185_000,
+  );
+});
+
+test('canonical live inference summarizes only timing, known fallbacks, and simulated-input state', () => {
+  const summary = summarizeLiveInferenceDiagnostics({
+    scenario: '/repo/packages/e2e/pilot-scenarios/message-send-registry-degraded.toml',
+    browser: {
+      clickAt: 1_000,
+      sendStartedAt: 1_010,
+      serverAcceptedAt: 1_700,
+      firstAssistantTextAt: 45_600,
+      firstAssistantTextSource: 'session-sse',
+      traceId: 'send-private-correlation',
+      sessionId: 'session-private-correlation',
+      runId: 'run-private-correlation',
+      modelVariant: 'xhigh',
+      // This is normal lifecycle observation, not a runtime restart. Keep the
+      // summary defensive even if a future browser collector returns it.
+      runtimeRecoveryEvents: ['session-lifecycle-recovery:poll'],
+    },
+    serverTrace: parseLiveInferenceTraceEntries([
+      JSON.stringify({
+        ts: 1_850,
+        traceId: 'send-private-correlation',
+        sessionId: 'session-private-correlation',
+        requestId: 'request-private-correlation',
+        event: 'server:ai-gateway:provider-hit',
+        provider: 'codex_oauth',
+      }),
+      'incomplete trace line',
+      JSON.stringify({
+        ts: 6_850,
+        traceId: 'send-private-correlation',
+        requestId: 'request-private-correlation',
+        event: 'server:ai-gateway:upstream-headers',
+      }),
+    ].join('\n')),
+    appStderr: '[runtime_prepare_workspace] orchestrator activate failed, falling back to fresh start: daemon absent',
+    env: {
+      E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+      E2E_MANAGED_AI_RESPONSE_DELAY_MS: '',
+      E2E_RUN_ACTIVITY_PROBE_MODE: '',
+      VESLO_DISABLE_DEV_AUTOSTART: '',
+    },
+  });
+
+  assert.equal(summary.diagnosticsComplete, true);
+  assert.deepEqual(summary.simulatedFailureInputs, {
+    managedAiGatewayFixture: false,
+    managedAiResponseDelay: false,
+    runActivityProbe: false,
+  });
+  assert.equal(summary.runtimeShape.devAutostartDisabled, false);
+  assert.equal(summary.runtimeShape.modelVariant, 'xhigh');
+  assert.deepEqual(summary.timingMs, {
+    clickToSendStart: 10,
+    clickToServerAccepted: 700,
+    serverAcceptedToProviderHit: 150,
+    providerHitToUpstreamHeaders: 5_000,
+    upstreamHeadersToFirstAssistantText: 38_750,
+    providerHitToFirstAssistantText: 43_750,
+    clickToFirstAssistantText: 44_600,
+  });
+  assert.deepEqual(summary.latencyDiagnosis, {
+    dominantStage: 'stream-to-first-text',
+    dominantStageMs: 38_750,
+  });
+  assert.equal(summary.provider, 'codex_oauth');
+  assert.deepEqual(summary.fallbacks, ['orchestrator-activate-fresh-start']);
+  const persisted = JSON.stringify(summary);
+  assert.doesNotMatch(persisted, /private-correlation/);
+  assert.match(formatLiveInferenceDiagnosticSummary(summary), /simulated=no/);
+  assert.match(buildPilotLiveInferenceDiagnosticScript(), /veslo\.modelVariant/);
+  assert.doesNotMatch(
+    buildPilotLiveInferenceDiagnosticScript(),
+    /textContent|innerText|promptText|messageText/i,
+  );
+  assert.deepEqual(parsePilotJsonOutput('Pilot output\n{"ok":true}'), { ok: true });
+});
+
+test('canonical live inference uses an explicit runtime preference source or the Windows dev profile default', () => {
+  assert.equal(
+    resolveCanonicalLiveParityRuntimePreferencesSource(
+      {
+        E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE:
+          'C:\\e2e\\runtime-preferences.json',
+      },
+      { platform: 'win32', fileExists: () => false },
+    ),
+    'C:\\e2e\\runtime-preferences.json',
+  );
+
+  const checked: string[] = [];
+  assert.equal(
+    resolveCanonicalLiveParityRuntimePreferencesSource(
+      { APPDATA: 'C:\\Users\\micha\\AppData\\Roaming' },
+      {
+        platform: 'win32',
+        fileExists: (path) => {
+          checked.push(path);
+          return true;
+        },
+      },
+    ),
+    'C:\\Users\\micha\\AppData\\Roaming\\com.neatech.veslo.dev\\runtime-preferences.json',
+  );
+  assert.deepEqual(checked, [
+    'C:\\Users\\micha\\AppData\\Roaming\\com.neatech.veslo.dev\\runtime-preferences.json',
+  ]);
+  assert.equal(
+    resolveCanonicalLiveParityRuntimePreferencesSource(
+      { APPDATA: 'C:\\Users\\micha\\AppData\\Roaming' },
+      { platform: 'linux', fileExists: () => true },
+    ),
+    '',
+  );
+});
+
+test('every live managed-AI scenario receives the isolated runtime preference mirror source', () => {
+  const env: NodeJS.ProcessEnv = {
+    E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE:
+      'C:\\e2e\\runtime-preferences.json',
+  };
+
+  const restore = configureLiveParityRuntimePreferencesEnvironment(env);
+  assert.equal(
+    env.E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE,
+    'C:\\e2e\\runtime-preferences.json',
+  );
+  restore();
+  assert.deepEqual(env, {
+    E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE:
+      'C:\\e2e\\runtime-preferences.json',
+  });
+
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+  assert.match(
+    source,
+    /const restoreLiveParityRuntimePreferencesEnvironment = requiresLiveManagedAiAuth\s*\? configureLiveParityRuntimePreferencesEnvironment\(\)\s*: null/,
+  );
+  assert.match(
+    source,
+    /restoreLiveParityRuntimePreferencesEnvironment\?\.\(\);/,
   );
 });
 
@@ -112,14 +271,16 @@ test('Pilot scenario timeout cap rejects canonical timeouts above the real cold-
   }
 });
 
-test('runPilotScenarios passes an explicit timeout to tauri-pilot run commands', () => {
+test('runPilotScenarios persists a JUnit result and passes an explicit timeout to Pilot runs', () => {
   const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
 
   assert.match(source, /const isCanonicalLiveInferenceSuite = options\.suite\?\.trim\(\) === 'live-inference'/);
   assert.match(source, /\? resolveCanonicalLiveInferenceCommandTimeoutMs\(\)\s*:\s*resolvePilotScenarioCommandTimeoutMs\(\)/);
   assert.match(source, /if \(isCanonicalLiveInferenceSuite\) \{\s*assertPilotScenarioTimeoutCap\(scenarios\);/);
-  assert.match(source, /args: \['run', scenario\],[\s\S]*timeoutMs: scenarioCommandTimeoutMs/);
-  assert.match(source, /args: \['run', reconnectScenario\],[\s\S]*timeoutMs: scenarioCommandTimeoutMs/);
+  assert.match(source, /const args = \['run', '--junit', junitPath, options\.scenario\];/);
+  assert.match(source, /scenario,\s*timeoutMs: scenarioCommandTimeoutMs,\s*runContext,/);
+  assert.match(source, /scenario: reconnectScenario,\s*timeoutMs: scenarioCommandTimeoutMs,\s*runContext,/);
+  assert.match(source, /persistPilotScenarioCommandResult\(/);
 });
 
 test('sanitizePilotArtifactName creates stable filesystem-safe scenario names', () => {
@@ -253,8 +414,18 @@ test('live-inference pilot suite uses production-path managed AI scenarios', () 
       /visibleAssistantTexts\(\)/,
       `${scenarioName} must require a rendered assistant response`,
     );
+    assert.match(
+      content,
+      /sendPrompt:server-submit-first-success/,
+      `${scenarioName} must assert the current production server-submit-first acceptance event`,
+    );
     assert.match(content, /action = "navigate"/, `${scenarioName} must use Pilot navigation`);
     assert.match(content, /action = "type"/, `${scenarioName} must type through Pilot`);
+    assert.match(
+      content,
+      /__vesloContenteditableTypeAdapter[\s\S]*document\.execCommand\("insertText"/,
+      `${scenarioName} must adapt Pilot type through WebView's contenteditable edit algorithm`,
+    );
     assert.match(content, /action = "click"/, `${scenarioName} must click through Pilot`);
     assert.match(
       content,
@@ -727,13 +898,13 @@ test('session queue durability rejects the shared existing-profile switch', () =
   assert.doesNotThrow(() => assertSessionQueueRuntimeFixtureProfileIsolation(selected, {}));
 });
 
-test('managed AI inference pilot scenarios disable debug dev autostart for production-path runtime startup', () => {
+test('non-canonical managed AI scenarios disable debug dev autostart while the canonical suite measures dev parity', () => {
   const e2eRoot = '/repo/packages/e2e';
 
   for (const scenarioName of MANAGED_AI_INFERENCE_SCENARIOS) {
     assert.equal(
       scenarioSelectionDisablesDevAutostart(resolvePilotScenarioSelection({ scenario: [scenarioName] }, e2eRoot)),
-      true,
+      scenarioName !== 'message-send-registry-degraded',
       scenarioName,
     );
   }
@@ -802,6 +973,10 @@ test('canonical live inference clears inherited E2E gateway and registry fixture
     E2E_RUN_ACTIVITY_PROBE_MODE: 'model-retry-no-progress',
     E2E_MANAGED_AI_RESPONSE_DELAY_MS: '30000',
     E2E_SKILL_REGISTRY_EVENTS_MODE: 'workspace-update-repeat',
+    VESLO_DISABLE_DEV_AUTOSTART: '1',
+    VESLO_RUNTIME_DIAGNOSTICS: '0',
+    VESLO_SEND_WORKFLOW_TRACE: '0',
+    VESLO_SEND_WORKFLOW_TRACE_CONSOLE: '1',
   };
 
   const restore = (
@@ -817,6 +992,11 @@ test('canonical live inference clears inherited E2E gateway and registry fixture
     E2E_RUN_ACTIVITY_PROBE_MODE: '',
     E2E_MANAGED_AI_RESPONSE_DELAY_MS: '',
     E2E_SKILL_REGISTRY_EVENTS_MODE: '',
+    VESLO_DISABLE_DEV_AUTOSTART: '',
+    VESLO_RUNTIME_DIAGNOSTICS: '0',
+    E2E_FORWARD_APP_LOGS: '0',
+    VESLO_SEND_WORKFLOW_TRACE: '1',
+    VESLO_SEND_WORKFLOW_TRACE_CONSOLE: '',
   });
 
   restore();
@@ -830,6 +1010,10 @@ test('canonical live inference clears inherited E2E gateway and registry fixture
     E2E_RUN_ACTIVITY_PROBE_MODE: 'model-retry-no-progress',
     E2E_MANAGED_AI_RESPONSE_DELAY_MS: '30000',
     E2E_SKILL_REGISTRY_EVENTS_MODE: 'workspace-update-repeat',
+    VESLO_DISABLE_DEV_AUTOSTART: '1',
+    VESLO_RUNTIME_DIAGNOSTICS: '0',
+    VESLO_SEND_WORKFLOW_TRACE: '0',
+    VESLO_SEND_WORKFLOW_TRACE_CONSOLE: '1',
   });
 });
 

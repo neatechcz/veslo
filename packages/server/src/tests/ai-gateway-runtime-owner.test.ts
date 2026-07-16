@@ -88,6 +88,40 @@ describe("createAiGatewayRuntimeOwner", () => {
     expect(byWorkspace.activeRunContext).toBeNull();
   });
 
+  test("does not cross-correlate a malformed duplicate OpenCode session id across workspaces", () => {
+    const owner = createAiGatewayRuntimeOwner();
+    owner.registerActiveRun({
+      ...activeRun,
+      workspaceId: "workspace-a",
+      conversationId: "conversation-a",
+      runId: "run-a",
+      opencodeSessionId: "duplicate-upstream-session",
+    });
+    owner.registerActiveRun({
+      ...activeRun,
+      workspaceId: "workspace-b",
+      conversationId: "conversation-b",
+      runId: "run-b",
+      opencodeSessionId: "duplicate-upstream-session",
+    });
+
+    expect(owner.resolveSession({
+      incomingSessionId: "duplicate-upstream-session",
+      workspaceId: "workspace-a",
+    }).activeRunContext?.runId).toBe("run-a");
+    expect(owner.resolveSession({
+      incomingSessionId: "duplicate-upstream-session",
+      workspaceId: "workspace-b",
+    }).activeRunContext?.runId).toBe("run-b");
+    expect(owner.resolveSession({
+      incomingSessionId: "duplicate-upstream-session",
+      workspaceId: "workspace-unrelated",
+    }).activeRunContext).toBeNull();
+    expect(owner.resolveSession({
+      incomingSessionId: "duplicate-upstream-session",
+    }).activeRunContext).toBeNull();
+  });
+
   test("prefers current runtime access bundle token and clears it when AI access is disabled", () => {
     const owner = createAiGatewayRuntimeOwner();
     owner.syncRuntimeAuthorizationFromAccessBundle({

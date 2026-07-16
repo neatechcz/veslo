@@ -82,14 +82,13 @@ export function createWorkspaceSendTarget<Client = unknown>(options: WorkspaceSe
   const ensureSelectedSessionWorkspaceActiveForSend = async (
     sessionId: string,
     traceId?: string | null,
+    resolvedTarget?: SendTargetWorkspaceScope | null,
   ): Promise<boolean> => {
     const tracePayload = traceId ? { traceId } : undefined;
     const browseScope = options.resolveSelectedSessionBrowseScope
       ? options.resolveSelectedSessionBrowseScope(sessionId)
       : null;
-    const sendTargetScope = browseScope
-      ? null
-      : options.resolveSessionSendTargetScope(sessionId);
+    const sendTargetScope = resolvedTarget ?? options.resolveSessionSendTargetScope(sessionId);
     const sendTargetWorkspaceId = sendTargetScope?.workspaceId?.trim() ?? "";
     const activeWorkspaceId = options.activeWorkspaceId().trim();
     const scopeTracePayload = {
@@ -103,11 +102,10 @@ export function createWorkspaceSendTarget<Client = unknown>(options: WorkspaceSe
       hasSendTargetWorkspace: Boolean(sendTargetWorkspaceId),
       scopeCandidateCount: Number(Boolean(browseScope?.workspaceId?.trim())) + Number(Boolean(sendTargetWorkspaceId)),
     };
-    const transcriptScope = browseScope ?? (
-      options.resolveSelectedSessionBrowseScope && sendTargetWorkspaceId === activeWorkspaceId
-        ? null
-        : sendTargetScope
-    );
+    const transcriptScope = options.resolveSelectedSessionBrowseScope && !browseScope &&
+      sendTargetWorkspaceId === activeWorkspaceId
+      ? null
+      : sendTargetScope;
     if (!transcriptScope) {
       if (options.resolveSelectedSessionBrowseScope && !sendTargetWorkspaceId) {
         options.recordSendTrace("sendPrompt:scoped-workspace-blocked-missing-scope", scopeTracePayload);

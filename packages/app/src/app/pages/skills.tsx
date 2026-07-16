@@ -387,7 +387,7 @@ export default function SkillsView(props: SkillsViewProps) {
     const matchingInstance = instances.find((instance) => instance.id === detail.instance.id);
     const replacementInstance = matchingInstance
       ?? instances.find((instance) => inventoryInstanceLifecycle(instance) === "active")
-      ?? instances[0]
+      ?? instances.at(0)
       ?? null;
 
     return replacementInstance ? { item: matchingItem, instance: replacementInstance } : null;
@@ -773,7 +773,7 @@ export default function SkillsView(props: SkillsViewProps) {
   });
   const bulkPublishDisabledReason = createMemo(() => {
     const selectedRows = selectedInventoryRows();
-    const row = selectedRows[0];
+    const row = selectedRows.at(0);
     const reasonKey = resolveSkillsBulkPublishDisabledReasonKey({
       selectedCount: selectedRows.length,
       selectedPublishable: Boolean(row && isPublishableInventoryInstance(row.instance)),
@@ -856,7 +856,7 @@ export default function SkillsView(props: SkillsViewProps) {
       setToast(disabledReason);
       return;
     }
-    const row = selectedInventoryRows()[0];
+    const row = selectedInventoryRows().at(0);
     if (!row) return;
     openSkillReviewDialog("organization", skillDetailActionForInventoryRow(row), row);
   };

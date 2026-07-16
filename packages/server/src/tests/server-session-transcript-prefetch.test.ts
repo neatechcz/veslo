@@ -228,6 +228,42 @@ describe("session transcript prefetch routes", () => {
     expect(transcriptPayload.conversationId).toMatch(/^conv-/);
     expect(transcriptPayload.messages.length).toBe(12);
 
+    const conversationId = transcriptPayload.conversationId;
+    if (!conversationId) throw new Error("expected canonical transcript to include a conversation id");
+    const aliasPrefetchResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/${workspaceId}/sessions/transcript-prefetch`,
+      {
+        method: "POST",
+        headers: {
+          ...authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          clickedSessionId: conversationId,
+          selectedSessionId: conversationId,
+          loadedTopLevelSessionIds: [conversationId],
+          expandedSubagentSessionIds: [],
+          directory: workspaceRoot,
+          sessionDirectoriesById: {
+            [conversationId]: workspaceRoot,
+          },
+          limit: 12,
+        }),
+      },
+    );
+    expect(aliasPrefetchResponse.status).toBe(200);
+    const aliasPrefetchPayload = await aliasPrefetchResponse.json() as {
+      queuedSessionIds: string[];
+      items: Array<{ sessionId: string; conversationId?: string; opencodeSessionId?: string }>;
+    };
+    expect(aliasPrefetchPayload.queuedSessionIds).toEqual([]);
+    expect(aliasPrefetchPayload.items).toHaveLength(1);
+    expect(aliasPrefetchPayload.items[0]).toMatchObject({
+      sessionId: "sess-a",
+      conversationId,
+      opencodeSessionId: "sess-a",
+    });
+
     const projectionResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/${workspaceId}/sessions/sess-a/transcript?limit=12&directory=${encodeURIComponent(workspaceRoot)}&include=latest-run-artifacts&caller=passive-selection`,
       {
@@ -277,6 +313,32 @@ describe("session transcript prefetch routes", () => {
     });
     expect(typeof settleTrace?.durationMs).toBe("number");
     expect(JSON.stringify(projectionTraceEntries)).not.toContain(workspaceRoot);
+
+    const uncorrelatedProjectionResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/${workspaceId}/sessions/sess-a/transcript?limit=12&directory=${encodeURIComponent(workspaceRoot)}&include=latest-run-artifacts&caller=terminal-recovery`,
+      { headers: authHeaders },
+    );
+    expect(uncorrelatedProjectionResponse.status).toBe(200);
+    const uncorrelatedProjectionTraceEntries = (await readFile(traceFile, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((entry) =>
+        entry.event?.toString().startsWith("session-transcript-projection:") &&
+        entry.caller === "terminal-recovery" &&
+        entry.traceId === null
+      );
+    expect(uncorrelatedProjectionTraceEntries.map((entry) => entry.event)).toEqual([
+      "session-transcript-projection:start",
+      "session-transcript-projection:settle",
+    ]);
+    expect(uncorrelatedProjectionTraceEntries[1]).toMatchObject({
+      source: "server",
+      displayLimit: 12,
+      sourceLimit: 200,
+      cacheOutcome: "warm",
+    });
 
     type WarmPrefetchPayload = {
       queuedSessionIds: string[];

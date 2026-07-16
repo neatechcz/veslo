@@ -5,6 +5,7 @@ import type { ModelRef } from "../../types.js";
 import {
   clearLegacySessionModelPersistence,
   collectLegacySessionModelStorageKeys,
+  parseSessionModelOverrides,
   resolveWorkspaceDefaultModel,
 } from "../../lib/model-persistence.js";
 
@@ -65,6 +66,10 @@ test("falls back to legacy default when current is missing", () => {
   });
 
   assert.deepEqual(next, CLAUDE);
+});
+
+test("ignores a non-object persisted session-model payload", () => {
+  assert.deepEqual(parseSessionModelOverrides('"legacy"'), {});
 });
 
 test("collects every legacy user model authority key from storage", () => {

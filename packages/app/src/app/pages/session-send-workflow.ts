@@ -30,6 +30,7 @@ import type {
   SessionAttachmentFilePartInput,
   SessionAttachmentPartInput,
 } from "./session-attachment-staging";
+import type { MaterializedSubmittedConversationRun } from "./session-creation-workflow";
 import type {
   VesloConversationRunInput,
   VesloConversationSubmitRequest,
@@ -322,6 +323,7 @@ export type SessionSendWorkflowOptions = {
       submitOrigin?: string | null;
       submitSource?: string | null;
       onSubmitResult?: (result: VesloConversationSubmitResult) => void;
+      onSubmittedRunMaterialized?: (input: MaterializedSubmittedConversationRun) => boolean;
       onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
       preflight?: SessionSendPreflightContext;
     },
@@ -333,6 +335,7 @@ export type SessionSendWorkflowOptions = {
   ensureSelectedSessionWorkspaceActiveForSend: (
     sessionId: string,
     sendTraceId?: string | null,
+    resolvedTarget?: SendTargetWorkspaceScope | null,
   ) => Promise<boolean>;
   emitFlowProgress: (event: SessionFlowProgressEvent) => void;
   finishPerf: (
@@ -1251,7 +1254,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       scopedSessionID &&
       !(await deps.sendTraceStep(
         "sendPrompt:ensure-scoped-workspace-active",
-        () => deps.ensureSelectedSessionWorkspaceActiveForSend(scopedSessionID, sendTraceId),
+        () => deps.ensureSelectedSessionWorkspaceActiveForSend(scopedSessionID, sendTraceId, sendTargetWorkspace),
         {
           traceId: sendTraceId,
           sessionID: scopedSessionID,
@@ -1269,7 +1272,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       });
     }
     if (scopedSessionID) {
-      sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(scopedSessionID) ?? sendTargetWorkspace;
       sendPreflight.targetWorkspace = sendTargetWorkspace;
       sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
     }
@@ -1367,11 +1369,11 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         deps.setError(hintedMessage);
         deps.sessionStoreAppendSessionErrorTurn(existingSessionId, hintedMessage);
       };
-      const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || deps.workspace.activeWorkspaceId().trim();
+      const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
       const directory =
         sendTargetWorkspace?.directory?.trim() ||
         sendTargetWorkspace?.workspaceRoot?.trim() ||
-        deps.workspace.activeWorkspaceRoot().trim();
+        "";
       if (!workspaceId || !directory) {
         const message = "Server-owned conversation submit is missing a workspace or directory for this local session.";
         deps.recordSendTrace("sendPrompt:server-submit-existing-missing-target", {
@@ -1905,6 +1907,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       current: ConversationSubmitTerminalResult | null;
       invalidMessage: string | null;
     } = { current: null, invalidMessage: null };
+    let serverFirstSubmittedRunAdmittedDuringMaterialization = false;
     if (!sessionID) {
       deps.recordSendTrace("sendPrompt:create-session-needed", {
         traceId: sendTraceId,
@@ -1943,6 +1946,56 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
                 serverFirstSubmitResultHolder.invalidMessage = validation.message;
               }
             }
+          },
+          onSubmittedRunMaterialized: (materialized) => {
+            const acceptedResult = serverFirstSubmitResultHolder.current;
+            if (
+              !acceptedResult ||
+              acceptedResult.status !== "submitted" ||
+              acceptedResult.runId !== materialized.result.runId ||
+              acceptedResult.clientMessageId !== materialized.result.clientMessageId
+            ) {
+              return false;
+            }
+
+            const workspaceId = materialized.workspaceId.trim();
+            const directory = materialized.directory.trim();
+            const sessionId = materialized.sessionId.trim();
+            if (!workspaceId || !directory || !sessionId) {
+              deps.recordSendTrace("sendPrompt:server-submit-first-admission-missing-target", {
+                traceId: sendTraceId,
+                sessionID: sessionId || null,
+                runId: acceptedResult.runId,
+              });
+              return false;
+            }
+
+            const admitted = deps.admitAcceptedConversationRun({
+              sessionId,
+              workspaceId,
+              conversationId: acceptedResult.conversationId,
+              opencodeSessionId: acceptedResult.opencodeSessionId,
+              directory,
+              runId: acceptedResult.runId,
+              clientMessageId: acceptedResult.clientMessageId,
+              diagnosticTraceId: sendTraceId,
+            });
+            if (admitted !== true) return false;
+
+            deps.emitLiveTranscriptPolicyEvent({
+              type: "conversation-run.succeeded",
+              reason: "sendPrompt:success",
+              workspaceId,
+              sessionId,
+              traceId: sendTraceId,
+            });
+            serverFirstSubmittedRunAdmittedDuringMaterialization = true;
+            deps.recordSendTrace("sendPrompt:server-submit-first-admitted-before-select", {
+              traceId: sendTraceId,
+              sessionID: sessionId,
+              runId: acceptedResult.runId,
+            });
+            return true;
           },
           onMaterializedSessionId: options.onMaterializedSessionId,
           preflight: sendPreflight,
@@ -2078,48 +2131,50 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         queueItemId: serverFirstSubmitResult.status === "queued" ? serverFirstSubmitResult.queueItemId : null,
         draftDisposition: serverFirstSubmitResult.draftDisposition,
       });
-      if (serverFirstSubmitResult.status === "queued") {
-        deps.emitLiveTranscriptPolicyEvent({
-          type: "conversation-run.queued",
-          reason: "sendPrompt:queued",
-          workspaceId: serverFirstSubmitResult.workspaceId,
-          sessionId: sessionID,
-          traceId: sendTraceId,
-          queueItemId: serverFirstSubmitResult.queueItemId,
-          reservedRunId: serverFirstSubmitResult.reservedRunId,
-        });
-      } else {
-        deps.emitLiveTranscriptPolicyEvent({
-          type: "conversation-run.succeeded",
-          reason: "sendPrompt:success",
-          workspaceId: serverFirstSubmitResult.workspaceId,
-          sessionId: sessionID,
-          traceId: sendTraceId,
-        });
-      }
-      if (serverFirstSubmitResult.status === "submitted") {
+      if (!serverFirstSubmittedRunAdmittedDuringMaterialization) {
         const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
-        const directory =
-          sendTargetWorkspace?.directory?.trim() ||
-          sendTargetWorkspace?.workspaceRoot?.trim() ||
-          "";
-        if (!workspaceId || !directory) {
-          deps.recordSendTrace("sendPrompt:server-submit-first-admission-missing-target", {
+        if (serverFirstSubmitResult.status === "queued") {
+          deps.emitLiveTranscriptPolicyEvent({
+            type: "conversation-run.queued",
+            reason: "sendPrompt:queued",
+            workspaceId: workspaceId || serverFirstSubmitResult.workspaceId,
+            sessionId: sessionID,
             traceId: sendTraceId,
-            sessionID,
-            runId: serverFirstSubmitResult.runId,
+            queueItemId: serverFirstSubmitResult.queueItemId,
+            reservedRunId: serverFirstSubmitResult.reservedRunId,
           });
         } else {
-          deps.admitAcceptedConversationRun({
+          deps.emitLiveTranscriptPolicyEvent({
+            type: "conversation-run.succeeded",
+            reason: "sendPrompt:success",
+            workspaceId: workspaceId || serverFirstSubmitResult.workspaceId,
             sessionId: sessionID,
-            workspaceId,
-            conversationId: serverFirstSubmitResult.conversationId,
-            opencodeSessionId: serverFirstSubmitResult.opencodeSessionId,
-            directory,
-            runId: serverFirstSubmitResult.runId,
-            clientMessageId: serverFirstSubmitResult.clientMessageId,
-            diagnosticTraceId: sendTraceId,
+            traceId: sendTraceId,
           });
+        }
+        if (serverFirstSubmitResult.status === "submitted") {
+          const directory =
+            sendTargetWorkspace?.directory?.trim() ||
+            sendTargetWorkspace?.workspaceRoot?.trim() ||
+            "";
+          if (!workspaceId || !directory) {
+            deps.recordSendTrace("sendPrompt:server-submit-first-admission-missing-target", {
+              traceId: sendTraceId,
+              sessionID,
+              runId: serverFirstSubmitResult.runId,
+            });
+          } else {
+            deps.admitAcceptedConversationRun({
+              sessionId: sessionID,
+              workspaceId,
+              conversationId: serverFirstSubmitResult.conversationId,
+              opencodeSessionId: serverFirstSubmitResult.opencodeSessionId,
+              directory,
+              runId: serverFirstSubmitResult.runId,
+              clientMessageId: serverFirstSubmitResult.clientMessageId,
+              diagnosticTraceId: sendTraceId,
+            });
+          }
         }
       }
       await consumePendingDraftAfterAcceptedSend(true);

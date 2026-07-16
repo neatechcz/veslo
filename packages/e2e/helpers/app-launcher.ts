@@ -12,9 +12,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
-import { join, resolve, dirname, win32, posix } from "node:path";
+import { basename, join, resolve, dirname, win32, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareDesktopAuthSeed } from "./desktop-auth-seed.js";
+import { createRedactingLineBuffer } from "./pilot-redaction.js";
 import {
   createGoogleMcpCatalogDenAuthJson,
   E2E_SKILL_REGISTRY_ORG_ID,
@@ -79,6 +80,11 @@ const MANAGED_CHILD_PROCESS_NAMES = [
 ] as const;
 const DESKTOP_BOOTSTRAP_READY_EVENT = "desktop-bootstrap:ready";
 const DESKTOP_BOOTSTRAP_READY_MARKER_FILE = "desktop-bootstrap-ready.json";
+const RUNTIME_PREFERENCES_FILE = "runtime-preferences.json";
+const LIVE_PARITY_RUNTIME_PREFERENCE_KEYS = [
+  "sharedUnsandboxedEngine",
+  "supportDiagnostics",
+] as const;
 
 let appProcess: ChildProcess | null = null;
 let appProcessOwnedByHarness = false;
@@ -117,6 +123,8 @@ type AppLaunchEnvOptions = {
   platform?: NodeJS.Platform;
   vesloServerPort?: number;
   pilotRuntimeDir?: string;
+  pilotTraceDir?: string;
+  runId?: string;
   opencodeHome: string;
   snapshotPath: string;
   denApiBase?: string | null;
@@ -137,10 +145,53 @@ export type StartAppProfileContext = {
   env: NodeJS.ProcessEnv;
 };
 
+export type PilotRunDiagnostics = {
+  traceDir: string;
+  appLogDir: string;
+  runId: string;
+  launchId: string;
+};
+
 export type StartAppOptions = {
   preserveIsolatedProfile?: boolean;
   beforeLaunch?: (context: StartAppProfileContext) => Promise<void> | void;
+  pilotDiagnostics?: PilotRunDiagnostics;
 };
+
+const SAFE_PILOT_DIAGNOSTIC_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function normalizePilotRunDiagnostics(
+  diagnostics: PilotRunDiagnostics | undefined,
+): PilotRunDiagnostics | null {
+  if (!diagnostics) return null;
+
+  const traceDir = diagnostics.traceDir.trim();
+  const appLogDir = diagnostics.appLogDir.trim();
+  const runId = diagnostics.runId.trim();
+  const launchId = diagnostics.launchId.trim();
+  if (!traceDir || !appLogDir) {
+    throw new Error("Pilot run diagnostics require non-empty traceDir and appLogDir.");
+  }
+  if (!SAFE_PILOT_DIAGNOSTIC_ID.test(runId)) {
+    throw new Error("Pilot run diagnostics require a filesystem-safe runId.");
+  }
+  if (!SAFE_PILOT_DIAGNOSTIC_ID.test(launchId)) {
+    throw new Error("Pilot run diagnostics require a filesystem-safe launchId.");
+  }
+  return { traceDir, appLogDir, runId, launchId };
+}
+
+function pilotDiagnosticsEnv(diagnostics: Pick<PilotRunDiagnostics, "traceDir" | "runId">): NodeJS.ProcessEnv {
+  return {
+    TAURI_PILOT_LOG_DIR: diagnostics.traceDir,
+    VESLO_RUN_ID: diagnostics.runId,
+    VESLO_RUNTIME_DIAGNOSTICS: "1",
+    VESLO_RUNTIME_TRACE: "1",
+    VESLO_RUNTIME_TRACE_DIR: diagnostics.traceDir,
+    VESLO_SEND_WORKFLOW_TRACE: "1",
+    VESLO_OPENCODE_HEALTH_DIAG: "1",
+  };
+}
 
 export type PackagedSmokeModelConfig = {
   baseUrl: string;
@@ -151,6 +202,12 @@ export function resolvePilotIdentifier(
   env: Record<string, string | undefined> = process.env,
 ): string {
   return env.E2E_TAURI_PILOT_IDENTIFIER?.trim() || DEFAULT_PILOT_IDENTIFIER;
+}
+
+export function shouldForwardAppLogs(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return env.E2E_FORWARD_APP_LOGS?.trim() !== '0';
 }
 
 export function resolvePackagedSmokeModelConfig(
@@ -633,6 +690,15 @@ export function createAppLaunchEnv(
     OPENAI_API_KEY: _openAiApiKey,
     OPENAI_BASE_URL: _openAiBaseUrl,
     OPENAI_API_BASE: _openAiApiBase,
+    E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE:
+      _liveParityRuntimePreferencesSource,
+    TAURI_PILOT_LOG_DIR: _tauriPilotLogDir,
+    VESLO_RUN_ID: _vesloRunId,
+    VESLO_RUNTIME_DIAGNOSTICS: _vesloRuntimeDiagnostics,
+    VESLO_RUNTIME_TRACE: _vesloRuntimeTrace,
+    VESLO_RUNTIME_TRACE_DIR: _vesloRuntimeTraceDir,
+    VESLO_SEND_WORKFLOW_TRACE: _vesloSendWorkflowTrace,
+    VESLO_OPENCODE_HEALTH_DIAG: _vesloOpencodeHealthDiag,
     ...desktopBaseEnv
   } = baseEnv;
   const platform = options.platform ?? process.platform;
@@ -650,9 +716,14 @@ export function createAppLaunchEnv(
     platform,
     runtimeDir: pilotRuntimeDir,
   });
+  const pilotTraceDir = options.pilotTraceDir?.trim() || joinForPlatform(vesloDataDir, "e2e-logs");
   const env: NodeJS.ProcessEnv = {
     ...desktopBaseEnv,
     TAURI_PILOT_SOCKET: pilotSocket,
+    // Keep all Pilot-only diagnostic output inside the harness-owned profile.
+    // This lets a live run persist its redacted timing evidence without
+    // touching the developer's normal desktop logs.
+    TAURI_PILOT_LOG_DIR: pilotTraceDir,
     OPENCODE_HOME: options.opencodeHome,
     VESLO_DATA_DIR: vesloDataDir,
     VESLO_APP_CONFIG_DIR: vesloAppConfigDir,
@@ -663,6 +734,9 @@ export function createAppLaunchEnv(
       ? { VESLO_DESKTOP_SERVER_PORT: String(options.vesloServerPort) }
       : {}),
     ...(denApiBase ? { VESLO_DEN_API_BASE: denApiBase } : {}),
+    ...(options.runId
+      ? pilotDiagnosticsEnv({ traceDir: pilotTraceDir, runId: options.runId })
+      : {}),
   };
 
   if (platform === "win32") {
@@ -682,6 +756,73 @@ export function createAppLaunchEnv(
   }
 
   return env;
+}
+
+type LiveParityRuntimePreferences = Partial<
+  Record<(typeof LIVE_PARITY_RUNTIME_PREFERENCE_KEYS)[number], boolean>
+>;
+
+function parseLiveParityRuntimePreferences(
+  sourcePath: string,
+): LiveParityRuntimePreferences {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(readFileSync(sourcePath, "utf8"));
+  } catch {
+    throw new Error(
+      "Could not read the live-parity runtime preferences source as JSON.",
+    );
+  }
+
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Live-parity runtime preferences must be a JSON object.");
+  }
+
+  const source = payload as Record<string, unknown>;
+  const preferences: LiveParityRuntimePreferences = {};
+  for (const key of LIVE_PARITY_RUNTIME_PREFERENCE_KEYS) {
+    if (!(key in source)) continue;
+    if (typeof source[key] !== "boolean") {
+      throw new Error(
+        `Live-parity runtime preference ${key} must be a boolean.`,
+      );
+    }
+    preferences[key] = source[key];
+  }
+  return preferences;
+}
+
+/**
+ * Mirrors only the two native desktop runtime switches that can affect the
+ * process shape. Authentication, workspace state, WebView data, and every
+ * unknown preference are deliberately excluded from the isolated E2E profile.
+ */
+export function seedLiveParityRuntimePreferences(
+  sourcePath: string | null | undefined,
+  targetConfigDir: string | null | undefined,
+): boolean {
+  const source = sourcePath?.trim() ?? "";
+  const target = targetConfigDir?.trim() ?? "";
+  if (!source) return false;
+  if (!target) {
+    throw new Error(
+      "Live-parity runtime preferences require an isolated app config directory.",
+    );
+  }
+  if (basename(source) !== RUNTIME_PREFERENCES_FILE) {
+    throw new Error(
+      "Live-parity runtime preferences source must be runtime-preferences.json.",
+    );
+  }
+
+  const preferences = parseLiveParityRuntimePreferences(source);
+  mkdirSync(target, { recursive: true });
+  writeFileSync(
+    join(target, RUNTIME_PREFERENCES_FILE),
+    `${JSON.stringify(preferences, null, 2)}\n`,
+    "utf8",
+  );
+  return true;
 }
 
 function parseTcpPort(raw: string | undefined, label: string): number | null {
@@ -1113,6 +1254,8 @@ async function cleanupStartedFixtures(): Promise<void> {
 export async function startApp(options: StartAppOptions = {}): Promise<void> {
   throwManagedChildCleanupFailure();
   const binaryPath = resolveBinaryPath();
+  const pilotDiagnostics = normalizePilotRunDiagnostics(options.pilotDiagnostics);
+  const forwardAppLogs = shouldForwardAppLogs(process.env);
   const pilotRuntimeDir = resolvePilotRuntimeDir();
   preparePilotRuntimeDir(pilotRuntimeDir);
   console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
@@ -1205,6 +1348,9 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     });
     env = createAppLaunchEnv(seedEnv, {
       vesloServerPort,
+      ...(pilotDiagnostics
+        ? { pilotTraceDir: pilotDiagnostics.traceDir, runId: pilotDiagnostics.runId }
+        : {}),
       opencodeHome: CUSTOM_OPENCODE_HOME,
       snapshotPath,
       denApiBase: mcpCatalogFixtureDenApiBase,
@@ -1225,10 +1371,23 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     const snapshotPath = prepareDesktopAuthSeed(tmpDir, seedEnv);
     env = createAppLaunchEnv(seedEnv, {
       vesloServerPort,
+      ...(pilotDiagnostics
+        ? { pilotTraceDir: pilotDiagnostics.traceDir, runId: pilotDiagnostics.runId }
+        : {}),
       opencodeHome: tmpDir,
       snapshotPath,
       denApiBase: mcpCatalogFixtureDenApiBase,
     });
+    if (
+      seedLiveParityRuntimePreferences(
+        seedEnv.E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE,
+        env.VESLO_APP_CONFIG_DIR,
+      )
+    ) {
+      console.log(
+        "[e2e] Seeded whitelisted desktop runtime preferences into the isolated live-parity profile.",
+      );
+    }
     env.HOME = ISOLATED_PROFILE_ROOT;
     env.USERPROFILE = ISOLATED_PROFILE_ROOT;
     env.XDG_DATA_HOME = join(ISOLATED_PROFILE_ROOT, ".local", "share");
@@ -1249,6 +1408,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
       ...(mcpCatalogFixtureDenApiBase
         ? { VESLO_DEN_API_BASE: mcpCatalogFixtureDenApiBase }
         : {}),
+      ...(pilotDiagnostics ? pilotDiagnosticsEnv(pilotDiagnostics) : {}),
     } as NodeJS.ProcessEnv;
     if (process.platform !== "win32") {
       env.XDG_RUNTIME_DIR = pilotRuntimeDir;
@@ -1268,23 +1428,43 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
   });
   activeAppLocalDataDir = env.VESLO_APP_LOCAL_DATA_DIR?.trim() || null;
 
-  const appLogRoot = env.OPENCODE_HOME
+  const appLogRoot = pilotDiagnostics?.appLogDir ?? (env.OPENCODE_HOME
     ? join(env.OPENCODE_HOME, ".veslo", "e2e-logs")
+    : "");
+  const appStdoutLog = appLogRoot
+    ? join(appLogRoot, pilotDiagnostics ? `${pilotDiagnostics.launchId}.stdout.log` : "app-stdout.log")
     : "";
-  const appStdoutLog = appLogRoot ? join(appLogRoot, "app-stdout.log") : "";
-  const appStderrLog = appLogRoot ? join(appLogRoot, "app-stderr.log") : "";
+  const appStderrLog = appLogRoot
+    ? join(appLogRoot, pilotDiagnostics ? `${pilotDiagnostics.launchId}.stderr.log` : "app-stderr.log")
+    : "";
   if (appLogRoot) {
     mkdirSync(appLogRoot, { recursive: true });
     const header = `[e2e] started=${new Date().toISOString()} binary=${binaryPath}\n`;
-    rotateExistingLogFile(appStdoutLog);
-    rotateExistingLogFile(appStderrLog);
+    if (!pilotDiagnostics) {
+      rotateExistingLogFile(appStdoutLog);
+      rotateExistingLogFile(appStderrLog);
+    }
     writeFileSync(appStdoutLog, header, "utf8");
     writeFileSync(appStderrLog, header, "utf8");
     console.log(`[e2e] Capturing app logs: ${appLogRoot}`);
   }
-  const appendAppLog = (path: string, data: Buffer) => {
-    if (!path) return;
-    appendFileSync(path, data);
+  const stdoutRedactor = createRedactingLineBuffer();
+  const stderrRedactor = createRedactingLineBuffer();
+  const appendAppLog = (path: string, content: string) => {
+    if (!path || !content) return;
+    appendFileSync(path, content, "utf8");
+  };
+  const writeAppOutput = (
+    path: string,
+    stream: "stdout" | "stderr",
+    content: string,
+  ) => {
+    appendAppLog(path, content);
+    if (forwardAppLogs && content) process[stream].write(`[app:${stream}] ${content}`);
+  };
+  const flushAppLogs = () => {
+    writeAppOutput(appStdoutLog, "stdout", stdoutRedactor.flush());
+    writeAppOutput(appStderrLog, "stderr", stderrRedactor.flush());
   };
 
   appProcess = spawn(binaryPath, [], {
@@ -1314,13 +1494,13 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
   });
 
   appProcess.stdout?.on("data", (data: Buffer) => {
-    appendAppLog(appStdoutLog, data);
-    process.stdout.write(`[app:stdout] ${data}`);
+    writeAppOutput(appStdoutLog, "stdout", stdoutRedactor.push(data.toString("utf8")));
   });
   appProcess.stderr?.on("data", (data: Buffer) => {
-    appendAppLog(appStderrLog, data);
-    process.stderr.write(`[app:stderr] ${data}`);
+    writeAppOutput(appStderrLog, "stderr", stderrRedactor.push(data.toString("utf8")));
   });
+
+  appProcess.once("close", flushAppLogs);
 
   appProcess.on("exit", (code, signal) => {
     console.log(

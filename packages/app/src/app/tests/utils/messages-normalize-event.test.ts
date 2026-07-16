@@ -1,7 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeEvent } from "../../utils/messages.js";
+import { modelFromUserMessage, normalizeEvent } from "../../utils/messages.js";
+
+test("modelFromUserMessage accepts only complete user model payloads", () => {
+  assert.deepEqual(
+    modelFromUserMessage({
+      role: "user",
+      model: { providerID: "openai", modelID: "gpt-5" },
+    }),
+    { providerID: "openai", modelID: "gpt-5" },
+  );
+  assert.equal(modelFromUserMessage({ role: "assistant", model: { providerID: "openai", modelID: "gpt-5" } }), null);
+  assert.equal(modelFromUserMessage({ role: "user", model: { providerID: "openai" } }), null);
+  assert.equal(modelFromUserMessage(undefined), null);
+});
 
 test("normalizeEvent keeps direct events unchanged", () => {
   assert.deepEqual(normalizeEvent({ type: "session.updated", properties: { id: "s1" } }), {

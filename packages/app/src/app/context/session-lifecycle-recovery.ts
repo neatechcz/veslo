@@ -198,7 +198,7 @@ export function createSessionLifecycleRecoveryController(
     scope: SessionLifecycleRecoveryScope;
     status: SessionLifecycleRecoveryStatus;
     generation: number;
-    outcome: "pending" | "hydrated" | "unavailable";
+    outcome: "pending" | "hydrated" | "unavailable" | "discarded";
     inFlight: boolean;
     automaticRetryUsed: boolean;
     retryTimer: unknown | null;
@@ -418,7 +418,12 @@ export function createSessionLifecycleRecoveryController(
       recovery.scope = scope;
       recovery.status = terminalStatus;
       terminalTranscriptRecoveries.set(key, recovery);
-      if (!recovery.inFlight && !recovery.retryTimer && recovery.outcome !== "hydrated") {
+      if (
+        !recovery.inFlight &&
+        !recovery.retryTimer &&
+        recovery.outcome !== "hydrated" &&
+        recovery.outcome !== "discarded"
+      ) {
         recovery.inFlight = true;
         void recoverTranscript().then((snapshot) => {
           const currentRecovery = terminalTranscriptRecoveries.get(key);
@@ -451,8 +456,26 @@ export function createSessionLifecycleRecoveryController(
             scheduleTerminalTranscriptRetry("terminal-transcript-unavailable");
             return;
           }
-          options.publishTranscriptProjection?.(scope, snapshot, selectionVersion);
-          options.hydrateConversationTranscript?.(retargetSnapshotForUiSession(snapshot, scope.sessionId));
+          const projectionPublished = options.publishTranscriptProjection?.(scope, snapshot, selectionVersion);
+          const selectedRunStillVisible = isAcceptedRunVisible(scope);
+          const selectionStillOwnsSnapshot =
+            selectedRun &&
+            selectedRunStillVisible &&
+            (options.currentSelectionVersion?.() ?? selectionVersion) === selectionVersion;
+          const shouldHydrateSnapshot =
+            (!selectedRun && !selectedRunStillVisible) ||
+            (selectionStillOwnsSnapshot && projectionPublished !== false);
+          if (shouldHydrateSnapshot) {
+            options.hydrateConversationTranscript?.(retargetSnapshotForUiSession(snapshot, scope.sessionId));
+          } else {
+            recovery.inFlight = false;
+            recovery.outcome = "discarded";
+            traceForScope("session-lifecycle-recovery:terminal-transcript-discarded", scope, generation, {
+              outcome: "terminal-transcript-discarded",
+              reason: selectionStillOwnsSnapshot ? "projection-rejected" : "selection-changed",
+            });
+            return;
+          }
           recovery.inFlight = false;
           recovery.outcome = "hydrated";
           traceForScope("session-lifecycle-recovery:terminal-transcript-hydrated", scope, generation, {

@@ -318,6 +318,11 @@ const conversationWorkspaceCacheKey = (workspaceId: string, directory: string) =
   normalizeDirectoryPath(directory) || directory.trim(),
 ].join("\n");
 
+// Kept in sync with the server-owned source cache. The app only requests a
+// display view, but its trace needs to identify the source window measured by
+// the corresponding server event.
+const TRANSCRIPT_PROJECTION_SOURCE_LIMIT = 200;
+
 function isInvalidHostTokenError(error: unknown): boolean {
   return error instanceof VesloServerError &&
     error.status === 401 &&
@@ -921,6 +926,7 @@ export function createConversationService<Client extends ConversationServiceClie
         traceId: options?.sendTraceId?.trim() || null,
         caller: projectionCaller,
         displayLimit: limit,
+        sourceLimit: TRANSCRIPT_PROJECTION_SOURCE_LIMIT,
         ...(payload ?? {}),
       });
     };
@@ -1571,7 +1577,7 @@ export function createConversationService<Client extends ConversationServiceClie
       expectedRunId: scope.expectedRunId?.trim() || undefined,
     });
     if (recovery.state === "persisted" || recovery.state === "unchanged") {
-      return serverClient.getSessionTranscript(serverWorkspaceId, sessionId, 140, directory, {
+      return getTranscriptFromVesloReadApi(workspaceId, sessionId, 140, directory, {
         includeLatestRunArtifacts: true,
         caller: "terminal-recovery",
         sendTraceId: scope.diagnosticTraceId,

@@ -156,7 +156,7 @@ export function extractSessionId(value: unknown): string | null {
   return null;
 }
 
-export function modelFromUserMessage(info: MessageInfo): ModelRef | null {
+export function modelFromUserMessage(info: unknown): ModelRef | null {
   if (!info || typeof info !== "object") return null;
   if ((info as { role?: unknown }).role !== "user") return null;
 

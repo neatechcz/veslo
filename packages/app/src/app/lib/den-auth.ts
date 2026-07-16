@@ -44,17 +44,18 @@ async function fetchWithTimeout(
   const signal = controller?.signal;
   const initWithSignal = signal && !init.signal ? { ...init, signal } : init;
 
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let rejectTimeout!: (reason?: unknown) => void;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      try {
-        controller?.abort();
-      } catch {
-        // ignore
-      }
-      reject(new Error("Request timed out."));
-    }, timeoutMs);
+    rejectTimeout = reject;
   });
+  const timeoutId = setTimeout(() => {
+    try {
+      controller?.abort();
+    } catch {
+      // ignore
+    }
+    rejectTimeout(new Error("Request timed out."));
+  }, timeoutMs);
 
   try {
     return await Promise.race([fetchImpl(url, initWithSignal), timeoutPromise]);
@@ -65,7 +66,7 @@ async function fetchWithTimeout(
     }
     throw error;
   } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
   }
 }
 

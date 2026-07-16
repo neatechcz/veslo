@@ -78,8 +78,8 @@ test("createSessionAndOpen uses the creation flow helpers before selecting the s
   );
   assert.match(
     applyTransitionSource,
-    /if \(result\.transition\.shouldRouteAfterSelect\) \{[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*\}[\s\S]*await selectSession\(sessionId\);[\s\S]*catch \(selectError\) \{[\s\S]*sessionRouteSync\.clearOwnNavigationSessionIf\(sessionId\);[\s\S]*throw selectError;[\s\S]*\}[\s\S]*if \(result\.transition\.shouldRouteAfterSelect\) \{[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*goToSession\(sessionId\);[\s\S]*\}/s,
-    "created sessions should arm route handoff before selecting, clear it on selection failure, then route after selection",
+    /if \(result\.transition\.shouldRouteAfterSelect\) \{[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*\}[\s\S]*await selectSession\(sessionId, \{[\s\S]*skipTranscriptRead: result\.transition\.skipTranscriptRead === true,[\s\S]*\}\);[\s\S]*catch \(selectError\) \{[\s\S]*sessionRouteSync\.clearOwnNavigationSessionIf\(sessionId\);[\s\S]*throw selectError;[\s\S]*\}[\s\S]*if \(result\.transition\.shouldRouteAfterSelect\) \{[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*goToSession\(sessionId\);[\s\S]*\}/s,
+    "created sessions should arm route handoff before selecting, defer only an admitted first-run read, clear on selection failure, then route",
   );
 });
 

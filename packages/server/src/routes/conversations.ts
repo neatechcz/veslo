@@ -1429,7 +1429,9 @@ export function registerConversationSessionRoutes(
     ) => {
       const sessionId = rawSessionId.trim();
       const directoryForSession = sessionDirectory?.trim() || "";
-      if (!sessionId || !directoryForSession) return sessionId;
+      // Engine session ids are already cache-canonical. Only conversation ids
+      // need a binding lookup before they enter the shared transcript cache.
+      if (!sessionId || !directoryForSession || !isVesloConversationId(sessionId)) return sessionId;
       const key = `${directoryForSession}\0${sessionId}`;
       const existing = canonicalSessionIdFlights.get(key);
       if (existing) return await existing;
@@ -1440,20 +1442,14 @@ export function registerConversationSessionRoutes(
         sessionOrConversationId: sessionId,
       }).then((binding) => binding?.engineSessionId?.trim() || sessionId);
       canonicalSessionIdFlights.set(key, flight);
-      try {
-        return await flight;
-      } finally {
-        if (canonicalSessionIdFlights.get(key) === flight) {
-          canonicalSessionIdFlights.delete(key);
-        }
-      }
+      return await flight;
     };
     const canonicalizeSessionId = async (
       rawSessionId: string,
       sessionDirectory?: string | null,
     ) => {
       const directoryForSession =
-        sessionDirectory?.trim() || sessionDirectoriesByRawId[rawSessionId] || directory;
+        sessionDirectory?.trim() || sessionDirectoriesByRawId[rawSessionId] || directory || null;
       const sessionId = await resolveCanonicalSessionId(rawSessionId, directoryForSession);
       if (sessionId && directoryForSession) {
         sessionDirectoriesById[sessionId] = directoryForSession;
@@ -1595,7 +1591,7 @@ export function registerConversationSessionRoutes(
     const projectionCaller = parseTranscriptProjection(ctx.url.searchParams);
     const sendTraceId = ctx.request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || null;
     const projectionStartedAt = projectionCaller ? Date.now() : 0;
-    if (sendTraceId && projectionCaller) {
+    if (projectionCaller) {
       recordSendWorkflowTrace("server", "session-transcript-projection:start", {
         traceId: sendTraceId,
         caller: projectionCaller,
@@ -1617,7 +1613,7 @@ export function registerConversationSessionRoutes(
           ? { latestRunArtifacts: deriveLatestRunArtifactsForTranscript(result, workspace, directory) }
           : {}),
       };
-      if (sendTraceId && projectionCaller) {
+      if (projectionCaller) {
         recordSendWorkflowTrace("server", "session-transcript-projection:settle", {
           traceId: sendTraceId,
           caller: projectionCaller,
@@ -1631,7 +1627,7 @@ export function registerConversationSessionRoutes(
       }
       return jsonResponse(response);
     } catch (error) {
-      if (sendTraceId && projectionCaller) {
+      if (projectionCaller) {
         recordSendWorkflowTrace("server", "session-transcript-projection:error", {
           traceId: sendTraceId,
           caller: projectionCaller,

@@ -30,6 +30,7 @@ import { resolveDeveloperModeFromSearch } from "./lib/developer-mode";
 import { recordSendWorkflowTrace } from "./lib/send-workflow-trace";
 import { resolveRunningVesloServerHostInfo } from "./lib/veslo-server-host";
 import {
+  readScopedSessionStatus,
   readSessionStatus,
   withoutSessionStatus,
 } from "./lib/scoped-session-status";
@@ -1060,7 +1061,7 @@ export default function App() {
         .filter(Boolean)
         .some((sessionId) =>
           ACTIVE_TRANSCRIPT_PROJECTION_STATUSES.has(
-            readSessionStatus(readSessionStatusForTranscriptProjection(), appWorkspaceId, sessionId),
+            readScopedSessionStatus(readSessionStatusForTranscriptProjection(), appWorkspaceId, sessionId),
           ),
         );
     },
@@ -1483,7 +1484,7 @@ export default function App() {
 
     const hydratedClient: VesloServerClient = {
       ...client,
-      prefetchSessionTranscripts: async (workspaceId, input) => {
+      prefetchSessionTranscripts: async (workspaceId, input, clientOptions) => {
         const backgroundInterest = deriveBackgroundSidebarPrefetchInterest(
           input,
           transcriptProjectionStore.reservation(),
@@ -1498,16 +1499,22 @@ export default function App() {
           return { workspaceId, queuedSessionIds: [], items: [] };
         }
         const result = await client.prefetchSessionTranscripts(workspaceId, backgroundInterest);
+        const appWorkspaceId = clientOptions?.appWorkspaceId?.trim() || "";
         for (const item of result.items) {
           if (transcriptProjectionStore.isReservedTranscriptSnapshot(item)) continue;
-          rememberConversationScopeFromTranscript(workspaceId, undefined, item);
+          if (appWorkspaceId) {
+            rememberConversationScopeFromTranscript(appWorkspaceId, undefined, item);
+          }
           hydrateTranscriptSnapshot(item);
         }
         return result;
       },
       getSessionTranscript: async (workspaceId, sessionId, limit = 140, directory, options) => {
         const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit, directory, options);
-        rememberConversationScopeFromTranscript(workspaceId, directory, snapshot);
+        const appWorkspaceId = options?.appWorkspaceId?.trim() || "";
+        if (appWorkspaceId) {
+          rememberConversationScopeFromTranscript(appWorkspaceId, directory, snapshot);
+        }
         if (!transcriptProjectionStore.isReservedTranscriptSnapshot(snapshot)) {
           hydrateTranscriptSnapshot(snapshot);
         }
@@ -1712,8 +1719,8 @@ export default function App() {
     displayedConversationStillMatches,
     engineReady,
     emitFlowProgress: (event) => sessionFlowProgressPresenter.emit(event),
-    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId) =>
-      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId),
+    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId, resolvedTarget) =>
+      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId, resolvedTarget),
     finishPerf,
     holdVisibleRuntimeActivity,
     isPendingSessionInstanceKey,
@@ -1787,8 +1794,8 @@ export default function App() {
     selectedSession,
     messages,
     setPrompt,
-    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId) =>
-      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId),
+    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId, resolvedTarget) =>
+      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId, resolvedTarget),
     routedClient: (workspaceId) => routedClient(workspaceId ?? undefined),
     abortSessionSafe,
     revertSession,
@@ -4298,7 +4305,9 @@ export default function App() {
       sessionRouteSync.markOwnNavigationSession(sessionId);
     }
     try {
-      await selectSession(sessionId);
+      await selectSession(sessionId, {
+        skipTranscriptRead: result.transition.skipTranscriptRead === true,
+      });
     } catch (selectError) {
       sessionRouteSync.clearOwnNavigationSessionIf(sessionId);
       throw selectError;

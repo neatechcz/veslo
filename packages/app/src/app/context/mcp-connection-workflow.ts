@@ -788,7 +788,7 @@ export function createMcpConnectionWorkflow(deps: McpConnectionWorkflowDeps) {
         return;
       }
 
-      if (canUseVesloServer && vesloClient && vesloWorkspaceId) {
+      if (canUseVesloServer) {
         await vesloClient.mcp.remove(vesloWorkspaceId, name);
       } else {
         const projectDir = deps.workspaceProjectDir().trim();

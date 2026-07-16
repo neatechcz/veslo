@@ -353,7 +353,7 @@ export function installStartupRequestAudit(
   const restore = (reason = "manual") => {
     if (finished) return;
     finished = true;
-    if (timer) {
+    if (timer !== null) {
       timerClear(timer);
       timer = null;
     }

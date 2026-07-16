@@ -32,7 +32,7 @@ export function createWorkspaceConnectionState(
     const id = workspaceId.trim();
     if (!id) return;
     setWorkspaceConnectionStateById((prev) => {
-      if (!prev[id]) return prev;
+      if (!Object.hasOwn(prev, id)) return prev;
       const next = { ...prev };
       delete next[id];
       return next;

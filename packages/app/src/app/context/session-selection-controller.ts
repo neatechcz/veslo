@@ -463,7 +463,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
     deps.setStore("sessions", (current: Session[]) => upsertSession(current, next));
   }
 
-  async function selectSession(sessionID: string) {
+  async function selectSession(sessionID: string, options: { skipTranscriptRead?: boolean } = {}) {
     const perfEnabled = deps.developerMode();
     const selectionKey = deps.selectSessionScopeKey?.(sessionID)?.trim() || sessionID;
 
@@ -512,6 +512,15 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       mark(`aborting: ${reason}`);
       return true;
     };
+
+    if (options.skipTranscriptRead) {
+      mark("transcript read deferred");
+      traceSelect("transcript-read-deferred", {
+        reason: "submitted-run-admitted-before-select",
+      });
+      deps.onSessionLoadComplete?.();
+      return;
+    }
 
     const run = (async () => {
       mark("start");

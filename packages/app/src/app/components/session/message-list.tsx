@@ -1053,7 +1053,7 @@ export default function MessageList(props: MessageListProps) {
       let cursor = 0;
       const baseSections = timelineModel().sections.map((section, sectionIndex) => {
         const rows = section.rows.map((row, rowIndex) => {
-          const part = parts[cursor + rowIndex];
+          const part = parts.at(cursor + rowIndex);
           return {
             id: `${containerProps.id}:section:${sectionIndex}:row:${rowIndex}`,
             row,

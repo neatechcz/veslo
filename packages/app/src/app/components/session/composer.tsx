@@ -1561,7 +1561,7 @@ export default function Composer(props: ComposerProps) {
       const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
       if (event.key === "Enter" && !imeActive) {
         event.preventDefault();
-        const active = options[mentionIndex()] ?? options[0];
+        const active = options.at(mentionIndex()) ?? options.at(0);
         if (active) insertMention(active);
         return;
       }
@@ -1585,7 +1585,7 @@ export default function Composer(props: ComposerProps) {
       }
       if (event.key === "Tab") {
         event.preventDefault();
-        const active = options[mentionIndex()] ?? options[0];
+        const active = options.at(mentionIndex()) ?? options.at(0);
         if (active) insertMention(active);
         return;
       }
@@ -1597,7 +1597,7 @@ export default function Composer(props: ComposerProps) {
       const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
       if (event.key === "Enter" && !imeActive) {
         event.preventDefault();
-        const active = options[slashIndex()] ?? options[0];
+        const active = options.at(slashIndex()) ?? options.at(0);
         if (active) handleSlashSelect(active);
         return;
       }
@@ -1621,7 +1621,7 @@ export default function Composer(props: ComposerProps) {
       }
       if (event.key === "Tab") {
         event.preventDefault();
-        const active = options[slashIndex()] ?? options[0];
+        const active = options.at(slashIndex()) ?? options.at(0);
         if (active) handleSlashSelect(active);
         return;
       }

@@ -38,6 +38,7 @@ if (!username || !password) {
 const expectedAuthorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 let nextSession = 1;
 let promptFailureServed = false;
+let promptConnectionDropServed = false;
 
 async function writeLog(entry) {
   if (!logPath) return;
@@ -146,7 +147,13 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, 500, { error: "fake prompt failure" });
         return;
       }
+      if (mode === "prompt-close-once" && !promptConnectionDropServed) {
+        promptConnectionDropServed = true;
+        response.destroy();
+        return;
+      }
       if (mode === "prompt-delay") await delay(100);
+      if (mode === "prompt-response-delay") await delay(750);
       sendJson(response, 200, { ok: true });
       return;
     }

@@ -1419,7 +1419,6 @@ export function createExtensionsStore(options: {
   async function installHubSkill(name: string, target: HubSkillInstallTarget): Promise<{ ok: boolean; message: string }> {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, message: __vesloIndirectT("ui.indirect.skill_name_is_required_5te74i", __vesloIndirectLocale()) };
-    if (!target) return { ok: false, message: translate("skills.install_target_required") };
     if (target.scope === "global") {
       return { ok: false, message: translate("skills.install_target_global_unavailable") };
     }
@@ -2627,7 +2626,7 @@ export function createExtensionsStore(options: {
       vesloClient &&
       vesloCapabilities?.skills?.read;
 
-    if (canUseVesloServer && vesloClient) {
+    if (canUseVesloServer) {
       try {
         setSkillsStatus(null);
         if (target.scope === "user-global" && typeof vesloClient.getGlobalSkillFiles === "function") {
@@ -3314,14 +3313,13 @@ export function createExtensionsStore(options: {
     }
 
     // Cross-location transfers are retarget operations: one active source per skill.
-    const deleteSource = true;
     options.setBusy(true);
     options.setError(null);
     setSkillsStatus(null);
 
     try {
       const current = await readLocalSkillAtPath(sourceRoot, name, entryFilePath);
-      if (!current || skillEntryFilePathForMutationPath(current.path) !== entryFilePath) {
+      if (skillEntryFilePathForMutationPath(current.path) !== entryFilePath) {
         const message = translate("skills.failed_load_skill");
         setSkillsStatus(message);
         return { ok: false, message };
@@ -3335,21 +3333,19 @@ export function createExtensionsStore(options: {
           enabled: true,
         });
 
-        if (deleteSource) {
-          const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
-          if (!deleteResult.ok) {
-            throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
-          }
+        const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
+        if (!deleteResult.ok) {
+          throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
         }
 
         await syncUserGlobalSkillStoreForActiveWorkspace();
-        const message = translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global");
+        const message = translate("skills.moved_to_global");
         setSkillsStatus(message);
         if (isActiveWorkspaceTarget) {
           options.markReloadRequired?.("skills", {
             type: "skill",
             name,
-            action: deleteSource ? "updated" : "added",
+            action: "updated",
           });
           await refreshSkills({ force: true });
         }
@@ -3364,20 +3360,18 @@ export function createExtensionsStore(options: {
         return { ok: false, message };
       }
 
-      if (deleteSource) {
-        const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
-        if (!deleteResult.ok) {
-          throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
-        }
+      const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
+      if (!deleteResult.ok) {
+        throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
       }
 
-      const message = translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global");
+      const message = translate("skills.moved_to_global");
       setSkillsStatus(message);
       if (isActiveWorkspaceTarget) {
         options.markReloadRequired?.("skills", {
           type: "skill",
           name,
-          action: deleteSource ? "updated" : "added",
+          action: "updated",
         });
         await refreshSkills({ force: true });
       }

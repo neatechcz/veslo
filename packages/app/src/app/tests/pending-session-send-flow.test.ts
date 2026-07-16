@@ -70,6 +70,27 @@ test("successful pending draft sends consume the pending draft only after the pr
   );
 });
 
+test("first submitted runs are admitted before selection and are not admitted twice after it", () => {
+  const source = sendPromptSource();
+  const createSessionSource = createSessionAndOpenSource();
+
+  assert.match(
+    source,
+    /let serverFirstSubmittedRunAdmittedDuringMaterialization = false;[\s\S]*onSubmittedRunMaterialized: \(materialized\) => \{[\s\S]*deps\.admitAcceptedConversationRun\(\{[\s\S]*\}\);[\s\S]*if \(admitted !== true\) return false;[\s\S]*deps\.emitLiveTranscriptPolicyEvent\(\{[\s\S]*serverFirstSubmittedRunAdmittedDuringMaterialization = true;[\s\S]*return true;/s,
+    "a validated first submitted run should claim lifecycle and live-read ownership while creation is still materializing",
+  );
+  assert.match(
+    source,
+    /if \(!serverFirstSubmittedRunAdmittedDuringMaterialization\) \{[\s\S]*if \(serverFirstSubmitResult\.status === "submitted"\) \{[\s\S]*deps\.admitAcceptedConversationRun\(/s,
+    "the post-creation admission must remain only as a fallback when the early claim did not succeed",
+  );
+  assert.match(
+    createSessionSource,
+    /deps\.applyCreatedSessionState\(creationResult, options\);[\s\S]*if \(materializedSubmittedRun\) \{[\s\S]*creationResult\.transition\.skipTranscriptRead =[\s\S]*options\.onSubmittedRunMaterialized\?\.\([\s\S]*\) === true;[\s\S]*await deps\.sendTraceStep\([\s\S]*"createSessionAndOpen:select-session"/s,
+    "creation should defer the first transcript read only after state materialization and a successful early lifecycle claim",
+  );
+});
+
 test("failed sends do not consume pending draft state", () => {
   const source = conversationRunCompatibilityBridgeSource();
   const catchStart = source.indexOf("    } catch (e) {");

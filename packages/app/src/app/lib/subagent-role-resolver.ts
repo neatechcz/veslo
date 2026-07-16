@@ -34,15 +34,16 @@ function withTimeoutOrThrow<T>(
   const timeoutMs = Number.isFinite(input.timeoutMs) ? input.timeoutMs : 0;
   if (timeoutMs <= 0) return promise;
 
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let rejectTimeout!: (reason?: unknown) => void;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error(`Timed out waiting for ${input.label} after ${timeoutMs}ms`));
-    }, timeoutMs);
+    rejectTimeout = reject;
   });
+  const timeoutId = setTimeout(() => {
+    rejectTimeout(new Error(`Timed out waiting for ${input.label} after ${timeoutMs}ms`));
+  }, timeoutMs);
 
   return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timeoutId) clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
   });
 }
 

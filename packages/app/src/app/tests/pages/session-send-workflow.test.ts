@@ -936,6 +936,62 @@ test("session send workflow submits an existing local prompt through server subm
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
+test("session send workflow keeps its existing-session target snapshot after scope changes", async () => {
+  const actionTarget = {
+    workspaceId: "ws-active",
+    workspaceRoot: "/owned",
+    directory: "/owned",
+  };
+  let targetResolutions = 0;
+  const activationTargets: unknown[] = [];
+  const submitTargets: Array<{ workspaceId: string; directory: string }> = [];
+  const harness = createHarness({
+    resolveSendTargetWorkspaceScope: () => {
+      targetResolutions += 1;
+      return actionTarget;
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) => sessionId === "sess-target"
+      ? {
+          sessionId,
+          workspaceId: "ws-stale",
+          workspaceRoot: "/stale",
+          directory: "/stale",
+          conversationId: "conv-target",
+          opencodeSessionId: "open-target",
+        }
+      : null,
+    ensureSelectedSessionWorkspaceActiveForSend: async (_sessionId, _traceId, scope) => {
+      activationTargets.push(scope);
+      return true;
+    },
+    submitConversationFromVesloWriteApi: async (workspaceId, directory, input) => {
+      submitTargets.push({ workspaceId, directory });
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        runId: "run-snapshot",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+    vesloServerStatus: () => "connected",
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("snapshot"), {
+    clientMessageId: "client-snapshot",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.equal(targetResolutions, 1);
+  assert.deepEqual(activationTargets, [actionTarget]);
+  assert.deepEqual(submitTargets, [{ workspaceId: "ws-active", directory: "/owned" }]);
+});
+
 test("session send workflow replays the same client id after a transport error", async () => {
   const clientMessageIds: string[] = [];
   let attempts = 0;
@@ -1527,8 +1583,8 @@ test("session send workflow blocks compatibility run when server submit target i
     },
     workspace: {
       activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
-      activeWorkspaceId: () => "",
-      activeWorkspaceRoot: () => "",
+      activeWorkspaceId: () => "ws-must-not-be-used",
+      activeWorkspaceRoot: () => "/must-not-be-used",
       workspaces: () => [],
     },
   });

@@ -254,3 +254,38 @@ test("send-time scoped activation can recover from a missing hydrated browse sco
   assert.ok(events.includes("sendPrompt:activate-scoped-workspace-call"));
   assert.ok(!events.includes("sendPrompt:scoped-workspace-skipped-no-scope"));
 });
+
+test("send-time activation uses the action target snapshot without resolving it again", async () => {
+  const activations: string[] = [];
+  const target = createWorkspaceSendTarget({
+    activePendingDraftMeta: () => null,
+    resolveWorkspaceRoot: () => "",
+    resolveSessionSendTargetScope: () => {
+      throw new Error("action snapshot must avoid a second target resolution");
+    },
+    resolveSelectedSessionBrowseScope: () => ({
+      workspaceId: "ws-stale",
+      workspaceRoot: "/stale",
+      directory: "/stale",
+    }),
+    activeWorkspaceId: () => "ws-a",
+    activateWorkspace: async (workspaceId) => {
+      activations.push(workspaceId);
+      return true;
+    },
+    recordSendTrace: () => undefined,
+    sendTraceStep: async (_event, run) => run(),
+    messageFromUnknownError: (error) => String(error),
+  });
+
+  const actionTarget = {
+    workspaceId: "ws-b",
+    workspaceRoot: "/repo/b",
+    directory: "/repo/b",
+  };
+  assert.equal(
+    await target.ensureSelectedSessionWorkspaceActiveForSend("sess-1", "trace-1", actionTarget),
+    true,
+  );
+  assert.deepEqual(activations, ["ws-b"]);
+});

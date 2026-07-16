@@ -119,7 +119,7 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
   const setSessionsIndex = stateSource.indexOf("setSessions([result.session, ...currentStoreSessions]);");
   const sidebarIndex = stateSource.indexOf("materializePendingSessionInWorkspaceSidebar({");
   const ownNavigationIndex = transitionSource.indexOf("sessionRouteSync.markOwnNavigationSession(sessionId);");
-  const selectIndex = transitionSource.indexOf("await selectSession(sessionId);");
+  const selectIndex = transitionSource.indexOf("await selectSession(sessionId");
   assert.ok(setSessionsIndex >= 0, "created session should be injected into the session store");
   assert.ok(sidebarIndex > setSessionsIndex, "sidebar materialization should happen after session store injection");
   assert.ok(handoffIndex > sidebarIndex, "scoped materialized handoff should publish after sidebar materialization");
@@ -128,7 +128,7 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
 
   assert.match(
     `${stateSource}\n${transitionSource}`,
-    /const displaySession = applyPendingInitialSessionTitle\(result\.session\);[\s\S]*setSessions\(\[result\.session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*options\.onMaterializedSessionId\?\.\(result\.handoff\);[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*await selectSession\(sessionId\);[\s\S]*goToSession\(sessionId\);/s,
+    /const displaySession = applyPendingInitialSessionTitle\(result\.session\);[\s\S]*setSessions\(\[result\.session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*options\.onMaterializedSessionId\?\.\(result\.handoff\);[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*await selectSession\(sessionId, \{[\s\S]*skipTranscriptRead: result\.transition\.skipTranscriptRead === true,[\s\S]*\}\);[\s\S]*goToSession\(sessionId\);/s,
     "newly created sessions should enter session/sidebar state, publish handoff, arm route guard, select, then route",
   );
 });

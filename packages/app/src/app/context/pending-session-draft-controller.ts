@@ -528,7 +528,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
         }
       }
 
-      const existingGlobalPendingDraft = pendingDrafts[0] ?? null;
+      const existingGlobalPendingDraft = pendingDrafts.at(0) ?? null;
       if (existingGlobalPendingDraft) {
         const loadedGlobalDraft = await deps.pendingSessionDraftsGet(existingGlobalPendingDraft.id);
         if (loadedGlobalDraft) {

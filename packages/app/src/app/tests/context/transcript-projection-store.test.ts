@@ -32,6 +32,7 @@ const snapshot = (
   latestRunArtifacts: {
     workspaceId: "ws-a",
     sessionId: "open-a",
+    directory: "/work/a",
     conversationId: "conv-a",
     opencodeSessionId: "open-a",
     runId: "run-a",
@@ -78,6 +79,10 @@ test("does not accept a stale alias or hide local artifacts during a new active 
       store.publishTranscriptProjection(scope, snapshot({ opencodeSessionId: "open-other" })),
       false,
     );
+    assert.equal(
+      store.publishTranscriptProjection(scope, snapshot({ sessionId: "open-other" })),
+      false,
+    );
     assert.equal(store.currentTranscriptProjection(), undefined);
 
     active = true;
@@ -101,7 +106,7 @@ test("requires the expected durable run id for terminal recovery", () => {
     assert.equal(
       store.publishTranscriptProjection(
         terminalScope,
-        snapshot({ latestRunArtifacts: { ...snapshot().latestRunArtifacts, runId: "run-terminal" } }),
+        snapshot({ latestRunArtifacts: { ...snapshot().latestRunArtifacts!, runId: "run-terminal" } }),
       ),
       true,
     );
@@ -109,7 +114,7 @@ test("requires the expected durable run id for terminal recovery", () => {
     store.invalidateTranscriptProjection(newerScope);
     assert.equal(store.currentTranscriptProjection(), undefined);
     assert.equal(store.publishTranscriptProjection(terminalScope, snapshot({
-      latestRunArtifacts: { ...snapshot().latestRunArtifacts, runId: "run-terminal" },
+      latestRunArtifacts: { ...snapshot().latestRunArtifacts!, runId: "run-terminal" },
     })), false);
     dispose();
   });
@@ -163,6 +168,7 @@ test("rejects artifacts whose nested identity disagrees with the transcript resp
 
     const artifactIdentityMismatches = [
       { workspaceId: "ws-other" },
+      { directory: undefined },
       { directory: "/work/other" },
       { conversationId: "conv-other" },
       { opencodeSessionId: "open-other" },

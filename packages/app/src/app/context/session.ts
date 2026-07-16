@@ -957,9 +957,9 @@ export function createSessionStore(options: {
     loadEarlierMessages,
     currentSelectionVersion,
   } = selectionController;
-  const selectSession = async (sessionId: string) => {
+  const selectSession = async (sessionId: string, selectOptions?: { skipTranscriptRead?: boolean }) => {
     lifecycleRecoveryController?.resumeExhaustedWatchForSession(sessionId, resolveSessionWorkspaceId(sessionId));
-    const result = await selectSessionFromController(sessionId);
+    const result = await selectSessionFromController(sessionId, selectOptions);
     lifecycleRecoveryController?.retryAcceptedRunForSession(sessionId, resolveSessionWorkspaceId(sessionId));
     lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession(
       sessionId,

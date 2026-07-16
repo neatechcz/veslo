@@ -16,7 +16,7 @@ export function markUnreadAfterAssistantResponse(
   const selectedSessionId = normalizeSessionId(input.selectedSessionId);
   const activelyReading = input.appFocused && selectedSessionId === responseSessionId;
   if (activelyReading) return current;
-  if (current[responseSessionId]) return current;
+  if (Object.hasOwn(current, responseSessionId)) return current;
 
   return {
     ...current,
@@ -29,7 +29,7 @@ export function clearUnreadSession(
   sessionId: string | null | undefined,
 ): UnreadSessionMap {
   const id = normalizeSessionId(sessionId);
-  if (!id || !current[id]) return current;
+  if (!id || !Object.hasOwn(current, id)) return current;
 
   const next = { ...current };
   delete next[id];

@@ -13,7 +13,7 @@ export function createWorkspaceBusyState(recordTrace?: WorkspaceBusyTrace) {
     if (!id || !sid) return;
     setWorkspaceBusy((prev) => {
       const existing = prev[id] ?? {};
-      if (existing[sid]) {
+      if (Object.hasOwn(existing, sid)) {
         recordTrace?.("mark-existing", {
           workspaceId: id,
           sessionId: sid,
@@ -42,10 +42,10 @@ export function createWorkspaceBusyState(recordTrace?: WorkspaceBusyTrace) {
     const id = workspaceId.trim();
     if (!id) return;
     setWorkspaceBusy((prev) => {
+      if (!Object.hasOwn(prev, id)) return prev;
       const entry = prev[id];
-      if (!entry) return prev;
       const sid = sessionId?.trim() ?? "";
-      if (sid && !entry[sid]) return prev;
+      if (sid && !Object.hasOwn(entry, sid)) return prev;
       const next = { ...prev };
       if (sid) {
         const nextWorkspace = { ...entry };
@@ -72,7 +72,7 @@ export function createWorkspaceBusyState(recordTrace?: WorkspaceBusyTrace) {
     const keep = workspaceId.trim();
     setWorkspaceBusy((prev) => {
       const next: WorkspaceBusyMap = {};
-      if (keep && prev[keep]) next[keep] = prev[keep];
+      if (keep && Object.hasOwn(prev, keep)) next[keep] = prev[keep];
       recordTrace?.("clear-all-except", {
         keepWorkspaceId: keep || null,
         previous: prev,

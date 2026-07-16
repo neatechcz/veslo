@@ -39,7 +39,7 @@ export const clearLegacySessionModelPersistence = (storage: StorageKeyStore) => 
 export const parseSessionModelOverrides = (raw: string | null) => {
   if (!raw) return {} as Record<string, ModelRef>;
   try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return {} as Record<string, ModelRef>;
     }

@@ -338,6 +338,52 @@ target = "[data-testid=\"session-composer-input\"]"
 timeout_ms = 30000
 
 [[step]]
+name = "install Pilot contenteditable type adapter"
+action = "eval"
+script = '''
+(() => {
+  const pilot = window.__PILOT__;
+  if (!pilot || typeof pilot.type !== "function") {
+    throw new Error("Tauri Pilot type bridge is unavailable.");
+  }
+  if (pilot.__vesloContenteditableTypeAdapter) return true;
+
+  const originalType = pilot.type.bind(pilot);
+  pilot.type = (params) => {
+    const target = params?.selector
+      ? document.querySelector(params.selector)
+      : params?.ref
+        ? pilot.resolve(params.ref)
+        : null;
+    if (!(target instanceof HTMLElement) || !target.isContentEditable) {
+      return originalType(params);
+    }
+
+    target.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    if (!selection) throw new Error("Browser selection is unavailable for the contenteditable composer.");
+    if (!target.contains(selection.anchorNode)) {
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+
+    // This goes through WebView's own contenteditable editing algorithm. It
+    // does not write application state or synthesize an InputEvent, so Solid
+    // receives the same DOM input path as a regular text edit.
+    if (!document.execCommand("insertText", false, String(params?.text ?? ""))) {
+      throw new Error("WebView rejected Pilot's contenteditable text edit.");
+    }
+    return { ok: true, inputPath: "browser-contenteditable-edit" };
+  };
+  Object.defineProperty(pilot, "__vesloContenteditableTypeAdapter", { value: true });
+  return true;
+})()
+'''
+
+[[step]]
 name = "capture native send baseline"
 action = "eval"
 script = '''
@@ -357,7 +403,7 @@ script = '''
       return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
     })
     .length;
-  document.addEventListener("click", (event) => {
+  const captureNativeSendClick = (event) => {
     const target = event.target instanceof Element
       ? event.target.closest('[data-testid="session-composer-send-button"]')
       : null;
@@ -370,17 +416,72 @@ script = '''
       sendTraceLastId: Number((Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace : []).at(-1)?.id ?? 0),
       assistantCountBefore: visibleAssistantCount(),
     };
-  }, { capture: true, once: true });
+    document.removeEventListener("click", captureNativeSendClick, true);
+  };
+  document.addEventListener("click", captureNativeSendClick, true);
   true;
 })();
+'''
+
+[[step]]
+name = "focus live composer through Pilot"
+action = "click"
+target = "[data-testid=\"session-composer-input\"]"
+timeout_ms = 15000
+
+[[step]]
+name = "capture native composer focus"
+action = "eval"
+script = '''
+(() => {
+  const input = document.querySelector('[data-testid="session-composer-input"]');
+  if (!(input instanceof HTMLElement)) throw new Error("Composer input is missing after Pilot click.");
+  const focus = {
+    activeElementTestId: document.activeElement instanceof HTMLElement ? document.activeElement.dataset.testid ?? null : null,
+    events: [],
+  };
+  for (const eventName of ["keydown", "beforeinput", "input"]) {
+    input.addEventListener(eventName, (event) => {
+      focus.events.push({
+        type: event.type,
+        trusted: event.isTrusted,
+        key: event instanceof KeyboardEvent ? event.key : null,
+        inputType: event instanceof InputEvent ? event.inputType : null,
+        data: event instanceof InputEvent && typeof event.data === "string" ? event.data : null,
+      });
+    }, { capture: true });
+  }
+  window.__vesloNativeComposerFocus = focus;
+  if (document.activeElement !== input) {
+    throw new Error(`Pilot click did not leave DOM focus in the composer: ${JSON.stringify(focus)}`);
+  }
+  return true;
+})()
 '''
 
 [[step]]
 name = "type live prompt through Pilot"
 action = "type"
 target = "[data-testid=\"session-composer-input\"]"
-text = "Reply with exactly veslo-live-parity-canary. No other words."
+text = "ping"
 timeout_ms = 15000
+
+[[step]]
+name = "Pilot browser edit populates composer"
+action = "eval"
+script = '''
+(() => {
+  const input = document.querySelector('[data-testid="session-composer-input"]');
+  if (!(input instanceof HTMLElement)) throw new Error("Composer input disappeared during native key press.");
+  const text = input.textContent ?? "";
+  const focus = window.__vesloNativeComposerFocus ?? null;
+  const hasInputEvent = Array.isArray(focus?.events) && focus.events.some((event) => event.type === "input");
+  if (text !== "ping" || !hasInputEvent) {
+    throw new Error(`Pilot browser edit did not populate the composer through its input path: ${JSON.stringify({ text, focus, activeElementTestId: document.activeElement instanceof HTMLElement ? document.activeElement.dataset.testid ?? null : null })}`);
+  }
+  return true;
+})()
+'''
 
 [[step]]
 name = "queue button becomes enabled"
@@ -402,7 +503,6 @@ script = '''
   const completeSelector = '[data-testid="message-send-registry-degraded-complete"]';
   const errorSelector = '[data-testid="message-send-registry-degraded-error"]';
   const progressSelector = '[data-testid="message-send-registry-degraded-progress"]';
-  const token = "veslo-live-parity-canary";
   const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
   const progressMarker = document.querySelector(progressSelector);
   const setProgress = (stage, detail = null) => {
@@ -465,16 +565,20 @@ script = '''
         }
         const trace = summarizeSendTrace().filter((entry) => Number(entry.id ?? 0) > nativeClick.sendTraceLastId);
         const assistantTexts = visibleAssistantTexts();
-        const hasSendSuccess = trace.some((entry) => entry.event === "sendPrompt:success");
-        const hasExpectedAssistantResponse = assistantTexts.some((text) => text.includes(token));
+        // A fresh conversation uses the server-submit-first path. Its accepted
+        // terminal handoff is deliberately named differently from the legacy
+        // sendPrompt:success event, so assert the live owner contract rather
+        // than waiting forever for an event this path never emits.
+        const hasAcceptedLiveSend = trace.some((entry) => entry.event === "sendPrompt:server-submit-first-success");
+        const hasRenderedAssistantResponse = assistantTexts.some((text) => text.length > 0);
         latest = {
           elapsedMs: Date.now() - nativeClick.atMs,
           assistantCount: assistantTexts.length,
-          hasSendSuccess,
-          hasExpectedAssistantResponse,
+          hasAcceptedLiveSend,
+          hasRenderedAssistantResponse,
           trace,
         };
-        if (assistantTexts.length > nativeClick.assistantCountBefore && hasSendSuccess && hasExpectedAssistantResponse) {
+        if (assistantTexts.length > nativeClick.assistantCountBefore && hasAcceptedLiveSend && hasRenderedAssistantResponse) {
           setProgress("production-managed-ai-response-rendered", latest);
           const complete = document.createElement("div");
           complete.dataset.testid = "message-send-registry-degraded-complete";

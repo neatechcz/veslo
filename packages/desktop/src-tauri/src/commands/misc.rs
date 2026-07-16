@@ -259,9 +259,11 @@ pub fn reset_veslo_state(
 #[tauri::command]
 pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Option<String>) {
     let is_send_workflow_trace = scope == "send-workflow-trace";
-    if is_send_workflow_trace
-        && !crate::runtime_preferences::runtime_diagnostics_enabled(&app).unwrap_or(false)
-    {
+    if !should_emit_send_workflow_trace(
+        is_send_workflow_trace,
+        crate::runtime_preferences::pilot_runtime_diagnostics_enabled(),
+        crate::runtime_preferences::runtime_diagnostics_enabled(&app).unwrap_or(false),
+    ) {
         return;
     }
     if is_send_workflow_trace {
@@ -281,6 +283,14 @@ pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Opt
             &line,
         );
     }
+}
+
+fn should_emit_send_workflow_trace(
+    is_send_workflow_trace: bool,
+    pilot_diagnostics_enabled: bool,
+    runtime_diagnostics_enabled: bool,
+) -> bool {
+    !is_send_workflow_trace || pilot_diagnostics_enabled || runtime_diagnostics_enabled
 }
 
 fn truthy_env(name: &str) -> bool {
@@ -664,13 +674,22 @@ pub fn read_obsidian_mirror_file(
 mod tests {
     use super::{
         append_send_workflow_trace_line, normalize_obsidian_mirror_relative_path,
-        sanitize_obsidian_workspace_id, update_session_directory_in_db,
+        sanitize_obsidian_workspace_id, should_emit_send_workflow_trace,
+        update_session_directory_in_db,
     };
     use rusqlite::Connection;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[test]
+    fn send_workflow_trace_allows_an_explicit_pilot_diagnostic_run() {
+        assert!(should_emit_send_workflow_trace(false, false, false));
+        assert!(!should_emit_send_workflow_trace(true, false, false));
+        assert!(should_emit_send_workflow_trace(true, true, false));
+        assert!(should_emit_send_workflow_trace(true, false, true));
+    }
 
     #[test]
     fn sanitize_workspace_id_collapses_separators() {

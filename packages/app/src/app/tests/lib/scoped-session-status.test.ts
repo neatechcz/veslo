@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  readScopedSessionStatus,
   readSessionStatus,
   scopedSessionStatusKey,
   withSessionStatus,
@@ -18,6 +19,16 @@ test("scoped session status prefers workspace-specific status over legacy sessio
   assert.equal(readSessionStatus(statuses, "ws-a", "shared"), "running");
   assert.equal(readSessionStatus(statuses, "ws-b", "shared"), "retry");
   assert.equal(readSessionStatus(statuses, "ws-c", "shared"), "idle");
+});
+
+test("strict scoped status does not borrow a matching session id from another workspace", () => {
+  const statuses = {
+    shared: "running",
+    [scopedSessionStatusKey("ws-b", "shared")]: "running",
+  };
+
+  assert.equal(readScopedSessionStatus(statuses, "ws-a", "shared"), "idle");
+  assert.equal(readScopedSessionStatus(statuses, "ws-b", "shared"), "running");
 });
 
 test("scoped session status writes scoped and legacy keys for compatibility", () => {

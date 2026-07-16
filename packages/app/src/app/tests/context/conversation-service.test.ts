@@ -55,6 +55,14 @@ type SubmitConversationCall = {
   options?: Parameters<ConversationServiceClient["submitConversation"]>[2];
 };
 
+type SessionTranscriptCall = {
+  workspaceId: string;
+  sessionId: string;
+  limit?: number;
+  directory?: string;
+  options?: Parameters<ConversationServiceClient["getSessionTranscript"]>[4];
+};
+
 function createFakeClient(options: {
   listWorkspaceItems?: FakeWorkspaceRegistryItem[];
   addLocalWorkspaceItems?: FakeWorkspaceRegistryItem[];
@@ -65,6 +73,7 @@ function createFakeClient(options: {
 } = {}) {
   const calls: string[] = [];
   const submitConversationCalls: SubmitConversationCall[] = [];
+  const sessionTranscriptCalls: SessionTranscriptCall[] = [];
   const listWorkspaceItems = options.listWorkspaceItems ?? [];
   let runConversationResult:
     | Awaited<ReturnType<ConversationServiceClient["runConversation"]>>
@@ -119,8 +128,21 @@ function createFakeClient(options: {
       calls.push(`importConversations:${workspaceId}`);
       return { workspaceId, items: [] };
     },
-    getSessionTranscript: async (workspaceId: string, sessionId: string) => {
+    getSessionTranscript: async (
+      workspaceId: string,
+      sessionId: string,
+      limit?: number,
+      directory?: string,
+      readOptions?: Parameters<ConversationServiceClient["getSessionTranscript"]>[4],
+    ) => {
       calls.push(`getSessionTranscript:${workspaceId}:${sessionId}`);
+      sessionTranscriptCalls.push({
+        workspaceId,
+        sessionId,
+        limit,
+        directory,
+        options: readOptions,
+      });
       if (sessionId === "sess-unavailable") {
         return {
           ...transcript(sessionId),
@@ -241,6 +263,7 @@ function createFakeClient(options: {
     client: client as unknown as ConversationServiceClient,
     calls,
     submitConversationCalls,
+    sessionTranscriptCalls,
     setRunConversationResult: (result: Awaited<ReturnType<ConversationServiceClient["runConversation"]>>) => {
       runConversationResult = result;
     },
@@ -275,7 +298,14 @@ function createService(options: {
   resolveWorkspaceRootForConversationScope?: (workspaceId: string, directory?: string | null) => string;
   failServerStart?: boolean;
 } = {}) {
-  const { client, calls, submitConversationCalls, setRunConversationResult, setSubmitConversationResult } = createFakeClient({
+  const {
+    client,
+    calls,
+    submitConversationCalls,
+    sessionTranscriptCalls,
+    setRunConversationResult,
+    setSubmitConversationResult,
+  } = createFakeClient({
     listWorkspaceItems: options.listWorkspaceItems,
     addLocalWorkspaceItems: options.addLocalWorkspaceItems,
     failWorkspaceRegistration: options.failWorkspaceRegistration,
@@ -440,6 +470,7 @@ function createService(options: {
     calls,
     refreshedCalls: refreshedFake?.calls ?? [],
     submitConversationCalls,
+    sessionTranscriptCalls,
     ensureCalls,
     ensureOptions,
     rememberedScopes,
@@ -515,6 +546,58 @@ test("terminal transcript recovery returns the exact fetched snapshot for sessio
   assert.equal(snapshot?.sessionId, "open-a");
   assert.ok(calls.includes("recoverSessionTranscript:server-ws:open-a:run-a"));
   assert.ok(calls.includes("getSessionTranscript:server-ws:open-a"));
+});
+
+test("terminal transcript recovery uses the projection trace client contract", async () => {
+  const { service, sessionTranscriptCalls, sendTraces } = createService();
+
+  const snapshot = await service.recoverConversationTranscript({
+    workspaceId: "app-ws",
+    sessionId: "open-a",
+    directory: "/repo",
+    expectedRunId: "run-a",
+    diagnosticTraceId: "trace-terminal-a",
+  });
+
+  assert.equal(snapshot?.sessionId, "open-a");
+  assert.deepEqual(sessionTranscriptCalls, [{
+    workspaceId: "server-ws",
+    sessionId: "open-a",
+    limit: 140,
+    directory: "/repo",
+    options: {
+      includeLatestRunArtifacts: true,
+      caller: "terminal-recovery",
+      sendTraceId: "trace-terminal-a",
+    },
+  }]);
+  const events = sendTraces.filter((entry) => entry.event.startsWith("session-transcript-projection:"));
+  assert.equal(events.length, 2);
+  assert.deepEqual(events[0], {
+    event: "session-transcript-projection:request",
+    payload: {
+      traceId: "trace-terminal-a",
+      caller: "terminal-recovery",
+      displayLimit: 140,
+      sourceLimit: 200,
+    },
+  });
+  assert.deepEqual(
+    {
+      traceId: events[1]?.payload?.traceId,
+      caller: events[1]?.payload?.caller,
+      displayLimit: events[1]?.payload?.displayLimit,
+      sourceLimit: events[1]?.payload?.sourceLimit,
+      outcome: events[1]?.payload?.outcome,
+    },
+    {
+      traceId: "trace-terminal-a",
+      caller: "terminal-recovery",
+      displayLimit: 140,
+      sourceLimit: 200,
+      outcome: "loaded",
+    },
+  );
 });
 
 test("accepted terminal transcript recovery reconnects once and keeps the accepted run scope", async () => {
@@ -975,6 +1058,7 @@ test("projection transcript reads emit content-free request and settle trace eve
       traceId: "trace-projection-a",
       caller: "passive-selection",
       displayLimit: 140,
+      sourceLimit: 200,
     },
   });
   assert.equal(events[1]?.event, "session-transcript-projection:settle");
@@ -983,6 +1067,7 @@ test("projection transcript reads emit content-free request and settle trace eve
       traceId: events[1]?.payload?.traceId,
       caller: events[1]?.payload?.caller,
       displayLimit: events[1]?.payload?.displayLimit,
+      sourceLimit: events[1]?.payload?.sourceLimit,
       outcome: events[1]?.payload?.outcome,
       source: events[1]?.payload?.source,
       messageCount: events[1]?.payload?.messageCount,
@@ -991,6 +1076,7 @@ test("projection transcript reads emit content-free request and settle trace eve
       traceId: "trace-projection-a",
       caller: "passive-selection",
       displayLimit: 140,
+      sourceLimit: 200,
       outcome: "loaded",
       source: "sqlite",
       messageCount: 0,

@@ -504,7 +504,7 @@ export default function DashboardView(props: DashboardViewProps) {
     const serverWorkspaceId = resolveVesloWorkspaceId(workspaceId);
     if (!serverWorkspaceId) return;
 
-    void client.prefetchSessionTranscripts(serverWorkspaceId, interest).catch((error) => {
+    void client.prefetchSessionTranscripts(serverWorkspaceId, interest, { appWorkspaceId: workspaceId }).catch((error) => {
       console.warn("[dashboard.loaded-session-prefetch] failed", {
         workspaceId,
         serverWorkspaceId,

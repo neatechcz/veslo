@@ -3593,7 +3593,7 @@ export default function SessionView(props: SessionViewProps) {
     const serverWorkspaceId = resolveVesloWorkspaceId(workspaceId);
     if (!serverWorkspaceId) return;
 
-    void client.prefetchSessionTranscripts(serverWorkspaceId, interest).catch((error) => {
+    void client.prefetchSessionTranscripts(serverWorkspaceId, interest, { appWorkspaceId: workspaceId }).catch((error) => {
       console.warn("[session.loaded-session-prefetch] failed", {
         workspaceId,
         serverWorkspaceId,

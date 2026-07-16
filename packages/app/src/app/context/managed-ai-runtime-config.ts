@@ -588,7 +588,7 @@ export function createManagedAiRuntimeConfigSync(
       capabilities?.config?.read;
 
     try {
-      if (canUseVesloServer && vesloClient) {
+      if (canUseVesloServer) {
         vesloWorkspaceId = await resolveManagedAiServerWorkspaceId({
           client: vesloClient,
           workspace,
@@ -1051,7 +1051,7 @@ export function createManagedAiRuntimeConfigSync(
       managedProfile && providerRoutingReady ? deps.beginManagedAiBootstrap?.() ?? null : null;
 
     try {
-      if (canUseVesloServerBase && vesloClient) {
+      if (canUseVesloServerBase) {
         vesloWorkspaceId = await resolveManagedAiServerWorkspaceId({
           client: vesloClient,
           workspace,

@@ -609,7 +609,7 @@ export function createSessionSearchCommandController(
   });
 
   const runActiveCommandPaletteItem = () => {
-    const item = commandPaletteItems()[commandPaletteActiveIndex()];
+    const item = commandPaletteItems().at(commandPaletteActiveIndex());
     if (!item) return;
     item.action();
   };

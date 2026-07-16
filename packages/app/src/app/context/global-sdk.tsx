@@ -117,7 +117,7 @@ export function GlobalSDKProvider(props: ParentProps) {
     };
 
     const flush = () => {
-      if (timer) clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
 
       const events = queue;
@@ -135,7 +135,7 @@ export function GlobalSDKProvider(props: ParentProps) {
     };
 
     const schedule = () => {
-      if (timer) return;
+      if (timer !== undefined) return;
       const elapsed = Date.now() - last;
       timer = setTimeout(flush, Math.max(0, 16 - elapsed));
     };

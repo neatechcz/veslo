@@ -2,7 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,9 +24,17 @@ import {
   resolvePilotRuntimeDir,
   resolvePilotSocketPath,
   resolveWorkspaceStateDirectories,
+  seedLiveParityRuntimePreferences,
   seedDefaultWorkspaceState,
+  shouldForwardAppLogs,
   terminateAppProcess,
 } from "./app-launcher.js";
+
+test("shouldForwardAppLogs keeps captured app output quiet only when explicitly requested", () => {
+  assert.equal(shouldForwardAppLogs({}), true);
+  assert.equal(shouldForwardAppLogs({ E2E_FORWARD_APP_LOGS: "0" }), false);
+  assert.equal(shouldForwardAppLogs({ E2E_FORWARD_APP_LOGS: "1" }), true);
+});
 
 test("createAppLaunchEnv configures pilot and forces x11 on linux so GTK-backed Tauri can start in headless E2E runs", () => {
   const env = createAppLaunchEnv(
@@ -43,6 +57,7 @@ test("createAppLaunchEnv configures pilot and forces x11 on linux so GTK-backed 
   );
   assert.equal(env.OPENCODE_HOME, "/tmp/opencode-home");
   assert.equal(env.VESLO_DATA_DIR, "/tmp/opencode-home/.veslo");
+  assert.equal(env.TAURI_PILOT_LOG_DIR, "/tmp/opencode-home/.veslo/e2e-logs");
   assert.equal(
     env.VESLO_APP_CONFIG_DIR,
     "/tmp/opencode-home/.veslo/app-config",
@@ -76,6 +91,30 @@ test("createAppLaunchEnv forwards the Den API base for fixture-backed catalog E2
   );
 
   assert.equal(env.VESLO_DEN_API_BASE, "http://127.0.0.1:54321");
+});
+
+test("createAppLaunchEnv routes an explicit Pilot run into its own trace directory", () => {
+  const env = createAppLaunchEnv(
+    {
+      VESLO_RUNTIME_TRACE_DIR: "/developer/diagnostics",
+      VESLO_SEND_WORKFLOW_TRACE: "0",
+    },
+    {
+      platform: "linux",
+      opencodeHome: "/tmp/opencode-home",
+      snapshotPath: "/tmp/opencode-home/.veslo/den-auth.json",
+      pilotTraceDir: "/tmp/pilot-runs/run-01/traces",
+      runId: "run-01",
+    },
+  );
+
+  assert.equal(env.TAURI_PILOT_LOG_DIR, "/tmp/pilot-runs/run-01/traces");
+  assert.equal(env.VESLO_RUN_ID, "run-01");
+  assert.equal(env.VESLO_RUNTIME_DIAGNOSTICS, "1");
+  assert.equal(env.VESLO_RUNTIME_TRACE, "1");
+  assert.equal(env.VESLO_RUNTIME_TRACE_DIR, "/tmp/pilot-runs/run-01/traces");
+  assert.equal(env.VESLO_SEND_WORKFLOW_TRACE, "1");
+  assert.equal(env.VESLO_OPENCODE_HEALTH_DIAG, "1");
 });
 
 test("resolveMcpCatalogFixtureDenApiBase forwards the fixture base for Google or SharePoint catalog scenarios", () => {
@@ -127,6 +166,8 @@ test("createAppLaunchEnv passes auth to desktop only through the copied snapshot
       OPENAI_API_KEY: "must-not-reach-the-e2e-desktop",
       OPENAI_BASE_URL: "https://openai.example.test/v1",
       OPENAI_API_BASE: "https://openai-api.example.test/v1",
+      E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE:
+        "C:\\source\\runtime-preferences.json",
     },
     {
       platform: "win32",
@@ -143,6 +184,52 @@ test("createAppLaunchEnv passes auth to desktop only through the copied snapshot
   assert.equal("OPENAI_API_KEY" in env, false);
   assert.equal("OPENAI_BASE_URL" in env, false);
   assert.equal("OPENAI_API_BASE" in env, false);
+  assert.equal("E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE" in env, false);
+});
+
+test("live-parity runtime preference seeding copies only the native desktop boolean allowlist", () => {
+  const root = mkdtempSync(join(tmpdir(), "veslo-e2e-live-parity-"));
+  try {
+    const source = join(root, "runtime-preferences.json");
+    const target = join(root, "isolated", "app-config");
+    writeFileSync(
+      source,
+      JSON.stringify({
+        sharedUnsandboxedEngine: false,
+        supportDiagnostics: true,
+        token: "must-not-be-copied",
+        arbitraryUserSetting: "must-not-be-copied",
+      }),
+      "utf8",
+    );
+
+    assert.equal(seedLiveParityRuntimePreferences(source, target), true);
+    const persisted = readFileSync(join(target, "runtime-preferences.json"), "utf8");
+    assert.deepEqual(JSON.parse(persisted), {
+      sharedUnsandboxedEngine: false,
+      supportDiagnostics: true,
+    });
+    assert.doesNotMatch(persisted, /token|arbitraryUserSetting|must-not-be-copied/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("live-parity runtime preference seeding rejects malformed preference values before writing", () => {
+  const root = mkdtempSync(join(tmpdir(), "veslo-e2e-live-parity-invalid-"));
+  try {
+    const source = join(root, "runtime-preferences.json");
+    const target = join(root, "isolated", "app-config");
+    writeFileSync(source, '{"sharedUnsandboxedEngine":"true"}', "utf8");
+
+    assert.throws(
+      () => seedLiveParityRuntimePreferences(source, target),
+      /sharedUnsandboxedEngine must be a boolean/,
+    );
+    assert.equal(existsSync(join(target, "runtime-preferences.json")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("createAppLaunchEnv isolates Windows app, local, and WebView2 storage so stale desktop state does not override the E2E snapshot", () => {
@@ -163,6 +250,10 @@ test("createAppLaunchEnv isolates Windows app, local, and WebView2 storage so st
   );
   assert.equal(env.OPENCODE_HOME, "C:\\temp\\veslo-e2e-home");
   assert.equal(env.VESLO_DATA_DIR, "C:\\temp\\veslo-e2e-home\\.veslo");
+  assert.equal(
+    env.TAURI_PILOT_LOG_DIR,
+    "C:\\temp\\veslo-e2e-home\\.veslo\\e2e-logs",
+  );
   assert.equal(
     env.VESLO_APP_CONFIG_DIR,
     "C:\\temp\\veslo-e2e-home\\.veslo\\app-config",
@@ -309,7 +400,7 @@ test("startApp can relaunch while preserving the isolated profile for reconnect 
 
   assert.match(
     source,
-    /type StartAppOptions = \{\s*preserveIsolatedProfile\?: boolean;\s*beforeLaunch\?: \(context: StartAppProfileContext\) => Promise<void> \| void;\s*\}/,
+    /type StartAppOptions = \{\s*preserveIsolatedProfile\?: boolean;\s*beforeLaunch\?: \(context: StartAppProfileContext\) => Promise<void> \| void;\s*pilotDiagnostics\?: PilotRunDiagnostics;\s*\}/,
   );
   assert.match(source, /startApp\(options: StartAppOptions = \{\}\)/);
   assert.match(source, /options\.preserveIsolatedProfile === true/);
@@ -350,7 +441,7 @@ test("startApp retains the launched PID for child cleanup even after unexpected 
   );
 });
 
-test("startApp rotates previous app logs before writing the latest E2E capture", () => {
+test("startApp keeps legacy log rotation but gives each explicit Pilot launch distinct redacted files", () => {
   const source = readFileSync(
     new URL("./app-launcher.ts", import.meta.url),
     "utf8",
@@ -360,6 +451,10 @@ test("startApp rotates previous app logs before writing the latest E2E capture",
   assert.match(source, /renameSync\(path, `\$\{path\}\.\$\{stamp\}`\)/);
   assert.match(source, /rotateExistingLogFile\(appStdoutLog\)/);
   assert.match(source, /rotateExistingLogFile\(appStderrLog\)/);
+  assert.match(source, /\$\{pilotDiagnostics\.launchId\}\.stdout\.log/);
+  assert.match(source, /\$\{pilotDiagnostics\.launchId\}\.stderr\.log/);
+  assert.match(source, /createRedactingLineBuffer\(\)/);
+  assert.match(source, /appProcess\.once\("close", flushAppLogs\)/);
 });
 
 test("seedDefaultWorkspaceState skips network-backed enterprise creators for deterministic E2E fixtures", () => {
