@@ -325,10 +325,17 @@ function isInvalidHostTokenError(error: unknown): boolean {
 export function createConversationService<Client extends ConversationServiceClient>(
   deps: ConversationServiceDeps<Client>,
 ) {
+  type ConversationWorkspaceRegistrationResult = { id: string; cacheable: boolean };
+  type ConversationWorkspaceRegistrationFlight = {
+    id: string;
+    promise: Promise<ConversationWorkspaceRegistrationResult>;
+  };
+
   const conversationWorkspaceRegistrationCacheByClient = new WeakMap<
     object,
-    Map<string, Promise<{ id: string; cacheable: boolean }>>
+    Map<string, ConversationWorkspaceRegistrationFlight>
   >();
+  let conversationWorkspaceRegistrationFlightSequence = 0;
 
   const resolveConversationServerWorkspaceId = (workspaceIdRaw: string) => {
     const workspaceId = workspaceIdRaw.trim();
@@ -480,7 +487,7 @@ export function createConversationService<Client extends ConversationServiceClie
     const key = serverClient as object;
     let cache = conversationWorkspaceRegistrationCacheByClient.get(key);
     if (!cache) {
-      cache = new Map<string, Promise<{ id: string; cacheable: boolean }>>();
+      cache = new Map<string, ConversationWorkspaceRegistrationFlight>();
       conversationWorkspaceRegistrationCacheByClient.set(key, cache);
     }
     return cache;
@@ -490,7 +497,11 @@ export function createConversationService<Client extends ConversationServiceClie
     serverClient: Client,
     workspaceIdRaw: string,
     directoryRaw?: string | null,
-    options: { requireLiveOpencodeBaseUrl?: boolean } = {},
+    options: {
+      requireLiveOpencodeBaseUrl?: boolean;
+      traceId?: string | null;
+      caller?: "submit" | "read";
+    } = {},
   ) => {
     const workspaceId = workspaceIdRaw.trim();
     const fallback = resolveConversationServerWorkspaceId(workspaceId);
@@ -556,16 +567,47 @@ export function createConversationService<Client extends ConversationServiceClie
     };
 
     const registrationCache = conversationWorkspaceRegistrationCacheFor(serverClient);
-    const registrationCacheKey = [
-      conversationWorkspaceCacheKey(workspaceId, targetDirectoryRaw),
-      requireLiveOpencodeBaseUrl ? "live-opencode" : "read",
-    ].join("\0");
-    const cachedRegistration = registrationCache.get(registrationCacheKey);
-    if (cachedRegistration) {
-      return (await cachedRegistration).id;
+    const registrationCacheBaseKey = conversationWorkspaceCacheKey(workspaceId, targetDirectoryRaw);
+    const liveRegistrationCacheKey = [registrationCacheBaseKey, "live-opencode"].join("\0");
+    const readRegistrationCacheKey = [registrationCacheBaseKey, "read"].join("\0");
+    const registrationCacheKey = requireLiveOpencodeBaseUrl
+      ? liveRegistrationCacheKey
+      : readRegistrationCacheKey;
+    const traceId = options.traceId?.trim() || null;
+    const caller = options.caller ?? (requireLiveOpencodeBaseUrl ? "submit" : "read");
+    const recordRegistrationFlight = (
+      action: "start" | "join" | "settle" | "reject",
+      flightId: string,
+    ) => {
+      deps.recordSendTrace("conversation-workspace-registration:flight", {
+        traceId,
+        action,
+        flightId,
+        caller,
+        scope: "app",
+      });
+    };
+
+    if (!requireLiveOpencodeBaseUrl) {
+      const liveRegistration = registrationCache.get(liveRegistrationCacheKey);
+      if (liveRegistration) {
+        recordRegistrationFlight("join", liveRegistration.id);
+        try {
+          const result = await liveRegistration.promise;
+          if (result.cacheable && result.id) return result.id;
+        } catch {
+          // A failed live registration is not a read result. Fall through to a read registration.
+        }
+      }
     }
 
-    const registrationPromise = (async (): Promise<{ id: string; cacheable: boolean }> => {
+    const cachedRegistration = registrationCache.get(registrationCacheKey);
+    if (cachedRegistration) {
+      recordRegistrationFlight("join", cachedRegistration.id);
+      return (await cachedRegistration.promise).id;
+    }
+
+    const registrationPromise = (async (): Promise<ConversationWorkspaceRegistrationResult> => {
       const opencodeRegistration = await resolveLocalOpencodeRegistration();
       if (requireLiveOpencodeBaseUrl && !opencodeRegistration?.baseUrl) {
         // OpenCode URLs are per-runtime; writes must not reuse stale registrations.
@@ -614,7 +656,7 @@ export function createConversationService<Client extends ConversationServiceClie
       const registerWithClient = async (
         activeClient: Client,
         allowHostAuthRefresh: boolean,
-      ): Promise<{ id: string; cacheable: boolean }> => {
+      ): Promise<ConversationWorkspaceRegistrationResult> => {
         try {
           const listed = await activeClient.listWorkspaces();
           const existing = findMatchingWorkspace(listed.items);
@@ -664,17 +706,22 @@ export function createConversationService<Client extends ConversationServiceClie
       return await registerWithClient(serverClient, true);
     })();
 
-    registrationCache.set(registrationCacheKey, registrationPromise);
+    const flightId = "conversation-registration-" + String(++conversationWorkspaceRegistrationFlightSequence);
+    const registrationFlight = { id: flightId, promise: registrationPromise };
+    registrationCache.set(registrationCacheKey, registrationFlight);
+    recordRegistrationFlight("start", flightId);
     try {
       const result = await registrationPromise;
-      if (!result.cacheable && registrationCache.get(registrationCacheKey) === registrationPromise) {
+      if (!result.cacheable && registrationCache.get(registrationCacheKey) === registrationFlight) {
         registrationCache.delete(registrationCacheKey);
       }
+      recordRegistrationFlight("settle", flightId);
       return result.id;
     } catch (error) {
-      if (registrationCache.get(registrationCacheKey) === registrationPromise) {
+      if (registrationCache.get(registrationCacheKey) === registrationFlight) {
         registrationCache.delete(registrationCacheKey);
       }
+      recordRegistrationFlight("reject", flightId);
       throw error;
     }
   };
@@ -750,7 +797,11 @@ export function createConversationService<Client extends ConversationServiceClie
             serverClient,
             normalizedWorkspaceId,
             normalizedDirectory,
-            { requireLiveOpencodeBaseUrl: true },
+            {
+              requireLiveOpencodeBaseUrl: true,
+              traceId: tracePayload?.traceId ?? null,
+              caller: "submit",
+            },
           ),
           {
             ...(tracePayload ?? {}),

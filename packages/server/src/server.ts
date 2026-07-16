@@ -244,6 +244,7 @@ import { createConversationRunQueueStore } from "./conversation-run-queue-store.
 import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
 import { createConversationSubmitService } from "./conversation-submit-service.js";
 import { createConversationSubmitSkillCommandResolver } from "./conversation-submit-skill-command-resolution.js";
+import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
 import {
   createOrchestratorLifecycleClient,
   type OrchestratorLifecycleClient,
@@ -1029,6 +1030,7 @@ async function fetchOpencodeJson(
     timeoutMs?: number;
     sendTraceId?: string | null;
     conversationRunId?: string | null;
+    orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   },
 ) {
   const baseUrl = workspace.baseUrl?.trim() ?? "";
@@ -1225,7 +1227,38 @@ function orchestratorFallbackWorkspace(config: ServerConfig, workspace: Workspac
   return { ...workspace, baseUrl };
 }
 
-async function ensureOrchestratorWorkspaceRegistered(
+function orchestratorWorkspaceRegistrationKey(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+): string | null {
+  if (workspace.workspaceType !== "local") return null;
+  const daemonUrl = config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
+  const workspaceId = workspace.id?.trim() ?? "";
+  const workspacePath = workspace.path?.trim() ?? "";
+  if (!daemonUrl || !workspaceId || !workspacePath) return null;
+  return daemonUrl + "\0" + workspaceId + "\0" + normalizeOpencodeDirectory(workspacePath);
+}
+
+let unscopedOrchestratorRegistrationFlightSequence = 0;
+
+function recordOrchestratorWorkspaceRegistrationFlight(
+  init: Pick<Parameters<typeof fetchOpencodeJson>[2], "sendTraceId">,
+  input: {
+    action: "start" | "join" | "settle" | "reject";
+    flightId: string;
+    scope: "http-submit" | "background";
+  },
+): void {
+  recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:flight", {
+    traceId: init.sendTraceId?.trim() || null,
+    action: input.action,
+    flightId: input.flightId,
+    caller: input.scope === "http-submit" ? "submit" : "background",
+    scope: input.scope,
+  });
+}
+
+async function performOrchestratorWorkspaceRegistration(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   init: Pick<Parameters<typeof fetchOpencodeJson>[2], "method" | "sendTraceId">,
@@ -1319,6 +1352,87 @@ async function ensureOrchestratorWorkspaceRegistered(
     });
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function ensureOrchestratorWorkspaceRegistered(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  init: Pick<
+    Parameters<typeof fetchOpencodeJson>[2],
+    "method" | "sendTraceId" | "orchestratorRegistrationScope"
+  >,
+): Promise<void> {
+  const scope = init.orchestratorRegistrationScope ?? null;
+  const registrationKey = orchestratorWorkspaceRegistrationKey(config, workspace);
+  if (!registrationKey) {
+    return await performOrchestratorWorkspaceRegistration(config, workspace, init);
+  }
+
+  if (scope) {
+    const existing = scope.registrations.get(registrationKey);
+    if (existing) {
+      recordOrchestratorWorkspaceRegistrationFlight(init, {
+        action: "join",
+        flightId: existing.id,
+        scope: "http-submit",
+      });
+      return await existing.promise;
+    }
+
+    const flightId = scope.nextFlightId();
+    let promise!: Promise<void>;
+    promise = Promise.resolve()
+      .then(() => performOrchestratorWorkspaceRegistration(config, workspace, init))
+      .then(
+        () => {
+          recordOrchestratorWorkspaceRegistrationFlight(init, {
+            action: "settle",
+            flightId,
+            scope: "http-submit",
+          });
+        },
+        (error) => {
+          if (scope.registrations.get(registrationKey)?.promise === promise) {
+            scope.registrations.delete(registrationKey);
+          }
+          recordOrchestratorWorkspaceRegistrationFlight(init, {
+            action: "reject",
+            flightId,
+            scope: "http-submit",
+          });
+          throw error;
+        },
+      );
+    scope.registrations.set(registrationKey, { id: flightId, promise });
+    recordOrchestratorWorkspaceRegistrationFlight(init, {
+      action: "start",
+      flightId,
+      scope: "http-submit",
+    });
+    return await promise;
+  }
+
+  const flightId = "background-registration-" + String(++unscopedOrchestratorRegistrationFlightSequence);
+  recordOrchestratorWorkspaceRegistrationFlight(init, {
+    action: "start",
+    flightId,
+    scope: "background",
+  });
+  try {
+    await performOrchestratorWorkspaceRegistration(config, workspace, init);
+    recordOrchestratorWorkspaceRegistrationFlight(init, {
+      action: "settle",
+      flightId,
+      scope: "background",
+    });
+  } catch (error) {
+    recordOrchestratorWorkspaceRegistrationFlight(init, {
+      action: "reject",
+      flightId,
+      scope: "background",
+    });
+    throw error;
   }
 }
 
@@ -3876,12 +3990,20 @@ function createRoutes(
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
     transcriptStore: conversationTranscriptStore,
-    createOpenCodeSession: async ({ workspace, directory, title, requestedOpenCodeSessionId, sendTraceId }) => {
+    createOpenCodeSession: async ({
+      workspace,
+      directory,
+      title,
+      requestedOpenCodeSessionId,
+      sendTraceId,
+      orchestratorRegistrationScope,
+    }) => {
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
       return await fetchOpencodeJsonWithOrchestratorFallback(config, scopedWorkspace, "/session", {
         method: "POST",
         timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
         sendTraceId,
+        orchestratorRegistrationScope,
         body: {
           ...(requestedOpenCodeSessionId?.trim() ? { id: requestedOpenCodeSessionId.trim() } : {}),
           ...(directory ? { directory } : {}),
@@ -4075,6 +4197,7 @@ function createRoutes(
     body: Record<string, unknown>;
     clientMessageId: string | null;
     origin: string | null;
+    orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   }) => {
     const {
       runTrace,
@@ -4085,6 +4208,7 @@ function createRoutes(
       body,
       clientMessageId,
       origin,
+      orchestratorRegistrationScope,
     } = input;
     const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
     const opencodeRunBody = buildConversationRunBody(kind, body);
@@ -4106,6 +4230,7 @@ function createRoutes(
         body: opencodeRunBody,
         sendTraceId: runTrace.traceId,
         conversationRunId: runId,
+        orchestratorRegistrationScope,
       }),
       {
         workspaceId: workspace.id,

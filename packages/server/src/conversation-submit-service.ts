@@ -24,6 +24,7 @@ import {
 import type { ConversationService } from "./conversation-service.js";
 import type { ConversationRunQueueItem } from "./conversation-run-queue-store.js";
 import { ApiError } from "./errors.js";
+import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
 import type { WorkspaceInfo } from "./types.js";
 
 export type ConversationSubmitService = {
@@ -31,6 +32,7 @@ export type ConversationSubmitService = {
     workspace: WorkspaceInfo;
     body: Record<string, unknown>;
     sendTraceId?: string | null;
+    orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
     runtimeAuthorizationActorTokenHash?: string | null;
     runtimeAuthorizationOrgId?: string | null;
     resolveDirectory: (requestedRaw: string | null) => Promise<string | null>;
@@ -49,6 +51,7 @@ export type ConversationSubmitResolvedRunSubmitter = (input: {
   resolvedRunInput: ConversationSubmitResolvedRunInput;
   directory: string | null;
   sendTraceId?: string | null;
+  orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   runtimeAuthorizationActorTokenHash?: string | null;
   runtimeAuthorizationOrgId?: string | null;
 }) => Promise<{
@@ -85,6 +88,7 @@ export function createConversationSubmitService(input: {
       workspace,
       body,
       sendTraceId,
+      orchestratorRegistrationScope,
       runtimeAuthorizationActorTokenHash,
       runtimeAuthorizationOrgId,
       resolveDirectory,
@@ -281,6 +285,7 @@ export function createConversationSubmitService(input: {
               resolvedRunInput: draftResolution.resolvedRunInput,
               directory,
               sendTraceId: sendTraceId ?? null,
+              orchestratorRegistrationScope: orchestratorRegistrationScope ?? null,
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
               runtimeAuthorizationOrgId: runtimeAuthorizationOrgId ?? null,
             });
@@ -350,6 +355,7 @@ export function createConversationSubmitService(input: {
           title: deriveSubmitConversationTitle(request),
           requestedOpenCodeSessionId,
           sendTraceId: sendTraceId ?? null,
+          orchestratorRegistrationScope: orchestratorRegistrationScope ?? null,
         });
         attemptStore.update({
           workspaceId: workspace.id,
@@ -375,6 +381,7 @@ export function createConversationSubmitService(input: {
               resolvedRunInput: draftResolution.resolvedRunInput,
               directory,
               sendTraceId: sendTraceId ?? null,
+              orchestratorRegistrationScope: orchestratorRegistrationScope ?? null,
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
               runtimeAuthorizationOrgId: runtimeAuthorizationOrgId ?? null,
             });

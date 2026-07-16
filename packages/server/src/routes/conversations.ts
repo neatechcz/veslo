@@ -27,6 +27,7 @@ import {
   OrchestratorLifecycleRequestError,
   type OrchestratorLifecycleClient,
 } from "../orchestrator-lifecycle-client.js";
+import { createOrchestratorWorkspaceRegistrationScope } from "../orchestrator-workspace-registration-scope.js";
 import { addRoute, type Route } from "../routing.js";
 import {
   ensureWritable,
@@ -761,10 +762,12 @@ export function registerConversationSessionRoutes(
     const sendTraceId = ctx.request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || null;
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const body = await readJsonBody(ctx.request);
+    const orchestratorRegistrationScope = createOrchestratorWorkspaceRegistrationScope();
     const submitResolvedRun: ConversationSubmitResolvedRunSubmitter = async ({
       request,
       resolvedRunInput,
       directory,
+      orchestratorRegistrationScope,
     }) => {
       const runtimeAuthorizationBinding = request.options?.expectAiGatewayStart === true
         ? dependencies.resolveAiGatewayRuntimeAuthorizationBindingForRun({
@@ -816,6 +819,7 @@ export function registerConversationSessionRoutes(
           body,
           clientMessageId: request.clientMessageId,
           origin: request.origin,
+          orchestratorRegistrationScope: orchestratorRegistrationScope ?? null,
           submitQueuePolicy: request.options?.submitQueuePolicy ?? "normal",
           expectAiGatewayStart: request.options?.expectAiGatewayStart === true,
           runtimeAuthorizationActorTokenHash: runtimeAuthorizationBinding?.actorTokenHash ?? null,
@@ -1046,6 +1050,7 @@ export function registerConversationSessionRoutes(
       workspace,
       body,
       sendTraceId,
+      orchestratorRegistrationScope,
       resolveDirectory: (requestedRaw) => resolveConversationReadDirectory(workspace, requestedRaw),
       submitResolvedRun,
     });

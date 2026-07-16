@@ -187,17 +187,22 @@ test("latest-run artifacts resolve workspace from scoped selected session", () =
 test("conversation read workspace registration dedupes per Veslo client", () => {
   assert.match(
     conversationServiceSource,
-    /const conversationWorkspaceRegistrationCacheByClient = new WeakMap<[\s\S]*Map<string, Promise<\{ id: string; cacheable: boolean \}>>[\s\S]*>\(\);/,
+    /const conversationWorkspaceRegistrationCacheByClient = new WeakMap<[\s\S]*Map<string, ConversationWorkspaceRegistrationFlight>[\s\S]*>\(\);/,
     "conversation workspace registration should keep a cache scoped to the current Veslo client object",
   );
   assert.match(
     conversationServiceSource,
-    /const cachedRegistration = registrationCache\.get\(registrationCacheKey\);[\s\S]*return \(await cachedRegistration\)\.id;/,
-    "repeated local conversation reads should join the same workspace registration lookup",
+    /if \(!requireLiveOpencodeBaseUrl\) \{[\s\S]*const liveRegistration = registrationCache\.get\(liveRegistrationCacheKey\);[\s\S]*const result = await liveRegistration\.promise;[\s\S]*if \(result\.cacheable && result\.id\) return result\.id;/,
+    "a read started during a live registration should join that in-flight registration before doing its own lookup",
   );
   assert.match(
     conversationServiceSource,
-    /if \(!result\.cacheable && registrationCache\.get\(registrationCacheKey\) === registrationPromise\) \{[\s\S]*registrationCache\.delete\(registrationCacheKey\);[\s\S]*\}/,
+    /const cachedRegistration = registrationCache\.get\(registrationCacheKey\);[\s\S]*return \(await cachedRegistration\.promise\)\.id;/,
+    "repeated registrations with the same policy should join the same in-flight lookup",
+  );
+  assert.match(
+    conversationServiceSource,
+    /if \(!result\.cacheable && registrationCache\.get\(registrationCacheKey\) === registrationFlight\) \{[\s\S]*registrationCache\.delete\(registrationCacheKey\);[\s\S]*\}/,
     "failed fallback-only registration attempts should not be cached forever",
   );
 });

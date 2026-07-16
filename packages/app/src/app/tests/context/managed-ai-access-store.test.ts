@@ -18,6 +18,7 @@ import {
   type ManagedAiAccessStorage,
   type ManagedAiAccessStoreOptions,
 } from "../../context/managed-ai-access-store.js";
+import type { DenAuthState } from "../../lib/den-auth.js";
 
 function createMemoryStorage(initial: Record<string, string> = {}): ManagedAiAccessStorage & {
   values: Map<string, string>;
@@ -211,15 +212,118 @@ test("managed AI browser cache rejects malformed or mismatched effective models"
 
 test("managed AI access single-flight reuses loads for the same cache key", async () => {
   let loadCalls = 0;
+  const flightActions: string[] = [];
   const first = loadManagedAiAccessSingleFlight("key-a", async () => {
     loadCalls += 1;
     return { aiAccess: null, accessToken: "" };
+  }, {
+    caller: "active-effect",
+    recordFlight: ({ action }) => flightActions.push(action),
   });
   const second = loadManagedAiAccessSingleFlight("key-a", async () => {
     loadCalls += 1;
     return { aiAccess: null, accessToken: "" };
+  }, {
+    caller: "active-effect",
+    recordFlight: ({ action }) => flightActions.push(action),
   });
 
+  assert.equal(first, second);
+  await first;
+  assert.equal(loadCalls, 1);
+  assert.deepEqual(flightActions, ["start", "join", "settle"]);
+});
+
+test("managed AI access single-flight isolates keys and removes rejected flights for retry", async () => {
+  let keyACalls = 0;
+  let keyBCalls = 0;
+  const first = loadManagedAiAccessSingleFlight("key-a-independent", async () => {
+    keyACalls += 1;
+    return { aiAccess: null, accessToken: "" };
+  });
+  const second = loadManagedAiAccessSingleFlight("key-b-independent", async () => {
+    keyBCalls += 1;
+    return { aiAccess: null, accessToken: "" };
+  });
+  await Promise.all([first, second]);
+  assert.equal(keyACalls, 1);
+  assert.equal(keyBCalls, 1);
+
+  let retryCalls = 0;
+  await assert.rejects(
+    loadManagedAiAccessSingleFlight("key-retry", async () => {
+      retryCalls += 1;
+      throw new Error("temporary access failure");
+    }),
+    /temporary access failure/,
+  );
+  await loadManagedAiAccessSingleFlight("key-retry", async () => {
+    retryCalls += 1;
+    return { aiAccess: null, accessToken: "" };
+  });
+  assert.equal(retryCalls, 2);
+});
+
+test("managed AI access defers an unknown identity context without a request or retry", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let loadCalls = 0;
+      const scheduledTimers: Array<() => void> = [];
+      const store = createManagedAiAccessStore(createStoreOptions({
+        readDenAuth: () => ({
+          denApiBase: "https://api.veslo.work",
+          token: "den-token",
+          orgId: "",
+          user: { id: "", email: "user@example.com" },
+          org: { id: "" },
+        }) as DenAuthState,
+        gatewayVesloServerClient: () => ({
+          baseUrl: "https://gateway.veslo.test",
+          getMyAiAccess: async () => {
+            loadCalls += 1;
+            return { aiAccess: null, accessToken: "" };
+          },
+        }),
+        timers: {
+          setTimeout: (callback) => {
+            scheduledTimers.push(callback);
+            return scheduledTimers.length as unknown as ReturnType<typeof setTimeout>;
+          },
+          clearTimeout: () => undefined,
+        },
+      }));
+
+      await settleEffects();
+
+      assert.equal(loadCalls, 0);
+      assert.equal(store.managedAiAccess(), null);
+      assert.equal(store.managedAiGatewayAccessToken(), "");
+      assert.equal(store.managedAiAccessBusy(), false);
+      assert.equal(store.managedAiAccessError(), null);
+      assert.equal(store.managedAiAccessRetryScheduled(), false);
+      assert.equal(scheduledTimers.length, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("managed AI access starts one flight when an unknown context becomes a complete final key", async () => {
+  let finalKey = "";
+  let loadCalls = 0;
+  const loadForCurrentContext = () => {
+    if (!finalKey) return null;
+    return loadManagedAiAccessSingleFlight(finalKey, async () => {
+      loadCalls += 1;
+      return { aiAccess: null, accessToken: "" };
+    });
+  };
+
+  assert.equal(loadForCurrentContext(), null);
+  finalKey = "user-1|org-1|https://gateway.veslo.test\0veslo-server\0runtime-workspace:server-workspace-1";
+  const first = loadForCurrentContext();
+  const second = loadForCurrentContext();
+  assert.ok(first);
   assert.equal(first, second);
   await first;
   assert.equal(loadCalls, 1);

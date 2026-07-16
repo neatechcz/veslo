@@ -598,6 +598,7 @@ describe("conversation routes", () => {
     tempDirs.push(workspaceRoot);
     const registeredWorkspaces = new Set<string>();
     const orchestratorRequests: Array<{ path: string; body: Record<string, unknown> | null }> = [];
+    let createdSessionCount = 0;
     const orchestrator = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -636,8 +637,9 @@ describe("conversation routes", () => {
           if (!registeredWorkspaces.has(workspaceId)) {
             return Response.json({ error: "workspace not found" }, { status: 404 });
           }
+          createdSessionCount += 1;
           return Response.json({
-            id: "sess-private-created",
+            id: `sess-private-created-${createdSessionCount}`,
             title: body?.title ?? "Private first submit",
             directory: body?.directory ?? workspaceRoot,
             parentID: null,
@@ -714,19 +716,45 @@ describe("conversation routes", () => {
     };
     expect(submitPayload.status).toBe("submitted");
     expect(submitPayload.workspaceId).toBe(workspaceId);
-    expect(submitPayload.opencodeSessionId).toBe("sess-private-created");
+    expect(submitPayload.opencodeSessionId).toBe("sess-private-created-1");
     expect(submitPayload.clientMessageId).toBe("msg-private-orchestrator");
 
     const paths = orchestratorRequests.map((entry) => entry.path);
     const firstRegisterIndex = paths.indexOf("/workspaces");
     const sessionIndex = paths.indexOf(`/workspace/${workspaceId}/opencode/session`);
-    const promptIndex = paths.indexOf(`/workspace/${workspaceId}/opencode/session/sess-private-created/prompt_async`);
+    const promptIndex = paths.indexOf(`/workspace/${workspaceId}/opencode/session/sess-private-created-1/prompt_async`);
     expect(firstRegisterIndex).toBeGreaterThanOrEqual(0);
     expect(sessionIndex).toBeGreaterThan(firstRegisterIndex);
     expect(promptIndex).toBeGreaterThan(sessionIndex);
     const registrations = orchestratorRequests.filter((entry) => entry.path === "/workspaces");
+    expect(registrations).toHaveLength(1);
     expect(registrations.every((entry) => entry.body?.serverWorkspaceId === workspaceId)).toBe(true);
     expect(registrations.every((entry) => entry.body?.path === workspaceRoot)).toBe(true);
+
+    const secondSubmitResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/${encodeURIComponent(workspaceId)}/conversations/submit`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer client-token",
+          "Content-Type": "application/json",
+          "x-veslo-send-trace-id": "submit-private-orchestrator-second-trace",
+        },
+        body: JSON.stringify({
+          clientMessageId: "msg-private-orchestrator-second",
+          origin: "composer-target:create-private",
+          source: "enter",
+          target: { directory: workspaceRoot, pendingClientSessionId: "pending-private-orchestrator-second" },
+          draft: {
+            mode: "prompt",
+            text: "Private server submit again",
+            parts: [{ type: "text", text: "Private server submit again" }],
+          },
+        }),
+      },
+    );
+    expect(secondSubmitResponse.status).toBe(200);
+    expect(orchestratorRequests.filter((entry) => entry.path === "/workspaces")).toHaveLength(2);
   });
 
   test("DELETE /workspace/:id/sessions/:sessionId retries stale local baseUrl through orchestrator daemon", async () => {

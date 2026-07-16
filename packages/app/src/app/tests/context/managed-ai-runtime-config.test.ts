@@ -25,6 +25,16 @@ const profile: ManagedAiAccessProfile = {
   updatedAt: "2026-07-01T10:00:00.000Z",
 };
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function createVesloClient(): ManagedAiRuntimeConfigVesloClient & {
   patched: Array<{ workspaceId: string; payload: { opencode?: Record<string, unknown> } }>;
   getConfigCalls: string[];
@@ -303,6 +313,145 @@ test("runtime auth prime reports stable support diagnostics for missing user tok
     },
   }]);
   assert.deepEqual(accessErrors, ["Sign in again to refresh managed AI authorization before sending."]);
+});
+
+test("runtime config sync joins matching active and send-preflight work", async () => {
+  const client = createVesloClient();
+  const readGate = createDeferred<{ opencode?: Record<string, unknown> | null }>();
+  const readStarted = createDeferred<void>();
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    readStarted.resolve();
+    return await readGate.promise;
+  };
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+  }));
+
+  const active = sync.syncActiveWorkspaceManagedAiConfig();
+  await readStarted.promise;
+  const send = sync.syncManagedAiRuntimeConfigForSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+  });
+  await Promise.resolve();
+
+  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
+  readGate.resolve({ opencode: {} });
+  await Promise.all([active, send]);
+  assert.equal(client.patched.length, 1);
+  const flightActions = traces
+    .filter((entry) => entry.event === "managed-ai-config-sync:flight")
+    .map((entry) => entry.payload.action);
+  assert.deepEqual(flightActions, ["start", "join", "settle"]);
+});
+
+test("runtime config sync changes semantic flight keys and retries a failed read", async () => {
+  const client = createVesloClient();
+  let defaultModel = model;
+  let denAuthRevision = 1;
+  let gatewayAccessToken = "gateway-access-token";
+  let serverWorkspaceId = "ws-active";
+  let configWriteCapable = true;
+  let projectReads = 0;
+  let failFirstRead = true;
+  const flightActions: string[] = [];
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    if (failFirstRead) {
+      failFirstRead = false;
+      throw new Error("temporary config read failure");
+    }
+    return { opencode: {} };
+  };
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    defaultModel: () => defaultModel,
+    denAuthRevision: () => denAuthRevision,
+    managedAiGatewayAccessToken: () => gatewayAccessToken,
+    resolveConversationServerWorkspaceId: () => serverWorkspaceId,
+    ensureConversationReadWorkspaceRegistered: async () => serverWorkspaceId,
+    resolvedVesloCapabilities: () => ({
+      config: { read: true, write: configWriteCapable },
+      sandbox: { enabled: false, backend: "none" },
+    }),
+    readOpencodeConfig: async () => {
+      projectReads += 1;
+      return { content: "{}" };
+    },
+    recordManagedAiWorkflowTrace: (event, payload) => {
+      if (event === "managed-ai-config-sync:flight") {
+        flightActions.push(String(payload.action));
+      }
+    },
+  }));
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  denAuthRevision += 1;
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  gatewayAccessToken = "gateway-access-token-next";
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  serverWorkspaceId = "ws-mapped";
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  defaultModel = { providerID: "codex_oauth", modelID: "gpt-5.1" };
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  configWriteCapable = false;
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.deepEqual(client.getConfigCalls, [
+    "ws-active",
+    "ws-active",
+    "ws-active",
+    "ws-active",
+    "ws-mapped",
+    "ws-mapped",
+  ]);
+  assert.equal(projectReads, 1, "a changed config source must start its own project-config sync");
+  assert.ok(flightActions.includes("reject"), "a failed config read must release its flight for retry");
+});
+
+test("a stale config sync cannot patch after a newer fingerprint completes", async () => {
+  const client = createVesloClient();
+  const firstRead = createDeferred<{ opencode?: Record<string, unknown> | null }>();
+  const secondRead = createDeferred<{ opencode?: Record<string, unknown> | null }>();
+  const firstStarted = createDeferred<void>();
+  const secondStarted = createDeferred<void>();
+  let currentProfile = profile;
+  let readCount = 0;
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    readCount += 1;
+    if (readCount === 1) {
+      firstStarted.resolve();
+      return await firstRead.promise;
+    }
+    secondStarted.resolve();
+    return await secondRead.promise;
+  };
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    managedAiAccess: () => currentProfile,
+  }));
+
+  const first = sync.syncActiveWorkspaceManagedAiConfig();
+  await firstStarted.promise;
+  currentProfile = {
+    ...profile,
+    effectiveModel: { providerID: "codex_oauth", modelID: "gpt-5.1" },
+    updatedAt: "2026-07-16T01:00:00.000Z",
+  };
+  const second = sync.syncActiveWorkspaceManagedAiConfig();
+  await secondStarted.promise;
+  secondRead.resolve({ opencode: {} });
+  await second;
+  firstRead.resolve({ opencode: {} });
+  await first;
+
+  assert.equal(client.patched.length, 1);
+  assert.match(JSON.stringify(client.patched[0]?.payload.opencode ?? {}), /gpt-5\.1/);
 });
 
 test("runtime config sync writes managed provider config through project file path without reloading", async () => {

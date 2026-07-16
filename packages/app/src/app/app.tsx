@@ -2230,6 +2230,9 @@ export default function App() {
   };
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
+  const recordManagedAiWorkflowTrace = (event: string, payload: Record<string, unknown>) => {
+    recordSendWorkflowTrace("app", event, payload, { developerMode: developerMode() });
+  };
   const managedAiAccessStore = createManagedAiAccessStore({
     authenticatedUser,
     denAuthRevision,
@@ -2253,6 +2256,7 @@ export default function App() {
       write: accessProofAiWrite,
       clear: accessProofAiClear,
     },
+    recordManagedAiWorkflowTrace,
   });
   lateManagedAiAccessStore.bind(managedAiAccessStore);
   const {
@@ -2281,10 +2285,6 @@ export default function App() {
       released = true;
       setManagedAiBootstrapPendingCount((count) => Math.max(0, count - 1));
     };
-  };
-
-  const recordManagedAiWorkflowTrace = (event: string, payload: Record<string, unknown>) => {
-    recordSendWorkflowTrace("app", event, payload, { developerMode: developerMode() });
   };
 
   const managedAiRuntimeConfig = createManagedAiRuntimeConfigSync({

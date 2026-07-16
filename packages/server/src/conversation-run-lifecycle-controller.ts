@@ -10,6 +10,7 @@ import {
   type LifecycleRunStatusResult,
   type OrchestratorLifecycleClient,
 } from "./orchestrator-lifecycle-client.js";
+import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
 import type { WorkspaceInfo } from "./types.js";
 
 export type ConversationRunLifecycleKind = "prompt_async" | "command" | "shell" | "summarize";
@@ -47,6 +48,7 @@ export type ConversationRunLifecycleSubmitOpenCodeInput = {
   body: Record<string, unknown>;
   clientMessageId: string | null;
   origin: string | null;
+  orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
 };
 
 export type ConversationRunLifecycleSubmitOpenCodePort = (
@@ -139,6 +141,7 @@ export type ConversationRunLifecycleSubmitInput = {
   body: Record<string, unknown>;
   clientMessageId: string | null;
   origin: string | null;
+  orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   submitQueuePolicy?: ConversationRunLifecycleSubmitQueuePolicy;
   expectAiGatewayStart: boolean;
   runtimeAuthorizationActorTokenHash?: string | null;
@@ -678,6 +681,7 @@ export function createConversationRunLifecycleController(
         body: input.body,
         clientMessageId: input.clientMessageId,
         origin: input.origin,
+        orchestratorRegistrationScope: input.orchestratorRegistrationScope ?? null,
       });
     } catch (error) {
       await markLifecycleFailed(

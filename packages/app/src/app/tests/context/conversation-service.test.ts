@@ -615,6 +615,75 @@ test("conversation write refreshes stale server workspace registration with live
   ]);
 });
 
+test("conversation read registration joins an in-flight live registration", async () => {
+  const { service, calls, sendTraces } = createService();
+  const client = service.vesloServerClient()!;
+  let releaseList!: (value: { items: FakeWorkspaceRegistryItem[]; activeId: string | null }) => void;
+  let signalListStarted!: () => void;
+  const pendingList = new Promise<{ items: FakeWorkspaceRegistryItem[]; activeId: string | null }>((resolve) => {
+    releaseList = resolve;
+  });
+  const listStarted = new Promise<void>((resolve) => {
+    signalListStarted = resolve;
+  });
+  let listCalls = 0;
+  client.listWorkspaces = async () => {
+    listCalls += 1;
+    signalListStarted();
+    return await pendingList;
+  };
+
+  const live = service.ensureConversationReadWorkspaceRegistered(client, "app-ws", "/repo", {
+    requireLiveOpencodeBaseUrl: true,
+  });
+  await listStarted;
+  const read = service.ensureConversationReadWorkspaceRegistered(client, "app-ws", "/repo");
+
+  assert.equal(listCalls, 1, "read must await the live control sequence instead of starting another one");
+  releaseList({ items: [], activeId: null });
+  assert.equal(await live, "server-ws");
+  assert.equal(await read, "server-ws");
+  assert.equal(listCalls, 1);
+  assert.deepEqual(calls.filter((call) => call.startsWith("addLocalWorkspace")), ["addLocalWorkspace:/repo"]);
+  assert.deepEqual(
+    sendTraces
+      .filter((entry) => entry.event === "conversation-workspace-registration:flight")
+      .map((entry) => entry.payload?.action),
+    ["start", "join", "settle"],
+  );
+});
+
+test("empty live registration cannot satisfy a later read registration", async () => {
+  const { service, calls } = createService({ engineBaseUrl: "" });
+  const client = service.vesloServerClient()!;
+
+  assert.equal(
+    await service.ensureConversationReadWorkspaceRegistered(client, "app-ws", "/repo", {
+      requireLiveOpencodeBaseUrl: true,
+    }),
+    "",
+  );
+  assert.equal(await service.ensureConversationReadWorkspaceRegistered(client, "app-ws", "/repo"), "server-ws");
+  assert.deepEqual(calls.filter((call) => call.startsWith("addLocalWorkspace")), ["addLocalWorkspace:/repo"]);
+});
+
+test("live registration does not reuse a read-only registration", async () => {
+  const { service, calls } = createService();
+  const client = service.vesloServerClient()!;
+
+  assert.equal(await service.ensureConversationReadWorkspaceRegistered(client, "app-ws", "/repo"), "server-ws");
+  assert.equal(
+    await service.ensureConversationReadWorkspaceRegistered(client, "app-ws", "/repo", {
+      requireLiveOpencodeBaseUrl: true,
+    }),
+    "server-ws",
+  );
+  assert.deepEqual(calls.filter((call) => call.startsWith("addLocalWorkspace")), [
+    "addLocalWorkspace:/repo",
+    "addLocalWorkspace:/repo",
+  ]);
+});
+
 test("conversation write refreshes stale local host token once before declaring registration unavailable", async () => {
   const { service, calls, refreshedCalls, ensureCalls, sendTraces } = createService({
     failWorkspaceRegistration: "invalid-host-token",

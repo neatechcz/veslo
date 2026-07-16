@@ -222,6 +222,17 @@ export type ManagedAiRuntimeConfigSync = {
   clearManagedAiRuntimeAuthorizationPrimeCache: () => void;
 };
 
+type ManagedAiConfigSyncRequestOptions = {
+  targetWorkspace?: SendRuntimePreflightTargetWorkspace | null;
+  isCancelled?: () => boolean;
+  reason?: string;
+};
+
+type ManagedAiConfigSyncFlight = {
+  id: string;
+  promise: Promise<void>;
+};
+
 function defaultDelay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -332,11 +343,13 @@ export function createManagedAiRuntimeConfigSync(
   const lastKnownConfigSnapshotByWs = new Map<string, string>();
   const inactiveWorkspaceBaseUrlHealedFor = new Map<string, string>();
   const runtimeAuthorizationPrimeInFlight = new Map<string, Promise<boolean>>();
+  const managedAiConfigSyncInFlight = new Map<string, ManagedAiConfigSyncFlight>();
+  const latestManagedAiConfigSyncFingerprintByScope = new Map<string, string>();
   let runtimeAuthorizationPrimeSuccess:
     | { key: string; expiresAt: number }
     | null = null;
   let lastRuntimeAuthorizationPrimeDiagnostic: ManagedAiRuntimeAuthPrimeDiagnostic | null = null;
-  let managedAiConfigSyncGeneration = 0;
+  let managedAiConfigSyncFlightSequence = 0;
   let inactiveWorkspaceBaseUrlHealGeneration = 0;
   let lastManagedAiConfigTrackingResetKey = "";
   let lastManagedAiAuthPrimeResetKey = "";
@@ -842,12 +855,112 @@ export function createManagedAiRuntimeConfigSync(
     }
   };
 
-  const syncWorkspaceManagedAiConfig = async (
-    options?: {
-      targetWorkspace?: SendRuntimePreflightTargetWorkspace | null;
-      isCancelled?: () => boolean;
-      reason?: string;
-    },
+  const resolveManagedAiConfigSyncFlightIntent = (
+    options?: ManagedAiConfigSyncRequestOptions,
+  ): { scopeKey: string; fingerprint: string } | null => {
+    const activeWorkspaceId = deps.activeWorkspaceId().trim();
+    const targetWorkspace = options?.targetWorkspace ?? null;
+    const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
+    const targetWorkspaceEntry = targetWorkspaceId
+      ? deps.workspaces().find((entry) => entry.id?.trim() === targetWorkspaceId)
+      : undefined;
+    const workspace =
+      targetWorkspaceEntry ||
+      (!targetWorkspaceId
+        ? deps.activeWorkspaceDisplay()
+        : {
+          id: targetWorkspaceId,
+          workspaceType: deps.activeWorkspaceDisplay().workspaceType,
+          path: targetWorkspace?.workspaceRoot?.trim() || targetWorkspace?.directory?.trim() || "",
+          directory: targetWorkspace?.directory?.trim() || targetWorkspace?.workspaceRoot?.trim() || "",
+        });
+    const workspaceRoot =
+      targetWorkspace?.workspaceRoot?.trim() ||
+      targetWorkspace?.directory?.trim() ||
+      workspace.path?.trim() ||
+      workspace.directory?.trim() ||
+      (!targetWorkspaceId || targetWorkspaceId === activeWorkspaceId ? deps.activeWorkspacePath() : "");
+    const syncPreflight = resolveManagedAiConfigSyncPreflight({
+      workspaceDefaultModelReady: deps.workspaceDefaultModelReady(),
+      isDesktopRuntime: deps.isTauriRuntime(),
+      defaultModelExplicit: deps.defaultModelExplicit(),
+      workspaceType: workspaceKind(workspace),
+      workspaceRoot,
+    });
+    if (syncPreflight.type === "skip") return null;
+
+    const root = syncPreflight.workspaceRoot;
+    const workspaceId = workspace.id?.trim() || targetWorkspaceId || activeWorkspaceId;
+    const managedProfile = deps.managedAiAccess();
+    const managedAccessState = managedProfile
+      ? "profile"
+      : deps.managedAiAccessBusy()
+        ? "loading"
+        : deps.managedAiAccessError()
+          ? "error"
+          : "unavailable";
+    const resolvedVesloWorkspaceId = deps.resolveConversationServerWorkspaceId(workspaceId)?.trim() || "";
+    const vesloCapabilities = deps.resolvedVesloCapabilities();
+    const vesloClient = deps.vesloServerClient();
+    const routing = buildProviderRoutingContext(workspace, workspaceId, root);
+    const gatewayAccessToken = deps.managedAiGatewayAccessToken() || deps.denGatewayAccessToken();
+    const canUseVesloServerBase =
+      deps.vesloServerStatus() === "connected" &&
+      Boolean(vesloClient) &&
+      Boolean(vesloCapabilities?.config?.write);
+    const normalizedRoot = normalizeDirectoryPath(root) || root.trim();
+    const scopeKey = [workspaceId || "unresolved-workspace", normalizedRoot || "unresolved-root"].join("\0");
+    const fingerprint = JSON.stringify({
+      target: {
+        workspaceId: workspaceId || "unresolved",
+        workspaceType: workspaceKind(workspace) ?? "unresolved",
+        root: normalizedRoot || "unresolved",
+        serverWorkspaceId: resolvedVesloWorkspaceId || "unresolved",
+      },
+      eligibility: {
+        desktopRuntime: deps.isTauriRuntime(),
+        workspaceDefaultModelReady: deps.workspaceDefaultModelReady(),
+        defaultModelExplicit: deps.defaultModelExplicit(),
+        vesloServerStatus: deps.vesloServerStatus(),
+        configReadCapable: Boolean(vesloCapabilities?.config?.read),
+        configWriteCapable: Boolean(vesloCapabilities?.config?.write),
+        configSource: canUseVesloServerBase
+          ? resolvedVesloWorkspaceId
+            ? "veslo-server-config"
+            : "veslo-server-config-unresolved"
+          : "project-config-file",
+      },
+      desired: {
+        defaultModel: formatModelRef(deps.defaultModel()),
+        managedProvider: managedProfile?.providerId ?? "",
+        managedModel: managedProfile ? formatModelRef(managedProfile.effectiveModel) : "",
+        managedProfileRevision: managedProfile?.updatedAt?.trim() || "",
+        managedAccessState,
+      },
+      routing: {
+        providerBaseUrl: normalizeManagedAiRouteFingerprintUrl(routing.providerRoutingTarget?.baseUrl),
+        engineBaseUrl: normalizeManagedAiRouteFingerprintUrl(routing.providerRoutingTarget?.engineBaseUrl),
+        localBaseUrl: normalizeManagedAiRouteFingerprintUrl(routing.providerRoutingLocalBaseUrl),
+        localEngineBaseUrl: normalizeManagedAiRouteFingerprintUrl(routing.providerRoutingEngineBaseUrl),
+        requiresEngineBaseUrl: routing.providerRoutingRequiresEngineBaseUrl,
+        configuredSandbox: routing.runtimeSandboxState.configuredBackend,
+        effectiveSandbox: routing.runtimeSandboxState.effectiveBackend,
+        engineChildKind: routing.runtimeSandboxState.childKind,
+        sandboxFallback: routing.runtimeSandboxState.sandboxFallback,
+        gatewayBaseUrl: normalizeManagedAiRouteFingerprintUrl(routing.gatewayClient?.baseUrl),
+        configServerBaseUrl: normalizeManagedAiRouteFingerprintUrl(vesloClient?.baseUrl),
+      },
+      authorization: {
+        denAuthRevision: deps.denAuthRevision(),
+        serverClientTokenHash: hashRuntimeAuthorizationCachePart(routing.providerRoutingTarget?.serverClientToken),
+        gatewayAccessTokenHash: hashRuntimeAuthorizationCachePart(gatewayAccessToken),
+      },
+    });
+    return { scopeKey, fingerprint };
+  };
+
+  const performWorkspaceManagedAiConfigSync = async (
+    options?: ManagedAiConfigSyncRequestOptions,
   ): Promise<void> => {
     const activeWorkspaceId = deps.activeWorkspaceId().trim();
     const targetWorkspace = options?.targetWorkspace ?? null;
@@ -926,9 +1039,7 @@ export function createManagedAiRuntimeConfigSync(
       canUseVesloServer: Boolean(canUseVesloServerBase && vesloWorkspaceId),
       vesloConfigWriteCapable: Boolean(vesloCapabilities?.config?.write),
     };
-    const syncGeneration = ++managedAiConfigSyncGeneration;
-    const isCurrentManagedAiConfigSync = () =>
-      !(options?.isCancelled?.() ?? false) && syncGeneration === managedAiConfigSyncGeneration;
+    const isCurrentManagedAiConfigSync = () => !(options?.isCancelled?.() ?? false);
     const releaseManagedAiBootstrap =
       managedProfile && providerRoutingReady ? deps.beginManagedAiBootstrap?.() ?? null : null;
 
@@ -1008,18 +1119,73 @@ export function createManagedAiRuntimeConfigSync(
         message,
       });
       deps.setError(deps.addOpencodeCacheHint(message));
+      throw error;
     } finally {
       releaseManagedAiBootstrap?.();
     }
   };
 
-  const syncActiveWorkspaceManagedAiConfig = async (
-    options?: { isCancelled?: () => boolean },
+  const syncWorkspaceManagedAiConfig = async (
+    options?: ManagedAiConfigSyncRequestOptions,
   ): Promise<void> => {
-    await syncWorkspaceManagedAiConfig({
-      isCancelled: options?.isCancelled,
-      reason: "active-workspace",
-    });
+    const intent = resolveManagedAiConfigSyncFlightIntent(options);
+    if (!intent) return;
+
+    const caller = options?.reason === "send-preflight" ? "send-readiness" : "active-effect";
+    const recordFlight = (action: "start" | "join" | "settle" | "reject", flightId: string) => {
+      deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:flight", {
+        action,
+        flightId,
+        caller,
+        scope: "app",
+        traceId: null,
+      });
+    };
+    latestManagedAiConfigSyncFingerprintByScope.set(intent.scopeKey, intent.fingerprint);
+    const existing = managedAiConfigSyncInFlight.get(intent.fingerprint);
+    if (existing) {
+      recordFlight("join", existing.id);
+      await existing.promise;
+      return;
+    }
+
+    const flightId = "managed-ai-config-" + String(++managedAiConfigSyncFlightSequence);
+    let promise!: Promise<void>;
+    promise = Promise.resolve()
+      .then(() => performWorkspaceManagedAiConfigSync({
+        targetWorkspace: options?.targetWorkspace,
+        reason: options?.reason,
+        isCancelled: () =>
+          latestManagedAiConfigSyncFingerprintByScope.get(intent.scopeKey) !== intent.fingerprint,
+      }))
+      .then(
+        () => {
+          if (managedAiConfigSyncInFlight.get(intent.fingerprint)?.promise === promise) {
+            managedAiConfigSyncInFlight.delete(intent.fingerprint);
+          }
+          if (latestManagedAiConfigSyncFingerprintByScope.get(intent.scopeKey) === intent.fingerprint) {
+            latestManagedAiConfigSyncFingerprintByScope.delete(intent.scopeKey);
+          }
+          recordFlight("settle", flightId);
+        },
+        (error) => {
+          if (managedAiConfigSyncInFlight.get(intent.fingerprint)?.promise === promise) {
+            managedAiConfigSyncInFlight.delete(intent.fingerprint);
+          }
+          if (latestManagedAiConfigSyncFingerprintByScope.get(intent.scopeKey) === intent.fingerprint) {
+            latestManagedAiConfigSyncFingerprintByScope.delete(intent.scopeKey);
+          }
+          recordFlight("reject", flightId);
+          return undefined;
+        },
+      );
+    managedAiConfigSyncInFlight.set(intent.fingerprint, { id: flightId, promise });
+    recordFlight("start", flightId);
+    await promise;
+  };
+
+  const syncActiveWorkspaceManagedAiConfig = async (): Promise<void> => {
+    await syncWorkspaceManagedAiConfig({ reason: "active-workspace" });
   };
 
   const syncManagedAiRuntimeConfigForSend = async (
@@ -1429,11 +1595,7 @@ export function createManagedAiRuntimeConfigSync(
   });
 
   effect(() => {
-    let cancelled = false;
-    void syncActiveWorkspaceManagedAiConfig({ isCancelled: () => cancelled });
-    onCleanup(() => {
-      cancelled = true;
-    });
+    void syncActiveWorkspaceManagedAiConfig();
   });
 
   effect(() => {

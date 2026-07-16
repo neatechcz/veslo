@@ -1,7 +1,7 @@
 ---
 title: First-Message Send Request Fanout Audit and Remediation Plan
 date: 2026-07-16
-status: proposed
+status: implementation_in_progress
 done: false
 repository_snapshot: commit 8954ea4e0122ac291d357c1b55f0edc633a53eed with scoped dirty working tree
 repository_commit: 8954ea4e0122ac291d357c1b55f0edc633a53eed
@@ -54,8 +54,8 @@ evidence from unrelated local work:
 - Excluded: the unrelated app.tsx MCP-auth callback hunk, broad component/UI
   changes, document-runtime/E2E changes, and quality-workflow/documentation
   edits already present in this checkout.
-- This plan file is a new untracked documentation artifact. It is not evidence
-  that any remediation code has landed.
+- This plan file is a documentation-only artifact. Its tracking state is not
+  evidence that any remediation code has landed.
 
 The relevant trace pair is:
 
@@ -278,7 +278,7 @@ do not make SSE the sole source of first-message transcript correctness.
 
 ### FMSP01 — establish request-count observability and tests
 
-**Status:** done: false
+**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
 **Owners:**
 
 - packages/app/src/app/context/managed-ai-access-store.ts
@@ -312,11 +312,10 @@ at every reactive caller:
 - app workspace registration;
 - server orchestrator workspace registration.
 
-Every event uses this payload shape:
+Each trace record uses the event name <owner>:flight and this payload shape:
 
 ~~~json
 {
-  "event": "<owner>:flight",
   "action": "start | join | settle | reject",
   "flightId": "opaque-process-local-id",
   "caller": "active-effect | send-readiness | submit | read",
@@ -347,7 +346,7 @@ test counts pass.
 
 ### FMSP02 — scope server orchestrator registration to one submit request
 
-**Status:** done: false
+**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
 **Owners:**
 
 - packages/server/src/routes/conversations.ts
@@ -413,12 +412,14 @@ small focused server test:
 - an orchestrator fallback within the same scope does not add a second
   successful registration;
 - clientMessageId replay still does not create a second OpenCode prompt.
+- concurrent idempotent duplicate submits join the first in-flight attempt and
+  cannot create a second registration scope or registration request;
 - a queued prompt and lifecycle reconciliation cannot observe or serialize the
   original HTTP scope; the later background submit gets a distinct flightId.
 
 ### FMSP03 — make app read registration a safe subset of live registration
 
-**Status:** done: false
+**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
 **Owner:** packages/app/src/app/context/conversation-service.ts
 
 Retain the existing per-client registration cache and current live-runtime
@@ -447,7 +448,7 @@ Required tests in packages/app/src/app/tests/context/conversation-service.test.t
 
 ### FMSP04 — make managed-AI access loading key-safe and multi-key single-flight
 
-**Status:** done: false
+**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
 **Owner:** packages/app/src/app/context/managed-ai-access-store.ts
 
 Replace the single mutable in-flight slot with a map of meaningful access
@@ -457,13 +458,15 @@ still the map value for that key.
 **Chosen policy:** do not issue an access request until the access/routing
 context has a non-empty stable key. Do not invent a pending key from empty
 identity fields. The effect must leave no in-flight entry and schedule no
-retry while context is unknown; the first transition to a stable key starts
-one normal load.
+retry while context is unknown; it must also clear an access profile/gateway
+token that cannot be associated with the unknown context. The first transition
+to a stable key starts one normal load without surfacing a terminal error.
 
-The stable map key is the complete access key passed to the requester,
-including the resolved runtime-workspace suffix when it changes the endpoint's
-semantics. It is an internal value only and must not be emitted in a trace.
-Do not treat an empty string as a globally shareable identity or as a
+The stable map key is the complete access key passed to the requester:
+normalized authenticated user id, DEN organization id, gateway base URL,
+routing mode, and the resolved runtime-workspace suffix when that changes the
+endpoint's semantics. It is an internal value only and must not be emitted in
+a trace. Do not treat an empty string as a globally shareable identity or as a
 persistent failure state.
 
 Required tests in packages/app/src/app/tests/context/managed-ai-access-store.test.ts:
@@ -479,7 +482,7 @@ Required tests in packages/app/src/app/tests/context/managed-ai-access-store.tes
 
 ### FMSP05 — single-flight active managed-AI configuration by desired fingerprint
 
-**Status:** done: false
+**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
 **Owners:** packages/app/src/app/context/managed-ai-runtime-config.ts and
 packages/app/src/app/context/send-runtime-readiness.ts
 
@@ -493,7 +496,7 @@ The fingerprint must contain these normalized input groups:
 | --- | --- |
 | Target identity | app workspace id, workspace type, normalized root/directory, requested target identity, resolved Veslo workspace mapping or an explicit unresolved state |
 | Eligibility/source | desktop-runtime flag, workspace-default-model readiness, explicit-default-model flag, Veslo connection state, config read/write capabilities, and whether the source is project config or Veslo server config |
-| Desired config | default provider/model, managed profile provider/model/revision, and managed-access state that changes the write decision |
+| Desired config | default provider/model, managed profile provider/model/revision, and a normalized managed-access state class that changes the write decision, never raw error text |
 | Routing | resolved provider base URL, resolved engine base URL, requires-engine-base-url flag, configured/effective sandbox state, engine child kind, and sandbox fallback |
 | Authorization | DEN auth revision plus one-way internal fingerprints of the server client token and effective gateway access token |
 

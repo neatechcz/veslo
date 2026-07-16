@@ -9,11 +9,10 @@ const runtimeConfigSource = readFileSync(
 );
 
 function managedAiRuntimeConfigSource(): string {
-  const marker = runtimeConfigSource.indexOf("const syncPreflight = resolveManagedAiConfigSyncPreflight");
-  const start = runtimeConfigSource.lastIndexOf("const syncWorkspaceManagedAiConfig = async", marker);
-  const end = runtimeConfigSource.indexOf("function managedConfigContentsMatch", marker);
+  const start = runtimeConfigSource.indexOf("const performWorkspaceManagedAiConfigSync = async");
+  const end = runtimeConfigSource.indexOf("function managedConfigContentsMatch", start);
   assert.ok(
-    marker >= 0 && start >= 0 && end > start,
+    start >= 0 && end > start,
     "managed AI runtime config sync source should be present",
   );
   return runtimeConfigSource.slice(start, end);
@@ -82,13 +81,18 @@ test("managed AI config sync ignores stale async runs before writing config", ()
 
   assert.match(
     runtimeConfigSource,
-    /let managedAiConfigSyncGeneration = 0;/,
-    "sync should track async generations across effect reruns",
+    /const latestManagedAiConfigSyncFingerprintByScope = new Map<string, string>\(\);/,
+    "sync should track the latest desired fingerprint independently for each workspace scope",
+  );
+  assert.match(
+    runtimeConfigSource,
+    /latestManagedAiConfigSyncFingerprintByScope\.set\(intent\.scopeKey, intent\.fingerprint\);[\s\S]*isCancelled: \(\) =>[\s\S]*latestManagedAiConfigSyncFingerprintByScope\.get\(intent\.scopeKey\) !== intent\.fingerprint/,
+    "a newer desired fingerprint should invalidate only the stale flight for its workspace scope",
   );
   assert.match(
     syncSource,
-    /const syncGeneration = \+\+managedAiConfigSyncGeneration;[\s\S]*const isCurrentManagedAiConfigSync = \(\) =>[\s\S]*!\(options\?\.isCancelled\?\.\(\) \?\? false\) && syncGeneration === managedAiConfigSyncGeneration;/,
-    "each sync run should be invalidated when a newer reactive run starts",
+    /const isCurrentManagedAiConfigSync = \(\) => !\(options\?\.isCancelled\?\.\(\) \?\? false\);/,
+    "the config writer should honor the wrapper's scoped staleness decision",
   );
   assert.match(
     syncSource,
