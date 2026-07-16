@@ -349,7 +349,10 @@ function submitInput(overrides: Partial<ConversationRunLifecycleSubmitInput> = {
   };
 }
 
-function controllerHarness(options?: { ingestTerminalTranscript?: (input: { runId: string }) => Promise<void> }) {
+function controllerHarness(options?: {
+  ingestTerminalTranscript?: (input: { runId: string }) => Promise<void>;
+  withLifecycle?: boolean;
+}) {
   const lifecycle = new LifecycleHarness();
   const queue = new QueueHarness();
   const timers = new TimerHarness();
@@ -382,7 +385,7 @@ function controllerHarness(options?: { ingestTerminalTranscript?: (input: { runI
     delayMs: number | undefined;
   }> = [];
   const controller = createConversationRunLifecycleController({
-    lifecycleClient: lifecycle,
+    lifecycleClient: options?.withLifecycle === false ? null : lifecycle,
     queueStore: queue,
     timers: timers.port,
     resolveWorkspace: (workspaceId) => workspaces.find((workspace) => workspace.id === workspaceId) ?? null,
@@ -959,6 +962,17 @@ test("submitRun provider-start timeout records diagnostics without failing, abor
   expect(typeof (providerWatchCalls[0] as { startedAt?: unknown }).startedAt).toBe("number");
   expect(abortCalls).toEqual([]);
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
+});
+
+test("submitRun retains managed-AI correlation in direct start mode until the runtime-owner TTL", async () => {
+  const { controller, activeGatewayCalls, providerWatchCalls } = controllerHarness({ withLifecycle: false });
+
+  const result = await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
+
+  expect(result.httpStatus).toBe(200);
+  expect(result.payload.status).toBe("submitted");
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
+  expect(providerWatchCalls).toEqual([]);
 });
 
 test("submitRun keeps active gateway context after provider start and clears it on terminal lifecycle reconcile", async () => {

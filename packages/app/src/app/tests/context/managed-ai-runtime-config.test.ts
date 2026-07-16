@@ -86,7 +86,9 @@ function createOptions(
     defaultModel: () => model,
     managedAiAccess: () => profile,
     managedAiAccessBusy: () => false,
+    managedAiAccessReady: () => true,
     managedAiAccessError: () => null,
+    managedAiAccessRetryScheduled: () => false,
     managedAiGatewayAccessToken: () => "gateway-access-token",
     denGatewayAccessToken: () => "den-token",
     denOrgId: () => "org-1",
@@ -514,6 +516,79 @@ test("runtime config sync writes managed provider config through Veslo server co
       ?.options as Record<string, unknown>)?.apiKey,
     VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
   );
+});
+
+test("runtime-start config gate waits for managed access before it writes the cold engine config", async () => {
+  const client = createVesloClient();
+  let currentProfile: ManagedAiAccessProfile | null = null;
+  let accessBusy = false;
+  let accessReady = false;
+  let retryScheduled = false;
+  let waitCalls = 0;
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      managedAiAccess: () => currentProfile,
+      managedAiAccessBusy: () => accessBusy,
+      managedAiAccessReady: () => accessReady,
+      managedAiAccessRetryScheduled: () => retryScheduled,
+      delay: async () => {
+        waitCalls += 1;
+        currentProfile = profile;
+        accessReady = true;
+      },
+      recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+    }),
+  );
+
+  const ready = await sync.prepareManagedAiRuntimeConfigForEngineStart({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+  });
+
+  assert.equal(ready, true);
+  assert.equal(waitCalls, 1);
+  assert.equal(client.patched.length, 1);
+  assert.equal(client.patched[0]?.workspaceId, "ws-active");
+  const gate = traces.find((entry) => entry.event === "managed-ai-config-sync:runtime-start-gate");
+  assert.equal(gate?.payload.managedProfilePresent, true);
+  assert.equal(gate?.payload.accessReady, true);
+  assert.equal(gate?.payload.accessBusy, false);
+  assert.equal(gate?.payload.accessRetryScheduled, false);
+});
+
+test("runtime-start config gate refuses to start a cold engine before live access is decided", async () => {
+  const client = createVesloClient();
+  let currentNow = 0;
+  let waitCalls = 0;
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const sync = createManagedAiRuntimeConfigSync(
+    createOptions({
+      vesloServerClient: () => client,
+      managedAiAccess: () => null,
+      managedAiAccessReady: () => false,
+      now: () => currentNow,
+      delay: async (ms) => {
+        waitCalls += 1;
+        currentNow += ms;
+      },
+      recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+    }),
+  );
+
+  const ready = await sync.prepareManagedAiRuntimeConfigForEngineStart({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+  });
+
+  assert.equal(ready, false);
+  assert.ok(waitCalls > 0);
+  assert.equal(client.patched.length, 0);
+  const gate = traces.find((entry) => entry.event === "managed-ai-config-sync:runtime-start-gate");
+  assert.equal(gate?.payload.accessReady, false);
 });
 
 test("runtime config sync does not require a gateway bearer to write local provider routing", async () => {

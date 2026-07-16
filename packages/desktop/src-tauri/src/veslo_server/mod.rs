@@ -1188,6 +1188,18 @@ fn client_token_for_spawn(previous: Option<String>, requested: Option<String>) -
     previous.or(requested).unwrap_or_else(generate_token)
 }
 
+fn persisted_client_token_matches_request(
+    requested_client_token: Option<&str>,
+    persisted_client_token: Option<&str>,
+) -> bool {
+    let Some(requested_client_token) = normalize_launch_token(requested_client_token) else {
+        return true;
+    };
+
+    normalize_launch_token(persisted_client_token).as_deref()
+        == Some(requested_client_token.as_str())
+}
+
 #[cfg(test)]
 #[expect(
     clippy::too_many_arguments,
@@ -1322,6 +1334,7 @@ pub fn start_veslo_server(
         .start_queue
         .lock()
         .map_err(|_| "veslo server start queue mutex poisoned".to_string())?;
+    let requested_client_token = normalize_launch_token(veslo_server_client_token);
 
     // VSLO-86 — extend caller-supplied workspaces with every local workspace
     // from veslo-workspaces.json before spawn. The frontend passes only the
@@ -1362,12 +1375,21 @@ pub fn start_veslo_server(
     };
     if should_try_persisted_recovery {
         if let Ok(Some(info)) = recover_persisted_veslo_server_info(app) {
+            let recovered_client_token = normalize_launch_token(info.client_token.as_deref());
             let mut state = manager
                 .inner
                 .lock()
                 .map_err(|_| "veslo server mutex poisoned".to_string())?;
-            if state.child.is_none() && state.external_info.is_none() {
+            if state.child.is_none()
+                && state.external_info.is_none()
+                && persisted_client_token_matches_request(
+                    requested_client_token.as_deref(),
+                    recovered_client_token.as_deref(),
+                )
+            {
                 state.external_info = Some(info.clone());
+                state.client_token = recovered_client_token;
+                state.host_token = info.host_token.clone();
                 append_veslo_server_launch_diagnostic(
                     app,
                     "veslo-server-launch:persisted-adopted",
@@ -1385,6 +1407,18 @@ pub fn start_veslo_server(
                 emit_veslo_server_state(app, &info);
                 return Ok(info);
             }
+            if state.child.is_none() && state.external_info.is_none() {
+                append_veslo_server_launch_diagnostic(
+                    app,
+                    "veslo-server-launch:persisted-rejected",
+                    serde_json::json!({
+                        "decision": "rejected",
+                        "reason": "requested_client_token_mismatch",
+                        "hasRequestedClientToken": requested_client_token.is_some(),
+                        "hasRecoveredClientToken": recovered_client_token.is_some(),
+                    }),
+                );
+            }
         }
     }
 
@@ -1400,7 +1434,6 @@ pub fn start_veslo_server(
     let normalized_orchestrator_daemon_url = normalize_launch_url(orchestrator_daemon_url);
     let normalized_orchestrator_lifecycle_token =
         normalize_launch_token(orchestrator_lifecycle_token);
-    let requested_client_token = normalize_launch_token(veslo_server_client_token);
     let host = resolve_veslo_host();
     let shared_unsandboxed_engine =
         crate::runtime_preferences::read_shared_unsandboxed_engine_override(app)?;
@@ -1749,12 +1782,13 @@ mod tests {
         build_urls_for_host_with_engine_resolver, classify_stale_veslo_server_process,
         client_token_for_spawn, discover_external_host_token, launch_config_matches,
         launch_config_mismatch_reasons, launch_decision_payload, normalize_launch_token,
-        normalize_launch_url, parse_macos_lsof_current_dir, publishes_external_urls,
-        read_persisted_veslo_server_info, read_persisted_veslo_server_info_with_cleanup,
-        ready_signal_bound_port, ready_signal_instance_id, resolve_engine_url_for_bind_host,
-        should_bind_wsl_bridge, start_decision_reasons, unix_kill_term_args,
-        veslo_server_state_event_payload, windows_taskkill_args, HealthIdentity,
-        PersistedVesloServerState, StaleProcessMetadata, StaleProcessOwner,
+        normalize_launch_url, parse_macos_lsof_current_dir, persisted_client_token_matches_request,
+        publishes_external_urls, read_persisted_veslo_server_info,
+        read_persisted_veslo_server_info_with_cleanup, ready_signal_bound_port,
+        ready_signal_instance_id, resolve_engine_url_for_bind_host, should_bind_wsl_bridge,
+        start_decision_reasons, unix_kill_term_args, veslo_server_state_event_payload,
+        windows_taskkill_args, HealthIdentity, PersistedVesloServerState, StaleProcessMetadata,
+        StaleProcessOwner,
     };
     #[cfg(windows)]
     use super::{
@@ -1771,6 +1805,26 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::thread;
     use uuid::Uuid;
+
+    #[test]
+    fn persisted_server_adoption_requires_the_requested_client_token_to_match() {
+        assert!(persisted_client_token_matches_request(
+            None,
+            Some("persisted-token")
+        ));
+        assert!(persisted_client_token_matches_request(
+            Some(" requested-token "),
+            Some("requested-token"),
+        ));
+        assert!(!persisted_client_token_matches_request(
+            Some("requested-token"),
+            Some("persisted-token"),
+        ));
+        assert!(!persisted_client_token_matches_request(
+            Some("requested-token"),
+            None
+        ));
+    }
 
     #[cfg(windows)]
     #[test]

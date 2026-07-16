@@ -130,7 +130,7 @@ test("switchComposerTarget serializes rapid target changes", () => {
   );
   assert.match(
     switchComposerTargetQueueSource,
-    /const queuedSwitch = composerTargetSwitchQueue[\s\S]*\.then\(\(\) => switchComposerTargetNow\(targetId\)\);/,
+    /const queuedSwitch = composerTargetSwitchQueue[\s\S]*\.then\(\(\) => untrack\(\(\) => switchComposerTargetNow\(targetId\)\)\);/,
     "each target switch should run after the previous switch settles",
   );
   assert.match(

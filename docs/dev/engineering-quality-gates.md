@@ -27,13 +27,35 @@ full Tauri Pilot suite. A failed subcommand is itself the reproduction command;
 do not replace it with an `--if-present`, `continue-on-error`, or auto-fix
 wrapper.
 
+## Required Headless Service Gate
+
+```bash
+pnpm check:services
+```
+
+This gate builds the local Veslo server and starts the same orchestrator
+`start` service topology used by development, without Vite, Tauri, Solid, or
+OpenCode Router. It uses an isolated profile, loopback ports, a deterministic
+Node fake OpenCode process that requires the generated start-mode Basic auth
+header, explicit external binaries, and
+`VESLO_DISABLE_SANDBOX=1` so Windows does not select the WSL sandbox. It proves
+authenticated first-submit and idempotency behavior, failure/retry boundaries,
+restart durability, and managed-AI access/session-correlation boundaries
+including legacy headers, stale authorization, ambiguous runs, and redacted
+upstream failures. Failure output keeps sanitized service logs and traces under
+the test-owned `.tmp` directory.
+
+It does not prove renderer recovery, WebView behavior, native commands, a real
+model/provider call, or the desktop child-exit lifecycle. Those remain owned by
+the focused desktop recovery lane.
+
 The lint gate covers async correctness, unused disable directives, high-signal
 Solid JSX checks, and rejects React-style dependency arrays in Solid reactive
-primitives. `solid/reactivity` is initially enforced on the explicitly owned
-app-route, session-event-stream, queue-drain, session-route, sidebar refresh, Veslo-server polling, workspace connection state, workspace snapshots, workspace-switch overlay, dashboard refresh, and session-search controllers; their browser-conditioned
-contract tests prove exact rerun and disposal behavior. Expand this file list
-only with a controller-specific contract test—do not add global callback or
-promise APIs as reactive-function exceptions.
+primitives. `solid/reactivity` is enforced across app source. The injected
+`effect` wrapper is registered as a reactive primitive because it defaults to
+`createEffect`; do not add global callback or promise APIs as
+reactive-function exceptions. Browser-conditioned contract tests prove exact
+rerun and disposal behavior for the highest-risk lifecycle owners.
 
 ## Required Desktop Recovery Lane
 
@@ -58,6 +80,7 @@ requests for `main` and `dev`:
 
 - `Quality / Static` — lint, types, and architecture checks
 - `Quality / Unit` — explicit unit/contract suite
+- `Quality / Services (Windows)` — headless service-runtime proof on Windows
 - `Quality / Rust` — Windows Rust checks
 - `Quality / Desktop recovery` — Windows focused Tauri recovery proof
 - `Quality / Gate` — aggregate that fails unless every previous job succeeds

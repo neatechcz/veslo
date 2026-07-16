@@ -43,6 +43,8 @@ import {
 } from "../utils";
 
 const RUNTIME_AUTH_PRIME_SUCCESS_TTL_MS = 15_000;
+const RUNTIME_START_MANAGED_AI_ACCESS_WAIT_MS = 15_000;
+const RUNTIME_START_MANAGED_AI_ACCESS_POLL_MS = 100;
 
 export type ManagedAiRuntimeAuthPrimeDiagnosticReason =
   | "missing-user-token"
@@ -135,7 +137,9 @@ export type ManagedAiRuntimeConfigSyncOptions = {
   defaultModel: Accessor<ModelRef>;
   managedAiAccess: Accessor<ManagedAiAccessProfile | null>;
   managedAiAccessBusy: Accessor<boolean>;
+  managedAiAccessReady: Accessor<boolean>;
   managedAiAccessError: Accessor<string | null>;
+  managedAiAccessRetryScheduled?: Accessor<boolean>;
   managedAiGatewayAccessToken: Accessor<string>;
   denGatewayAccessToken: Accessor<string>;
   denOrgId: Accessor<string>;
@@ -215,6 +219,9 @@ export type ManagedAiRuntimeConfigSync = {
   syncManagedAiRuntimeConfigForSend: (
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ) => Promise<void>;
+  prepareManagedAiRuntimeConfigForEngineStart: (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ) => Promise<boolean>;
   lastManagedAiRuntimeAuthorizationPrimeDiagnostic: () => ManagedAiRuntimeAuthPrimeDiagnostic | null;
   healInactiveManagedAiWorkspaceConfigs: () => Promise<void>;
   rememberKnownConfigSnapshot: (key: string, content: string | null) => void;
@@ -1197,6 +1204,37 @@ export function createManagedAiRuntimeConfigSync(
     });
   };
 
+  const prepareManagedAiRuntimeConfigForEngineStart = async (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ): Promise<boolean> => {
+    if (!deps.isTauriRuntime()) return true;
+
+    const startedAt = now();
+    while (
+      !deps.managedAiAccessReady() &&
+      now() - startedAt < RUNTIME_START_MANAGED_AI_ACCESS_WAIT_MS
+    ) {
+      await delay(RUNTIME_START_MANAGED_AI_ACCESS_POLL_MS);
+    }
+
+    deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:runtime-start-gate", {
+      targetWorkspaceId: targetWorkspace?.workspaceId?.trim() || null,
+      waitedMs: Math.max(0, now() - startedAt),
+      managedProfilePresent: Boolean(deps.managedAiAccess()),
+      accessReady: deps.managedAiAccessReady(),
+      accessBusy: deps.managedAiAccessBusy(),
+      accessRetryScheduled: Boolean(deps.managedAiAccessRetryScheduled?.()),
+    });
+    if (!deps.managedAiAccessReady()) {
+      return false;
+    }
+    await syncWorkspaceManagedAiConfig({
+      targetWorkspace,
+      reason: "runtime-start",
+    });
+    return true;
+  };
+
   const maybeMarkManagedConfigApplied = (
     providerRoutingReloadKey: string,
     hasConfigChanged: boolean,
@@ -1611,6 +1649,7 @@ export function createManagedAiRuntimeConfigSync(
     hasUsableManagedAiRuntimeConfigForSend,
     ensureManagedAiRuntimeAuthorizationForSend,
     syncManagedAiRuntimeConfigForSend,
+    prepareManagedAiRuntimeConfigForEngineStart,
     lastManagedAiRuntimeAuthorizationPrimeDiagnostic,
     syncActiveWorkspaceManagedAiConfig: () => syncActiveWorkspaceManagedAiConfig(),
     healInactiveManagedAiWorkspaceConfigs: () => healInactiveManagedAiWorkspaceConfigs(),

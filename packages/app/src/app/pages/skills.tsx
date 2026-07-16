@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js";
 
 import type {
   HubSkillCard,
@@ -1179,10 +1179,10 @@ export default function SkillsView(props: SkillsViewProps) {
       return;
     }
 
-    void props.copySkillInstanceToGlobal(target, { deleteSource: true }).then((result) => {
+    void props.copySkillInstanceToGlobal(target, { deleteSource: true }).then((result) => untrack(() => {
       setToast(result.message ?? translate(result.ok ? "skills.moved_to_global" : "skills.failed_save_skill"));
       if (result.ok) props.refreshSkillInventory({ force: true });
-    });
+    }));
   };
 
   const workspaceInstallTargetWorkspaces = createMemo<WorkspaceInfo[]>(() =>

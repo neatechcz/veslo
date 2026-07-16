@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -60,6 +60,18 @@ const useOpenCodeDbPath = (dbPath: string) => {
       delete process.env.VESLO_OPENCODE_DB_PATH;
     } else {
       process.env.VESLO_OPENCODE_DB_PATH = previous;
+    }
+  });
+};
+
+const useEnvVar = (name: string, value: string) => {
+  const previous = process.env[name];
+  process.env[name] = value;
+  envRestores.push(() => {
+    if (previous === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = previous;
     }
   });
 };
@@ -150,7 +162,9 @@ describe("session transcript prefetch routes", () => {
     const workspaceId = "ws_legacy_identity";
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-transcript-legacy-identity-"));
     tempDirs.push(workspaceRoot);
-    await useTempVesloDataDir("veslo-session-transcript-legacy-data-");
+    const dataDir = await useTempVesloDataDir("veslo-session-transcript-legacy-data-");
+    const traceFile = join(dataDir, "send-workflow-trace.ndjson");
+    useEnvVar("VESLO_SEND_WORKFLOW_TRACE_FILE", traceFile);
     const dbPath = join(workspaceRoot, "opencode.db");
     seedOpenCodeDb(dbPath, workspaceRoot, 12);
     useOpenCodeDbPath(dbPath);
@@ -213,6 +227,56 @@ describe("session transcript prefetch routes", () => {
     expect(transcriptPayload.opencodeSessionId).toBe("sess-a");
     expect(transcriptPayload.conversationId).toMatch(/^conv-/);
     expect(transcriptPayload.messages.length).toBe(12);
+
+    const projectionResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/${workspaceId}/sessions/sess-a/transcript?limit=12&directory=${encodeURIComponent(workspaceRoot)}&include=latest-run-artifacts&caller=passive-selection`,
+      {
+        headers: {
+          ...authHeaders,
+          "X-Veslo-Send-Trace-Id": "trace-projection-a",
+        },
+      },
+    );
+    expect(projectionResponse.status).toBe(200);
+    const projectionPayload = await projectionResponse.json() as {
+      limit: number;
+      messages: unknown[];
+      latestRunArtifacts?: {
+        sessionId: string;
+        directory?: string;
+        conversationId?: string;
+        opencodeSessionId?: string;
+        runId: string | null;
+      };
+    };
+    expect(projectionPayload.limit).toBe(12);
+    expect(projectionPayload.messages).toHaveLength(12);
+    expect(projectionPayload.latestRunArtifacts?.sessionId).toBe("sess-a");
+    expect(projectionPayload.latestRunArtifacts?.directory).toBe(workspaceRoot);
+    expect(projectionPayload.latestRunArtifacts?.conversationId).toMatch(/^conv-/);
+    expect(projectionPayload.latestRunArtifacts?.opencodeSessionId).toBe("sess-a");
+
+    const projectionTraceEntries = (await readFile(traceFile, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((entry) => entry.traceId === "trace-projection-a");
+    expect(projectionTraceEntries.map((entry) => entry.event)).toEqual([
+      "session-transcript-projection:start",
+      "session-transcript-projection:settle",
+    ]);
+    const settleTrace = projectionTraceEntries[1];
+    expect(settleTrace).toMatchObject({
+      source: "server",
+      caller: "passive-selection",
+      displayLimit: 12,
+      sourceLimit: 200,
+      cacheOutcome: "warm",
+      transcriptSource: "sqlite",
+    });
+    expect(typeof settleTrace?.durationMs).toBe("number");
+    expect(JSON.stringify(projectionTraceEntries)).not.toContain(workspaceRoot);
 
     type WarmPrefetchPayload = {
       queuedSessionIds: string[];

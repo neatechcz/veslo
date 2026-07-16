@@ -70,6 +70,31 @@ jobs:
       - name: Run unit and contract checks
         run: pnpm check:unit
 
+  services-windows:
+    name: Quality / Services (Windows)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run headless service integration check
+        run: pnpm check:services
+
   rust:
     name: Quality / Rust
     runs-on: windows-2022
@@ -149,7 +174,7 @@ jobs:
 
   gate:
     name: Quality / Gate
-    needs: [static, unit, rust, desktop-recovery]
+    needs: [static, unit, services-windows, rust, desktop-recovery]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -158,10 +183,12 @@ jobs:
         env:
           STATIC_RESULT: ${{ needs.static.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
+          SERVICES_WINDOWS_RESULT: ${{ needs.services-windows.result }}
           RUST_RESULT: ${{ needs.rust.result }}
           DESKTOP_RECOVERY_RESULT: ${{ needs.desktop-recovery.result }}
         run: |
           test "$STATIC_RESULT" = "success"
           test "$UNIT_RESULT" = "success"
+          test "$SERVICES_WINDOWS_RESULT" = "success"
           test "$RUST_RESULT" = "success"
           test "$DESKTOP_RECOVERY_RESULT" = "success"

@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onMount } from "solid-js";
+import { For, Show, createMemo, createSignal, onMount, untrack } from "solid-js";
 
 import type { HubMcpCard, McpServerEntry, McpStatusMap } from "../types";
 import type { McpDirectoryInfo } from "../constants";
@@ -446,11 +446,11 @@ export default function McpView(props: McpViewProps) {
                           data-mcp-name={entry.name}
                           disabled={!canConnect() || connecting()}
                           onClick={() => {
-                            void props.installHubMcp(entry.id || entry.name).then((result) => {
+                            void props.installHubMcp(entry.id || entry.name).then((result) => untrack(() => {
                               if (result.ok) {
                                 props.refreshMcpServers();
                               }
-                            });
+                            }));
                           }}
                         >
                           <Show

@@ -104,7 +104,7 @@ test("composer clears transferred drafts through the revision-owned handoff", ()
 
   assert.match(
     composerSource,
-    /const submittedRevision = draftHandoffController\.beginSubmission\(\);[\s\S]*onDraftTransferred: \(\) => \{[\s\S]*draftHandoffController\.acknowledgeTransfer\(submittedRevision,[\s\S]*sendResult = await sendPromise;[\s\S]*draftHandoffController\.applyResult\(/,
+    /const submittedRevision = draftHandoffController\.beginSubmission\(\);[\s\S]*onDraftTransferred: \(\) => \{[\s\S]*draftHandoffController\.acknowledgeTransfer\(\s*submittedRevision,[\s\S]*sendResult = await sendPromise;[\s\S]*draftHandoffController\.applyResult\(/,
     "composer should allow synchronous ownership transfer and guard delayed result clearing with one submitted revision",
   );
 

@@ -227,7 +227,10 @@ import {
 } from "./route-helpers.js";
 import { FileSessionStore } from "./file-sessions.js";
 import { createSessionArchiveStore } from "./session-archives.js";
-import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
+import {
+  createSessionTranscriptDisplayView,
+  createSessionTranscriptPrefetchStore,
+} from "./session-transcript-prefetch.js";
 import {
   type AutomationExecutionInput,
   type AutomationExecutionResult,
@@ -2287,6 +2290,10 @@ async function proxyAiGatewayRequest(input: {
     !sessionId &&
     (
       !isSessionlessFallback ||
+      // A placeholder cannot be safely forwarded when the runtime owner found
+      // more than one possible run. Doing so loses run correlation and lets a
+      // managed-AI provider request escape the local fail-closed boundary.
+      sessionResolution?.workspaceFallbackSuppressedReason === "ambiguous-active-run-context" ||
       (
         isAiGatewayChatCompletionsPath(input.gatewayPath) &&
         !hasActiveGatewayResolutionContext()
@@ -4092,6 +4099,7 @@ function createRoutes(
     sessionOrConversationId: string;
     limit: number;
     directory: string | null;
+    includeSource?: boolean;
   }) => {
     const binding = await conversationService.resolveOpenCodeSessionForRead({
       workspaceId: input.workspace.id,
@@ -4103,15 +4111,26 @@ function createRoutes(
       throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
     }
     const opencodeSessionId = binding.engineSessionId;
-    const snapshot = await sessionTranscriptPrefetch.getOrLoad({
-      workspaceId: input.workspace.id,
-      sessionId: opencodeSessionId,
-      limit: input.limit,
-      directory: input.directory,
-    });
+    const sourceResult = input.includeSource
+      ? await sessionTranscriptPrefetch.getOrLoadSource({
+          workspaceId: input.workspace.id,
+          sessionId: opencodeSessionId,
+          limit: input.limit,
+          directory: input.directory,
+        })
+      : null;
+    const snapshot = sourceResult
+      ? createSessionTranscriptDisplayView(sourceResult.snapshot, input.limit)
+      : await sessionTranscriptPrefetch.getOrLoad({
+          workspaceId: input.workspace.id,
+          sessionId: opencodeSessionId,
+          limit: input.limit,
+          directory: input.directory,
+        });
     return {
       workspaceId: input.workspace.id,
       sessionId: opencodeSessionId,
+      ...(input.directory ? { directory: input.directory } : {}),
       conversationId: binding.conversationId,
       opencodeSessionId,
       limit: snapshot.limit,
@@ -4121,6 +4140,10 @@ function createRoutes(
       staleAt: snapshot.staleAt,
       source: snapshot.source,
       ...(snapshot.diagnostic ? { diagnostic: snapshot.diagnostic } : {}),
+      ...(sourceResult ? {
+        sourceSnapshot: sourceResult.snapshot,
+        cacheOutcome: sourceResult.outcome,
+      } : {}),
     };
   };
 

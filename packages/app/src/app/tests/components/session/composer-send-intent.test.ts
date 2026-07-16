@@ -122,6 +122,12 @@ test("composer distinguishes queued Enter sends from immediate Ctrl+Enter sends"
 test("composer exposes button intents for queue and streaming send-now", () => {
   assert.match(
     composerSource,
+    /data-testid="session-composer-input"[\s\S]*contentEditable=\{!submitLocked\(\)\}/,
+    "the editable composer should expose a stable automation selector",
+  );
+
+  assert.match(
+    composerSource,
     /void sendDraft\(\{ sendNow: false, source: "button" \}\);/,
     "normal send button should queue by default and identify the button source",
   );
@@ -130,6 +136,11 @@ test("composer exposes button intents for queue and streaming send-now", () => {
     composerSource,
     /translate\("session\.queue_message_label"\)/,
     "normal send button should use the localized queue label",
+  );
+  assert.match(
+    composerSource,
+    /data-testid="session-composer-send-button"[\s\S]*void sendDraft\(\{ sendNow: false, source: "button" \}\);/,
+    "the normal send button should expose a stable automation selector",
   );
 
   assert.match(

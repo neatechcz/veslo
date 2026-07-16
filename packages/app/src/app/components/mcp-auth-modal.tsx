@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup, untrack } from "solid-js";
 import { CheckCircle2, Loader2, RefreshCcw, X } from "lucide-solid";
 import Button from "./button";
 import TextInput from "./text-input";
@@ -170,7 +170,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     if (typeof window === "undefined") return;
     stopStatusPolling();
     const startedAt = Date.now();
-    statusPoll = window.setInterval(async () => {
+    statusPoll = window.setInterval(() => untrack(() => (async () => {
       if (Date.now() - startedAt >= MCP_AUTH_TIMEOUT_MS) {
         stopStatusPolling();
         setError(translate("mcp.auth.request_timed_out"));
@@ -183,7 +183,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
         setError(null);
         stopStatusPolling();
       }
-    }, MCP_AUTH_POLL_INTERVAL_MS);
+    })()), MCP_AUTH_POLL_INTERVAL_MS);
   };
 
   const startAuth = async (forceRetry = false, allowAutoReload = true) => {

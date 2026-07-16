@@ -1309,6 +1309,7 @@ export type VesloSessionArtifactItem = {
 
 export type VesloSessionLatestRunArtifacts = {
   sessionId: string;
+  directory?: string;
   conversationId?: string;
   opencodeSessionId?: string;
   workspaceId: string;
@@ -1345,6 +1346,13 @@ export type VesloSessionTranscriptSnapshot = {
   staleAt?: number;
   source?: "sqlite" | "unavailable";
   diagnostic?: VesloConversationReadDiagnostic;
+  latestRunArtifacts?: VesloSessionLatestRunArtifacts;
+};
+
+export type VesloSessionTranscriptReadOptions = {
+  includeLatestRunArtifacts?: boolean;
+  caller?: "passive-selection" | "terminal-recovery";
+  sendTraceId?: string | null;
 };
 
 export type VesloSessionTranscriptPrefetchInput = {

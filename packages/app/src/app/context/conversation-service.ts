@@ -14,6 +14,7 @@ import {
   type VesloConversationSubmitResult,
   type VesloSessionTranscriptRecoveryInput,
   type VesloSessionTranscriptRecoveryResult,
+  type VesloSessionTranscriptReadOptions,
   type VesloSessionTranscriptSnapshot,
 } from "../lib/veslo-server";
 import { normalizeDirectoryPath, safeStringify } from "../utils";
@@ -54,6 +55,7 @@ export type ConversationServiceClient = {
     sessionId: string,
     limit?: number,
     directory?: string,
+    options?: VesloSessionTranscriptReadOptions,
   ) => Promise<VesloSessionTranscriptSnapshot>;
   createConversation: (
     workspaceId: string,
@@ -907,29 +909,70 @@ export function createConversationService<Client extends ConversationServiceClie
     sessionId: string,
     limit: number,
     directory?: string,
+    options?: VesloSessionTranscriptReadOptions,
   ) => {
-    const serverClient = await resolvePassiveConversationReadClient({
-      intent: "live-read",
-      reason: "getTranscriptFromVesloReadApi",
-      workspaceId,
-      directory,
-    });
-    if (!serverClient) return null;
-    const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
-    if (!serverWorkspaceId) return null;
-    const snapshot = await serverClient.getSessionTranscript(serverWorkspaceId, sessionId, limit, directory);
-    if (snapshot.source === "unavailable") {
-      deps.recordSendTrace("getTranscriptFromVesloReadApi:unavailable", {
-        workspaceId,
-        serverWorkspaceId,
-        sessionId,
-        directory: directory ?? null,
-        limit,
-        diagnostic: snapshot.diagnostic ?? null,
+    const projectionCaller = options?.includeLatestRunArtifacts === true && options.caller
+      ? options.caller
+      : null;
+    const projectionStartedAt = projectionCaller ? Date.now() : 0;
+    const traceProjection = (event: "request" | "settle" | "error", payload?: Record<string, unknown>) => {
+      if (!projectionCaller) return;
+      deps.recordSendTrace(`session-transcript-projection:${event}`, {
+        traceId: options?.sendTraceId?.trim() || null,
+        caller: projectionCaller,
+        displayLimit: limit,
+        ...(payload ?? {}),
       });
+    };
+    traceProjection("request");
+    try {
+      const serverClient = await resolvePassiveConversationReadClient({
+        intent: "live-read",
+        reason: "getTranscriptFromVesloReadApi",
+        workspaceId,
+        directory,
+      });
+      if (!serverClient) {
+        traceProjection("settle", {
+          outcome: "unavailable",
+          durationMs: Math.max(0, Date.now() - projectionStartedAt),
+        });
+        return null;
+      }
+      const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(serverClient, workspaceId, directory);
+      if (!serverWorkspaceId) {
+        traceProjection("settle", {
+          outcome: "unavailable",
+          durationMs: Math.max(0, Date.now() - projectionStartedAt),
+        });
+        return null;
+      }
+      const snapshot = await serverClient.getSessionTranscript(serverWorkspaceId, sessionId, limit, directory, options);
+      if (snapshot.source === "unavailable") {
+        deps.recordSendTrace("getTranscriptFromVesloReadApi:unavailable", {
+          workspaceId,
+          serverWorkspaceId,
+          sessionId,
+          directory: directory ?? null,
+          limit,
+          diagnostic: snapshot.diagnostic ?? null,
+        });
+      }
+      deps.rememberConversationScopeFromTranscript(workspaceId, directory, snapshot);
+      traceProjection("settle", {
+        outcome: snapshot.source === "unavailable" ? "unavailable" : "loaded",
+        source: snapshot.source ?? "unknown",
+        messageCount: snapshot.messages.length,
+        durationMs: Math.max(0, Date.now() - projectionStartedAt),
+      });
+      return snapshot;
+    } catch (error) {
+      traceProjection("error", {
+        errorType: error instanceof Error ? error.name : "unknown",
+        durationMs: Math.max(0, Date.now() - projectionStartedAt),
+      });
+      throw error;
     }
-    deps.rememberConversationScopeFromTranscript(workspaceId, directory, snapshot);
-    return snapshot;
   };
 
   const createConversationFromVesloWriteApi = async (
@@ -1513,6 +1556,7 @@ export function createConversationService<Client extends ConversationServiceClie
     sessionId: string;
     directory?: string | null;
     expectedRunId?: string | null;
+    diagnosticTraceId?: string | null;
   }) => {
     const workspaceId = scope.workspaceId.trim();
     const sessionId = scope.sessionId.trim();
@@ -1527,7 +1571,11 @@ export function createConversationService<Client extends ConversationServiceClie
       expectedRunId: scope.expectedRunId?.trim() || undefined,
     });
     if (recovery.state === "persisted" || recovery.state === "unchanged") {
-      return serverClient.getSessionTranscript(serverWorkspaceId, sessionId, 140, directory);
+      return serverClient.getSessionTranscript(serverWorkspaceId, sessionId, 140, directory, {
+        includeLatestRunArtifacts: true,
+        caller: "terminal-recovery",
+        sendTraceId: scope.diagnosticTraceId,
+      });
     }
     return null;
   };
@@ -1540,6 +1588,7 @@ export function createConversationService<Client extends ConversationServiceClie
     sessionId: string;
     runId: string;
     clientMessageId?: string | null;
+    diagnosticTraceId?: string | null;
   }) => {
     const sessionId = scope.opencodeSessionId?.trim() || scope.sessionId.trim();
     if (!sessionId) return null;
@@ -1548,6 +1597,7 @@ export function createConversationService<Client extends ConversationServiceClie
       sessionId,
       directory: scope.directory,
       expectedRunId: scope.runId,
+      diagnosticTraceId: scope.diagnosticTraceId,
     });
 
     // A terminal status already obtained by the lifecycle owner is sufficient

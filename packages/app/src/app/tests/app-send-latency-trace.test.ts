@@ -166,21 +166,16 @@ test("artifact family workspace root follows scoped selected session", () => {
   );
 });
 
-test("latest-run artifacts resolve workspace from scoped selected session", () => {
+test("artifact families project latest-run artifacts from the selected transcript", () => {
   assert.match(
     source,
-    /const latestRunArtifactScope = createMemo\(\(\) => \{[\s\S]*const scope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const workspaceId = scope\?\.workspaceId\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const directory = scope\?\.directory\?\.trim\(\) \|\| sessionDirectoryOverrideById\(\)\[sessionId\]\?\.trim\(\) \|\| workspaceRoot;/,
-    "latest-run artifact target should be derived from the displayed scoped session",
-  );
-  assert.match(
-    source,
-    /ensureConversationReadWorkspaceRegistered\(\s*client,\s*scope\.workspaceId,\s*scope\.directory,\s*\);[\s\S]*client\.getSessionLatestRunArtifacts\(serverWorkspaceId, scope\.sessionId, scope\.directory\)/,
-    "latest-run artifact refresh should resolve the server workspace for the scoped session before reading artifacts",
+    /const projection = transcriptProjectionStore\.currentTranscriptProjection\(\);[\s\S]*resolveArtifactFamilies\(\{[\s\S]*serverArtifacts: projection\?\.items,[\s\S]*preferServerArtifacts: Boolean\(projection\),[\s\S]*legacyArtifacts: projection \? \[\] : artifacts\(\),[\s\S]*workingFiles: projection \? \[\] : workingFiles\(\),/s,
+    "artifact rendering should use the guarded latest-run projection from the selected transcript",
   );
   assert.doesNotMatch(
     source,
-    /const workspaceId = vesloServerWorkspaceId\(\);[\s\S]*getSessionLatestRunArtifacts\(workspaceId, sessionId\)/,
-    "latest-run artifact refresh must not use the active Veslo workspace for every selected session",
+    /getSessionLatestRunArtifacts/,
+    "artifact rendering must not issue an uncorrelated latest-run request after a transcript projection is reserved",
   );
 });
 

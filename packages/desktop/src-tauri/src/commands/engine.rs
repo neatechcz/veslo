@@ -94,19 +94,23 @@ fn workspace_runtime_prepare_result(
 }
 
 fn current_or_new_veslo_client_token(manager: &VesloServerManager) -> String {
-    manager
-        .inner
-        .lock()
-        .ok()
-        .and_then(|state| {
-            state
-                .client_token
-                .as_deref()
-                .map(str::trim)
-                .filter(|token| !token.is_empty())
-                .map(ToOwned::to_owned)
-        })
-        .unwrap_or_else(|| Uuid::new_v4().to_string())
+    let Ok(mut state) = manager.inner.lock() else {
+        return Uuid::new_v4().to_string();
+    };
+
+    if let Some(token) = state
+        .client_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(ToOwned::to_owned)
+    {
+        return token;
+    }
+
+    let token = Uuid::new_v4().to_string();
+    state.client_token = Some(token.clone());
+    token
 }
 
 fn try_reserve_dev_autostart(manager: &EngineManager) -> Option<MutexGuard<'_, ()>> {
@@ -1679,16 +1683,18 @@ fn engine_start_reserved(
 #[cfg(test)]
 mod tests {
     use super::{
-        dev_autostart_disabled_from_env, format_orchestrator_start_error,
-        orchestrator_opencode_base_url, resolve_opencode_bind_host_from_env,
-        resolve_orchestrator_proxy_workspace_id, should_retry_orchestrator_start,
-        try_reserve_dev_autostart, workspace_runtime_prepare_action, WorkspaceRuntimePrepareAction,
+        current_or_new_veslo_client_token, dev_autostart_disabled_from_env,
+        format_orchestrator_start_error, orchestrator_opencode_base_url,
+        resolve_opencode_bind_host_from_env, resolve_orchestrator_proxy_workspace_id,
+        should_retry_orchestrator_start, try_reserve_dev_autostart,
+        workspace_runtime_prepare_action, WorkspaceRuntimePrepareAction,
     };
     use crate::engine::manager::EngineManager;
     use crate::types::{
         EngineRuntime, OrchestratorSharedEngineSnapshot, OrchestratorStatus, OrchestratorWorkspace,
         RuntimeEngineState,
     };
+    use crate::veslo_server::manager::VesloServerManager;
 
     fn orchestrator_workspace(id: &str, path: &str) -> OrchestratorWorkspace {
         OrchestratorWorkspace {
@@ -1727,6 +1733,25 @@ mod tests {
             shared_engine: None,
             last_error: None,
         }
+    }
+
+    #[test]
+    fn current_or_new_veslo_client_token_persists_the_first_generated_token() {
+        let manager = VesloServerManager::default();
+
+        let first = current_or_new_veslo_client_token(&manager);
+        let second = current_or_new_veslo_client_token(&manager);
+
+        assert_eq!(first, second);
+        assert_eq!(
+            manager
+                .inner
+                .lock()
+                .expect("manager state")
+                .client_token
+                .as_deref(),
+            Some(first.as_str())
+        );
     }
 
     #[test]

@@ -1,16 +1,17 @@
 ---
 title: Tauri Pilot E2E Parity KISS Plan
 date: 2026-07-07
-status: planned
+status: in_progress
 done: false
 issue: unlinked
 source_audit: chat:2026-07-07-tauri-pilot-e2e-parity-audit
 base_branch: local/sandbox-merge
-tpe00_token_handoff_done: false
-tpe01_fresh_e2e_build_done: false
+tpe00_token_handoff_done: true
+tpe01_fresh_e2e_build_done: true
 tpe02_redacted_diagnostics_done: false
-tpe03_live_inference_timeout_policy_done: false
-tpe04_production_path_suite_contract_done: false
+tpe02_core_auth_redaction_done: true
+tpe03_live_inference_timeout_policy_done: true
+tpe04_production_path_suite_contract_done: true
 ---
 
 # Tauri Pilot E2E Parity KISS Plan
@@ -54,6 +55,36 @@ The acceptance path must prove that:
   sharing sensitive artifacts.
 - Keep lifecycle/recovery scenarios separate from production-path inference
   acceptance scenarios.
+
+## Implementation Progress — 2026-07-16
+
+Completed:
+
+- **TPE00:** the generated server client token is retained in
+  `VesloServerManager`; persisted server recovery now compares a requested
+  token before adoption and records only non-secret decision booleans when it
+  rejects a mismatch.
+- **TPE01:** `build:desktop:e2e` is the single fresh local entry point. It
+  builds `veslo-server`, force-prepares sidecars, then builds the E2E Tauri
+  binary. The missing-binary error points to that command and explicitly names
+  `tauri.e2e.conf.json`.
+- **TPE02 core safety:** post-boot Pilot auth injection/reload was removed.
+  Live scenarios verify the snapshot-hydrated signed-in state instead. Failure
+  diagnostics now record redacted storage summaries and redact known credential
+  fields from captured output, errors, and command arguments.
+- **TPE03:** canonical `live-inference` now contains only the 95-second
+  message-send scenario. The runner checks every TOML global/step timeout for
+  that suite and bounds the outer command to 100 seconds, including a five
+  second diagnostic grace. The longer cold-start handoff has an explicit
+  `live-inference-lifecycle` suite instead.
+- **TPE04:** canonical live inference requires a real snapshot-hydrated Den
+  user, no gateway fixture, the harness-owned isolated profile, local
+  `codex_oauth` access, a visible assistant response, no direct engine-start
+  IPC, and no inherited OpenAI key/base environment. Lifecycle coverage remains
+  separately labelled.
+
+TPE02 remains open until the non-secret sidecar/provider-config/log/env-presence
+artifacts and their focused tests are added.
 
 ## TPE00 - Fix Veslo Server Client Token Handoff
 

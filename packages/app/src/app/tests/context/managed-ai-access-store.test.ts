@@ -14,6 +14,7 @@ import {
   createManagedAiAccessStore,
   loadManagedAiAccessSingleFlight,
   readManagedAiAccessCache,
+  shouldResetMissingManagedAiAccessProofCache,
   writeManagedAiAccessCache,
   type ManagedAiAccessStorage,
   type ManagedAiAccessStoreOptions,
@@ -234,6 +235,25 @@ test("managed AI access single-flight reuses loads for the same cache key", asyn
   assert.deepEqual(flightActions, ["start", "join", "settle"]);
 });
 
+test("an incomplete managed AI access key does not reset an already-empty proof cache", () => {
+  assert.equal(
+    shouldResetMissingManagedAiAccessProofCache({
+      cacheKey: "",
+      loaded: true,
+      record: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldResetMissingManagedAiAccessProofCache({
+      cacheKey: "stale-key",
+      loaded: true,
+      record: null,
+    }),
+    true,
+  );
+});
+
 test("managed AI access single-flight isolates keys and removes rejected flights for retry", async () => {
   let keyACalls = 0;
   let keyBCalls = 0;
@@ -299,9 +319,48 @@ test("managed AI access defers an unknown identity context without a request or 
       assert.equal(store.managedAiAccess(), null);
       assert.equal(store.managedAiGatewayAccessToken(), "");
       assert.equal(store.managedAiAccessBusy(), false);
+      assert.equal(store.managedAiAccessReady(), false);
       assert.equal(store.managedAiAccessError(), null);
       assert.equal(store.managedAiAccessRetryScheduled(), false);
       assert.equal(scheduledTimers.length, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("managed AI access preflight diagnostics expose readiness facts without bearer values", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+      const store = createManagedAiAccessStore(createStoreOptions({
+        readDenAuth: () => ({
+          denApiBase: "https://api.veslo.work",
+          token: "den-token-that-must-not-be-traced",
+          orgId: "",
+          user: { id: "", email: "user@example.com" },
+          org: { id: "" },
+        }) as DenAuthState,
+        recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+      }));
+
+      await settleEffects();
+
+      assert.equal(store.managedAiAccessReady(), false);
+      const preflight = traces.find((entry) =>
+        entry.event === "managed-ai-access:preflight" &&
+        entry.payload.phase === "request-key-missing");
+      assert.ok(preflight);
+      assert.equal(preflight?.payload.hasUserToken, true);
+      assert.equal(preflight?.payload.hasCacheKey, false);
+      assert.equal(JSON.stringify(preflight).includes("den-token-that-must-not-be-traced"), false);
+      assert.equal(
+        traces.filter((entry) =>
+          entry.event === "managed-ai-access:preflight" &&
+          entry.payload.phase === "request-key-missing").length,
+        1,
+        "an incomplete desktop auth state must settle instead of self-triggering",
+      );
     } finally {
       dispose();
     }
@@ -371,6 +430,7 @@ test("managed AI access store applies cached access before retrying a gateway fa
       assert.equal(store.managedAiGatewayAccessToken(), "cached-token");
       assert.equal(store.managedAiAccessError(), "Managed AI access failed");
       assert.equal(store.managedAiAccessBusy(), false);
+      assert.equal(store.managedAiAccessReady(), true);
       assert.equal(store.managedAiAccessRetryScheduled(), true);
       assert.equal(scheduledTimers.length, 1);
     } finally {
@@ -407,6 +467,7 @@ test("managed AI access store surfaces authoritative missing access without retr
       assert.equal(store.managedAiAccess(), null);
       assert.equal(store.managedAiAccessError(), AI_ACCESS_NOT_CONFIGURED_MESSAGE);
       assert.equal(store.managedAiAccessBusy(), false);
+      assert.equal(store.managedAiAccessReady(), true);
       assert.equal(store.managedAiAccessRetryScheduled(), false);
       assert.equal(store.managedAiAccessBlockedReason(), AI_ACCESS_NOT_CONFIGURED_MESSAGE_KEY);
       assert.equal(scheduledTimers.length, 0);

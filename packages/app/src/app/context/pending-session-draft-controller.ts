@@ -1,4 +1,4 @@
-import { createEffect, createSignal, type Accessor } from "solid-js";
+import { createEffect, createSignal, untrack, type Accessor } from "solid-js";
 
 import {
   openPendingDraftFromDirectorySelection,
@@ -286,7 +286,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
       const generation = ++pendingDraftPersistenceGeneration;
 
       pendingDraftPersistenceQueue = pendingDraftPersistenceQueue
-        .then(async () => {
+        .then(() => untrack(() => (async () => {
           if (pendingDraftPersistenceGeneration !== generation) return;
           const activePendingDraftKeyValue = activePendingDraftKey();
           const activePendingDraftId = activePendingDraftMeta()?.id.trim() || "";
@@ -303,7 +303,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
             updatedAt: Date.now(),
             composer: persistedDraft,
           });
-        })
+        })()))
         .catch((error) => {
           deps.reportError(error, "pendingDrafts.persist");
         });

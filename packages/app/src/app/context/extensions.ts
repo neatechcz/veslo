@@ -1,4 +1,4 @@
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, untrack } from "solid-js";
 
 import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
@@ -1547,10 +1547,10 @@ export function createExtensionsStore(options: {
   const loadPluginsFromConfig = (config: OpencodeConfigFile | null) => {
     loadPluginsFromConfigHelpers(
       config,
-      (next) => {
+      (next) => untrack(() => {
         setPluginList(next);
         setPluginInventory(unmanagedPluginInventoryFromSpecs(next, pluginScope()));
-      },
+      }),
       (message) => setPluginStatus(message),
     );
   };

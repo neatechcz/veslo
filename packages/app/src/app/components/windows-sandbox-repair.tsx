@@ -1,4 +1,4 @@
-import { Show, createSignal, onMount } from "solid-js";
+import { Show, createSignal, onMount, untrack } from "solid-js";
 import { CheckCircle2, Loader2, ShieldAlert } from "lucide-solid";
 
 import Button from "./button";
@@ -190,19 +190,19 @@ export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   onMount(() => {
     if (!isWindowsDesktop()) return;
     void desktopRuntimePreferencesRead()
-      .then((preferences) => {
+      .then((preferences) => untrack(() => {
         setRuntimePreferences(preferences);
         const policy = resolveWindowsSandboxRepairPolicy({
           isWindowsDesktop: true,
           preferences,
           supportFlow: props.supportFlow,
         });
-        maybeStartWindowsSandboxAutoPrepare(policy, () => {
+        maybeStartWindowsSandboxAutoPrepare(policy, () => untrack(() => {
           if (autoPrepareStarted) return;
           autoPrepareStarted = true;
           void autoPrepare();
-        });
-      })
+        }));
+      }))
       .catch(() => setRuntimePreferences(null));
   });
 

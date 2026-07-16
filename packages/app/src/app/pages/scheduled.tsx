@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createMemo, createSignal, type Component } from "solid-js";
+import { For, Match, Show, Switch, createMemo, createSignal, untrack, type Component } from "solid-js";
 import { Dynamic } from "solid-js/web";
 
 import type {
@@ -530,7 +530,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const handleCreateAutomation = async () => {
     const schedule = selectedSchedule();
     if (!schedule || !canCreateAutomation()) return;
-    await createAction.execute(async () => {
+    await createAction.execute(() => untrack(() => (async () => {
       const targetTitle = automationProject().trim() || automationName().trim();
       await props.createAutomation(automationWorkspaceId(), {
         name: automationName().trim(),
@@ -539,7 +539,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         target: targetTitle ? { fallbackTitle: targetTitle } : undefined,
         });
       setCreateModalOpen(false);
-    });
+    })()));
   };
 
   const handleUpdateAutomation = async () => {
@@ -547,7 +547,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     const schedule = selectedSchedule();
     const workspaceId = target?.workspace.serverWorkspaceId;
     if (!target || !workspaceId || !schedule || automationName().trim().length === 0 || automationPrompt().trim().length === 0) return;
-    await updateAction.execute(async () => {
+    await updateAction.execute(() => untrack(() => (async () => {
       const targetPayload = {
         fallbackTitle: automationProject().trim() || undefined,
         agent: automationAgent().trim() || undefined,
@@ -563,25 +563,25 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         target: Object.values(targetPayload).some((value) => value) ? targetPayload : null,
       });
       setEditTarget(null);
-    });
+    })()));
   };
 
   const runAutomationNow = async (item: WorkspaceAutomationItem) => {
     const workspaceId = item.workspace.serverWorkspaceId;
     if (!workspaceId) return;
-    await runAction.execute(async () => {
+    await runAction.execute(() => untrack(() => (async () => {
       await props.runAutomation(workspaceId, item.automation.id);
-    });
+    })()));
   };
 
   const confirmDelete = async () => {
     const target = deleteTarget();
     const workspaceId = target?.workspace.serverWorkspaceId;
     if (!target || !workspaceId) return;
-    await deleteAction.execute(async () => {
+    await deleteAction.execute(() => untrack(() => (async () => {
       await props.deleteAutomation(workspaceId, target.automation.id);
       setDeleteTarget(null);
-    });
+    })()));
   };
 
   const toggleDay = (id: string) => {

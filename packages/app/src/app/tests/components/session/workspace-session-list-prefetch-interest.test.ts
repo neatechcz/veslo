@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deriveLoadedSidebarPrefetchInterest } from "../../../components/session/workspace-session-list-prefetch-interest.js";
+import {
+  deriveBackgroundSidebarPrefetchInterest,
+  deriveLoadedSidebarPrefetchInterest,
+} from "../../../components/session/workspace-session-list-prefetch-interest.js";
 
 test("recent mode groups loaded rows by workspace across the whole sidebar", () => {
   const result = deriveLoadedSidebarPrefetchInterest({
@@ -204,4 +207,70 @@ test("does not guess clicked or selected directory for same-workspace duplicate 
     ],
     expandedSubagentSessions: [],
   });
+});
+
+test("keeps generic prefetch background-only across selected and canonical aliases", () => {
+  const result = deriveBackgroundSidebarPrefetchInterest({
+    clickedSessionId: "ui-a",
+    selectedSessionId: "ui-a",
+    clickedSession: { sessionId: "ui-a", directory: "/work/a" },
+    selectedSession: { sessionId: "ui-a", directory: "/work/a" },
+    loadedTopLevelSessionIds: ["ui-a", "conv-a", "background-a"],
+    expandedSubagentSessionIds: ["open-a", "background-child"],
+    loadedTopLevelSessions: [
+      { sessionId: "ui-a", directory: "/work/a" },
+      { sessionId: "conv-a", directory: "/work/a" },
+      { sessionId: "background-a", directory: "/work/a" },
+    ],
+    expandedSubagentSessions: [
+      { sessionId: "open-a", directory: "/work/a" },
+      { sessionId: "background-child", directory: "/work/a" },
+    ],
+    sessionDirectoriesById: {
+      "ui-a": "/work/a",
+      "conv-a": "/work/a",
+      "open-a": "/work/a",
+      "background-a": "/work/a",
+      "background-child": "/work/a",
+    },
+  }, {
+    uiSessionId: "ui-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "open-a",
+  });
+
+  assert.deepEqual(result, {
+    clickedSessionId: null,
+    selectedSessionId: null,
+    clickedSession: null,
+    selectedSession: null,
+    loadedTopLevelSessionIds: ["background-a"],
+    expandedSubagentSessionIds: ["background-child"],
+    loadedTopLevelSessions: [{ sessionId: "background-a", directory: "/work/a" }],
+    expandedSubagentSessions: [{ sessionId: "background-child", directory: "/work/a" }],
+    sessionDirectoriesById: {
+      "background-a": "/work/a",
+      "background-child": "/work/a",
+    },
+  });
+});
+
+test("keeps matching raw ids in another workspace outside the active projection reservation", () => {
+  const result = deriveBackgroundSidebarPrefetchInterest({
+    clickedSessionId: null,
+    selectedSessionId: null,
+    clickedSession: null,
+    selectedSession: null,
+    loadedTopLevelSessionIds: ["shared"],
+    expandedSubagentSessionIds: [],
+    loadedTopLevelSessions: [{ sessionId: "shared", directory: "/work/b" }],
+    expandedSubagentSessions: [],
+    sessionDirectoriesById: { shared: "/work/b" },
+  }, {
+    workspaceId: "ws-a",
+    uiSessionId: "shared",
+  }, "ws-b");
+
+  assert.deepEqual(result.loadedTopLevelSessionIds, ["shared"]);
+  assert.deepEqual(result.loadedTopLevelSessions, [{ sessionId: "shared", directory: "/work/b" }]);
 });

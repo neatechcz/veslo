@@ -71,7 +71,7 @@ test("extensions store retries hub mcp after Veslo server auth context becomes r
   const autoRefreshSource =
     extensionsSource.match(/createEffect\(\(\) => \{[\s\S]*?refreshHubMcp\(\)\.catch[\s\S]*?\}\);/)?.[0] ?? "";
 
-  assert.match(extensionsSource, /import \{ createEffect, createSignal \} from "solid-js";/);
+  assert.match(extensionsSource, /import \{ createEffect, createSignal, untrack \} from "solid-js";/);
   assert.match(autoRefreshSource, /options\.vesloServerStatus\(\) === "connected"/);
   assert.match(autoRefreshSource, /vesloCapabilities\?\.hub\?\.mcp\?\.read/);
   assert.match(autoRefreshSource, /readDenAuth\(\)/);
@@ -263,6 +263,8 @@ test("app prompts once to install the managed SharePoint MCP from the Den catalo
   assert.match(appSource, /markReloadRequired\("mcp", \{ type: "mcp", name: SHAREPOINT_MCP_ID, action: "added" \}\)/);
   assert.match(appSource, /setMcpStatus\(t\("mcp\.sharepoint_prompt_reload_required"/);
   assert.match(appSource, /data-testid="sharepoint-mcp-install-prompt"/);
+  assert.match(appSource, /cancelTestId="sharepoint-mcp-install-dismiss"/);
+  assert.match(appSource, /confirmTestId="sharepoint-mcp-install-confirm"/);
 });
 
 test("hub mcp cards label shared provider context without merging card installs", () => {

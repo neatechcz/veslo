@@ -215,7 +215,7 @@ test("throttled auto-scroll keeps a trailing bottom anchor while pinned", () => 
 
   assert.match(
     viewportSource,
-    /const now = deps\.now\(\);\s*const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - \(now - lastAutoScrollAt\);\s*if \(nextBehavior === "auto" && remainingMs > 0\) \{\s*if \(trailingAutoScrollTimer === undefined\) \{\s*trailingAutoScrollTimer = window\.setTimeout\(\(\) => \{\s*trailingAutoScrollTimer = undefined;\s*if \(!stickToBottom\(\)\) return;\s*scheduleScrollToLatest\("auto"\);\s*\}, remainingMs\);\s*\}\s*return;\s*\}/s,
+    /const now = deps\.now\(\);\s*const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - \(now - lastAutoScrollAt\);\s*if \(nextBehavior === "auto" && remainingMs > 0\) \{\s*if \(trailingAutoScrollTimer === undefined\) \{\s*trailingAutoScrollTimer = window\.setTimeout\(\(\) => untrack\(\(\) => \{\s*trailingAutoScrollTimer = undefined;\s*if \(!stickToBottom\(\)\) return;\s*scheduleScrollToLatest\("auto"\);\s*\}\), remainingMs\);\s*\}\s*return;\s*\}/s,
     "throttled auto-scroll should schedule one trailing scroll while bottom pinning is still active",
   );
 

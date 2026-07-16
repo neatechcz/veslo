@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, type Accessor } from "solid-js";
+import { createEffect, createMemo, createSignal, untrack, type Accessor } from "solid-js";
 
 import {
   deleteSessionComposerDraft,
@@ -469,7 +469,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
   const switchComposerTarget = async (targetId: string): Promise<ComposerTargetSwitchResult> => {
     const queuedSwitch = composerTargetSwitchQueue
       .catch(() => undefined)
-      .then(() => switchComposerTargetNow(targetId));
+      .then(() => untrack(() => switchComposerTargetNow(targetId)));
     composerTargetSwitchQueue = queuedSwitch.then(() => undefined, () => undefined);
     return await queuedSwitch;
   };

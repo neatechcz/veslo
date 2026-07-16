@@ -42,6 +42,10 @@ import {
   type SessionArtifactMessage,
   type SessionArtifactPart,
 } from "../session-artifacts.js";
+import type {
+  SessionTranscriptCacheOutcome,
+  SessionTranscriptSourceSnapshot,
+} from "../session-transcript-prefetch.js";
 import type { Actor, ServerConfig, WorkspaceInfo } from "../types.js";
 import { shortId } from "../utils.js";
 
@@ -108,7 +112,12 @@ type LoadConversationTranscriptResponse = (input: {
   sessionOrConversationId: string;
   limit: number;
   directory: string | null;
-}) => Promise<ConversationTranscriptResult>;
+  includeSource?: boolean;
+}) => Promise<ConversationTranscriptResult & {
+  directory?: string;
+  sourceSnapshot?: SessionTranscriptSourceSnapshot;
+  cacheOutcome?: SessionTranscriptCacheOutcome;
+}>;
 
 type ResolveConversationExecutionTarget = (input: {
   workspace: WorkspaceInfo;
@@ -196,6 +205,14 @@ function parseSessionTranscriptLimit(input: unknown): number {
         : Number.NaN;
   if (!Number.isFinite(parsed) || parsed <= 0) return SESSION_TRANSCRIPT_DEFAULT_LIMIT;
   return Math.min(Math.floor(parsed), SESSION_TRANSCRIPT_MAX_LIMIT);
+}
+
+type TranscriptProjectionCaller = "passive-selection" | "terminal-recovery";
+
+function parseTranscriptProjection(input: URLSearchParams): TranscriptProjectionCaller | null {
+  if (input.get("include") !== "latest-run-artifacts") return null;
+  const caller = input.get("caller");
+  return caller === "passive-selection" || caller === "terminal-recovery" ? caller : null;
 }
 
 function parseSessionTranscriptMessages(input: unknown): unknown[] {
@@ -287,6 +304,39 @@ function attachTranscriptPartsForArtifacts(
     });
   }
   return result;
+}
+
+function deriveLatestRunArtifactsForTranscript(
+  transcript: ConversationTranscriptResult & {
+    directory?: string;
+    sourceSnapshot?: SessionTranscriptSourceSnapshot;
+  },
+  workspace: WorkspaceInfo,
+  directory: string | null,
+) {
+  const source = transcript.sourceSnapshot ?? transcript;
+  const messages = attachTranscriptPartsForArtifacts(source.messages, source.partsByMessageId);
+  return {
+    ...deriveLatestRunArtifactsResponse({
+      sessionId: transcript.opencodeSessionId,
+      workspaceId: workspace.id,
+      messages,
+    }, { workspaceRoot: directory ?? workspace.path }),
+    ...(directory ? { directory } : {}),
+    ...(transcript.conversationId ? { conversationId: transcript.conversationId } : {}),
+    opencodeSessionId: transcript.opencodeSessionId,
+  };
+}
+
+function serializeConversationTranscript(
+  transcript: ConversationTranscriptResult & {
+    directory?: string;
+    sourceSnapshot?: SessionTranscriptSourceSnapshot;
+    cacheOutcome?: SessionTranscriptCacheOutcome;
+  },
+) {
+  const { sourceSnapshot: _sourceSnapshot, cacheOutcome: _cacheOutcome, ...response } = transcript;
+  return response;
 }
 
 function parseSessionIdArray(input: unknown, fieldName: string): string[] {
@@ -1113,7 +1163,7 @@ export function registerConversationSessionRoutes(
       limit,
       directory,
     });
-    return jsonResponse(result);
+    return jsonResponse(serializeConversationTranscript(result));
   });
 
   addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/runs", "client", async (ctx) => {
@@ -1363,25 +1413,80 @@ export function registerConversationSessionRoutes(
       optionalBodyNullableString(payload, "directory") ?? null,
     );
     const rawSessionDirectoriesById = parseSessionDirectoryMap(payload.sessionDirectoriesById);
-    const sessionDirectoriesById: Record<string, string> = {};
+    const sessionDirectoriesByRawId: Record<string, string> = {};
     for (const [sessionId, sessionDirectory] of Object.entries(rawSessionDirectoriesById)) {
       const resolvedSessionDirectory = await resolveConversationReadDirectory(workspace, sessionDirectory);
       if (!resolvedSessionDirectory) {
         throw new ApiError(400, "invalid_directory", "Session directory is required");
       }
-      sessionDirectoriesById[sessionId] = resolvedSessionDirectory;
+      sessionDirectoriesByRawId[sessionId] = resolvedSessionDirectory;
     }
+    const canonicalSessionIdFlights = new Map<string, Promise<string>>();
+    const sessionDirectoriesById: Record<string, string> = {};
+    const resolveCanonicalSessionId = async (
+      rawSessionId: string,
+      sessionDirectory: string | null,
+    ) => {
+      const sessionId = rawSessionId.trim();
+      const directoryForSession = sessionDirectory?.trim() || "";
+      if (!sessionId || !directoryForSession) return sessionId;
+      const key = `${directoryForSession}\0${sessionId}`;
+      const existing = canonicalSessionIdFlights.get(key);
+      if (existing) return await existing;
+      const flight = conversationService.resolveOpenCodeSessionForRead({
+        workspaceId: workspace.id,
+        workspace,
+        directory: directoryForSession,
+        sessionOrConversationId: sessionId,
+      }).then((binding) => binding?.engineSessionId?.trim() || sessionId);
+      canonicalSessionIdFlights.set(key, flight);
+      try {
+        return await flight;
+      } finally {
+        if (canonicalSessionIdFlights.get(key) === flight) {
+          canonicalSessionIdFlights.delete(key);
+        }
+      }
+    };
+    const canonicalizeSessionId = async (
+      rawSessionId: string,
+      sessionDirectory?: string | null,
+    ) => {
+      const directoryForSession =
+        sessionDirectory?.trim() || sessionDirectoriesByRawId[rawSessionId] || directory;
+      const sessionId = await resolveCanonicalSessionId(rawSessionId, directoryForSession);
+      if (sessionId && directoryForSession) {
+        sessionDirectoriesById[sessionId] = directoryForSession;
+      }
+      return sessionId;
+    };
     const resolveSessionPrefetchRef = async (
       ref: SessionTranscriptPrefetchSessionRef | null,
     ): Promise<SessionTranscriptPrefetchSessionRef | null> => {
       if (!ref) return null;
-      if (!ref.directory) return ref;
-      const resolvedDirectory = await resolveConversationReadDirectory(workspace, ref.directory);
-      if (!resolvedDirectory) {
-        throw new ApiError(400, "invalid_directory", "Session directory is required");
+      let resolvedDirectory = sessionDirectoriesByRawId[ref.sessionId] || directory;
+      if (ref.directory) {
+        resolvedDirectory = await resolveConversationReadDirectory(workspace, ref.directory);
+        if (!resolvedDirectory) {
+          throw new ApiError(400, "invalid_directory", "Session directory is required");
+        }
       }
-      return { ...ref, directory: resolvedDirectory };
+      const sessionId = await canonicalizeSessionId(ref.sessionId, resolvedDirectory);
+      return {
+        sessionId,
+        ...(resolvedDirectory ? { directory: resolvedDirectory } : {}),
+      };
     };
+    const canonicalizeSessionIds = async (sessionIds: string[]) =>
+      await Promise.all(sessionIds.map((sessionId) => canonicalizeSessionId(sessionId)));
+    const canonicalClickedSessionId = clickedSessionId
+      ? await canonicalizeSessionId(clickedSessionId)
+      : null;
+    const canonicalSelectedSessionId = selectedSessionId
+      ? await canonicalizeSessionId(selectedSessionId)
+      : null;
+    const canonicalLoadedTopLevelSessionIds = await canonicalizeSessionIds(loadedTopLevelSessionIds);
+    const canonicalExpandedSubagentSessionIds = await canonicalizeSessionIds(expandedSubagentSessionIds);
     const clickedSession = await resolveSessionPrefetchRef(clickedSessionRaw);
     const selectedSession = await resolveSessionPrefetchRef(selectedSessionRaw);
     const loadedTopLevelSessions = (
@@ -1392,15 +1497,15 @@ export function registerConversationSessionRoutes(
     ).filter((ref): ref is SessionTranscriptPrefetchSessionRef => Boolean(ref));
     const result = await sessionTranscriptPrefetch.updateInterest({
       workspaceId: workspace.id,
-      loadedTopLevelSessionIds,
-      expandedSubagentSessionIds,
+      loadedTopLevelSessionIds: canonicalLoadedTopLevelSessionIds,
+      expandedSubagentSessionIds: canonicalExpandedSubagentSessionIds,
       loadedTopLevelSessions,
       expandedSubagentSessions,
       directory,
       sessionDirectoriesById,
       limit,
-      ...(clickedSessionId ? { clickedSessionId } : {}),
-      ...(selectedSessionId ? { selectedSessionId } : {}),
+      ...(canonicalClickedSessionId ? { clickedSessionId: canonicalClickedSessionId } : {}),
+      ...(canonicalSelectedSessionId ? { selectedSessionId: canonicalSelectedSessionId } : {}),
       ...(clickedSession ? { clickedSession } : {}),
       ...(selectedSession ? { selectedSession } : {}),
     });
@@ -1487,13 +1592,57 @@ export function registerConversationSessionRoutes(
       workspace,
       ctx.url.searchParams.get("directory"),
     );
-    const result = await loadConversationTranscriptResponse({
-      workspace,
-      sessionOrConversationId: sessionId,
-      limit,
-      directory,
-    });
-    return jsonResponse(result);
+    const projectionCaller = parseTranscriptProjection(ctx.url.searchParams);
+    const sendTraceId = ctx.request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || null;
+    const projectionStartedAt = projectionCaller ? Date.now() : 0;
+    if (sendTraceId && projectionCaller) {
+      recordSendWorkflowTrace("server", "session-transcript-projection:start", {
+        traceId: sendTraceId,
+        caller: projectionCaller,
+        displayLimit: limit,
+        sourceLimit: SESSION_TRANSCRIPT_MAX_LIMIT,
+      });
+    }
+    try {
+      const result = await loadConversationTranscriptResponse({
+        workspace,
+        sessionOrConversationId: sessionId,
+        limit,
+        directory,
+        includeSource: Boolean(projectionCaller),
+      });
+      const response = {
+        ...serializeConversationTranscript(result),
+        ...(projectionCaller
+          ? { latestRunArtifacts: deriveLatestRunArtifactsForTranscript(result, workspace, directory) }
+          : {}),
+      };
+      if (sendTraceId && projectionCaller) {
+        recordSendWorkflowTrace("server", "session-transcript-projection:settle", {
+          traceId: sendTraceId,
+          caller: projectionCaller,
+          displayLimit: limit,
+          sourceLimit: SESSION_TRANSCRIPT_MAX_LIMIT,
+          cacheOutcome: result.cacheOutcome ?? "untracked",
+          transcriptSource: result.source ?? "unknown",
+          messageCount: result.messages.length,
+          durationMs: Math.max(0, Date.now() - projectionStartedAt),
+        });
+      }
+      return jsonResponse(response);
+    } catch (error) {
+      if (sendTraceId && projectionCaller) {
+        recordSendWorkflowTrace("server", "session-transcript-projection:error", {
+          traceId: sendTraceId,
+          caller: projectionCaller,
+          displayLimit: limit,
+          sourceLimit: SESSION_TRANSCRIPT_MAX_LIMIT,
+          errorType: error instanceof Error ? error.name : "unknown",
+          durationMs: Math.max(0, Date.now() - projectionStartedAt),
+        });
+      }
+      throw error;
+    }
   });
 
   addRoute(routes, "GET", "/workspace/:id/sessions/:sessionId/artifacts/latest-run", "client", async (ctx) => {
@@ -1511,20 +1660,8 @@ export function registerConversationSessionRoutes(
       sessionOrConversationId: sessionId,
       limit: SESSION_TRANSCRIPT_MAX_LIMIT,
       directory,
+      includeSource: true,
     });
-    const messages = attachTranscriptPartsForArtifacts(
-      transcript.messages,
-      transcript.partsByMessageId,
-    );
-
-    return jsonResponse({
-      ...deriveLatestRunArtifactsResponse({
-        sessionId: transcript.opencodeSessionId,
-        workspaceId: workspace.id,
-        messages,
-      }, { workspaceRoot: directory ?? workspace.path }),
-      ...(transcript.conversationId ? { conversationId: transcript.conversationId } : {}),
-      opencodeSessionId: transcript.opencodeSessionId,
-    });
+    return jsonResponse(deriveLatestRunArtifactsForTranscript(transcript, workspace, directory));
   });
 }

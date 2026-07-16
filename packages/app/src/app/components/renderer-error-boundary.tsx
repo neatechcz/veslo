@@ -1,3 +1,5 @@
+import { untrack } from "solid-js";
+
 import { captureFatalRenderError } from "../lib/error-monitoring";
 
 type RendererErrorFallbackProps = {
@@ -32,7 +34,7 @@ export function RendererErrorFallback(props: RendererErrorFallbackProps) {
   // Solid ErrorBoundary fallbacks do not apply later signal updates reliably.
   // Capture once while this dedicated fallback is created so the support ID is
   // present in its initial DOM; this is intentionally not a reactive memo.
-  const incidentId = captureFatalRenderError(props.error);
+  const incidentId = untrack(() => captureFatalRenderError(props.error));
 
   return (
     <main

@@ -74,6 +74,19 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
     /const runtimeReady = workspace\.workspaceType === "local"[\s\S]*await deps\.ensureLocalRuntimeReadyForWorkspaceStart\?\.\(workspace\.path\)[\s\S]*if \(runtimeReady === false\) \{[\s\S]*ensure-engine:runtime-prerequisites-not-ready[\s\S]*return false;[\s\S]*\}[\s\S]*const skillSyncMaxAttempts = isBootWarmup \|\| isRuntimeRecovery \? 6 : 1;[\s\S]*const skillSyncReason = isBootWarmup[\s\S]*\? "boot-warmup"[\s\S]*: isRuntimeRecovery[\s\S]*\? "runtime-recovery"[\s\S]*: "browse-attach";[\s\S]*deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(workspace,[\s\S]*reason: skillSyncReason,/s,
     "first-prompt lazy runtime startup must ask the local runtime readiness guard before skill sync or engine spawn",
   );
+  const managedConfigStart = ensureSource.indexOf('"ensure-engine:managed-ai-config:start"');
+  const managedConfigDone = ensureSource.indexOf('"ensure-engine:managed-ai-config:done"');
+  const skillSync = ensureSource.indexOf("deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace");
+  const runtimePrepare = ensureSource.indexOf("deps.localRuntimeLifecycle.prepareWorkspaceRuntime({");
+  assert.ok(managedConfigStart >= 0, "runtime ensure should trace the managed AI config gate");
+  assert.ok(managedConfigDone > managedConfigStart, "runtime ensure should wait for managed AI config completion");
+  assert.ok(skillSync > managedConfigDone, "managed AI config must be ready before skill sync");
+  assert.ok(runtimePrepare > managedConfigDone, "managed AI config must be ready before cold engine start");
+  assert.match(
+    ensureSource,
+    /if \(!managedAiConfigReady\) \{[\s\S]*ensure-engine:managed-ai-config:not-ready[\s\S]*return false;/,
+    "runtime ensure must not start a cold engine when live managed AI access is still undecided",
+  );
   assert.match(
     runtimeSource,
     /const isActiveWorkspace = workspace\.id === deps\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*if \(isActiveWorkspace\) \{[\s\S]*deps\.setEngineReady\?\.\(true\);[\s\S]*deps\.onEngineStable\?\.\(\);[\s\S]*\}/s,

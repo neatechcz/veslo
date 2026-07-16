@@ -110,8 +110,8 @@ test("outer transcript rows reconcile through stable primitive keys and live blo
   assert.match(source, /const messageBlockByKey = createMemo\(\(\) => new Map\(messageBlockEntries\(\)\.map\(\(entry\) => \[entry\.key, entry\.block\]\)\)\);/);
   assert.match(
     source,
-    /<For each=\{messageBlockKeys\(\)\}>[\s\S]*renderBlock\(\(\) => messageBlockByKey\(\)\.get\(key\)!\, blockIndex\)/s,
-    "both regular-list fallbacks should retain semantic primitive keys while resolving the latest block through an accessor",
+    /<For each=\{messageBlockKeys\(\)\}>[\s\S]*<RenderedMessageBlock blockKey=\{key\} blockIndex=\{blockIndex\} \/>/s,
+    "both regular-list fallbacks should retain semantic primitive keys while resolving the latest block through the tracked child component",
   );
   assert.match(
     source,

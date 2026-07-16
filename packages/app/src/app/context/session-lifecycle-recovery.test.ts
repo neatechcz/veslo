@@ -960,7 +960,7 @@ test("a superseded in-flight lifecycle poll cannot terminalize its replacement",
 test("accepted run admission watches idle UI state and hydrates the selected terminal transcript", async () => {
   const statuses: string[] = [];
   const recoveries: string[] = [];
-  const hydrated: string[] = [];
+  const hydrated: Array<{ sessionId: string; latestRunArtifacts?: { sessionId: string; opencodeSessionId?: string } }> = [];
   let reads = 0;
   const controller = createSessionLifecycleRecoveryController({
     sessionStatusById: () => ({ "ws-a\0ses-ui": "idle" }),
@@ -975,14 +975,22 @@ test("accepted run admission watches idle UI state and hydrates the selected ter
       recoveries.push(`${scope.workspaceId}:${scope.sessionId}:${scope.expectedRunId}`);
       return {
         workspaceId: "ws-a",
-        sessionId: "ses-open",
+        sessionId: "ses-ui",
+        opencodeSessionId: "ses-open",
         limit: 140,
         messages: [],
         partsByMessageId: {},
         source: "sqlite",
+        latestRunArtifacts: {
+          workspaceId: "ws-a",
+          sessionId: "ses-open",
+          opencodeSessionId: "ses-open",
+          runId: "run-a",
+          items: [],
+        },
       };
     },
-    hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot.sessionId),
+    hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot),
     setSessionStatusForWorkspace: (sessionId, status) => statuses.push(`${sessionId}:${status}`),
     notifySessionBusy: () => {},
   });
@@ -1001,7 +1009,9 @@ test("accepted run admission watches idle UI state and hydrates the selected ter
 
   assert.equal(reads, 1);
   assert.deepEqual(recoveries, ["ws-a:ses-open:run-a"]);
-  assert.deepEqual(hydrated, ["ses-ui"]);
+  assert.deepEqual(hydrated.map((snapshot) => snapshot.sessionId), ["ses-ui"]);
+  assert.equal(hydrated[0]?.latestRunArtifacts?.sessionId, "ses-open");
+  assert.equal(hydrated[0]?.latestRunArtifacts?.opencodeSessionId, "ses-open");
   assert.ok(statuses.includes("ses-ui:submitted"));
   assert.ok(statuses.includes("ses-ui:idle"));
   assert.equal(controller.activeWatchCount(), 0);
@@ -1017,7 +1027,7 @@ test("accepted run admission watches idle UI state and hydrates the selected ter
   });
   await waitForAsyncPoll();
   assert.equal(reads, 1);
-  assert.deepEqual(hydrated, ["ses-ui"]);
+  assert.deepEqual(hydrated.map((snapshot) => snapshot.sessionId), ["ses-ui"]);
 });
 
 test("terminal transcript recovery error is traced and retried once by the lifecycle owner", async () => {

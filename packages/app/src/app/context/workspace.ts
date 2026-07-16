@@ -1,4 +1,4 @@
-import { batch, createEffect, createMemo, createSignal } from "solid-js";
+import { batch, createEffect, createMemo, createSignal, untrack } from "solid-js";
 import type {
   Client,
   DashboardTab,
@@ -192,6 +192,11 @@ export function createWorkspaceStore(options: {
   activeSendTraceId?: () => string | null;
   setEngineReady?: (value: boolean) => void;
   isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
+  syncManagedAiRuntimeConfigBeforeRuntime?: (target: {
+    workspaceId: string;
+    workspaceRoot: string;
+    directory: string;
+  }) => Promise<boolean>;
   populateSidebarFromDb?: (workspaceId: string, directory: string) => Promise<void>;
   hydrateLatestSessionFromDb?: (workspaceId: string, directory: string) => Promise<void>;
   requestWorkspaceFolderAccess?: (input: {
@@ -1145,7 +1150,7 @@ export function createWorkspaceStore(options: {
       10_000,
       `workspaceVesloRead:${input.reason}`,
     )
-      .then((cfg) => {
+      .then((cfg) => untrack(() => {
         if (!stillCurrent()) return;
         if (cfg) {
           setWorkspaceConfig(cfg);
@@ -1157,8 +1162,8 @@ export function createWorkspaceStore(options: {
         }
         publishLocalWorkspaceConfigFallback(workspacePath, true);
         bootTrace("workspaceVesloRead (bg) empty/timeout", input.reason);
-      })
-      .catch((error) => {
+      }))
+      .catch((error) => untrack(() => {
         if (!stillCurrent()) return;
         publishLocalWorkspaceConfigFallback(workspacePath, true);
         _wsLog("[workspace:bootstrap] workspaceVesloRead background failed", {
@@ -1167,7 +1172,7 @@ export function createWorkspaceStore(options: {
           reason: input.reason,
           error: error instanceof Error ? error.message : safeStringify(error),
         });
-      });
+      }));
   }
 
   function populateSidebarFromDbInBackground(input: {
@@ -1226,12 +1231,12 @@ export function createWorkspaceStore(options: {
         reason: "boot-warmup",
         loadSessions: false,
       })
-        .then((ok) => {
+        .then((ok) => untrack(() => {
           if (!ok) scheduledEngineWarmupKeys.delete(warmupKey);
           if (!stillCurrent()) return;
           bootTrace("ensureEngineForWorkspace background warmup done", ok ? "ok" : "failed");
-        })
-        .catch((error) => {
+        }))
+        .catch((error) => untrack(() => {
           scheduledEngineWarmupKeys.delete(warmupKey);
           if (!stillCurrent()) return;
           _wsLog("[workspace:bootstrap] engine warmup failed", {
@@ -1240,7 +1245,7 @@ export function createWorkspaceStore(options: {
             reason: input.reason,
             error: error instanceof Error ? error.message : safeStringify(error),
           });
-        });
+        }));
     };
     startWarmup();
   }
@@ -1683,6 +1688,7 @@ export function createWorkspaceStore(options: {
     onEngineStable: options.onEngineStable,
     clearWorkspaceBusyAllExcept,
     ensureLocalRuntimeReadyForWorkspaceStart: engineStore.ensureLocalRuntimeReadyForWorkspaceStart,
+    syncManagedAiRuntimeConfigBeforeRuntime: options.syncManagedAiRuntimeConfigBeforeRuntime,
     syncWorkspaceSkillMaterializationBeforeRuntime,
     probeWorkspaceApiReady: async ({ workspaceId, workspacePath, reason }) => {
       const entry = options.routing.entry(workspaceId);

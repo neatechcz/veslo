@@ -481,11 +481,11 @@ export function createSessionTranscriptViewport(
       const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - (now - lastAutoScrollAt);
       if (nextBehavior === "auto" && remainingMs > 0) {
         if (trailingAutoScrollTimer === undefined) {
-    trailingAutoScrollTimer = window.setTimeout(() => {
+    trailingAutoScrollTimer = window.setTimeout(() => untrack(() => {
             trailingAutoScrollTimer = undefined;
             if (!stickToBottom()) return;
             scheduleScrollToLatest("auto");
-          }, remainingMs);
+          }), remainingMs);
         }
         return;
       }

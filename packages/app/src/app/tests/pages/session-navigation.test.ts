@@ -435,7 +435,7 @@ test("app routes selected session browsing through DB scope", () => {
   );
   assert.match(
     appSource,
-    /loadOfflineTranscript: async \(sessionId, limit\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const transcriptWorkspaceId = transcriptScope\?\.workspaceId \?\? workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const transcriptDirectory = transcriptScope\?\.directory \|\| workspaceRoot;[\s\S]*getTranscriptFromVesloReadApi\([\s\S]*transcriptWorkspaceId,[\s\S]*sessionId,[\s\S]*limit,[\s\S]*transcriptDirectory \|\| undefined,/s,
+    /loadOfflineTranscript: async \(sessionId, limit, readContext\) => \{[\s\S]*const transcriptScope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const transcriptWorkspaceId = transcriptScope\?\.workspaceId \?\? workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const workspaceRoot = transcriptScope\?\.workspaceRoot \|\| workspaceStore\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const transcriptDirectory = transcriptScope\?\.directory \|\| workspaceRoot;[\s\S]*getTranscriptFromVesloReadApi\([\s\S]*transcriptWorkspaceId,[\s\S]*sessionId,[\s\S]*limit,[\s\S]*transcriptDirectory \|\| undefined,/s,
     "offline transcript snapshots should read through Veslo using the clicked session's workspace and directory scope",
   );
 });

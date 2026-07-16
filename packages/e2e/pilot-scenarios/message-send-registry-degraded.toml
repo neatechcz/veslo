@@ -1,475 +1,516 @@
 [scenario]
 name = "message-send-registry-degraded"
 fail_fast = true
-global_timeout_ms = 95000
+# This is a real cold desktop path: isolated local profile, snapshot-hydrated
+# production Den auth, the local Veslo server, and the real Codex OAuth provider.
+# It is an observation budget, not a product latency target.
+global_timeout_ms = 180000
 
 [[step]]
 name = "root exists"
 action = "wait"
 target = "#root"
-timeout_ms = 15000
+timeout_ms = 30000
 
 [[step]]
-name = "start degraded registry send task"
+name = "prepare real managed AI desktop runtime"
 action = "eval"
 script = '''
 (async () => {
-window.__vesloSendWorkflowTraceEnabled = true;
-window.localStorage.setItem("veslo.sendWorkflowTrace", "1");
-const completeSelector = '[data-testid="message-send-registry-degraded-complete"]';
-const errorSelector = '[data-testid="message-send-registry-degraded-error"]';
-const progressSelector = '[data-testid="message-send-registry-degraded-progress"]';
-document.querySelector(completeSelector)?.remove();
-document.querySelector(errorSelector)?.remove();
-document.querySelector(progressSelector)?.remove();
+  window.__vesloSendWorkflowTraceEnabled = true;
+  window.localStorage.setItem("veslo.sendWorkflowTrace", "1");
 
-const progressMarker = document.createElement("pre");
-progressMarker.dataset.testid = "message-send-registry-degraded-progress";
-progressMarker.style.display = "none";
-progressMarker.textContent = "starting";
-document.body.append(progressMarker);
+  const readySelector = '[data-testid="message-send-registry-degraded-ready"]';
+  const errorSelector = '[data-testid="message-send-registry-degraded-error"]';
+  const progressSelector = '[data-testid="message-send-registry-degraded-progress"]';
+  document.querySelector(readySelector)?.remove();
+  document.querySelector(errorSelector)?.remove();
+  document.querySelector(progressSelector)?.remove();
 
-const setProgress = (stage, detail = null) => {
-  const previous = window.__vesloMessageSendRegistryDegradedProgress ?? null;
-  const timeline = Array.isArray(window.__vesloMessageSendRegistryDegradedTimeline)
-    ? window.__vesloMessageSendRegistryDegradedTimeline
-    : [];
-  window.__vesloMessageSendRegistryDegradedProgress = {
-    stage,
-    detail,
-    at: new Date().toISOString(),
-    elapsedMs: timeline.length > 0 ? Date.now() - timeline[0].ts : 0,
-    previousStage: previous?.stage ?? null,
-  };
-  timeline.push({
-    ts: Date.now(),
-    at: window.__vesloMessageSendRegistryDegradedProgress.at,
-    stage,
-    detail,
-    elapsedMs: window.__vesloMessageSendRegistryDegradedProgress.elapsedMs,
-  });
-  if (timeline.length > 200) timeline.splice(0, timeline.length - 200);
-  window.__vesloMessageSendRegistryDegradedTimeline = timeline;
-  progressMarker.textContent = JSON.stringify(window.__vesloMessageSendRegistryDegradedProgress);
-};
+  const progressMarker = document.createElement("pre");
+  progressMarker.dataset.testid = "message-send-registry-degraded-progress";
+  progressMarker.style.display = "none";
+  document.body.append(progressMarker);
 
-const appendFailureMarker = (payload) => {
-  if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
-  const errorMarker = document.createElement("pre");
-  errorMarker.dataset.testid = "message-send-registry-degraded-error";
-  errorMarker.textContent = JSON.stringify(payload, null, 2);
-  document.body.append(errorMarker);
-};
-
-if (!window.__vesloMessageSendRegistryDegradedStarted) {
-  window.__vesloMessageSendRegistryDegradedStarted = true;
-  window.__vesloMessageSendRegistryDegradedPromise = (async () => {
-    const overallTimeout = setTimeout(() => {
-      appendFailureMarker({
-        message: "Timed out before the message-send registry degraded task produced a result marker.",
-        progress: window.__vesloMessageSendRegistryDegradedProgress ?? null,
-        timeline: window.__vesloMessageSendRegistryDegradedTimeline ?? [],
-        clickedButton: window.__vesloMessageSendRegistryDegradedClickedButton ?? null,
-        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-30) : [],
-        body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
-      });
-    }, 90000);
-    try {
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const trimText = (value) => String(value ?? "").trim();
-
-const assert = (condition, message) => {
-  if (!condition) throw new Error(message);
-};
-
-const waitUntil = async (predicate, options = {}) => {
-  const timeout = options.timeout ?? 10000;
-  const interval = options.interval ?? 250;
-  const message = options.message ?? "Condition was not met";
-  const deadline = Date.now() + timeout;
-  let latest;
-
-  while (Date.now() < deadline) {
-    latest = await predicate();
-    if (latest) return latest;
-    await sleep(interval);
-  }
-
-  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
-};
-
-const tauriInvoke = async (command, payload = {}) => {
-  const invoke = window.__TAURI_INTERNALS__?.invoke;
-  assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
-  return await invoke(command, payload);
-};
-
-const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
-const normalize = (value) => trimText(value).replace(/\s+/g, " ");
-const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
-
-const buttonDetails = () => Array.from(document.querySelectorAll("button")).map((button) => {
-  const rect = button.getBoundingClientRect();
-  return {
-    text: normalize(button.textContent),
-    title: normalize(button.title),
-    label: normalize(button.getAttribute("aria-label")),
-    disabled: button.disabled,
-    visible: Boolean(button.offsetParent) && rect.width > 0 && rect.height > 0,
-  };
-});
-
-const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-30) : [];
-const isVisibleElement = (element) => {
-  if (!(element instanceof HTMLElement)) return false;
-  const rect = element.getBoundingClientRect();
-  const style = window.getComputedStyle(element);
-  return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
-};
-const visibleMessageTexts = (role) =>
-  Array.from(document.querySelectorAll(`[data-message-role="${role}"]`))
-    .filter(isVisibleElement)
-    .map((element) => normalize(element.textContent));
-const messageRoleCount = (role) => visibleMessageTexts(role).length;
-const describeButton = (button) => ({
-  text: normalize(button.textContent),
-  title: normalize(button.title),
-  label: normalize(button.getAttribute("aria-label")),
-  disabled: button.disabled,
-  className: normalize(button.getAttribute("class")),
-});
-
-const assertNoSkillRegistryError = () => {
-  const text = bodyText();
-  if (/skill registry|skill_registry/i.test(text)) {
-    throw new Error(`Skill registry error leaked into the send flow: ${text.slice(0, 2000)}`);
-  }
-};
-
-const waitForLocalVesloServerReady = async () => {
-  let latest = null;
-  setProgress("waiting-local-veslo-server");
-  return await waitUntil(async () => {
-    latest = await tauriInvoke("veslo_server_info").catch(() => null);
-    const baseUrl = trimBaseUrl(latest?.baseUrl);
-    const clientToken = normalize(latest?.clientToken);
-    const hostToken = normalize(latest?.hostToken);
-    if (!latest?.running || !baseUrl || !clientToken || !hostToken) return false;
-
-    const response = await fetch(`${baseUrl}/health`).catch(() => null);
-    if (!response?.ok) return false;
-    const payload = await response.json().catch(() => null);
-    if (payload?.ok !== true) return false;
-
-    return { baseUrl, clientToken, hostToken };
-  }, {
-    timeout: 90000,
-    interval: 500,
-    message: `Local Veslo server did not become ready. Server info=${JSON.stringify(latest)}`,
-  });
-};
-
-const parseDenAuth = (raw) => {
-  if (!raw || typeof raw !== "string") return null;
-  try {
-    const parsed = JSON.parse(raw);
-    const token = normalize(parsed?.token);
-    if (!token) return null;
-    return {
-      token,
-      email: normalize(parsed?.user?.email),
-      userId: normalize(parsed?.user?.id),
-      orgId: normalize(parsed?.orgId || parsed?.org?.id),
-      denApiBase: trimBaseUrl(parsed?.denApiBase),
+  const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+  const setProgress = (stage, detail = null) => {
+    const previous = window.__vesloMessageSendRegistryDegradedProgress ?? null;
+    const timeline = Array.isArray(window.__vesloMessageSendRegistryDegradedTimeline)
+      ? window.__vesloMessageSendRegistryDegradedTimeline
+      : [];
+    const entry = {
+      stage,
+      detail,
+      at: new Date().toISOString(),
+      elapsedMs: timeline.length > 0 ? Date.now() - timeline[0].ts : 0,
+      previousStage: previous?.stage ?? null,
     };
-  } catch {
-    return null;
-  }
-};
-
-const readDenAuthForAiAccess = async () => {
-  const storageAuth = parseDenAuth(
-    window.localStorage.getItem("veslo.den.auth") ||
-    window.sessionStorage.getItem("veslo.den.auth"),
-  );
-  if (storageAuth) return storageAuth;
-
-  const snapshot = await tauriInvoke("den_auth_snapshot_read", {}, 15000).catch(() => null);
-  return parseDenAuth(snapshot?.authJson);
-};
-
-const waitForAiAccessReady = async (connection) => {
-  let latest = null;
-  setProgress("waiting-ai-access");
-  const access = await waitUntil(async () => {
-    const auth = await readDenAuthForAiAccess();
-    if (!auth?.token || !auth.email || auth.email.endsWith("@example.test")) {
-      latest = { auth: auth ? { email: auth.email, userId: auth.userId, orgId: auth.orgId, denApiBase: auth.denApiBase, hasToken: Boolean(auth.token) } : null };
-      return false;
-    }
-    const response = await fetch(`${connection.baseUrl}/ai-gateway/me/ai-access`, {
-      headers: {
-        authorization: `Bearer ${connection.clientToken}`,
-        "x-veslo-gateway-authorization": `Bearer ${auth.token}`,
-        accept: "application/json",
-      },
-    }).catch((error) => {
-      latest = { error: error?.message || String(error) };
-      return null;
-    });
-    if (!response) return false;
-    const text = await response.text();
-    latest = { status: response.status, body: text.slice(0, 500) };
-    if (!response.ok) return false;
-    const payload = text.trim() ? JSON.parse(text) : null;
-    return payload?.aiAccess?.enabled === true ? payload : false;
-  }, {
-    timeout: 90000,
-    interval: 500,
-    message: `AI access endpoint did not become ready. Latest=${JSON.stringify(latest)}`,
-  });
-
-  window.dispatchEvent(new Event("focus"));
-  document.dispatchEvent(new Event("visibilitychange"));
-  await sleep(3000);
-  setProgress("waiting-app-settle-after-ai-access");
-  await waitUntil(() => !/Opening worker|Getting things ready|Failed to load AI access/i.test(bodyText()), {
-    timeout: 90000,
-    interval: 500,
-    message: `App did not settle after AI access became ready. Body=${bodyText().slice(0, 2000)}`,
-  });
-  return access;
-};
-
-const navigateToHash = (path) => {
-  const oldUrl = window.location.href;
-  window.location.hash = path.startsWith("/") ? path : `/${path}`;
-  window.dispatchEvent(new HashChangeEvent("hashchange", {
-    oldURL: oldUrl,
-    newURL: window.location.href,
-  }));
-};
-
-const buttonMatchesLabel = (button, labels) => {
-  if (button.disabled) return false;
-  const rect = button.getBoundingClientRect();
-  if (!button.offsetParent || rect.width <= 0 || rect.height <= 0) return false;
-  const values = [
-    normalize(button.textContent),
-    normalize(button.title),
-    normalize(button.getAttribute("aria-label")),
-  ];
-  return labels.some((label) => values.some((value) => value === label || value.includes(label)));
-};
-
-const findButton = (labels) => Array.from(document.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
-
-const findComposerSendButton = (textbox) => {
-  const labels = [
-    "Send now",
-    "Steer agent now",
-    "Queue message",
-    "Send",
-    "Poslat hned",
-    "Nasm?rovat agenta te?",
-    "Za?adit zpr?vu",
-    "Odeslat",
-    "????",
-    "??????",
-    "????",
-  ];
-  let current = textbox;
-  const containers = [];
-  for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
-    containers.push(current);
-    current = current.parentElement;
-  }
-
-  for (const container of containers) {
-    const matching = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
-    if (matching) return matching;
-  }
-
-  return findButton(labels);
-};
-
-const waitForComposer = async () => {
-  setProgress("waiting-composer");
-  let textbox = await waitUntil(() => {
-    const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
-    return candidate instanceof HTMLElement && candidate.offsetParent ? candidate : false;
-  }, {
-    timeout: 30000,
-    interval: 250,
-    message: `Composer did not appear. Body=${bodyText().slice(0, 2000)}`,
-  }).catch(async () => {
-    const chatButton = findButton(["Chat", "??"]);
-    if (chatButton) {
-      chatButton.click();
-      await sleep(500);
-    }
-    return await waitUntil(() => {
-      const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
-      return candidate instanceof HTMLElement && candidate.offsetParent ? candidate : false;
-    }, {
-      timeout: 30000,
-      interval: 250,
-      message: `Composer did not appear after opening chat. Body=${bodyText().slice(0, 2000)}`,
-    });
-  });
-
-  return textbox;
-};
-
-await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
-  timeout: 15000,
-  message: "Veslo root did not render child UI",
-});
-
-setProgress("waiting-workspace-bootstrap");
-const workspaceList = await waitUntil(async () => {
-  const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
-  return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
-}, {
-  timeout: 45000,
-  interval: 500,
-  message: "Workspace bootstrap did not expose a local workspace",
-});
-const activeWorkspace = workspaceList.workspaces.find((workspace) => workspace.id === workspaceList.activeId) ?? workspaceList.workspaces[0];
-assert(activeWorkspace, `Workspace bootstrap did not expose an active workspace: ${JSON.stringify(workspaceList)}`);
-
-const localServer = await waitForLocalVesloServerReady();
-await waitForAiAccessReady(localServer);
-
-setProgress("navigating-session-route");
-navigateToHash("/session");
-await waitUntil(() => window.location.hash.includes("/session"), {
-  timeout: 10000,
-  message: "Session route did not become active",
-});
-
-assertNoSkillRegistryError();
-const textbox = await waitForComposer();
-const token = `registry-degraded-${Date.now()}`;
-const prompt = `Reply with exactly ${token}. No other words.`;
-
-setProgress("filling-composer", { token });
-textbox.focus();
-textbox.replaceChildren(document.createTextNode(prompt));
-textbox.dispatchEvent(new InputEvent("input", {
-  bubbles: true,
-  data: prompt,
-  inputType: "insertText",
-}));
-
-await waitUntil(() => textbox.textContent === prompt, {
-  timeout: 10000,
-  message: "Composer text was not reflected in the editable node",
-});
-
-assertNoSkillRegistryError();
-setProgress("waiting-send-button", { token });
-const sendButton = await waitUntil(() => findComposerSendButton(textbox), {
-  timeout: 15000,
-  interval: 250,
-  message: `Send button did not become enabled. Buttons=${JSON.stringify(buttonDetails())}. Body=${bodyText().slice(0, 2000)}`,
-});
-window.__vesloMessageSendRegistryDegradedClickedButton = describeButton(sendButton);
-const traceLengthBeforeClick = sendTrace().length;
-const traceLastIdBeforeClick = Number(sendTrace().at(-1)?.id ?? 0);
-const assistantBefore = messageRoleCount("assistant");
-const traceAfterClick = () => sendTrace().filter((entry) => Number(entry?.id ?? 0) > traceLastIdBeforeClick);
-setProgress("clicking-send-button", { token });
-sendButton.click();
-
-setProgress("waiting-send-handler", { token });
-await waitUntil(() => sendTrace().length > traceLengthBeforeClick || traceAfterClick().length > 0, {
-  timeout: 5000,
-  interval: 250,
-  message: `Send click did not reach composer handler. Clicked=${JSON.stringify(window.__vesloMessageSendRegistryDegradedClickedButton)} Buttons=${JSON.stringify(buttonDetails())}. Body=${bodyText().slice(0, 2000)}`,
-});
-
-setProgress("waiting-managed-ai-response", { token });
-let latestManagedAiResponse = null;
-await waitUntil(() => {
-  assertNoSkillRegistryError();
-  const text = bodyText();
-  if (/Send failed|Odesl.n. selhalo/i.test(text)) {
-    throw new Error(`Message send failed before managed AI response. Trace=${JSON.stringify(sendTrace())}. Body=${text.slice(0, 2000)}`);
-  }
-  const assistantTexts = visibleMessageTexts("assistant");
-  const assistantAfter = assistantTexts.length;
-  const trace = traceAfterClick();
-  const hasSendSuccess = trace.some((entry) => entry?.event === "sendPrompt:success");
-  latestManagedAiResponse = {
-    assistantBefore,
-    assistantAfter,
-    hasSendSuccess,
-    trace,
-    assistantTexts,
-    body: text.slice(0, 2000),
+    timeline.push({ ts: Date.now(), ...entry });
+    if (timeline.length > 200) timeline.splice(0, timeline.length - 200);
+    window.__vesloMessageSendRegistryDegradedTimeline = timeline;
+    window.__vesloMessageSendRegistryDegradedProgress = entry;
+    progressMarker.textContent = JSON.stringify(entry);
   };
-  return assistantAfter > assistantBefore && hasSendSuccess && assistantTexts.some((value) => value.includes(token));
-}, {
-  timeout: 90000,
-  interval: 1000,
-  message: `Managed AI response did not render for token ${token}`,
-});
 
-assertNoSkillRegistryError();
-clearTimeout(overallTimeout);
-const completeMarker = document.createElement("div");
-completeMarker.dataset.testid = "message-send-registry-degraded-complete";
-completeMarker.textContent = "complete";
-document.body.append(completeMarker);
-    } catch (error) {
-      clearTimeout(overallTimeout);
-      const fallbackNormalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
-      const fallbackBodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
-      const fallbackButtonDetails = () => Array.from(document.querySelectorAll("button")).map((button) => {
-        const rect = button.getBoundingClientRect();
-        return {
-          text: fallbackNormalize(button.textContent),
-          title: fallbackNormalize(button.title),
-          label: fallbackNormalize(button.getAttribute("aria-label")),
-          disabled: button.disabled,
-          visible: Boolean(button.offsetParent) && rect.width > 0 && rect.height > 0,
-        };
+  const summarizeSendTrace = () => (Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace : [])
+    .slice(-40)
+    .map((entry) => ({
+      id: Number(entry?.id ?? 0) || null,
+      at: typeof entry?.at === "string" ? entry.at : null,
+      event: normalize(entry?.event) || null,
+      source: normalize(entry?.source) || null,
+      sessionId: normalize(entry?.sessionId) || null,
+      workspaceId: normalize(entry?.workspaceId) || null,
+    }));
+  const summarizeWorkflowTrace = () => (Array.isArray(window.__vesloSendWorkflowTrace) ? window.__vesloSendWorkflowTrace : [])
+    .slice(-100)
+    .map((entry) => ({
+      id: Number(entry?.id ?? 0) || null,
+      at: typeof entry?.at === "string" ? entry.at : null,
+      source: normalize(entry?.source) || null,
+      event: normalize(entry?.event) || null,
+      workspaceId: normalize(entry?.workspaceId) || null,
+      targetWorkspaceId: normalize(entry?.targetWorkspaceId) || null,
+      reason: normalize(entry?.reason) || null,
+      syncReason: normalize(entry?.syncReason) || null,
+      decision: normalize(entry?.decision) || null,
+      providerRoutingReady: entry?.providerRoutingReady === true,
+      managedProfilePresent: entry?.managedProfilePresent === true,
+      accessReady: entry?.accessReady === true,
+      ok: entry?.ok === true ? true : entry?.ok === false ? false : null,
+      durationMs: Number.isFinite(Number(entry?.durationMs)) ? Number(entry.durationMs) : null,
+    }));
+  const appendFailureMarker = (payload) => {
+    if (document.querySelector(errorSelector)) return;
+    const errorMarker = document.createElement("pre");
+    errorMarker.dataset.testid = "message-send-registry-degraded-error";
+    errorMarker.style.display = "none";
+    errorMarker.textContent = JSON.stringify({
+      ...payload,
+      progress: window.__vesloMessageSendRegistryDegradedProgress ?? null,
+      timeline: window.__vesloMessageSendRegistryDegradedTimeline ?? [],
+      sendTrace: summarizeSendTrace(),
+      workflowTrace: summarizeWorkflowTrace(),
+      runtimeStartup: window.__vesloMessageSendRegistryDegradedRuntimeStartup ?? null,
+    }, null, 2);
+    document.body.append(errorMarker);
+  };
+
+  if (window.__vesloMessageSendRegistryDegradedPreflightStarted) return true;
+  window.__vesloMessageSendRegistryDegradedPreflightStarted = true;
+  window.__vesloMessageSendRegistryDegradedPreflightPromise = (async () => {
+    try {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const assert = (condition, message) => {
+        if (!condition) throw new Error(message);
+      };
+      const waitUntil = async (predicate, options = {}) => {
+        const deadline = Date.now() + (options.timeout ?? 10000);
+        let latest = null;
+        while (Date.now() < deadline) {
+          latest = await predicate();
+          if (latest) return latest;
+          await sleep(options.interval ?? 250);
+        }
+        throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latest)}`);
+      };
+      const tauriInvoke = async (command, payload = {}) => {
+        const invoke = window.__TAURI_INTERNALS__?.invoke;
+        assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+        return await invoke(command, payload);
+      };
+      const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+      const parseDenAuth = (raw) => {
+        if (!raw || typeof raw !== "string") return null;
+        try {
+          const parsed = JSON.parse(raw);
+          const token = normalize(parsed?.token);
+          if (!token) return null;
+          return {
+            token,
+            email: normalize(parsed?.user?.email),
+            userId: normalize(parsed?.user?.id),
+            orgId: normalize(parsed?.orgId || parsed?.org?.id),
+          };
+        } catch {
+          return null;
+        }
+      };
+      const readDenAuth = async () => {
+        const storageAuth = parseDenAuth(
+          window.localStorage.getItem("veslo.den.auth") || window.sessionStorage.getItem("veslo.den.auth"),
+        );
+        if (storageAuth) return storageAuth;
+        const snapshot = await tauriInvoke("den_auth_snapshot_read", {}).catch(() => null);
+        return parseDenAuth(snapshot?.authJson);
+      };
+      const isVisible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+      };
+      const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
+      const assertNoSkillRegistryError = () => {
+        if (/skill registry|skill_registry/i.test(bodyText())) {
+          throw new Error("Skill registry error leaked into the live message-send flow.");
+        }
+      };
+
+      await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
+        timeout: 30000,
+        message: "Veslo root did not render child UI",
       });
+
+      setProgress("waiting-workspace-bootstrap");
+      const workspaceList = await waitUntil(async () => {
+        const info = await tauriInvoke("workspace_bootstrap").catch(() => null);
+        return Array.isArray(info?.workspaces) && info.workspaces.length > 0 ? info : false;
+      }, {
+        timeout: 60000,
+        interval: 500,
+        message: "Workspace bootstrap did not expose a local workspace",
+      });
+      const activeWorkspace = workspaceList.workspaces.find((workspace) => workspace.id === workspaceList.activeId)
+        ?? workspaceList.workspaces[0];
+      assert(activeWorkspace, "Workspace bootstrap did not expose an active workspace.");
+
+      setProgress("waiting-local-veslo-server");
+      const localServer = await waitUntil(async () => {
+        const info = await tauriInvoke("veslo_server_info").catch(() => null);
+        const baseUrl = trimBaseUrl(info?.baseUrl);
+        const clientToken = normalize(info?.clientToken);
+        const hostToken = normalize(info?.hostToken);
+        if (!info?.running || !baseUrl || !clientToken || !hostToken) return false;
+        const response = await fetch(`${baseUrl}/health`).catch(() => null);
+        const health = await response?.json().catch(() => null);
+        return response?.ok && health?.ok === true ? { baseUrl, clientToken } : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: "Local Veslo server did not become ready",
+      });
+
+      setProgress("waiting-production-ai-access");
+      await waitUntil(async () => {
+        const auth = await readDenAuth();
+        if (!auth?.token || !auth.email || auth.email.endsWith("@example.test")) return false;
+        const response = await fetch(`${localServer.baseUrl}/ai-gateway/me/ai-access`, {
+          headers: {
+            authorization: `Bearer ${localServer.clientToken}`,
+            "x-veslo-gateway-authorization": `Bearer ${auth.token}`,
+            accept: "application/json",
+          },
+        }).catch(() => null);
+        if (!response?.ok) return false;
+        const payload = await response.json().catch(() => null);
+        assert(payload?.aiAccess?.provider === "codex_oauth", "Live managed AI did not resolve Codex OAuth.");
+        assert(payload?.aiAccess?.enabled === true, "Live managed AI access is disabled.");
+        return true;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: "Production AI access did not become ready",
+      });
+
+      const workspaceId = normalize(activeWorkspace.id);
+      const belongsToWorkspace = (entry) => {
+        const entryWorkspaceId = normalize(entry?.workspaceId);
+        const targetWorkspaceId = normalize(entry?.targetWorkspaceId);
+        return !workspaceId || entryWorkspaceId === workspaceId || targetWorkspaceId === workspaceId;
+      };
+      const summarizeRuntimeEntry = (entry) => entry ? {
+        id: Number(entry?.id ?? 0) || null,
+        event: normalize(entry?.event) || null,
+        reason: normalize(entry?.reason) || null,
+        syncReason: normalize(entry?.syncReason) || null,
+        decision: normalize(entry?.decision) || null,
+      } : null;
+      setProgress("waiting-app-managed-runtime", { workspaceId: workspaceId || null });
+      await waitUntil(() => {
+        const trace = Array.isArray(window.__vesloSendWorkflowTrace) ? window.__vesloSendWorkflowTrace : [];
+        const runtimeStartGate = trace.find((entry) =>
+          entry?.source === "app" &&
+          entry?.event === "managed-ai-config-sync:runtime-start-gate" &&
+          belongsToWorkspace(entry) &&
+          entry?.accessReady === true &&
+          entry?.managedProfilePresent === true);
+        const runtimeStartGateId = Number(runtimeStartGate?.id ?? 0);
+        const configDecision = trace.find((entry) =>
+          entry?.source === "app" &&
+          entry?.event === "managed-ai-config-sync:managed-decision" &&
+          belongsToWorkspace(entry) &&
+          Number(entry?.id ?? 0) > runtimeStartGateId &&
+          entry?.providerRoutingReady === true &&
+          (entry?.decision === "write-managed-config" ||
+            (entry?.decision === "skip" && entry?.reason === "managed-config-current")));
+        const configDecisionId = Number(configDecision?.id ?? 0);
+        const configPatch = trace.find((entry) =>
+          entry?.source === "app" &&
+          entry?.event === "managed-ai-config-sync:patch-done" &&
+          belongsToWorkspace(entry) &&
+          Number(entry?.id ?? 0) > configDecisionId);
+        const engineReady = trace.find((entry) =>
+          entry?.source === "workspace-runtime" &&
+          entry?.event === "ensure-engine:success" &&
+          entry?.reason === "boot-warmup" &&
+          belongsToWorkspace(entry) &&
+          Number(entry?.id ?? 0) > configDecisionId);
+        const configSettled = Boolean(configDecision) &&
+          (configDecision.decision !== "write-managed-config" ||
+            Boolean(configPatch));
+        const latest = {
+          runtimeStartGate: summarizeRuntimeEntry(runtimeStartGate),
+          configDecision: summarizeRuntimeEntry(configDecision),
+          configPatch: summarizeRuntimeEntry(configPatch),
+          engineReady: summarizeRuntimeEntry(engineReady),
+        };
+        window.__vesloMessageSendRegistryDegradedRuntimeStartup = latest;
+        return runtimeStartGate && configSettled && engineReady ? latest : false;
+      }, {
+        timeout: 90000,
+        interval: 500,
+        message: "App did not finish the production managed-AI startup contract",
+      });
+
+      assertNoSkillRegistryError();
+      setProgress("ready-for-native-pilot-ui", { workspaceId: workspaceId || null });
+      const readyMarker = document.createElement("div");
+      readyMarker.dataset.testid = "message-send-registry-degraded-ready";
+      readyMarker.style.display = "none";
+      document.body.append(readyMarker);
+    } catch (error) {
       appendFailureMarker({
+        phase: "preflight",
         message: error?.message || String(error),
-        stack: error?.stack || null,
-        progress: window.__vesloMessageSendRegistryDegradedProgress ?? null,
-        timeline: window.__vesloMessageSendRegistryDegradedTimeline ?? [],
-        clickedButton: window.__vesloMessageSendRegistryDegradedClickedButton ?? null,
-        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-30) : [],
-        buttons: fallbackButtonDetails(),
-        body: fallbackBodyText().slice(0, 3000),
       });
     }
   })();
-}
 
-return true;
+  return true;
 })();
 '''
 
 [[step]]
-name = "degraded registry send task finished"
+name = "real managed AI runtime is ready"
 action = "wait"
-target = "[data-testid=\"message-send-registry-degraded-complete\"], [data-testid=\"message-send-registry-degraded-error\"]"
-timeout_ms = 95000
+target = "[data-testid=\"message-send-registry-degraded-ready\"], [data-testid=\"message-send-registry-degraded-error\"]"
+timeout_ms = 100000
 
 [[step]]
-name = "degraded registry send task succeeded"
+name = "managed AI preflight succeeded"
 action = "eval"
 script = '''
 const error = document.querySelector('[data-testid="message-send-registry-degraded-error"]');
-if (error) {
-  const detail = (error.textContent || "Message send registry degraded task failed")
-    .replace(/[\u0080-\uffff]/g, "?")
-    .slice(0, 4000);
-  throw new Error(`Message send registry degraded task failed: ${detail}`);
-}
+if (error) throw new Error(`Live managed AI preflight failed: ${(error.textContent || "unknown error").slice(0, 4000)}`);
+true;
+'''
+
+[[step]]
+name = "open session through Pilot navigation"
+action = "navigate"
+url = "http://tauri.localhost/#/session"
+timeout_ms = 15000
+
+[[step]]
+name = "live account SharePoint prompt is visible"
+action = "wait"
+target = "[data-testid=\"sharepoint-mcp-install-prompt\"]"
+timeout_ms = 30000
+
+[[step]]
+name = "dismiss live account SharePoint prompt through Pilot"
+action = "click"
+target = "[data-testid=\"sharepoint-mcp-install-dismiss\"]"
+timeout_ms = 15000
+
+[[step]]
+name = "live account SharePoint prompt is gone"
+action = "wait"
+target = "[data-testid=\"sharepoint-mcp-install-prompt\"]"
+gone = true
+timeout_ms = 15000
+
+[[step]]
+name = "real session composer is visible"
+action = "wait"
+target = "[data-testid=\"session-composer-input\"]"
+timeout_ms = 30000
+
+[[step]]
+name = "capture native send baseline"
+action = "eval"
+script = '''
+(() => {
+  const errorSelector = '[data-testid="message-send-registry-degraded-error"]';
+  const completeSelector = '[data-testid="message-send-registry-degraded-complete"]';
+  document.querySelector(errorSelector)?.remove();
+  document.querySelector(completeSelector)?.remove();
+  window.__vesloMessageSendRegistryDegradedNativeClick = null;
+  window.__vesloMessageSendRegistryDegradedResponseMonitorStarted = false;
+  const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+  const visibleAssistantCount = () => Array.from(document.querySelectorAll('[data-message-role="assistant"]'))
+    .filter((element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    })
+    .length;
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest('[data-testid="session-composer-send-button"]')
+      : null;
+    if (!(target instanceof HTMLButtonElement)) return;
+    window.__vesloMessageSendRegistryDegradedNativeClick = {
+      atMs: Date.now(),
+      at: new Date().toISOString(),
+      targetTestId: normalize(target.dataset.testid),
+      disabled: target.disabled,
+      sendTraceLastId: Number((Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace : []).at(-1)?.id ?? 0),
+      assistantCountBefore: visibleAssistantCount(),
+    };
+  }, { capture: true, once: true });
+  true;
+})();
+'''
+
+[[step]]
+name = "type live prompt through Pilot"
+action = "type"
+target = "[data-testid=\"session-composer-input\"]"
+text = "Reply with exactly veslo-live-parity-canary. No other words."
+timeout_ms = 15000
+
+[[step]]
+name = "queue button becomes enabled"
+action = "wait"
+target = "[data-testid=\"session-composer-send-button\"]:not([disabled])"
+timeout_ms = 15000
+
+[[step]]
+name = "click queue button through Pilot"
+action = "click"
+target = "[data-testid=\"session-composer-send-button\"]"
+timeout_ms = 15000
+
+[[step]]
+name = "observe real managed AI response"
+action = "eval"
+script = '''
+(async () => {
+  const completeSelector = '[data-testid="message-send-registry-degraded-complete"]';
+  const errorSelector = '[data-testid="message-send-registry-degraded-error"]';
+  const progressSelector = '[data-testid="message-send-registry-degraded-progress"]';
+  const token = "veslo-live-parity-canary";
+  const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+  const progressMarker = document.querySelector(progressSelector);
+  const setProgress = (stage, detail = null) => {
+    if (!progressMarker) return;
+    const current = window.__vesloMessageSendRegistryDegradedProgress ?? null;
+    const entry = { stage, detail, at: new Date().toISOString(), previousStage: current?.stage ?? null };
+    window.__vesloMessageSendRegistryDegradedProgress = entry;
+    progressMarker.textContent = JSON.stringify(entry);
+  };
+  const summarizeSendTrace = () => (Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace : [])
+    .slice(-50)
+    .map((entry) => ({
+      id: Number(entry?.id ?? 0) || null,
+      at: typeof entry?.at === "string" ? entry.at : null,
+      event: normalize(entry?.event) || null,
+      source: normalize(entry?.source) || null,
+      sessionId: normalize(entry?.sessionId) || null,
+      workspaceId: normalize(entry?.workspaceId) || null,
+    }));
+  const visibleAssistantTexts = () => Array.from(document.querySelectorAll('[data-message-role="assistant"]'))
+    .filter((element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    })
+    .map((element) => normalize(element.textContent));
+  const appendFailure = (payload) => {
+    if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
+    const marker = document.createElement("pre");
+    marker.dataset.testid = "message-send-registry-degraded-error";
+    marker.style.display = "none";
+    marker.textContent = JSON.stringify({
+      ...payload,
+      progress: window.__vesloMessageSendRegistryDegradedProgress ?? null,
+      nativeClick: window.__vesloMessageSendRegistryDegradedNativeClick ?? null,
+      sendTrace: summarizeSendTrace(),
+    }, null, 2);
+    document.body.append(marker);
+  };
+
+  if (window.__vesloMessageSendRegistryDegradedResponseMonitorStarted) return true;
+  window.__vesloMessageSendRegistryDegradedResponseMonitorStarted = true;
+  window.__vesloMessageSendRegistryDegradedResponseMonitorPromise = (async () => {
+    try {
+      const nativeClick = window.__vesloMessageSendRegistryDegradedNativeClick;
+      if (!nativeClick || nativeClick.targetTestId !== "session-composer-send-button" || nativeClick.disabled) {
+        throw new Error("Pilot click did not reach the enabled composer send button.");
+      }
+      const deadline = Date.now() + 150000;
+      setProgress("waiting-production-managed-ai-response", { clickAt: nativeClick.at });
+      let latest = null;
+      while (Date.now() < deadline) {
+        const body = document.body.innerText.replace(/\s+/g, " ").trim();
+        if (/Send failed|Odesl.n. selhalo/i.test(body)) {
+          throw new Error("The visible composer flow reported a send failure.");
+        }
+        if (/skill registry|skill_registry/i.test(body)) {
+          throw new Error("Skill registry error leaked into the live message-send flow.");
+        }
+        const trace = summarizeSendTrace().filter((entry) => Number(entry.id ?? 0) > nativeClick.sendTraceLastId);
+        const assistantTexts = visibleAssistantTexts();
+        const hasSendSuccess = trace.some((entry) => entry.event === "sendPrompt:success");
+        const hasExpectedAssistantResponse = assistantTexts.some((text) => text.includes(token));
+        latest = {
+          elapsedMs: Date.now() - nativeClick.atMs,
+          assistantCount: assistantTexts.length,
+          hasSendSuccess,
+          hasExpectedAssistantResponse,
+          trace,
+        };
+        if (assistantTexts.length > nativeClick.assistantCountBefore && hasSendSuccess && hasExpectedAssistantResponse) {
+          setProgress("production-managed-ai-response-rendered", latest);
+          const complete = document.createElement("div");
+          complete.dataset.testid = "message-send-registry-degraded-complete";
+          complete.style.display = "none";
+          complete.textContent = JSON.stringify(latest);
+          document.body.append(complete);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      throw new Error(`Managed AI response did not render within 150000ms. Latest=${JSON.stringify(latest)}`);
+    } catch (error) {
+      appendFailure({
+        phase: "response",
+        message: error?.message || String(error),
+      });
+    }
+  })();
+
+  return true;
+})();
+'''
+
+[[step]]
+name = "real managed AI response finished"
+action = "wait"
+target = "[data-testid=\"message-send-registry-degraded-complete\"], [data-testid=\"message-send-registry-degraded-error\"]"
+timeout_ms = 165000
+
+[[step]]
+name = "real managed AI response succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="message-send-registry-degraded-error"]');
+if (error) throw new Error(`Live managed AI response failed: ${(error.textContent || "unknown error").slice(0, 4000)}`);
+const complete = document.querySelector('[data-testid="message-send-registry-degraded-complete"]');
+if (!complete) throw new Error("Live managed AI response did not produce a completion marker.");
 true;
 '''

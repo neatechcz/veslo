@@ -7,18 +7,22 @@ import * as pilotRunnerModule from './pilot-runner.js';
 
 import {
   assertLiveManagedAiAuthForScenarioSelection,
+  assertPilotScenarioTimeoutCap,
   assertPilotScenarioSelectionIsolated,
   buildPilotCommand,
-  buildPilotDenAuthSeedScript,
+  buildPilotDesktopAuthHydrationCheckScript,
+  buildPilotStorageSummaryScript,
   defaultPilotScenarios,
   pilotScenarioSuiteNames,
   pilotFailureDiagnosticCommands,
   pilotSessionRenderSuccessArtifactCommands,
   pilotReadinessProbeCommands,
   resolvePilotBinary,
-  resolvePilotDenAuthJson,
+  resolveCanonicalLiveInferenceCommandTimeoutMs,
   resolvePilotScenarioCommandTimeoutMs,
   resolvePilotScenarioSelection,
+  redactPilotCommandArgs,
+  redactPilotDiagnosticText,
   sanitizePilotArtifactName,
   scenarioSelectionNeedsSkillEnableInventoryFixture,
   scenarioSelectionNeedsGoogleMcpCatalogFixture,
@@ -81,10 +85,39 @@ test('resolvePilotScenarioCommandTimeoutMs bounds tauri-pilot scenario runs whil
   );
 });
 
+test('canonical live inference observes a cold real response with diagnostic collection grace', () => {
+  assert.equal(resolveCanonicalLiveInferenceCommandTimeoutMs({}), 185_000);
+  assert.equal(
+    resolveCanonicalLiveInferenceCommandTimeoutMs({ E2E_PILOT_SCENARIO_TIMEOUT_MS: '60000' }),
+    60_000,
+  );
+  assert.equal(
+    resolveCanonicalLiveInferenceCommandTimeoutMs({ E2E_PILOT_SCENARIO_TIMEOUT_MS: '900000' }),
+    185_000,
+  );
+});
+
+test('Pilot scenario timeout cap rejects canonical timeouts above the real cold-response budget', () => {
+  const root = mkdtempSync(join(tmpdir(), 'veslo-pilot-timeout-cap-'));
+  const allowed = join(root, 'allowed.toml');
+  const rejected = join(root, 'rejected.toml');
+  try {
+    writeFileSync(allowed, '[scenario]\nglobal_timeout_ms = 180000\n\n[[step]]\ntimeout_ms = 180000\n');
+    writeFileSync(rejected, '[scenario]\nglobal_timeout_ms = 180001\n');
+
+    assert.doesNotThrow(() => assertPilotScenarioTimeoutCap([allowed]));
+    assert.throws(() => assertPilotScenarioTimeoutCap([rejected]), /global_timeout_ms=180001/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('runPilotScenarios passes an explicit timeout to tauri-pilot run commands', () => {
   const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
 
-  assert.match(source, /const scenarioCommandTimeoutMs = resolvePilotScenarioCommandTimeoutMs\(\)/);
+  assert.match(source, /const isCanonicalLiveInferenceSuite = options\.suite\?\.trim\(\) === 'live-inference'/);
+  assert.match(source, /\? resolveCanonicalLiveInferenceCommandTimeoutMs\(\)\s*:\s*resolvePilotScenarioCommandTimeoutMs\(\)/);
+  assert.match(source, /if \(isCanonicalLiveInferenceSuite\) \{\s*assertPilotScenarioTimeoutCap\(scenarios\);/);
   assert.match(source, /args: \['run', scenario\],[\s\S]*timeoutMs: scenarioCommandTimeoutMs/);
   assert.match(source, /args: \['run', reconnectScenario\],[\s\S]*timeoutMs: scenarioCommandTimeoutMs/);
 });
@@ -110,8 +143,8 @@ test('pilot failure diagnostics include high-signal app state probes', () => {
     'logs',
     'network',
     'network-failed',
-    'storage-local',
-    'storage-session',
+    'storage-local-summary',
+    'storage-session-summary',
     'forms',
     'send-workflow-trace',
     'veslo-server-info',
@@ -132,6 +165,20 @@ test('pilot failure diagnostics include high-signal app state probes', () => {
     'eval',
     '--json',
     '(window.__vesloDumpSendWorkflowTrace?.() ?? window.__vesloSendWorkflowTrace ?? []).slice(-300)',
+  ]);
+  assert.deepEqual(commands.find((command) => command.name === 'storage-local-summary')?.args, [
+    '--window',
+    'main',
+    'eval',
+    '--json',
+    buildPilotStorageSummaryScript('local'),
+  ]);
+  assert.deepEqual(commands.find((command) => command.name === 'storage-session-summary')?.args, [
+    '--window',
+    'main',
+    'eval',
+    '--json',
+    buildPilotStorageSummaryScript('session'),
   ]);
   assert.deepEqual(commands.find((command) => command.name === 'screenshot')?.args, [
     '--window',
@@ -185,10 +232,8 @@ test('live-inference pilot suite uses production-path managed AI scenarios', () 
   const e2eRoot = '/repo/packages/e2e';
   const names = pilotScenarioSuiteNames('live-inference');
 
-  assert.deepEqual(names, [
-    'runtime-cold-start-session-handoff',
-    'message-send-registry-degraded',
-  ]);
+  assert.deepEqual(names, ['message-send-registry-degraded']);
+  assert.deepEqual(pilotScenarioSuiteNames('live-inference-lifecycle'), ['runtime-cold-start-session-handoff']);
 
   const scenarios = resolvePilotScenarioSelection({ suite: 'live-inference' }, e2eRoot);
   assert.equal(scenarioSelectionRequiresLiveManagedAiAuth(scenarios), true);
@@ -202,10 +247,24 @@ test('live-inference pilot suite uses production-path managed AI scenarios', () 
       `${scenarioName} must not bypass the production workspace runtime path`,
     );
     assert.match(content, /ai-gateway\/me\/ai-access/, `${scenarioName} must check live AI gateway access`);
+    assert.match(content, /aiAccess\?\.provider === "codex_oauth"/, `${scenarioName} must require the managed codex_oauth provider`);
     assert.match(
       content,
-      /messageRoleCount\("assistant"\)|visibleMessageTexts\("assistant"\)/,
+      /visibleAssistantTexts\(\)/,
       `${scenarioName} must require a rendered assistant response`,
+    );
+    assert.match(content, /action = "navigate"/, `${scenarioName} must use Pilot navigation`);
+    assert.match(content, /action = "type"/, `${scenarioName} must type through Pilot`);
+    assert.match(content, /action = "click"/, `${scenarioName} must click through Pilot`);
+    assert.match(
+      content,
+      /data-testid=\\"session-composer-input\\"/,
+      `${scenarioName} must target the stable composer input selector`,
+    );
+    assert.doesNotMatch(
+      content,
+      /replaceChildren\(|dispatchEvent\(new InputEvent|sendButton\.click\(/,
+      `${scenarioName} must not bypass native Pilot input or click actions`,
     );
   }
 });
@@ -224,43 +283,65 @@ test('pilotReadinessProbeCommands waits for both socket and webview readiness', 
   assert.deepEqual(pilotReadinessProbeCommands(), [['ping'], ['state']]);
 });
 
-test('resolvePilotDenAuthJson prefers the Veslo-prefixed auth seed', () => {
-  assert.equal(resolvePilotDenAuthJson({}), null);
-  assert.equal(
-    resolvePilotDenAuthJson({
-      E2E_DEN_AUTH_JSON: '{"token":"fallback"}',
-      VESLO_E2E_DEN_AUTH_JSON: '{"token":"preferred"}',
-    }),
-    '{"token":"preferred"}',
+test('live Pilot startup gives the production webview and snapshot hydration bounded cold-start time', () => {
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /const PILOT_WEBVIEW_READINESS_TIMEOUT_MS = 30_000;/);
+  assert.match(source, /const PILOT_DESKTOP_AUTH_HYDRATION_COMMAND_TIMEOUT_MS = 15_000;/);
+  assert.match(
+    source,
+    /ensurePilotReady[\s\S]*Math\.min\(PILOT_WEBVIEW_READINESS_TIMEOUT_MS, resolveLaunchTimeout\(\)\)/,
+  );
+  assert.match(
+    source,
+    /verifyPilotDesktopAuthHydration[\s\S]*Math\.min\([\s\S]*PILOT_DESKTOP_AUTH_HYDRATION_COMMAND_TIMEOUT_MS,[\s\S]*options\.timeoutMs \?\? resolveLaunchTimeout\(\)/,
   );
 });
 
-test('resolvePilotDenAuthJson reads authJson from the configured live snapshot file', () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'veslo-pilot-den-auth-'));
-  const snapshotPath = join(tempDir, 'den-auth.json');
-  const authJson = JSON.stringify({
-    denApiBase: 'https://api.veslo.work',
-    token: 'live-token',
-    user: { email: 'user@neatech.cz' },
-  });
+test('live auth verification checks snapshot-hydrated WebView state without writing or reloading it', () => {
+  const script = buildPilotDesktopAuthHydrationCheckScript();
 
-  try {
-    writeFileSync(snapshotPath, JSON.stringify({ version: 1, authJson }));
-    assert.equal(
-      resolvePilotDenAuthJson({ VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: snapshotPath }),
-      authJson,
-    );
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
+  assert.match(script, /window\.localStorage\.getItem\("veslo\.den\.auth"\)/);
+  assert.match(script, /desktop-snapshot-hydration/);
+  assert.doesNotMatch(script, /setItem\(/);
+  assert.doesNotMatch(script, /den_auth_snapshot_write/);
+  assert.doesNotMatch(script, /window\.location\.reload\(\)/);
 });
 
-test('buildPilotDenAuthSeedScript writes browser and desktop auth state', () => {
-  const script = buildPilotDenAuthSeedScript('{"denApiBase":"http://127.0.0.1:8788","token":"token"}');
+test('Pilot storage summaries expose auth state without raw storage values', () => {
+  const local = buildPilotStorageSummaryScript('local');
+  const session = buildPilotStorageSummaryScript('session');
 
-  assert.match(script, /window\.localStorage\.setItem\("veslo\.den\.auth", authJson\)/);
-  assert.match(script, /den_auth_snapshot_write/);
-  assert.match(script, /window\.location\.reload\(\)/);
+  assert.match(local, /hasToken/);
+  assert.match(local, /denApiBase/);
+  assert.match(session, /window\.sessionStorage/);
+  assert.doesNotMatch(local, /storage list/);
+  assert.doesNotMatch(local, /return authRaw/);
+});
+
+test('Pilot diagnostic redaction removes bearer material from structured output and command arguments', () => {
+  const redacted = redactPilotDiagnosticText(JSON.stringify({
+    provider: 'codex_oauth',
+    token: 'live-token',
+    nested: {
+      authorization: 'Bearer another-live-token',
+      accessToken: 'access-live-token',
+      refreshToken: 'refresh-live-token',
+      clientToken: 'client-live-token',
+      apiKey: 'api-key-live-token',
+      secret: 'secret-live-token',
+      password: 'password-live-token',
+    },
+    message: 'Authorization: Bearer third-live-token',
+  }));
+
+  assert.match(redacted, /codex_oauth/);
+  assert.match(redacted, /<redacted>/);
+  assert.doesNotMatch(redacted, /live-token|another-live-token|third-live-token|access-live-token|refresh-live-token|client-live-token|api-key-live-token|secret-live-token|password-live-token/);
+  assert.deepEqual(
+    redactPilotCommandArgs(['--socket', '/tmp/veslo.sock', 'eval', 'window.token = "live-token"']),
+    ['--socket', '/tmp/veslo.sock', 'eval', '<redacted-eval-script>'],
+  );
 });
 
 test('resolvePilotScenarioSelection supports focused scenario names without re-enabling legacy WDIO specs', () => {
@@ -646,26 +727,6 @@ test('session queue durability rejects the shared existing-profile switch', () =
   assert.doesNotThrow(() => assertSessionQueueRuntimeFixtureProfileIsolation(selected, {}));
 });
 
-test('resolvePilotDenAuthJson reads authJson from the production desktop snapshot path', () => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'veslo-pilot-den-auth-prod-'));
-  const snapshotPath = join(tempDir, 'den-auth.json');
-  const authJson = JSON.stringify({
-    denApiBase: 'https://api.veslo.work',
-    token: 'live-token',
-    user: { email: 'user@neatech.cz' },
-  });
-
-  try {
-    writeFileSync(snapshotPath, JSON.stringify({ version: 1, authJson }));
-    assert.equal(
-      resolvePilotDenAuthJson({ VESLO_DEN_AUTH_SNAPSHOT_PATH: snapshotPath }),
-      authJson,
-    );
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
 test('managed AI inference pilot scenarios disable debug dev autostart for production-path runtime startup', () => {
   const e2eRoot = '/repo/packages/e2e';
 
@@ -725,6 +786,60 @@ test('VSLO-235 port contention scenario requests a held local server port', () =
     scenarioSelectionNeedsPortContentionFixture(resolvePilotScenarioSelection({ scenario: ['smoke'] }, e2eRoot)),
     false,
   );
+});
+
+test('canonical live inference clears inherited E2E gateway and registry fixtures before desktop launch', () => {
+  const configureLiveEnvironment = (pilotRunnerModule as Record<string, unknown>)
+    .configureCanonicalLiveInferenceEnvironment;
+  assert.equal(typeof configureLiveEnvironment, 'function');
+  const env: NodeJS.ProcessEnv = {
+    E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+    E2E_SKILL_REGISTRY_FIXTURE: '1',
+    E2E_SKILL_REGISTRY_SERVER_ENV: '1',
+    E2E_SKILL_REGISTRY_AUTH_BASE: 'fixture',
+    E2E_GOOGLE_MCP_CATALOG_FIXTURE: '1',
+    E2E_SHAREPOINT_MCP_CATALOG_FIXTURE: '1',
+    E2E_RUN_ACTIVITY_PROBE_MODE: 'model-retry-no-progress',
+    E2E_MANAGED_AI_RESPONSE_DELAY_MS: '30000',
+    E2E_SKILL_REGISTRY_EVENTS_MODE: 'workspace-update-repeat',
+  };
+
+  const restore = (
+    configureLiveEnvironment as (target: NodeJS.ProcessEnv) => () => void
+  )(env);
+  assert.deepEqual(env, {
+    E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+    E2E_SKILL_REGISTRY_FIXTURE: '0',
+    E2E_SKILL_REGISTRY_SERVER_ENV: '0',
+    E2E_SKILL_REGISTRY_AUTH_BASE: '',
+    E2E_GOOGLE_MCP_CATALOG_FIXTURE: '0',
+    E2E_SHAREPOINT_MCP_CATALOG_FIXTURE: '0',
+    E2E_RUN_ACTIVITY_PROBE_MODE: '',
+    E2E_MANAGED_AI_RESPONSE_DELAY_MS: '',
+    E2E_SKILL_REGISTRY_EVENTS_MODE: '',
+  });
+
+  restore();
+  assert.deepEqual(env, {
+    E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+    E2E_SKILL_REGISTRY_FIXTURE: '1',
+    E2E_SKILL_REGISTRY_SERVER_ENV: '1',
+    E2E_SKILL_REGISTRY_AUTH_BASE: 'fixture',
+    E2E_GOOGLE_MCP_CATALOG_FIXTURE: '1',
+    E2E_SHAREPOINT_MCP_CATALOG_FIXTURE: '1',
+    E2E_RUN_ACTIVITY_PROBE_MODE: 'model-retry-no-progress',
+    E2E_MANAGED_AI_RESPONSE_DELAY_MS: '30000',
+    E2E_SKILL_REGISTRY_EVENTS_MODE: 'workspace-update-repeat',
+  });
+});
+
+test('canonical live inference applies its no-fixture environment before launching desktop', () => {
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+  const configuration = source.indexOf('configureCanonicalLiveInferenceEnvironment()');
+  const desktopLaunch = source.indexOf('await startApp(');
+
+  assert.ok(configuration >= 0, 'canonical live inference fixture reset must exist');
+  assert.ok(desktopLaunch > configuration, 'canonical live inference must reset fixtures before startApp launches Tauri');
 });
 
 test('packaged smoke requires its isolated production-shaped launch contract', () => {
@@ -842,6 +957,20 @@ test('VSLO-271 pilot scenario requires live managed-AI auth and not the fixture'
         VESLO_AI_GATEWAY_BASE_URL: 'http://127.0.0.1:8788',
       }),
       /live managed-AI gateway/,
+    );
+    assert.throws(
+      () => assertLiveManagedAiAuthForScenarioSelection(scenarios, {
+        VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: snapshotPath,
+        E2E_USE_EXISTING_PROFILE: '1',
+      }),
+      /harness-owned isolated profile/,
+    );
+    assert.throws(
+      () => assertLiveManagedAiAuthForScenarioSelection(scenarios, {
+        VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: snapshotPath,
+        E2E_OPENCODE_HOME: 'C:\\Users\\jajse\\.opencode',
+      }),
+      /harness-owned isolated profile/,
     );
     assert.throws(
       () => assertLiveManagedAiAuthForScenarioSelection(scenarios, {

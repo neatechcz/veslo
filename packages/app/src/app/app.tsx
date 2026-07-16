@@ -283,6 +283,10 @@ import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import type { ReconnectNotice, ReconnectState } from "./context/session-reconnect";
+import {
+  createTranscriptProjectionStore,
+  type TranscriptProjectionScope,
+} from "./context/transcript-projection-store";
 import { createSidebarWorkspaceSessions } from "./context/sidebar-workspace-sessions";
 import { createWorkspaceSessionSnapshots } from "./context/workspace-session-snapshots";
 import { createExtensionsStore } from "./context/extensions";
@@ -331,7 +335,6 @@ import {
   readVesloServerSettings,
   writeVesloServerSettings,
   clearVesloServerSettings,
-  type VesloSessionLatestRunArtifacts,
   type VesloSessionTranscriptSnapshot,
   type VesloServerClient,
   VesloServerError,
@@ -343,6 +346,7 @@ import {
 import { routeStagedAttachmentsForModel } from "./lib/attachment-prompt-routing";
 import { createSessionAttachmentStaging } from "./pages/session-attachment-staging";
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
+import { deriveBackgroundSidebarPrefetchInterest } from "./components/session/workspace-session-list-prefetch-interest";
 import {
   clearUnreadSession,
   markUnreadAfterAssistantResponse,
@@ -1013,6 +1017,82 @@ export default function App() {
     recoverAcceptedConversationTranscript,
     recoverConversationTranscript,
   } = conversationService;
+  const ACTIVE_TRANSCRIPT_PROJECTION_STATUSES = new Set(["submitted", "running", "retry", "blocked"]);
+  let currentTranscriptSelectionVersion = 0;
+  let readSessionStatusForTranscriptProjection: () => Record<string, string> = () => ({});
+  const resolveTranscriptProjectionServerWorkspaceId = (workspaceId: string | null | undefined) => {
+    const clientWorkspaceId = workspaceId?.trim() ?? "";
+    return resolveConversationServerWorkspaceId(clientWorkspaceId);
+  };
+  const createTranscriptProjectionScope = (
+    sessionId: string,
+    selectionVersion: number,
+    expectedRunId?: string | null,
+  ): TranscriptProjectionScope | null => {
+    const uiSessionId = sessionId.trim();
+    if (!uiSessionId || isPendingSessionInstanceKey(uiSessionId)) return null;
+    const sessionScope = resolveSelectedSessionBrowseScope(uiSessionId);
+    const appWorkspaceId = sessionScope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
+    const serverWorkspaceId = resolveTranscriptProjectionServerWorkspaceId(appWorkspaceId);
+    const workspaceId = serverWorkspaceId || appWorkspaceId;
+    const workspaceRoot = sessionScope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
+    const directory = sessionScope?.directory?.trim() || sessionDirectoryOverrideById()[uiSessionId]?.trim() || workspaceRoot;
+    if (!workspaceId || !directory) return null;
+    return {
+      workspaceId,
+      appWorkspaceId,
+      serverWorkspaceId: serverWorkspaceId || null,
+      directory,
+      uiSessionId,
+      conversationId: sessionScope?.conversationId ?? null,
+      opencodeSessionId: sessionScope?.opencodeSessionId ?? null,
+      selectionVersion,
+      expectedRunId: expectedRunId?.trim() || null,
+    };
+  };
+  const transcriptProjectionStore = createTranscriptProjectionStore({
+    selectedSessionId,
+    currentSelectionVersion: () => currentTranscriptSelectionVersion,
+    isRunActive: (scope) => {
+      const appWorkspaceId = scope.appWorkspaceId?.trim() || scope.workspaceId.trim();
+      return [scope.uiSessionId, scope.conversationId, scope.opencodeSessionId]
+        .map((value) => value?.trim() ?? "")
+        .filter(Boolean)
+        .some((sessionId) =>
+          ACTIVE_TRANSCRIPT_PROJECTION_STATUSES.has(
+            readSessionStatus(readSessionStatusForTranscriptProjection(), appWorkspaceId, sessionId),
+          ),
+        );
+    },
+    trace: (event, payload) => recordSendWorkflowTrace("transcript-projection", event, payload, {
+      developerMode: developerMode(),
+    }),
+  });
+  const normalizeTranscriptProjectionScope = (scope: TranscriptProjectionScope): TranscriptProjectionScope => {
+    const appWorkspaceId = scope.appWorkspaceId?.trim() || scope.workspaceId.trim();
+    const serverWorkspaceId =
+      scope.serverWorkspaceId?.trim() || resolveTranscriptProjectionServerWorkspaceId(appWorkspaceId);
+    return {
+      ...scope,
+      workspaceId: serverWorkspaceId || scope.workspaceId.trim() || appWorkspaceId,
+      appWorkspaceId,
+      serverWorkspaceId: serverWorkspaceId || null,
+      directory: scope.directory?.trim() || null,
+      conversationId: scope.conversationId?.trim() || null,
+      opencodeSessionId: scope.opencodeSessionId?.trim() || null,
+    };
+  };
+  const reserveTranscriptProjection = (scope: TranscriptProjectionScope) =>
+    transcriptProjectionStore.reserveTranscriptProjection(normalizeTranscriptProjectionScope(scope));
+  const invalidateTranscriptProjection = (scope: TranscriptProjectionScope) =>
+    transcriptProjectionStore.invalidateTranscriptProjection(normalizeTranscriptProjectionScope(scope));
+  const publishTranscriptProjection = (
+    scope: TranscriptProjectionScope,
+    snapshot: VesloSessionTranscriptSnapshot,
+  ) => transcriptProjectionStore.publishTranscriptProjection(
+    normalizeTranscriptProjectionScope(scope),
+    snapshot,
+  );
   const sessionStore = createSessionStore({
     client,
     routing: runtimeOwnedRouting,
@@ -1075,7 +1155,15 @@ export default function App() {
         }),
       );
     },
-    loadOfflineTranscript: async (sessionId, limit) => {
+    onSessionSelectionStart: (sessionId, selectionVersion) => {
+      currentTranscriptSelectionVersion = selectionVersion;
+      const scope = createTranscriptProjectionScope(sessionId, selectionVersion);
+      if (scope) reserveTranscriptProjection(scope);
+    },
+    currentSelectionVersion: () => currentTranscriptSelectionVersion,
+    reserveTranscriptProjection,
+    publishTranscriptProjection,
+    loadOfflineTranscript: async (sessionId, limit, readContext) => {
       const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
       const transcriptWorkspaceId = transcriptScope?.workspaceId ?? workspaceStore.activeWorkspaceId().trim();
       const workspaceRoot = transcriptScope?.workspaceRoot || workspaceStore.activeWorkspaceRoot().trim();
@@ -1091,11 +1179,25 @@ export default function App() {
       if (!workspaceRoot) {
         return { status: "unavailable" as const, scope, reason: "missing-workspace-root" };
       }
+      const projectionScope = readContext.purpose === "selection" &&
+        typeof readContext.selectionVersion === "number" &&
+        readContext.selectionVersion === currentTranscriptSelectionVersion &&
+        selectedSessionId()?.trim() === sessionId.trim()
+        ? createTranscriptProjectionScope(sessionId, readContext.selectionVersion)
+        : null;
+      if (projectionScope) reserveTranscriptProjection(projectionScope);
       const snapshot = await getTranscriptFromVesloReadApi(
         transcriptWorkspaceId,
         sessionId,
         limit,
         transcriptDirectory || undefined,
+        projectionScope
+          ? {
+              includeLatestRunArtifacts: true,
+              caller: "passive-selection",
+              sendTraceId: activeSendTraceId(),
+            }
+          : undefined,
       );
       if (!snapshot) {
         return { status: "unavailable" as const, scope, reason: "veslo-read-api-unavailable" };
@@ -1112,9 +1214,14 @@ export default function App() {
           reason: "source-unavailable",
         };
       }
+      const resolvedProjectionScope = projectionScope &&
+        readContext.selectionVersion === currentTranscriptSelectionVersion &&
+        selectedSessionId()?.trim() === sessionId.trim()
+        ? projectionScope
+        : null;
       return snapshot.messages.length === 0
-        ? { status: "empty" as const, snapshot }
-        : { status: "loaded" as const, snapshot };
+        ? { status: "empty" as const, snapshot, ...(resolvedProjectionScope ? { projectionScope: resolvedProjectionScope } : {}) }
+        : { status: "loaded" as const, snapshot, ...(resolvedProjectionScope ? { projectionScope: resolvedProjectionScope } : {}) };
     },
     resolveConversationRunForSession,
     readConversationRunStatus,
@@ -1182,6 +1289,26 @@ export default function App() {
     hasWarmTranscript,
     getCachedTranscriptMessages,
   } = sessionStore;
+  readSessionStatusForTranscriptProjection = sessionStatusById;
+  const admitAcceptedConversationRunWithProjectionInvalidation = (
+    input: Parameters<typeof admitAcceptedConversationRun>[0],
+  ) => {
+    const workspaceId = input.workspaceId?.trim() ?? "";
+    const directory = input.directory?.trim() ?? "";
+    const uiSessionId = input.sessionId?.trim() ?? "";
+    if (workspaceId && directory && uiSessionId) {
+      invalidateTranscriptProjection({
+        workspaceId,
+        directory,
+        uiSessionId,
+        conversationId: input.conversationId,
+        opencodeSessionId: input.opencodeSessionId,
+        selectionVersion: currentTranscriptSelectionVersion,
+        expectedRunId: input.runId,
+      });
+    }
+    return admitAcceptedConversationRun(input);
+  };
 
   const [sidebarActivityTokenByScopedSessionKey, setSidebarActivityTokenByScopedSessionKey] = createSignal({});
   const sidebarActivityTokenModel = createSidebarSessionActivityTokenModel(
@@ -1357,17 +1484,33 @@ export default function App() {
     const hydratedClient: VesloServerClient = {
       ...client,
       prefetchSessionTranscripts: async (workspaceId, input) => {
-        const result = await client.prefetchSessionTranscripts(workspaceId, input);
+        const backgroundInterest = deriveBackgroundSidebarPrefetchInterest(
+          input,
+          transcriptProjectionStore.reservation(),
+          workspaceId,
+        );
+        const hasBackgroundRows =
+          backgroundInterest.loadedTopLevelSessionIds.length > 0 ||
+          backgroundInterest.expandedSubagentSessionIds.length > 0 ||
+          (backgroundInterest.loadedTopLevelSessions?.length ?? 0) > 0 ||
+          (backgroundInterest.expandedSubagentSessions?.length ?? 0) > 0;
+        if (!hasBackgroundRows) {
+          return { workspaceId, queuedSessionIds: [], items: [] };
+        }
+        const result = await client.prefetchSessionTranscripts(workspaceId, backgroundInterest);
         for (const item of result.items) {
+          if (transcriptProjectionStore.isReservedTranscriptSnapshot(item)) continue;
           rememberConversationScopeFromTranscript(workspaceId, undefined, item);
           hydrateTranscriptSnapshot(item);
         }
         return result;
       },
-      getSessionTranscript: async (workspaceId, sessionId, limit = 140, directory) => {
-        const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit, directory);
+      getSessionTranscript: async (workspaceId, sessionId, limit = 140, directory, options) => {
+        const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit, directory, options);
         rememberConversationScopeFromTranscript(workspaceId, directory, snapshot);
-        hydrateTranscriptSnapshot(snapshot);
+        if (!transcriptProjectionStore.isReservedTranscriptSnapshot(snapshot)) {
+          hydrateTranscriptSnapshot(snapshot);
+        }
         return snapshot;
       },
     };
@@ -1380,7 +1523,6 @@ export default function App() {
     deriveArtifacts(messages(), { maxMessages: ARTIFACT_SCAN_MESSAGE_WINDOW }),
   );
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
-  const [latestRunArtifactResponse, setLatestRunArtifactResponse] = createSignal<VesloSessionLatestRunArtifacts | undefined>(undefined);
   const activeSessionId = createMemo(() => selectedSessionId());
   const activeSessionStatusById = createMemo(() => sessionStatusById());
   const busySessionByWorkspaceId = createMemo<WorkspaceBusyMap>(
@@ -1411,98 +1553,6 @@ export default function App() {
   const activeTodos = createMemo(() => todos());
   const activeArtifacts = createMemo(() => artifacts());
   const activeWorkingFiles = createMemo(() => workingFiles());
-  const [latestRunArtifactResponseKey, setLatestRunArtifactResponseKey] = createSignal("");
-  const latestRunArtifactScope = createMemo(() => {
-    const sessionId = selectedSessionId()?.trim() ?? "";
-    if (!sessionId) return null;
-    if (isPendingSessionInstanceKey(sessionId)) return null;
-    const scope = resolveSelectedSessionBrowseScope(sessionId);
-    const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
-    const workspaceRoot = scope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
-    const directory = scope?.directory?.trim() || sessionDirectoryOverrideById()[sessionId]?.trim() || workspaceRoot;
-    if (!workspaceId || !directory) return null;
-    return { sessionId, workspaceId, directory };
-  });
-  const latestRunArtifactRefreshKey = createMemo(() => {
-    const client = vesloServerClient();
-    const scope = latestRunArtifactScope();
-    if (!client || !scope || vesloServerStatus() !== "connected") return "";
-
-    const list = messages();
-    let partCount = 0;
-    let lastUserMessageId = "";
-    for (const message of list) {
-      partCount += Array.isArray(message.parts) ? message.parts.length : 0;
-      const role = typeof message.info?.role === "string" ? message.info.role : "";
-      if (role === "user" && typeof message.info?.id === "string") {
-        lastUserMessageId = message.info.id;
-      }
-    }
-
-    return [
-      scope.workspaceId,
-      scope.directory,
-      scope.sessionId,
-      lastUserMessageId,
-      String(partCount),
-    ].join(":");
-  });
-  const currentLatestRunArtifactResponse = createMemo(() => {
-    const response = latestRunArtifactResponse();
-    const key = latestRunArtifactRefreshKey();
-    if (!response || !key || latestRunArtifactResponseKey() !== key) return undefined;
-    return response;
-  });
-  createEffect(() => {
-    const key = latestRunArtifactRefreshKey();
-    if (!key) {
-      setLatestRunArtifactResponse(undefined);
-      setLatestRunArtifactResponseKey("");
-      return;
-    }
-
-    const client = vesloServerClient();
-    const scope = latestRunArtifactScope();
-    if (!client || !scope) {
-      setLatestRunArtifactResponse(undefined);
-      setLatestRunArtifactResponseKey("");
-      return;
-    }
-
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
-          client,
-          scope.workspaceId,
-          scope.directory,
-        );
-        if (!serverWorkspaceId) return null;
-        return await client.getSessionLatestRunArtifacts(serverWorkspaceId, scope.sessionId, scope.directory);
-      })()
-        .then((response) => {
-          if (cancelled) return;
-          if (!response) {
-            setLatestRunArtifactResponse(undefined);
-            setLatestRunArtifactResponseKey("");
-            return;
-          }
-          if (response.sessionId !== scope.sessionId) return;
-          setLatestRunArtifactResponse(response);
-          setLatestRunArtifactResponseKey(key);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setLatestRunArtifactResponse(undefined);
-          setLatestRunArtifactResponseKey("");
-        });
-    }, 120);
-
-    onCleanup(() => {
-      cancelled = true;
-      clearTimeout(timer);
-    });
-  });
 
   type SessionsLoadReadyState = {
     workspaceId: string;
@@ -1637,7 +1687,7 @@ export default function App() {
   };
 
   const sessionSendWorkflow = createSessionSendWorkflow({
-    admitAcceptedConversationRun,
+    admitAcceptedConversationRun: admitAcceptedConversationRunWithProjectionInvalidation,
     beginSidebarActivityToken: (scope) => sidebarActivityTokenModel.begin(scope),
     migrateSidebarActivityToken: (handle, scope) => sidebarActivityTokenModel.migrate(handle, scope),
     promoteSidebarActivityToken: (handle, runId) => sidebarActivityTokenModel.promote(handle, runId),
@@ -2263,7 +2313,9 @@ export default function App() {
     managedAiAccess,
     managedAiGatewayAccessToken,
     managedAiAccessBusy,
+    managedAiAccessReady,
     managedAiAccessError,
+    managedAiAccessRetryScheduled,
     managedAiAccessModel,
     denGatewayAccessToken,
     managedAiAccessMessage,
@@ -2294,7 +2346,9 @@ export default function App() {
     defaultModel,
     managedAiAccess,
     managedAiAccessBusy,
+    managedAiAccessReady,
     managedAiAccessError,
+    managedAiAccessRetryScheduled,
     managedAiGatewayAccessToken,
     denGatewayAccessToken,
     denOrgId: () => readDenAuth()?.orgId?.trim() ?? "",
@@ -2348,6 +2402,7 @@ export default function App() {
     hasUsableManagedAiRuntimeConfigForSend,
     ensureManagedAiRuntimeAuthorizationForSend,
     syncManagedAiRuntimeConfigForSend,
+    prepareManagedAiRuntimeConfigForEngineStart,
   } = managedAiRuntimeConfig;
   lateManagedAiRuntimeConfig.bind(managedAiRuntimeConfig);
 
@@ -2472,6 +2527,8 @@ export default function App() {
     activeSendTraceId,
     setEngineReady,
     isWorkspaceRuntimeReady,
+    syncManagedAiRuntimeConfigBeforeRuntime: (target) =>
+      prepareManagedAiRuntimeConfigForEngineStart(target),
     requestWorkspaceFolderAccess,
     populateSidebarFromDb: async (workspaceId: string, directory: string) => {
       // Set status to "loading" SYNCHRONOUSLY before any await, so the idle-loader
@@ -2879,17 +2936,18 @@ export default function App() {
   });
   const skillRegistryMaterializationAuthContext = skillRegistryOrchestrator.materializationAuthContext;
 
-  const activeArtifactFamilies = createMemo(() =>
-    resolveArtifactFamilies({
-      serverArtifacts: currentLatestRunArtifactResponse()?.items,
-      preferServerArtifacts: Boolean(currentLatestRunArtifactResponse()),
-      legacyArtifacts: currentLatestRunArtifactResponse() ? [] : artifacts(),
-      workingFiles: currentLatestRunArtifactResponse() ? [] : workingFiles(),
+  const activeArtifactFamilies = createMemo(() => {
+    const projection = transcriptProjectionStore.currentTranscriptProjection();
+    return resolveArtifactFamilies({
+      serverArtifacts: projection?.items,
+      preferServerArtifacts: Boolean(projection),
+      legacyArtifacts: projection ? [] : artifacts(),
+      workingFiles: projection ? [] : workingFiles(),
       workspaceRoot:
         (activeSessionId() ? resolveSelectedSessionBrowseScope(activeSessionId()!)?.workspaceRoot : null) ||
         workspaceStore.activeWorkspaceRoot().trim(),
-    }),
-  );
+    });
+  });
 
   const shouldSyncConversationReadForWorkspace =
     runtimeOwner.shouldSyncConversationReadForWorkspace;
@@ -5007,6 +5065,8 @@ export default function App() {
               ? t("mcp.installing_button", currentLocale())
               : t("mcp.sharepoint_prompt_install", currentLocale())}
             cancelLabel={t("mcp.sharepoint_prompt_later", currentLocale())}
+            confirmTestId="sharepoint-mcp-install-confirm"
+            cancelTestId="sharepoint-mcp-install-dismiss"
             onConfirm={() => {
               void confirmSharePointMcpInstallPrompt();
             }}

@@ -42,6 +42,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const DEFAULT_PILOT_IDENTIFIER = "com.neatech.veslo.e2e";
+export const E2E_DESKTOP_BUILD_COMMAND =
+  "pnpm --filter @neatech/veslo-e2e run build:desktop:e2e";
 const MAX_E2E_TIMEOUT = 95_000;
 const DEFAULT_LAUNCH_TIMEOUT = MAX_E2E_TIMEOUT;
 const LAUNCH_TIMEOUT = resolveLaunchTimeout();
@@ -380,9 +382,7 @@ function resolveBinaryPath(): string {
   if (platform === "win32") {
     const winPath = join(tauriTarget, "veslo.exe");
     if (existsSync(winPath)) return winPath;
-    throw new Error(
-      `Tauri binary not found at ${winPath}. Run: pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e`,
-    );
+    throw new Error(missingE2EDesktopBinaryMessage(winPath));
   }
 
   const unbundledPath = join(tauriTarget, "veslo");
@@ -401,9 +401,11 @@ function resolveBinaryPath(): string {
     if (existsSync(bundledPath)) return bundledPath;
   }
 
-  throw new Error(
-    `Tauri binary not found at ${unbundledPath}. Run: pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e`,
-  );
+  throw new Error(missingE2EDesktopBinaryMessage(unbundledPath));
+}
+
+export function missingE2EDesktopBinaryMessage(binaryPath: string): string {
+  return `Tauri binary not found at ${binaryPath}. Run: ${E2E_DESKTOP_BUILD_COMMAND} (uses src-tauri/tauri.e2e.conf.json).`;
 }
 
 function childHasExited(child: ChildProcess): boolean {
@@ -622,6 +624,17 @@ export function createAppLaunchEnv(
   baseEnv: NodeJS.ProcessEnv,
   options: AppLaunchEnvOptions,
 ): NodeJS.ProcessEnv {
+  const {
+    VESLO_E2E_DEN_AUTH_JSON: _vesloE2EDenAuthJson,
+    E2E_DEN_AUTH_JSON: _e2eDenAuthJson,
+    VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: _vesloE2EDenAuthSnapshotFile,
+    E2E_DEN_AUTH_SNAPSHOT_FILE: _e2eDenAuthSnapshotFile,
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: _vesloDenAuthSnapshotPath,
+    OPENAI_API_KEY: _openAiApiKey,
+    OPENAI_BASE_URL: _openAiBaseUrl,
+    OPENAI_API_BASE: _openAiApiBase,
+    ...desktopBaseEnv
+  } = baseEnv;
   const platform = options.platform ?? process.platform;
   const joinForPlatform = platform === "win32" ? win32.join : posix.join;
   const vesloDataDir = joinForPlatform(options.opencodeHome, ".veslo");
@@ -638,7 +651,7 @@ export function createAppLaunchEnv(
     runtimeDir: pilotRuntimeDir,
   });
   const env: NodeJS.ProcessEnv = {
-    ...baseEnv,
+    ...desktopBaseEnv,
     TAURI_PILOT_SOCKET: pilotSocket,
     OPENCODE_HOME: options.opencodeHome,
     VESLO_DATA_DIR: vesloDataDir,
@@ -1052,23 +1065,6 @@ export function resolveMcpCatalogFixtureDenApiBase(input: {
   return input.skillRegistryFixtureBaseUrl;
 }
 
-export function publishPilotDenAuthSeedForWebView(
-  seedEnv: Record<string, string | undefined>,
-  targetEnv: Record<string, string | undefined> = process.env,
-): void {
-  const existing =
-    targetEnv.VESLO_E2E_DEN_AUTH_JSON?.trim() ||
-    targetEnv.E2E_DEN_AUTH_JSON?.trim();
-  if (existing) return;
-
-  const seed =
-    seedEnv.VESLO_E2E_DEN_AUTH_JSON?.trim() ||
-    seedEnv.E2E_DEN_AUTH_JSON?.trim();
-  if (!seed) return;
-
-  targetEnv.E2E_DEN_AUTH_JSON = seed;
-}
-
 export function publishManagedAiFixtureAuthSeed(
   authJson: string,
   targetEnv: Record<string, string | undefined> = process.env,
@@ -1183,9 +1179,6 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
             }),
           }
         : process.env;
-  if (!managedAiFixtureAuthJson) {
-    publishPilotDenAuthSeedForWebView(seedEnv);
-  }
   if (skillRegistryFixtureBaseUrl) {
     console.log(`[e2e] Skill registry fixture: ${skillRegistryFixtureBaseUrl}`);
   }

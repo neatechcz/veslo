@@ -700,7 +700,11 @@ export function createConversationRunLifecycleController(
       lifecycleOwner,
       providerWatchStartedAt,
     );
-    if (!providerWatchOwnsGatewayRun) {
+    // Direct `orchestrator start` has no lifecycle daemon, but OpenCode can
+    // issue its managed-AI provider request immediately after prompt_async
+    // returns. Keep the correlation until the runtime-owner TTL in that mode;
+    // without it the `${OPENCODE_SESSION_ID}` provider header is unresolvable.
+    if (!providerWatchOwnsGatewayRun && lifecycleOwner) {
       unregisterRegisteredAiGatewayRun();
     }
 

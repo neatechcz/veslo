@@ -9,6 +9,8 @@ import {
   classifyOfflineTranscriptFallbackReason,
   classifyOfflineTranscriptUnavailableReason,
   createSessionSelectionController,
+  type SessionOfflineTranscriptLoadContext,
+  type SessionOfflineTranscriptLoadResult,
 } from "../../context/session-selection-controller.js";
 import type { MessageInfo, MessageWithParts, TodoItem } from "../../types";
 
@@ -90,7 +92,11 @@ function makeController(options: {
   } | null;
   isWorkspaceRuntimeReady?: (workspaceId?: string | null) => boolean;
   shouldBrowseSessionFromDb?: (sessionId: string) => boolean;
-  loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<any>;
+  loadOfflineTranscript?: (
+    sessionID: string,
+    limit: number,
+    context: SessionOfflineTranscriptLoadContext,
+  ) => Promise<SessionOfflineTranscriptLoadResult>;
   appendTranscriptSnapshot?: (input: any) => Promise<void> | void;
   sessionWarn?: (label: string, payload?: unknown) => void;
   resolveSessionWorkspaceId?: (sessionID: string) => string | null;
@@ -344,6 +350,64 @@ test("selectSession uses offline fallback for browse policy instead of live mess
       assert.equal(messageCalls, 0);
       assert.equal(offlineCalls, 1);
       assert.equal(hydratedSnapshots.length, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession passes its versioned projection context to the offline reader", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let receivedContext: SessionOfflineTranscriptLoadContext | undefined;
+      const { controller } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "sess-context",
+        loadOfflineTranscript: async (sessionID, _limit, context) => {
+          receivedContext = context;
+          return makeTranscriptSnapshot(sessionID);
+        },
+      });
+
+      await controller.selectSession("sess-context");
+
+      assert.deepEqual(receivedContext, { purpose: "selection", selectionVersion: 1 });
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession preserves canonical nested latest-run artifact identity when the transcript uses the UI id", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, hydratedSnapshots } = makeController({
+        shouldBrowseSessionFromDb: (sessionID) => sessionID === "sess-ui",
+        loadOfflineTranscript: async () => ({
+          workspaceId: "ws-a",
+          sessionId: "sess-ui",
+          conversationId: "conv-a",
+          opencodeSessionId: "sess-open",
+          limit: 140,
+          fetchedAt: 1,
+          messages: [],
+          partsByMessageId: {},
+          latestRunArtifacts: {
+            workspaceId: "ws-a",
+            sessionId: "sess-open",
+            conversationId: "conv-a",
+            opencodeSessionId: "sess-open",
+            runId: "run-a",
+            items: [],
+          },
+        }),
+      });
+
+      await controller.selectSession("sess-ui");
+
+      assert.equal(hydratedSnapshots.length, 1);
+      assert.equal(hydratedSnapshots[0]?.sessionId, "sess-ui");
+      assert.equal(hydratedSnapshots[0]?.latestRunArtifacts?.sessionId, "sess-open");
+      assert.equal(hydratedSnapshots[0]?.latestRunArtifacts?.opencodeSessionId, "sess-open");
     } finally {
       dispose();
     }

@@ -1116,9 +1116,10 @@ export default function Composer(props: ComposerProps) {
     const sendOptions: ComposerSendOptions = {
       ...options,
       onDraftTransferred: () => {
-        draftHandoffController.acknowledgeTransfer(submittedRevision, () => {
-          clearSubmittedDraft(submittedDraft.mode);
-        });
+        draftHandoffController.acknowledgeTransfer(
+          submittedRevision,
+          () => untrack(() => clearSubmittedDraft(submittedDraft.mode)),
+        );
       },
     };
     try {
@@ -1142,7 +1143,7 @@ export default function Composer(props: ComposerProps) {
       draftHandoffController.applyResult(
         submittedRevision,
         sendResult.draftDisposition,
-        () => clearSubmittedDraft(submittedDraft.mode),
+        () => untrack(() => clearSubmittedDraft(submittedDraft.mode)),
       );
     } catch (error) {
       recordSendTrace("sendDraft:onSend:error", {
@@ -1948,6 +1949,7 @@ export default function Composer(props: ComposerProps) {
                     </Show>
                     <div
                       ref={editorRef}
+                      data-testid="session-composer-input"
                       contentEditable={!submitLocked()}
                       role="textbox"
                       aria-disabled={submitLocked() ? "true" : "false"}
@@ -2035,6 +2037,7 @@ export default function Composer(props: ComposerProps) {
                           fallback={
                             <button
                               type="button"
+                              data-testid="session-composer-send-button"
                               disabled={sendDisabled()}
                               onClick={() => {
                                 recordSendTrace("sendButton:click", {

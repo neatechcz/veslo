@@ -295,13 +295,13 @@ test("app hydrates transcript snapshots returned by veslo prefetch calls", () =>
   );
   assert.match(
     source,
-    /getSessionTranscript:\s*async\s*\(workspaceId,\s*sessionId,\s*limit = 140,\s*directory\)\s*=>/,
+    /getSessionTranscript:\s*async\s*\(workspaceId,\s*sessionId,\s*limit = 140,\s*directory,\s*options\)\s*=>/,
     "app should wrap getSessionTranscript through the same hydration path",
   );
   assert.match(
     source,
-    /hydrateTranscriptSnapshot\(snapshot\);/,
-    "direct transcript fetches should hydrate before returning",
+    /if \(!transcriptProjectionStore\.isReservedTranscriptSnapshot\(snapshot\)\) \{[\s\S]*hydrateTranscriptSnapshot\(snapshot\);[\s\S]*\}/s,
+    "direct transcript fetches should not hydrate snapshots reserved for the selected transcript projection",
   );
   assert.match(
     source,

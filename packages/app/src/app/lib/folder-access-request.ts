@@ -122,7 +122,7 @@ export function resolveFolderAccessRequestFromPermission(
   const markerPermission = permissionLooksLikeFolderAccess(permissionName, metadata);
   if (!markerPermission) return null;
 
-  const patternRequestedPath = markerPermission ? findFirstAbsolutePath(permission.patterns ?? []) : "";
+  const patternRequestedPath = findFirstAbsolutePath(permission.patterns ?? []);
   const requestedPath = (isAbsoluteFolderAccessPath(metadataRequestedPath) ? metadataRequestedPath : patternRequestedPath).trim();
 
   if (!requestedPath || !isAbsoluteFolderAccessPath(requestedPath)) return null;

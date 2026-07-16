@@ -891,6 +891,7 @@ export default function SessionView(props: SessionViewProps) {
     const initialX = event.clientX;
     const previousUserSelect = document.body.style.userSelect;
     const previousCursor = document.body.style.cursor;
+    const resizeListeners = new AbortController();
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
 
@@ -902,17 +903,15 @@ export default function SessionView(props: SessionViewProps) {
     const onPointerUp = () => stopLeftSidebarResize(true);
     const onPointerCancel = () => stopLeftSidebarResize(true);
 
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp, { once: true });
-    window.addEventListener("pointercancel", onPointerCancel, { once: true });
+    window.addEventListener("pointermove", onPointerMove, { signal: resizeListeners.signal });
+    window.addEventListener("pointerup", onPointerUp, { once: true, signal: resizeListeners.signal });
+    window.addEventListener("pointercancel", onPointerCancel, { once: true, signal: resizeListeners.signal });
 
-    leftSidebarResizeCleanup = untrack(() => () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerCancel);
+    leftSidebarResizeCleanup = () => {
+      resizeListeners.abort();
       document.body.style.userSelect = previousUserSelect;
       document.body.style.cursor = previousCursor;
-    });
+    };
   };
 
   onCleanup(() => stopLeftSidebarResize(false));

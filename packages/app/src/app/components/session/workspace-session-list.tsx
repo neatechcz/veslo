@@ -370,7 +370,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
 
   const scheduleTransitionSafetyTimer = (open: boolean) => {
     if (typeof window === "undefined") return;
-    transitionSafetyTimer = window.setTimeout(() => {
+    transitionSafetyTimer = window.setTimeout(() => untrack(() => {
       transitionSafetyTimer = 0;
       if (props.open !== open) return;
       if (open) {
@@ -378,7 +378,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
         return;
       }
       finishClosed();
-    }, sidebarCollapseDurationForRegion(props.region) + 40);
+    }), sidebarCollapseDurationForRegion(props.region) + 40);
   };
 
   createEffect(() => {
@@ -1918,8 +1918,8 @@ export default function WorkspaceSessionList(props: Props) {
       return buildBackgroundMenuItems({
         addDirectoryDisabled: addDirectorySessionDisabled(),
         onAddDirectory: () => props.onAddDirectorySession?.(),
-        onSearchSessions: props.onOpenSessionSearch ? () => props.onOpenSessionSearch?.() : undefined,
-        onArchivedItems: props.onOpenArchivedSessions ? () => props.onOpenArchivedSessions?.() : undefined,
+        onSearchSessions: props.onOpenSessionSearch ? () => untrack(() => props.onOpenSessionSearch?.()) : undefined,
+        onArchivedItems: props.onOpenArchivedSessions ? () => untrack(() => props.onOpenArchivedSessions?.()) : undefined,
       });
     }
 

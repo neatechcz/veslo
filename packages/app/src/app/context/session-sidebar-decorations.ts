@@ -1,4 +1,4 @@
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, untrack } from "solid-js";
 
 import {
   buildSubagentDecorationModel,
@@ -244,9 +244,9 @@ export function createSessionSidebarDecorations(
 
       pendingSessionIds.add(candidate.sessionId);
       queue = queue
-        .then(async () => {
+        .then(() => untrack(() => (async () => {
           await ensureSubagentDecorationForSession(candidate);
-        })
+        })()))
         .catch(() => {})
         .finally(() => {
           pendingSessionIds.delete(candidate.sessionId);

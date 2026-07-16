@@ -951,6 +951,57 @@ test("passive browse reads do not start the local conversation server", async ()
   assert.deepEqual(ensureCalls, []);
 });
 
+test("projection transcript reads emit content-free request and settle trace events", async () => {
+  const { service, sendTraces } = createService();
+
+  const snapshot = await service.getTranscriptFromVesloReadApi(
+    "app-ws",
+    "sess-a",
+    140,
+    "/repo",
+    {
+      includeLatestRunArtifacts: true,
+      caller: "passive-selection",
+      sendTraceId: "trace-projection-a",
+    },
+  );
+
+  assert.equal(snapshot?.sessionId, "sess-a");
+  const events = sendTraces.filter((entry) => entry.event.startsWith("session-transcript-projection:"));
+  assert.equal(events.length, 2);
+  assert.deepEqual(events[0], {
+    event: "session-transcript-projection:request",
+    payload: {
+      traceId: "trace-projection-a",
+      caller: "passive-selection",
+      displayLimit: 140,
+    },
+  });
+  assert.equal(events[1]?.event, "session-transcript-projection:settle");
+  assert.deepEqual(
+    {
+      traceId: events[1]?.payload?.traceId,
+      caller: events[1]?.payload?.caller,
+      displayLimit: events[1]?.payload?.displayLimit,
+      outcome: events[1]?.payload?.outcome,
+      source: events[1]?.payload?.source,
+      messageCount: events[1]?.payload?.messageCount,
+    },
+    {
+      traceId: "trace-projection-a",
+      caller: "passive-selection",
+      displayLimit: 140,
+      outcome: "loaded",
+      source: "sqlite",
+      messageCount: 0,
+    },
+  );
+  assert.equal(typeof events[1]?.payload?.durationMs, "number");
+  assert.equal("workspaceId" in (events[1]?.payload ?? {}), false);
+  assert.equal("directory" in (events[1]?.payload ?? {}), false);
+  assert.equal("sessionId" in (events[1]?.payload ?? {}), false);
+});
+
 test("live transcript reads do not start the local conversation server without active recovery opt-in", async () => {
   const { service, ensureCalls, sendTraces } = createService({ startDisconnected: true });
 

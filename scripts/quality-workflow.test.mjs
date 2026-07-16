@@ -34,3 +34,17 @@ test("document runtime delegates portable test discovery to Node", () => {
   const packageJson = JSON.parse(read("packages/document-runtime/package.json"));
   assert.equal(packageJson.scripts.test, "node --test");
 });
+
+test("Quality requires the headless service gate on Ubuntu and Windows", () => {
+  const workflow = read(".github/workflows/quality.yml");
+  const packageJson = JSON.parse(read("package.json"));
+
+  assert.match(packageJson.scripts["check:unit"], /pnpm check:services/);
+  assert.equal(
+    packageJson.scripts["check:services"],
+    "pnpm --filter veslo-server build:bin && node --test scripts/headless-services.integration.test.mjs",
+  );
+  assert.match(workflow, /services-windows:\n\s+name: Quality \/ Services \(Windows\)[\s\S]*?run: pnpm check:services/);
+  assert.match(workflow, /needs: \[static, unit, services-windows, rust, desktop-recovery\]/);
+  assert.match(workflow, /SERVICES_WINDOWS_RESULT: \$\{\{ needs\.services-windows\.result \}\}/);
+});

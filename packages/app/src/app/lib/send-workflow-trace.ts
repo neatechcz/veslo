@@ -4,6 +4,7 @@ const SEND_WORKFLOW_TRACE_LIMIT = 2_000;
 const SUPPORT_DIAGNOSTICS_STORAGE_KEY = "veslo.supportDiagnostics";
 
 type SendWorkflowTraceRoot = typeof window & {
+  __PILOT__?: unknown;
   __vesloActiveSendTraceId?: string | null;
   __vesloSendWorkflowTrace?: Array<Record<string, unknown>>;
   __vesloSendWorkflowTraceSeq?: number;
@@ -65,13 +66,26 @@ const runtimeDiagnosticsDisabled = () => {
   return override === false || (override == null && envDiagnosticsDisabled());
 };
 
+const pilotTraceEnabled = (): boolean => {
+  try {
+    return typeof window !== "undefined" && Boolean((window as SendWorkflowTraceRoot).__PILOT__);
+  } catch {
+    return false;
+  }
+};
+
 function sendWorkflowTraceEnabled(options?: { developerMode?: boolean }): boolean {
   if (runtimeDiagnosticsDisabled()) return false;
-  if (options?.developerMode === false && supportDiagnosticsOverride() !== true) return false;
+  if (
+    options?.developerMode === false &&
+    supportDiagnosticsOverride() !== true &&
+    !pilotTraceEnabled()
+  ) return false;
   if (typeof window === "undefined") return envTraceEnabled();
   try {
     const root = window as SendWorkflowTraceRoot;
     if (truthy(root.__vesloSendWorkflowTraceEnabled)) return true;
+    if (Boolean(root.__PILOT__)) return true;
     if (truthy(window.localStorage?.getItem("veslo.sendWorkflowTrace"))) return true;
     return envTraceEnabled();
   } catch {

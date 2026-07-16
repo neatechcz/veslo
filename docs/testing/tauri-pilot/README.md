@@ -112,19 +112,16 @@ Use this when the scenario must run through the same debug binary and isolated
 profile model as `packages/e2e`.
 
 ```powershell
-pnpm --filter veslo-server build:bin
-
-$env:VESLO_SIDECAR_FORCE_BUILD = "1"
-pnpm --filter @neatech/veslo run prepare:sidecar
-Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
-
-Push-Location packages\desktop
-pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
-Pop-Location
+pnpm --filter @neatech/veslo-e2e run build:desktop:e2e
 
 $env:E2E_TAURI_PILOT_BIN = "C:\Users\jajse\.cargo\bin\tauri-pilot.exe"
 pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario runtime-cold-start-session-handoff
 ```
+
+`build:desktop:e2e` always builds `veslo-server`, force-prepares desktop
+sidecars, and then builds the debug Tauri binary with
+`src-tauri/tauri.e2e.conf.json` and the `e2e` feature. Use it instead of
+copying only one of those steps.
 
 The runner launches `packages/desktop/src-tauri/target/debug/veslo.exe`, sets
 `TAURI_PILOT_SOCKET`, waits for Pilot readiness, runs the TOML scenario, and
@@ -137,10 +134,7 @@ Rebuild sidecars when server/orchestrator/router/runtime binaries changed or
 when a pilot run could be using stale sidecars:
 
 ```powershell
-pnpm --filter veslo-server build:bin
-$env:VESLO_SIDECAR_FORCE_BUILD = "1"
-pnpm --filter @neatech/veslo run prepare:sidecar
-Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
+pnpm --filter @neatech/veslo-e2e run build:desktop:e2e
 ```
 
 Rebuild the E2E debug Tauri binary when any of these changed:
@@ -160,15 +154,7 @@ Use this build path when validating the actual desktop binary that Pilot will
 drive:
 
 ```powershell
-pnpm --filter veslo-server build:bin
-
-$env:VESLO_SIDECAR_FORCE_BUILD = "1"
-pnpm --filter @neatech/veslo run prepare:sidecar
-Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
-
-Push-Location packages\desktop
-pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
-Pop-Location
+pnpm --filter @neatech/veslo-e2e run build:desktop:e2e
 ```
 
 After the build, these invariants should hold:
@@ -187,10 +173,9 @@ After the build, these invariants should hold:
   `tauri-plugin-pilot/press`.
 - `tauri-pilot --version` reports `tauri-pilot 0.7.2`, matching
   `tauri-plugin-pilot = "0.7.2"`.
-- The package runner still seeds WebView Den auth from
-  `VESLO_E2E_DEN_AUTH_JSON`, `VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE`, or the
-  production desktop `VESLO_DEN_AUTH_SNAPSHOT_PATH` fallback before a TOML
-  scenario runs.
+- The package runner prepares a desktop auth snapshot before launch. It does
+  not write WebView auth through Pilot or reload the app after boot; live
+  scenarios verify that desktop snapshot hydration produced a signed-in state.
 - Managed-AI/inference scenarios still reject
   `E2E_MANAGED_AI_GATEWAY_FIXTURE=1` and do not auto-enable that fixture.
 
@@ -213,7 +198,10 @@ pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario smoke
 ```
 
 For managed-AI/inference acceptance, add the live seed and keep the fixture
-disabled:
+disabled. `test:pilot:live-inference` is the canonical production-path suite:
+it runs the visible message-send flow only, requires `codex_oauth`, and caps
+the scenario at 95 seconds (with five seconds of runner grace to collect a
+failure result).
 
 ```powershell
 $env:VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = "C:\Users\jajse\.veslo\den-auth.json"
@@ -225,6 +213,14 @@ From the workspace root, the same gate is available as:
 
 ```powershell
 pnpm test:e2e:ui:live-inference
+```
+
+The longer cold-start handoff check remains available as explicitly separate
+lifecycle coverage; it is not acceptance evidence for the 95-second canonical
+live-inference gate:
+
+```powershell
+pnpm --filter @neatech/veslo-e2e test:pilot:live-inference:lifecycle
 ```
 
 ## Scenario Authoring Boundaries
@@ -252,6 +248,9 @@ production.
 - For managed-AI/inference scenarios, read Den auth from WebView storage first
   and then from `den_auth_snapshot_read`; never use a hardcoded
   `veslo-e2e-*` token.
+- Keep lifecycle/recovery checks outside `test:pilot:live-inference` unless
+  their TOML `global_timeout_ms` and step `timeout_ms` values are at most
+  95000.
 
 ## Automatic Failure Diagnostics
 
@@ -272,8 +271,9 @@ Start with these files:
   requests.
 - `veslo-server-info.json` and `workspace-bootstrap.json`: app-side Tauri IPC
   state.
-- `storage-local.json` and `storage-session.json`: WebView storage, including
-  whether Den auth was seeded.
+- `storage-local-summary.json` and `storage-session-summary.json`: key names
+  plus Den auth presence, token presence, email, and Den base; no stored values
+  or bearer tokens.
 - `webview.png`: full-page WebView screenshot when screenshot capture succeeds.
 
 Use these artifacts before rerunning a scenario. They usually answer whether
@@ -295,6 +295,11 @@ The E2E runner does not behave like `pnpm dev`.
   is set.
 - `E2E_USE_EXISTING_PROFILE=1` is only for scenarios that explicitly need the
   current desktop profile.
+- Canonical live inference rejects `E2E_USE_EXISTING_PROFILE` and
+  `E2E_OPENCODE_HOME`; it always uses the harness-owned isolated profile and
+  copied Den snapshot. The child desktop environment also removes
+  `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_API_BASE` so a host API-key
+  configuration cannot turn the gate into a direct OpenAI fallback.
 
 For live Den auth in the E2E runner, use the same production desktop snapshot
 path accepted by the app:
@@ -306,8 +311,9 @@ $env:VESLO_DEN_AUTH_SNAPSHOT_PATH = "C:\Users\jajse\.veslo\den-auth.json"
 `VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE` remains available when a test needs a
 separate E2E-only input. In both cases the runner copies that snapshot into the
 isolated profile, launches the app with `VESLO_DEN_AUTH_SNAPSHOT_PATH` pointing
-at the copied file, and seeds the WebView Den localStorage from the same
-snapshot before the TOML scenario runs.
+at the copied file, and lets the desktop startup hydration restore the WebView
+state before onboarding. The runner never copies raw auth JSON into a Pilot
+command or reloads the app after boot.
 
 Managed-AI/inference pilot scenarios must use the live Den auth seed. They
 fail fast when the seed is missing, when it uses an `@example.test` user,
@@ -499,13 +505,16 @@ C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main network --failed --json
 C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main network --filter "/ai-gateway" --last 50
 ```
 
-Use storage and forms when the problem may be auth/profile/UI-state related:
+Use forms when the problem may be auth/profile/UI-state related:
 
 ```powershell
-C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main storage list --json
-C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main storage get veslo.den.auth --json
 C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main forms --json
 ```
+
+Do not collect raw `storage list` or `storage get veslo.den.auth` output in a
+failure bundle, terminal transcript, or uploaded artifact: it can contain a
+live bearer token. The package runner records only the redacted storage
+summaries described above.
 
 Use `ipc` only when the diagnosis needs a Tauri command result. Prefer the
 normal UI path first.

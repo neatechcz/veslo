@@ -39,7 +39,7 @@ test("background engine warmup is local-only, completion-stale-safe, and deduped
   );
   assert.match(
     facadeSource,
-    /\.then\(\(ok\) => \{[\s\S]*if \(!ok\) scheduledEngineWarmupKeys\.delete\(warmupKey\);[\s\S]*if \(!stillCurrent\(\)\) return;[\s\S]*bootTrace\("ensureEngineForWorkspace background warmup done"/s,
+    /\.then\(\(ok\) => untrack\(\(\) => \{[\s\S]*if \(!ok\) scheduledEngineWarmupKeys\.delete\(warmupKey\);[\s\S]*if \(!stillCurrent\(\)\) return;[\s\S]*bootTrace\("ensureEngineForWorkspace background warmup done"/s,
     "background warmup completion logs should still ignore stale active-workspace completions",
   );
   assert.match(
@@ -49,12 +49,12 @@ test("background engine warmup is local-only, completion-stale-safe, and deduped
   );
   assert.match(
     facadeSource,
-    /\.then\(\(ok\) => \{[\s\S]*if \(!ok\) scheduledEngineWarmupKeys\.delete\(warmupKey\);/s,
+    /\.then\(\(ok\) => untrack\(\(\) => \{[\s\S]*if \(!ok\) scheduledEngineWarmupKeys\.delete\(warmupKey\);/s,
     "failed background warmup results should allow a later warmup retry",
   );
   assert.match(
     facadeSource,
-    /\.catch\(\(error\) => \{[\s\S]*scheduledEngineWarmupKeys\.delete\(warmupKey\);[\s\S]*engine warmup failed/s,
+    /\.catch\(\(error\) => untrack\(\(\) => \{[\s\S]*scheduledEngineWarmupKeys\.delete\(warmupKey\);[\s\S]*engine warmup failed/s,
     "thrown background warmup failures should not poison the dedupe key",
   );
 });

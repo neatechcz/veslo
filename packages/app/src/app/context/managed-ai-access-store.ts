@@ -54,6 +54,12 @@ export type ManagedAiAccessProofCacheState = {
   record: ManagedAiAccessCacheRecord | null;
 };
 
+export function shouldResetMissingManagedAiAccessProofCache(
+  state: ManagedAiAccessProofCacheState,
+): boolean {
+  return state.cacheKey !== "" || !state.loaded || state.record !== null;
+}
+
 export type ManagedAiAccessStorage = {
   getItem: (key: string) => string | null;
   setItem: (key: string, value: string) => void;
@@ -142,6 +148,7 @@ export type ManagedAiAccessStore = {
   managedAiAccess: Accessor<ManagedAiAccessProfile | null>;
   managedAiGatewayAccessToken: Accessor<string>;
   managedAiAccessBusy: Accessor<boolean>;
+  managedAiAccessReady: Accessor<boolean>;
   managedAiAccessError: Accessor<string | null>;
   managedAiAccessRetryScheduled: Accessor<boolean>;
   managedAiAccessModel: Accessor<ManagedAiAccessProfile["effectiveModel"] | null>;
@@ -459,6 +466,7 @@ export function createManagedAiAccessStore(
     createSignal<ManagedAiAccessProfile | null>(null);
   const [managedAiGatewayAccessToken, setManagedAiGatewayAccessToken] = createSignal("");
   const [managedAiAccessBusy, setManagedAiAccessBusy] = createSignal(false);
+  const [managedAiAccessReady, setManagedAiAccessReady] = createSignal(false);
   const [managedAiAccessError, setManagedAiAccessError] = createSignal<string | null>(null);
   const [managedAiAccessRefreshNonce, setManagedAiAccessRefreshNonce] = createSignal(0);
   const [managedAiAccessRetryAttempt, setManagedAiAccessRetryAttempt] = createSignal(0);
@@ -629,11 +637,34 @@ export function createManagedAiAccessStore(
       managedAiGatewayBaseUrl: managedAiBaseUrl,
       runtimeWorkspaceId,
     });
+    const preflightTrace = (phase: string, payload?: Record<string, unknown>) => {
+      recordManagedAiWorkflowTrace("managed-ai-access:preflight", {
+        phase,
+        hasRequestKey: Boolean(managedAiAccessRequestKey),
+        hasCacheKey: Boolean(managedAiCacheKey),
+        hasGatewayClient: Boolean(gatewayClient),
+        hasManagedAiGatewayBaseUrl: Boolean(managedAiBaseUrl),
+        hasUserToken: Boolean(userToken),
+        hasOrgId: Boolean(denOrgId),
+        runtimeWorkspaceId: runtimeWorkspaceId || null,
+        hasLocalClientToken: Boolean(gatewayLocalAuth.token?.trim()),
+        proofCacheLoaded: proofCacheState.loaded,
+        proofCacheRecordPresent: Boolean(proofCacheState.record),
+        ...payload,
+      });
+    };
     if (!managedAiAccessRequestKey) {
-      setManagedAiAccessProofCacheState({ cacheKey: "", loaded: true, record: null });
+      preflightTrace("request-key-missing");
+      // This effect observes the proof-cache state. Replacing an already-empty
+      // object here schedules the effect again, which used to create a tight
+      // reactive loop while desktop auth hydration was still incomplete.
+      if (shouldResetMissingManagedAiAccessProofCache(proofCacheState)) {
+        setManagedAiAccessProofCacheState({ cacheKey: "", loaded: true, record: null });
+      }
       setManagedAiAccess(null);
       setManagedAiGatewayAccessToken("");
       setManagedAiAccessBusy(false);
+      setManagedAiAccessReady(false);
       setManagedAiAccessError(null);
       setManagedAiAccessRetryAttempt(0);
       setManagedAiAccessRetryScheduled(false);
@@ -644,8 +675,10 @@ export function createManagedAiAccessStore(
       managedAiCacheKey &&
       (!proofCacheState.loaded || proofCacheState.cacheKey !== managedAiCacheKey)
     ) {
+      preflightTrace("proof-cache-pending");
       if (!managedAiAccess()) {
         setManagedAiAccessBusy(true);
+        setManagedAiAccessReady(false);
       }
       return;
     }
@@ -656,22 +689,31 @@ export function createManagedAiAccessStore(
         : null;
     const cachedAccess =
       proofCachedAccess ?? readManagedAiAccessCache(managedAiCacheKey, cacheOptions());
+    const deferForLocalGateway = shouldDeferManagedAiAccessRefresh({
+      gatewayBaseUrl: managedAiBaseUrl || gatewayClient?.baseUrl || "",
+      isDesktopRuntime: options.isTauriRuntime(),
+      localClientToken: gatewayLocalAuth.token,
+    });
     const refreshPreflight = resolveManagedAiAccessRefreshPreflight({
       hasGatewayClient: Boolean(gatewayClient),
       managedAiBaseUrl,
       userToken,
-      deferForLocalGateway: shouldDeferManagedAiAccessRefresh({
-        gatewayBaseUrl: managedAiBaseUrl || gatewayClient?.baseUrl || "",
-        isDesktopRuntime: options.isTauriRuntime(),
-        localClientToken: gatewayLocalAuth.token,
-      }),
+      deferForLocalGateway,
       cachedAccessPresent: Boolean(cachedAccess),
       freshCachedAccessPresent: Boolean(proofCachedAccess?.gatewayAccessToken),
+    });
+    preflightTrace("resolved", {
+      decision: refreshPreflight.type,
+      reason: refreshPreflight.type === "reset" ? refreshPreflight.reason : null,
+      deferForLocalGateway,
+      cachedAccessPresent: Boolean(cachedAccess),
+      proofCachedAccessPresent: Boolean(proofCachedAccess),
     });
     if (refreshPreflight.type === "reset") {
       setManagedAiAccess(null);
       setManagedAiGatewayAccessToken("");
       setManagedAiAccessBusy(false);
+      setManagedAiAccessReady(false);
       setManagedAiAccessError(null);
       setManagedAiAccessRetryAttempt(0);
       setManagedAiAccessRetryScheduled(false);
@@ -684,6 +726,7 @@ export function createManagedAiAccessStore(
         setManagedAiAccessError(null);
       }
       setManagedAiAccessBusy(false);
+      setManagedAiAccessReady(true);
       setManagedAiAccessRetryAttempt(0);
       return;
     }
@@ -693,6 +736,7 @@ export function createManagedAiAccessStore(
     if (refreshPreflight.applyCachedAccessFirst && cachedAccess) {
       setManagedAiAccess(cachedAccess.profile);
       setManagedAiGatewayAccessToken(cachedAccess.gatewayAccessToken);
+      setManagedAiAccessReady(true);
       setManagedAiAccessError(null);
     }
     setManagedAiAccessBusy(true);
@@ -747,7 +791,7 @@ export function createManagedAiAccessStore(
     );
 
     void loadManagedAiAccess
-      .then((response) => {
+      .then((response) => untrack(() => {
         if (cancelled) return;
         const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
           aiAccess: response.aiAccess,
@@ -764,6 +808,7 @@ export function createManagedAiAccessStore(
           setManagedAiAccess(successDecision.profile);
           setManagedAiGatewayAccessToken(successDecision.gatewayAccessToken);
           setManagedAiAccessError(successDecision.error);
+          setManagedAiAccessReady(true);
           writeManagedAiAccessCache(
             managedAiCacheKey,
             successDecision.profile,
@@ -783,9 +828,10 @@ export function createManagedAiAccessStore(
         } else {
           setManagedAiAccessRetryAttempt(0);
           setManagedAiAccessRetryScheduled(false);
+          setManagedAiAccessReady(true);
         }
-      })
-      .catch((error) => {
+      }))
+      .catch((error) => untrack(() => {
         if (cancelled) return;
         const failureDecision = resolveManagedAiAccessRefreshFailure({
           cachedAccessPresent: Boolean(cachedAccess),
@@ -802,7 +848,10 @@ export function createManagedAiAccessStore(
         }
         setManagedAiAccessError(failureDecision.error);
         scheduleRetry(false);
-      })
+        if (!managedAiAccessRetryScheduled()) {
+          setManagedAiAccessReady(true);
+        }
+      }))
       .finally(() => {
         if (cancelled) return;
         setManagedAiAccessBusy(false);
@@ -860,6 +909,7 @@ export function createManagedAiAccessStore(
   ) => {
     setManagedAiAccess(profile);
     setManagedAiGatewayAccessToken(gatewayAccessToken);
+    setManagedAiAccessReady(true);
     setManagedAiAccessError(null);
     if (applyOptions?.writeCache) {
       writeCurrentManagedAiAccessCache(profile, gatewayAccessToken);
@@ -870,6 +920,7 @@ export function createManagedAiAccessStore(
     managedAiAccess,
     managedAiGatewayAccessToken,
     managedAiAccessBusy,
+    managedAiAccessReady,
     managedAiAccessError,
     managedAiAccessRetryScheduled,
     managedAiAccessModel,

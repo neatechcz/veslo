@@ -71,6 +71,11 @@ export type WorkspaceRuntimeControllerDeps = {
   onEngineStable?: () => void;
   clearWorkspaceBusyAllExcept: (workspaceId: string) => void;
   ensureLocalRuntimeReadyForWorkspaceStart?: (workspacePath: string) => Promise<boolean>;
+  syncManagedAiRuntimeConfigBeforeRuntime?: (target: {
+    workspaceId: string;
+    workspaceRoot: string;
+    directory: string;
+  }) => Promise<boolean>;
   syncWorkspaceSkillMaterializationBeforeRuntime: (
     workspace: WorkspaceInfo,
     options: { reason: string },
@@ -349,6 +354,57 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
             message,
           });
           return false;
+        }
+
+        if (workspace.workspaceType === "local" && deps.syncManagedAiRuntimeConfigBeforeRuntime) {
+          const configStartedAt = Date.now();
+          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:managed-ai-config:start", {
+            workspaceId: id,
+            workspacePath: workspace.path,
+            reason: ensureReason,
+          });
+          try {
+            const managedAiConfigReady = await deps.syncManagedAiRuntimeConfigBeforeRuntime({
+              workspaceId: id,
+              workspaceRoot: workspace.path,
+              directory: workspace.path,
+            });
+            if (!managedAiConfigReady) {
+              const message = "Managed AI access was not ready before runtime start";
+              recordSendWorkflowTrace("workspace-runtime", "ensure-engine:managed-ai-config:not-ready", {
+                workspaceId: id,
+                reason: ensureReason,
+                durationMs: Date.now() - configStartedAt,
+              });
+              deps.updateWorkspaceConnectionState(id, { status: "error", message });
+              deps.dispatchLifecycle?.({
+                type: "failed",
+                workspaceId: id,
+                message,
+              });
+              return false;
+            }
+            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:managed-ai-config:done", {
+              workspaceId: id,
+              reason: ensureReason,
+              durationMs: Date.now() - configStartedAt,
+            });
+          } catch (error) {
+            const message = messageFromUnknownError(error, deps.safeStringify);
+            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:managed-ai-config:error", {
+              workspaceId: id,
+              reason: ensureReason,
+              durationMs: Date.now() - configStartedAt,
+              error: message,
+            });
+            deps.updateWorkspaceConnectionState(id, { status: "error", message });
+            deps.dispatchLifecycle?.({
+              type: "failed",
+              workspaceId: id,
+              message,
+            });
+            return false;
+          }
         }
 
         const skillSyncMaxAttempts = isBootWarmup || isRuntimeRecovery ? 6 : 1;

@@ -9,7 +9,7 @@ import {
   buildWindowsManagedChildCleanupScript,
   createAppLaunchEnv,
   isDesktopBootstrapReadyDiagnostic,
-  publishPilotDenAuthSeedForWebView,
+  missingE2EDesktopBinaryMessage,
   readDesktopBootstrapDiagnosticFile,
   resolvePackagedSmokeModelConfig,
   resolveLaunchTimeout,
@@ -105,29 +105,44 @@ test("resolveMcpCatalogFixtureDenApiBase forwards the fixture base for Google or
   );
 });
 
-test("publishPilotDenAuthSeedForWebView exposes fixture auth to Pilot seeding without overriding explicit auth", () => {
-  const target: Record<string, string | undefined> = {};
-
-  publishPilotDenAuthSeedForWebView(
-    { E2E_DEN_AUTH_JSON: '{"token":"fixture"}' },
-    target,
+test("E2E desktop build guidance always points at the fresh E2E build entry point", () => {
+  assert.match(
+    missingE2EDesktopBinaryMessage("C:\\temp\\veslo.exe"),
+    /pnpm --filter @neatech\/veslo-e2e run build:desktop:e2e/,
   );
-  assert.equal(target.E2E_DEN_AUTH_JSON, '{"token":"fixture"}');
-
-  publishPilotDenAuthSeedForWebView(
-    { E2E_DEN_AUTH_JSON: '{"token":"other"}' },
-    target,
+  assert.match(
+    missingE2EDesktopBinaryMessage("C:\\temp\\veslo.exe"),
+    /src-tauri\/tauri\.e2e\.conf\.json/,
   );
-  assert.equal(target.E2E_DEN_AUTH_JSON, '{"token":"fixture"}');
+});
 
-  const explicitTarget = { VESLO_E2E_DEN_AUTH_JSON: '{"token":"explicit"}' };
-  publishPilotDenAuthSeedForWebView(
-    { E2E_DEN_AUTH_JSON: '{"token":"fixture"}' },
-    explicitTarget,
+test("createAppLaunchEnv passes auth to desktop only through the copied snapshot and strips OpenAI fallback variables", () => {
+  const env = createAppLaunchEnv(
+    {
+      E2E_DEN_AUTH_JSON: '{"token":"live-token"}',
+      VESLO_E2E_DEN_AUTH_JSON: '{"token":"preferred-live-token"}',
+      VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: "C:\\source\\den-auth.json",
+      E2E_DEN_AUTH_SNAPSHOT_FILE: "C:\\source\\fallback-den-auth.json",
+      VESLO_DEN_AUTH_SNAPSHOT_PATH: "C:\\source\\desktop-den-auth.json",
+      OPENAI_API_KEY: "must-not-reach-the-e2e-desktop",
+      OPENAI_BASE_URL: "https://openai.example.test/v1",
+      OPENAI_API_BASE: "https://openai-api.example.test/v1",
+    },
+    {
+      platform: "win32",
+      opencodeHome: "C:\\temp\\veslo-e2e-home",
+      snapshotPath: "C:\\temp\\veslo-e2e-home\\.veslo\\den-auth.json",
+    },
   );
-  assert.deepEqual(explicitTarget, {
-    VESLO_E2E_DEN_AUTH_JSON: '{"token":"explicit"}',
-  });
+
+  assert.equal(env.VESLO_DEN_AUTH_SNAPSHOT_PATH, "C:\\temp\\veslo-e2e-home\\.veslo\\den-auth.json");
+  assert.equal("E2E_DEN_AUTH_JSON" in env, false);
+  assert.equal("VESLO_E2E_DEN_AUTH_JSON" in env, false);
+  assert.equal("VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE" in env, false);
+  assert.equal("E2E_DEN_AUTH_SNAPSHOT_FILE" in env, false);
+  assert.equal("OPENAI_API_KEY" in env, false);
+  assert.equal("OPENAI_BASE_URL" in env, false);
+  assert.equal("OPENAI_API_BASE" in env, false);
 });
 
 test("createAppLaunchEnv isolates Windows app, local, and WebView2 storage so stale desktop state does not override the E2E snapshot", () => {

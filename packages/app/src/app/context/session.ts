@@ -51,6 +51,7 @@ import {
   createSessionSelectionController,
   isSessionNotFoundError,
   type SessionOfflineTranscriptLoadResult,
+  type SessionOfflineTranscriptLoadContext,
 } from "./session-selection-controller";
 import { createSessionEventStreamController } from "./session-event-stream";
 import {
@@ -61,6 +62,7 @@ import {
 } from "./session-lifecycle-recovery";
 import { createSessionWorkspaceCacheController } from "./session-workspace-cache";
 import type { ReconnectNotice, ReconnectState } from "./session-reconnect";
+import type { TranscriptProjectionScope } from "./transcript-projection-store";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
@@ -162,7 +164,18 @@ export function createSessionStore(options: {
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
-  loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<SessionOfflineTranscriptLoadResult>;
+  onSessionSelectionStart?: (sessionID: string, selectionVersion: number) => void;
+  loadOfflineTranscript?: (
+    sessionID: string,
+    limit: number,
+    context: SessionOfflineTranscriptLoadContext,
+  ) => Promise<SessionOfflineTranscriptLoadResult>;
+  currentSelectionVersion?: () => number;
+  reserveTranscriptProjection?: (scope: TranscriptProjectionScope) => void;
+  publishTranscriptProjection?: (
+    scope: TranscriptProjectionScope,
+    snapshot: VesloSessionTranscriptSnapshot,
+  ) => boolean | void;
   resolveConversationRunForSession?: (
     sessionID: string,
     workspaceIdHint?: string | null,
@@ -182,6 +195,7 @@ export function createSessionStore(options: {
     sessionId: string;
     directory?: string | null;
     expectedRunId?: string | null;
+    diagnosticTraceId?: string | null;
   }) => Promise<VesloSessionTranscriptSnapshot | null>;
   lifecycleRecoveryDiagnosticContext?: () => {
     appWorkspaceId?: string | null;
@@ -790,6 +804,28 @@ export function createSessionStore(options: {
           recoverAcceptedConversationRunStatus: options.recoverAcceptedConversationRunStatus,
           recoverAcceptedConversationTranscript: options.recoverAcceptedConversationTranscript,
           recoverConversationTranscript: options.recoverConversationTranscript,
+          currentSelectionVersion: options.currentSelectionVersion,
+          reserveTranscriptProjection: (scope, selectionVersion) => {
+            options.reserveTranscriptProjection?.({
+              workspaceId: scope.workspaceId,
+              directory: scope.directory,
+              uiSessionId: scope.sessionId,
+              conversationId: scope.conversationId,
+              opencodeSessionId: scope.opencodeSessionId,
+              selectionVersion,
+              expectedRunId: scope.runId,
+            });
+          },
+          publishTranscriptProjection: (scope, snapshot, selectionVersion) =>
+            options.publishTranscriptProjection?.({
+              workspaceId: scope.workspaceId,
+              directory: scope.directory,
+              uiSessionId: scope.sessionId,
+              conversationId: scope.conversationId,
+              opencodeSessionId: scope.opencodeSessionId,
+              selectionVersion,
+              expectedRunId: scope.runId,
+            }, snapshot),
           // Terminal recovery has already passed its exact durable run fence;
           // unlike a passive browse snapshot, it is allowed to replace stale
           // live parts with the canonical terminal snapshot.
@@ -876,7 +912,9 @@ export function createSessionStore(options: {
     selectSessionScopeKey: options.selectSessionScopeKey,
     directoryQueryPathMode: options.directoryQueryPathMode,
     conversationReader: options.conversationReader,
+    onSelectionStart: options.onSessionSelectionStart,
     loadOfflineTranscript: options.loadOfflineTranscript,
+    publishTranscriptProjection: options.publishTranscriptProjection,
     shouldBrowseSessionFromDb: options.shouldBrowseSessionFromDb,
     developerMode: options.developerMode,
     setError: options.setError,
@@ -917,6 +955,7 @@ export function createSessionStore(options: {
     renameSession,
     selectSession: selectSessionFromController,
     loadEarlierMessages,
+    currentSelectionVersion,
   } = selectionController;
   const selectSession = async (sessionId: string) => {
     lifecycleRecoveryController?.resumeExhaustedWatchForSession(sessionId, resolveSessionWorkspaceId(sessionId));
@@ -1074,6 +1113,7 @@ export function createSessionStore(options: {
     refreshPendingQuestions,
     selectSession,
     loadEarlierMessages,
+    currentSelectionVersion,
     renameSession,
     respondPermission,
     respondQuestion,

@@ -25,7 +25,14 @@ import { createSessionRenderArtifactManifest } from './session-render-fixture.js
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_READY_POLL_INTERVAL = 250;
+const PILOT_WEBVIEW_READINESS_TIMEOUT_MS = 30_000;
+const PILOT_DESKTOP_AUTH_HYDRATION_COMMAND_TIMEOUT_MS = 15_000;
 const DEFAULT_PILOT_SCENARIO_COMMAND_TIMEOUT_MS = 20 * 60_000;
+// A cold, real Codex OAuth response can begin long after the desktop runtime is
+// ready. This bounds observation of that production path; it is not a latency
+// target or a substitute for the provider-start diagnostics.
+export const CANONICAL_LIVE_INFERENCE_TIMEOUT_MS = 180_000;
+const CANONICAL_LIVE_INFERENCE_COMMAND_TIMEOUT_MS = CANONICAL_LIVE_INFERENCE_TIMEOUT_MS + 5_000;
 const DEFAULT_PILOT_SCENARIO_NAMES = ['smoke', 'navigation'] as const;
 const MANAGED_AI_INFERENCE_SCENARIO_NAMES = [
   'global-unpublished-draft',
@@ -69,8 +76,10 @@ const PILOT_SCENARIO_SUITES = {
     'language-persistence',
   ],
   'live-inference': [
-    'runtime-cold-start-session-handoff',
     'message-send-registry-degraded',
+  ],
+  'live-inference-lifecycle': [
+    'runtime-cold-start-session-handoff',
   ],
 } as const;
 
@@ -127,6 +136,11 @@ type PortContentionFixture = {
 
 type PilotSuccessArtifactCommand = PilotFailureDiagnosticCommand;
 
+const SENSITIVE_DIAGNOSTIC_KEY = /^(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)$/i;
+const SENSITIVE_DIAGNOSTIC_INLINE_VALUE = /((?:["']?)(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)(?:["']?)\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^,\s}\]]+)/gi;
+const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
+const SENSITIVE_QUERY_VALUE = /([?&](?:token|access_token|refresh_token|api_key|apikey|secret|password)=)[^&\s]+/gi;
+
 const SESSION_RENDER_ARTIFACT_VIEWPORTS = [
   { width: 390, height: 844 },
   { width: 768, height: 900 },
@@ -165,6 +179,15 @@ export function resolvePilotScenarioCommandTimeoutMs(env: Record<string, string 
   return timeoutMs;
 }
 
+export function resolveCanonicalLiveInferenceCommandTimeoutMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  return Math.min(
+    resolvePilotScenarioCommandTimeoutMs(env),
+    CANONICAL_LIVE_INFERENCE_COMMAND_TIMEOUT_MS,
+  );
+}
+
 export function sanitizePilotArtifactName(value: string): string {
   const base = basename(value.replaceAll('\\', '/')).replace(/\.toml$/i, '');
   const safe = base
@@ -177,6 +200,93 @@ export function sanitizePilotArtifactName(value: string): string {
 export function tailText(value: string, maxLength = 20_000): string {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, 1_000)}\n...<truncated ${value.length - maxLength} chars>...\n${value.slice(-maxLength + 1_000)}`;
+}
+
+function redactPilotDiagnosticValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactPilotDiagnosticValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        SENSITIVE_DIAGNOSTIC_KEY.test(key) ? '<redacted>' : redactPilotDiagnosticValue(child),
+      ]),
+    );
+  }
+  return typeof value === 'string' ? redactPilotDiagnosticText(value) : value;
+}
+
+export function redactPilotDiagnosticText(value: string): string {
+  try {
+    return JSON.stringify(redactPilotDiagnosticValue(JSON.parse(value)), null, 2);
+  } catch {
+    return value
+      .replace(BEARER_VALUE, 'Bearer <redacted>')
+      .replace(SENSITIVE_DIAGNOSTIC_INLINE_VALUE, '$1<redacted>')
+      .replace(SENSITIVE_QUERY_VALUE, '$1<redacted>');
+  }
+}
+
+export function redactPilotCommandArgs(args: string[]): string[] {
+  const evalIndex = args.indexOf('eval');
+  return args.map((arg, index) => {
+    if (evalIndex >= 0 && index > evalIndex) return '<redacted-eval-script>';
+    return redactPilotDiagnosticText(arg);
+  });
+}
+
+export function buildPilotStorageSummaryScript(scope: 'local' | 'session'): string {
+  const storage = scope === 'local' ? 'window.localStorage' : 'window.sessionStorage';
+  return `(() => {
+  const storage = ${storage};
+  const authRaw = storage.getItem("veslo.den.auth");
+  const denAuth = { present: Boolean(authRaw), hasToken: false, email: null, denApiBase: null, parseError: false };
+  if (authRaw) {
+    try {
+      const parsed = JSON.parse(authRaw);
+      if (!parsed || typeof parsed !== "object") {
+        denAuth.parseError = true;
+      } else {
+        denAuth.hasToken = typeof parsed.token === "string" && parsed.token.trim().length > 0;
+        denAuth.email = typeof parsed.user?.email === "string" ? parsed.user.email : null;
+        denAuth.denApiBase = typeof parsed.denApiBase === "string" ? parsed.denApiBase : null;
+      }
+    } catch {
+      denAuth.parseError = true;
+    }
+  }
+  return {
+    scope: ${JSON.stringify(scope)},
+    keyCount: storage.length,
+    keys: Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter(Boolean),
+    denAuth,
+    hasKeepSignedIn: storage.getItem("veslo.den.keepSignedIn") === "1",
+  };
+})()`;
+}
+
+export function buildPilotDesktopAuthHydrationCheckScript(): string {
+  return `(async () => {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const authRaw = window.localStorage.getItem("veslo.den.auth") ?? window.sessionStorage.getItem("veslo.den.auth");
+    if (authRaw) {
+      try {
+        const auth = JSON.parse(authRaw);
+        if (auth && typeof auth === "object" && typeof auth.token === "string" && auth.token.trim()) {
+          return {
+            signedIn: true,
+            email: typeof auth.user?.email === "string" ? auth.user.email : null,
+            source: "desktop-snapshot-hydration",
+          };
+        }
+      } catch {
+        // Keep waiting while desktop snapshot hydration settles.
+      }
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  throw new Error("Desktop auth snapshot did not hydrate a signed-in WebView state.");
+})()`;
 }
 
 export function pilotFailureDiagnosticCommands(outputDir: string): PilotFailureDiagnosticCommand[] {
@@ -192,8 +302,16 @@ export function pilotFailureDiagnosticCommands(outputDir: string): PilotFailureD
       args: ['--window', 'main', 'network', '--failed', '--last', '100', '--json'],
       outputFile: 'network-failed.json',
     },
-    { name: 'storage-local', args: ['--window', 'main', 'storage', '--json', 'list'], outputFile: 'storage-local.json' },
-    { name: 'storage-session', args: ['--window', 'main', 'storage', '--session', '--json', 'list'], outputFile: 'storage-session.json' },
+    {
+      name: 'storage-local-summary',
+      args: ['--window', 'main', 'eval', '--json', buildPilotStorageSummaryScript('local')],
+      outputFile: 'storage-local-summary.json',
+    },
+    {
+      name: 'storage-session-summary',
+      args: ['--window', 'main', 'eval', '--json', buildPilotStorageSummaryScript('session')],
+      outputFile: 'storage-session-summary.json',
+    },
     { name: 'forms', args: ['--window', 'main', 'forms', '--json'], outputFile: 'forms.json' },
     {
       name: 'send-workflow-trace',
@@ -229,40 +347,27 @@ export function pilotScenarioSuiteNames(suiteName: string): string[] {
   return [...suite];
 }
 
+export function assertPilotScenarioTimeoutCap(
+  scenarios: string[],
+  maximumTimeoutMs = CANONICAL_LIVE_INFERENCE_TIMEOUT_MS,
+): void {
+  for (const scenario of scenarios) {
+    const source = readFileSync(scenario, 'utf8');
+    const entries = Array.from(
+      source.matchAll(/^\s*(global_timeout_ms|timeout_ms)\s*=\s*(\d+)\s*$/gm),
+      ([, name, rawTimeout]) => ({ name, timeoutMs: Number(rawTimeout) }),
+    );
+    const overLimit = entries.find((entry) => entry.timeoutMs > maximumTimeoutMs);
+    if (overLimit) {
+      throw new Error(
+        `Pilot scenario ${scenario} has ${overLimit.name}=${overLimit.timeoutMs}, above the ${maximumTimeoutMs}ms cap.`,
+      );
+    }
+  }
+}
+
 export function pilotReadinessProbeCommands(): string[][] {
   return [['ping'], ['state']];
-}
-
-export function resolvePilotDenAuthJson(env: Record<string, string | undefined> = process.env): string | null {
-  const raw = env.VESLO_E2E_DEN_AUTH_JSON?.trim() || env.E2E_DEN_AUTH_JSON?.trim() || '';
-  if (raw) return raw;
-
-  const snapshotPath = resolveLiveDenAuthSnapshotPath(env);
-  if (!snapshotPath || !existsSync(snapshotPath)) return null;
-
-  return readDenAuthJsonFromSnapshot(snapshotPath);
-}
-
-export function buildPilotDenAuthSeedScript(authJson: string): string {
-  return `
-const authJson = ${JSON.stringify(authJson)};
-JSON.parse(authJson);
-window.localStorage.setItem("veslo.den.auth", authJson);
-window.localStorage.setItem("veslo.den.keepSignedIn", "1");
-window.sessionStorage.removeItem("veslo.den.auth");
-window.sessionStorage.removeItem("veslo.den.keepSignedIn");
-const invoke = window.__TAURI_INTERNALS__?.invoke;
-if (invoke) {
-  await invoke("den_auth_snapshot_write", {
-    authJson,
-    keepSignedIn: true,
-    language: "en",
-    onboardingComplete: true,
-  });
-}
-window.location.reload();
-true;
-`;
 }
 
 export function resolvePilotScenarioSelection(
@@ -562,6 +667,22 @@ export function configureManagedAiGatewayFixtureEnvironment(
   }, targetEnv);
 }
 
+export function configureCanonicalLiveInferenceEnvironment(
+  targetEnv: NodeJS.ProcessEnv = process.env,
+): EnvironmentRestore {
+  return setEnvironmentForFixture({
+    E2E_MANAGED_AI_GATEWAY_FIXTURE: '0',
+    E2E_SKILL_REGISTRY_FIXTURE: '0',
+    E2E_SKILL_REGISTRY_SERVER_ENV: '0',
+    E2E_SKILL_REGISTRY_AUTH_BASE: '',
+    E2E_GOOGLE_MCP_CATALOG_FIXTURE: '0',
+    E2E_SHAREPOINT_MCP_CATALOG_FIXTURE: '0',
+    E2E_RUN_ACTIVITY_PROBE_MODE: '',
+    E2E_MANAGED_AI_RESPONSE_DELAY_MS: '',
+    E2E_SKILL_REGISTRY_EVENTS_MODE: '',
+  }, targetEnv);
+}
+
 export function scenarioSelectionNeedsNoWorkspaceProfile(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
     scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/vslo-235-local-host-no-workspace.toml'),
@@ -636,6 +757,12 @@ export function assertLiveManagedAiAuthForScenarioSelection(
   if (env.E2E_MANAGED_AI_GATEWAY_FIXTURE?.trim() === '1') {
     throw new Error(
       'Managed-AI inference pilot scenarios must run the live managed-AI path. Unset E2E_MANAGED_AI_GATEWAY_FIXTURE or set it to 0.',
+    );
+  }
+
+  if (env.E2E_USE_EXISTING_PROFILE?.trim() === '1' || env.E2E_OPENCODE_HOME?.trim()) {
+    throw new Error(
+      'Managed-AI inference pilot scenarios require the harness-owned isolated profile and auth snapshot; unset E2E_USE_EXISTING_PROFILE and E2E_OPENCODE_HOME.',
     );
   }
 
@@ -733,6 +860,7 @@ export async function runPilotCommand(options: RunPilotCommandOptions): Promise<
   const binary = options.binary ?? resolvePilotBinary(options.env);
   const socket = options.socket ?? resolvePilotSocketPath({ runtimeDir: resolvePilotRuntimeDir() });
   const { command, args } = buildPilotCommand({ binary, socket, args: options.args });
+  const safeArgs = redactPilotCommandArgs(args).join(' ');
 
   await new Promise<void>((resolveCommand, reject) => {
     const child = spawn(command, args, {
@@ -768,7 +896,7 @@ export async function runPilotCommand(options: RunPilotCommandOptions): Promise<
     if (options.timeoutMs) {
       timeout = setTimeout(() => {
         child.kill(process.platform === 'win32' ? undefined : 'SIGKILL');
-        finish(new Error(`tauri-pilot command timed out after ${options.timeoutMs}ms: ${args.join(' ')}`));
+        finish(new Error(`tauri-pilot command timed out after ${options.timeoutMs}ms: ${safeArgs}`));
       }, options.timeoutMs);
     }
 
@@ -784,8 +912,8 @@ export async function runPilotCommand(options: RunPilotCommandOptions): Promise<
 
       const stderr = Buffer.concat(errors).toString().trim();
       const stdout = Buffer.concat(output).toString().trim();
-      const detail = [stderr, stdout].filter(Boolean).join('\n');
-      finish(new Error(`tauri-pilot exited with ${code ?? signal}: ${args.join(' ')}${detail ? `\n${tailText(detail)}` : ''}`));
+      const detail = redactPilotDiagnosticText([stderr, stdout].filter(Boolean).join('\n'));
+      finish(new Error(`tauri-pilot exited with ${code ?? signal}: ${safeArgs}${detail ? `\n${tailText(detail)}` : ''}`));
     });
   });
 }
@@ -861,9 +989,10 @@ async function collectPilotFailureDiagnostics(options: {
   const outputDir = join(options.e2eRoot, 'tauri-pilot-failures', `diagnostics-${Date.now()}-${scenarioName}`);
   mkdirSync(outputDir, { recursive: true });
 
-  const errorText = options.error instanceof Error
+  const rawErrorText = options.error instanceof Error
     ? `${options.error.stack ?? options.error.message}\n`
     : `${String(options.error)}\n`;
+  const errorText = redactPilotDiagnosticText(rawErrorText);
   writeFileSync(join(outputDir, 'failure.txt'), errorText, 'utf8');
 
   const commands = pilotFailureDiagnosticCommands(outputDir);
@@ -886,10 +1015,13 @@ async function collectPilotFailureDiagnostics(options: {
       args: diagnostic.args,
       timeoutMs: diagnostic.timeoutMs ?? Math.min(5_000, Math.max(1_000, options.timeoutMs)),
     });
+    const stdout = redactPilotDiagnosticText(result.stdout).trim();
+    const stderr = redactPilotDiagnosticText(result.stderr).trim();
+    const error = result.error ? redactPilotDiagnosticText(result.error) : null;
     const body = [
-      result.stdout.trim() ? result.stdout.trim() : null,
-      result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : null,
-      result.error ? `error:\n${result.error}` : null,
+      stdout || null,
+      stderr ? `stderr:\n${stderr}` : null,
+      error ? `error:\n${error}` : null,
       result.exitCode === 0 && !result.timedOut ? null : `status: exit=${result.exitCode ?? 'null'} signal=${result.signal ?? 'null'} timedOut=${result.timedOut}`,
     ].filter(Boolean).join('\n\n');
 
@@ -897,12 +1029,12 @@ async function collectPilotFailureDiagnostics(options: {
     results.push({
       name: diagnostic.name,
       command: result.command,
-      args: result.args,
+      args: redactPilotCommandArgs(result.args),
       outputFile: diagnostic.outputFile,
       exitCode: result.exitCode,
       signal: result.signal,
       timedOut: result.timedOut,
-      error: result.error,
+      error,
     });
   }
 
@@ -936,17 +1068,25 @@ async function collectSessionRenderSuccessArtifacts(options: {
       args: artifact.args,
       timeoutMs: artifact.timeoutMs ?? Math.min(15_000, Math.max(1_000, options.timeoutMs)),
     });
+    const stdout = redactPilotDiagnosticText(result.stdout).trim();
+    const stderr = redactPilotDiagnosticText(result.stderr).trim();
+    const error = result.error ? redactPilotDiagnosticText(result.error) : null;
     const body = [
-      result.stdout.trim() ? result.stdout.trim() : null,
-      result.stderr.trim() ? `stderr:\n${result.stderr.trim()}` : null,
-      result.error ? `error:\n${result.error}` : null,
+      stdout || null,
+      stderr ? `stderr:\n${stderr}` : null,
+      error ? `error:\n${error}` : null,
       result.exitCode === 0 && !result.timedOut ? null : `status: exit=${result.exitCode ?? 'null'} signal=${result.signal ?? 'null'} timedOut=${result.timedOut}`,
     ].filter(Boolean).join('\n\n');
     writeFileSync(join(outputDir, artifact.outputFile), body ? `${body}\n` : '', 'utf8');
-    if (result.exitCode !== 0 || result.timedOut || result.error) {
+    if (result.exitCode !== 0 || result.timedOut || error) {
       throw new Error(`Could not capture session-render-stability artifact ${artifact.name}: ${body || 'tauri-pilot returned no detail'}`);
     }
-    results.push({ name: artifact.name, outputFile: artifact.outputFile, command: result.command, args: result.args });
+    results.push({
+      name: artifact.name,
+      outputFile: artifact.outputFile,
+      command: result.command,
+      args: redactPilotCommandArgs(result.args),
+    });
   }
 
   const manifest = createSessionRenderArtifactManifest({
@@ -957,7 +1097,7 @@ async function collectSessionRenderSuccessArtifacts(options: {
 }
 
 export async function ensurePilotReady(options: Omit<RunPilotCommandOptions, 'args'> = {}): Promise<void> {
-  const timeoutMs = options.timeoutMs ?? Math.min(10_000, resolveLaunchTimeout());
+  const timeoutMs = options.timeoutMs ?? Math.min(PILOT_WEBVIEW_READINESS_TIMEOUT_MS, resolveLaunchTimeout());
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = null;
 
@@ -981,18 +1121,17 @@ export async function ensurePilotReady(options: Omit<RunPilotCommandOptions, 'ar
   throw new Error(`tauri-pilot did not become ready within ${timeoutMs}ms.${message}`);
 }
 
-async function seedPilotDenAuthIfConfigured(
+async function verifyPilotDesktopAuthHydration(
   options: Omit<RunPilotCommandOptions, 'args'> = {},
 ): Promise<void> {
-  const authJson = resolvePilotDenAuthJson(options.env ?? process.env);
-  if (!authJson) return;
-
   await runPilotCommand({
     ...options,
-    args: ['eval', buildPilotDenAuthSeedScript(authJson)],
-    timeoutMs: Math.min(10_000, options.timeoutMs ?? resolveLaunchTimeout()),
+    args: ['--window', 'main', 'eval', '--json', buildPilotDesktopAuthHydrationCheckScript()],
+    timeoutMs: Math.min(
+      PILOT_DESKTOP_AUTH_HYDRATION_COMMAND_TIMEOUT_MS,
+      options.timeoutMs ?? resolveLaunchTimeout(),
+    ),
   });
-  await ensurePilotReady(options);
 }
 
 export async function runPilotScenarios(options: RunPilotScenariosOptions = {}): Promise<void> {
@@ -1001,12 +1140,18 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   const binary = options.binary ?? resolvePilotBinary();
   const socket = options.socket ?? resolvePilotSocketPath({ runtimeDir: resolvePilotRuntimeDir() });
   const timeoutMs = options.timeoutMs ?? resolveLaunchTimeout();
-  const scenarioCommandTimeoutMs = resolvePilotScenarioCommandTimeoutMs();
+  const isCanonicalLiveInferenceSuite = options.suite?.trim() === 'live-inference';
+  const scenarioCommandTimeoutMs = isCanonicalLiveInferenceSuite
+    ? resolveCanonicalLiveInferenceCommandTimeoutMs()
+    : resolvePilotScenarioCommandTimeoutMs();
 
   for (const scenario of scenarios) {
     if (!existsSync(scenario)) {
       throw new Error(`tauri-pilot scenario not found: ${scenario}`);
     }
+  }
+  if (isCanonicalLiveInferenceSuite) {
+    assertPilotScenarioTimeoutCap(scenarios);
   }
   assertPilotScenarioSelectionIsolated(scenarios);
   assertSessionQueueRuntimeFixtureProfileIsolation(scenarios);
@@ -1016,6 +1161,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
 
   const restoreManagedAiFixtureEnvironment = scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)
     ? configureManagedAiGatewayFixtureEnvironment()
+    : null;
+  const restoreCanonicalLiveInferenceEnvironment = isCanonicalLiveInferenceSuite
+    ? configureCanonicalLiveInferenceEnvironment()
     : null;
   if (scenarioSelectionNeedsAutomationSecondaryWorkspace(scenarios)) {
     process.env.E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE ||= '1';
@@ -1112,7 +1260,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         }
       : undefined);
     await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
-    await seedPilotDenAuthIfConfigured({ binary, socket, cwd: e2eRoot, timeoutMs });
+    if (scenarioSelectionRequiresLiveManagedAiAuth(scenarios)) {
+      await verifyPilotDesktopAuthHydration({ binary, socket, cwd: e2eRoot, timeoutMs });
+    }
     if (scenarioSelectionNeedsPackagedSmokeFixture(scenarios)) {
       try {
         await waitForDesktopBootstrapReady({ timeoutMs: 180_000 });
@@ -1187,6 +1337,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     await packagedSmokeModelFixture?.stop();
     restoreSessionQueueFixtureEnvironment?.();
     restorePackagedSmokeFixtureEnvironment?.();
+    restoreCanonicalLiveInferenceEnvironment?.();
     restoreManagedAiFixtureEnvironment?.();
   }
 }

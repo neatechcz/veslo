@@ -2,7 +2,7 @@
 title: Headless service-runtime integration gate implementation plan
 date: 2026-07-16
 target: local Veslo server, orchestrator, deterministic fake OpenCode engine, quality gate
-status: proposed
+status: implementation-in-progress
 done: false
 base_branch: main
 baseline_worktree: dirty
@@ -21,14 +21,12 @@ service topology and proves the critical first-message path across process and
 HTTP boundaries:
 
 ```text
-test client
-  -> veslo-server
-    -> veslo-orchestrator workspace mount
-      -> fake OpenCode executable
+veslo-orchestrator start owner
+  -> veslo-server -> fake OpenCode executable
 ```
 
 The gate must catch a broken server binary, bad orchestrator startup arguments,
-workspace registration/proxy regressions, first-message route regressions and
+direct local OpenCode wiring regressions, first-message route regressions and
 unbounded failure handling before a desktop build is needed.
 
 It is deliberately **not** a replacement for the focused Tauri recovery lane.
@@ -45,9 +43,10 @@ renderer crash fallback.
   `serve --hostname <host> --port <port>`. This is the supported seam for a
   deterministic fake engine. Do not add a production-only test bypass to the
   orchestrator.
-- The server owns the app-facing conversation/run routes. For local workspaces
-  it registers the workspace with the orchestrator and proxies OpenCode calls
-  through the workspace mount.
+- In the current development `start` mode, the orchestrator owns the local
+  server and OpenCode child processes, while the server talks to the configured
+  local OpenCode URL directly. Workspace-mount registration belongs to the
+  daemon topology, not this 1:1 dev-mode gate.
 - The current route audit extracts registrations and app client paths from
   source; it is a hard duplicate-route guard, not a generated typed API schema.
   Its current report is 178 server routes, 95 client path strings, six
@@ -62,7 +61,7 @@ renderer crash fallback.
 | Decision | Chosen approach | Explicitly not doing |
 | --- | --- | --- |
 | Runtime under test | Exactly three service processes: real server binary, real orchestrator, fake OpenCode child | Mock either production owner in the integration test or start OpenCode Router |
-| Engine | `scripts/test-fixtures/fake-opencode.js`, run by Node through the existing `--opencode-bin` seam | A generic executable script, a provider call, credentials, network, or a real model response |
+| Engine | `scripts/test-fixtures/fake-opencode.js`, run by Node through the existing `--opencode-bin` seam; retain start-mode OpenCode Basic auth and require it in the fake | A generic executable script, a provider call, provider credentials, network, or a real model response |
 | UI | No Vite, Tauri, browser, Solid, or Pilot process | Renaming this as desktop E2E |
 | Isolation | Unique ports, tokens, data directory, workspace directory and trace directory per test run | Reusing a developer profile or repository data store |
 | Cleanup | Await normal shutdown; on timeout terminate only recorded child process trees and report their logs | Global process-name cleanup or deleting a shared directory |
@@ -97,10 +96,10 @@ done: false
 1. Record cold and warm timings for the existing server build, orchestrator
    startup and one current focused server/orchestrator test. Record platform and
    Bun/Node versions with the result.
-2. Define the first stable service suite as exactly four scenarios:
+2. Define the first stable service suite around these core scenarios:
    - server and orchestrator reach ready health with no UI process;
-   - a local workspace is registered by the real server before the server
-     proxies to the orchestrator;
+   - the server exposes its start-mode workspace through the generated client
+     token;
    - the atomic first-submit route materializes one session and sends one run
      to the fake engine;
    - replaying the same client message/run identity does not cause a second
@@ -140,7 +139,6 @@ It owns only:
    --opencode-source external
    --veslo-server-bin <absolute built veslo-server path>
    --opencode-bin <absolute scripts/test-fixtures/fake-opencode.js path>
-   --no-opencode-auth
    --no-veslo-code-router
    --veslo-host 127.0.0.1
    --veslo-port <reserved loopback port>
@@ -201,8 +199,12 @@ endpoints:
   requires, discovered in HS00.
 
 Its behavior is controlled exclusively by a test-private environment variable:
-normal success or a deterministic prompt 5xx. It must never inspect real
+normal success, a bounded prompt delay, deterministic session/prompt 5xx, or a
+single prompt 5xx followed by success for retry coverage.
+It must never inspect real
 OpenCode configuration, read provider credentials, or make an outbound request.
+It must require the generated start-mode OpenCode Basic authorization header on
+every request and record only whether it was accepted, never its value.
 The fixture emits a compact redacted request log to the test-owned trace
 directory so the integration test can assert one upstream prompt and diagnose
 failures.
@@ -230,36 +232,58 @@ The initial HTTP matrix is fixed before coding:
 | Case | Request | Required headers/body | Expected result |
 | --- | --- | --- | --- |
 | Server readiness | `GET /health` | no auth; this route is intentionally public | `200`; server pid/instance health is usable |
-| Local workspace | `POST /workspaces/local` | `x-veslo-host-token: <host token>`, JSON `{ name: "service gate", path: <temporary workspace> }` | `201`; capture the server-owned workspace id |
-| Atomic first submit | `POST /workspace/<id>/conversations/submit` | `Authorization: Bearer <client token>`, `x-veslo-send-trace-id: service-gate-first-submit`, JSON `{ clientMessageId: "service-gate-message-1", origin: "session:normal", source: "enter", target: { directory: <temporary workspace>, pendingClientSessionId: "pending-service-gate" }, draft: { mode: "prompt", text: "service gate", parts: [{ type: "text", text: "service gate" }] } }` | `200`, `status: "submitted"`; exactly one fake `POST /session` with a server-chosen id and one fake `POST /session/<id>/prompt_async` |
-| Workspace proxy health | `GET /workspace/<id>/opencode/global/health` after first submit has started the engine | bearer token | `200`; fake engine observes the server-injected workspace/directory context |
-| Idempotent replay | identical atomic first-submit request | same headers/body | `200` with the identical terminal payload; no second fake `/session` or `prompt_async` |
-| Upstream failure | atomic first submit in a fresh fake-5xx profile | same headers with a new message id; fake returns `500` only from `prompt_async` | `502` with `code: "opencode_request_failed"`; subsequent `/health` remains `200` |
+| Workspace lookup | `GET /workspaces` | `Authorization: Bearer <client token>` | `200`; capture the start-mode workspace id and temporary directory |
+| Local auth and topology | `GET /approvals`, `GET /status` | correct `X-Veslo-Host-Token`, then `Authorization: Bearer <client token>` | host token is required; direct start reports `runtimeChain.status: "server_running"` with no daemon configured |
+| Atomic first submit | `POST /workspace/<id>/conversations/submit` | `Authorization: Bearer <client token>`, `x-veslo-send-trace-id: service-gate-first-submit`, JSON `{ clientMessageId: "service-gate-message-1", origin: "session:normal", source: "enter", target: { directory: <temporary workspace>, pendingClientSessionId: "pending-service-gate" }, draft: { mode: "prompt", text: "service gate", parts: [{ type: "text", text: "service gate" }] } }` | `200`, `status: "submitted"`; exactly one fake `POST /session` with a server-chosen id and one fake `POST /session/<id>/prompt_async`; the normalized upstream prompt body has only one text part and the trace id |
+| Direct OpenCode health | `GET /workspace/<id>/opencode/global/health` after first submit | bearer token | `200`; fake engine observes the server-injected directory context |
+| Idempotent replay | identical atomic first-submit request, then same `clientMessageId` with a changed draft | same headers/body | exact replay gives the identical `200` payload; changed replay gives `409 idempotency_conflict`; neither causes a second fake `/session` or `prompt_async` |
+| Concurrent retry | two identical first-submit requests while the fake delays `prompt_async` | same headers/body | both receive the same `200` payload; exactly one fake `/session` and `prompt_async` prove in-flight deduplication |
+| Retry after prompt failure | identical first-submit request after a fake one-shot `prompt_async` 5xx | same headers/body and client message id | first result restores the draft; retry submits through the already materialized conversation/session; exactly one fake `/session` and two prompts |
+| Durable replay after restart | identical completed first-submit request after stopping and starting the full local service topology with the same isolated data profile | same headers/body and client message id | exact `200` replay; the restarted fake receives no `POST /session` or `prompt_async` |
+| Managed-AI gateway handoff | prime `GET /workspace/<id>/ai-gateway/me/ai-access`, submit with `expectAiGatewayStart: true`, then send a provider request carrying `${OPENCODE_SESSION_ID}` | generated client/caller credentials, workspace id and placeholder session header | runtime authorization reaches the loopback gateway fake; placeholder resolves through the active run context; the upstream sees only its resolved session id and no local/internal headers or message content in diagnostics |
+| Cold managed-AI startup | prime access but send `${OPENCODE_SESSION_ID}` before any managed run, then repeat after first-run admission | generated client/caller credentials and workspace id | first request is local `400 gateway_session_unresolved` with no upstream contact; admitted run resolves and forwards normally |
+| Ambiguous managed-AI runs | submit two managed runs in one workspace, then send a placeholder; retry with the second run's legacy OpenCode `x-session-id` | generated credentials, same workspace id, placeholder plus optional OpenCode session header | ambiguous placeholder is local `400 gateway_session_unresolved` with no upstream contact; explicit legacy session header resolves the intended run and internal headers remain stripped |
+| Runtime-auth clear/reprime | clear runtime authorization after admission, try redacted and stale legacy gateway tokens, then read access again | generated client/caller credentials and admitted session | both stale forms reject locally with typed `401`; no legacy fallback reaches upstream; only a fresh access prime restores provider forwarding |
+| Gateway 5xx and retry | fake gateway returns one provider `503`, then success for the same admitted session | generated credentials and resolved session | server maps the failure to typed `502 ai_gateway_upstream_failed`, redacts the runtime token from diagnostics, and a retry succeeds without a new conversation/session |
+| Invalid request | malformed `draft.parts` | authenticated submit with a non-array `parts` value | `400 invalid_payload`; fake receives no `/session` or `prompt_async`; subsequent `/health` remains `200` |
+| Upstream prompt failure | atomic first submit in a fresh fake-5xx profile | same headers with a new message id; fake returns `500` only from `prompt_async` | `200` with `status: "failed"`, `code: "opencode_request_failed"`, `draftDisposition: "restore"`, and `debugTrace[0].upstreamStatus: 502`; subsequent `/health` remains `200` |
+| Upstream session failure | first atomic submit in a fresh fake-5xx profile | same headers with a new message id; fake returns `500` from `/session` | `200` with `status: "failed"`, `code: "conversation_create_failed"`, `draftDisposition: "restore"`, upstream `opencode_request_failed/502`, no `prompt_async`, and subsequent `/health` remains `200` |
 
 The matrix deliberately asserts only server-owned HTTP fields and fake request
 counts. It does not assert UI drafts, renderer state, a provider response, or
 an unspecified generic bounded failure.
 
-Implement the four HS00 scenarios in one serial suite initially. Each case gets
-a fresh launcher/profile so database state, ports and engine request counts
-cannot leak between cases. Assert:
+The managed-AI row uses a loopback listener inside the Node test process, not a
+fourth production child or a live gateway. It records a redacted request summary
+under the isolated profile and proves the server proxy boundary: caller auth for
+the access read, runtime auth for the provider call, resolved session correlation,
+and stripping of local/internal headers before forwarding.
 
-1. readiness contains the expected server instance identity, and the first
-   protected call accepts only the generated client token;
-2. the server trace records the workspace registration and a workspace-scoped
-   proxy request reaches the fake engine with the registered context, not a
-   caller-selected directory;
+Implement the matrix in one serial suite. Each ordinary case gets a fresh
+launcher/profile so database state, ports and engine request counts cannot leak
+between cases; the durable-replay case intentionally reuses one isolated profile
+across a complete stop/start cycle. Assert:
+
+1. readiness contains the expected server instance identity; client and host
+   protected calls reject a wrong credential and accept the generated runtime
+   credential; direct start reports its non-daemon runtime topology explicitly;
+2. the protected workspace lookup returns the start-mode workspace and direct
+   OpenCode health reaches the fake engine with the configured directory;
 3. atomic first submit materializes a server-owned session and produces exactly
    one fake `/session` plus one `prompt_async` request;
-4. replay preserves idempotency; the fake 5xx is exactly the `502`
-   `opencode_request_failed` contract, and subsequent health proves the service
-   topology has not crashed.
+4. replay preserves idempotency; the fake 5xx yields the typed `failed`
+   `opencode_request_failed` result with upstream status `502`, and subsequent
+   health proves the service topology has not crashed.
+
+The successful submit must carry the supplied trace id through
+`server:conversation-run:opencode-submit`; the test-owned server and
+orchestrator trace files must record the OpenCode completion and engine spawn.
 
 On failure, print the profile directory, sanitized child logs, fake-engine
 request summary, the server/orchestrator send-trace event names and the exact
 failing HTTP status. Do not print bearer tokens, message content or environment
-dumps. A passing first-submit assertion must find the server workspace-register
-event and the orchestrator engine-spawn event in the test-owned traces.
+dumps. A passing first-submit assertion must find the server submit event and
+the orchestrator engine-spawn event in the test-owned traces/logs.
 
 Acceptance:
 
@@ -311,7 +335,7 @@ orchestrator, its real server child and its fake OpenCode child, but no Vite or
 OpenCode Router. Then perform controlled mutations in a disposable worktree:
 
 - break an orchestrator argument or server-binary path;
-- make the workspace proxy target incorrect;
+- make the direct local OpenCode target incorrect;
 - make first-run submission issue two upstream prompt requests;
 - make the fake engine return 5xx.
 
@@ -354,7 +378,7 @@ suite belongs to this plan.
 - If child cleanup cannot be made reliable on Windows using only recorded PIDs,
   do not add broad process-name cleanup; fix the launcher lifecycle first.
 - If first-message behavior requires an unbounded OpenCode API surface, narrow
-  the first gate to health/workspace proxy and create a separately reviewed
+  the first gate to health/direct-engine wiring and create a separately reviewed
   fake-engine contract plan. Do not grow the fixture opportunistically.
 - A passing service gate never closes a renderer-crash report. Keep the
   desktop-recovery lane and collect a fresh desktop trace for UI-only failures.

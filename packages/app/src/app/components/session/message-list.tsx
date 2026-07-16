@@ -1127,14 +1127,15 @@ export default function MessageList(props: MessageListProps) {
         kind: section.kind,
         status: section.status,
       }));
-      untrack(() => {
-        props.setExpandedTimelineSectionIds((current) => {
-          const next = reconcileTimelineOpenSectionIds(current, {
-            containerId: containerProps.id,
-            sections,
-          });
-          return sameStringSet(current, next) ? current : next;
+      const reconcileOpenSectionIds = (current: Set<string>) => {
+        const next = reconcileTimelineOpenSectionIds(current, {
+          containerId: containerProps.id,
+          sections,
         });
+        return sameStringSet(current, next) ? current : next;
+      };
+      untrack(() => {
+        props.setExpandedTimelineSectionIds(reconcileOpenSectionIds);
       });
     });
 
@@ -1723,6 +1724,14 @@ export default function MessageList(props: MessageListProps) {
     );
   };
 
+  const RenderedMessageBlock = (blockProps: {
+    blockKey: string;
+    blockIndex: Accessor<number>;
+  }) => {
+    const block = createMemo(() => messageBlockByKey().get(blockProps.blockKey)!);
+    return <>{renderBlock(block, blockProps.blockIndex)}</>;
+  };
+
   return (
     <div class="pb-24" style={{ contain: "layout paint style" }}>
       <Show
@@ -1730,7 +1739,7 @@ export default function MessageList(props: MessageListProps) {
         fallback={(
           <div class="space-y-4">
             <For each={messageBlockKeys()}>
-              {(key, blockIndex) => renderBlock(() => messageBlockByKey().get(key)!, blockIndex)}
+              {(key, blockIndex) => <RenderedMessageBlock blockKey={key} blockIndex={blockIndex} />}
             </For>
           </div>
         )}
@@ -1740,7 +1749,7 @@ export default function MessageList(props: MessageListProps) {
           fallback={(
             <div class="space-y-4">
               <For each={messageBlockKeys()}>
-                {(key, blockIndex) => renderBlock(() => messageBlockByKey().get(key)!, blockIndex)}
+                {(key, blockIndex) => <RenderedMessageBlock blockKey={key} blockIndex={blockIndex} />}
               </For>
             </div>
           )}

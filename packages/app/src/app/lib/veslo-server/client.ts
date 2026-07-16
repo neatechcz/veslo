@@ -544,8 +544,17 @@ export function createVesloServerClient(options: {
     getConversationQueueItem: conversations.getQueueItem,
     getSessionLatestRunArtifacts: conversations.getLatestRunArtifacts,
     prefetchSessionTranscripts: conversations.prefetchTranscripts,
-    getSessionTranscript: (workspaceId: string, sessionId: string, limit = 140, directory?: string) =>
-      conversations.getTranscript(workspaceId, sessionId, { limit, directory }),
+    getSessionTranscript: (
+      workspaceId: string,
+      sessionId: string,
+      limit = 140,
+      directory?: string,
+      options?: {
+        includeLatestRunArtifacts?: boolean;
+        caller?: "passive-selection" | "terminal-recovery";
+        sendTraceId?: string | null;
+      },
+    ) => conversations.getTranscript(workspaceId, sessionId, { limit, directory, ...options }),
     recoverSessionTranscript: conversations.recoverTranscript,
     exportWorkspace: workspace.export,
     importWorkspace: workspace.import,
