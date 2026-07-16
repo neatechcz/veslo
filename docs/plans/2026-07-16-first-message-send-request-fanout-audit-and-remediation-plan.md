@@ -1,10 +1,11 @@
 ---
 title: First-Message Send Request Fanout Audit and Remediation Plan
 date: 2026-07-16
-status: implementation_in_progress
-done: false
+status: completed
+done: true
 repository_snapshot: commit 8954ea4e0122ac291d357c1b55f0edc633a53eed with scoped dirty working tree
 repository_commit: 8954ea4e0122ac291d357c1b55f0edc633a53eed
+implementation_commit: dc308636
 working_tree_scope: audited owner files clean; unrelated UI and quality-gate edits excluded except for current command definitions
 scope: first-message send path, managed-AI startup effects, workspace registration, and initial transcript loading
 ---
@@ -37,6 +38,23 @@ Source was inspected in the current working tree on 2026-07-16. The newest
 retained send trace available in the repository is from 2026-07-14, so its
 request timings are evidence of the observed behavior, while current source
 is the authority for implementation.
+
+Implementation landed in `dc308636`. Fresh desktop acceptance was completed
+on 2026-07-16 in one newly started Tauri development runtime driven through
+Pilot. One first local managed-AI prompt completed visibly in the application.
+The correlated content-free trace recorded one accepted submit, one session
+create, one `prompt_async`, one actual scoped orchestrator registration, and
+one successful upstream model proxy. The registration flight had one `start`,
+one internal `join`, and one `settle`; the join did not issue another
+registration request. There were no trace error events and no background
+registration event reused the HTTP-submit trace context.
+
+The same run recorded one app registration flight (`start` then `settle`) and
+one initial transcript-fallback read (`start` then `done`). The fallback did
+not create another submit, registration, session create, or `prompt_async`.
+The focused source suites remain the acceptance evidence for same-key
+managed-AI access/configuration concurrency, whose cold paths need not be
+present in every healthy desktop trace.
 
 ### Reproducible snapshot
 
@@ -278,7 +296,8 @@ do not make SSE the sole source of first-message transcript correctness.
 
 ### FMSP01 — establish request-count observability and tests
 
-**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
+**Status:** done - implementation, focused coverage, and fresh desktop-trace
+acceptance verified on 2026-07-16
 **Owners:**
 
 - packages/app/src/app/context/managed-ai-access-store.ts
@@ -346,7 +365,8 @@ test counts pass.
 
 ### FMSP02 — scope server orchestrator registration to one submit request
 
-**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
+**Status:** done - implementation, focused coverage, and fresh desktop-trace
+acceptance verified on 2026-07-16
 **Owners:**
 
 - packages/server/src/routes/conversations.ts
@@ -419,7 +439,8 @@ small focused server test:
 
 ### FMSP03 — make app read registration a safe subset of live registration
 
-**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
+**Status:** done - implementation, focused coverage, and fresh desktop-trace
+acceptance verified on 2026-07-16
 **Owner:** packages/app/src/app/context/conversation-service.ts
 
 Retain the existing per-client registration cache and current live-runtime
@@ -448,7 +469,8 @@ Required tests in packages/app/src/app/tests/context/conversation-service.test.t
 
 ### FMSP04 — make managed-AI access loading key-safe and multi-key single-flight
 
-**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
+**Status:** done - implementation and focused same-key concurrency coverage
+verified on 2026-07-16
 **Owner:** packages/app/src/app/context/managed-ai-access-store.ts
 
 Replace the single mutable in-flight slot with a map of meaningful access
@@ -482,7 +504,8 @@ Required tests in packages/app/src/app/tests/context/managed-ai-access-store.tes
 
 ### FMSP05 — single-flight active managed-AI configuration by desired fingerprint
 
-**Status:** implemented in the current working tree; fresh desktop-trace acceptance pending
+**Status:** done - implementation and focused same-fingerprint concurrency
+coverage verified on 2026-07-16
 **Owners:** packages/app/src/app/context/managed-ai-runtime-config.ts and
 packages/app/src/app/context/send-runtime-readiness.ts
 
@@ -537,34 +560,33 @@ Required tests in packages/app/src/app/tests/context/managed-ai-runtime-config.t
 
 ### FMSP06 — decide whether to optimize the initial transcript fallback
 
-**Status:** done: false — decision required before implementation
+**Status:** done - decision: retain the existing defensive fallback; no code
+change selected
 **Owners:** packages/app/src/app/context/session-selection-controller.ts and
 packages/app/src/app/app.tsx
 
-Choose one of these bounded designs after measuring the fresh trace from
-FMSP01:
+The fresh trace recorded one bounded fallback `start` and `done` sequence and
+no duplicate submit, registration, session creation, or `prompt_async`. Keep
+the current fallback: it remains the recovery path for delayed or absent SSE,
+and this one read is not sufficient evidence that a grace window or transport
+cancellation would improve correctness. No fallback implementation change is
+authorized by this completed plan.
 
-1. **Keep the current fallback.** Accept one occasional redundant read as the
+The evaluated choices were:
+
+1. **Selected: keep the current fallback.** Accept one occasional redundant read as the
    cost of recovering from absent SSE.
-2. **Add a bounded new-session grace window.** Only for a just-materialized,
+2. **Not selected: add a bounded new-session grace window.** Only for a just-materialized,
    accepted first submit, wait briefly for the live transcript before starting
    fallback. Historical selection, deep links, and recovery paths continue to
    fall back immediately.
-3. **Make the fallback abortable.** Pass an AbortSignal through the read API
+3. **Not selected: make the fallback abortable.** Pass an AbortSignal through the read API
    and abort the still-pending client request when a qualifying live transcript
    arrives. Preserve fallback when no live update arrives.
 
-The recommended starting point is option 3 only if the server/client transport
-can genuinely cancel useful work before the request is committed. Otherwise
-option 2 is simpler and more predictable. Neither option may remove the
-fallback or use an unbounded wait.
-
-Required tests in packages/app/src/app/tests/context/session-selection-controller.test.ts:
-
-- live transcript before the threshold skips/cancels fallback;
-- absent or delayed SSE still loads fallback;
-- a live update for another session does not cancel this session's fallback;
-- the selected-session and transcript ownership rules remain unchanged.
+If a future change selects either alternative, it must first add its own
+failure-mode tests. Neither alternative may remove the fallback or use an
+unbounded wait.
 
 ## Explicit non-goals and guardrails
 
@@ -581,19 +603,19 @@ Required tests in packages/app/src/app/tests/context/session-selection-controlle
 - Do not make all unknown managed-AI users share an empty cache key.
 - Do not turn a source-level count assertion into a brittle timing assertion.
   Tests must control promises/fetches and prove joins directly.
-- Do not change transcript fallback before FMSP06 has an explicit decision and
-  its failure-mode tests.
+- Do not change transcript fallback unless a later reliability decision and
+  its failure-mode tests authorize it.
 
-## Current test gaps
+## Focused coverage delivered and remaining limits
 
-| Gap | Required coverage |
+| Area | Evidence / bounded limit |
 | --- | --- |
-| Server registration | The current server tests verify registration before session creation but do not carry a scope through route, submit service, lifecycle input, and submit port to assert exactly one registration across materialize plus prompt. |
-| Managed-AI access | Current tests cover one identical normal key, not the chosen empty-context deferral or routing-context transition. |
-| Managed-AI config | Current tests invoke sync directly; they do not model reactive rerun fanout, send joining active work, or all routing/auth/mapping fingerprint dimensions. |
-| App registration | Current tests do not prove that a read arriving during pending live registration awaits that exact promise or rejects a failed live result. |
-| First-message budget | No focused contract enumerates the full healthy first-message request fanout. |
-| Transcript fallback | Current coverage does not establish a cancellation/grace policy because no policy has been selected. |
+| Server registration | `server-conversations` carries the scope through the real submit route and asserts one registration across materialization plus prompt; a second submit receives its own registration. |
+| Managed-AI access | Focused tests cover same-key join, independent keys, rejection/retry, unknown-context deferral, and the transition to one complete final key. |
+| Managed-AI config | Focused tests cover active-effect/send-preflight joining, fingerprint changes, rejected-flight retry, and stale-completion suppression. They do not attempt to reproduce every UI scheduler interleaving; the live trace is the complementary end-to-end evidence. |
+| App registration | Focused tests prove that a read joins a pending live registration, that an empty live result cannot satisfy a read, and that a live write does not reuse a read-only result. |
+| First-message budget | The fresh desktop trace is the healthy-path budget contract; it is intentionally content-free and does not replace deterministic unit-level joins. |
+| Transcript fallback | No cancellation/grace policy was selected; the existing defensive fallback is intentionally retained. |
 
 ## Validation and acceptance
 
@@ -643,12 +665,31 @@ verify:
 9. the retry test still produces at most one upstream prompt for a replayed
    clientMessageId.
 
-FMSP06 has a separate acceptance test after its decision. It is not required
-to close FMSP01 through FMSP05.
+### Completed desktop acceptance evidence
+
+The fresh 2026-07-16 Tauri/Pilot run satisfied the healthy first-send budget:
+
+- one accepted submit, one session create, and one `prompt_async`;
+- one actual orchestrator registration request and completion; the second
+  internal caller joined that request rather than issuing another one;
+- one app registration flight with `start` and `settle`, and no duplicate app
+  workspace control sequence;
+- zero traced errors, one successful upstream model proxy, and a visibly
+  completed assistant response with the composer ready again;
+- zero background registration events carrying the HTTP-submit trace context;
+- one bounded transcript fallback read, followed by the explicit FMSP06
+  decision to retain that reliability safeguard.
+
+Focused app/server regression suites cover the remaining same-key access and
+same-fingerprint configuration joins, stale completion handling, retry
+idempotency, and request-scope isolation. The full `pnpm check`, server binary
+build, forced sidecar refresh, and `git diff --check` had passed before this
+desktop run.
 
 ## Completion definition
 
-This plan is complete only when FMSP01 through FMSP05 are implemented, their
-focused tests pass, and a fresh trace demonstrates the healthy-path request
-budget. FMSP06 remains explicitly open until its reliability tradeoff is
-chosen; it must not be marked done merely because the other fanout fixes land.
+This plan is complete: FMSP01 through FMSP05 are implemented with focused
+coverage and the fresh trace demonstrates the healthy-path request budget.
+FMSP06 is also resolved by the explicit decision to retain the defensive
+fallback unchanged. Any future fallback optimization is a new, separately
+tested change.

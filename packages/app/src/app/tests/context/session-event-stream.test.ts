@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createRoot } from "solid-js";
+import { createComputed, createRoot, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 
 import {
@@ -223,6 +223,21 @@ async function tick(count = 1) {
     await Promise.resolve();
   }
 }
+
+function solidRuntimeSupportsEffects(): boolean {
+  let observed = 0;
+  createRoot((dispose) => {
+    const [value, setValue] = createSignal(0);
+    createComputed(() => { observed = value(); });
+    setValue(1);
+    dispose();
+  });
+  return observed === 1;
+}
+
+const reactivityTestOptions = solidRuntimeSupportsEffects()
+  ? {}
+  : { skip: "Solid's Node server condition does not run effects; use the test:reactivity script." };
 
 function makeEventClient(
   subscribe: (options: { signal: AbortSignal }) => Promise<{ stream: AsyncIterable<OpencodeEvent> }>,
@@ -1224,6 +1239,65 @@ test("SSE target reconciler ignores unchanged readiness reruns", () => {
   assert.equal(subscribeCount, 2);
   assert.equal(closeCount, 2);
   assert.equal(streams.size, 0);
+});
+
+test("reactive SSE routing dedupes unchanged targets and aborts on owner disposal", reactivityTestOptions, async () => {
+  const [entryIds, setEntryIds] = createSignal(["ws-a"]);
+  const signals: AbortSignal[] = [];
+  let closeCount = 0;
+  const client = {
+    event: {
+      subscribe: (_input?: unknown, options?: { signal?: AbortSignal }) => {
+        signals.push(options?.signal ?? new AbortController().signal);
+        return Promise.resolve({
+          stream: (async function* () {
+            await new Promise<void>(() => {});
+          })(),
+          close: async () => { closeCount += 1; },
+        });
+      },
+    },
+  } as any;
+  const entry = {
+    client,
+    baseUrl: "http://127.0.0.1:8787/workspace/ws-a/opencode",
+    directory: "/repo",
+  };
+  const routing = {
+    activeWorkspaceId: () => "ws-a",
+    active: () => entry,
+    client: (workspaceId?: string) => workspaceId === "ws-a" ? client : null,
+    entry: (workspaceId?: string) => workspaceId === "ws-a" ? entry : null,
+    entryIds,
+    release: () => {},
+  };
+
+  await createRoot(async (dispose) => {
+    try {
+      const { controller } = makeController({
+        routing,
+        isWorkspaceRuntimeReady: () => true,
+      });
+      controller.startEventStreams();
+      await tick(4);
+      assert.equal(signals.length, 1);
+
+      setEntryIds(["ws-a"]);
+      await tick(4);
+      assert.equal(signals.length, 1, "unchanged routing must not create another SSE subscription");
+
+      dispose();
+      await tick(2);
+      assert.equal(signals[0]?.aborted, true);
+      assert.equal(closeCount, 1);
+
+      setEntryIds([]);
+      await tick(2);
+      assert.equal(signals.length, 1, "disposed routing owner must not subscribe again");
+    } finally {
+      dispose();
+    }
+  });
 });
 
 test("local Veslo bearer session errors trace and recover workspace runtime", withSendWorkflowTraceWindow(async (target) => {

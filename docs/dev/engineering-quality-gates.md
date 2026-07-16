@@ -30,7 +30,7 @@ wrapper.
 The lint gate covers async correctness, unused disable directives, high-signal
 Solid JSX checks, and rejects React-style dependency arrays in Solid reactive
 primitives. `solid/reactivity` is initially enforced on the explicitly owned
-queue-drain, Veslo-server polling, dashboard refresh, and session-search controllers; their browser-conditioned
+app-route, session-event-stream, queue-drain, session-route, sidebar refresh, Veslo-server polling, workspace connection state, workspace snapshots, workspace-switch overlay, dashboard refresh, and session-search controllers; their browser-conditioned
 contract tests prove exact rerun and disposal behavior. Expand this file list
 only with a controller-specific contract test—do not add global callback or
 promise APIs as reactive-function exceptions.

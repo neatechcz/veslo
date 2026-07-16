@@ -3,8 +3,15 @@ import tseslint from "typescript-eslint";
 
 const APP_TYPESCRIPT_FILES = ["packages/app/src/**/*.{ts,tsx}"];
 const SOLID_REACTIVITY_GATE_FILES = [
+  "packages/app/src/app/context/app-route-sync.ts",
+  "packages/app/src/app/context/session-event-stream.ts",
   "packages/app/src/app/context/session-queue-drain-controller.ts",
+  "packages/app/src/app/context/session-route-sync.ts",
+  "packages/app/src/app/context/sidebar-workspace-sessions.ts",
   "packages/app/src/app/context/veslo-server-connection.ts",
+  "packages/app/src/app/context/workspace-connection-state.ts",
+  "packages/app/src/app/context/workspace-session-snapshots.ts",
+  "packages/app/src/app/context/workspace-switch-overlay-state.ts",
   "packages/app/src/app/pages/dashboard.tsx",
   "packages/app/src/app/pages/dashboard-tab-refresh-controller.ts",
   "packages/app/src/app/pages/session-search-command-controller.ts",
