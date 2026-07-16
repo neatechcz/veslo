@@ -1047,13 +1047,15 @@ export function createSessionStore(options: {
     clearWorkspaceSnapshot,
   } = workspaceCacheController;
 
+  const selectedSessionErrorTurns = createMemo(() => {
+    const sessionID = options.selectedSessionId();
+    return sessionErrorTurnsForScope(sessionID);
+  });
+
   return {
     sessions,
     sessionErrorTurnsById: (sessionID: string | null) => sessionErrorTurnsForScope(sessionID),
-    selectedSessionErrorTurns: createMemo(() => {
-      const sessionID = options.selectedSessionId();
-      return sessionErrorTurnsForScope(sessionID);
-    }),
+    selectedSessionErrorTurns,
     sessionStatusById,
     conversationRunDiagnosticsBySessionKey,
     selectedSession,

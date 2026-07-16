@@ -26,21 +26,23 @@ type LocalContextValue = {
 const LocalContext = createContext<LocalContextValue | undefined>(undefined);
 
 export function LocalProvider(props: ParentProps) {
+  const [initialUi, setInitialUi] = createStore<LocalUIState>({
+    view: "onboarding",
+    tab: "scheduled",
+  });
   const [ui, setUi, , uiReady] = persisted(
     Persist.global("local.ui", ["veslo.ui"]),
-    createStore<LocalUIState>({
-      view: "onboarding",
-      tab: "scheduled",
-    }),
+    [initialUi, setInitialUi],
   );
 
+  const [initialPrefs, setInitialPrefs] = createStore<LocalPreferences>({
+    showThinking: false,
+    modelVariant: null,
+    defaultModel: null,
+  });
   const [prefs, setPrefs, , prefsReady] = persisted(
     Persist.global("local.preferences", ["veslo.preferences"]),
-    createStore<LocalPreferences>({
-      showThinking: false,
-      modelVariant: null,
-      defaultModel: null,
-    }),
+    [initialPrefs, setInitialPrefs],
   );
 
   const ready = () => uiReady() && prefsReady();

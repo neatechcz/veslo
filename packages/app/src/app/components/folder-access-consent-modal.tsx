@@ -33,7 +33,7 @@ export default function FolderAccessConsentModal(props: FolderAccessConsentModal
     props.duration === "workspace" ? translate("folder_access.duration_workspace") : props.duration;
 
   useFocusTrap(() => props.open, () => dialogRef, {
-    onClose: props.onCancel,
+    onClose: () => props.onCancel(),
     getInitialFocus: () => chooseFolderRef,
   });
 

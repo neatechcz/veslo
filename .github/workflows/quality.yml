@@ -85,6 +85,10 @@ jobs:
         with:
           version: ${{ env.PNPM_VERSION }}
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
@@ -92,6 +96,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prepare desktop sidecars for Rust checks
+        run: pnpm --filter @neatech/veslo run prepare:sidecar
 
       - name: Run Rust quality checks
         run: pnpm check:rust

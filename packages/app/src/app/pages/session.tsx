@@ -788,8 +788,10 @@ export default function SessionView(props: SessionViewProps) {
     if (!leftDockedVisible() || !rightDockedVisible()) return false;
     return availableChatWidthForLayout(rootWidth, sidebarLayoutState(), leftSidebarWidth()) < 740;
   });
-  const centerColumnWidthClass = (wideWidth: string) =>
-    createMemo(() => (useCompactCenterColumn() ? "max-w-full" : wideWidth));
+  const centerColumnWidthClass = (wideWidth: string) => {
+    const widthClass = createMemo(() => (useCompactCenterColumn() ? "max-w-full" : wideWidth));
+    return widthClass;
+  };
   const searchBannerWidthClass = centerColumnWidthClass("max-w-[800px]");
   const chatBodyWidthClass = centerColumnWidthClass("max-w-[960px]");
   const railWidthClass = centerColumnWidthClass("max-w-[68ch]");
@@ -819,7 +821,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const queueSidebarRootMeasurement = () => {
     if (sidebarLayoutResizeFrame !== undefined) return;
-    sidebarLayoutResizeFrame = window.requestAnimationFrame(() => {
+    sidebarLayoutResizeFrame = requestAnimationFrame(() => {
       sidebarLayoutResizeFrame = undefined;
       const rootWidth = responsiveLayoutRootWidth(
         sessionLayoutRootEl?.clientWidth ?? 0,
@@ -904,13 +906,13 @@ export default function SessionView(props: SessionViewProps) {
     window.addEventListener("pointerup", onPointerUp, { once: true });
     window.addEventListener("pointercancel", onPointerCancel, { once: true });
 
-    leftSidebarResizeCleanup = () => {
+    leftSidebarResizeCleanup = untrack(() => () => {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerCancel);
       document.body.style.userSelect = previousUserSelect;
       document.body.style.cursor = previousCursor;
-    };
+    });
   };
 
   onCleanup(() => stopLeftSidebarResize(false));
@@ -1542,7 +1544,7 @@ export default function SessionView(props: SessionViewProps) {
     hasEarlierMessages: () => props.hasEarlierMessages,
     isChatContainerReady,
     totalPartCount,
-    loadEarlierMessages: props.loadEarlierMessages,
+    loadEarlierMessages: (sessionId) => props.loadEarlierMessages(sessionId),
     messagesEndElement: () => messagesEndEl,
     bottomVisibilityElement: () => bottomVisibilityEl,
     chatContainerElement: () => chatContainerEl,
@@ -1557,8 +1559,8 @@ export default function SessionView(props: SessionViewProps) {
   const [activeSessionSwitchHandoff, setActiveSessionSwitchHandoff] =
     createSignal<ActiveSessionSwitchHandoff | null>(null);
   let activeSessionSwitchHandoffToken = 0;
-  let lastSelectedSessionId = props.selectedSessionId?.trim() ?? "";
-  let lastPaintedSessionId = props.selectedSessionId?.trim() ?? "";
+  let lastSelectedSessionId = untrack(() => props.selectedSessionId?.trim() ?? "");
+  let lastPaintedSessionId = untrack(() => props.selectedSessionId?.trim() ?? "");
   let lastPaintedMessages: MessageWithParts[] = [];
   createEffect(
     on(
@@ -1707,7 +1709,7 @@ export default function SessionView(props: SessionViewProps) {
     if (typeof window === "undefined") return;
 
     let expectedAt = perfNow() + MAIN_THREAD_LAG_INTERVAL_MS;
-    const interval = window.setInterval(() => {
+    const interval = setInterval(() => {
       const now = perfNow();
       const lagMs = Math.round((now - expectedAt) * 100) / 100;
       expectedAt = now + MAIN_THREAD_LAG_INTERVAL_MS;
@@ -1994,7 +1996,7 @@ export default function SessionView(props: SessionViewProps) {
   const [abortBusy, setAbortBusy] = createSignal(false);
   const [escapeStopConfirmationPending, setEscapeStopConfirmationPending] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
-  let escapeStopConfirmationSessionId = props.selectedSessionId;
+  let escapeStopConfirmationSessionId = untrack(() => props.selectedSessionId);
 
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
   const activeServerQueueVisibilityScope = createMemo(() => {
@@ -3263,9 +3265,9 @@ export default function SessionView(props: SessionViewProps) {
       updateQueueForSessionKey,
     },
     composer: {
-      clearComposerDraftForSession: props.clearComposerDraftForSession,
+      clearComposerDraftForSession: (sessionId) => props.clearComposerDraftForSession(sessionId),
       currentDraftMode: () => props.composerDraft.mode,
-      setComposerDraft: props.setComposerDraft,
+      setComposerDraft: (draft) => props.setComposerDraft(draft),
     },
     transcriptEdit: {
       editableUserMessage,
@@ -3276,7 +3278,7 @@ export default function SessionView(props: SessionViewProps) {
       abortBusy,
       abortSession: (sessionId) => props.abortSession(sessionId),
       lastPromptSent: () => props.lastPromptSent,
-      retryLastPrompt: props.retryLastPrompt,
+      retryLastPrompt: () => props.retryLastPrompt(),
       runPhase,
       hasAbortableBackendRun,
       setAbortBusy,
@@ -3886,7 +3888,7 @@ export default function SessionView(props: SessionViewProps) {
           <button
             type="button"
             class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-gray-10 transition-colors hover:bg-gray-3/70 hover:text-gray-12 focus:outline-none focus-visible:ring-0"
-            onClick={props.onOpenFeedback}
+            onClick={() => props.onOpenFeedback()}
             aria-label={feedbackButtonLabel()}
             title={feedbackButtonLabel()}
           >
@@ -4072,7 +4074,7 @@ export default function SessionView(props: SessionViewProps) {
                   <button
                     type="button"
                     class="rounded-xl border border-amber-6/70 bg-transparent px-3 py-2 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3"
-                    onClick={props.dismissReloadBanner}
+                    onClick={() => props.dismissReloadBanner()}
                   >
                     {tr("reload.toast_dismiss")}
                   </button>

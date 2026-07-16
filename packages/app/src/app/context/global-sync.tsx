@@ -230,7 +230,8 @@ export function GlobalSyncProvider(props: ParentProps) {
     const key = keyFor(directory);
     const existing = children.get(key);
     if (existing) return existing;
-    const store = createStore<WorkspaceState>(createWorkspaceState());
+    const [state, setState] = createStore<WorkspaceState>(createWorkspaceState());
+    const store: WorkspaceStore = [state, setState];
     children.set(key, store);
     void refreshDirectory(directory);
     if (!subscriptions.has(key)) {

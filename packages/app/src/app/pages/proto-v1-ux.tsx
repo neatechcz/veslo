@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
 import type { Component, JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import {
   ArrowUp,
   BookOpen,
@@ -119,18 +120,17 @@ const SidebarItem = (props: {
   active?: boolean;
   onClick?: () => void;
 }) => {
-  const Icon = props.icon;
   return (
     <button
       type="button"
-      onClick={props.onClick}
+      onClick={() => props.onClick?.()}
       class={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
         props.active
           ? "bg-gray-3 text-gray-12"
           : "text-gray-10 hover:bg-gray-2 hover:text-gray-12"
       }`}
     >
-      <Icon size={18} class="text-current" />
+      <Dynamic component={props.icon} size={18} class="text-current" />
       <span>{props.label}</span>
     </button>
   );
@@ -203,11 +203,10 @@ const AutomationCard = (props: {
   color?: string;
   onClick?: () => void;
 }) => {
-  const Icon = props.icon;
   return (
     <button
       type="button"
-      onClick={props.onClick}
+      onClick={() => props.onClick?.()}
       class="group flex h-full min-h-[120px] w-full min-w-[240px] flex-1 flex-col rounded-2xl border border-gray-6 bg-gray-1/80 p-5 text-left transition-shadow hover:shadow-md"
     >
       <div
@@ -215,7 +214,7 @@ const AutomationCard = (props: {
           props.color ?? "text-gray-10"
         }`}
       >
-        <Icon size={18} />
+        <Dynamic component={props.icon} size={18} />
       </div>
       <p class="text-sm text-gray-10 transition-colors group-hover:text-gray-12">
         {props.description}
@@ -231,12 +230,11 @@ const SkillCard = (props: {
   badge?: string;
   type?: "installed" | "add";
 }) => {
-  const Icon = props.icon;
   return (
     <div class="flex items-start justify-between rounded-2xl border border-gray-6 bg-gray-1/70 p-4 transition-colors hover:border-gray-7">
       <div class="flex gap-4">
         <div class="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-6 bg-gray-1 shadow-sm">
-          <Icon size={20} class="text-gray-11" />
+          <Dynamic component={props.icon} size={20} class="text-gray-11" />
         </div>
         <div>
           <div class="flex flex-wrap items-center gap-2">
@@ -289,7 +287,7 @@ const CreateAutomationModal = (props: { open: boolean; onClose: () => void }) =>
             <button
               type="button"
               aria-label="Close modal"
-              onClick={props.onClose}
+              onClick={() => props.onClose()}
               class="rounded-full p-2 text-gray-8 transition-colors hover:bg-gray-2 hover:text-gray-12"
             >
               <X size={18} />
@@ -370,7 +368,7 @@ const CreateAutomationModal = (props: { open: boolean; onClose: () => void }) =>
         <div class="flex items-center justify-end gap-3 border-t border-gray-6 bg-gray-2/40 px-8 py-4">
           <button
             type="button"
-            onClick={props.onClose}
+            onClick={() => props.onClose()}
             class="px-4 py-2 text-xs font-medium text-gray-9 hover:text-gray-12"
           >
             Cancel

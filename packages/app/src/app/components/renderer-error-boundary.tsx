@@ -1,5 +1,3 @@
-import { createSignal, onMount } from "solid-js";
-
 import { captureFatalRenderError } from "../lib/error-monitoring";
 
 type RendererErrorFallbackProps = {
@@ -31,11 +29,10 @@ export function createRendererRecoveryAction({
 }
 
 export function RendererErrorFallback(props: RendererErrorFallbackProps) {
-  const [incidentId, setIncidentId] = createSignal<string | null>(null);
-
-  onMount(() => {
-    setIncidentId(captureFatalRenderError(props.error));
-  });
+  // Solid ErrorBoundary fallbacks do not apply later signal updates reliably.
+  // Capture once while this dedicated fallback is created so the support ID is
+  // present in its initial DOM; this is intentionally not a reactive memo.
+  const incidentId = captureFatalRenderError(props.error);
 
   return (
     <main
@@ -48,9 +45,9 @@ export function RendererErrorFallback(props: RendererErrorFallbackProps) {
         <p class="mt-2 text-sm text-dls-secondary">
           The interface encountered an unexpected rendering error. Restarting reloads the application safely.
         </p>
-        {incidentId() ? (
+        {incidentId ? (
           <p class="mt-3 text-xs text-dls-secondary" data-testid="renderer-error-incident-id">
-            Incident ID: {incidentId()}
+            Incident ID: {incidentId}
           </p>
         ) : null}
         <button

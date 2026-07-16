@@ -1,4 +1,4 @@
-import { Show, type JSX } from "solid-js";
+import { Show, createMemo, type JSX } from "solid-js";
 import { Minus, Square, X } from "lucide-solid";
 import {
   closeCurrentWindow,
@@ -28,12 +28,12 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
   const isTauri = isTauriRuntime();
   const isWindows = isWindowsPlatform();
   const isMac = isMacPlatform();
-  const layout = resolveTitlebarMenuLayout({
+  const layout = createMemo(() => resolveTitlebarMenuLayout({
     tauri: isTauri,
     windows: isWindows,
     mac: isMac,
     hideTitlebar: props.hideTitlebar,
-  });
+  }));
   const showWindowsWindowControls = isTauri && isWindows;
 
   const buttonClass = (active: boolean) =>
@@ -69,14 +69,14 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
 
   return (
     <>
-      {layout.dragRegionClass ? (
+      {layout().dragRegionClass ? (
         <div
           data-tauri-drag-region
-          class={layout.dragRegionClass}
+          class={layout().dragRegionClass ?? undefined}
         />
       ) : null}
-      <div class={layout.rootClass}>
-        <div class={layout.leftOffsetClass}>
+      <div class={layout().rootClass}>
+        <div class={layout().leftOffsetClass}>
           <div class="flex items-center gap-2.5">
             <button
               type="button"
@@ -101,7 +101,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
         </div>
 
         <Show when={props.centerContent}>
-          <div class={layout.centerContentClass}>
+          <div class={layout().centerContentClass}>
             <div
               data-tauri-drag-region
               onMouseDown={handleTitlebarDragMouseDown}
@@ -113,7 +113,7 @@ export default function TitlebarMenuToggles(props: TitlebarMenuTogglesProps) {
           </div>
         </Show>
 
-        <div class={`${layout.rightOffsetClass} flex shrink-0 flex-nowrap items-center gap-1`}>
+        <div class={`${layout().rightOffsetClass} flex shrink-0 flex-nowrap items-center gap-1`}>
           {props.rightContent}
           <button
             type="button"

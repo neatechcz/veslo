@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "test": "node --test src/**/*.test.mjs",
+    "test": "node --test",
     "typecheck": "node scripts/syntax-check.mjs",
     "validate:manifest": "node ../../scripts/document-runtime/validate-manifest.mjs",
     "validate:package-feed": "node ../../scripts/document-runtime/validate-package-feed.mjs",

@@ -106,6 +106,27 @@ export default function ConfigView(props: ConfigViewProps) {
     token: vesloToken().trim() || undefined,
   });
 
+  const testVesloServerConnection = () => {
+    if (vesloTestState() === "testing") return;
+    const next = buildVesloSettings();
+    props.updateVesloServerSettings(next);
+    setVesloTestState("testing");
+    setVesloTestMessage(null);
+    void (async () => {
+      try {
+        const ok = await props.testVesloServerConnection(next);
+        setVesloTestState(ok ? "success" : "error");
+        setVesloTestMessage(
+          ok ? tr("config.connection_successful") : tr("config.connection_failed_check_host"),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : tr("config.connection_failed");
+        setVesloTestState("error");
+        setVesloTestMessage(message);
+      }
+    })();
+  };
+
   const hasVesloChanges = createMemo(() => {
     const currentUrl = props.vesloServerSettings.urlOverride ?? "";
     const currentToken = props.vesloServerSettings.token ?? "";
@@ -389,24 +410,7 @@ export default function ConfigView(props: ConfigViewProps) {
         <div class="flex flex-wrap gap-2">
           <Button
             variant="secondary"
-            onClick={async () => {
-              if (vesloTestState() === "testing") return;
-              const next = buildVesloSettings();
-              props.updateVesloServerSettings(next);
-              setVesloTestState("testing");
-              setVesloTestMessage(null);
-              try {
-                const ok = await props.testVesloServerConnection(next);
-                setVesloTestState(ok ? "success" : "error");
-                setVesloTestMessage(
-                  ok ? tr("config.connection_successful") : tr("config.connection_failed_check_host"),
-                );
-              } catch (error) {
-                const message = error instanceof Error ? error.message : tr("config.connection_failed");
-                setVesloTestState("error");
-                setVesloTestMessage(message);
-              }
-            }}
+            onClick={testVesloServerConnection}
             disabled={props.busy || vesloTestState() === "testing"}
           >
             {vesloTestState() === "testing" ? tr("config.testing") : tr("mcp.verify_connection")}

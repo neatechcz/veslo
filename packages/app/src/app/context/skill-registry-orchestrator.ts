@@ -296,7 +296,6 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
     listener.start();
   };
 
-  syncPendingSkillRegistryReplays();
   syncSkillRegistryEventListener();
 
   createEffect(() => {

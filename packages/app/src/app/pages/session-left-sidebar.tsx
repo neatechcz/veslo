@@ -52,7 +52,7 @@ function SidebarResizeHandle(props: {
       role="separator"
       aria-orientation="vertical"
       aria-label={props.label}
-      onPointerDown={props.onStartResize}
+      onPointerDown={(event) => props.onStartResize(event)}
     />
   );
 }

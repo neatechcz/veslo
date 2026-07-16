@@ -1,4 +1,5 @@
 import type { WorkspaceInfo } from "../lib/tauri";
+import { Dynamic } from "solid-js/web";
 
 import { useTranslate } from "../../i18n";
 
@@ -17,7 +18,6 @@ export default function WorkspaceChip(props: {
   onClick: () => void;
   connecting?: boolean;
 }) {
-  const Icon = iconForWorkspace(props.workspace.preset, props.workspace.workspaceType);
   const subtitle = () =>
     props.workspace.workspaceType === "remote"
       ? props.workspace.baseUrl ?? props.workspace.path
@@ -26,7 +26,7 @@ export default function WorkspaceChip(props: {
 
   return (
     <button
-      onClick={props.onClick}
+      onClick={() => props.onClick()}
       class="flex items-center gap-2 pl-3 pr-2 py-1.5 bg-gray-2 border border-gray-6 rounded-lg hover:border-gray-7 hover:bg-gray-4 transition-all group"
     >
       <div
@@ -36,7 +36,7 @@ export default function WorkspaceChip(props: {
             : "bg-indigo-7/10 text-indigo-6"
         }`}
       >
-        <Icon size={14} />
+        <Dynamic component={iconForWorkspace(props.workspace.preset, props.workspace.workspaceType)} size={14} />
       </div>
       <div class="flex flex-col items-start mr-2 min-w-0">
         <div class="flex items-center gap-2">

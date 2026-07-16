@@ -12,13 +12,12 @@ const baseProps = {
 } as const;
 
 export function LeftSidebarToggleIcon(props: ToggleIconProps) {
-  const size = props.size ?? 18;
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 24 24"
-      width={size}
-      height={size}
+      width={props.size ?? 18}
+      height={props.size ?? 18}
       class={props.class}
       aria-hidden="true"
       {...baseProps}
@@ -30,13 +29,12 @@ export function LeftSidebarToggleIcon(props: ToggleIconProps) {
 }
 
 export function RightSidebarToggleIcon(props: ToggleIconProps) {
-  const size = props.size ?? 18;
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 24 24"
-      width={size}
-      height={size}
+      width={props.size ?? 18}
+      height={props.size ?? 18}
       class={props.class}
       aria-hidden="true"
       {...baseProps}

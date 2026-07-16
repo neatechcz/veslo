@@ -2,6 +2,13 @@ import solid from "eslint-plugin-solid";
 import tseslint from "typescript-eslint";
 
 const APP_TYPESCRIPT_FILES = ["packages/app/src/**/*.{ts,tsx}"];
+const SOLID_REACTIVITY_GATE_FILES = [
+  "packages/app/src/app/context/session-queue-drain-controller.ts",
+  "packages/app/src/app/context/veslo-server-connection.ts",
+  "packages/app/src/app/pages/dashboard.tsx",
+  "packages/app/src/app/pages/dashboard-tab-refresh-controller.ts",
+  "packages/app/src/app/pages/session-search-command-controller.ts",
+];
 
 export default [
   {
@@ -12,6 +19,8 @@ export default [
       "**/target/**",
       "packages/app/src/**/*.test.ts",
       "packages/app/src/**/*.test.tsx",
+      "packages/app/src/**/*.dom-test.ts",
+      "packages/app/src/**/*.dom-test.tsx",
       "packages/app/src/**/tests/**",
     ],
     linterOptions: {
@@ -23,6 +32,8 @@ export default [
     ignores: [
       "packages/app/src/**/*.test.ts",
       "packages/app/src/**/*.test.tsx",
+      "packages/app/src/**/*.dom-test.ts",
+      "packages/app/src/**/*.dom-test.tsx",
       "packages/app/src/**/tests/**",
     ],
     languageOptions: {
@@ -37,8 +48,6 @@ export default [
       ...solid.configs["flat/typescript"].plugins,
     },
     rules: {
-      // The existing app baseline has 122 reactivity diagnostics. Enable this
-      // only after the owner-level remediation can make it a real gate.
       "solid/no-react-deps": "error",
       "solid/jsx-no-duplicate-props": "error",
       "solid/jsx-no-undef": ["error", { typescriptEnabled: true }],
@@ -48,6 +57,12 @@ export default [
         "error",
         { checksVoidReturn: false },
       ],
+    },
+  },
+  {
+    files: SOLID_REACTIVITY_GATE_FILES,
+    rules: {
+      "solid/reactivity": "error",
     },
   },
 ];

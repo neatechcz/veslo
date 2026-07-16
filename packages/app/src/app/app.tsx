@@ -4988,15 +4988,13 @@ export default function App() {
           setMcpAuthEntry(null);
           setMcpAuthNeedsReload(false);
         }}
-        onComplete={async () => {
+        onComplete={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
           setMcpAuthNeedsReload(false);
-          await refreshMcpServers({ mode: "explicit", reason: "mcp-auth-complete" });
+          void refreshMcpServers({ mode: "explicit", reason: "mcp-auth-complete" });
         }}
-        onReloadEngine={async () => {
-          await reloadWorkspaceEngine();
-        }}
+        onReloadEngine={() => void reloadWorkspaceEngine()}
       />
 
       <Show when={sharePointMcpInstallPromptOpen()}>

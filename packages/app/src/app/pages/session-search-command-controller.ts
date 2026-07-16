@@ -525,7 +525,6 @@ export function createSessionSearchCommandController(
     setCommandPaletteQuerySignal("");
     setCommandPaletteActiveIndex(0);
     setCommandPaletteOpen(true);
-    deps.focusCommandPaletteInput();
   };
   const setCommandPaletteQuery = (value: string) => {
     setCommandPaletteQuerySignal(value);

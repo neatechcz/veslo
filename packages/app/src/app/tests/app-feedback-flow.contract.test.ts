@@ -449,12 +449,12 @@ function assertPageFeedbackContract(
 
   const buttonsWithSharedOpen = findButtonNodes(sourceFile).filter((button) => {
     const onClickExpression = getJsxAttributeExpression(button, "onClick");
-    return expressionText(sourceFile, onClickExpression) === "props.onOpenFeedback";
+    return expressionText(sourceFile, onClickExpression).replace(/\s+/g, "") === "()=>props.onOpenFeedback()";
   });
   assert.equal(
     buttonsWithSharedOpen.length,
     1,
-    `${viewName} should have exactly one button wired to props.onOpenFeedback`,
+    `${viewName} should have exactly one button that calls props.onOpenFeedback`,
   );
 
   const rightContentButtons = findButtonNodes(rightContent!);

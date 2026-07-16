@@ -18,7 +18,7 @@ pnpm check
 1. Type-aware app lint (`check:lint`)
 2. Typecheck coverage plus every workspace typecheck (`check:types`)
 3. The explicit stable unit/contract set, including the browser-conditioned
-   Solid reactivity contract (`check:unit`)
+   Solid reactivity and renderer-recovery DOM contracts (`check:unit`)
 4. Desktop Rust format, Clippy, and tests (`check:rust`)
 5. Import, cycle, route, and Veslo-header audits (`check:architecture`)
 
@@ -27,11 +27,13 @@ full Tauri Pilot suite. A failed subcommand is itself the reproduction command;
 do not replace it with an `--if-present`, `continue-on-error`, or auto-fix
 wrapper.
 
-The lint gate covers async correctness, unused disable directives, the
-high-signal Solid JSX checks, and rejects React-style dependency arrays in
-Solid reactive primitives. General Solid reactivity remains a visible
-remediation item rather than a warning budget: it is not enabled as a required
-rule until its existing findings are fixed owner by owner.
+The lint gate covers async correctness, unused disable directives, high-signal
+Solid JSX checks, and rejects React-style dependency arrays in Solid reactive
+primitives. `solid/reactivity` is initially enforced on the explicitly owned
+queue-drain, Veslo-server polling, dashboard refresh, and session-search controllers; their browser-conditioned
+contract tests prove exact rerun and disposal behavior. Expand this file list
+only with a controller-specific contract test—do not add global callback or
+promise APIs as reactive-function exceptions.
 
 ## Required Desktop Recovery Lane
 
@@ -45,9 +47,9 @@ pnpm check:desktop-recovery
 
 This builds the debug E2E desktop binary and runs only the focused VSLO-235
 child-exit scenario against a fresh isolated profile. It proves the sequence
-ready, owned child exit, `exited/child_exited`, explicit restart, and healthy
-host. It is intentionally separate from `pnpm check` because it launches the
-real desktop application.
+ready, owned child exit reported as `exited/child_exited`, automatic replacement
+with a new child PID, and healthy host. It is intentionally separate from
+`pnpm check` because it launches the real desktop application.
 
 ## CI Contract
 

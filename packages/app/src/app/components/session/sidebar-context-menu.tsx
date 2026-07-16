@@ -146,7 +146,7 @@ export default function SidebarContextMenu(props: SidebarContextMenuProps) {
     <Show when={visiblePlacement()}>
       <div
         class="fixed inset-0 z-[100]"
-        onClick={props.onClose}
+        onClick={() => props.onClose()}
         onContextMenu={(event) => {
           event.preventDefault();
           props.onClose();

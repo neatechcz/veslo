@@ -135,7 +135,7 @@ export default function CreateWorkspaceModal(props: {
         </div>
         <Show when={showClose()}>
           <button
-            onClick={props.onClose}
+            onClick={() => props.onClose()}
             disabled={submitting()}
             class={`hover:bg-gray-4 p-1 rounded-full ${submitting() ? "opacity-50 cursor-not-allowed" : ""}`.trim()}
           >

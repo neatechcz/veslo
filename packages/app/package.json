@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "audit:legacy": "node scripts/legacy-symbol-audit.mjs",
     "test:unit": "node --test --import=tsx/esm src/app/**/*.test.ts",
-    "test:reactivity": "node --conditions=browser --test --import=tsx/esm src/app/tests/context/session-queue-drain-controller.test.ts",
+    "test:reactivity": "node --conditions=browser --test --import=tsx/esm src/app/tests/context/session-queue-drain-controller.test.ts src/app/tests/context/veslo-server-connection.reactivity.test.ts src/app/tests/pages/dashboard-tab-refresh-controller.reactivity.test.ts src/app/tests/pages/session-search-command-controller.reactivity.test.ts",
+    "test:renderer-recovery": "tsx --tsconfig tsconfig.dom-test.json --conditions=browser --test src/app/components/renderer-error-boundary.dom-test.ts",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/app/**/*.ts --test-coverage-include=src/app/**/*.tsx --test-coverage-exclude=src/app/**/*.test.ts --test-coverage-exclude=src/app/tests/** --test-coverage-exclude=src/app/**/*.d.ts --import=tsx/esm src/app/**/*.test.ts",
     "test:health": "node scripts/health.mjs",
     "test:mention-send": "node scripts/mention-send.mjs",
@@ -83,6 +84,8 @@
   "devDependencies": {
     "@solid-devtools/overlay": "0.33.5",
     "@tailwindcss/vite": "^4.1.18",
+    "@types/jsdom": "28.0.3",
+    "jsdom": "29.0.1",
     "solid-devtools": "0.34.5",
     "tailwindcss": "^4.1.18",
     "tsx": "^4.21.0",

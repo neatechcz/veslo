@@ -5,6 +5,7 @@ import {
   on,
   onCleanup,
   onMount,
+  untrack,
   type Accessor,
   type Setter,
 } from "solid-js";
@@ -306,7 +307,9 @@ export function createSessionTranscriptViewport(
     }),
   );
 
-  const [batchedRenderedMessages, setBatchedRenderedMessages] = createSignal<MessageWithParts[]>(renderedMessages());
+  const [batchedRenderedMessages, setBatchedRenderedMessages] = createSignal<MessageWithParts[]>(
+    untrack(() => renderedMessages()),
+  );
 
   // The direct memo path avoids a SolidJS batching gap that can flash the transcript
   // during rapid idle/running transitions. Keep the batched signal updated for the
@@ -478,7 +481,7 @@ export function createSessionTranscriptViewport(
       const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - (now - lastAutoScrollAt);
       if (nextBehavior === "auto" && remainingMs > 0) {
         if (trailingAutoScrollTimer === undefined) {
-          trailingAutoScrollTimer = window.setTimeout(() => {
+    trailingAutoScrollTimer = window.setTimeout(() => {
             trailingAutoScrollTimer = undefined;
             if (!stickToBottom()) return;
             scheduleScrollToLatest("auto");

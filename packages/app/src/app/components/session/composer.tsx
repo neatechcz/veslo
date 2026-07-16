@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
 import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
@@ -473,12 +473,14 @@ export default function Composer(props: ComposerProps) {
   const [mentionQuery, setMentionQuery] = createSignal("");
   const [mentionOpen, setMentionOpen] = createSignal(false);
   const [searchResults, setSearchResults] = createSignal<string[]>([]);
+  const initialDraft = untrack(() => props.initialDraft);
+  const initialPrompt = untrack(() => props.prompt);
   const [attachments, setAttachments] = createSignal<ComposerAttachment[]>(
-    (props.initialDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
+    (initialDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
   );
   const draftHandoffController = createComposerDraftHandoffController();
-  const [draftText, setDraftText] = createSignal(normalizeText(props.initialDraft.text ?? props.prompt));
-  const [mode, setMode] = createSignal<PromptMode>(props.initialDraft.mode ?? "prompt");
+  const [draftText, setDraftText] = createSignal(normalizeText(initialDraft.text ?? initialPrompt));
+  const [mode, setMode] = createSignal<PromptMode>(initialDraft.mode ?? "prompt");
   const [historySnapshot, setHistorySnapshot] = createSignal<ComposerDraft | null>(null);
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
@@ -1707,7 +1709,7 @@ export default function Composer(props: ComposerProps) {
       return;
     }
     const runId = (mentionSearchRun += 1);
-    const timeout = window.setTimeout(() => {
+    const timeout = setTimeout(() => {
       props
         .searchFiles(query)
         .then((results) => {
@@ -1883,7 +1885,7 @@ export default function Composer(props: ComposerProps) {
               <button
                 type="button"
                 class="w-full mb-2 flex items-center justify-between gap-3 rounded-xl border border-green-7/20 bg-green-7/10 px-3 py-2 text-left text-sm text-green-12 transition-colors hover:bg-green-7/15"
-                onClick={props.onNotionBannerClick}
+                onClick={() => props.onNotionBannerClick()}
               >
                 <span>{translate("session.try_notion_prompt")}</span>
                 <span class="text-xs text-green-12 font-medium">{translate("session.insert_prompt")}</span>

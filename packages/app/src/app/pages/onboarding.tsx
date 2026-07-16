@@ -793,7 +793,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
               <div class="flex items-center gap-2 px-2 py-1">
                 <button
-                  onClick={props.onRememberStartupToggle}
+                  onClick={() => props.onRememberStartupToggle()}
                   class="flex items-center gap-2 text-xs text-gray-10 hover:text-gray-11 transition-colors group"
                 >
                   <div

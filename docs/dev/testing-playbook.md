@@ -78,6 +78,7 @@ Then run focused script tests relevant to the changed area, for example:
 - `pnpm --filter @neatech/veslo-ui test:session-switch`
 - `pnpm --filter @neatech/veslo-ui test:fs-engine`
 - `pnpm --filter @neatech/veslo-ui test:browser-entry`
+- `pnpm --filter @neatech/veslo-ui test:renderer-recovery`
 
 ### AI Gateway provider transport changes
 
@@ -130,6 +131,10 @@ pnpm check:desktop-recovery
 
 It rebuilds the server binary and the pilot-enabled E2E Tauri binary, prepares
 sidecars, and runs only `vslo-235-local-host-child-exit` against a fresh profile.
+The scenario first requires the lifecycle API to expose `exited/child_exited`,
+then requires the app-owned recovery path to create a replacement child PID and
+restore `/health` and `/status`. It must not suppress that automatic recovery
+only to make a transient exited state easier to observe.
 Run it twice when changing this contract. It is the `Quality / Desktop recovery`
 Windows CI job, not a replacement for the wider Pilot suite or installed-MSI VM
 verification.

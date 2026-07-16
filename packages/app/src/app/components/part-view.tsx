@@ -306,7 +306,7 @@ export default function PartView(props: Props) {
     if (collapsedLongText()) return "";
     return rawText();
   });
-  const throttledMarkdownSource = useThrottledValue(markdownSource, markdownThrottleMs);
+  const throttledMarkdownSource = useThrottledValue(() => markdownSource(), markdownThrottleMs);
   const renderedMarkdown = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return null;
     if (collapsedLongText()) return null;

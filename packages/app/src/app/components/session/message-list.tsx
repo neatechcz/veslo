@@ -117,7 +117,8 @@ function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): b
 /** Icon for a given tool category */
 function ToolIcon(props: { category: string; size?: number }) {
   const s = () => props.size ?? 12;
-  switch (props.category) {
+  const icon = createMemo(() => {
+    switch (props.category) {
     case "plan":
       return <Sparkles size={s()} />;
     case "explore":
@@ -149,7 +150,9 @@ function ToolIcon(props: { category: string; size?: number }) {
     case "tool":
     default:
       return <File size={s()} />;
-  }
+    }
+  });
+  return <>{icon()}</>;
 }
 
 function statusChipClass(status?: string): string {
@@ -809,6 +812,7 @@ export default function MessageList(props: MessageListProps) {
 
   createEffect(() => {
     const setScrollToMessageById = props.setScrollToMessageById;
+    const scrollElement = props.scrollElement;
     if (!setScrollToMessageById) return;
     const indexById = blockIndexByMessageId();
     const useVirtualization = shouldVirtualize();
@@ -822,7 +826,7 @@ export default function MessageList(props: MessageListProps) {
         return true;
       }
 
-      const container = props.scrollElement?.();
+      const container = scrollElement?.();
       if (!container) return false;
       const escapedId = messageId.replace(/"/g, '\\"');
       const target = container.querySelector(`[data-message-id="${escapedId}"]`) as HTMLElement | null;
@@ -1111,7 +1115,11 @@ export default function MessageList(props: MessageListProps) {
       openSectionIds: props.expandedTimelineSectionIds,
     });
     const setTimelineDetailState = (updater: (current: TimelineDetailState) => TimelineDetailState) => {
-      props.setExpandedTimelineSectionIds((current) => updater({ expanded: false, openSectionIds: current }).openSectionIds);
+      untrack(() => {
+        props.setExpandedTimelineSectionIds((current) =>
+          updater({ expanded: false, openSectionIds: current }).openSectionIds,
+        );
+      });
     };
     createEffect(() => {
       const sections = timelineSections().map((section) => ({
@@ -1119,12 +1127,14 @@ export default function MessageList(props: MessageListProps) {
         kind: section.kind,
         status: section.status,
       }));
-      props.setExpandedTimelineSectionIds((current) => {
-        const next = reconcileTimelineOpenSectionIds(current, {
-          containerId: containerProps.id,
-          sections,
+      untrack(() => {
+        props.setExpandedTimelineSectionIds((current) => {
+          const next = reconcileTimelineOpenSectionIds(current, {
+            containerId: containerProps.id,
+            sections,
+          });
+          return sameStringSet(current, next) ? current : next;
         });
-        return sameStringSet(current, next) ? current : next;
       });
     });
 

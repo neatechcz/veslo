@@ -1156,7 +1156,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     role="switch"
                     aria-checked={props.updateAutoDownload}
                     class="inline-flex h-8 max-w-full items-center justify-between gap-2 rounded-full border border-gray-6 bg-gray-1 px-3 text-left transition-colors hover:bg-gray-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)]"
-                    onClick={props.toggleUpdateAutoDownload}
+                    onClick={() => props.toggleUpdateAutoDownload()}
                   >
                     <span class="min-w-0 whitespace-nowrap text-xs font-medium text-gray-12">{translate("settings.auto_update_label")}</span>
                     <span class={`relative h-4 w-8 shrink-0 rounded-full border transition-colors ${
@@ -1387,7 +1387,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   <button
                     type="button"
                     class={compactDangerActionClass}
-                    onClick={props.stopHost}
+                    onClick={() => props.stopHost()}
                     disabled={props.busy}
                   >
                     <CircleAlert size={14} />
@@ -1397,7 +1397,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   <button
                     type="button"
                     class={compactOutlineActionClass}
-                    onClick={props.stopHost}
+                    onClick={() => props.stopHost()}
                     disabled={props.busy}
                   >
                     {__vesloT("ui.literal.disconnect_server_1xj61t", __vesloCurrentLocale())}</button>
@@ -1479,7 +1479,7 @@ export default function SettingsView(props: SettingsViewProps) {
                               <Button
                                 variant="outline"
                                 class="h-8 rounded-full border-gray-6 px-3 py-0 text-xs"
-                                onClick={props.toggleUpdateAutoDownload}
+                                onClick={() => props.toggleUpdateAutoDownload()}
                               >
                                 {translate("settings.pause_update_download")}
                               </Button>
@@ -1493,7 +1493,7 @@ export default function SettingsView(props: SettingsViewProps) {
                                   ? "border-gray-12/20 bg-gray-12"
                                   : "border-gray-6 bg-gray-3 hover:bg-gray-4"
                               }`}
-                              onClick={props.toggleUpdateAutoDownload}
+                              onClick={() => props.toggleUpdateAutoDownload()}
                             >
                               <span class={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-gray-1 shadow-sm transition-transform ${
                                 props.updateAutoDownload ? "translate-x-5" : "translate-x-0"

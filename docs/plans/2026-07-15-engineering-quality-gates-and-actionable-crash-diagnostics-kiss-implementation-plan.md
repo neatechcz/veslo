@@ -209,7 +209,7 @@ release/MSI změny.
 ### QG01 — Jeden malý `pnpm check` (P0)
 
 done: false
-implementation_status: root composition works locally; Solid reactivity baseline and clean-checkout proof remain pending
+implementation_status: root composition and the Solid reactivity contract are locally verified; clean-checkout proof remains pending
 
 #### Typecheck coverage guard
 
@@ -303,7 +303,7 @@ format. Pokud později vznikne konkrétní problém s cleanupem nebo diagnostiko
 ### QG02 — Required GitHub gate pro `main` i `dev` (P0)
 
 done: false
-implementation_status: workflow is implemented and locally contract-checked; GitHub ruleset and blocked-PR proof remain pending
+implementation_status: workflow is locally corrected and contract-checked after its first remote failure; GitHub ruleset and blocked-PR proof remain pending
 
 Přidat jeden quality workflow se čtyřmi stabilními job names:
 
@@ -337,8 +337,8 @@ Přidat jeden quality workflow se čtyřmi stabilními job names:
 
 ### QG03 — Povýšit existující desktop recovery důkaz (P1)
 
-done: true
-implementation_status: local acceptance passed twice; GitHub workflow execution remains unobserved
+done: false
+implementation_status: local acceptance passed twice after removing the Pilot 10 s eval-cap failure; post-fix GitHub workflow proof remains pending
 
 Nevytvářet nový scénář ani nový kill mechanismus. Použít existující:
 
@@ -358,17 +358,21 @@ Workflow přidá stabilní job `Quality / Desktop recovery` a `Quality / Gate` s
 rozšíří o jeho výsledek. Branch protection dál vyžaduje pouze aggregate status;
 nevzniká druhý ručně spravovaný required status.
 
-Scénář už prokazuje ready -> owned child exit -> `exited/child_exited` -> restart
--> healthy. V tomto rolloutu jej nerozšiřovat o nový model fixture ani obecný
-fault framework. Samostatný follow-up je oprávněný pouze tehdy, pokud runtime
-incident prokáže, že direct restart contract nestačí a je nutné pokrýt konkrétní
-user-visible send/recovery flow.
+Scénář už prokazuje ready -> owned child exit -> `exited/child_exited` ->
+automatic replacement child -> healthy. Dlouhé čekání nesmí běžet uvnitř jednoho
+Pilot `eval`, protože 0.7.2 ho ukončí po 10 s; scénář proto spouští asynchronní
+sondu, čeká na DOM marker a až potom krátce vyhodnotí výsledek. V tomto rolloutu
+jej nerozšiřovat o nový model fixture ani obecný fault framework. Samostatný
+follow-up je oprávněný pouze tehdy, pokud runtime incident prokáže, že tento
+recovery contract nestačí a je nutné pokrýt konkrétní user-visible send/recovery
+flow.
 
 #### Akceptace
 
 - focused scenario projde dvakrát po sobě s fresh profilem;
 - kill command zůstane kompilovaný pouze pod `debug_assertions + e2e`;
-- test failne, pokud kill nebo restart ve skutečnosti neproběhne;
+- test failne, pokud kill, `exited/child_exited`, replacement PID nebo health/status
+  recovery ve skutečnosti neproběhne;
 - po success i failure nezůstane proces spuštěný launcherem;
 - production/MSI config nemá Pilot permission ani fault-injection command;
 - `Quality / Gate` nemůže být zelený, pokud required desktop recovery job
@@ -377,7 +381,7 @@ user-visible send/recovery flow.
 ### QG04 — Akční frontend crash diagnostika (P1)
 
 done: false
-implementation_status: boundary, release map pipeline, and staging canary are locally verified; DOM fallback, authorized upload/alert, and installer proof remain pending
+implementation_status: boundary, DOM fallback, release map pipeline, and staging canary are locally verified; authorized upload/alert and installer proof remain pending
 
 Rozšířit existující GlitchTip browser SDK a release env verifikaci. Nepřidávat
 nový backend ani nový obecný logger.
@@ -449,15 +453,21 @@ The plan is now partially implemented in the current integrated worktree, not me
 ready for implementation. The local evidence is deliberately narrower than the final
 done criteria:
 
-- `pnpm check` exits 0 after lint, workspace typechecks, explicit unit/contract
-  suites, Rust checks, and hard architecture audits;
+- owned lint, workspace typechecks, renderer DOM contract, document-runtime
+  discovery test, workflow contract, Rust checks, and hard architecture audits
+  passed locally; the current dirty integrated `pnpm check` stops earlier in two
+  unrelated UI test changes (`skill-detail-drawer.test.ts` close-handler source
+  contract and `dashboard-tab-refresh-controller.reactivity.test.ts` refresh
+  contract), so it is not reported as a green integrated result;
 - the focused QG03 desktop recovery scenario passed twice in real debug+E2E runs,
-  each with a fresh profile and no launcher-owned process left behind;
+  each with a fresh profile, `exited/child_exited`, a replacement child PID, and
+  no launcher-owned process left behind;
 - the quality workflow has the stable aggregate contract locally checked, and its
   desktop lane calls the same root recovery command;
 - source-map/release tests, strict release review, renderer boundary tests, and
-  focused launcher/runner tests pass; the normal build output contains neither maps
-  nor public `sourceMappingURL` comments.
+  focused launcher/runner tests pass; the browser-conditioned DOM contract verifies
+  recovery UI, one fatal capture, incident ID, and restart action; the normal build
+  output contains neither maps nor public `sourceMappingURL` comments.
 - the manual staging workflow has an opt-in compile-time renderer canary; a normal
   build asserts the marker is absent, while a canary build requires it and uses the
   staging-only monitoring/source-map contract.
@@ -471,10 +481,13 @@ The following are intentionally still incomplete and must not be reported as don
 
 1. all clean-checkout acceptance evidence, including the required two full baseline
    runs, because this worktree was already dirty;
-2. the remaining Solid reactivity baseline required before enabling that rule;
-3. actual GitHub branch ruleset enforcement and a real blocked-PR proof;
-4. a rendered DOM fallback test, authorized GlitchTip upload and alert drill, and
-   final published-installer inspection.
+2. resolution of the two unrelated dirty UI test regressions before an integrated
+   `pnpm check` can be green again;
+3. clean-checkout confirmation that the Solid reactivity gate stays green;
+4. post-fix GitHub workflow execution, actual branch ruleset enforcement, and a
+   real blocked-PR proof;
+5. authorized GlitchTip upload and alert drill, and final published-installer
+   inspection.
 
 ## Odložený native symbol follow-up
 

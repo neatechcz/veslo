@@ -215,7 +215,7 @@ export default function SkillDetailDrawer(props: SkillDetailDrawerProps) {
                   type="button"
                   class="rounded-lg p-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
                   aria-label={translate("skills.detail_close")}
-                  onClick={props.onClose}
+                  onClick={() => props.onClose()}
                 >
                   <X size={18} />
                 </button>

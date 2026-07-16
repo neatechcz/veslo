@@ -41,7 +41,7 @@ test("skill detail drawer exposes accessible dialog semantics and close control"
   assert.match(source, /aria-modal="true"/);
   assert.match(source, /aria-labelledby=\{titleId\}/);
   assert.match(source, /aria-label=\{translate\("skills\.detail_close"\)\}/);
-  assert.match(source, /onClick=\{props\.onClose\}/);
+  assert.match(source, /onClick=\{\(\) => props\.onClose\(\)\}/);
 });
 
 test("skill detail drawer closes from backdrop clicks and leaves titlebar clearance", () => {

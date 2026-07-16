@@ -303,7 +303,7 @@ export default function SoulView(props: SoulViewProps) {
     client: () => props.client,
     serverConnected: () => props.serverConnected,
     authContext: () => props.authContext,
-    refresh: props.refresh,
+    refresh: () => props.refresh(),
     activeWorkspaceIds: soulActiveWorkspaceIds,
     activeRun: soulActiveRun,
     onMaterializationResult: handleSoulMaterializationResult,

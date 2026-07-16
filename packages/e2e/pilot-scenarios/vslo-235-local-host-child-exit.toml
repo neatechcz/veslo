@@ -10,65 +10,103 @@ target = "#root"
 timeout_ms = 15000
 
 [[step]]
+name = "start local host health probe before child exit"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="vslo-235-before-child-exit-complete"]';
+const errorSelector = '[data-testid="vslo-235-before-child-exit-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector.slice('[data-testid="'.length, -2);
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+void (async () => {
+  try {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const normalize = (value) => String(value ?? "").trim();
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const tauriInvoke = async (command, payload = {}) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await invoke(command, payload);
+    };
+    const serverJson = async (baseUrl, token, path) => {
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const text = await response.text();
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = text;
+      }
+      return { ok: response.ok, status: response.status, body };
+    };
+    let latestProbe = null;
+    let ready = null;
+    const deadline = Date.now() + 8500;
+    while (Date.now() < deadline && !ready) {
+      const info = await tauriInvoke("veslo_server_info").catch((error) => ({ error: String(error) }));
+      const baseUrl = trimBaseUrl(info?.baseUrl || info?.base_url || "");
+      const token = normalize(info?.clientToken || info?.client_token || "");
+      if (info?.running && baseUrl && token) {
+        const health = await serverJson(baseUrl, "", "/health").catch((error) => ({ error: String(error) }));
+        if (health.ok && health.body?.ok === true) {
+          ready = { info, baseUrl, token, health };
+          break;
+        }
+        latestProbe = { info, health };
+      } else {
+        latestProbe = { info };
+      }
+      await sleep(400);
+    }
+    assert(ready, `Local Veslo host did not become healthy before child-exit check. Latest=${JSON.stringify(latestProbe)}`);
+    assert(ready.info.lifecycleStatus === "running", `Expected lifecycleStatus=running, got ${JSON.stringify(ready.info)}`);
+    assert(ready.info.lifecycleReason === "none", `Expected lifecycleReason=none, got ${JSON.stringify(ready.info)}`);
+    assert(ready.info.pid, `Expected initial Veslo server pid, got ${JSON.stringify(ready.info)}`);
+    window.__vslo235ChildExit = { initialPid: ready.info.pid };
+    appendMarker(completeSelector, window.__vslo235ChildExit);
+  } catch (error) {
+    appendMarker(errorSelector, {
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+    });
+  }
+})();
+
+true;
+'''
+
+[[step]]
+name = "local host health probe before child exit finished"
+action = "wait"
+target = "[data-testid=\"vslo-235-before-child-exit-complete\"], [data-testid=\"vslo-235-before-child-exit-error\"]"
+timeout_ms = 20000
+
+[[step]]
 name = "local host is healthy before child exit"
 action = "eval"
-timeout_ms = 20000
 script = '''
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const normalize = (value) => String(value ?? "").trim();
-const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
-const assert = (condition, message) => {
-  if (!condition) throw new Error(message);
-};
-const tauriInvoke = async (command, payload = {}) => {
-  const invoke = window.__TAURI_INTERNALS__?.invoke;
-  assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
-  return await invoke(command, payload);
-};
-const serverJson = async (baseUrl, token, path) => {
-  const response = await fetch(`${baseUrl}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  const text = await response.text();
-  let body = null;
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    body = text;
-  }
-  return { ok: response.ok, status: response.status, body };
-};
-let latestProbe = null;
-const deadline = Date.now() + 8500;
-let ready = null;
-while (Date.now() < deadline && !ready) {
-  const info = await tauriInvoke("veslo_server_info").catch((error) => ({ error: String(error) }));
-  const baseUrl = trimBaseUrl(info?.baseUrl || info?.base_url || "");
-  const token = normalize(info?.clientToken || info?.client_token || "");
-  if (info?.running && baseUrl && token) {
-    const health = await serverJson(baseUrl, "", "/health").catch((error) => ({ error: String(error) }));
-    if (health.ok && health.body?.ok === true) {
-      ready = { info, baseUrl, token, health };
-      break;
-    }
-    latestProbe = { info, health };
-  } else {
-    latestProbe = { info };
-  }
-  await sleep(400);
-}
-assert(ready, `Local Veslo host did not become healthy before child-exit check. Latest=${JSON.stringify(latestProbe)}`);
-assert(ready.info.lifecycleStatus === "running", `Expected lifecycleStatus=running, got ${JSON.stringify(ready.info)}`);
-assert(ready.info.lifecycleReason === "none", `Expected lifecycleReason=none, got ${JSON.stringify(ready.info)}`);
-assert(ready.info.pid, `Expected initial Veslo server pid, got ${JSON.stringify(ready.info)}`);
-window.__vslo235ChildExit = { initialPid: ready.info.pid };
+const error = document.querySelector('[data-testid="vslo-235-before-child-exit-error"]');
+if (error) throw new Error(`Local host health probe failed: ${(error.textContent || "No error details were captured.").slice(0, 4000)}`);
+if (!window.__vslo235ChildExit?.initialPid) throw new Error("Local host health probe did not record an initial server pid.");
 true;
 '''
 
 [[step]]
 name = "kill only the veslo server child"
 action = "eval"
-timeout_ms = 20000
 script = '''
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -78,109 +116,133 @@ assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
 const killed = await invoke("veslo_server_e2e_kill_child");
 assert(killed.lifecycleStatus === "exited", `Expected kill command to report exited, got ${JSON.stringify(killed)}`);
 assert(killed.lifecycleReason === "child_exited", `Expected kill command to report child_exited, got ${JSON.stringify(killed)}`);
+assert(killed.running === false, `Expected killed child to report running=false, got ${JSON.stringify(killed)}`);
+assert(killed.pid === null || killed.pid === undefined, `Expected killed child to have no pid, got ${JSON.stringify(killed)}`);
+window.__vslo235ChildExit.killed = killed;
 true;
 '''
 
 [[step]]
 name = "child exit is visible"
 action = "eval"
-timeout_ms = 20000
 script = '''
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const assert = (condition, message) => {
-  if (!condition) throw new Error(message);
-};
-const invoke = window.__TAURI_INTERNALS__?.invoke;
-assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
-let latest = null;
-let exited = null;
-const deadline = Date.now() + 8500;
-while (Date.now() < deadline && !exited) {
-  const info = await invoke("veslo_server_info").catch((error) => ({ error: String(error) }));
-  latest = info;
-  if (info?.running === false && info.lifecycleStatus === "exited" && info.lifecycleReason === "child_exited") {
-    exited = info;
-    break;
-  }
-  await sleep(400);
+const result = window.__vslo235ChildExit;
+const killed = result?.killed;
+if (!result?.initialPid || !killed || killed.running !== false || killed.lifecycleStatus !== "exited" || killed.lifecycleReason !== "child_exited") {
+  throw new Error(`Child exit was not exposed by the desktop lifecycle API: ${JSON.stringify(result)}`);
 }
-assert(exited, `Local Veslo host did not report exited/child_exited after child kill. Latest=${JSON.stringify(latest)}`);
-assert(exited.pid === null || exited.pid === undefined, `Expected exited child to have no pid, got ${JSON.stringify(exited)}`);
+if (killed.pid !== null && killed.pid !== undefined) throw new Error(`Expected exited child to have no pid, got ${JSON.stringify(killed)}`);
 true;
 '''
 
 [[step]]
-name = "restart after child exit"
+name = "start automatic recovery probe after child exit"
 action = "eval"
-timeout_ms = 20000
 script = '''
-const assert = (condition, message) => {
-  if (!condition) throw new Error(message);
-};
-const invoke = window.__TAURI_INTERNALS__?.invoke;
-assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
-const restarted = await invoke("veslo_server_restart");
-assert(restarted.running === true, `Expected restart to respawn a running host, got ${JSON.stringify(restarted)}`);
-assert(restarted.lifecycleStatus === "running", `Expected restart lifecycleStatus=running, got ${JSON.stringify(restarted)}`);
-assert(restarted.lifecycleReason === "none", `Expected restart lifecycleReason=none, got ${JSON.stringify(restarted)}`);
-true;
-'''
+const completeSelector = '[data-testid="vslo-235-after-child-exit-complete"]';
+const errorSelector = '[data-testid="vslo-235-after-child-exit-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
 
-[[step]]
-name = "local host is healthy after restart"
-action = "eval"
-timeout_ms = 20000
-script = '''
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const normalize = (value) => String(value ?? "").trim();
-const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
-const assert = (condition, message) => {
-  if (!condition) throw new Error(message);
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector.slice('[data-testid="'.length, -2);
+  marker.textContent = JSON.stringify(payload, null, 2);
+  document.body.append(marker);
 };
-const tauriInvoke = async (command, payload = {}) => {
-  const invoke = window.__TAURI_INTERNALS__?.invoke;
-  assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
-  return await invoke(command, payload);
-};
-const serverJson = async (baseUrl, token, path) => {
-  const response = await fetch(`${baseUrl}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  const text = await response.text();
-  let body = null;
+
+void (async () => {
   try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    body = text;
-  }
-  return { ok: response.ok, status: response.status, body };
-};
-let latestProbe = null;
-let recovered = null;
-const deadline = Date.now() + 8500;
-while (Date.now() < deadline && !recovered) {
-  const info = await tauriInvoke("veslo_server_info").catch((error) => ({ error: String(error) }));
-  const baseUrl = trimBaseUrl(info?.baseUrl || info?.base_url || "");
-  const token = normalize(info?.clientToken || info?.client_token || "");
-  if (info?.running && baseUrl && token) {
-    const health = await serverJson(baseUrl, "", "/health").catch((error) => ({ error: String(error) }));
-    if (health.ok && health.body?.ok === true) {
-      recovered = { info, baseUrl, token, health };
-      break;
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const normalize = (value) => String(value ?? "").trim();
+    const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+    const tauriInvoke = async (command, payload = {}) => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
+      return await invoke(command, payload);
+    };
+    const serverJson = async (baseUrl, token, path) => {
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const text = await response.text();
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = text;
+      }
+      return { ok: response.ok, status: response.status, body };
+    };
+    const initialPid = window.__vslo235ChildExit?.initialPid;
+    assert(initialPid, "Initial Veslo server pid is missing before recovery probe.");
+    let latestProbe = null;
+    let recovered = null;
+    const deadline = Date.now() + 8500;
+    while (Date.now() < deadline && !recovered) {
+      const info = await tauriInvoke("veslo_server_info").catch((error) => ({ error: String(error) }));
+      const baseUrl = trimBaseUrl(info?.baseUrl || info?.base_url || "");
+      const token = normalize(info?.clientToken || info?.client_token || "");
+      if (info?.running && info?.pid && info.pid !== initialPid && baseUrl && token) {
+        const health = await serverJson(baseUrl, "", "/health").catch((error) => ({ error: String(error) }));
+        if (health.ok && health.body?.ok === true) {
+          recovered = { info, baseUrl, token, health };
+          break;
+        }
+        latestProbe = { info, health };
+      } else {
+        latestProbe = { info };
+      }
+      await sleep(400);
     }
-    latestProbe = { info, health };
-  } else {
-    latestProbe = { info };
-  }
-  await sleep(400);
-}
-assert(recovered, `Local Veslo host did not become healthy after child-exit restart. Latest=${JSON.stringify(latestProbe)}`);
-assert(recovered.info.lifecycleStatus === "running", `Expected recovered lifecycleStatus=running, got ${JSON.stringify(recovered.info)}`);
-assert(recovered.info.lifecycleReason === "none", `Expected recovered lifecycleReason=none, got ${JSON.stringify(recovered.info)}`);
+    assert(recovered, `Local Veslo host did not automatically recover after child exit. Latest=${JSON.stringify(latestProbe)}`);
+    assert(recovered.info.lifecycleStatus === "running", `Expected recovered lifecycleStatus=running, got ${JSON.stringify(recovered.info)}`);
+    assert(recovered.info.lifecycleReason === "none", `Expected recovered lifecycleReason=none, got ${JSON.stringify(recovered.info)}`);
+    assert(recovered.info.pid !== initialPid, `Expected a new child pid after recovery, got ${JSON.stringify(recovered.info)}`);
 
-const status = await serverJson(recovered.baseUrl, recovered.token, "/status");
-assert(status.ok, `GET /status failed after recovery: ${JSON.stringify(status)}`);
-assert(status.body?.workspaceCount > 0, `Expected workspaceCount>0 after recovery, got ${JSON.stringify(status.body)}`);
-assert(status.body?.workspace !== null, `Expected workspace object after recovery, got ${JSON.stringify(status.body)}`);
+    const status = await serverJson(recovered.baseUrl, recovered.token, "/status");
+    assert(status.ok, `GET /status failed after recovery: ${JSON.stringify(status)}`);
+    assert(status.body?.workspaceCount > 0, `Expected workspaceCount>0 after recovery, got ${JSON.stringify(status.body)}`);
+    assert(status.body?.workspace !== null, `Expected workspace object after recovery, got ${JSON.stringify(status.body)}`);
+    window.__vslo235ChildExit.recovered = { info: recovered.info, status };
+    appendMarker(completeSelector, window.__vslo235ChildExit.recovered);
+  } catch (error) {
+    appendMarker(errorSelector, {
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+    });
+  }
+})();
+
+true;
+'''
+
+[[step]]
+name = "automatic recovery probe finished"
+action = "wait"
+target = "[data-testid=\"vslo-235-after-child-exit-complete\"], [data-testid=\"vslo-235-after-child-exit-error\"]"
+timeout_ms = 20000
+
+[[step]]
+name = "local host automatically recovers after child exit"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="vslo-235-after-child-exit-error"]');
+if (error) throw new Error(`Local host recovery probe failed: ${(error.textContent || "No error details were captured.").slice(0, 4000)}`);
+const result = window.__vslo235ChildExit;
+const recovered = result?.recovered;
+if (!recovered?.info?.running || recovered.info.lifecycleStatus !== "running" || recovered.info.lifecycleReason !== "none") {
+  throw new Error(`Local host recovery probe returned an unexpected lifecycle state: ${JSON.stringify(recovered)}`);
+}
+if (!recovered.info.pid || recovered.info.pid === result.initialPid) {
+  throw new Error(`Local host recovery probe did not observe a replacement child: ${JSON.stringify(recovered.info)}`);
+}
+if (!recovered.status?.ok || !(recovered.status.body?.workspaceCount > 0) || recovered.status.body?.workspace === null) {
+  throw new Error(`Local host recovery probe returned an unhealthy status: ${JSON.stringify(recovered?.status)}`);
+}
 true;
 '''

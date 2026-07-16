@@ -38,7 +38,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
   const successId = createUniqueId();
 
   useFocusTrap(() => props.open, () => dialogRef, {
-    onClose: props.onClose,
+    onClose: () => props.onClose(),
     getInitialFocus: () => titleInputRef,
     onOpen: () => {
       setTitle("");

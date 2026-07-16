@@ -3,6 +3,7 @@ import {
   createMemo,
   createSignal,
   onCleanup,
+  untrack,
   type Accessor,
 } from "solid-js";
 import {
@@ -1031,20 +1032,22 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       );
     });
     const ensurePromise = Promise.race([ensureWork(), deadline])
-      .catch((error) => {
-        const timedOut = error instanceof Error &&
-          error.message === "Local Veslo server ensure deadline exceeded";
-        applyVesloServerProbeResult(
-          { status: "disconnected", capabilities: null },
-          timedOut ? "local-ensure-deadline-exceeded" : "local-ensure-failed",
-        );
-        recordLocalEnsureOutcome({
-          outcome: timedOut ? "deadline-exceeded" : "ensure-failed",
-          requireRuntimeChainReady,
-          restartAttempted,
-        });
-        return false;
-      })
+      .catch((error) =>
+        untrack(() => {
+          const timedOut = error instanceof Error &&
+            error.message === "Local Veslo server ensure deadline exceeded";
+          applyVesloServerProbeResult(
+            { status: "disconnected", capabilities: null },
+            timedOut ? "local-ensure-deadline-exceeded" : "local-ensure-failed",
+          );
+          recordLocalEnsureOutcome({
+            outcome: timedOut ? "deadline-exceeded" : "ensure-failed",
+            requireRuntimeChainReady,
+            restartAttempted,
+          });
+          return false;
+        })
+      )
       .finally(() => {
         if (deadlineTimer) clearTimeout(deadlineTimer);
         if (
@@ -1229,10 +1232,13 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     };
 
     void refreshSnapshot();
-    void listenVesloServerState((info) => {
-      if (!active) return;
-      setVesloServerHostInfoFromEvent(info);
-    })
+    const applyServerStateEvent = (info: VesloServerInfo) =>
+      untrack(() => {
+        if (!active) return;
+        setVesloServerHostInfoFromEvent(info);
+      });
+
+    void listenVesloServerState(applyServerStateEvent)
       .then((cleanup) => {
         if (active) {
           unlisten = cleanup;
