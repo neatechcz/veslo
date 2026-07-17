@@ -901,12 +901,13 @@ export default function SettingsView(props: SettingsViewProps) {
   const runtimeDebugReportJson = createMemo(() => `${JSON.stringify(runtimeDebugReport(), null, 2)}\n`);
 
   const copyRuntimeDebugReport = async () => {
-    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    const navigatorApi = (globalThis as { navigator?: Navigator }).navigator;
+    if (!navigatorApi?.clipboard?.writeText) {
       setDebugReportStatus(translate("settings.clipboard_unavailable"));
       return;
     }
     try {
-      await navigator.clipboard.writeText(runtimeDebugReportJson());
+      await navigatorApi.clipboard.writeText(runtimeDebugReportJson());
       setDebugReportStatus(translate("settings.copied_runtime_report"));
     } catch (error) {
       setDebugReportStatus(error instanceof Error ? error.message : translate("settings.copy_runtime_report_failed"));

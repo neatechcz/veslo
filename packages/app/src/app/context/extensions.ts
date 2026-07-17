@@ -423,14 +423,11 @@ export function createExtensionsStore(options: {
   let refreshSkillImportCandidatesInFlight = false;
   let refreshHubSkillsPromise: Promise<void> | null = null;
   let refreshHubSkillsInFlightContextKey = "";
-  let refreshSkillsAborted = false;
-  let refreshSkillInventoryAborted = false;
-  let refreshPluginsAborted = false;
-  let refreshHubSkillsAborted = false;
-  let refreshSkillImportCandidatesAborted = false;
+  const abortedRefreshes = new Set<
+    "skills" | "skill-inventory" | "plugins" | "hub-skills" | "skill-import-candidates" | "hub-mcp"
+  >();
   let refreshHubMcpInFlight = false;
-  let refreshHubMcpForcePending = false;
-  let refreshHubMcpAborted = false;
+  const pendingForcedRefreshes = new Set<"hub-mcp">();
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
   let skillImportCandidatesLoaded = false;
@@ -483,15 +480,15 @@ export function createExtensionsStore(options: {
     if (!optionsOverride?.force && hubMcpLoaded) return;
     if (refreshHubMcpInFlight) {
       if (optionsOverride?.force) {
-        refreshHubMcpForcePending = true;
+        pendingForcedRefreshes.add("hub-mcp");
         hubMcpLoaded = false;
       }
       return;
     }
 
     refreshHubMcpInFlight = true;
-    refreshHubMcpForcePending = false;
-    refreshHubMcpAborted = false;
+    pendingForcedRefreshes.delete("hub-mcp");
+    abortedRefreshes.delete("hub-mcp");
 
     try {
       setHubMcpStatus(null);
@@ -511,7 +508,7 @@ export function createExtensionsStore(options: {
           denToken,
           denOrgId,
         });
-        if (refreshHubMcpAborted) return;
+        if (abortedRefreshes.has("hub-mcp")) return;
         const next: HubMcpCard[] = Array.isArray(response?.items)
           ? response.items.map((entry: HubMcpItem) => ({
               id: String(entry.id ?? entry.name ?? ""),
@@ -538,19 +535,19 @@ export function createExtensionsStore(options: {
         return;
       }
 
-      if (refreshHubMcpAborted) return;
+      if (abortedRefreshes.has("hub-mcp")) return;
       setHubMcpCards([]);
       setHubMcpStatus(orgCatalogPlaceholder);
       hubMcpRoot = root;
       hubMcpContextKey = nextContextKey;
     } catch (e) {
-      if (refreshHubMcpAborted) return;
+      if (abortedRefreshes.has("hub-mcp")) return;
       setHubMcpCards([]);
       setHubMcpStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_hub_mcp_1s9f65", __vesloIndirectLocale()));
     } finally {
       refreshHubMcpInFlight = false;
-      if (refreshHubMcpForcePending && !refreshHubMcpAborted) {
-        refreshHubMcpForcePending = false;
+      if (pendingForcedRefreshes.has("hub-mcp") && !abortedRefreshes.has("hub-mcp")) {
+        pendingForcedRefreshes.delete("hub-mcp");
         void refreshHubMcp({ force: true });
       }
     }
@@ -636,7 +633,7 @@ export function createExtensionsStore(options: {
 
     refreshHubSkillsInFlight = true;
     refreshHubSkillsInFlightContextKey = contextKey;
-    refreshHubSkillsAborted = false;
+    abortedRefreshes.delete("hub-skills");
     refreshHubSkillsPromise = (async () => {
       try {
         setHubSkillsStatus(null);
@@ -657,7 +654,7 @@ export function createExtensionsStore(options: {
             denToken,
             denOrgId,
           });
-          if (refreshHubSkillsAborted) return;
+          if (abortedRefreshes.has("hub-skills")) return;
           const next: HubSkillCard[] = response.items.map((entry) => ({
             name: entry.name,
             description: entry.description,
@@ -674,7 +671,7 @@ export function createExtensionsStore(options: {
           return;
         }
 
-        if (refreshHubSkillsAborted) return;
+        if (abortedRefreshes.has("hub-skills")) return;
         setHubSkills([]);
         setHubSkillsStatus(orgCatalogPlaceholder);
         hubSkillsLoaded = true;
@@ -683,7 +680,7 @@ export function createExtensionsStore(options: {
         markHubSkillsSourceChanged();
         void refreshHubMcp({ force: true });
       } catch (e) {
-        if (refreshHubSkillsAborted) return;
+        if (abortedRefreshes.has("hub-skills")) return;
         hubSkillsLoaded = false;
         setHubSkills([]);
         hubSkillsRoot = root;
@@ -1204,24 +1201,24 @@ export function createExtensionsStore(options: {
       const refreshOptions = forceRefresh ? { force: true } : undefined;
       refreshSkillInventoryInFlight = true;
       refreshSkillInventoryInFlightContextKey = nextRefreshContextKey;
-      refreshSkillInventoryAborted = false;
+      abortedRefreshes.delete("skill-inventory");
       refreshSkillInventoryPromise = (async (): Promise<SkillInventoryRefreshResult> => {
         try {
           setSkillInventoryStatus(null);
           await refreshHubSkills(refreshOptions);
-          if (refreshSkillInventoryAborted) return "aborted";
+          if (abortedRefreshes.has("skill-inventory")) return "aborted";
 
           const refreshedHubContext = resolveHubSkillsRefreshContext();
           if (hubSkillsContextKey !== refreshedHubContext.contextKey) {
             await refreshHubSkills({ force: true });
-            if (refreshSkillInventoryAborted) return "aborted";
+            if (abortedRefreshes.has("skill-inventory")) return "aborted";
           }
 
           const inventoryHubContext = resolveHubSkillsRefreshContext();
           const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
           const inventoryContextAtStart = getSkillInventoryContextKey(localWorkspaces, inventoryHubContext.contextKey);
           const disabledSkillRecords = await loadDisabledSkillRecords(localWorkspaces);
-          if (refreshSkillInventoryAborted) return "aborted";
+          if (abortedRefreshes.has("skill-inventory")) return "aborted";
 
           const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
           const removalClient = getSkillRemovalClient();
@@ -1235,7 +1232,7 @@ export function createExtensionsStore(options: {
           );
           globalSkills.push(...(await loadUserGlobalSkillStoreInputs()));
           globalSkills.push(...(await listRemovedSkillInputs(removalClient, { scope: "user-global" })));
-          if (refreshSkillInventoryAborted) return "aborted";
+          if (abortedRefreshes.has("skill-inventory")) return "aborted";
 
           const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
 
@@ -1249,7 +1246,7 @@ export function createExtensionsStore(options: {
               scope: "workspace",
               workspaceId: workspace.id,
             })));
-            if (refreshSkillInventoryAborted) return "aborted";
+            if (abortedRefreshes.has("skill-inventory")) return "aborted";
             workspaceSkillsByWorkspaceId[workspace.id] = {
               workspace: {
                 id: workspace.id,
@@ -1276,7 +1273,7 @@ export function createExtensionsStore(options: {
             workspaceSkillsByWorkspaceId,
             hubSkills: hasMatchingHubSkills ? hubSkills() : [],
           });
-          if (refreshSkillInventoryAborted) return "aborted";
+          if (abortedRefreshes.has("skill-inventory")) return "aborted";
 
           setSkillInventory(next);
           if (!next.length) {
@@ -1288,7 +1285,7 @@ export function createExtensionsStore(options: {
           skillInventoryContextKey = inventoryContextAtStart;
           return "published";
         } catch (e) {
-          if (refreshSkillInventoryAborted) return "aborted";
+          if (abortedRefreshes.has("skill-inventory")) return "aborted";
           skillInventoryLoaded = false;
           setSkillInventory([]);
           setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1347,11 +1344,11 @@ export function createExtensionsStore(options: {
     if (refreshSkillImportCandidatesInFlight) return;
 
     refreshSkillImportCandidatesInFlight = true;
-    refreshSkillImportCandidatesAborted = false;
+      abortedRefreshes.delete("skill-import-candidates");
     try {
       setSkillImportStatus(null);
       const response = await client.listSkillImportCandidates!();
-      if (refreshSkillImportCandidatesAborted) return;
+      if (abortedRefreshes.has("skill-import-candidates")) return;
       const next = Array.isArray(response.items) ? response.items : [];
       setSkillImportCandidates(next);
       if (!next.length) {
@@ -1360,7 +1357,7 @@ export function createExtensionsStore(options: {
       skillImportCandidatesLoaded = true;
       skillImportCandidatesContextKey = contextKey;
     } catch (e) {
-      if (refreshSkillImportCandidatesAborted) return;
+      if (abortedRefreshes.has("skill-import-candidates")) return;
       skillImportCandidatesLoaded = false;
       setSkillImportCandidates([]);
       setSkillImportStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1589,14 +1586,14 @@ export function createExtensionsStore(options: {
       }
 
       refreshSkillsInFlight = true;
-      refreshSkillsAborted = false;
+      abortedRefreshes.delete("skills");
 
       try {
         setSkillsStatus(null);
         const response = await vesloClient.listSkills(vesloWorkspaceId, {
           includeGlobal: isLocalWorkspace,
         });
-        if (refreshSkillsAborted) return;
+        if (abortedRefreshes.has("skills")) return;
         const next: SkillCard[] = Array.isArray(response.items)
           ? response.items.map((entry) => ({
               name: entry.name,
@@ -1614,7 +1611,7 @@ export function createExtensionsStore(options: {
         skillsLoaded = true;
         skillsRoot = root;
       } catch (e) {
-        if (refreshSkillsAborted) return;
+        if (abortedRefreshes.has("skills")) return;
         setSkills([]);
         markLocalSkillsSourceChanged();
         setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1641,12 +1638,12 @@ export function createExtensionsStore(options: {
       }
 
       refreshSkillsInFlight = true;
-      refreshSkillsAborted = false;
+      abortedRefreshes.delete("skills");
 
       try {
         setSkillsStatus(null);
         const local = await listLocalSkills(root);
-        if (refreshSkillsAborted) return;
+        if (abortedRefreshes.has("skills")) return;
 
         const next: SkillCard[] = Array.isArray(local)
           ? local.map((entry) => ({
@@ -1666,7 +1663,7 @@ export function createExtensionsStore(options: {
         skillsLoaded = true;
         skillsRoot = root;
       } catch (e) {
-        if (refreshSkillsAborted) return;
+        if (abortedRefreshes.has("skills")) return;
         setSkills([]);
         markLocalSkillsSourceChanged();
         setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1698,12 +1695,12 @@ export function createExtensionsStore(options: {
     }
 
     refreshSkillsInFlight = true;
-    refreshSkillsAborted = false;
+    abortedRefreshes.delete("skills");
 
     try {
       setSkillsStatus(null);
 
-      if (refreshSkillsAborted) return;
+      if (abortedRefreshes.has("skills")) return;
 
       const rawClient = c as unknown as { _client?: { get: (input: { url: string }) => Promise<OpenCodeClientGetResult> } };
       if (!rawClient._client) {
@@ -1719,7 +1716,7 @@ export function createExtensionsStore(options: {
       }
       const data = result.data;
 
-      if (refreshSkillsAborted) return;
+      if (abortedRefreshes.has("skills")) return;
 
       const next: SkillCard[] = Array.isArray(data)
         ? data
@@ -1740,7 +1737,7 @@ export function createExtensionsStore(options: {
       skillsLoaded = true;
       skillsRoot = root;
     } catch (e) {
-      if (refreshSkillsAborted) return;
+      if (abortedRefreshes.has("skills")) return;
       setSkills([]);
       markLocalSkillsSourceChanged();
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1773,7 +1770,7 @@ export function createExtensionsStore(options: {
     }
 
     refreshPluginsInFlight = true;
-    refreshPluginsAborted = false;
+    abortedRefreshes.delete("plugins");
 
     try {
       const isRemoteWorkspace = options.workspaceType() === "remote";
@@ -1805,14 +1802,14 @@ export function createExtensionsStore(options: {
           setPluginStatus(null);
           setSidebarPluginStatus(null);
 
-          if (refreshPluginsAborted) return;
+          if (abortedRefreshes.has("plugins")) return;
 
           const listOptions = {
             includeGlobal: false,
             ...(optionsOverride?.debug ? { debug: true } : {}),
           };
           const result = await vesloClient.plugins.list(vesloWorkspaceId, listOptions);
-          if (refreshPluginsAborted) return;
+          if (abortedRefreshes.has("plugins")) return;
 
           const hasServerInventory = Array.isArray(result.inventory);
           const inventory = hasServerInventory
@@ -1829,7 +1826,7 @@ export function createExtensionsStore(options: {
             setPluginStatus(__vesloIndirectT("plugins.no_plugins_yet", __vesloIndirectLocale()));
           }
         } catch (e) {
-          if (refreshPluginsAborted) return;
+          if (abortedRefreshes.has("plugins")) return;
           clearPluginState();
           setSidebarPluginStatus(__vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
           setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
@@ -1863,11 +1860,11 @@ export function createExtensionsStore(options: {
         setPluginStatus(null);
         setSidebarPluginStatus(null);
 
-        if (refreshPluginsAborted) return;
+        if (abortedRefreshes.has("plugins")) return;
 
         const config = await readOpencodeConfig(scope, targetDir);
 
-        if (refreshPluginsAborted) return;
+        if (abortedRefreshes.has("plugins")) return;
 
         setPluginConfig(config);
         setPluginConfigPath(config.path ?? null);
@@ -1891,7 +1888,7 @@ export function createExtensionsStore(options: {
 
         loadPluginsFromConfig(config);
       } catch (e) {
-        if (refreshPluginsAborted) return;
+        if (abortedRefreshes.has("plugins")) return;
         setPluginConfig(null);
         setPluginConfigPath(null);
         clearPluginState();
@@ -1903,7 +1900,7 @@ export function createExtensionsStore(options: {
       const queuedRequest = refreshPluginsQueuedRequest;
       refreshPluginsQueuedRequest = null;
       if (queuedRequest) {
-        if (refreshPluginsAborted) {
+        if (abortedRefreshes.has("plugins")) {
           queuedRequest.resolve();
         } else {
           try {
@@ -3597,12 +3594,12 @@ export function createExtensionsStore(options: {
   }
 
   function abortRefreshes() {
-    refreshSkillsAborted = true;
-    refreshSkillInventoryAborted = true;
-    refreshPluginsAborted = true;
-    refreshHubSkillsAborted = true;
-    refreshSkillImportCandidatesAborted = true;
-    refreshHubMcpAborted = true;
+    abortedRefreshes.add("skills");
+    abortedRefreshes.add("skill-inventory");
+    abortedRefreshes.add("plugins");
+    abortedRefreshes.add("hub-skills");
+    abortedRefreshes.add("skill-import-candidates");
+    abortedRefreshes.add("hub-mcp");
   }
 
   return {

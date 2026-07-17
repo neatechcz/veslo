@@ -928,7 +928,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     generation: number,
   ): (() => void) => {
     const streamConnectionKey = sseConnectionKey(sourceWsId);
-    let cancelled = false;
+    const cancellation = new Set<true>();
     let reconnectAttempt = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let wasConnected = false;
@@ -1216,7 +1216,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
           });
         }
-        if (cancelled || controller.signal.aborted) {
+        if (cancellation.has(true) || controller.signal.aborted) {
           await closeSseSubscription(sub);
           activeSubscriptions.delete(sub);
           return;
@@ -1237,7 +1237,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
         try {
           for await (const raw of sub.stream) {
-            if (cancelled) break;
+            if (cancellation.has(true)) break;
 
             const event = normalizeEvent(raw);
             if (!event) continue;
@@ -1288,13 +1288,13 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           await closeSseSubscription(sub);
         }
 
-        if (!cancelled) {
+        if (!cancellation.has(true)) {
           setStreamSseConnected(streamConnectionKey, false);
           recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "stream-ended", { generation });
           scheduleReconnect(controller);
         }
       } catch (e) {
-        if (cancelled) return;
+        if (cancellation.has(true)) return;
         if (controller.signal.aborted) return;
 
         const message = e instanceof Error ? e.message : String(e);
@@ -1383,7 +1383,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     };
 
     const scheduleReconnect = (oldController: AbortController) => {
-      if (cancelled) return;
+      if (cancellation.has(true)) return;
       if (reconnectTimer) return;
       markOutageAndMaybeNotify();
       oldController.abort();
@@ -1402,7 +1402,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       });
 
       reconnectTimer = setTimeout(() => {
-        if (cancelled) return;
+        if (cancellation.has(true)) return;
         reconnectTimer = undefined;
         const newController = new AbortController();
         void connectSse(newController);
@@ -1413,7 +1413,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     void connectSse(controller);
 
     return () => {
-      cancelled = true;
+      cancellation.add(true);
       currentController?.abort();
       for (const subscription of Array.from(activeSubscriptions)) {
         activeSubscriptions.delete(subscription);

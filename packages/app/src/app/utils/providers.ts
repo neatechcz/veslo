@@ -95,8 +95,11 @@ const normalizeModelStatus = (value: unknown): ProviderListModel["status"] => {
   return value === "alpha" || value === "beta" || value === "deprecated" || value === "active" ? value : undefined;
 };
 
+const readOptionalModelCost = (model: { cost?: ConfigProvider["models"][string]["cost"] }) => model.cost;
+
 const mapModel = (modelId: string, model: ConfigProvider["models"][string]): ProviderListModel => {
   const status = normalizeModelStatus(model.status);
+  const cost = readOptionalModelCost(model);
   return {
     id: model.id ?? modelId,
     name: model.name ?? model.id ?? modelId,
@@ -107,18 +110,18 @@ const mapModel = (modelId: string, model: ConfigProvider["models"][string]): Pro
     temperature: model.capabilities?.temperature ?? false,
     tool_call: model.capabilities?.toolcall ?? false,
     interleaved: model.capabilities?.interleaved ? true : undefined,
-    cost: model.cost
+    cost: cost
       ? {
-          input: model.cost.input,
-          output: model.cost.output,
-          cache_read: model.cost.cache.read,
-          cache_write: model.cost.cache.write,
-          context_over_200k: model.cost.experimentalOver200K
+          input: cost.input,
+          output: cost.output,
+          cache_read: cost.cache.read,
+          cache_write: cost.cache.write,
+          context_over_200k: cost.experimentalOver200K
             ? {
-                input: model.cost.experimentalOver200K.input,
-                output: model.cost.experimentalOver200K.output,
-                cache_read: model.cost.experimentalOver200K.cache.read,
-                cache_write: model.cost.experimentalOver200K.cache.write,
+                input: cost.experimentalOver200K.input,
+                output: cost.experimentalOver200K.output,
+                cache_read: cost.experimentalOver200K.cache.read,
+                cache_write: cost.experimentalOver200K.cache.write,
               }
             : undefined,
         }

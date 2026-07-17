@@ -1114,9 +1114,11 @@ export default function SessionView(props: SessionViewProps) {
       pendingQueueKeyAwaitingSessionIdByBaseKey: pendingQueueKeyAwaitingSessionIdByBaseKey(),
     });
   });
-  const implicitSkillConfirmation = createMemo(() =>
-    implicitSkillConfirmationBySessionKey()[currentSessionQueueKey()] ?? null,
-  );
+  const implicitSkillConfirmation = createMemo(() => {
+    const confirmations = implicitSkillConfirmationBySessionKey();
+    const sessionKey = currentSessionQueueKey();
+    return Object.hasOwn(confirmations, sessionKey) ? confirmations[sessionKey]! : null;
+  });
   const [composerEntryDismissedBySessionKey, setComposerEntryDismissedBySessionKey] =
     createSignal<Record<string, boolean>>({});
   const composerEntryDismissed = createMemo(() => {
@@ -1357,8 +1359,9 @@ export default function SessionView(props: SessionViewProps) {
   const resetRunState = (sessionKey = currentSessionQueueKey(), reason = "unspecified-reset") => {
     const key = sessionKey.trim();
     if (!key) return;
-    const previous = untrack(runStateBySessionKey)[key];
-    if (previous) {
+    const runStates = untrack(runStateBySessionKey);
+    if (Object.hasOwn(runStates, key)) {
+      const previous = runStates[key]!;
       recordSendTrace("run-state:reset", {
         reason,
         sessionKey: key,
@@ -1372,8 +1375,9 @@ export default function SessionView(props: SessionViewProps) {
   const preserveRunStateOnSessionSwitch = (sessionKey: string) => {
     const key = sessionKey.trim();
     if (!key) return;
-    const previous = untrack(runStateBySessionKey)[key];
-    if (!previous) return;
+    const runStates = untrack(runStateBySessionKey);
+    if (!Object.hasOwn(runStates, key)) return;
+    const previous = runStates[key]!;
     recordSendTrace("run-state:preserve-session-switch", {
       sessionKey: key,
       status: statusForQueueKey(key, props.sessionStatusById),

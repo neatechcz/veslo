@@ -568,7 +568,8 @@ export async function waitForHealthy(
     const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const health = unwrap(await client.global.health({ signal: controller.signal }));
-      if (health.healthy) {
+      const isHealthy = Boolean(health.healthy);
+      if (isHealthy) {
         return health;
       }
       lastError = "Server reported unhealthy";

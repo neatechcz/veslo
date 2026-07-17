@@ -110,7 +110,8 @@ function normalizeFeedbackSubmitError(error: unknown, denApiBase: string): Error
 export async function captureFeedbackSurface(
   options: FeedbackCaptureOptions = {},
 ): Promise<Extract<FeedbackCaptureResult, { status: "captured" }>> {
-  const targetDocument = options.document ?? globalThis.document;
+  const targetDocument: Pick<Document, "querySelector"> | undefined =
+    options.document ?? (globalThis as { document?: Document }).document;
   if (!targetDocument) {
     throw new Error("Feedback screenshot capture is unavailable in this environment.");
   }

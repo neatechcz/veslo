@@ -301,9 +301,9 @@ function summarizeUrlForManagedAiTrace(value: string | null | undefined): Record
 function getConfigSnapshot(content: string | null): string {
   if (!content?.trim()) return "";
   try {
-    const parsed = parse(content) as Record<string, unknown>;
+    const parsed: unknown = parse(content);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const copy = { ...parsed };
+      const copy = { ...(parsed as Record<string, unknown>) };
       delete copy.model;
       return JSON.stringify(copy);
     }
@@ -1086,7 +1086,7 @@ export function createManagedAiRuntimeConfigSync(
         return;
       }
 
-      if (canUseVesloServerBase && vesloClient && vesloWorkspaceId) {
+      if (canUseVesloServerBase && vesloWorkspaceId) {
         await syncVesloServerConfig({
           vesloClient,
           vesloWorkspaceId,

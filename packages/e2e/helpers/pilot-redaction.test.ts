@@ -19,17 +19,28 @@ test('diagnostic redaction removes credentials from structured output and comman
       apiKey: 'api-key-live-token',
       secret: 'secret-live-token',
       password: 'password-live-token',
+      hasUserToken: true,
+      hasServerToken: false,
     },
     message: 'Authorization: Bearer third-live-token',
   }));
 
   assert.match(redacted, /codex_oauth/);
   assert.match(redacted, /<redacted>/);
+  assert.match(redacted, /"hasUserToken": true/);
+  assert.match(redacted, /"hasServerToken": false/);
   assert.doesNotMatch(redacted, /live-token|another-live-token|third-live-token|access-live-token|refresh-live-token|client-live-token|api-key-live-token|secret-live-token|password-live-token/);
   assert.deepEqual(
     redactPilotCommandArgs(['--socket', '/tmp/veslo.sock', 'eval', 'window.token = "live-token"']),
     ['--socket', '/tmp/veslo.sock', 'eval', '<redacted-eval-script>'],
   );
+
+  const prefixedTrace = redactPilotDiagnosticText(
+    '[app] trace {"hasUserToken":true,"clientToken":"client-live-token"}',
+  );
+  assert.match(prefixedTrace, /"hasUserToken":true/);
+  assert.match(prefixedTrace, /"clientToken":<redacted>/);
+  assert.doesNotMatch(prefixedTrace, /client-live-token/);
 });
 
 test('line-buffered redaction protects credentials split across app-process chunks', () => {

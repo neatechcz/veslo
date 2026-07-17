@@ -54,7 +54,7 @@ export function shouldReleaseStaleWorkspaceRoute(wsId: string, activeWs: string,
 
 function isWorkspaceFolderAccessPermission(permission: PendingPermission): boolean {
   if ((permission.permission ?? "").trim() !== "folder_access") return false;
-  const metadata = permission.metadata;
+  const metadata: unknown = permission.metadata;
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return false;
   const requestedPath = (metadata as { requestedPath?: unknown }).requestedPath;
   return typeof requestedPath === "string" && requestedPath.trim().length > 0;

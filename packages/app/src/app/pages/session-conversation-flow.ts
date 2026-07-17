@@ -1373,20 +1373,19 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               : deps.sessionKeys.selectedSessionId()),
           draft,
         });
-        let pendingStored = false;
-        let pendingSlotOccupied = false;
+        const optimisticSlot = { stored: false, occupied: false };
         deps.pendingSubmitted.updatePendingSubmittedDrafts((current) => {
           const result = trySetPendingSubmittedDraftForKey(
             current,
             sessionKey,
             pendingSubmittedDraft,
           );
-          pendingStored = result.kind === "stored";
-          pendingSlotOccupied = result.kind === "occupied";
+          optimisticSlot.stored = result.kind === "stored";
+          optimisticSlot.occupied = result.kind === "occupied";
           return result.draftsBySessionKey;
         });
-        if (!pendingStored) {
-          const message = pendingSlotOccupied
+        if (!optimisticSlot.stored) {
+          const message = optimisticSlot.occupied
             ? "A previous message is still synchronizing. Keep this draft and try again after it resolves."
             : "This message could not be prepared for sending. Keep the draft and try again.";
           deps.trace.recordSendTrace("sendPromptImmediate:optimistic-slot-unavailable", {
@@ -1394,11 +1393,11 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             clientMessageId,
             origin,
             sessionKey,
-            reason: pendingSlotOccupied ? "occupied" : "invalid",
+            reason: optimisticSlot.occupied ? "occupied" : "invalid",
           });
           deps.feedback.setToastMessage(message);
           return sessionSubmitBlockedResult({
-            code: pendingSlotOccupied ? "pending_submit_slot_occupied" : "pending_submit_slot_invalid",
+            code: optimisticSlot.occupied ? "pending_submit_slot_occupied" : "pending_submit_slot_invalid",
             message,
             draftDisposition: "restore",
           });
@@ -2031,8 +2030,8 @@ export const remapPendingRunStateToSession = (
   const pending = pendingKey.trim();
   const real = sessionKey.trim();
   if (!pending || !real || pending === real) return current;
-  const pendingRun = current[pending];
-  if (!pendingRun) return current;
+  if (!Object.hasOwn(current, pending)) return current;
+  const pendingRun = current[pending]!;
   const { [pending]: _removedPendingRunState, ...rest } = current;
   return {
     ...rest,

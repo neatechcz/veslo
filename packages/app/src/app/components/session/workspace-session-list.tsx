@@ -896,8 +896,8 @@ export default function WorkspaceSessionList(props: Props) {
     let nextWorkspaceId: string | null = null;
 
     for (const workspaceId of projectWorkspaceIds(group)) {
-      const entry = paging[workspaceId];
-      if (!entry) continue;
+      if (!Object.hasOwn(paging, workspaceId)) continue;
+      const entry = paging[workspaceId]!;
       hasMore = hasMore || entry.hasMore;
       loadingMore = loadingMore || entry.loadingMore;
       if (entry.hasMore && !entry.loadingMore && !nextWorkspaceId) {

@@ -32,7 +32,9 @@ script = '''
   progressMarker.style.display = "none";
   document.body.append(progressMarker);
 
-  const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+  const pilotE2E = window.__vesloPilotE2E;
+  if (!pilotE2E) throw new Error("Pilot browser prelude is unavailable.");
+  const { normalize } = pilotE2E;
   const setProgress = (stage, detail = null) => {
     const previous = window.__vesloMessageSendRegistryDegradedProgress ?? null;
     const timeline = Array.isArray(window.__vesloMessageSendRegistryDegradedTimeline)
@@ -100,25 +102,7 @@ script = '''
   window.__vesloMessageSendRegistryDegradedPreflightStarted = true;
   window.__vesloMessageSendRegistryDegradedPreflightPromise = (async () => {
     try {
-      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      const assert = (condition, message) => {
-        if (!condition) throw new Error(message);
-      };
-      const waitUntil = async (predicate, options = {}) => {
-        const deadline = Date.now() + (options.timeout ?? 10000);
-        let latest = null;
-        while (Date.now() < deadline) {
-          latest = await predicate();
-          if (latest) return latest;
-          await sleep(options.interval ?? 250);
-        }
-        throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latest)}`);
-      };
-      const tauriInvoke = async (command, payload = {}) => {
-        const invoke = window.__TAURI_INTERNALS__?.invoke;
-        assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
-        return await invoke(command, payload);
-      };
+      const { assert, waitUntil, invoke: tauriInvoke } = pilotE2E;
       const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
       const parseDenAuth = (raw) => {
         if (!raw || typeof raw !== "string") return null;
@@ -143,12 +127,6 @@ script = '''
         if (storageAuth) return storageAuth;
         const snapshot = await tauriInvoke("den_auth_snapshot_read", {}).catch(() => null);
         return parseDenAuth(snapshot?.authJson);
-      };
-      const isVisible = (element) => {
-        if (!(element instanceof HTMLElement)) return false;
-        const rect = element.getBoundingClientRect();
-        const style = window.getComputedStyle(element);
-        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
       };
       const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
       const assertNoSkillRegistryError = () => {
@@ -229,37 +207,55 @@ script = '''
       setProgress("waiting-app-managed-runtime", { workspaceId: workspaceId || null });
       await waitUntil(() => {
         const trace = Array.isArray(window.__vesloSendWorkflowTrace) ? window.__vesloSendWorkflowTrace : [];
-        const runtimeStartGate = trace.find((entry) =>
-          entry?.source === "app" &&
-          entry?.event === "managed-ai-config-sync:runtime-start-gate" &&
-          belongsToWorkspace(entry) &&
-          entry?.accessReady === true &&
-          entry?.managedProfilePresent === true);
-        const runtimeStartGateId = Number(runtimeStartGate?.id ?? 0);
+        const bootEngineStart = trace.find((entry) =>
+          entry?.source === "workspace-runtime" &&
+          entry?.event === "ensure-engine:start" &&
+          entry?.reason === "boot-warmup" &&
+          belongsToWorkspace(entry));
+        const bootEngineStartId = Number(bootEngineStart?.id ?? 0);
+        // The active-workspace config sync and runtime-start gate can share one
+        // single-flight. The config decision may therefore precede the gate,
+        // but both must belong to this boot and the engine must finish after
+        // the gate (and after a required patch).
         const configDecision = trace.find((entry) =>
           entry?.source === "app" &&
           entry?.event === "managed-ai-config-sync:managed-decision" &&
           belongsToWorkspace(entry) &&
-          Number(entry?.id ?? 0) > runtimeStartGateId &&
+          Number(entry?.id ?? 0) > bootEngineStartId &&
           entry?.providerRoutingReady === true &&
           (entry?.decision === "write-managed-config" ||
             (entry?.decision === "skip" && entry?.reason === "managed-config-current")));
         const configDecisionId = Number(configDecision?.id ?? 0);
+        const runtimeStartGate = trace.find((entry) =>
+          entry?.source === "app" &&
+          entry?.event === "managed-ai-config-sync:runtime-start-gate" &&
+          belongsToWorkspace(entry) &&
+          Number(entry?.id ?? 0) > bootEngineStartId &&
+          entry?.accessReady === true &&
+          entry?.managedProfilePresent === true);
+        const runtimeStartGateId = Number(runtimeStartGate?.id ?? 0);
         const configPatch = trace.find((entry) =>
           entry?.source === "app" &&
           entry?.event === "managed-ai-config-sync:patch-done" &&
           belongsToWorkspace(entry) &&
           Number(entry?.id ?? 0) > configDecisionId);
+        const engineReadyAfterId = Math.max(
+          runtimeStartGateId,
+          configDecision?.decision === "write-managed-config"
+            ? Number(configPatch?.id ?? 0)
+            : configDecisionId,
+        );
         const engineReady = trace.find((entry) =>
           entry?.source === "workspace-runtime" &&
           entry?.event === "ensure-engine:success" &&
           entry?.reason === "boot-warmup" &&
           belongsToWorkspace(entry) &&
-          Number(entry?.id ?? 0) > configDecisionId);
+          Number(entry?.id ?? 0) > engineReadyAfterId);
         const configSettled = Boolean(configDecision) &&
           (configDecision.decision !== "write-managed-config" ||
             Boolean(configPatch));
         const latest = {
+          bootEngineStart: summarizeRuntimeEntry(bootEngineStart),
           runtimeStartGate: summarizeRuntimeEntry(runtimeStartGate),
           configDecision: summarizeRuntimeEntry(configDecision),
           configPatch: summarizeRuntimeEntry(configPatch),
@@ -394,14 +390,11 @@ script = '''
   document.querySelector(completeSelector)?.remove();
   window.__vesloMessageSendRegistryDegradedNativeClick = null;
   window.__vesloMessageSendRegistryDegradedResponseMonitorStarted = false;
-  const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+  const pilotE2E = window.__vesloPilotE2E;
+  if (!pilotE2E) throw new Error("Pilot browser prelude is unavailable.");
+  const { normalize, visible } = pilotE2E;
   const visibleAssistantCount = () => Array.from(document.querySelectorAll('[data-message-role="assistant"]'))
-    .filter((element) => {
-      if (!(element instanceof HTMLElement)) return false;
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
-    })
+    .filter(visible)
     .length;
   const captureNativeSendClick = (event) => {
     const target = event.target instanceof Element
@@ -503,7 +496,9 @@ script = '''
   const completeSelector = '[data-testid="message-send-registry-degraded-complete"]';
   const errorSelector = '[data-testid="message-send-registry-degraded-error"]';
   const progressSelector = '[data-testid="message-send-registry-degraded-progress"]';
-  const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+  const pilotE2E = window.__vesloPilotE2E;
+  if (!pilotE2E) throw new Error("Pilot browser prelude is unavailable.");
+  const { normalize, visible } = pilotE2E;
   const progressMarker = document.querySelector(progressSelector);
   const setProgress = (stage, detail = null) => {
     if (!progressMarker) return;
@@ -523,12 +518,7 @@ script = '''
       workspaceId: normalize(entry?.workspaceId) || null,
     }));
   const visibleAssistantTexts = () => Array.from(document.querySelectorAll('[data-message-role="assistant"]'))
-    .filter((element) => {
-      if (!(element instanceof HTMLElement)) return false;
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
-    })
+    .filter(visible)
     .map((element) => normalize(element.textContent));
   const appendFailure = (payload) => {
     if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;

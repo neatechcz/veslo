@@ -14,10 +14,8 @@ export function resolveWindowsSandboxRepairPolicy(input: {
   preferences: WindowsSandboxRepairPreferences | null | undefined;
   supportFlow?: boolean;
 }): WindowsSandboxRepairPolicy {
-  if (!WINDOWS_WSL_SANDBOX_RUNTIME_ENABLED) return "hidden";
-  if (!input.isWindowsDesktop) return "hidden";
-  if (input.supportFlow) return "available";
-  return input.preferences?.sharedUnsandboxedEngine === false ? "available" : "hidden";
+  void input;
+  return "hidden";
 }
 
 export function maybeStartWindowsSandboxAutoPrepare(

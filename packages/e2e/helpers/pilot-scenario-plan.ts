@@ -4,7 +4,7 @@ export const PILOT_SELECTION_PLAN_SCHEMA = 'veslo-tauri-pilot-selection-plan/v1'
 
 export type PilotProfileMode =
   | 'isolated'
-  | 'existing-profile'
+  | 'real-profile'
   | 'custom-opencode-home'
   | 'packaged-smoke';
 
@@ -145,7 +145,7 @@ function resolveProfileMode(
   env: Record<string, string | undefined>,
   hasPackagedSmokeFixture: boolean,
 ): PilotProfileMode {
-  if (env.E2E_USE_EXISTING_PROFILE?.trim() === '1') return 'existing-profile';
+  if (env.E2E_USE_EXISTING_PROFILE?.trim() === '1') return 'real-profile';
   if (env.E2E_OPENCODE_HOME?.trim()) return 'custom-opencode-home';
   return hasPackagedSmokeFixture ? 'packaged-smoke' : 'isolated';
 }
@@ -201,19 +201,19 @@ function selectionRejection(signals: PilotSelectionSignals): PilotSelectionRejec
   if (signals.needsPackagedSmokeFixture && signals.scenarioNames.length > 1) {
     return 'focused-packaged-smoke';
   }
-  if (signals.needsSessionQueueRuntimeFixture && signals.profileMode === 'existing-profile') {
+  if (signals.needsSessionQueueRuntimeFixture && signals.profileMode === 'real-profile') {
     return 'session-queue-existing-profile';
   }
   if (signals.needsPackagedSmokeFixture && !signals.hasPackagedSmokeLaunch) {
     return 'packaged-smoke-launch-mode';
   }
-  if (signals.needsManagedAiGatewayFixture && signals.profileMode === 'existing-profile') {
+  if (signals.needsManagedAiGatewayFixture && signals.profileMode === 'real-profile') {
     return 'managed-ai-gateway-existing-profile';
   }
   if (signals.needsManagedAiGatewayFixture && signals.profileMode === 'custom-opencode-home') {
     return 'managed-ai-gateway-custom-opencode-home';
   }
-  if (signals.requiresLiveManagedAiAuth && signals.profileMode === 'existing-profile') {
+  if (signals.requiresLiveManagedAiAuth && signals.profileMode === 'real-profile') {
     return 'live-managed-ai-existing-profile';
   }
   if (signals.requiresLiveManagedAiAuth && signals.profileMode === 'custom-opencode-home') {

@@ -395,7 +395,7 @@ const restoreSelectionOffsets = (root: HTMLElement, offsets: { start: number; en
       startNode = node;
       startOffset = offsets.start - current;
     }
-    if (!endNode && current + length >= offsets.end) {
+    if (current + length >= offsets.end) {
       endNode = node;
       endOffset = offsets.end - current;
       break;
@@ -430,7 +430,7 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
       startNode = node;
       startOffset = start - current;
     }
-    if (!endNode && current + length >= end) {
+    if (current + length >= end) {
       endNode = node;
       endOffset = end - current;
       break;

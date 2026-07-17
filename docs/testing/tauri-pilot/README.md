@@ -262,36 +262,80 @@ production.
   their TOML `global_timeout_ms` and step `timeout_ms` values are at most
   180000.
 
-## Automatic Failure Diagnostics
+## Per-run Artifacts And Diagnostics
 
-The package runner captures a diagnostic bundle whenever `tauri-pilot run`
-fails. Look under:
+Every package-runner invocation creates one ignored, self-contained run under
+`packages/e2e/.pilot-runs/<run-id>/` before the desktop app starts:
 
 ```text
-packages/e2e/tauri-pilot-failures/diagnostics-<timestamp>-<scenario>/
+<run-id>/
+  run.json
+  runner.ndjson
+  app/
+    launch-01.stdout.log
+    launch-01.stderr.log
+  traces/
+    send-workflow-trace.ui.ndjson
+    send-workflow-trace.server.ndjson
+    runtime-trace.<run-id>.jsonl
+  scenarios/<scenario>/
+    result.json
+    pilot.stdout.log
+    pilot.stderr.log
+    pilot.junit.xml
+    failure/ or success/
 ```
 
-Start with these files:
+`run.json` is the authoritative lifecycle record. It starts as `running` and
+records the owner hostname, PID, start time, and heartbeat; it finishes as
+`passed` or `failed`. `runner.ndjson` is the timestamped runner timeline. Read
+the relevant `scenarios/<scenario>/result.json` first, then the matching Pilot
+stdout/stderr and app launch logs. A failed scenario adds its targeted browser,
+network, IPC, storage-summary, and screenshot probes under `failure/`; a
+successful live-inference or render scenario adds its compact evidence under
+`success/`.
 
-- `failure.txt`: original runner error with the tauri-pilot step output tail.
-- `summary.json`: command list, exit codes, and artifact names.
-- `snapshot.txt`: accessibility tree around the failed state.
-- `logs.json`: recent browser console logs.
-- `network.json` and `network-failed.json`: recent requests and failed
-  requests.
-- `veslo-server-info.json` and `workspace-bootstrap.json`: app-side Tauri IPC
-  state.
-- `storage-local-summary.json` and `storage-session-summary.json`: key names
-  plus Den auth presence, token presence, email, and Den base; no stored values
-  or bearer tokens.
-- `webview.png`: full-page WebView screenshot when screenshot capture succeeds.
+The final artifacts have a redaction boundary: command arguments, Pilot
+stdout/stderr, JUnit, app stdout/stderr, failure summaries, and runner reasons
+are redacted before they are written or echoed. The Pilot CLI writes JUnit to a
+temporary system directory first; only the redacted final XML is copied into
+the run directory. Do not put raw auth JSON, bearer values, or prompts that
+contain credentials into an E2E scenario.
 
-Use these artifacts before rerunning a scenario. They usually answer whether
-the failure was UI targeting, missing auth seed, local server startup,
-workspace bootstrap, runtime recovery, or remote gateway/network behavior.
+Retention keeps the ten newest terminal runs (`passed`, `failed`, or
+`abandoned`). Before pruning, the runner can mark a `running` run `abandoned`
+only when its heartbeat is older than two minutes, the owner hostname is local,
+and its owner PID is proven dead. Active, fresh, foreign-host, live-PID, and
+invalid-manifest directories are retained and produce a warning instead of
+being deleted. This protects a concurrent or interrupted run from accidental
+cleanup.
+
+The older `tauri-pilot-failures/` and `tauri-pilot-artifacts/` roots remain
+readable for historical evidence, but the runner never bulk-cleans them. Clean
+them only with an explicit operator decision; normal bounded retention applies
+only to `.pilot-runs/`.
+
+Use the current run artifacts before rerunning a scenario. They normally tell
+whether the first cause was UI targeting, auth hydration, local server startup,
+workspace bootstrap, runtime recovery, or gateway/network behavior.
 
 Set `E2E_PILOT_FAILURE_DIAGNOSTICS=0` only for narrow runner debugging where
 the diagnostic probes themselves would obscure the original process failure.
+
+## Selection Plan Contract
+
+Before a desktop process is launched, the runner compiles all selected TOML
+files into one `SelectionPlan`: profile mode, auth mode, fixture topology,
+environment mutations, preconditions, timeout class, relaunch behavior, and
+success artifact hooks. It compares that plan with the existing legacy policy
+adapter at runtime and in the checked-in characterization matrix. This makes a
+conflicting multi-scenario selection fail before it can silently start a wrong
+fixture or use the wrong profile.
+
+When adding a scenario, keep the default isolated topology unless it genuinely
+needs an exception. Add its suite membership and any explicit exception to the
+selection plan, then deliberately update the characterization matrix; do not
+infer profile, auth, or fixture behavior from the filename alone.
 
 ## E2E Profile And Auth Knobs
 

@@ -3371,7 +3371,7 @@
         ],
         "suite": null,
         "profile": {
-          "mode": "existing-profile",
+          "mode": "real-profile",
           "defaultWorkspace": "seeded"
         },
         "auth": "none",
@@ -3442,7 +3442,7 @@
         ],
         "suite": null,
         "profile": {
-          "mode": "existing-profile",
+          "mode": "real-profile",
           "defaultWorkspace": "seeded"
         },
         "auth": "fixture",
@@ -3586,7 +3586,7 @@
         ],
         "suite": null,
         "profile": {
-          "mode": "existing-profile",
+          "mode": "real-profile",
           "defaultWorkspace": "seeded"
         },
         "auth": "live-den",

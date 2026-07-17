@@ -939,16 +939,16 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       return inFlight;
     }
 
-    let ensureExpired = false;
+    const ensureDeadline = new Set<true>();
     let restartAttempted = false;
     const ensureWork = async () => {
       let info: VesloServerInfo | null = null;
       try {
         info = await loadVesloServerInfo();
-        if (ensureExpired) return false;
+        if (ensureDeadline.has(true)) return false;
         setVesloServerHostInfoStable(info);
       } catch {
-        if (ensureExpired) return false;
+        if (ensureDeadline.has(true)) return false;
         setVesloServerHostInfoStable(null);
       }
 
@@ -960,7 +960,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
           liveInfo.hostToken?.trim() || undefined,
           { requireRuntimeChainReady },
         );
-        if (ensureExpired) return false;
+        if (ensureDeadline.has(true)) return false;
         applyVesloServerProbeResult(result, "local-ensure-existing");
         if (isAuthenticatedVesloServerStatus(result.status)) {
           // A reachable owned server must not be restarted merely because its
@@ -981,7 +981,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
 
       restartAttempted = true;
       const restarted = await restartVesloServer();
-      if (ensureExpired) return false;
+      if (ensureDeadline.has(true)) return false;
       setVesloServerHostInfoStable(restarted);
       const restartedInfo = resolveRunningVesloServerHostInfo(restarted);
       const baseUrl = restartedInfo?.baseUrl?.trim() ?? "";
@@ -1004,7 +1004,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         restartedInfo?.hostToken?.trim() || undefined,
         { requireRuntimeChainReady },
       );
-      if (ensureExpired) return false;
+      if (ensureDeadline.has(true)) return false;
       applyVesloServerProbeResult(result, "local-ensure-restart");
       const ready =
         isAuthenticatedVesloServerStatus(result.status) &&
@@ -1025,7 +1025,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     const deadline = new Promise<never>((_, reject) => {
       deadlineTimer = setTimeout(
         () => {
-          ensureExpired = true;
+          ensureDeadline.add(true);
           reject(new Error("Local Veslo server ensure deadline exceeded"));
         },
         localEnsureTimeoutMs,
@@ -1049,7 +1049,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         })
       )
       .finally(() => {
-        if (deadlineTimer) clearTimeout(deadlineTimer);
+        if (deadlineTimer !== null) clearTimeout(deadlineTimer);
         if (
           ensureLocalVesloServerRunningInFlight.get(ensureKey) === ensurePromise
         ) {

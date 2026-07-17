@@ -1907,7 +1907,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       current: ConversationSubmitTerminalResult | null;
       invalidMessage: string | null;
     } = { current: null, invalidMessage: null };
-    let serverFirstSubmittedRunAdmittedDuringMaterialization = false;
+    const serverFirstSubmittedRunAdmissions = new Set<true>();
     if (!sessionID) {
       deps.recordSendTrace("sendPrompt:create-session-needed", {
         traceId: sendTraceId,
@@ -1989,7 +1989,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
               sessionId,
               traceId: sendTraceId,
             });
-            serverFirstSubmittedRunAdmittedDuringMaterialization = true;
+            serverFirstSubmittedRunAdmissions.add(true);
             deps.recordSendTrace("sendPrompt:server-submit-first-admitted-before-select", {
               traceId: sendTraceId,
               sessionID: sessionId,
@@ -2131,7 +2131,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         queueItemId: serverFirstSubmitResult.status === "queued" ? serverFirstSubmitResult.queueItemId : null,
         draftDisposition: serverFirstSubmitResult.draftDisposition,
       });
-      if (!serverFirstSubmittedRunAdmittedDuringMaterialization) {
+      if (!serverFirstSubmittedRunAdmissions.has(true)) {
         const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
         if (serverFirstSubmitResult.status === "queued") {
           deps.emitLiveTranscriptPolicyEvent({

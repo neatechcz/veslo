@@ -593,7 +593,6 @@ export function createSessionStore(options: {
   };
 
   const maybeHandleInvalidToolError = (part: Part, sourceWorkspaceId?: string | null) => {
-    if (!options.setError) return;
     if (!isInvalidToolError(part)) return;
     if (!part?.id || !part.messageID) return;
 
@@ -621,7 +620,6 @@ export function createSessionStore(options: {
   };
 
   const maybeHandleChromeMcpCompletedError = (part: Part, sourceWorkspaceId?: string | null) => {
-    if (!options.setError) return;
     if (!part?.id || !part.messageID) return;
 
     const key = `${part.messageID}:${part.id}`;
@@ -757,7 +755,7 @@ export function createSessionStore(options: {
     try {
       return await Promise.race([promise, timeoutPromise]);
     } finally {
-      if (timeoutId) {
+      if (timeoutId !== null) {
         clearTimeout(timeoutId);
       }
     }

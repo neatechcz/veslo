@@ -30,6 +30,8 @@ import type { OnboardingStep, View } from "../types";
 const DESKTOP_AUTH_POLL_INTERVAL_MS = 1_250;
 const POST_AUTH_BOOTSTRAP_TIMEOUT_MS = 15_000;
 
+const isAbortSignalAborted = (signal: AbortSignal) => signal.aborted;
+
 type AuthDeps = {
   clearDenAuth: () => void;
   readDenAuth: () => DenAuthState | null;
@@ -406,7 +408,7 @@ export function createDenDesktopAuthWorkflow(
         if (authCompleteExchangeBusy()) return;
 
         const statusResult = await desktopAuth.getDesktopBrowserAuthStatus(sessionId, controller.signal);
-        if (controller.signal.aborted) return;
+        if (isAbortSignalAborted(controller.signal)) return;
 
         if (!statusResult.ok) {
           if (statusResult.statusCode === 404) return;

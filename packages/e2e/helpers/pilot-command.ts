@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 
+import { createRedactingLineBuffer } from './pilot-redaction.js';
+
 export type BuildPilotCommandOptions = {
   binary: string;
   socket: string;
@@ -50,14 +52,25 @@ export async function executePilotCommand(options: PilotCommandExecutionOptions)
     });
     const stdout: Uint8Array[] = [];
     const stderr: Uint8Array[] = [];
+    const stdoutRedactor = createRedactingLineBuffer();
+    const stderrRedactor = createRedactingLineBuffer();
     let timeout: NodeJS.Timeout | null = null;
     let timedOut = false;
     let settled = false;
+
+    const flushInheritedOutput = () => {
+      if (!options.inheritStdio) return;
+      const safeStdout = stdoutRedactor.flush();
+      const safeStderr = stderrRedactor.flush();
+      if (safeStdout) process.stdout.write(safeStdout);
+      if (safeStderr) process.stderr.write(safeStderr);
+    };
 
     const finish = (result: Omit<PilotCommandResult, 'command' | 'args' | 'startedAt' | 'finishedAt' | 'durationMs' | 'stdout' | 'stderr'>) => {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
+      flushInheritedOutput();
       const finishedAt = new Date();
       resolveCommand({
         command: options.command,
@@ -73,11 +86,17 @@ export async function executePilotCommand(options: PilotCommandExecutionOptions)
 
     child.stdout?.on('data', (chunk: Uint8Array) => {
       stdout.push(chunk);
-      if (options.inheritStdio) process.stdout.write(chunk);
+      if (options.inheritStdio) {
+        const safeOutput = stdoutRedactor.push(Buffer.from(chunk).toString('utf8'));
+        if (safeOutput) process.stdout.write(safeOutput);
+      }
     });
     child.stderr?.on('data', (chunk: Uint8Array) => {
       stderr.push(chunk);
-      if (options.inheritStdio) process.stderr.write(chunk);
+      if (options.inheritStdio) {
+        const safeOutput = stderrRedactor.push(Buffer.from(chunk).toString('utf8'));
+        if (safeOutput) process.stderr.write(safeOutput);
+      }
     });
 
     if (options.timeoutMs) {
@@ -95,7 +114,7 @@ export async function executePilotCommand(options: PilotCommandExecutionOptions)
         error: error.message,
       });
     });
-    child.on('exit', (exitCode, signal) => {
+    child.on('close', (exitCode, signal) => {
       finish({
         exitCode,
         signal,

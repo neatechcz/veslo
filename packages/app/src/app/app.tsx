@@ -2563,7 +2563,6 @@ export default function App() {
         (rememberedSessionId ? visible.find((item) => item.id === rememberedSessionId) : undefined) ??
         visible[0] ??
         result.items[0];
-      if (!latest) return;
       const snapshot = await getTranscriptFromVesloReadApi(workspaceId, latest.id, 50, directory);
       if (!snapshot) return;
       // Warm the cache before selecting so browse-mode selectSession can stay on

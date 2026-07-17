@@ -426,7 +426,10 @@ export function createSessionCreationWorkflow(
 
       const submitDraft = options.submitDraft;
       const submitConversation = deps.submitConversationFromVesloWriteApi;
-      let materializedSubmittedRun: Extract<VesloConversationSubmitResult, { status: "submitted" }> | null = null;
+      const materializedSubmittedRuns = new Map<
+        "current",
+        Extract<VesloConversationSubmitResult, { status: "submitted" }>
+      >();
       const createViaVeslo = async (retry: boolean): Promise<CreatedSession> => {
         const retryPayload = retry ? { retry: true } : {};
         const vesloCreated = submitDraft && clientMessageId && submitConversation
@@ -459,7 +462,7 @@ export function createSessionCreationWorkflow(
             );
             if (submitResult) options.onSubmitResult?.(submitResult);
             if (submitResult?.status === "submitted") {
-              materializedSubmittedRun = submitResult;
+              materializedSubmittedRuns.set("current", submitResult);
             }
             return createdSessionFromSubmitResult(submitResult);
           })()
@@ -595,6 +598,7 @@ export function createSessionCreationWorkflow(
       }
       if (applyEffects) {
         deps.applyCreatedSessionState(creationResult, options);
+        const materializedSubmittedRun = materializedSubmittedRuns.get("current");
         if (materializedSubmittedRun) {
           creationResult.transition.skipTranscriptRead =
             options.onSubmittedRunMaterialized?.({

@@ -762,7 +762,7 @@ function bytesToBase64Url(bytes: Uint8Array): string {
 }
 
 function randomBase64Url(byteLength: number): string {
-  const cryptoApi = globalThis.crypto;
+  const cryptoApi: Partial<Crypto> = globalThis.crypto;
   if (!cryptoApi?.getRandomValues) {
     throw new Error("Secure random generator unavailable.");
   }
@@ -772,7 +772,7 @@ function randomBase64Url(byteLength: number): string {
 }
 
 async function sha256Base64Url(value: string): Promise<string> {
-  const cryptoApi = globalThis.crypto;
+  const cryptoApi: Partial<Crypto> = globalThis.crypto;
   if (!cryptoApi?.subtle) {
     throw new Error("Secure hash generator unavailable.");
   }

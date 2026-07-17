@@ -162,11 +162,12 @@ const bytesToHex = (bytes: Uint8Array) =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const sha256BytesHex = async (bytes: Uint8Array): Promise<string> => {
-  if (!globalThis.crypto?.subtle) {
+  const cryptoApi: Partial<Crypto> = globalThis.crypto;
+  if (!cryptoApi.subtle) {
     throw new Error("Web Crypto SHA-256 support is required to build skill package manifests");
   }
   const digestInput = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", digestInput);
+  const digest = await cryptoApi.subtle.digest("SHA-256", digestInput);
   return bytesToHex(new Uint8Array(digest));
 };
 

@@ -41,6 +41,25 @@ type SsePayload =
       reason: string;
     };
 
+function isSsePayload(value: unknown): value is SsePayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  if (typeof payload.subscriptionId !== "string" || typeof payload.workspaceId !== "string") return false;
+
+  switch (payload.kind) {
+    case "open":
+      return true;
+    case "message":
+      return typeof payload.data === "string";
+    case "error":
+      return typeof payload.message === "string";
+    case "closed":
+      return typeof payload.reason === "string";
+    default:
+      return false;
+  }
+}
+
 type EngineSseInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 type EngineSseListen = <T>(event: string, handler: (event: { payload: T }) => void) => Promise<UnlistenFn>;
 type EngineSseRuntime = {
@@ -173,9 +192,9 @@ async function engineSseSubscribeWithRuntime(
   let activeSubscriptionCount: number | undefined;
   let activeConnectionCount: number | undefined;
   try {
-    unlisten = await runtime.listen<SsePayload>(SSE_EVENT_NAME, (event) => {
+    unlisten = await runtime.listen<unknown>(SSE_EVENT_NAME, (event) => {
+      if (!isSsePayload(event.payload) || event.payload.subscriptionId !== subscriptionId) return;
       const payload = event.payload;
-      if (!payload || payload.subscriptionId !== subscriptionId) return;
 
       switch (payload.kind) {
         case "open":
@@ -319,7 +338,8 @@ async function engineSseSubscribeWithRuntime(
 }
 
 function createSubscriptionId(): string {
-  const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+  const crypto: Partial<Crypto> = globalThis.crypto;
+  const randomUUID = crypto.randomUUID?.bind(crypto);
   if (randomUUID) return randomUUID();
   return `engine-sse-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

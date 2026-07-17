@@ -1,7 +1,21 @@
 const SENSITIVE_DIAGNOSTIC_KEY = /^(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)$/i;
-const SENSITIVE_DIAGNOSTIC_INLINE_VALUE = /((?:["']?)(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)(?:["']?)\s*[:=]\s*)(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^,\s}\]]+)/gi;
+const SENSITIVE_DIAGNOSTIC_INLINE_VALUE = /((?:["']?)(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)(?:["']?)\s*[:=]\s*)((?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^,\s}\]]+))/gi;
 const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const SENSITIVE_QUERY_VALUE = /([?&](?:token|access_token|refresh_token|api_key|apikey|secret|password)=)[^&\s]+/gi;
+
+function isCredentialPresenceBoolean(key: string, value: unknown): boolean {
+  return typeof value === 'boolean' && /^(?:has|is)[a-z0-9_-]*(?:token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)$/i.test(key);
+}
+
+function redactInlineSensitiveValue(_match: string, prefix: string, rawValue: string): string {
+  const key = prefix.match(/["']?([A-Za-z0-9_-]+)["']?\s*[:=]\s*$/)?.[1] ?? '';
+  const normalizedValue = rawValue.trim().replace(/^["']|["']$/g, '').toLowerCase();
+  if ((normalizedValue === 'true' || normalizedValue === 'false') &&
+    isCredentialPresenceBoolean(key, normalizedValue === 'true')) {
+    return `${prefix}${rawValue}`;
+  }
+  return `${prefix}<redacted>`;
+}
 
 function redactPilotDiagnosticValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactPilotDiagnosticValue);
@@ -9,7 +23,9 @@ function redactPilotDiagnosticValue(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [
         key,
-        SENSITIVE_DIAGNOSTIC_KEY.test(key) ? '<redacted>' : redactPilotDiagnosticValue(child),
+        SENSITIVE_DIAGNOSTIC_KEY.test(key) && !isCredentialPresenceBoolean(key, child)
+          ? '<redacted>'
+          : redactPilotDiagnosticValue(child),
       ]),
     );
   }
@@ -22,7 +38,7 @@ export function redactPilotDiagnosticText(value: string): string {
   } catch {
     return value
       .replace(BEARER_VALUE, 'Bearer <redacted>')
-      .replace(SENSITIVE_DIAGNOSTIC_INLINE_VALUE, '$1<redacted>')
+      .replace(SENSITIVE_DIAGNOSTIC_INLINE_VALUE, redactInlineSensitiveValue)
       .replace(SENSITIVE_QUERY_VALUE, '$1<redacted>');
   }
 }
@@ -39,7 +55,7 @@ export function redactPilotCommandArgs(args: string[]): string[] {
  * Keeps partial process output in memory until a complete line is available,
  * then redacts it before it can enter a persistent run artifact or be echoed
  * by the harness. This covers credentials split across arbitrary stdout/stderr
- * chunks without changing the original line layout.
+ * chunks. Structured JSON may be normalized while it is redacted.
  */
 export function createRedactingLineBuffer(): {
   push(chunk: string): string;

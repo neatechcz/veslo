@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as pilotRunnerModule from './pilot-runner.js';
+import { compilePilotSelectionPlan } from './pilot-scenario-plan.js';
 
 import {
   assertLiveManagedAiAuthForScenarioSelection,
@@ -99,6 +100,14 @@ test('runner passes each app launch the run-owned trace and app-log context', ()
   assert.match(source, /pilotDiagnostics: pilotRunLaunchDiagnostics\(runContext, 2\)/);
   assert.match(source, /logDir: runContext\.traceDir/);
   assert.match(source, /appLogDir: runContext\.appLogDir/);
+});
+
+test('runner installs the browser-only Pilot prelude after every ready desktop launch', () => {
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+
+  assert.match(source, /args: \['--window', 'main', 'eval', '--json', buildPilotBrowserPreludeScript\(\)\]/);
+  assert.match(source, /await ensurePilotReady\([\s\S]*await installPilotBrowserPrelude\(/);
+  assert.match(source, /await startApp\(\{[\s\S]*pilotDiagnostics: pilotRunLaunchDiagnostics\(runContext, 2\)[\s\S]*await installPilotBrowserPrelude\(/);
 });
 
 test('canonical live inference observes a cold real response with diagnostic collection grace', () => {
@@ -274,10 +283,14 @@ test('Pilot scenario timeout cap rejects canonical timeouts above the real cold-
 test('runPilotScenarios persists a JUnit result and passes an explicit timeout to Pilot runs', () => {
   const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
 
-  assert.match(source, /const isCanonicalLiveInferenceSuite = options\.suite\?\.trim\(\) === 'live-inference'/);
+  assert.match(source, /const selectionPlan = compilePilotSelectionPlan\(/);
+  assert.match(source, /assertSelectionPlanMatchesLegacy\(selectionPlan/);
+  assert.match(source, /const isCanonicalLiveInferenceSuite = selectionPlan\.launch\.scenarioTimeout === 'canonical-live'/);
   assert.match(source, /\? resolveCanonicalLiveInferenceCommandTimeoutMs\(\)\s*:\s*resolvePilotScenarioCommandTimeoutMs\(\)/);
   assert.match(source, /if \(isCanonicalLiveInferenceSuite\) \{\s*assertPilotScenarioTimeoutCap\(scenarios\);/);
-  assert.match(source, /const args = \['run', '--junit', junitPath, options\.scenario\];/);
+  assert.match(source, /const junitRawPath = join\(junitTemporaryDir, 'pilot\.junit\.xml'\);/);
+  assert.match(source, /const args = \['run', '--junit', junitRawPath, options\.scenario\];/);
+  assert.match(source, /rmSync\(junitTemporaryDir, \{ recursive: true, force: true \}\);/);
   assert.match(source, /scenario,\s*timeoutMs: scenarioCommandTimeoutMs,\s*runContext,/);
   assert.match(source, /scenario: reconnectScenario,\s*timeoutMs: scenarioCommandTimeoutMs,\s*runContext,/);
   assert.match(source, /persistPilotScenarioCommandResult\(/);
@@ -613,12 +626,19 @@ test('sharepoint mcp pilot scenario requests the sharepoint mcp catalog fixture'
 });
 
 test('sharepoint mcp pilot scenario wires the sharepoint fixture env', () => {
-  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+  const plan = compilePilotSelectionPlan({
+    scenarios: ['/repo/packages/e2e/pilot-scenarios/sharepoint-mcp-connectors.toml'],
+  });
 
-  assert.match(source, /scenarioSelectionNeedsSharePointMcpCatalogFixture\(scenarios\)/);
-  assert.match(source, /process\.env\.E2E_SHAREPOINT_MCP_CATALOG_FIXTURE\s*\|\|=\s*'1'/);
-  assert.match(source, /process\.env\.E2E_SKILL_REGISTRY_FIXTURE\s*\|\|=\s*'1'/);
-  assert.match(source, /process\.env\.E2E_SKILL_REGISTRY_AUTH_BASE\s*\|\|=\s*'fixture'/);
+  assert.equal(plan.fixtures.includes('sharepoint-mcp-catalog'), true);
+  assert.deepEqual(
+    plan.environment.filter((mutation) => mutation.key.startsWith('E2E_')),
+    [
+      { key: 'E2E_SHAREPOINT_MCP_CATALOG_FIXTURE', operation: 'set-if-empty', value: '1' },
+      { key: 'E2E_SKILL_REGISTRY_FIXTURE', operation: 'set-if-empty', value: '1' },
+      { key: 'E2E_SKILL_REGISTRY_AUTH_BASE', operation: 'set-if-empty', value: 'fixture' },
+    ],
+  );
 });
 
 test('managed AI inference pilot scenarios require live auth and never auto-select the gateway fixture', () => {
@@ -738,7 +758,7 @@ test('global managed AI model policy restores prior auth environment after fixtu
 
 test('global managed AI model policy enables the fixture before the desktop launch', () => {
   const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
-  const fixtureSelection = source.indexOf('scenarioSelectionNeedsManagedAiGatewayFixture(scenarios)');
+  const fixtureSelection = source.indexOf("selectionPlanHasFixture(selectionPlan, 'managed-ai-gateway')");
   const fixtureEnv = source.indexOf('configureManagedAiGatewayFixtureEnvironment()');
   const desktopLaunch = source.indexOf('await startApp(');
 
@@ -923,10 +943,14 @@ test('model stream retry pilot scenario is focused-only because it enables a glo
 });
 
 test('model stream retry pilot fixture widens provider-start watchdog for debug desktop cold starts', () => {
-  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+  const plan = compilePilotSelectionPlan({
+    scenarios: ['/repo/packages/e2e/pilot-scenarios/model-stream-retry-no-progress.toml'],
+  });
 
-  assert.match(source, /VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS/);
-  assert.match(source, /process\.env\.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS\s*\|\|=\s*'90000'/);
+  assert.deepEqual(
+    plan.environment.find((mutation) => mutation.key === 'VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS'),
+    { key: 'VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS', operation: 'set-if-empty', value: '90000' },
+  );
 });
 
 test('VSLO-235 local host scenario requests a no-workspace desktop profile', () => {
@@ -1189,8 +1213,11 @@ test('VSLO-271 pilot scenario requires live managed-AI auth and not the fixture'
         user: { email: 'user@neatech.cz' },
       }),
     }));
-    const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
-    assert.match(source, /scenarioSelectionRequiresLiveManagedAiAuth\(scenarios\)[\s\S]*VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS\s*\|\|=\s*'90000'/);
+    const plan = compilePilotSelectionPlan({ scenarios });
+    assert.deepEqual(
+      plan.environment.find((mutation) => mutation.key === 'VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS'),
+      { key: 'VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS', operation: 'set-if-empty', value: '90000' },
+    );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

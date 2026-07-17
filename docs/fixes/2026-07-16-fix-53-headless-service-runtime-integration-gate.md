@@ -122,6 +122,12 @@ provider request with `${OPENCODE_SESSION_ID}` therefore failed locally with
 29. disposing the daemon-owned engine is followed by a lazy respawn and a new
     successful server submit without reusing the previous chat session.
 
+`pnpm audit:legacy-headers` separately prevents new production creation or
+consumption sites for the compatibility-only `x-session-id`,
+`x-session-affinity`, and `x-veslo-gateway-token` headers. Only the reviewed
+server ingress/strip owners and the AI Gateway's own compatibility ingress may
+mention them; tests remain free to cover old clients.
+
 The focused runtime-owner suite additionally injects the same malformed
 OpenCode session id into two workspaces. It proves resolution uses the matching
 workspace and returns no active run for an unrelated or omitted workspace.
@@ -142,6 +148,9 @@ pnpm --filter veslo-server exec bun test src/tests/ai-gateway-runtime-owner.test
 
 pnpm audit:session-identity
 # passed: scans all production source roots and enforces session-correlation invariants
+
+pnpm audit:legacy-headers
+# passed: compatibility-only legacy header references stay within reviewed owners
 
 pnpm --filter veslo-server exec bun test src/tests/conversation-run-lifecycle-controller.test.ts
 # passed: 37/37

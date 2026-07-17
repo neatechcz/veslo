@@ -542,17 +542,15 @@ async function hydrateDesktopAuthSnapshot(deps: AppStartupHydrationDeps) {
 
   try {
     const hydrationPromise = hydrateDenAuthFromDesktopSnapshot().catch(() => false);
-    let hydrationTimedOut = false;
-    await Promise.race([
-      hydrationPromise,
-      new Promise<void>((resolve) => {
+    const hydrationResult = await Promise.race([
+      hydrationPromise.then(() => "hydrated" as const),
+      new Promise<"timed-out">((resolve) => {
         window.setTimeout(() => {
-          hydrationTimedOut = true;
-          resolve();
+          resolve("timed-out");
         }, 1500);
       }),
     ]);
-    if (hydrationTimedOut) {
+    if (hydrationResult === "timed-out") {
       void hydrationPromise.then((imported) => {
         if (!imported || deps.onboardingStep() !== "auth") {
           return;
