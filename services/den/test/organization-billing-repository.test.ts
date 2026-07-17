@@ -38,6 +38,7 @@ function createBillingAccount(input: Partial<OrganizationBillingAccountRecord> =
     managedAiExtendedQuantity: 0,
     localModelsQuantity: 0,
     manualAccessEnabled: false,
+    manualAccessUnlimited: false,
     manualAccessExpiresAt: null,
     localModelsUnitAmount: null,
     localModelsCurrency: null,
@@ -291,6 +292,29 @@ test("organization billing repository derives active managed-ai license limits",
   assert.equal(entitlement.activeUserCount, 2)
   assert.equal(entitlement.licenseLimit, 3)
   assert.equal(entitlement.canUseManagedAi, true)
+})
+
+test("organization billing repository grants unlimited manual access without quantity fields", async () => {
+  const { repository } = createMemoryBillingRepository({
+    memberships: [
+      { orgId: "org_1", status: "active" },
+      { orgId: "org_1", status: "active" },
+    ],
+  })
+  await repository.upsertBillingAccount({
+    orgId: "org_1",
+    mode: "manual_access",
+    source: "manual_external",
+    status: "active",
+    manualAccessEnabled: true,
+    manualAccessUnlimited: true,
+  })
+
+  const entitlement = await repository.deriveEntitlement("org_1")
+
+  assert.equal(entitlement.effectiveMode, "manual_access")
+  assert.equal(entitlement.canUseManagedAi, true)
+  assert.ok(entitlement.licenseLimit >= entitlement.activeUserCount)
 })
 
 test("organization billing repository rejects requested quantity decreases below active users", async () => {

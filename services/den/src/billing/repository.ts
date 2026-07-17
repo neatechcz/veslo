@@ -46,6 +46,7 @@ export type OrganizationBillingAccountRecord = {
   managedAiExtendedQuantity: number
   localModelsQuantity: number
   manualAccessEnabled: boolean
+  manualAccessUnlimited?: boolean
   manualAccessExpiresAt: Date | null
   localModelsUnitAmount: number | null
   localModelsCurrency: string | null
@@ -70,6 +71,7 @@ export type UpsertOrganizationBillingAccountInput = {
   managedAiExtendedQuantity?: number
   localModelsQuantity?: number
   manualAccessEnabled?: boolean
+  manualAccessUnlimited?: boolean
   manualAccessExpiresAt?: Date | null
   localModelsUnitAmount?: number | null
   localModelsCurrency?: string | null
@@ -511,6 +513,7 @@ function buildBillingAccountRecord(
     managedAiExtendedQuantity: input.managedAiExtendedQuantity ?? existing?.managedAiExtendedQuantity ?? 0,
     localModelsQuantity: input.localModelsQuantity ?? existing?.localModelsQuantity ?? 0,
     manualAccessEnabled: input.manualAccessEnabled ?? existing?.manualAccessEnabled ?? false,
+    manualAccessUnlimited: input.manualAccessUnlimited ?? existing?.manualAccessUnlimited ?? false,
     manualAccessExpiresAt: input.manualAccessExpiresAt !== undefined
       ? input.manualAccessExpiresAt
       : existing?.manualAccessExpiresAt ?? null,
@@ -619,6 +622,9 @@ function isTierAllowed(
 }
 
 function manualAccessLicenseLimit(account: OrganizationBillingAccountRecord) {
+  if (account.manualAccessUnlimited === true) {
+    return Number.MAX_SAFE_INTEGER
+  }
   return normalizeCount(account.managedAiBasicQuantity) +
     normalizeCount(account.managedAiExtendedQuantity) +
     normalizeCount(account.localModelsQuantity)
@@ -645,6 +651,7 @@ function billingAccountRowValues(record: OrganizationBillingAccountRecord) {
     managed_ai_extended_quantity: record.managedAiExtendedQuantity,
     local_models_quantity: record.localModelsQuantity,
     manual_access_enabled: record.manualAccessEnabled,
+    manual_access_unlimited: record.manualAccessUnlimited ?? false,
     manual_access_expires_at: record.manualAccessExpiresAt,
     local_models_unit_amount: record.localModelsUnitAmount,
     local_models_currency: record.localModelsCurrency,
@@ -671,6 +678,7 @@ function mapBillingAccountRow(row: typeof OrganizationBillingAccountTable.$infer
     managedAiExtendedQuantity: row.managed_ai_extended_quantity,
     localModelsQuantity: row.local_models_quantity,
     manualAccessEnabled: row.manual_access_enabled,
+    manualAccessUnlimited: row.manual_access_unlimited,
     manualAccessExpiresAt: row.manual_access_expires_at,
     localModelsUnitAmount: row.local_models_unit_amount,
     localModelsCurrency: row.local_models_currency,

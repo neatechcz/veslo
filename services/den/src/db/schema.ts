@@ -224,6 +224,7 @@ export const OrganizationBillingAccountTable = mysqlTable(
     managed_ai_extended_quantity: int("managed_ai_extended_quantity", { unsigned: true }).notNull().default(0),
     local_models_quantity: int("local_models_quantity", { unsigned: true }).notNull().default(0),
     manual_access_enabled: boolean("manual_access_enabled").notNull().default(false),
+    manual_access_unlimited: boolean("manual_access_unlimited").notNull().default(false),
     manual_access_expires_at: timestamp("manual_access_expires_at", { fsp: 3 }),
     local_models_unit_amount: int("local_models_unit_amount", { unsigned: true }),
     local_models_currency: varchar("local_models_currency", { length: 3 }),
