@@ -18,7 +18,7 @@
     "ops:codex-credential-probe": "node dist/ops/probe-codex-credentials.js"
   },
   "dependencies": {
-    "@openai/codex": "0.144.1",
+    "@openai/codex": "0.144.5",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.45.1",
     "express": "^4.19.2",
