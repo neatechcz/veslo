@@ -5,6 +5,8 @@ const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const SENSITIVE_QUERY_VALUE = /([?&](?:token|access_token|refresh_token|api_key|apikey|secret|password)=)[^&\s]+/gi;
 const WINDOWS_ABSOLUTE_PATH = /\b[A-Za-z]:(?:\\\\|\\|\/)[^\s"'`<>|,)\]}]*/g;
 const POSIX_ABSOLUTE_PATH = /(^|[\s"'(=])\/(?:Users|home|tmp|var|private|mnt|opt|workspace|workspaces)(?:\/[^\s"'`<>()\[\]{}]*)*/g;
+const JUNIT_PRIVATE_ATTRIBUTE = /(\s(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?|message|error|failure|stack|body|text|label|title|content|prompt|transcript|workspacepath|workspace_path|directory|dbpath|db_path|path|filepath|file_path|email|subject)\s*=\s*)(["'])([^"']*)\2/gi;
+const JUNIT_PRIVATE_ELEMENT_BODY = /(<(failure|error|system-out|system-err)\b[^>]*>)[\s\S]*?(<\/\2\s*>)/gi;
 
 function isCredentialPresenceBoolean(key: string, value: unknown): boolean {
   return typeof value === 'boolean' && /^(?:has|is)[a-z0-9_-]*(?:token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)$/i.test(key);
@@ -51,6 +53,21 @@ export function redactPilotDiagnosticText(value: string): string {
   } catch {
     return redactInlineDiagnosticText(value);
   }
+}
+
+/**
+ * Keeps a JUnit artifact well-formed while removing all failure diagnostics.
+ * The generic line redactor intentionally emits compact diagnostic markers
+ * such as `message=<redacted>`, which is not valid XML attribute syntax.
+ */
+export function redactPilotJUnitXml(value: string): string {
+  return value
+    .replace(JUNIT_PRIVATE_ATTRIBUTE, '$1$2[redacted]$2')
+    .replace(JUNIT_PRIVATE_ELEMENT_BODY, '$1[redacted]$3')
+    .replace(BEARER_VALUE, 'Bearer [redacted]')
+    .replace(SENSITIVE_QUERY_VALUE, '$1[redacted]')
+    .replace(WINDOWS_ABSOLUTE_PATH, '[redacted-path]')
+    .replace(POSIX_ABSOLUTE_PATH, '$1[redacted-path]');
 }
 
 export function redactPilotCommandArgs(args: string[]): string[] {

@@ -7,6 +7,7 @@ const orchestratorSource = readFileSync(
   new URL("../context/skill-registry-orchestrator.ts", import.meta.url),
   "utf8",
 );
+const appViewPropsSource = readFileSync(new URL("../app-view-props.ts", import.meta.url), "utf8");
 
 function extractArrowObjectPropertyBody(text: string, propertyName: string): string {
   const propertyIndex = text.indexOf(`${propertyName}:`);
@@ -57,6 +58,16 @@ test("app composes the skill registry event orchestrator after extension store s
     appSource,
     /const workspaceBusyForSkillRegistry[\s\S]*sessionStatusById\(\)[\s\S]*conversationRunDiagnosticsBySessionKey\(\)[\s\S]*key\.indexOf\("\\0"\)[\s\S]*status\.trim\(\) === "idle"[\s\S]*"blocked"/,
     "Skill registry events should treat non-idle session state and blocked lifecycle diagnostics as active workspace runs",
+  );
+  assert.match(
+    appSource,
+    /const activeReloadBlockingSessions[\s\S]*conversationRunDiagnosticsBySessionKey\(\)[\s\S]*diagnostic\.status !== "blocked"/,
+    "Blocked backend lifecycle diagnostics should appear in the reload-blocking session set",
+  );
+  assert.match(
+    appViewPropsSource,
+    /showSkillReloadBanner:\s*[\s\S]*activeReloadBlockingSessions\(\)\.length > 0/,
+    "A blocked backend run should expose the existing reload banner even without a skill mutation",
   );
 });
 

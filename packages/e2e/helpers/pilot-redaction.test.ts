@@ -5,6 +5,7 @@ import {
   createRedactingLineBuffer,
   redactPilotCommandArgs,
   redactPilotDiagnosticText,
+  redactPilotJUnitXml,
 } from './pilot-redaction.js';
 
 test('diagnostic redaction removes credentials from structured output and command arguments', () => {
@@ -81,4 +82,22 @@ test('line-buffered redaction flushes a final unterminated app-process line', ()
 
   assert.equal(buffer.push('{"token":"final-secret"}'), '');
   assert.equal(buffer.flush(), '{\n  "token": "<redacted>"\n}');
+});
+
+test('JUnit redaction removes private diagnostics without breaking XML attribute syntax', () => {
+  const redacted = redactPilotJUnitXml(`<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="1" failures="1">
+  <testsuite name="message-send-registry-degraded" tests="1">
+    <testcase name="real managed AI response succeeded" time="150.044">
+      <failure message="prompt-sentinel-must-not-persist" path="C:\\Users\\example\\workspace">Bearer live-token</failure>
+      <system-out>assistant-text-sentinel-must-not-persist /tmp/example-workspace</system-out>
+    </testcase>
+  </testsuite>
+</testsuites>`);
+
+  assert.match(redacted, /<failure message="\[redacted\]" path="\[redacted\]">\[redacted\]<\/failure>/);
+  assert.match(redacted, /<system-out>\[redacted\]<\/system-out>/);
+  assert.match(redacted, /<testcase name="real managed AI response succeeded" time="150\.044">/);
+  assert.doesNotMatch(redacted, /(?:message|path)=<redacted/);
+  assert.doesNotMatch(redacted, /prompt-sentinel-must-not-persist|assistant-text-sentinel-must-not-persist|live-token|C:\\Users\\example|\/tmp\/example-workspace/);
 });

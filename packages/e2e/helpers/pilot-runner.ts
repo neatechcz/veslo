@@ -31,6 +31,7 @@ import {
 import {
   redactPilotCommandArgs,
   redactPilotDiagnosticText,
+  redactPilotJUnitXml,
 } from './pilot-redaction.js';
 import {
   buildPilotSelectionPlan,
@@ -1064,6 +1065,7 @@ function assertSelectionPlanLiveAuth(
   env: Record<string, string | undefined> = process.env,
 ): void {
   if (selectionPlan.auth !== 'live-den') return;
+  assertLiveManagedAiAuthForScenarioSelection([...selectionPlan.scenarios], env);
   if (env.E2E_MANAGED_AI_GATEWAY_FIXTURE?.trim() === '1') {
     throw new Error('Pilot live managed-AI selections reject E2E_MANAGED_AI_GATEWAY_FIXTURE=1.');
   }
@@ -1474,7 +1476,7 @@ function persistPilotScenarioCommandResult(options: {
   let junitCaptured = false;
   if (existsSync(options.junitRawPath)) {
     const junit = readPilotDiagnosticFile(options.junitRawPath);
-    writeFileSync(options.junitPath, junit ? `${redactPilotDiagnosticText(junit).trim()}\n` : '', 'utf8');
+    writeFileSync(options.junitPath, junit ? `${redactPilotJUnitXml(junit).trim()}\n` : '', 'utf8');
     junitCaptured = true;
   }
 

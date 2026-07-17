@@ -1,6 +1,6 @@
 # Tauri Pilot: modularizace scénářů a per-run diagnostické artefakty
 
-**Status:** návrh připravený z read-only auditu aktuálního pracovního stromu (2026-07-16).
+**Status:** implementováno a ověřeno v desktopovém běhu (2026-07-17).
 
 **Cíl:** Udělat z každého Tauri Pilot běhu samostatně dohledatelný, redigovaný a omezeně uchovávaný artefakt. Současně zmenšit duplicitu v runneru a TOML scénářích, aniž by se ztratila 1:1 desktopová interakce s ostrým Den přihlášením a skutečným UI.
 
@@ -419,3 +419,23 @@ Prelude se musí nainstalovat znovu i po relaunchi. Nesmí zapisovat Solid stav,
 - Nevynucovat globální byte cap na každý stream v první verzi. Retention 10 řeší požadované meziběhové bobtnání bez ztráty důkazu z dlouhého incidentu; `run.json` má alespoň evidovat velikost streamů pro pozdější rozhodnutí.
 - Nemigrovat všechny velké TOML scénáře najednou. Po třech reprezentativních migracích rozhodnout podle reálné redukce duplicity a stability.
 - Nezavádět široký native E2E IPC command. Pokud se později objeví oprávněná potřeba nativního helperu, musí být debug/E2E-only a samostatně capability-scoped.
+
+## 8. Implementační stav a ověření (2026-07-17)
+
+Všechny tasky 1–6 jsou implementované. Run-store, retention, per-run trace/app log roots, JUnit/result artefakty, `SelectionPlan` compiler i browser prelude jsou v produkční E2E cestě. Legacy roots zůstávají bez automatického mazání.
+
+Dodatečně byla uzavřena dvě zjištění z VSLO-270:
+
+- blokovaný backendový run nyní zpřístupní reload banner a akci i bez původního skill triggeru;
+- persistentní UI trace rediguje privacy/credential klíče i absolutní cesty před zápisem.
+
+Ověřeno na čerstvě sestaveném desktopu:
+
+- `pnpm --dir packages/app typecheck`;
+- focused app testy: 11 passed;
+- focused E2E helper/selection testy: 100 passed, 1 platformně skipped;
+- focused Rust testy pro redakci a souběžný zápis trace: passed;
+- `pnpm --filter @neatech/veslo-e2e run build:desktop:e2e`;
+- živý `vslo-270-stop-reload-reconnect` run `20260717T132822341Z-vslo-270-stop-reload-reconnect-6a68f4fa`: passed.
+
+Privacy scan tohoto run rootu: 19 artefaktů, 2 validní JUnit XML; 0 raw workspace cest, 0 promptů, 0 e-mailů a 0 bearer hodnot.

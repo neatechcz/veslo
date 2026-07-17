@@ -4036,6 +4036,26 @@ export default function App() {
       }
     }
 
+    for (const diagnostic of Object.values(conversationRunDiagnosticsBySessionKey())) {
+      if (diagnostic.stale || diagnostic.status !== "blocked") continue;
+      const workspaceId = diagnostic.workspaceId.trim();
+      const sessionId = diagnostic.sessionId.trim();
+      if (!workspaceId || !sessionId) continue;
+      const sidebarSession = findSidebarSessionForWorkspace(workspaceId, sessionId);
+      const directory = sidebarSession?.directory?.trim() || "";
+      const workspaceTitle = workspaceTitleForActiveRun(workspaceId);
+      const title = sidebarSession?.title?.trim() || sidebarSession?.slug?.trim() || sessionId;
+      addSession({
+        id: sessionId,
+        title: `${title} (${workspaceTitle})`,
+        workspaceId,
+        workspaceRoot: resolveWorkspaceRootForConversationScope(workspaceId, directory),
+        directory,
+        conversationId: diagnostic.conversationId,
+        opencodeSessionId: diagnostic.opencodeSessionId ?? sessionId,
+      });
+    }
+
     return Array.from(byKey.values());
   });
 

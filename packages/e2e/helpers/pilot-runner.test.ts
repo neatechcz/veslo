@@ -291,6 +291,7 @@ test('runPilotScenarios persists a JUnit result and passes an explicit timeout t
   assert.match(source, /if \(isCanonicalLiveInferenceSuite\) \{\s*assertPilotScenarioTimeoutCap\(scenarios\);/);
   assert.match(source, /const junitRawPath = join\(junitTemporaryDir, 'pilot\.junit\.xml'\);/);
   assert.match(source, /const args = \['run', '--junit', junitRawPath, options\.scenario\];/);
+  assert.match(source, /redactPilotJUnitXml\(junit\)/);
   assert.match(source, /rmSync\(junitTemporaryDir, \{ recursive: true, force: true \}\);/);
   assert.match(source, /scenario,\s*timeoutMs: scenarioCommandTimeoutMs,\s*runContext,/);
   assert.match(source, /scenario: reconnectScenario,\s*timeoutMs: scenarioCommandTimeoutMs,\s*runContext,/);

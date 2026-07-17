@@ -1499,12 +1499,13 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     sessionCapabilities: sessionCapabilitiesSnapshot(),
     sessionCapabilitiesStatus: sessionCapabilitiesStatus(),
     sessionCapabilitiesError: sessionCapabilitiesError(),
-    showSkillReloadBanner: reloadRequired() && reloadTrigger()?.type === "skill",
+    showSkillReloadBanner:
+      (reloadRequired() && reloadTrigger()?.type === "skill") || activeReloadBlockingSessions().length > 0,
     reloadBannerTitle: reloadCopy().title,
     reloadBannerBody: reloadCopy().body,
     reloadBannerBlocked: activeReloadBlockingSessions().length > 0,
     reloadBannerActiveCount: activeReloadBlockingSessions().length,
-    canReloadWorkspace: canReloadWorkspace(),
+    canReloadWorkspace: canReloadWorkspace() || activeReloadBlockingSessions().length > 0,
     reloadWorkspaceEngine: async () => {
       await reloadWorkspaceEngine();
     },
