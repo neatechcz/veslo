@@ -23,16 +23,25 @@ test('diagnostic redaction removes credentials from structured output and comman
       hasServerToken: false,
     },
     message: 'Authorization: Bearer third-live-token',
+    workspacePath: 'C:\\Users\\example\\workspace',
+    directory: '/home/example/workspace',
+    dbPath: 'C:\\Users\\example\\opencode.db',
+    prompt: 'prompt-sentinel-must-not-persist',
+    transcript: 'assistant-text-sentinel-must-not-persist',
+    body: 'visible-ui-sentinel-must-not-persist',
+    email: 'person@example.test',
+    lastStdout: 'server prompt-sentinel-must-not-persist C:\\Users\\example\\workspace',
+    lastStderr: 'server assistant-text-sentinel-must-not-persist /tmp/example-workspace',
   }));
 
   assert.match(redacted, /codex_oauth/);
   assert.match(redacted, /<redacted>/);
   assert.match(redacted, /"hasUserToken": true/);
   assert.match(redacted, /"hasServerToken": false/);
-  assert.doesNotMatch(redacted, /live-token|another-live-token|third-live-token|access-live-token|refresh-live-token|client-live-token|api-key-live-token|secret-live-token|password-live-token/);
+  assert.doesNotMatch(redacted, /live-token|another-live-token|third-live-token|access-live-token|refresh-live-token|client-live-token|api-key-live-token|secret-live-token|password-live-token|prompt-sentinel-must-not-persist|assistant-text-sentinel-must-not-persist|visible-ui-sentinel-must-not-persist|person@example\.test|C:\\Users\\example|\/home\/example|\/tmp\/example-workspace/);
   assert.deepEqual(
     redactPilotCommandArgs(['--socket', '/tmp/veslo.sock', 'eval', 'window.token = "live-token"']),
-    ['--socket', '/tmp/veslo.sock', 'eval', '<redacted-eval-script>'],
+    ['--socket', '<redacted-path>', 'eval', '<redacted-eval-script>'],
   );
 
   const prefixedTrace = redactPilotDiagnosticText(
@@ -41,6 +50,18 @@ test('diagnostic redaction removes credentials from structured output and comman
   assert.match(prefixedTrace, /"hasUserToken":true/);
   assert.match(prefixedTrace, /"clientToken":<redacted>/);
   assert.doesNotMatch(prefixedTrace, /client-live-token/);
+});
+
+test('diagnostic redaction removes private fields and absolute paths from prefixed trace lines', () => {
+  const redacted = redactPilotDiagnosticText(
+    '[app:stderr] trace {"event":"session.failed","workspacePath":"C:\\\\Users\\\\example\\\\workspace","directory":"/tmp/example-workspace","message":"prompt-sentinel-must-not-persist","errorCode":"workspace_unavailable"}',
+  );
+
+  assert.match(redacted, /"event":"session\.failed"/);
+  assert.match(redacted, /"errorCode":"workspace_unavailable"/);
+  assert.match(redacted, /"workspacePath":<redacted>/);
+  assert.match(redacted, /"message":<redacted>/);
+  assert.doesNotMatch(redacted, /prompt-sentinel-must-not-persist|C:\\Users\\example|\/tmp\/example-workspace/);
 });
 
 test('line-buffered redaction protects credentials split across app-process chunks', () => {

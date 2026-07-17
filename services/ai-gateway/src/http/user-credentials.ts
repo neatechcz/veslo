@@ -1,6 +1,5 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
-import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AiAccessRepository } from "../access/repository.js";
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js";
 import type { PlatformModelRef } from "../model-policy/repository.js";
@@ -9,7 +8,6 @@ import { asyncHandler, jsonErrorHandler } from "./async-handler.js";
 export type UserCredentialDependencies = {
   sessionResolver: UserSessionResolver;
   aiAccess?: AiAccessRepository;
-  autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService;
 };
 
 export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
@@ -47,18 +45,6 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
       return;
     }
     const effectiveModel = toEffectiveModel(aiAccess.provider, aiAccess.defaultModel);
-
-    if (aiAccess?.provider === "codex_oauth" && effectiveModel && deps.autoAssignedCodexCredentialRotation) {
-      try {
-        aiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
-          aiAccess,
-          activeModel: effectiveModel,
-          reason: "user_ai_access_read",
-        });
-      } catch (error) {
-        console.error("user_codex_assignment_repair_failed", error);
-      }
-    }
 
     res.json({
       aiAccess: aiAccess

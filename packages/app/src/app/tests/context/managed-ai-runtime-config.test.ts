@@ -5,6 +5,7 @@ import {
   hasUsableManagedAiRuntimeConfig,
   type ManagedAiAccessProfile,
 } from "../../lib/ai-access.js";
+import { VesloServerError } from "../../lib/veslo-server.js";
 import { VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE } from "../../lib/opencode.js";
 import type { ModelRef } from "../../types.js";
 import {
@@ -265,7 +266,9 @@ test("runtime auth prime records request diagnostics after the success cache exp
         getMyAiAccess: async () => {
           accessCalls += 1;
           if (accessCalls === 1) return response;
-          throw new Error("connect ETIMEDOUT");
+          throw new VesloServerError(503, "ai_gateway_unreachable", "AI gateway is not reachable on this host", {
+            requestId: "gateway-request-123",
+          });
         },
       }),
     }),
@@ -280,7 +283,10 @@ test("runtime auth prime records request diagnostics after the success cache exp
   assert.deepEqual(sync.lastManagedAiRuntimeAuthorizationPrimeDiagnostic(), {
     reason: "request-failed",
     supportMessage: "Managed AI runtime authorization could not be refreshed. Check the local Veslo server connection and retry.",
-    message: "connect ETIMEDOUT",
+    message: "AI gateway is not reachable on this host",
+    serverStatus: 503,
+    serverCode: "ai_gateway_unreachable",
+    serverRequestId: "gateway-request-123",
   });
   assert.deepEqual(accessErrors, [
     "Managed AI runtime authorization could not be refreshed. Check the local Veslo server connection and retry.",
@@ -288,7 +294,10 @@ test("runtime auth prime records request diagnostics after the success cache exp
 
   const errorTrace = traces.find((entry) => entry.event === "managed-ai-runtime-auth-prime:error");
   assert.equal(errorTrace?.payload.reason, "request-failed");
-  assert.equal(errorTrace?.payload.message, "connect ETIMEDOUT");
+  assert.equal(errorTrace?.payload.message, "AI gateway is not reachable on this host");
+  assert.equal(errorTrace?.payload.serverStatus, 503);
+  assert.equal(errorTrace?.payload.serverCode, "ai_gateway_unreachable");
+  assert.equal(errorTrace?.payload.serverRequestId, "gateway-request-123");
 });
 
 test("runtime auth prime reports stable support diagnostics for missing user token", async () => {

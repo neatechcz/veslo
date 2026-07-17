@@ -251,6 +251,76 @@ test("GET /api/me/ai-access reflects user access model fields without platform p
   }
 });
 
+test("GET /api/me/ai-access does not repair Codex credentials on the authorization read path", async () => {
+  let repairCalls = 0;
+  const runtime = createUserAiAccessApp({
+    aiAccess: createAiAccessRecord({
+      provider: "codex_oauth",
+      credentialId: "cred_codex",
+      defaultModel: "gpt-5.6-sol",
+      allowedModels: ["gpt-5.6-sol"],
+    }),
+  });
+  const app = createApp({
+    userCredentials: {
+      sessionResolver: {
+        async resolveSession(token: string) {
+          assert.equal(token, "den_token_123");
+          return {
+            token,
+            user: { id: "user_123", email: "user@example.test" },
+          };
+        },
+      },
+      aiAccess: {
+        async getUserAiAccess() {
+          return createAiAccessRecord({
+            provider: "codex_oauth",
+            credentialId: "cred_codex",
+            defaultModel: "gpt-5.6-sol",
+            allowedModels: ["gpt-5.6-sol"],
+          });
+        },
+        async upsertUserAiAccess() {
+          throw new Error("unused");
+        },
+      },
+      autoAssignedCodexCredentialRotation: {
+        async repairCodexAccess() {
+          repairCalls += 1;
+          throw new Error("credential repair must not run while reading access");
+        },
+      },
+    } as never,
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, {
+      headers: runtime.authHeader,
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(repairCalls, 0);
+    assert.deepEqual((await response.json()).aiAccess, {
+      id: "ai_access_user_123",
+      userId: "user_123",
+      enabled: true,
+      provider: "codex_oauth",
+      credentialId: "cred_codex",
+      defaultModel: "gpt-5.6-sol",
+      allowedModels: ["gpt-5.6-sol"],
+      effectiveModel: { provider: "codex_oauth", model: "gpt-5.6-sol" },
+      updatedAt: "2026-04-08T10:05:00.000Z",
+    });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("GET /api/me/ai-access returns bounded JSON when session lookup throws", async () => {
   const app = createApp({
     userCredentials: {

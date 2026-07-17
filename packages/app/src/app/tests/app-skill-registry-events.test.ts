@@ -50,8 +50,13 @@ test("app composes the skill registry event orchestrator after extension store s
 
   assert.match(
     appSource,
-    /createSkillRegistryOrchestrator\(\{[\s\S]*vesloServerClient,[\s\S]*vesloServerStatus,[\s\S]*activeWorkspaceId:\s*\(\)\s*=>\s*workspaceStore\.activeWorkspaceId\(\),[\s\S]*workspaceBusy:\s*\(\)\s*=>\s*workspaceStore\.workspaceBusy\(\),[\s\S]*denAuthRevision,[\s\S]*readDenAuth,[\s\S]*invalidateSkillRegistryInventory:\s*\(\)\s*=>\s*extensionsStore\.invalidateSkillRegistryInventory\(\),[\s\S]*markReloadRequired/s,
+    /createSkillRegistryOrchestrator\(\{[\s\S]*vesloServerClient,[\s\S]*vesloServerStatus,[\s\S]*activeWorkspaceId:\s*\(\)\s*=>\s*workspaceStore\.activeWorkspaceId\(\),[\s\S]*workspaceBusy:\s*workspaceBusyForSkillRegistry,[\s\S]*denAuthRevision,[\s\S]*readDenAuth,[\s\S]*invalidateSkillRegistryInventory:\s*\(\)\s*=>\s*extensionsStore\.invalidateSkillRegistryInventory\(\),[\s\S]*markReloadRequired/s,
     "App should pass server connection, workspace, inventory, reload, and Den auth dependencies",
+  );
+  assert.match(
+    appSource,
+    /const workspaceBusyForSkillRegistry[\s\S]*sessionStatusById\(\)[\s\S]*conversationRunDiagnosticsBySessionKey\(\)[\s\S]*key\.indexOf\("\\0"\)[\s\S]*status\.trim\(\) === "idle"[\s\S]*"blocked"/,
+    "Skill registry events should treat non-idle session state and blocked lifecycle diagnostics as active workspace runs",
   );
 });
 

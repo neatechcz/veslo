@@ -282,7 +282,11 @@ export function tailText(value: string, maxLength = 20_000): string {
 
 function safePilotRunFailureReason(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
-  return tailText(redactPilotDiagnosticText(raw), 1_000);
+  if (/timed?\s*out/i.test(raw)) return 'pilot-command-timeout';
+  if (/did not become ready/i.test(raw)) return 'pilot-not-ready';
+  if (/exited with\s+\d+/i.test(raw)) return 'pilot-command-failed';
+  if (/ECONNREFUSED|connection refused|os error 10060/i.test(raw)) return 'workspace-activation-unavailable';
+  return 'pilot-run-failed';
 }
 
 function pilotRunLaunchDiagnostics(
@@ -1050,6 +1054,73 @@ export function assertPackagedSmokeProfileIsolation(
   }
 }
 
+function assertSelectionPlanAllowed(selectionPlan: PilotSelectionPlan): void {
+  if (!selectionPlan.rejection) return;
+  throw new Error(`Pilot selection rejected: ${selectionPlan.rejection}.`);
+}
+
+function assertSelectionPlanLiveAuth(
+  selectionPlan: PilotSelectionPlan,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  if (selectionPlan.auth !== 'live-den') return;
+  if (env.E2E_MANAGED_AI_GATEWAY_FIXTURE?.trim() === '1') {
+    throw new Error('Pilot live managed-AI selections reject E2E_MANAGED_AI_GATEWAY_FIXTURE=1.');
+  }
+}
+
+function assertSelectionPlanPackagedSmokeEnvironment(
+  selectionPlan: PilotSelectionPlan,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  if (!selectionPlan.fixtures.includes('packaged-smoke-model')) return;
+  if (env.VESLO_PACKAGED_SMOKE?.trim() !== '1') {
+    throw new Error('packaged-smoke must be launched through pnpm desktop:smoke-packaged.');
+  }
+
+  const explicitlyDisallowed = [
+    'E2E_USE_EXISTING_PROFILE',
+    'E2E_OPENCODE_HOME',
+    'E2E_TAURI_BINARY',
+    'E2E_PRESERVE_ISOLATED_PROFILE',
+    'VESLO_DEV_SERVER_URL',
+    'VESLO_DEV_SERVER_TOKEN',
+    'VESLO_DESKTOP_ALLOW_EXTERNAL_RUNTIME_BINARIES',
+    'OPENCODE_BIN_PATH',
+    'VESLO_DEN_API_BASE',
+    'VESLO_DEN_AUTH_SNAPSHOT_PATH',
+    'VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE',
+    'E2E_DEN_AUTH_SNAPSHOT_FILE',
+    'VESLO_E2E_DEN_AUTH_JSON',
+    'E2E_DEN_AUTH_JSON',
+    'VESLO_MANAGED_AI_BASE_URL',
+    'VESLO_AI_GATEWAY_BASE_URL',
+  ];
+  const inheritedE2eConfiguration = Object.entries(env)
+    .filter(([name, value]) => name.startsWith('E2E_') && name !== 'E2E_TAURI_PILOT_BIN' && Boolean(value?.trim()))
+    .map(([name]) => name);
+  const inheritedCredential = Object.entries(env)
+    .filter(([name, value]) => /(?:^|_)(?:API_KEY|TOKENS?|SECRETS?|PASSWORDS?|CREDENTIALS?|AUTH(?:ORIZATION)?)(?:_|$)/i.test(name) && Boolean(value?.trim()))
+    .map(([name]) => name);
+  const inheritedRuntimeOverride = Object.entries(env)
+    .filter(([name, value]) => (
+      (name.startsWith('VESLO_') &&
+        !['VESLO_PACKAGED_SMOKE', 'VESLO_SIDECAR_FORCE_BUILD', 'VESLO_DISABLE_DEV_AUTOSTART'].includes(name)) ||
+      name.startsWith('VITE_') ||
+      name.startsWith('OPENCODE_')
+    ) && Boolean(value?.trim()))
+    .map(([name]) => name);
+  const disallowed = [...new Set([
+    ...explicitlyDisallowed.filter((name) => Boolean(env[name]?.trim())),
+    ...inheritedE2eConfiguration,
+    ...inheritedCredential,
+    ...inheritedRuntimeOverride,
+  ])];
+  if (disallowed.length > 0) {
+    throw new Error('packaged-smoke rejects inherited dev, profile, binary, auth, or provider overrides: ' + disallowed.join(', ') + '.');
+  }
+}
+
 function setEnvironmentForFixture(
   values: Record<string, string>,
   targetEnv: NodeJS.ProcessEnv = process.env,
@@ -1396,7 +1467,7 @@ function persistPilotScenarioCommandResult(options: {
 }): void {
   const stdout = redactPilotDiagnosticText(options.result.stdout).trim();
   const stderr = redactPilotDiagnosticText(options.result.stderr).trim();
-  const error = options.result.error ? redactPilotDiagnosticText(options.result.error) : null;
+  const error = options.result.error ? 'pilot-command-error' : null;
   writeFileSync(join(options.outputDir, 'pilot.stdout.log'), stdout ? `${stdout}\n` : '', 'utf8');
   writeFileSync(join(options.outputDir, 'pilot.stderr.log'), stderr ? `${stderr}\n` : '', 'utf8');
 
@@ -1490,11 +1561,8 @@ async function collectPilotFailureDiagnostics(options: {
   );
   mkdirSync(outputDir, { recursive: true });
 
-  const rawErrorText = options.error instanceof Error
-    ? `${options.error.stack ?? options.error.message}\n`
-    : `${String(options.error)}\n`;
-  const errorText = redactPilotDiagnosticText(rawErrorText);
-  writeFileSync(join(outputDir, 'failure.txt'), errorText, 'utf8');
+  const failureClassification = safePilotRunFailureReason(options.error);
+  writeFileSync(join(outputDir, 'failure.txt'), `classification=${failureClassification}\n`, 'utf8');
 
   const commands = pilotFailureDiagnosticCommands(outputDir);
   const results: Array<{
@@ -1518,7 +1586,7 @@ async function collectPilotFailureDiagnostics(options: {
     });
     const stdout = redactPilotDiagnosticText(result.stdout).trim();
     const stderr = redactPilotDiagnosticText(result.stderr).trim();
-    const error = result.error ? redactPilotDiagnosticText(result.error) : null;
+    const error = result.error ? 'pilot-command-error' : null;
     const body = [
       stdout || null,
       stderr ? `stderr:\n${stderr}` : null,
@@ -1540,13 +1608,13 @@ async function collectPilotFailureDiagnostics(options: {
   }
 
   writeFileSync(join(outputDir, 'summary.json'), JSON.stringify({
-    scenario: options.scenario,
+    scenario: scenarioName,
     capturedAt: new Date().toISOString(),
-    failure: errorText.trim(),
+    failure: failureClassification,
     commands: results,
   }, null, 2), 'utf8');
 
-  console.error(`[e2e] Pilot failure diagnostics captured: ${outputDir}`);
+  console.error(redactPilotDiagnosticText(`[e2e] Pilot failure diagnostics captured: ${outputDir}`));
 }
 
 function readPilotDiagnosticFile(path: string): string {
@@ -1613,7 +1681,7 @@ async function collectLiveInferenceSuccessDiagnostics(options: {
   });
   writeFileSync(join(outputDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
   console.log(`[e2e] Live inference diagnostic: ${formatLiveInferenceDiagnosticSummary(summary)}`);
-  console.log(`[e2e] Live inference diagnostic artifact: ${outputDir}`);
+  console.log(redactPilotDiagnosticText(`[e2e] Live inference diagnostic artifact: ${outputDir}`));
   if (!summary.diagnosticsComplete) {
     console.warn('[e2e] Live inference diagnostics are partial; inspect the redacted summary before using this run as a latency baseline.');
   }
@@ -1665,7 +1733,7 @@ async function collectSessionRenderSuccessArtifacts(options: {
     widths: SESSION_RENDER_ARTIFACT_VIEWPORTS.map((viewport) => viewport.width),
   });
   writeFileSync(join(outputDir, 'manifest.json'), JSON.stringify({ ...manifest, commands: results }, null, 2), 'utf8');
-  console.log(`[e2e] Session render artifacts captured: ${outputDir}`);
+  console.log(redactPilotDiagnosticText(`[e2e] Session render artifacts captured: ${outputDir}`));
 }
 
 export async function ensurePilotReady(options: Omit<RunPilotCommandOptions, 'args'> = {}): Promise<void> {
@@ -1727,11 +1795,9 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     suite: options.suite,
     env: process.env,
   });
-  assertSelectionPlanMatchesLegacy(selectionPlan, {
-    scenarios,
-    suite: options.suite,
-    env: process.env,
-  });
+  assertSelectionPlanAllowed(selectionPlan);
+  assertSelectionPlanLiveAuth(selectionPlan);
+  assertSelectionPlanPackagedSmokeEnvironment(selectionPlan);
   const isCanonicalLiveInferenceSuite = selectionPlan.launch.scenarioTimeout === 'canonical-live';
   const scenarioCommandTimeoutMs = isCanonicalLiveInferenceSuite
     ? resolveCanonicalLiveInferenceCommandTimeoutMs()
@@ -1745,12 +1811,6 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   if (isCanonicalLiveInferenceSuite) {
     assertPilotScenarioTimeoutCap(scenarios);
   }
-  assertPilotScenarioSelectionIsolated(scenarios);
-  assertSessionQueueRuntimeFixtureProfileIsolation(scenarios);
-  assertPackagedSmokeProfileIsolation(scenarios);
-  assertManagedAiGatewayFixtureProfileIsolation(scenarios);
-  assertLiveManagedAiAuthForScenarioSelection(scenarios);
-
   const requiresLiveManagedAiAuth = selectionPlan.auth === 'live-den';
   const usesManagedAiGatewayFixture = selectionPlanHasFixture(selectionPlan, 'managed-ai-gateway');
   const usesSessionQueueRuntimeFixture = selectionPlanHasFixture(selectionPlan, 'session-queue-runtime');
@@ -1886,7 +1946,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
       }
     }
     for (const scenario of scenarios) {
-      console.log(`[e2e] Running tauri-pilot scenario: ${scenario}`);
+      console.log(redactPilotDiagnosticText(`[e2e] Running tauri-pilot scenario: ${scenario}`));
       runContext.record('scenario.starting', { scenario: sanitizePilotArtifactName(scenario) });
       try {
         const scenarioOutputDir = await runPilotScenarioWithArtifacts({
@@ -1954,7 +2014,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         await installPilotBrowserPrelude({ binary, socket, cwd: e2eRoot, timeoutMs });
         runContext.record('app.relaunch.ready');
         runContext.record('pilot.browser-prelude.installed', { launch: 'relaunch' });
-        console.log(`[e2e] Running tauri-pilot scenario: ${reconnectScenario}`);
+        console.log(redactPilotDiagnosticText(`[e2e] Running tauri-pilot scenario: ${reconnectScenario}`));
         runContext.record('scenario.starting', { scenario: sanitizePilotArtifactName(reconnectScenario) });
         try {
           await runPilotScenarioWithArtifacts({

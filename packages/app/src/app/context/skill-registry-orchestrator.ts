@@ -8,6 +8,7 @@ import {
   type SkillRegistryEventsListener,
   type SkillRegistryEventsListenerOptions,
 } from "../lib/skill-registry-events";
+import { VesloServerError } from "../lib/veslo-server";
 import type {
   VesloServerClient,
   VesloServerStatus,
@@ -103,6 +104,26 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
     };
   };
 
+  const retryWithRefreshedLocalHostToken = async <T>(
+    client: VesloServerClient,
+    request: (candidate: VesloServerClient) => Promise<T>,
+  ): Promise<T> => {
+    try {
+      return await request(client);
+    } catch (error) {
+      if (!isInvalidHostTokenError(error) || !deps.ensureLocalVesloServerRunning) {
+        throw error;
+      }
+
+      const refreshed = await deps.ensureLocalVesloServerRunning({
+        requireRuntimeChainReady: false,
+      });
+      const refreshedClient = deps.vesloServerClient();
+      if (!refreshed || !refreshedClient) throw error;
+      return request(refreshedClient);
+    }
+  };
+
   const refreshAfterSkillRegistryMaterialization = async (result: SkillRegistryMaterializationResult) => {
     if (!shouldRefreshAfterSkillRegistryMaterialization(result)) return;
     await deps.refreshSkills({ force: true });
@@ -136,9 +157,12 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
     skillRegistryWorkspaceReplayInFlight.add(workspaceId);
     void (async () => {
       try {
-        const result = await client.syncWorkspaceSkillMaterialization(
-          workspaceId,
-          materializationAuthContext(),
+        const result = await retryWithRefreshedLocalHostToken(
+          client,
+          (candidate) => candidate.syncWorkspaceSkillMaterialization(
+            workspaceId,
+            materializationAuthContext(),
+          ),
         );
         await refreshAfterSkillRegistryMaterialization(result);
         clearPendingSkillRegistryWorkspaceReplay(workspaceId, pending.eventId);
@@ -155,7 +179,10 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
     skillRegistryGlobalReplayInFlight = true;
     void (async () => {
       try {
-        const result = await client.syncGlobalSkillMaterialization(materializationAuthContext());
+        const result = await retryWithRefreshedLocalHostToken(
+          client,
+          (candidate) => candidate.syncGlobalSkillMaterialization(materializationAuthContext()),
+        );
         await refreshAfterSkillRegistryMaterialization(result);
         setPendingGlobalSkillRegistryReplay((current) =>
           current?.eventId === pending.eventId ? null : current,
@@ -253,39 +280,54 @@ export function createSkillRegistryOrchestrator(deps: SkillRegistryOrchestratorD
       onWorkspaceUpdatePending: async (update) => {
         const trigger = skillRegistryReloadTriggerForEvent(update.event);
         if (hasWorkspaceBusySessions(deps.workspaceBusy(), update.workspaceId)) {
-          await client.syncWorkspaceSkillMaterialization(update.workspaceId, {
-            ...materializationAuthContext(),
-            activeRun: true,
-          });
+          await retryWithRefreshedLocalHostToken(
+            client,
+            (candidate) => candidate.syncWorkspaceSkillMaterialization(update.workspaceId, {
+              ...materializationAuthContext(),
+              activeRun: true,
+            }),
+          );
           deps.markReloadRequired("skills", trigger);
           queuePendingSkillRegistryWorkspaceReplay(update.workspaceId, update.event.id);
           return;
         }
-        const result = await client.syncWorkspaceSkillMaterialization(
-          update.workspaceId,
-          materializationAuthContext(),
+        const result = await retryWithRefreshedLocalHostToken(
+          client,
+          (candidate) => candidate.syncWorkspaceSkillMaterialization(
+            update.workspaceId,
+            materializationAuthContext(),
+          ),
         );
         await refreshAfterSkillRegistryMaterialization(result);
       },
       onIdleWorkspaceUpdate: async (update) => {
-        const result = await client.syncWorkspaceSkillMaterialization(
-          update.workspaceId,
-          materializationAuthContext(),
+        const result = await retryWithRefreshedLocalHostToken(
+          client,
+          (candidate) => candidate.syncWorkspaceSkillMaterialization(
+            update.workspaceId,
+            materializationAuthContext(),
+          ),
         );
         await refreshAfterSkillRegistryMaterialization(result);
       },
       onGlobalUpdate: async (update) => {
         const hasActiveRun = hasAnyWorkspaceBusySessions(deps.workspaceBusy());
         if (hasActiveRun) {
-          await client.syncGlobalSkillMaterialization({
-            ...materializationAuthContext(),
-            activeRun: true,
-          });
+          await retryWithRefreshedLocalHostToken(
+            client,
+            (candidate) => candidate.syncGlobalSkillMaterialization({
+              ...materializationAuthContext(),
+              activeRun: true,
+            }),
+          );
           deps.markReloadRequired("skills", skillRegistryReloadTriggerForEvent(update.event));
           setPendingGlobalSkillRegistryReplay({ eventId: update.event.id });
           return;
         }
-        const result = await client.syncGlobalSkillMaterialization(materializationAuthContext());
+        const result = await retryWithRefreshedLocalHostToken(
+          client,
+          (candidate) => candidate.syncGlobalSkillMaterialization(materializationAuthContext()),
+        );
         await refreshAfterSkillRegistryMaterialization(result);
       },
       onUnauthorized: handleSkillRegistryEventsUnauthorized,
@@ -337,4 +379,10 @@ function hasWorkspaceBusySessions(
 
 function hasAnyWorkspaceBusySessions(busyByWorkspace: WorkspaceBusyMap) {
   return Object.values(busyByWorkspace).some((sessions) => Object.keys(sessions).length > 0);
+}
+
+function isInvalidHostTokenError(error: unknown) {
+  return error instanceof VesloServerError &&
+    error.status === 401 &&
+    /invalid host token/i.test(error.message);
 }

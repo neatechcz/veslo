@@ -14,6 +14,7 @@ test('Pilot browser prelude is a self-contained parseable browser script', () =>
   assert.match(script, new RegExp(PILOT_BROWSER_PRELUDE_SCHEMA));
   assert.match(script, /window\.__vesloPilotE2E = Object\.freeze/);
   assert.match(script, /insertContenteditableThroughBrowser/);
+  assert.match(script, /installContenteditableTypeAdapter/);
   assert.match(script, /recentTraceSummary/);
   assert.match(script, new RegExp(PILOT_BROWSER_PRELUDE_STORAGE_KEY));
   assert.match(script, /window\.sessionStorage\?\.setItem/);
@@ -25,6 +26,8 @@ test('Pilot browser prelude exposes no click helper and uses the browser editing
   assert.doesNotMatch(script, /\.click\(/);
   assert.doesNotMatch(script, /dispatchEvent\(new (?:PointerEvent|MouseEvent)/);
   assert.match(script, /document\.execCommand\(command, false, content \|\| null\)/);
+  assert.match(script, /document\.execCommand\('insertText', false, String\(params\?\.text \?\? ''\)\)/);
+  assert.doesNotMatch(script, /dispatchEvent\(new InputEvent/);
   assert.doesNotMatch(script, /replaceChildren\(/);
   assert.doesNotMatch(script, /new InputEvent\('input'/);
 });

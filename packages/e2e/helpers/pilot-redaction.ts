@@ -1,7 +1,10 @@
 const SENSITIVE_DIAGNOSTIC_KEY = /^(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)$/i;
-const SENSITIVE_DIAGNOSTIC_INLINE_VALUE = /((?:["']?)(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)(?:["']?)\s*[:=]\s*)((?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^,\s}\]]+))/gi;
+const PRIVATE_DIAGNOSTIC_KEY = /^(?:message|error|failure|stack|body|text|label|title|content|prompt|transcript|workspacepath|workspace_path|directory|dbpath|db_path|path|filepath|file_path|email|subject|laststdout|laststderr)$/i;
+const SENSITIVE_DIAGNOSTIC_INLINE_VALUE = /((?:["']?)(?:(?:[a-z]+[_-]?)?token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?|message|error|failure|stack|body|text|label|title|content|prompt|transcript|workspacepath|workspace_path|directory|dbpath|db_path|path|filepath|file_path|email|subject)(?:["']?)\s*[:=]\s*)((?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^,\s}\]]+))/gi;
 const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const SENSITIVE_QUERY_VALUE = /([?&](?:token|access_token|refresh_token|api_key|apikey|secret|password)=)[^&\s]+/gi;
+const WINDOWS_ABSOLUTE_PATH = /\b[A-Za-z]:(?:\\\\|\\|\/)[^\s"'`<>|,)\]}]*/g;
+const POSIX_ABSOLUTE_PATH = /(^|[\s"'(=])\/(?:Users|home|tmp|var|private|mnt|opt|workspace|workspaces)(?:\/[^\s"'`<>()\[\]{}]*)*/g;
 
 function isCredentialPresenceBoolean(key: string, value: unknown): boolean {
   return typeof value === 'boolean' && /^(?:has|is)[a-z0-9_-]*(?:token|authorization|api[_-]?key|secret|password|cookie|auth(?:[_-]?json)?)$/i.test(key);
@@ -17,29 +20,36 @@ function redactInlineSensitiveValue(_match: string, prefix: string, rawValue: st
   return `${prefix}<redacted>`;
 }
 
-function redactPilotDiagnosticValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactPilotDiagnosticValue);
+function redactPilotDiagnosticValue(value: unknown, key?: string): unknown {
+  if (PRIVATE_DIAGNOSTIC_KEY.test(key ?? '')) return '<redacted>';
+  if (Array.isArray(value)) return value.map((entry) => redactPilotDiagnosticValue(entry));
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [
         key,
         SENSITIVE_DIAGNOSTIC_KEY.test(key) && !isCredentialPresenceBoolean(key, child)
           ? '<redacted>'
-          : redactPilotDiagnosticValue(child),
+          : redactPilotDiagnosticValue(child, key),
       ]),
     );
   }
-  return typeof value === 'string' ? redactPilotDiagnosticText(value) : value;
+  return typeof value === 'string' ? redactInlineDiagnosticText(value) : value;
+}
+
+function redactInlineDiagnosticText(value: string): string {
+  return value
+    .replace(BEARER_VALUE, 'Bearer <redacted>')
+    .replace(SENSITIVE_DIAGNOSTIC_INLINE_VALUE, redactInlineSensitiveValue)
+    .replace(SENSITIVE_QUERY_VALUE, '$1<redacted>')
+    .replace(WINDOWS_ABSOLUTE_PATH, '<redacted-path>')
+    .replace(POSIX_ABSOLUTE_PATH, '$1<redacted-path>');
 }
 
 export function redactPilotDiagnosticText(value: string): string {
   try {
     return JSON.stringify(redactPilotDiagnosticValue(JSON.parse(value)), null, 2);
   } catch {
-    return value
-      .replace(BEARER_VALUE, 'Bearer <redacted>')
-      .replace(SENSITIVE_DIAGNOSTIC_INLINE_VALUE, redactInlineSensitiveValue)
-      .replace(SENSITIVE_QUERY_VALUE, '$1<redacted>');
+    return redactInlineDiagnosticText(value);
   }
 }
 

@@ -15,7 +15,7 @@ import { createServer } from "node:net";
 import { basename, join, resolve, dirname, win32, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareDesktopAuthSeed } from "./desktop-auth-seed.js";
-import { createRedactingLineBuffer } from "./pilot-redaction.js";
+import { createRedactingLineBuffer, redactPilotDiagnosticText } from "./pilot-redaction.js";
 import {
   createGoogleMcpCatalogDenAuthJson,
   E2E_SKILL_REGISTRY_ORG_ID,
@@ -1258,7 +1258,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
   const forwardAppLogs = shouldForwardAppLogs(process.env);
   const pilotRuntimeDir = resolvePilotRuntimeDir();
   preparePilotRuntimeDir(pilotRuntimeDir);
-  console.log(`[e2e] Launching Tauri binary: ${binaryPath}`);
+  console.log(redactPilotDiagnosticText(`[e2e] Launching Tauri binary: ${binaryPath}`));
   const useGoogleMcpCatalogFixture = shouldUseGoogleMcpCatalogFixture();
   const useSharePointMcpCatalogFixture = shouldUseSharePointMcpCatalogFixture();
   const useMcpCatalogFixture =
@@ -1358,7 +1358,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     if (!shouldSkipDefaultWorkspaceState(env)) {
       seedDefaultWorkspaceState(CUSTOM_OPENCODE_HOME, env);
     }
-    console.log(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`);
+    console.log(redactPilotDiagnosticText(`[e2e] Using custom OPENCODE_HOME: ${CUSTOM_OPENCODE_HOME}`));
   } else if (!REAL_PROFILE_ENV) {
     profileRoot = ISOLATED_PROFILE_ROOT;
     const preserveIsolatedProfile =
@@ -1396,12 +1396,12 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     if (!shouldSkipDefaultWorkspaceState(env)) {
       seedDefaultWorkspaceState(ISOLATED_PROFILE_ROOT, env);
     }
-    console.log(
+    console.log(redactPilotDiagnosticText(
       `[e2e] Using isolated app profile: ${ISOLATED_PROFILE_ROOT}${preserveIsolatedProfile ? " (preserved)" : ""}`,
-    );
-    console.log(
+    ));
+    console.log(redactPilotDiagnosticText(
       `[e2e] Using isolated OPENCODE_HOME: ${tmpDir}${preserveIsolatedProfile ? " (preserved)" : ""}`,
-    );
+    ));
   } else {
     env = {
       ...process.env,
@@ -1439,14 +1439,14 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     : "";
   if (appLogRoot) {
     mkdirSync(appLogRoot, { recursive: true });
-    const header = `[e2e] started=${new Date().toISOString()} binary=${binaryPath}\n`;
+    const header = `${redactPilotDiagnosticText(`[e2e] started=${new Date().toISOString()} binary=${binaryPath}`)}\n`;
     if (!pilotDiagnostics) {
       rotateExistingLogFile(appStdoutLog);
       rotateExistingLogFile(appStderrLog);
     }
     writeFileSync(appStdoutLog, header, "utf8");
     writeFileSync(appStderrLog, header, "utf8");
-    console.log(`[e2e] Capturing app logs: ${appLogRoot}`);
+    console.log(redactPilotDiagnosticText(`[e2e] Capturing app logs: ${appLogRoot}`));
   }
   const stdoutRedactor = createRedactingLineBuffer();
   const stderrRedactor = createRedactingLineBuffer();

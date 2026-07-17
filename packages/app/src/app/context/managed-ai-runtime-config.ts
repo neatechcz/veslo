@@ -25,6 +25,7 @@ import {
   type RuntimeSandboxEngineSnapshot,
 } from "../lib/runtime-sandbox-state";
 import {
+  VesloServerError,
   type VesloUserAiAccess,
   type VesloServerStatus,
 } from "../lib/veslo-server";
@@ -80,6 +81,21 @@ function managedAiRuntimeAuthPrimeDiagnostic(
     reason,
     supportMessage: MANAGED_AI_RUNTIME_AUTH_PRIME_SUPPORT_MESSAGES[reason],
     ...extra,
+  };
+}
+
+function managedAiRuntimeAuthPrimeRequestFailureDetails(error: unknown): Record<string, unknown> {
+  if (!(error instanceof VesloServerError)) return {};
+
+  const details = error.details && typeof error.details === "object"
+    ? error.details as Record<string, unknown>
+    : {};
+  const requestId = typeof details.requestId === "string" ? details.requestId.trim() : "";
+
+  return {
+    serverStatus: error.status,
+    serverCode: error.code,
+    ...(requestId ? { serverRequestId: requestId } : {}),
   };
 }
 
@@ -842,6 +858,7 @@ export function createManagedAiRuntimeConfigSync(
         const diagnostic = rememberRuntimeAuthorizationPrimeDiagnostic(
           managedAiRuntimeAuthPrimeDiagnostic("request-failed", {
             message: error instanceof Error ? error.message : deps.safeStringify(error),
+            ...managedAiRuntimeAuthPrimeRequestFailureDetails(error),
           }),
         );
         deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:error", {

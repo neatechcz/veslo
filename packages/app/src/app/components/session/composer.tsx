@@ -2077,6 +2077,7 @@ export default function Composer(props: ComposerProps) {
                         >
                           <button
                             type="button"
+                            data-testid="session-composer-stop-button"
                             onClick={() => props.onStop()}
                             class="inline-flex h-8 w-10 shrink-0 items-center justify-center rounded-full bg-gray-12 text-gray-1 transition-colors hover:bg-gray-11"
                             title={

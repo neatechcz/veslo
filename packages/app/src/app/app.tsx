@@ -2927,11 +2927,45 @@ export default function App() {
     cleanupWorkspaceRuntimeDebugProbe = null;
   });
 
+  const workspaceBusyForSkillRegistry = (): WorkspaceBusyMap => {
+    const reportedBusy = workspaceStore.workspaceBusy();
+    const sessionStatuses = sessionStatusById();
+    const runDiagnostics = conversationRunDiagnosticsBySessionKey();
+    let mergedBusy = reportedBusy;
+
+    const addBusySession = (workspaceIdRaw: string, sessionIdRaw: string) => {
+      const workspaceId = workspaceIdRaw.trim();
+      const sessionId = sessionIdRaw.trim();
+      if (!workspaceId || !sessionId || mergedBusy[workspaceId]?.[sessionId]) return;
+      if (mergedBusy === reportedBusy) mergedBusy = { ...reportedBusy };
+      mergedBusy = {
+        ...mergedBusy,
+        [workspaceId]: {
+          ...(mergedBusy[workspaceId] ?? {}),
+          [sessionId]: { startedAt: Date.now() },
+        },
+      };
+    };
+
+    for (const [key, status] of Object.entries(sessionStatuses)) {
+      const separator = key.indexOf("\0");
+      if (separator <= 0 || status.trim() === "idle") continue;
+      addBusySession(key.slice(0, separator), key.slice(separator + 1));
+    }
+
+    for (const diagnostic of Object.values(runDiagnostics)) {
+      if (diagnostic.stale || !["submitted", "running", "blocked"].includes(diagnostic.status)) continue;
+      addBusySession(diagnostic.workspaceId, diagnostic.sessionId);
+    }
+
+    return mergedBusy;
+  };
+
   const skillRegistryOrchestrator = createSkillRegistryOrchestrator({
     vesloServerClient,
     vesloServerStatus,
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
-    workspaceBusy: () => workspaceStore.workspaceBusy(),
+    workspaceBusy: workspaceBusyForSkillRegistry,
     denAuthRevision,
     readDenAuth,
     refreshSkills,

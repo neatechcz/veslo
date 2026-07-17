@@ -284,7 +284,8 @@ test('runPilotScenarios persists a JUnit result and passes an explicit timeout t
   const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
 
   assert.match(source, /const selectionPlan = compilePilotSelectionPlan\(/);
-  assert.match(source, /assertSelectionPlanMatchesLegacy\(selectionPlan/);
+  assert.match(source, /assertSelectionPlanAllowed\(selectionPlan\);/);
+  assert.doesNotMatch(source, /assertSelectionPlanMatchesLegacy\(selectionPlan/);
   assert.match(source, /const isCanonicalLiveInferenceSuite = selectionPlan\.launch\.scenarioTimeout === 'canonical-live'/);
   assert.match(source, /\? resolveCanonicalLiveInferenceCommandTimeoutMs\(\)\s*:\s*resolvePilotScenarioCommandTimeoutMs\(\)/);
   assert.match(source, /if \(isCanonicalLiveInferenceSuite\) \{\s*assertPilotScenarioTimeoutCap\(scenarios\);/);
@@ -524,7 +525,7 @@ test('Pilot diagnostic redaction removes bearer material from structured output 
   assert.doesNotMatch(redacted, /live-token|another-live-token|third-live-token|access-live-token|refresh-live-token|client-live-token|api-key-live-token|secret-live-token|password-live-token/);
   assert.deepEqual(
     redactPilotCommandArgs(['--socket', '/tmp/veslo.sock', 'eval', 'window.token = "live-token"']),
-    ['--socket', '/tmp/veslo.sock', 'eval', '<redacted-eval-script>'],
+    ['--socket', '<redacted-path>', 'eval', '<redacted-eval-script>'],
   );
 });
 
@@ -820,6 +821,38 @@ test('VSLO-270 stop reload reconnect pilot scenario requests live auth and retry
   assert.equal(scenarioSelectionDisablesDevAutostart(scenarios), true);
   assert.equal(scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(scenarios), true);
   assert.equal(scenarioSelectionNeedsRelaunchReconnectCheck(scenarios), true);
+});
+
+test('VSLO-270 scenarios use the atomic workspace runtime preparation contract', () => {
+  const scenarios = [
+    '../pilot-scenarios/vslo-270-stop-reload-reconnect.toml',
+    '../pilot-scenarios/vslo-270-relaunch-reconnect.toml',
+  ];
+
+  for (const scenario of scenarios) {
+    const content = readFileSync(new URL(scenario, import.meta.url), 'utf8');
+
+    assert.match(content, /tauriInvoke\("runtime_prepare_workspace"/);
+    assert.doesNotMatch(content, /tauriInvoke\("(?:engine_start|orchestrator_workspace_activate)"/);
+  }
+});
+
+test('VSLO-270 stop reload reconnect uses real Pilot UI navigation, type, Send, and Stop', () => {
+  const content = readFileSync(
+    new URL('../pilot-scenarios/vslo-270-stop-reload-reconnect.toml', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(content, /action = "navigate"/);
+  assert.match(content, /action = "type"/);
+  assert.match(content, /action = "click"/);
+  assert.match(content, /installContenteditableTypeAdapter\(\)/);
+  assert.match(content, /session-composer-send-button/);
+  assert.match(content, /session-composer-stop-button/);
+  assert.match(content, /NativeSendClick/);
+  assert.match(content, /NativeStopClick/);
+  assert.doesNotMatch(content, /navigateToHash\(/);
+  assert.doesNotMatch(content, /replaceChildren\(|dispatchEvent\(new InputEvent|sendButton\.click\(|stopButton\.click\(/);
 });
 
 test('runtime cold-start handoff pilot scenario requires live managed-AI auth', () => {

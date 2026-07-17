@@ -145,8 +145,8 @@ test("composer exposes button intents for queue and streaming send-now", () => {
 
   assert.match(
     composerSource,
-    /when=\{props\.isStreaming\}[\s\S]*onClick=\{\(\) => props\.onStop\(\)\}[\s\S]*translate\("session\.stop_label"\)/s,
-    "streaming UI should keep a localized Stop affordance",
+    /when=\{props\.isStreaming\}[\s\S]*data-testid="session-composer-stop-button"[\s\S]*onClick=\{\(\) => props\.onStop\(\)\}[\s\S]*translate\("session\.stop_label"\)/s,
+    "streaming UI should expose a stable localized Stop affordance",
   );
   assert.match(
     composerSource,

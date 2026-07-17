@@ -110,19 +110,20 @@ const appendFailureMarker = (payload) => {
       const workspacePath = normalize(workspace?.path || workspace?.directory);
       assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
       setProgress("starting-workspace-engine", { workspaceId: workspace?.id ?? null, workspacePath });
-      await tauriInvoke("engine_start", {
+      const prepared = await tauriInvoke("runtime_prepare_workspace", {
         projectDir: workspacePath,
+        workspaceId: normalize(workspace?.id) || null,
+        workspaceName: normalize(workspace?.displayName || workspace?.name) || null,
+        reason: "vslo-270-relaunch-reconnect",
+        forceFreshRuntime: false,
         preferSidecar: true,
         opencodeBinPath: null,
         runtime: "veslo-orchestrator",
         workspacePaths: [workspacePath],
       });
-      const activation = await tauriInvoke("orchestrator_workspace_activate", {
-        workspacePath,
-        name: normalize(workspace?.displayName || workspace?.name) || null,
-      });
-      await sleep(1000);
-      return activation ?? { ok: true };
+      assert(prepared?.ok === true,
+        `Workspace runtime preparation failed: ${JSON.stringify(prepared)}`);
+      return prepared;
     };
     const waitForOriginalActiveRunCleared = async (connection, scope) => {
       let latestActive = null;

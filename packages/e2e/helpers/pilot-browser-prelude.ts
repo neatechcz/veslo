@@ -90,6 +90,40 @@ export function buildPilotBrowserPreludeScript(): string {
     }
     return content;
   };
+  const installContenteditableTypeAdapter = () => {
+    const pilot = window.__PILOT__;
+    assert(pilot && typeof pilot.type === 'function', 'Tauri Pilot type bridge is unavailable.');
+    if (pilot.__vesloContenteditableTypeAdapter) return { reused: true };
+
+    const originalType = pilot.type.bind(pilot);
+    pilot.type = (params) => {
+      const target = params?.selector
+        ? document.querySelector(params.selector)
+        : params?.ref
+          ? pilot.resolve(params.ref)
+          : null;
+      if (!(target instanceof HTMLElement) || !target.isContentEditable) {
+        return originalType(params);
+      }
+
+      target.focus({ preventScroll: true });
+      const selection = window.getSelection();
+      assert(selection, 'Browser selection is unavailable for the contenteditable composer.');
+      if (!target.contains(selection.anchorNode)) {
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      if (!document.execCommand('insertText', false, String(params?.text ?? ''))) {
+        throw new Error('WebView rejected Pilot contenteditable text edit.');
+      }
+      return { ok: true, inputPath: 'browser-contenteditable-edit' };
+    };
+    Object.defineProperty(pilot, '__vesloContenteditableTypeAdapter', { value: true });
+    return { reused: false };
+  };
   const safeScenarioKey = (name) => normalize(name).replace(/[^a-z0-9_-]+/gi, '-').slice(0, 96) || 'scenario';
   const marker = (scenario, state, payload = null) => {
     const key = safeScenarioKey(scenario);
@@ -135,6 +169,7 @@ export function buildPilotBrowserPreludeScript(): string {
     findVisibleButton,
     getComposer,
     insertContenteditableThroughBrowser,
+    installContenteditableTypeAdapter,
     progress: (scenario, stage, detail = null) => marker(scenario, 'progress', { stage, detail }),
     finishScenario: (scenario, payload = null) => marker(scenario, 'complete', payload),
     failScenario: (scenario, error, payload = null) => marker(scenario, 'error', {

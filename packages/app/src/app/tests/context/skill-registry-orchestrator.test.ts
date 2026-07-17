@@ -14,7 +14,7 @@ import type {
   SkillRegistryEventsListenerOptions,
 } from "../../lib/skill-registry-events.js";
 import { SkillRegistryEventsAuthError } from "../../lib/skill-registry-events.js";
-import type { VesloServerClient } from "../../lib/veslo-server.js";
+import { VesloServerError, type VesloServerClient } from "../../lib/veslo-server.js";
 
 type MaterializationCall =
   | { kind: "workspace"; workspaceId: string; options: unknown }
@@ -439,6 +439,86 @@ test("event listener auth failure retries the same key once after reacquire", as
         { requireRuntimeChainReady: false },
       ]);
       assert.equal(listener.started, 2);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("workspace update refreshes a rotated local host token before marking reload", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const calls: string[] = [];
+      const reloads: unknown[] = [];
+      const ensures: unknown[] = [];
+      const errors: Array<{ scope: string; message: string }> = [];
+      const listener = createListenerCapture();
+      const [busy] = createSignal<WorkspaceBusyMap>({
+        "workspace-1": { "session-1": { startedAt: 1 } },
+      });
+      const staleClient = {
+        baseUrl: "http://127.0.0.1:8787",
+        token: "server-token",
+        syncWorkspaceSkillMaterialization: async () => {
+          calls.push("stale");
+          throw new VesloServerError(401, "unauthorized", "Invalid host token");
+        },
+      } as unknown as VesloServerClient;
+      const freshClient = {
+        baseUrl: "http://127.0.0.1:8787",
+        token: "server-token",
+        syncWorkspaceSkillMaterialization: async () => {
+          calls.push("fresh");
+          return { synced: true, reloadRequired: true };
+        },
+      } as unknown as VesloServerClient;
+      const [client, setClient] = createSignal<VesloServerClient | null>(staleClient);
+
+      const orchestrator = createSkillRegistryOrchestrator({
+        vesloServerClient: client,
+        vesloServerStatus: () => "connected",
+        activeWorkspaceId: () => "workspace-1",
+        workspaceBusy: busy,
+        denAuthRevision: () => 1,
+        readDenAuth: denAuth,
+        refreshSkills: async () => undefined,
+        invalidateSkillRegistryInventory: async () => undefined,
+        markReloadRequired: (...args) => {
+          reloads.push(args);
+        },
+        reportError: (error, scope) => {
+          errors.push({
+            scope,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        },
+        ensureLocalVesloServerRunning: async (options) => {
+          ensures.push(options);
+          setClient(freshClient);
+          return true;
+        },
+        createListener: listener.createListener,
+      });
+
+      await flushEffects();
+      await listener.options.onWorkspaceUpdatePending?.({
+        workspaceId: "workspace-1",
+        status: "pending",
+        reloadRequired: true,
+        event: registryEvent({ id: "evt-rotated-host-token", workspaceId: "workspace-1" }),
+      });
+
+      assert.deepEqual(calls, ["stale", "fresh"]);
+      assert.deepEqual(ensures, [{ requireRuntimeChainReady: false }]);
+      assert.deepEqual(reloads, [["skills", {
+        type: "skill",
+        action: "updated",
+        name: "planning",
+      }]]);
+      assert.deepEqual(orchestrator.pendingSkillRegistryWorkspaceReplays(), {
+        "workspace-1": { eventId: "evt-rotated-host-token" },
+      });
+      assert.deepEqual(errors, []);
     } finally {
       dispose();
     }
