@@ -31,7 +31,10 @@ export type ModelCapabilityBatchResult =
 type CapabilityCacheEntry = { expiresAt: number; result: ModelCapabilityCheckResult };
 
 const DEFAULT_CAPABILITY_CONCURRENCY = 4;
-const DEFAULT_CAPABILITY_TIMEOUT_MS = 5_000;
+// A Codex credential probe can take several seconds while it refreshes OAuth
+// state and reads rate-limit evidence. Five seconds rejects healthy production
+// credentials before their probe can complete.
+const DEFAULT_CAPABILITY_TIMEOUT_MS = 15_000;
 const DEFAULT_CAPABILITY_CACHE_TTL_MS = 15_000;
 
 export function createPlatformModelCapabilityVerifier(deps: {
