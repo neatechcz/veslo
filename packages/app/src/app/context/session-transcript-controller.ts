@@ -10,6 +10,7 @@ import { normalizeDirectoryPath } from "../utils";
 import type { MessageInfo, MessageWithParts } from "../types";
 import type { WorkspaceRouting } from "./workspace-routing";
 import {
+  sameStoredList,
   sortById,
   sortMessagesByActivity,
 } from "./session-store-model";
@@ -63,10 +64,17 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
       .map((info) => info as MessageInfo);
 
     batch(() => {
-      deps.setStore("messages", sessionID, sortMessagesByActivity(infos));
+      const nextInfos = sortMessagesByActivity(infos);
+      const currentInfos = deps.store.messages[sessionID] ?? [];
+      if (!sameStoredList(currentInfos, nextInfos)) {
+        deps.setStore("messages", sessionID, nextInfos);
+      }
       for (const message of list) {
-        const parts = message.parts.filter((part) => !!part?.id);
-        deps.setStore("parts", message.info.id, sortById(parts));
+        const nextParts = sortById(message.parts.filter((part) => !!part?.id));
+        const currentParts = deps.store.parts[message.info.id] ?? [];
+        if (!sameStoredList(currentParts, nextParts)) {
+          deps.setStore("parts", message.info.id, nextParts);
+        }
       }
     });
   }

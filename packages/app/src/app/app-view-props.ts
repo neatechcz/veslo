@@ -627,6 +627,15 @@ export type AppViewPropsAdapter = {
   sessionProps: () => SessionViewAdapterProps;
 };
 
+export function shouldShowSessionReloadBanner(input: {
+  reloadRequired: boolean;
+  reloadTrigger: ReloadTrigger | null;
+  activeReloadBlockingSessionCount: number;
+}): boolean {
+  return input.reloadRequired &&
+    (input.reloadTrigger?.type === "skill" || input.activeReloadBlockingSessionCount > 0);
+}
+
 export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter {
   const {
     connectedVersion,
@@ -1513,8 +1522,11 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     sessionCapabilities: sessionCapabilitiesSnapshot(),
     sessionCapabilitiesStatus: sessionCapabilitiesStatus(),
     sessionCapabilitiesError: sessionCapabilitiesError(),
-    showSkillReloadBanner:
-      (reloadRequired() && reloadTrigger()?.type === "skill") || activeReloadBlockingSessions().length > 0,
+    showSkillReloadBanner: shouldShowSessionReloadBanner({
+      reloadRequired: reloadRequired(),
+      reloadTrigger: reloadTrigger(),
+      activeReloadBlockingSessionCount: activeReloadBlockingSessions().length,
+    }),
     reloadBannerTitle: reloadCopy().title,
     reloadBannerBody: reloadCopy().body,
     reloadBannerBlocked: activeReloadBlockingSessions().length > 0,

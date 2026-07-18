@@ -83,7 +83,7 @@ export const resolveTranscriptSourceMessages = <T,>({
   messages,
   localSubmittedMessage,
 }: Pick<ResolveRenderedTranscriptMessagesInput<T>, "messages" | "localSubmittedMessage">): T[] =>
-  localSubmittedMessage ? [...messages, localSubmittedMessage] : [...messages];
+  localSubmittedMessage ? [...messages, localSubmittedMessage] : messages as T[];
 
 export const resolveRenderedTranscriptMessages = <T,>({
   messages,

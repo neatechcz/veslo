@@ -113,6 +113,26 @@ test("dev runtime records bounded session DOM mutation batches alongside state c
   );
   assert.match(
     sessionSource,
+    /const isTempRuntimeUiDiagnosticNode =[\s\S]*data-temp-runtime-ui-render-source/s,
+    "the observer should identify its own temporary diagnostic badge",
+  );
+  assert.match(
+    sessionSource,
+    /const isTempRuntimeUiDiagnosticMutation =[\s\S]*changedNodes\.every/s,
+    "the observer should exclude mutations produced solely by its own temporary diagnostic badge",
+  );
+  assert.match(
+    sessionSource,
+    /if \(isTempRuntimeUiDiagnosticMutation\(record\)\)[\s\S]*ignoredDiagnosticRecordCount \+= 1;[\s\S]*continue;/s,
+    "diagnostic-only mutation records should not be counted as product UI commits",
+  );
+  assert.match(
+    sessionSource,
+    /recordSendTrace\("session-ui:mutation-observer-ready", \{[\s\S]*diagnosticNodesExcluded: true,[\s\S]*root: "session-center-pane"/s,
+    "the trace should state that self-observation is disabled for the center-pane observer",
+  );
+  assert.match(
+    sessionSource,
     /frame = window\.requestAnimationFrame\(\(\) => flush\("animation-frame"\)\)/,
     "multiple records from one paint should become one trace record",
   );
@@ -135,6 +155,11 @@ test("dev runtime records bounded session DOM mutation batches alongside state c
     sessionSource,
     /latestUiMarker: renderSource\.source,[\s\S]*latestUiMarkerKind: renderSource\.markerKind,[\s\S]*latestUiMarkerAgeMs:/s,
     "DOM batches should describe their newest marker as temporal context rather than a causal render source",
+  );
+  assert.match(
+    sessionSource,
+    /ignoredDiagnosticRecordCount,[\s\S]*attributeNames:/s,
+    "product mutation batches should disclose diagnostic records excluded during the same observation window",
   );
   assert.match(
     sessionSource,
@@ -355,7 +380,7 @@ test("pending send state renders an immediate local echo while the footer owns r
 
   assert.match(
     transcriptViewportSource,
-    /export const resolveTranscriptSourceMessages = <T,>\(\{[\s\S]*localSubmittedMessage \? \[\.\.\.messages, localSubmittedMessage\] : \[\.\.\.messages\];/s,
+    /export const resolveTranscriptSourceMessages = <T,>\(\{[\s\S]*localSubmittedMessage \? \[\.\.\.messages, localSubmittedMessage\] : messages as T\[\];/s,
     "rendered messages should append the local echo only while canonical transcript data is absent",
   );
 

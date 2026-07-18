@@ -11,6 +11,10 @@ const conversationServiceSource = readFileSync(
   new URL("../context/conversation-service.ts", import.meta.url),
   "utf8",
 );
+const lifecycleRecoverySource = readFileSync(
+  new URL("../context/session-lifecycle-recovery.ts", import.meta.url),
+  "utf8",
+);
 
 test("conversation runs remember abort and lifecycle run ids under scoped identities", () => {
   const runStart = conversationServiceSource.indexOf("  const submitConversationRunViaVesloWriteApi = async (");
@@ -102,6 +106,24 @@ test("reload guards include background workspace busy runs", () => {
     source,
     /onForceStopSession=\{\(sessionID, session\) => abortSession\(sessionID, session\)\}/,
     "MCP auth modal force-stop should preserve the scoped background session metadata",
+  );
+});
+
+test("lifecycle recovery tracks one busy runtime session per conversation run", () => {
+  assert.match(
+    lifecycleRecoverySource,
+    /const busySessionIdForScope = \(scope: SessionLifecycleRecoveryScope\) =>\s*normalize\(scope\.opencodeSessionId\) \|\| normalize\(scope\.sessionId\);/,
+    "busy ownership should use the OpenCode session id, with the UI session only as a fallback",
+  );
+  assert.doesNotMatch(
+    lifecycleRecoverySource,
+    /for \(const sessionId of unique\(\[scope\.sessionId, scope\.opencodeSessionId, scope\.conversationId\]\)\) \{[\s\S]{0,220}?options\.notifySessionBusy\(sessionId,/,
+    "conversation identity aliases must not become separate busy runs",
+  );
+  assert.match(
+    lifecycleRecoverySource,
+    /const busySessionId = busySessionIdForScope\(scope\);\s*if \(busySessionId\) options\.notifySessionBusy\(busySessionId, admittedStatus\.status, workspaceId\);/,
+    "accepted lifecycle runs should publish exactly one busy identity",
   );
 });
 

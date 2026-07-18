@@ -122,6 +122,7 @@ export function createSystemState(options: {
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
   setError: (value: string | null) => void;
+  recordReloadTrace?: (event: string, payload: Record<string, unknown>) => void;
   notion?: NotionState;
 }) {
   const routing = options.routing ?? { active: options.client };
@@ -261,32 +262,51 @@ export function createSystemState(options: {
   }
 
   function markReloadRequired(reason: ReloadReason, trigger?: ReloadTrigger) {
+    const alreadyRequired = reloadRequired();
+    const previousReasons = reloadReasons();
+    const nextReasons = previousReasons.includes(reason) ? previousReasons : [...previousReasons, reason];
+    const nextTrigger = trigger ?? {
+      type:
+        reason === "plugins"
+          ? "plugin"
+          : reason === "skills"
+            ? "skill"
+            : reason === "agents"
+              ? "agent"
+              : reason === "commands"
+                ? "command"
+                : reason,
+    };
     setReloadRequired(true);
     setReloadLastTriggeredAt(Date.now());
-    setReloadReasons((current) => (current.includes(reason) ? current : [...current, reason]));
-    if (trigger) {
-      setReloadTrigger(trigger);
-    } else {
-      setReloadTrigger({
-        type:
-          reason === "plugins"
-            ? "plugin"
-            : reason === "skills"
-              ? "skill"
-              : reason === "agents"
-                ? "agent"
-                : reason === "commands"
-                  ? "command"
-                  : reason,
-      });
-    }
+    setReloadReasons(nextReasons);
+    setReloadTrigger(nextTrigger);
+    options.recordReloadTrace?.("reload-state:marked", {
+      reason,
+      alreadyRequired,
+      previousReasons,
+      reasons: nextReasons,
+      triggerType: nextTrigger.type,
+      triggerAction: nextTrigger.action ?? null,
+    });
   }
 
   function clearReloadRequired() {
+    const wasRequired = reloadRequired();
+    const previousReasons = reloadReasons();
+    const previousTrigger = reloadTrigger();
     setReloadRequired(false);
     setReloadReasons([]);
     setReloadError(null);
     setReloadTrigger(null);
+    if (wasRequired || previousReasons.length > 0 || previousTrigger) {
+      options.recordReloadTrace?.("reload-state:cleared", {
+        wasRequired,
+        previousReasons,
+        triggerType: previousTrigger?.type ?? null,
+        triggerAction: previousTrigger?.action ?? null,
+      });
+    }
   }
 
   const reloadCopy = createMemo(() => {

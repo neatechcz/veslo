@@ -8,6 +8,7 @@ import {
   resolveHeaderConnectedVersion,
   resolveHeaderStatus,
   resolveLocalHostLabel,
+  shouldShowSessionReloadBanner,
 } from "../app-view-props.js";
 
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
@@ -114,6 +115,42 @@ test("app view prop helpers preserve header and busy labels", () => {
     }),
     "localhost:4888",
   );
+});
+
+test("session reload banner visibility keeps the skill and active-run policy explicit", () => {
+  assert.equal(shouldShowSessionReloadBanner({
+    reloadRequired: false,
+    reloadTrigger: { type: "config" },
+    activeReloadBlockingSessionCount: 1,
+  }), false);
+  assert.equal(shouldShowSessionReloadBanner({
+    reloadRequired: true,
+    reloadTrigger: { type: "config" },
+    activeReloadBlockingSessionCount: 0,
+  }), false);
+  assert.equal(shouldShowSessionReloadBanner({
+    reloadRequired: true,
+    reloadTrigger: { type: "config" },
+    activeReloadBlockingSessionCount: 1,
+  }), true);
+  assert.equal(shouldShowSessionReloadBanner({
+    reloadRequired: true,
+    reloadTrigger: { type: "skill" },
+    activeReloadBlockingSessionCount: 0,
+  }), true);
+});
+
+test("app traces reload banner transitions without session identifiers or trigger paths", () => {
+  const marker = 'recordSendWorkflowTrace("app", "session-reload-banner:state", state';
+  const markerIndex = appSource.indexOf(marker);
+  assert.notEqual(markerIndex, -1, "app should trace reload banner state transitions");
+  const stateStart = appSource.lastIndexOf("const state = {", markerIndex);
+  assert.notEqual(stateStart, -1, "reload banner trace should build a state payload");
+  const traceBlock = appSource.slice(stateStart, markerIndex + marker.length);
+
+  assert.match(traceBlock, /visible: showSessionReloadBanner\(\)/);
+  assert.match(traceBlock, /activeCount/);
+  assert.doesNotMatch(traceBlock, /trigger\.name|trigger\.path|session\.id/);
 });
 
 test("dashboard view access preserves remote and local skill/plugin permissions", () => {

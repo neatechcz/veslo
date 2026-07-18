@@ -13,6 +13,9 @@ import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
 import { createComposerDraftHandoffController } from "./composer-draft-handoff";
 import { findMentionTrigger } from "./composer-mention-trigger";
+import { uiEffectTrace } from "../../lib/ui-effect-trace";
+
+let composerEditorInstanceSequence = 0;
 
 
 type MentionOption = {
@@ -458,6 +461,7 @@ export default function Composer(props: ComposerProps) {
       : `sticky bottom-0 z-20 bg-gradient-to-t from-gray-1 via-gray-1 to-transparent px-8 ${props.compactTopSpacing ? "pt-0" : "pt-12"} pb-3`,
   );
   let editorRef: HTMLDivElement | undefined;
+  const editorInstanceId = `composer_${(composerEditorInstanceSequence += 1)}`;
   let fileInputRef: HTMLInputElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
@@ -465,6 +469,7 @@ export default function Composer(props: ComposerProps) {
   let draftScheduledAt = 0;
   let lastInputAt = 0;
   let fileDragDepth = 0;
+  let authorizedFocusChange: "pointer" | "keyboard" | "window-blur" | null = null;
   const pasteTextById = new Map<string, string>();
   // Track IME composition state so we can combine it with keyCode === 229 to
   // reliably suppress Enter during CJK input across Chrome, Safari, and WebKit.
@@ -511,7 +516,11 @@ export default function Composer(props: ComposerProps) {
   const [slashLoading, setSlashLoading] = createSignal(false);
 
   onMount(() => {
-    queueMicrotask(() => focusEditorEnd());
+    uiEffectTrace.record("ui-composer:mount", {
+      editorInstanceId,
+      entryPlacement: props.entryPlacement ?? "footer",
+    });
+    queueMicrotask(() => focusEditorEnd("mount"));
 
     // Bind composition events directly via addEventListener because SolidJS
     // does not delegate compositionstart/compositionend — the camelCase JSX
@@ -525,7 +534,41 @@ export default function Composer(props: ComposerProps) {
           imeComposing = false;
         });
       });
+      editorRef.addEventListener("focusin", () => {
+        uiEffectTrace.record("ui-focus:changed", { editorInstanceId, focused: true });
+      });
+      editorRef.addEventListener("focusout", (event) => {
+        const related = event.relatedTarget;
+        const reason = authorizedFocusChange;
+        authorizedFocusChange = null;
+        uiEffectTrace.record("ui-focus:changed", {
+          editorInstanceId,
+          focused: false,
+          authorized: reason !== null,
+          authorizationReason: reason,
+          relatedTargetRole: related instanceof Element ? related.getAttribute("role") ?? related.tagName.toLowerCase() : null,
+        });
+      });
     }
+
+    const authorizeFocusChange = (reason: NonNullable<typeof authorizedFocusChange>) => {
+      authorizedFocusChange = reason;
+      queueMicrotask(() => {
+        if (authorizedFocusChange === reason) authorizedFocusChange = null;
+      });
+    };
+    const authorizePointerFocusChange = () => {
+      authorizeFocusChange("pointer");
+    };
+    const authorizeKeyboardFocusChange = (event: KeyboardEvent) => {
+      if (event.key === "Tab" || event.metaKey || event.ctrlKey) authorizeFocusChange("keyboard");
+    };
+    const authorizeWindowBlur = () => {
+      authorizeFocusChange("window-blur");
+    };
+    window.addEventListener("pointerdown", authorizePointerFocusChange, true);
+    window.addEventListener("keydown", authorizeKeyboardFocusChange, true);
+    window.addEventListener("blur", authorizeWindowBlur);
 
     const clearDragState = () => {
       clearFileDragState();
@@ -535,6 +578,9 @@ export default function Composer(props: ComposerProps) {
     onCleanup(() => {
       window.removeEventListener("dragend", clearDragState);
       window.removeEventListener("drop", clearDragState);
+      window.removeEventListener("pointerdown", authorizePointerFocusChange, true);
+      window.removeEventListener("keydown", authorizeKeyboardFocusChange, true);
+      window.removeEventListener("blur", authorizeWindowBlur);
     });
   });
 
@@ -631,6 +677,13 @@ export default function Composer(props: ComposerProps) {
     if (!editorRef) return;
     const value = props.prompt;
     const current = readEditorText(editorRef);
+    uiEffectTrace.record("ui-effect:run", {
+      owner: "composer.prompt-sync",
+      editorInstanceId,
+      promptLength: value.length,
+      currentLength: current.length,
+      equal: value === current,
+    });
 
     // Robust Echo Cancellation:
     // If the incoming value matches ANY recently emitted text, it's a stale echo or confirmation.
@@ -667,6 +720,16 @@ export default function Composer(props: ComposerProps) {
     }
 
     // External update confirmed
+    uiEffectTrace.record("ui-draft:mutation", {
+      editorInstanceId,
+      reason: "external-sync",
+      previousLength: current.length,
+      nextLength: value.length,
+      focused: document.activeElement === editorRef,
+    });
+    if (document.activeElement === editorRef) {
+      uiEffectTrace.reportIncident("draft-external-sync-while-focused", { editorInstanceId });
+    }
     if (value.startsWith("!") && mode() === "prompt") {
       setMode("shell");
       setEditorText(value.slice(1).trimStart());
@@ -758,6 +821,11 @@ export default function Composer(props: ComposerProps) {
     if (submitLocked()) return;
     const startedAt = perfNow();
     const currentText = readEditorText(editorRef);
+    uiEffectTrace.record("ui-draft:mutation", {
+      editorInstanceId,
+      reason: "user-input",
+      nextLength: currentText.length,
+    });
     const mentionStartedAt = perfNow();
     if (mentionOpen() || currentText.includes("@")) {
       updateMentionQuery(currentText);
@@ -790,8 +858,9 @@ export default function Composer(props: ComposerProps) {
     }
   };
 
-  const focusEditorEnd = () => {
+  const focusEditorEnd = (reason = "automatic") => {
     if (!editorRef) return;
+    uiEffectTrace.record("ui-focus:intent", { editorInstanceId, reason });
     const selection = window.getSelection();
     if (!selection) return;
     const range = document.createRange();
@@ -1746,6 +1815,9 @@ export default function Composer(props: ComposerProps) {
   });
 
   onCleanup(() => {
+    const focused = document.activeElement === editorRef;
+    uiEffectTrace.record("ui-composer:dispose", { editorInstanceId, focused });
+    if (focused) uiEffectTrace.reportIncident("composer-disposed-while-focused", { editorInstanceId });
     if (emitTimer !== null) {
       window.clearTimeout(emitTimer);
       emitTimer = null;
@@ -1950,6 +2022,7 @@ export default function Composer(props: ComposerProps) {
                     <div
                       ref={editorRef}
                       data-testid="session-composer-input"
+                      data-composer-editor-instance={editorInstanceId}
                       contentEditable={!submitLocked()}
                       role="textbox"
                       aria-disabled={submitLocked() ? "true" : "false"}

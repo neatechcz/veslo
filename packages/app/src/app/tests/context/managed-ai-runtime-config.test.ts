@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
   type ManagedAiAccessProfile,
 } from "../../lib/ai-access.js";
@@ -525,6 +526,56 @@ test("runtime config sync writes managed provider config through Veslo server co
       ?.options as Record<string, unknown>)?.apiKey,
     VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
   );
+});
+
+test("cold server config containing the managed credential environment reference does not rewrite or request reload", async () => {
+  const client = createVesloClient();
+  const reloads: string[] = [];
+  const content = formatManagedAiAccessConfig("{}", {
+    profile,
+    serverBaseUrl: "http://127.0.0.1:34115",
+    engineBaseUrl: "http://127.0.0.1:34116",
+    serverClientToken: "local-client-token",
+    gatewayAccessToken: "gateway-access-token",
+    workspaceId: "ws-active",
+  });
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    return { opencode: JSON.parse(content) as Record<string, unknown> };
+  };
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    engine: () => ({ running: false, runtime: "direct", projectDir: "/repo" }),
+    markReloadRequired: (_scope, change) => reloads.push(change.action),
+  }));
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.equal(client.patched.length, 0);
+  assert.deepEqual(reloads, []);
+});
+
+test("managed config write before engine start does not request a redundant reload", async () => {
+  const client = createVesloClient();
+  const reloads: string[] = [];
+  const reloadDecisions: Array<Record<string, unknown>> = [];
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    engine: () => ({ running: false, runtime: "direct", projectDir: "/repo" }),
+    markReloadRequired: (_scope, change) => reloads.push(change.action),
+    recordManagedAiWorkflowTrace: (event, payload) => {
+      if (event === "managed-ai-config-sync:reload-decision") reloadDecisions.push(payload);
+    },
+  }));
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.equal(client.patched.length, 1);
+  assert.deepEqual(reloads, []);
+  assert.equal(reloadDecisions.length, 1);
+  assert.equal(reloadDecisions[0]?.configSource, "veslo-server-config");
+  assert.equal(reloadDecisions[0]?.engineRunning, false);
+  assert.equal(reloadDecisions[0]?.decision, "skip-engine-not-running");
 });
 
 test("runtime-start config gate waits for managed access before it writes the cold engine config", async () => {

@@ -7,6 +7,7 @@ import {
   resolveHiddenMessageCount,
   resolveRevealEarlierMessagesAction,
   resolveRenderedTranscriptMessages,
+  resolveTranscriptSourceMessages,
   resolveTranscriptWindowStateChange,
   shouldAutoScrollForRunProgress,
   shouldAutoScrollForTranscriptGrowth,
@@ -29,6 +30,21 @@ test("rendered transcript window contains canonical messages when there is no lo
   });
 
   assert.deepEqual(rendered.map((item) => item.info.id), ["m5", "m6"]);
+});
+
+test("canonical transcript source retains its array identity without a local echo", () => {
+  const messages = Array.from({ length: 2 }, (_, index) => message(`m${index + 1}`));
+  const source = resolveTranscriptSourceMessages({ messages, localSubmittedMessage: null });
+  const rendered = resolveRenderedTranscriptMessages({
+    messages,
+    localSubmittedMessage: null,
+    searchActive: true,
+    windowExpanded: false,
+    windowStart: 0,
+  });
+
+  assert.equal(source, messages);
+  assert.equal(rendered, messages);
 });
 
 test("rendered transcript window appends a local submitted echo without masking canonical messages", () => {

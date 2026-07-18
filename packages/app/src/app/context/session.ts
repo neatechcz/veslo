@@ -36,9 +36,9 @@ import {
 } from "../lib/scoped-session-status";
 import {
   appendSessionErrorTurnModel,
-  applyCommandDisplayAlias,
   formatSlashCommandDisplay,
   readSessionErrorTurnsForScope,
+  reconcileMessageProjection,
   scopedSessionAliasKeys,
   sessionErrorTurnScopeKey,
   sortSessionsByActivity,
@@ -970,15 +970,22 @@ export function createSessionStore(options: {
   const conversationRunDiagnosticsBySessionKey = () => store.conversationRunDiagnosticsBySessionKey;
   const events = () => store.events;
 
+  let messageProjection = null as import("./session-store-model").MessageProjectionCache | null;
   const messages = createMemo<MessageWithParts[]>(() => {
     const id = options.selectedSessionId();
-    if (!id) return [];
+    if (!id) {
+      messageProjection = null;
+      return [];
+    }
     const list = store.messages[id] ?? [];
-    return list.map((info) => {
-      const parts = store.parts[info.id] ?? [];
-      const alias = store.commandDisplayByMessageID[info.id];
-      return applyCommandDisplayAlias(info, parts, alias);
+    messageProjection = reconcileMessageProjection({
+      previous: messageProjection,
+      sessionID: id,
+      infos: list,
+      partsByMessageID: store.parts,
+      commandDisplayByMessageID: store.commandDisplayByMessageID,
     });
+    return messageProjection.messages;
   });
 
   const setSessions = (next: Session[]) => {

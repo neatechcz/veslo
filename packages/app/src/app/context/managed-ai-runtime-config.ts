@@ -1278,6 +1278,21 @@ export function createManagedAiRuntimeConfigSync(
     }
   };
 
+  const markReloadRequiredAfterConfigWrite = (input: {
+    configSource: "veslo-server-config" | "project-config-file";
+    traceContext: Record<string, unknown>;
+  }) => {
+    const engineRunning = deps.engine()?.running === true;
+    deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:reload-decision", {
+      ...input.traceContext,
+      configSource: input.configSource,
+      engineRunning,
+      decision: engineRunning ? "mark-reload-required" : "skip-engine-not-running",
+    });
+    if (!engineRunning) return;
+    deps.markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+  };
+
   async function syncVesloServerConfig(input: {
     vesloClient: ManagedAiRuntimeConfigVesloClient;
     vesloWorkspaceId: string;
@@ -1376,7 +1391,10 @@ export function createManagedAiRuntimeConfigSync(
         desiredBytes: content.length,
       });
       lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
-      deps.markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+      markReloadRequiredAfterConfigWrite({
+        configSource: "veslo-server-config",
+        traceContext: input.configSyncTracePayload,
+      });
       maybeMarkManagedConfigApplied(input.providerRoutingReloadKey, true);
       return;
     }
@@ -1404,7 +1422,10 @@ export function createManagedAiRuntimeConfigSync(
     await input.vesloClient.patchConfig(input.vesloWorkspaceId, {
       opencode: { model: formatModelRef(input.nextModel) },
     });
-    deps.markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+    markReloadRequiredAfterConfigWrite({
+      configSource: "veslo-server-config",
+      traceContext: input.configSyncTracePayload,
+    });
   }
 
   async function syncProjectConfig(input: {
@@ -1478,7 +1499,10 @@ export function createManagedAiRuntimeConfigSync(
         configSource: "project-config-file",
         desiredBytes: content.length,
       });
-      deps.markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+      markReloadRequiredAfterConfigWrite({
+        configSource: "project-config-file",
+        traceContext: input.configSyncTracePayload,
+      });
       maybeMarkManagedConfigApplied(input.providerRoutingReloadKey, true);
       return;
     }
@@ -1509,7 +1533,10 @@ export function createManagedAiRuntimeConfigSync(
       throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
     }
     lastKnownConfigSnapshotByWs.set(input.root, getConfigSnapshot(content));
-    deps.markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
+    markReloadRequiredAfterConfigWrite({
+      configSource: "project-config-file",
+      traceContext: input.configSyncTracePayload,
+    });
   }
 
   function managedConfigContentsMatch(

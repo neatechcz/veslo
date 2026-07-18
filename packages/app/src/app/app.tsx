@@ -139,7 +139,7 @@ import McpAuthModal from "./components/mcp-auth-modal";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
-import { createAppViewProps } from "./app-view-props";
+import { createAppViewProps, shouldShowSessionReloadBanner } from "./app-view-props";
 import { createScheduledAutomationStore } from "./pages/scheduled-automation-store";
 import {
   createSessionCreationWorkflow,
@@ -218,7 +218,6 @@ import {
   removeMcpFromConfig,
   validateMcpServerName,
 } from "./mcp";
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
   MessageWithParts,
@@ -283,6 +282,7 @@ import {
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
+import { createVisibleMessageProjection } from "./context/session-visible-messages";
 import type { ReconnectNotice, ReconnectState } from "./context/session-reconnect";
 import {
   createTranscriptProjectionStore,
@@ -1893,13 +1893,6 @@ export default function App() {
     void triggerAutoCompaction(sessionID);
   });
 
-  const messageIdFromInfo = (message: MessageWithParts) => {
-    const id = (message.info as { id?: string | number }).id;
-    if (typeof id === "string") return id;
-    if (typeof id === "number") return String(id);
-    return "";
-  };
-
   const createSyntheticSessionErrorMessage = (
     sessionID: string,
     errorTurn: SessionErrorTurn,
@@ -1933,31 +1926,7 @@ export default function App() {
     };
   };
 
-  const insertSyntheticSessionErrors = (
-    list: MessageWithParts[],
-    sessionID: string | null,
-    errorTurns: SessionErrorTurn[],
-  ) => {
-    if (!sessionID || errorTurns.length === 0) return list;
-
-    const next = list.slice();
-    errorTurns.forEach((errorTurn) => {
-      if (next.some((message) => messageIdFromInfo(message) === errorTurn.id)) return;
-      const syntheticMessage = createSyntheticSessionErrorMessage(sessionID, errorTurn);
-      const anchorIndex = errorTurn.afterMessageID
-        ? next.findIndex((message) => messageIdFromInfo(message) === errorTurn.afterMessageID)
-        : -1;
-
-      if (anchorIndex === -1) {
-        next.push(syntheticMessage);
-        return;
-      }
-
-      next.splice(anchorIndex + 1, 0, syntheticMessage);
-    });
-
-    return next;
-  };
+  const reconcileVisibleMessages = createVisibleMessageProjection(createSyntheticSessionErrorMessage);
 
   const upsertLocalSession = (next: Session | null | undefined) => {
     const id = (next as { id?: string } | null)?.id ?? "";
@@ -1980,16 +1949,12 @@ export default function App() {
   const visibleMessages = createMemo(() => {
     const sessionID = selectedSessionId();
     const errorTurns = sessionStore.selectedSessionErrorTurns();
-    const list = messages().filter((message) => {
-      const id = messageIdFromInfo(message);
-      return !id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+    return reconcileVisibleMessages({
+      source: messages(),
+      sessionID,
+      errorTurns,
+      revertMessageID: selectedSession()?.revert?.messageID ?? null,
     });
-    const revert = selectedSession()?.revert?.messageID ?? null;
-    const visible = !revert ? list : list.filter((message) => {
-      const id = messageIdFromInfo(message);
-      return Boolean(id) && id < revert;
-    });
-    return insertSyntheticSessionErrors(visible, sessionID, errorTurns);
   });
 
   const [pendingSessionSwitchPerf, setPendingSessionSwitchPerf] = createSignal<{
@@ -3740,6 +3705,8 @@ export default function App() {
     setProviderDefaults,
     setProviderConnectedIds,
     setError,
+    recordReloadTrace: (event, payload) =>
+      recordSendWorkflowTrace("system-state", event, payload, { developerMode: developerMode() }),
     notion: {
       status: notionStatus,
       setStatus: setNotionStatus,
@@ -4055,6 +4022,34 @@ export default function App() {
     }
 
     return Array.from(byKey.values());
+  });
+
+  const showSessionReloadBanner = createMemo(() => shouldShowSessionReloadBanner({
+    reloadRequired: reloadRequired(),
+    reloadTrigger: reloadTrigger(),
+    activeReloadBlockingSessionCount: activeReloadBlockingSessions().length,
+  }));
+  let lastSessionReloadBannerTraceKey: string | null = null;
+  createEffect(() => {
+    const trigger = reloadTrigger();
+    const activeCount = activeReloadBlockingSessions().length;
+    const state = {
+      visible: showSessionReloadBanner(),
+      blocked: activeCount > 0,
+      reloadRequired: reloadRequired(),
+      reasons: reloadReasons(),
+      triggerType: trigger?.type ?? null,
+      triggerAction: trigger?.action ?? null,
+      activeCount,
+    };
+    const traceKey = JSON.stringify(state);
+    if (traceKey === lastSessionReloadBannerTraceKey) return;
+    const hadPreviousState = lastSessionReloadBannerTraceKey !== null;
+    lastSessionReloadBannerTraceKey = traceKey;
+    if (!hadPreviousState && !state.visible) return;
+    recordSendWorkflowTrace("app", "session-reload-banner:state", state, {
+      developerMode: developerMode(),
+    });
   });
 
   createEffect(() => {

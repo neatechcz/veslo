@@ -66,8 +66,8 @@ test("app composes the skill registry event orchestrator after extension store s
   );
   assert.match(
     appViewPropsSource,
-    /showSkillReloadBanner:\s*[\s\S]*activeReloadBlockingSessions\(\)\.length > 0/,
-    "A blocked backend run should expose the existing reload banner even without a skill mutation",
+    /showSkillReloadBanner:\s*reloadRequired\(\)\s*&&\s*\(reloadTrigger\(\)\?\.type === "skill" \|\| activeReloadBlockingSessions\(\)\.length > 0\)/,
+    "Active runs should block an already required reload, not create a reload banner on their own",
   );
 });
 

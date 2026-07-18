@@ -170,6 +170,12 @@ const recoveryKey = (scope: SessionLifecycleRecoveryScope) => {
 export function createSessionLifecycleRecoveryController(
   options: SessionLifecycleRecoveryControllerOptions,
 ) {
+  // A conversation id identifies the durable Veslo conversation, not a separate
+  // OpenCode run. Status aliases remain useful for transcript and route recovery,
+  // but busy ownership must have exactly one runtime identity.
+  const busySessionIdForScope = (scope: SessionLifecycleRecoveryScope) =>
+    normalize(scope.opencodeSessionId) || normalize(scope.sessionId);
+
   const initialDelayMs = Math.max(0, options.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS);
   const pollMs = Math.max(250, options.pollMs ?? DEFAULT_POLL_MS);
   const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
@@ -338,8 +344,9 @@ export function createSessionLifecycleRecoveryController(
     ]);
     for (const sessionId of sessionIds) {
       options.setSessionStatusForWorkspace(sessionId, "idle", workspaceId);
-      options.notifySessionBusy(sessionId, "idle", workspaceId);
     }
+    const busySessionId = busySessionIdForScope(scope);
+    if (busySessionId) options.notifySessionBusy(busySessionId, "idle", workspaceId);
 
     const selectedSessionId = normalize(options.selectedSessionId());
     const selectedRun = Boolean(selectedSessionId && sessionIds.includes(selectedSessionId));
@@ -508,8 +515,9 @@ export function createSessionLifecycleRecoveryController(
     ]);
     for (const sessionId of sessionIds) {
       options.setSessionStatusForWorkspace(sessionId, "submitted", workspaceId);
-      options.notifySessionBusy(sessionId, "submitted", workspaceId);
     }
+    const busySessionId = busySessionIdForScope(scope);
+    if (busySessionId) options.notifySessionBusy(busySessionId, "submitted", workspaceId);
     traceForScope("session-lifecycle-recovery:queued", scope, generation, {
       sessionIds,
     });
@@ -858,8 +866,9 @@ export function createSessionLifecycleRecoveryController(
         const workspaceId = normalize(scope.workspaceId);
         for (const sessionId of unique([scope.sessionId, scope.opencodeSessionId, scope.conversationId])) {
           options.setSessionStatusForWorkspace(sessionId, admittedStatus.status, workspaceId);
-          options.notifySessionBusy(sessionId, admittedStatus.status, workspaceId);
         }
+        const busySessionId = busySessionIdForScope(scope);
+        if (busySessionId) options.notifySessionBusy(busySessionId, admittedStatus.status, workspaceId);
         options.onConversationRunStatus?.(scope, admittedStatus);
         traceForScope("session-lifecycle-recovery:admitted", scope, existingWatch.generation, {
           outcome: "accepted-run-promoted-existing-watch",
@@ -892,8 +901,9 @@ export function createSessionLifecycleRecoveryController(
       const workspaceId = normalize(scope.workspaceId);
       for (const sessionId of unique([scope.sessionId, scope.opencodeSessionId, scope.conversationId])) {
         options.setSessionStatusForWorkspace(sessionId, "submitted", workspaceId);
-        options.notifySessionBusy(sessionId, "submitted", workspaceId);
       }
+      const busySessionId = busySessionIdForScope(scope);
+      if (busySessionId) options.notifySessionBusy(busySessionId, "submitted", workspaceId);
       options.onConversationRunStatus?.(scope, submittedStatus);
       traceForScope("session-lifecycle-recovery:admitted", scope, 1, {
         outcome: "accepted-run-admitted",

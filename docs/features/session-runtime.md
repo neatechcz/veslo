@@ -195,7 +195,9 @@ Legacy pending queue-key prefixes remain compatibility state. They must not be r
 
 Workspace/session visibility is not the runtime boundary. A run in a non-visible workspace must keep using its workspace-scoped server/orchestrator/OpenCode runtime, including file writes and provider requests, and append to the same conversation transcript. The UI consumes background workspace SSE without merging message parts into the currently visible transcript: it updates the scoped status/busy marker, refreshes permission/question prompts, and persists background transcript snapshots through the Veslo server so returning to that workspace can hydrate from durable state. Destructive global actions such as update install, reset, or engine reload must include background `workspaceBusy` entries in their active-run guard instead of checking only the currently visible session list.
 
-Workspace busy state is scoped as `workspaceId -> sessionId -> startedAt`, so multiple runs in one workspace cannot overwrite each other. Session status readers should prefer workspace-scoped status keys and use plain `session.id` only as a legacy fallback for older callers.
+Workspace busy state is scoped as `workspaceId -> sessionId -> startedAt`, so multiple runs in one workspace cannot overwrite each other. A busy entry must use the canonical OpenCode runtime session id (falling back to the UI session id); a durable conversation id is an alias for status and transcript recovery, not a second active run. Session status readers should prefer workspace-scoped status keys and use plain `session.id` only as a legacy fallback for older callers.
+
+Reload presentation is separate from busy tracking: a pending reload is required before showing a reload banner. Active runs only block that pending reload action, so a normal in-progress conversation never produces a configuration-reload banner or duplicate abort attempts.
 
 Main source of truth:
 

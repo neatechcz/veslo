@@ -52,6 +52,14 @@ export type PendingMessageState =
 
 export type MessageBlocksRecomputedTrace = {
   revision: number;
+  displayRevision: number;
+  streamPartRevision: number;
+  messageArrayIdentityRevision: number;
+  messageArrayIdentityChanged: boolean;
+  streamingInputChanged: boolean;
+  showThinkingInputChanged: boolean;
+  developerModeInputChanged: boolean;
+  nestedReactiveDependencyChanged: boolean;
   messageCount: number;
   blockCount: number;
   changedMessageCount: number;
@@ -105,6 +113,33 @@ function messageInfoString(message: MessageWithParts, key: string): string {
   const value = record[key];
   return value === undefined || value === null ? "" : String(value);
 }
+
+const digestDisplayValue = (value: unknown) => {
+  let source = "";
+  try {
+    source = JSON.stringify(value) ?? "";
+  } catch {
+    source = String(value ?? "");
+  }
+  let hash = 5381;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) + hash) ^ source.charCodeAt(index);
+  }
+  return `${source.length}:${hash >>> 0}`;
+};
+
+const messageDisplayDigest = (messages: MessageWithParts[]) =>
+  messages
+    .map((message, index) => {
+      const info = message.info as unknown as Record<string, unknown>;
+      const messageId = messageInfoString(message, "id") || `idx:${index}`;
+      const parts = message.parts.map((part) => {
+        const record = part as unknown as Record<string, unknown>;
+        return `${String(record.id ?? "")}\u0000${String(record.type ?? "")}\u0000${digestDisplayValue(part)}`;
+      });
+      return `${messageId}\u0000${String(info.role ?? "")}\u0000${parts.join("\u0001")}`;
+    })
+    .join("\u0002");
 
 function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   if (left.size !== right.size) return false;
@@ -640,13 +675,28 @@ export default function MessageList(props: MessageListProps) {
     relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
 
   let messageBlocksRevision = 0;
+  let displayRevision = 0;
+  let streamPartRevision = 0;
+  let messageArrayIdentityRevision = 0;
+  let previousMessages: MessageWithParts[] | null = null;
+  let previousStreaming: boolean | null = null;
+  let previousShowThinking: boolean | null = null;
+  let previousDeveloperMode: boolean | null = null;
+  let previousMessageDisplayDigest: string | null = null;
   const messageBlockEntries = createMemo<ProgressRenderBlockEntry[]>(() => {
     const startedAt = perfNow();
+    const messages = props.messages;
+    const streaming = Boolean(props.isStreaming);
+    const messageArrayIdentityChanged = messages !== previousMessages;
+    const streamingInputChanged = previousStreaming !== null && streaming !== previousStreaming;
+    const showThinkingInputChanged = previousShowThinking !== null && props.showThinking !== previousShowThinking;
+    const developerModeInputChanged = previousDeveloperMode !== null && props.developerMode !== previousDeveloperMode;
+    if (messageArrayIdentityChanged) messageArrayIdentityRevision += 1;
     const nextMessagePartCountById = new Map<string, number>();
     let changedMessageCount = 0;
     let addedMessageCount = 0;
 
-    props.messages.forEach((message, index) => {
+    messages.forEach((message, index) => {
       const messageId = messageInfoString(message, "id");
       const idKey = messageId || `idx:${index}`;
       const totalParts = message.parts.length;
@@ -660,11 +710,26 @@ export default function MessageList(props: MessageListProps) {
     });
 
     const blocks = buildProgressRenderBlocks({
-      messages: props.messages,
-      isStreaming: Boolean(props.isStreaming),
+      messages,
+      isStreaming: streaming,
       developerMode: props.developerMode,
       showThinking: props.showThinking,
     });
+
+    const nextDisplayDigest = props.onMessageBlocksRecomputed ? messageDisplayDigest(messages) : null;
+    const displayChanged = nextDisplayDigest !== previousMessageDisplayDigest;
+    if (displayChanged) {
+      displayRevision += 1;
+      if (previousMessageDisplayDigest !== null && streaming) streamPartRevision += 1;
+      previousMessageDisplayDigest = nextDisplayDigest;
+    }
+    const nestedReactiveDependencyChanged =
+      previousMessages !== null &&
+      !messageArrayIdentityChanged &&
+      !streamingInputChanged &&
+      !showThinkingInputChanged &&
+      !developerModeInputChanged &&
+      !displayChanged;
 
     const toolPartCount = blocks.reduce((count, block) => {
       if (block.kind === "message") {
@@ -686,6 +751,10 @@ export default function MessageList(props: MessageListProps) {
       }
     });
     previousMessagePartCountById = nextMessagePartCountById;
+    previousMessages = messages;
+    previousStreaming = streaming;
+    previousShowThinking = props.showThinking;
+    previousDeveloperMode = props.developerMode;
 
     const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
     if (
@@ -697,14 +766,14 @@ export default function MessageList(props: MessageListProps) {
       )
     ) {
       recordPerfLog(true, "session.render", "message-blocks", {
-        messageCount: props.messages.length,
+        messageCount: messages.length,
         blockCount: blocks.length,
         changedMessageCount,
         addedMessageCount,
         removedMessageCount,
         toolPartCount,
         stepGroupCount,
-        streaming: Boolean(props.isStreaming),
+        streaming,
         ms: elapsedMs,
       });
     }
@@ -713,7 +782,15 @@ export default function MessageList(props: MessageListProps) {
     untrack(() => {
       props.onMessageBlocksRecomputed?.({
         revision: (messageBlocksRevision += 1),
-        messageCount: props.messages.length,
+        displayRevision,
+        streamPartRevision,
+        messageArrayIdentityRevision,
+        messageArrayIdentityChanged,
+        streamingInputChanged,
+        showThinkingInputChanged,
+        developerModeInputChanged,
+        nestedReactiveDependencyChanged,
+        messageCount: messages.length,
         blockCount: entries.length,
         changedMessageCount,
         addedMessageCount,
@@ -721,7 +798,7 @@ export default function MessageList(props: MessageListProps) {
         toolPartCount,
         stepGroupCount,
         unstableBlockKeyCount: entries.filter((entry) => entry.unstable).length,
-        streaming: Boolean(props.isStreaming),
+        streaming,
       });
     });
     return entries;

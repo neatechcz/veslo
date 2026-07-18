@@ -268,6 +268,18 @@ const describeSessionUiMutationTarget = (node: Node) => {
   return `${node.tagName.toLowerCase()}${classes.length ? `.${classes.join(".")}` : ""}`;
 };
 
+const isTempRuntimeUiDiagnosticNode = (node: Node | null) => {
+  const element = node instanceof Element ? node : node?.parentElement;
+  return Boolean(element?.closest("[data-temp-runtime-ui-render-source]"));
+};
+
+const isTempRuntimeUiDiagnosticMutation = (record: MutationRecord) => {
+  if (isTempRuntimeUiDiagnosticNode(record.target)) return true;
+  if (record.type !== "childList") return false;
+  const changedNodes = [...record.addedNodes, ...record.removedNodes];
+  return changedNodes.length > 0 && changedNodes.every((node) => isTempRuntimeUiDiagnosticNode(node));
+};
+
 type TempRuntimeUiRenderSurface = "workspace-initial" | "conversation";
 type TempRuntimeUiMarkerKind = "initial" | "flow" | "message-blocks";
 
@@ -2392,10 +2404,15 @@ export default function SessionView(props: SessionViewProps) {
     let attributeCount = 0;
     let addedNodeCount = 0;
     let removedNodeCount = 0;
+    let ignoredDiagnosticRecordCount = 0;
     const attributeNames = new Set<string>();
     const targets: string[] = [];
     const collect = (records: MutationRecord[]) => {
       for (const record of records) {
+        if (isTempRuntimeUiDiagnosticMutation(record)) {
+          ignoredDiagnosticRecordCount += 1;
+          continue;
+        }
         recordCount += 1;
         if (record.type === "childList") {
           childListCount += 1;
@@ -2423,6 +2440,7 @@ export default function SessionView(props: SessionViewProps) {
         attributeCount,
         addedNodeCount,
         removedNodeCount,
+        ignoredDiagnosticRecordCount,
         attributeNames: [...attributeNames].sort(),
         targets: [...targets],
         latestUiMarker: renderSource.source,
@@ -2442,6 +2460,7 @@ export default function SessionView(props: SessionViewProps) {
       attributeCount = 0;
       addedNodeCount = 0;
       removedNodeCount = 0;
+      ignoredDiagnosticRecordCount = 0;
       attributeNames.clear();
       targets.length = 0;
     };
@@ -2451,6 +2470,10 @@ export default function SessionView(props: SessionViewProps) {
       frame = window.requestAnimationFrame(() => flush("animation-frame"));
     });
     observer.observe(root, { attributes: true, childList: true, subtree: true });
+    recordSendTrace("session-ui:mutation-observer-ready", {
+      diagnosticNodesExcluded: true,
+      root: "session-center-pane",
+    });
 
     onCleanup(() => {
       collect(observer.takeRecords());

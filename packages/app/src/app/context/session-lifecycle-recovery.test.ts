@@ -707,7 +707,6 @@ test("session lifecycle recovery clears local busy state after terminal backend 
   ]);
   assert.deepEqual(busyWrites.map((item) => [item.sessionId, item.status, item.workspaceId]), [
     ["ses-a", "idle", "ws-a"],
-    ["conv-a", "idle", "ws-a"],
   ]);
   assert.equal(controller.activeWatchCount(), 0);
 });
@@ -917,7 +916,7 @@ test("session lifecycle recovery keeps a durable queued run submitted through en
   await waitForAsyncPoll();
 
   assert.deepEqual(statusWrites, ["ses-a:submitted", "conv-a:submitted"]);
-  assert.deepEqual(busyWrites, ["ses-a:submitted", "conv-a:submitted"]);
+  assert.deepEqual(busyWrites, ["ses-a:submitted"]);
   assert.equal(statuses["ws-a\0ses-a"], "submitted");
   assert.equal(controller.activeWatchCount(), 1);
 });

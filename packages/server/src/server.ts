@@ -281,6 +281,7 @@ const CONVERSATION_RUN_LIFECYCLE_RECONCILE_MAX_ATTEMPTS_DEFAULT = 600;
 const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
+const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE = "{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}";
 const AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES = 64 * 1024;
 const AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES = 64 * 1024;
 const AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES = 64 * 1024;
@@ -416,6 +417,13 @@ function isSensitiveConfigKey(key: string): boolean {
   return REDACTED_CONFIG_KEYS.some((segment) => normalized === segment || normalized.endsWith(segment));
 }
 
+function isSafeManagedConfigCredentialReference(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim();
+  return normalized === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE ||
+    normalized === `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`;
+}
+
 export function redactSensitiveConfig<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => redactSensitiveConfig(item)) as T;
@@ -426,6 +434,13 @@ export function redactSensitiveConfig<T>(value: T): T {
   const output: Record<string, unknown> = {};
   for (const [key, rawValue] of Object.entries(input)) {
     if (isSensitiveConfigKey(key)) {
+      // This is a public reference to a local runtime environment variable, not
+      // the credential itself. Keeping it intact makes a read-after-write
+      // stable while real values remain redacted and continue to be scrubbed.
+      if (isSafeManagedConfigCredentialReference(rawValue)) {
+        output[key] = rawValue;
+        continue;
+      }
       output[key] = rawValue === null || rawValue === undefined || rawValue === ""
         ? rawValue
         : REDACTED_SECRET_VALUE;

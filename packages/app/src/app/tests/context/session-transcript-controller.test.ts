@@ -295,6 +295,69 @@ test("terminal-authoritative snapshot can clear stale live parts", () => {
   });
 });
 
+test("equivalent snapshots are store no-ops, while a terminal replacement happens once", () => {
+  createRoot((dispose) => {
+    try {
+      const { controller, store, setStore } = makeController();
+      const message = makeMessage("msg-a", 1);
+      const partial = makeTextPart("part-a", "msg-a", "sess-a", "partial response");
+      const durable = makeTextPart("part-a", "msg-a", "sess-a", "durable response");
+
+      controller.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        fetchedAt: 10,
+        limit: 1,
+        messages: [message],
+        partsByMessageId: { "msg-a": [durable] },
+      });
+      const firstMessages = store.messages["sess-a"];
+      const firstParts = store.parts["msg-a"];
+
+      controller.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        fetchedAt: 11,
+        limit: 1,
+        messages: [{ ...message }],
+        partsByMessageId: { "msg-a": [{ ...durable }] },
+      });
+      assert.equal(store.messages["sess-a"], firstMessages);
+      assert.equal(store.parts["msg-a"], firstParts);
+
+      setStore("parts", "msg-a", [partial]);
+      controller.hydrateTranscriptSnapshot(
+        {
+          workspaceId: "ws-a",
+          sessionId: "sess-a",
+          fetchedAt: 12,
+          limit: 1,
+          messages: [{ ...message }],
+          partsByMessageId: { "msg-a": [{ ...durable }] },
+        },
+        { preserveLiveParts: false },
+      );
+      const terminalParts = store.parts["msg-a"];
+      assert.deepEqual(terminalParts, [durable]);
+
+      controller.hydrateTranscriptSnapshot(
+        {
+          workspaceId: "ws-a",
+          sessionId: "sess-a",
+          fetchedAt: 13,
+          limit: 1,
+          messages: [{ ...message }],
+          partsByMessageId: { "msg-a": [{ ...durable }] },
+        },
+        { preserveLiveParts: false },
+      );
+      assert.equal(store.parts["msg-a"], terminalParts);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("hydrateTranscriptSnapshot still adopts non-empty snapshot parts", () => {
   createRoot((dispose) => {
     try {
