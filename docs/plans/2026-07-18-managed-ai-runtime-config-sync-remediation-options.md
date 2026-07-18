@@ -1,26 +1,24 @@
 ---
-title: Managed AI Runtime Config Sync Remediation Options
+title: Managed AI Runtime Config Sync Remediation
 date: 2026-07-18
-status: proposed
+status: in_progress
 done: false
 scope: active-workspace managed AI config reconciliation only
 ---
 
-# Managed AI Runtime Config Sync Remediation Options
+# Managed AI Runtime Config Sync Remediation
 
-## Decision to make
+## Approved direction
 
 The desktop app must reconcile a managed AI runtime config when its **effective
 desired config** changes, while avoiding a new config read for unrelated UI,
 engine, session, or lifecycle changes.
 
-This document proposes two implementation paths. Both preserve explicit
-verification before a cold runtime start and before a send when the current
-config is unusable. They differ in how strongly they separate boot-time
-server-config ownership from the project-file fallback.
+This implementation preserves explicit verification before a cold runtime
+start and adds an explicit freshness revalidation for an actual send, even if
+the installed config remains merely usable.
 
-No choice in this document changes transcript, composer draft, SSE, or Den
-registry ownership.
+It does not change transcript, composer draft, SSE, or Den registry ownership.
 
 ## Observed behavior
 
@@ -91,6 +89,11 @@ config became available.
    unwritable server; it must not race a local server that is still resolving.
 6. A diagnostic event must distinguish a semantic config change, a joined
    flight, a completed-intent skip, and an explicit revalidation.
+7. Only a flight with an explicit `verified` outcome may become a completed
+   active intent. A failure, authority-pending return, or stale cancellation
+   must remain retryable.
+8. A managed config descriptor includes the selectable-model roster and known
+   capability metadata, not only its effective model.
 
 ## Option A — semantic completed-intent dedupe (recommended)
 
@@ -116,6 +119,22 @@ effective route is already represented. For example, with
 `requiresEngineBaseUrl === false`, a direct-engine lifecycle update must not
 be an independent config input.
 
+Make flight completion explicit:
+
+```ts
+type ManagedAiConfigSyncOutcome =
+  | { kind: "verified" }
+  | { kind: "skipped-pending" }
+  | { kind: "cancelled" }
+  | { kind: "failed"; error: string };
+```
+
+The current wrapper converts a rejected internal promise to a resolved caller
+promise so active effects do not produce unhandled rejections. That behavior
+may remain, but the wrapper must return the typed outcome internally. A stale
+return after an awaited read is `cancelled`, not `verified`. An authority-pending
+preflight is `skipped-pending`, not a successful completed intent.
+
 Maintain:
 
 ```ts
@@ -124,37 +143,82 @@ const lastSuccessfulActiveIntentByScope = new Map<string, string>();
 
 For `reason: "active-workspace"`, return before `getConfig` when the scope has
 already completed that exact semantic intent. Populate the map only after the
-current, non-cancelled flight completed its read/decision/write successfully.
-Clear or replace the entry when a different intent becomes current.
+current, non-cancelled flight returns `{ kind: "verified" }`. Clear or replace
+the entry when a different intent becomes current; never populate it for
+`skipped-pending`, `cancelled`, or `failed`.
 
 `runtime-start` and `send-preflight` bypass this completed-intent shortcut,
 but keep the existing in-flight join behavior. They are explicit freshness
-boundaries, rather than accidental UI-driven polling.
+boundaries, rather than accidental UI-driven polling. In particular,
+send-preflight must perform its descriptor revalidation even when the current
+config passes the existing *usable routing and credential* check; that check
+does not validate a stale selectable-model roster.
 
 ### Boot adjustment
 
-Add a narrow preflight result such as `server-config-authority-pending`.
-While a local Veslo server probe/capability resolution is still unresolved,
-the active effect does not write the project fallback. Once authority settles,
-it chooses one of:
+`context/veslo-server-connection.ts` becomes the explicit owner of the
+connection-level authority state. It exposes a stable tri-state accessor:
+
+```ts
+type ManagedAiConfigAuthority =
+  | { kind: "pending" }
+  | { kind: "server"; workspaceConfigId: string }
+  | { kind: "project-fallback"; reason: "serverless" | "unwritable" };
+```
+
+`server` is valid only when the selected server config target is known and the
+server reports **both** `config.read` and `config.write`. The reconciliation
+path always begins with `getConfig`, so write capability alone is insufficient.
+
+While authority is `pending`, the active effect returns
+`{ kind: "skipped-pending" }` and does not write the project fallback. Once
+authority settles, it chooses one of:
 
 - writable server config;
 - confirmed project fallback.
 
-This needs one explicit connection-readiness accessor from the connection
-owner. It must not infer "unavailable" merely from the initial
-`vesloServerStatus() === "disconnected"` value.
+The connection owner must not infer `project-fallback` merely from the initial
+`vesloServerStatus() === "disconnected"` value. The app composition layer may
+combine the connection authority with the acknowledged workspace mapping, but
+must not recreate its own independent authority decision.
+
+### Descriptor construction
+
+The intent must derive from a deterministic, secret-free
+`desiredConfigDescriptorHash`, representing the data that
+`formatManagedAiAccessConfig()` would render. For a managed profile it includes
+at least:
+
+- provider ID and effective model;
+- selectable models in deterministic order;
+- each selectable model's capability status, attachment capability, and known
+  input modalities;
+- the effective server/engine route and target workspace config ID;
+- hashes, never values, of the server-client and gateway credentials.
+
+`profile.updatedAt` is not a substitute for this descriptor. It may be retained
+as diagnostic provenance, but must not be the correctness mechanism that
+detects roster or capability changes.
 
 ### Files and changes
 
 - `packages/app/src/app/context/managed-ai-runtime-config.ts`
   - extract semantic intent construction from the current flight resolver;
-  - add completed-intent tracking for `active-workspace` only;
+  - return typed completion outcomes and add completed-intent tracking for
+    `active-workspace` only;
   - retain the existing in-flight and stale-write maps;
-  - expose the exact `reason` in flight trace events;
-  - use a resolved config-authority preflight before project fallback.
+  - compute a descriptor hash from rendered managed-config inputs, including
+    selectable model capabilities;
+  - expose the exact `reason`, outcome, descriptor hash, and authority in
+    flight trace events;
+  - use the connection-owned authority accessor before project fallback;
+  - add descriptor revalidation to the real send-preflight path.
 - `packages/app/src/app/controllers/managed-ai-config-sync.ts`
-  - extend the pure preflight decision with the authority-pending branch.
+  - extend the pure preflight decision with the authority-pending branch and
+    the typed outcome decision helpers.
+- `packages/app/src/app/context/veslo-server-connection.ts`
+  - own and expose `ManagedAiConfigAuthority`; server authority requires both
+    config read and write capabilities and an acknowledged config workspace ID.
 - `packages/app/src/app/app.tsx`
   - pass the single connection-authority readiness accessor; do not add a
     second config owner or a UI-level timer.
@@ -168,14 +232,18 @@ owner. It must not infer "unavailable" merely from the initial
    one `getConfig` call, not two.
 2. Changing only an engine object from absent to direct, while the effective
    emitted routes are unchanged, causes no second active read.
-3. Changing model, provider routing output, token hash, config authority, or
-   target server workspace causes exactly one new read.
+3. Changing model, provider routing output, token hash, config authority,
+   target server workspace, selectable-model roster, or model capability causes
+   exactly one new read.
 4. A changed intent still prevents an older in-flight read from writing.
-5. `runtime-start` and a send repair path revalidate even after an active
-   intent was completed.
+5. `runtime-start` and every real send-preflight revalidate even after an
+   active intent was completed. A usable-but-stale model roster is repaired by
+   send-preflight.
 6. During local server bootstrap, no project write occurs until config
    authority is resolved; a confirmed serverless/unwritable case still uses
    the project fallback.
+7. `failed`, `cancelled`, and `skipped-pending` outcomes never populate
+   `lastSuccessfulActiveIntentByScope`; a later retry may run.
 
 ### Benefits
 
@@ -190,93 +258,15 @@ owner. It must not infer "unavailable" merely from the initial
 - The semantic intent must be derived from actual config output, not merely a
   shortened version of the current broad fingerprint.
 - An external config edit is not discovered by unrelated UI state changes.
-  This is intentional; runtime-start, send validation, reconnect, or explicit
-  refresh are the freshness boundaries.
+  This is intentional; runtime-start, every real send-preflight, reconnect, or
+  explicit refresh are the freshness boundaries.
 
-## Option B — explicit config-reconciliation state machine
+## Implementation status
 
-### Idea
-
-Replace the ambient active effect with a workspace-scoped controller whose
-inputs are explicit events:
-
-- config authority resolved or changed;
-- managed access semantic profile changed;
-- selected/default model changed;
-- provider routing output changed;
-- explicit runtime-start;
-- explicit send-preflight;
-- explicit reconnect or user refresh.
-
-Each workspace has a state similar to:
-
-```ts
-type ReconciliationState =
-  | { phase: "authority-pending" }
-  | { phase: "dirty"; intent: SemanticConfigIntent }
-  | { phase: "syncing"; intent: SemanticConfigIntent }
-  | { phase: "verified"; intent: SemanticConfigIntent }
-  | { phase: "failed"; intent: SemanticConfigIntent; error: string };
-```
-
-The controller accepts `request(intent, freshness)` and decides whether to
-join, skip a verified equivalent intent, or read/reconcile. It owns all
-per-workspace generations, cancellation, successful checkpoints, and trace
-provenance. `app.tsx` only translates its existing owner events into controller
-requests.
-
-### Files and changes
-
-- New `packages/app/src/app/controllers/managed-ai-config-reconciliation.ts`
-  - pure transition helpers for request/join/skip/complete/fail;
-  - no network and no Solid imports.
-- `packages/app/src/app/context/managed-ai-runtime-config.ts`
-  - becomes the I/O adapter around the controller;
-  - removes broad implicit config-sync tracking from its active effect;
-  - retains formatting, read/patch, and stale-write guards.
-- `packages/app/src/app/app.tsx`
-  - emits explicit semantic invalidations from the existing workspace, access,
-    and server connection owners.
-- Focused controller and context tests.
-
-### Tests
-
-All Option A behavior tests apply, plus:
-
-1. Interleaved authority/profile/routing changes collapse to the latest intent
-   for one workspace without losing another workspace's pending sync.
-2. A reconnect marks only its affected workspace route dirty.
-3. A failed sync remains retryable without treating an old verified intent as
-   current.
-4. An explicit send request may demand freshness while an active request may
-   accept a verified equivalent config.
-
-### Benefits
-
-- Strongest ownership boundary and best observability.
-- Removes accidental subscriptions from the config owner entirely.
-- Better long-term fit if config reconciliation expands to multi-workspace,
-  offline, or user-edit conflict handling.
-
-### Risks
-
-- Materially larger refactor with more migration surface.
-- Easy to duplicate existing runtime-start and send-readiness policy unless
-  the controller's request API is kept very narrow.
-- Not justified solely by the currently measured duplicate reads.
-
-## Recommendation
-
-Implement **Option A** first.
-
-It directly fixes both confirmed causes: completed identical active intents
+This direction directly fixes both confirmed causes: completed identical active intents
 will not re-read config, and project fallback waits for connection authority to
 settle. It preserves the existing explicit startup/send checks and does not
 introduce another lifecycle controller.
-
-Consider Option B only if Option A's follow-up trace still shows meaningful
-config-sync requests whose semantic intent is unchanged, or if the product
-needs first-class multi-workspace reconciliation state.
 
 ## Trace changes required before verification
 
@@ -284,14 +274,14 @@ Every config-sync flight should carry:
 
 - `reason`: `active-workspace`, `runtime-start`, or `send-preflight`;
 - a non-secret `scopeKey` and intent hash;
+- `outcome`: `verified`, `skipped-pending`, `cancelled`, or `failed`;
 - `decision`: `start`, `join`, `completed-intent-skip`, `read`, `write`, or
   `explicit-revalidation`;
 - changed semantic input groups relative to the last observed intent;
 - config authority: `pending`, `server`, or `project-fallback`.
 
-This corrects the current ambiguity where `runtime-start` is labelled as an
-`active-effect` caller and a flight log does not reveal why its fingerprint
-changed.
+This corrects the current ambiguity where a flight log does not reveal why its
+fingerprint changed or whether it was safe to record as completed.
 
 ## Acceptance evidence
 
@@ -302,7 +292,10 @@ A new desktop manual run must show:
 2. No active config read during first-session materialization, ordinary stream
    updates, terminal lifecycle completion, or unrelated session UI changes.
 3. One intentional read remains permitted for runtime-start or a send that
-   needs config repair/revalidation.
+   needs config repair/revalidation; every real send has descriptor freshness
+   validation even if current routing is usable.
 4. No project fallback write while a local server is merely still connecting.
-5. No regression in managed AI send, runtime bootstrap, config write, or
+5. A roster/capability change at the same effective model produces one
+   descriptor change and one reconciliation.
+6. No regression in managed AI send, runtime bootstrap, config write, or
    stale-flight protection tests.

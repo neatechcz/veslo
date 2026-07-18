@@ -176,11 +176,12 @@ export function createWorkspaceClient(context: WorkspaceClientContext) {
       );
     },
 
-    reloadEngine: (workspaceId: string) =>
+    reloadEngine: (workspaceId: string, options?: { ifIdle?: boolean }) =>
       requestJson<{ ok: boolean; reloadedAt?: number }>(baseUrl, `${workspacePath(workspaceId)}/engine/reload`, {
         token,
         hostToken,
         method: "POST",
+        ...(options?.ifIdle ? { body: { ifIdle: true } } : {}),
       }),
 
     listAudit: (workspaceId: string, limit = 50) =>

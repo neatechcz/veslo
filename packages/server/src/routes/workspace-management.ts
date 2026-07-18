@@ -10,6 +10,7 @@ import {
   ensureWritable,
   jsonResponse,
   readJsonBody,
+  readOptionalJsonBody,
   requireApproval,
   requireClientScope,
   resolveWorkspace,
@@ -50,6 +51,10 @@ export type WorkspaceManagementRouteDependencies = {
   ) => Promise<void>;
   buildConfigTrigger: (path: string) => ReloadTrigger;
   reloadOpencodeEngine: (workspace: WorkspaceInfo) => Promise<void>;
+  reloadWorkspaceEngineIfIdle: (input: {
+    workspaceId: string;
+    reload: () => Promise<void>;
+  }) => Promise<{ kind: "reloaded" } | { kind: "blocked"; reason: "active-runs" | "reconciliation-pending" }>;
   exportWorkspace: (workspace: WorkspaceInfo) => Promise<unknown>;
   importWorkspace: (workspace: WorkspaceInfo, body: Record<string, unknown>) => Promise<void>;
 };
@@ -90,6 +95,7 @@ export function registerWorkspaceManagementRoutes(
     writeVesloConfig,
     buildConfigTrigger,
     reloadOpencodeEngine,
+    reloadWorkspaceEngineIfIdle,
     exportWorkspace,
     importWorkspace,
   } = dependencies;
@@ -442,8 +448,22 @@ export function registerWorkspaceManagementRoutes(
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
     const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     requireClientScope(ctx, "collaborator");
-
-    await reloadOpencodeEngine(workspace);
+    const body = await readOptionalJsonBody(ctx.request);
+    const ifIdle = body?.ifIdle === true;
+    if (ifIdle) {
+      const result = await reloadWorkspaceEngineIfIdle({
+        workspaceId: workspace.id,
+        reload: () => reloadOpencodeEngine(workspace),
+      });
+      if (result.kind === "blocked") {
+        throw new ApiError(409, "reload_blocked_active_runs", "Workspace engine reload is blocked by an active or reconciling run", {
+          workspaceId: workspace.id,
+          reason: result.reason,
+        });
+      }
+    } else {
+      await reloadOpencodeEngine(workspace);
+    }
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -455,7 +475,7 @@ export function registerWorkspaceManagementRoutes(
       timestamp: Date.now(),
     });
 
-    return jsonResponse({ ok: true, reloadedAt: Date.now() });
+    return jsonResponse({ ok: true, reloadedAt: Date.now(), ifIdle });
   });
 
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {

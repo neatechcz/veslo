@@ -4532,6 +4532,7 @@ function createRoutes(
     writeVesloConfig,
     buildConfigTrigger,
     reloadOpencodeEngine,
+    reloadWorkspaceEngineIfIdle: conversationRunLifecycleController.reloadWorkspaceEngineIfIdle,
     exportWorkspace,
     importWorkspace,
   });

@@ -302,4 +302,24 @@ describe("conversation run queue store", () => {
     expect(store.getForConversation("ws-other", "conv-a", queued.item.queueItemId)).toBeNull();
     expect(store.getForConversation("ws-a", "conv-other", queued.item.queueItemId)).toBeNull();
   });
+
+  test("persists workspace run reservations until their idempotent release", async () => {
+    const dataDir = await tempDataDir();
+    const first = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const reserved = first.reserveWorkspaceRun({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-a",
+    });
+    expect(reserved.state).toBe("starting");
+    expect(first.activateWorkspaceRun("ws-a", "run-a")?.state).toBe("active");
+
+    const restarted = createConversationRunQueueStore({ dataDir, now: () => 3_000 });
+    expect(restarted.listWorkspaceRunReservations()).toEqual([
+      expect.objectContaining({ workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a", state: "active" }),
+    ]);
+    expect(restarted.releaseWorkspaceRun("ws-a", "run-a")).toBe(true);
+    expect(restarted.releaseWorkspaceRun("ws-a", "run-a")).toBe(false);
+    expect(restarted.listWorkspaceRunReservations()).toEqual([]);
+  });
 });

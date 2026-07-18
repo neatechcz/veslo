@@ -40,16 +40,19 @@ function createDeferred<T>() {
 function createVesloClient(): ManagedAiRuntimeConfigVesloClient & {
   patched: Array<{ workspaceId: string; payload: { opencode?: Record<string, unknown> } }>;
   getConfigCalls: string[];
+  reloadEngineCalls: Array<{ workspaceId: string; ifIdle: boolean }>;
   listCalls: number;
 } {
   const patched: Array<{ workspaceId: string; payload: { opencode?: Record<string, unknown> } }> = [];
   const getConfigCalls: string[] = [];
+  const reloadEngineCalls: Array<{ workspaceId: string; ifIdle: boolean }> = [];
   let listCalls = 0;
   return {
     baseUrl: "http://127.0.0.1:34115",
     token: "veslo-token",
     patched,
     getConfigCalls,
+    reloadEngineCalls,
     get listCalls() {
       return listCalls;
     },
@@ -62,6 +65,10 @@ function createVesloClient(): ManagedAiRuntimeConfigVesloClient & {
     },
     patchConfig: async (workspaceId, payload) => {
       patched.push({ workspaceId, payload });
+      return { ok: true };
+    },
+    reloadEngine: async (workspaceId, options) => {
+      reloadEngineCalls.push({ workspaceId, ifIdle: options?.ifIdle === true });
       return { ok: true };
     },
     listWorkspaces: async () => {
@@ -99,6 +106,19 @@ function createOptions(
     vesloServerClient: () => vesloClient,
     vesloServerStatus: () => "connected",
     vesloServerWorkspaceId: () => "ws-active",
+    managedAiConfigAuthority: () => {
+      const workspaceConfigId = options.vesloServerWorkspaceId()?.trim() ?? "";
+      const capabilities = options.resolvedVesloCapabilities();
+      if (
+        options.vesloServerStatus() === "connected" &&
+        capabilities?.config?.read === true &&
+        capabilities.config.write === true &&
+        workspaceConfigId
+      ) {
+        return { kind: "server", workspaceConfigId };
+      }
+      return { kind: "project-fallback", reason: "unwritable" };
+    },
     resolvedVesloCapabilities: () => ({
       config: { read: true, write: true },
       sandbox: { enabled: false, backend: "none" },
@@ -360,16 +380,43 @@ test("runtime config sync joins matching active and send-preflight work", async 
   assert.deepEqual(flightActions, ["start", "join", "settle"]);
 });
 
+test("active config sync waits for connection-owned authority before choosing a config store", async () => {
+  const client = createVesloClient();
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  let authority: import("../../context/veslo-server-connection.js").ManagedAiConfigAuthority = {
+    kind: "pending",
+  };
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    managedAiConfigAuthority: () => authority,
+    recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+  }));
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.deepEqual(client.getConfigCalls, []);
+  assert.equal(client.patched.length, 0);
+  assert.ok(traces.some((entry) =>
+    entry.event === "managed-ai-config-sync:skip" &&
+    entry.payload.reason === "config-authority-pending",
+  ));
+
+  authority = { kind: "server", workspaceConfigId: "ws-active" };
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
+});
+
 test("runtime config sync changes semantic flight keys and retries a failed read", async () => {
   const client = createVesloClient();
-  let defaultModel = model;
+  let currentProfile = profile;
   let denAuthRevision = 1;
   let gatewayAccessToken = "gateway-access-token";
   let serverWorkspaceId = "ws-active";
   let configWriteCapable = true;
   let projectReads = 0;
   let failFirstRead = true;
-  const flightActions: string[] = [];
+  const flightEvents: Array<{ action: string; outcome: string | null }> = [];
   client.getConfig = async (workspaceId) => {
     client.getConfigCalls.push(workspaceId);
     if (failFirstRead) {
@@ -380,9 +427,10 @@ test("runtime config sync changes semantic flight keys and retries a failed read
   };
   const sync = createManagedAiRuntimeConfigSync(createOptions({
     vesloServerClient: () => client,
-    defaultModel: () => defaultModel,
+    managedAiAccess: () => currentProfile,
     denAuthRevision: () => denAuthRevision,
     managedAiGatewayAccessToken: () => gatewayAccessToken,
+    vesloServerWorkspaceId: () => serverWorkspaceId,
     resolveConversationServerWorkspaceId: () => serverWorkspaceId,
     ensureConversationReadWorkspaceRegistered: async () => serverWorkspaceId,
     resolvedVesloCapabilities: () => ({
@@ -395,7 +443,10 @@ test("runtime config sync changes semantic flight keys and retries a failed read
     },
     recordManagedAiWorkflowTrace: (event, payload) => {
       if (event === "managed-ai-config-sync:flight") {
-        flightActions.push(String(payload.action));
+        flightEvents.push({
+          action: String(payload.action),
+          outcome: typeof payload.outcome === "string" ? payload.outcome : null,
+        });
       }
     },
   }));
@@ -408,7 +459,16 @@ test("runtime config sync changes semantic flight keys and retries a failed read
   await sync.syncActiveWorkspaceManagedAiConfig();
   serverWorkspaceId = "ws-mapped";
   await sync.syncActiveWorkspaceManagedAiConfig();
-  defaultModel = { providerID: "codex_oauth", modelID: "gpt-5.1" };
+  currentProfile = {
+    ...profile,
+    selectableModels: [{
+      model,
+      capabilityStatus: "known",
+      attachment: true,
+      modalities: { input: ["text", "image"] },
+      registryVersion: "2026-07-18",
+    }],
+  };
   await sync.syncActiveWorkspaceManagedAiConfig();
   configWriteCapable = false;
   await sync.syncActiveWorkspaceManagedAiConfig();
@@ -422,7 +482,10 @@ test("runtime config sync changes semantic flight keys and retries a failed read
     "ws-mapped",
   ]);
   assert.equal(projectReads, 1, "a changed config source must start its own project-config sync");
-  assert.ok(flightActions.includes("reject"), "a failed config read must release its flight for retry");
+  assert.ok(
+    flightEvents.some((event) => event.action === "settle" && event.outcome === "failed"),
+    "a failed config read must settle as failed so the next intent can retry",
+  );
 });
 
 test("a stale config sync cannot patch after a newer fingerprint completes", async () => {
@@ -730,6 +793,82 @@ test("send preflight sync writes managed config for the snapshotted target works
   );
 });
 
+test("server-owned send freshness uses the resolved server workspace and reloads it after a patch", async () => {
+  const client = createVesloClient();
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    managedAiConfigAuthority: () => ({ kind: "project-fallback", reason: "serverless" }),
+    resolveConversationServerWorkspaceId: () => "wrong-workspace-that-must-not-be-used",
+  }));
+
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "server-resolved-exact",
+    traceId: "send-trace-exact",
+  });
+
+  assert.deepEqual(outcome, { kind: "verified" });
+  assert.deepEqual(client.getConfigCalls, ["server-resolved-exact"]);
+  assert.equal(client.patched[0]?.workspaceId, "server-resolved-exact");
+  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "server-resolved-exact", ifIdle: true }]);
+});
+
+test("background completed-intent skip cannot cancel an in-flight server send freshness check", async () => {
+  const client = createVesloClient();
+  const readGate = createDeferred<{ opencode?: Record<string, unknown> | null }>();
+  const readStarted = createDeferred<void>();
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+  }));
+
+  // Establish the background owner's successful intent first. This makes the
+  // later active-workspace run take its completed-intent skip path, which used
+  // to clear the shared cancellation marker of the send flight.
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    readStarted.resolve();
+    return await readGate.promise;
+  };
+
+  const send = sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-trace-background-noop",
+  });
+  await readStarted.promise;
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  readGate.resolve({ opencode: {} });
+
+  assert.deepEqual(await send, { kind: "verified" });
+});
+
+test("server-owned send freshness maps guarded reload conflicts to reload-required", async () => {
+  const client = createVesloClient();
+  client.reloadEngine = async () => {
+    throw new VesloServerError(409, "reload_blocked_active_runs", "Another run is active");
+  };
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    managedAiConfigAuthority: () => ({ kind: "project-fallback", reason: "serverless" }),
+  }));
+
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "server-resolved-exact",
+    traceId: "send-trace-reload-blocked",
+  });
+
+  assert.deepEqual(outcome, { kind: "verified-reload-required" });
+});
+
 test("runtime config sync registers local workspace before using fallback app id", async () => {
   const client = createVesloClient();
   const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];
@@ -889,6 +1028,7 @@ test("inactive workspace heal keeps config tracking across managed access metada
       patched.push({ workspaceId, payload });
       return { ok: true };
     },
+    reloadEngine: async () => ({ ok: true }),
     listWorkspaces: async () => ({
       items: [
         { id: "ws-active", workspaceType: "local" },
@@ -966,7 +1106,7 @@ test("inactive workspace heal skips server scans while a send or run is active",
   }
 });
 
-test("server config sync does not churn after a write when the next server read is stale", async () => {
+test("active server config sync records a completed intent after a write", async () => {
   const client = createVesloClient();
   const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
   const readTime = Date.parse("2026-07-07T08:00:00.000Z");
@@ -984,9 +1124,9 @@ test("server config sync does not churn after a write when the next server read 
   await sync.syncActiveWorkspaceManagedAiConfig();
 
   assert.equal(client.patched.length, 1);
-  assert.deepEqual(client.getConfigCalls, ["ws-active", "ws-active"]);
+  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
   const decisions = traces.filter((entry) => entry.event === "managed-ai-config-sync:managed-decision");
-  assert.equal(decisions.length, 2);
+  assert.equal(decisions.length, 1);
   assert.equal(decisions[0]?.payload.decision, "write-managed-config");
   assert.equal(decisions[0]?.payload.configSource, "veslo-server-config");
   assert.equal(decisions[0]?.payload.vesloWorkspaceId, "ws-active");
@@ -994,14 +1134,36 @@ test("server config sync does not churn after a write when the next server read 
   assert.equal(decisions[0]?.payload.cachedSnapshotMatches, false);
   assert.equal(decisions[0]?.payload.redactedServerConfigMatches, false);
 
-  assert.equal(decisions[1]?.payload.decision, "skip");
-  assert.equal(decisions[1]?.payload.reason, "managed-config-current");
-  assert.equal(decisions[1]?.payload.configSource, "veslo-server-config");
-  assert.equal(decisions[1]?.payload.vesloWorkspaceId, "ws-active");
-  assert.equal(decisions[1]?.payload.readTimestamp, "2026-07-07T08:00:00.000Z");
-  assert.equal(decisions[1]?.payload.cachedSnapshotMatches, true);
-  assert.equal(decisions[1]?.payload.redactedServerConfigMatches, true);
-  assert.equal(decisions[1]?.payload.compareSource, "last-known-snapshot");
+  const completedSkip = traces.find((entry) =>
+    entry.event === "managed-ai-config-sync:flight" &&
+    entry.payload.action === "completed-intent-skip",
+  );
+  assert.equal(completedSkip?.payload.outcome, "verified");
+  assert.match(String(completedSkip?.payload.descriptorHash), /^[0-9a-f]{8}$/);
+  assert.match(String(completedSkip?.payload.scopeHash), /^[0-9a-f]{8}$/);
+});
+
+test("an intervening active descriptor invalidates an older completed intent", async () => {
+  const client = createVesloClient();
+  let currentProfile = profile;
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    vesloServerWorkspaceId: () => "ws-active",
+    resolveConversationServerWorkspaceId: () => "ws-active",
+    managedAiAccess: () => currentProfile,
+  }));
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  currentProfile = {
+    ...profile,
+    effectiveModel: { providerID: "codex_oauth", modelID: "gpt-5.1" },
+  };
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  currentProfile = profile;
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.deepEqual(client.getConfigCalls, ["ws-active", "ws-active", "ws-active"]);
 });
 
 test("inactive workspace heal does not require a gateway bearer to write local provider routing", async () => {
@@ -1018,6 +1180,7 @@ test("inactive workspace heal does not require a gateway bearer to write local p
       patched.push({ workspaceId, payload });
       return { ok: true };
     },
+    reloadEngine: async () => ({ ok: true }),
     listWorkspaces: async () => ({
       items: [
         { id: "ws-active", workspaceType: "local" },

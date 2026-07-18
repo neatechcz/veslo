@@ -136,6 +136,11 @@ export type VesloServerAuth = {
   hostToken?: string;
 };
 
+export type ManagedAiConfigAuthority =
+  | { kind: "pending" }
+  | { kind: "server"; workspaceConfigId: string }
+  | { kind: "project-fallback"; reason: "serverless" | "unwritable" };
+
 export type CheckVesloServerOptions = {
   requireRuntimeChainReady?: boolean;
 };
@@ -273,6 +278,30 @@ export function resolveVesloServerReachability(
   }
 }
 
+export function resolveManagedAiConfigAuthority(input: {
+  serverCheckedAt: number | null;
+  projectFallbackConfirmed: boolean;
+  status: VesloServerStatus;
+  capabilities: VesloServerCapabilities | null;
+  workspaceConfigId: string | null | undefined;
+}): ManagedAiConfigAuthority {
+  const workspaceConfigId = input.workspaceConfigId?.trim() ?? "";
+  const canReadConfig = input.capabilities?.config?.read === true;
+  const canWriteConfig = input.capabilities?.config?.write === true;
+  if (input.status === "connected" && canReadConfig && canWriteConfig) {
+    return workspaceConfigId
+      ? { kind: "server", workspaceConfigId }
+      : { kind: "pending" };
+  }
+  if (input.status === "disconnected") {
+    return input.projectFallbackConfirmed
+      ? { kind: "project-fallback", reason: "serverless" }
+      : { kind: "pending" };
+  }
+  if (input.serverCheckedAt == null) return { kind: "pending" };
+  return { kind: "project-fallback", reason: "unwritable" };
+}
+
 export function resolveVesloRuntimeReadiness(input: {
   localRuntimeContract: boolean;
   diagnostics: VesloServerDiagnostics | null | undefined;
@@ -399,6 +428,8 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
   const [vesloServerWorkspaceId, setVesloServerWorkspaceId] = createSignal<
     string | null
   >(null);
+  const [managedAiProjectFallbackConfirmed, setManagedAiProjectFallbackConfirmed] =
+    createSignal(false);
   const [vesloServerHostInfo, setVesloServerHostInfo] =
     createSignal<VesloServerInfo | null>(null);
   const [vesloServerDiagnostics, setVesloServerDiagnostics] =
@@ -582,6 +613,16 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         (prev?.hostToken ?? "") === (next?.hostToken ?? ""),
     },
   );
+  const managedAiConfigAuthority = () =>
+    resolveManagedAiConfigAuthority({
+      serverCheckedAt: vesloServerCheckedAt(),
+      // `disconnected` is only bootstrap/reconnect pending until a local ensure
+      // exhausts its owned restart path. Only then is project fallback allowed.
+      projectFallbackConfirmed: managedAiProjectFallbackConfirmed(),
+      status: vesloServerStatus(),
+      capabilities: vesloServerCapabilities(),
+      workspaceConfigId: vesloServerWorkspaceId(),
+    });
 
   const readyEngineWorkspaceIds = createMemo(() => {
     const set = new Set<string>();
@@ -803,6 +844,9 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     source = "unspecified",
   ) => {
     setVesloServerStatus(result.status);
+    if (result.status === "connected") {
+      setManagedAiProjectFallbackConfirmed(false);
+    }
     setVesloServerCapabilitiesStable(result.capabilities);
     if (result.runtimeReadiness !== undefined) {
       setVesloRuntimeReadiness(result.runtimeReadiness);
@@ -939,6 +983,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       return inFlight;
     }
 
+    setManagedAiProjectFallbackConfirmed(false);
     const ensureDeadline = new Set<true>();
     let restartAttempted = false;
     const ensureWork = async () => {
@@ -986,6 +1031,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       const restartedInfo = resolveRunningVesloServerHostInfo(restarted);
       const baseUrl = restartedInfo?.baseUrl?.trim() ?? "";
       if (!baseUrl) {
+        setManagedAiProjectFallbackConfirmed(true);
         applyVesloServerProbeResult(
           { status: "disconnected", capabilities: null },
           "local-ensure-restart-missing-info",
@@ -1009,6 +1055,9 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       const ready =
         isAuthenticatedVesloServerStatus(result.status) &&
         (!requireRuntimeChainReady || result.runtimeReadiness === "ready");
+      if (!ready && result.status === "disconnected") {
+        setManagedAiProjectFallbackConfirmed(true);
+      }
       recordLocalEnsureOutcome({
         outcome: ready
           ? "ready"
@@ -1036,6 +1085,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         untrack(() => {
           const timedOut = error instanceof Error &&
             error.message === "Local Veslo server ensure deadline exceeded";
+          setManagedAiProjectFallbackConfirmed(true);
           applyVesloServerProbeResult(
             { status: "disconnected", capabilities: null },
             timedOut ? "local-ensure-deadline-exceeded" : "local-ensure-failed",
@@ -1048,6 +1098,12 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
           return false;
         })
       )
+      .then((ready) => {
+        if (!ready && vesloServerStatus() === "disconnected") {
+          setManagedAiProjectFallbackConfirmed(true);
+        }
+        return ready;
+      })
       .finally(() => {
         if (deadlineTimer !== null) clearTimeout(deadlineTimer);
         if (
@@ -1500,6 +1556,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
     setDevtoolsWorkspaceId,
     activeVesloServerHostInfo,
     activeVesloServerRoutingInfo,
+    managedAiConfigAuthority,
     vesloServerBaseUrl,
     vesloServerAuth,
     vesloServerClient,

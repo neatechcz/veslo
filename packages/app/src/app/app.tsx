@@ -576,6 +576,7 @@ export default function App() {
     setDevtoolsWorkspaceId,
     activeVesloServerHostInfo,
     activeVesloServerRoutingInfo,
+    managedAiConfigAuthority,
     vesloServerBaseUrl,
     vesloServerAuth,
     vesloServerClient,
@@ -989,6 +990,12 @@ export default function App() {
       return runtimeConfig
         ? runtimeConfig.ensureManagedAiRuntimeAuthorizationForSend(targetWorkspace)
         : Promise.resolve(false);
+    },
+    prepareManagedAiRuntimeConfigForServerSend: (input) => {
+      const runtimeConfig = lateManagedAiRuntimeConfig.current();
+      return runtimeConfig
+        ? runtimeConfig.prepareManagedAiRuntimeConfigForServerSend(input)
+        : Promise.resolve({ kind: "skipped-pending" });
     },
     managedAiRuntimeAuthorizationPrimeDiagnostic: () =>
       lateManagedAiRuntimeConfig.current()?.lastManagedAiRuntimeAuthorizationPrimeDiagnostic() ?? null,
@@ -2435,6 +2442,7 @@ export default function App() {
     vesloServerClient,
     vesloServerStatus,
     vesloServerWorkspaceId,
+    managedAiConfigAuthority,
     resolvedVesloCapabilities: () => resolvedVesloCapabilities(),
     activeVesloServerRoutingInfo,
     baseUrl,

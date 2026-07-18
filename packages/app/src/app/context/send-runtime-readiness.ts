@@ -300,7 +300,6 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         (await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace));
       if (
         hasManagedProfile &&
-        !canUseCurrentManagedConfig &&
         !deps.managedAiBootstrapBusy() &&
         !deps.reloadBusy() &&
         deps.syncManagedAiRuntimeConfigForSend
@@ -308,6 +307,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         deps.recordSendTrace("managed-ai-bootstrap-config-sync:start", {
           traceId,
           targetWorkspaceId: targetWorkspaceId || null,
+          freshnessRevalidation: true,
         });
         await deps.syncManagedAiRuntimeConfigForSend(targetWorkspace);
         canUseCurrentManagedConfig = await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace);
@@ -315,6 +315,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           traceId,
           targetWorkspaceId: targetWorkspaceId || null,
           canUseCurrentManagedConfig,
+          freshnessRevalidation: true,
         });
       }
       if (canUseCurrentManagedConfig && deps.ensureManagedAiRuntimeAuthorizationForSend) {

@@ -294,6 +294,7 @@ function createService(options: {
     defaultModel?: { modelID?: string | null } | null;
   } | null;
   runtimeAuthorizationResult?: boolean;
+  managedAiConfigFreshnessOutcome?: "verified" | "skipped-pending" | "cancelled" | "failed" | "verified-reload-required";
   runtimeAuthorizationDiagnostic?: ManagedAiRuntimeAuthPrimeDiagnostic | null;
   resolveWorkspaceRootForConversationScope?: (workspaceId: string, directory?: string | null) => string;
   failServerStart?: boolean;
@@ -449,6 +450,11 @@ function createService(options: {
       );
       return options.runtimeAuthorizationResult ?? true;
     },
+    prepareManagedAiRuntimeConfigForServerSend: async () => {
+      calls.push("prepareManagedAiRuntimeConfigForServerSend");
+      const kind = options.managedAiConfigFreshnessOutcome ?? "verified";
+      return kind === "failed" ? { kind, error: "config sync failed" } : { kind };
+    },
     managedAiRuntimeAuthorizationPrimeDiagnostic: () => options.runtimeAuthorizationDiagnostic ?? null,
     activeSendTraceId: () => null,
     recordSendTrace: (event, payload) => {
@@ -500,6 +506,21 @@ test("conversation read workspace registration is cached per client and director
   assert.deepEqual(calls.filter((call) => call.startsWith("addLocalWorkspace")), [
     "addLocalWorkspace:/repo",
   ]);
+});
+
+test("conversation read workspace registration labels a fulfilled registration as a cache hit", async () => {
+  const { service, sendTraces } = createService();
+  const client = service.vesloServerClient()!;
+
+  assert.equal(await service.ensureConversationReadWorkspaceRegistered(client, "app-ws", "/repo"), "server-ws");
+  assert.equal(await service.ensureConversationReadWorkspaceRegistered(client, "app-ws", "/repo"), "server-ws");
+
+  assert.deepEqual(
+    sendTraces
+      .filter((entry) => entry.event === "conversation-workspace-registration:flight")
+      .map((entry) => entry.payload?.action),
+    ["start", "settle", "cache-hit"],
+  );
 });
 
 test("mapped local workspace id is used for server calls while app scopes stay local", async () => {
@@ -1426,9 +1447,12 @@ test("managed conversation runs prime runtime authorization before submit", asyn
     directory: "/repo",
   }]);
   const authPrimeIndex = calls.findIndex((call) => call.startsWith("ensureManagedAiRuntimeAuthorizationForSend:"));
+  const freshnessIndex = calls.findIndex((call) => call === "prepareManagedAiRuntimeConfigForServerSend");
   const runIndex = calls.findIndex((call) => call.startsWith("runConversation:"));
+  assert.ok(freshnessIndex >= 0, "managed config freshness should be checked");
   assert.ok(authPrimeIndex >= 0, "runtime authorization should be primed");
   assert.ok(runIndex >= 0, "conversation should be submitted");
+  assert.ok(freshnessIndex < authPrimeIndex, "managed config must be fresh before runtime authorization");
   assert.ok(authPrimeIndex < runIndex, "runtime authorization must be primed before submit");
 });
 
@@ -1474,11 +1498,35 @@ test("managed conversation submit primes runtime authorization and forwards gate
     directory: "/repo",
   }]);
   const authPrimeIndex = calls.findIndex((call) => call.startsWith("ensureManagedAiRuntimeAuthorizationForSend:"));
+  const freshnessIndex = calls.findIndex((call) => call === "prepareManagedAiRuntimeConfigForServerSend");
   const submitIndex = calls.findIndex((call) => call.startsWith("submitConversation:"));
+  assert.ok(freshnessIndex >= 0, "managed config freshness should be checked");
   assert.ok(authPrimeIndex >= 0, "runtime authorization should be primed");
   assert.ok(submitIndex >= 0, "conversation should be submitted");
+  assert.ok(freshnessIndex < authPrimeIndex, "managed config must be fresh before runtime authorization");
   assert.ok(authPrimeIndex < submitIndex, "runtime authorization must be primed before submit");
   assert.ok(calls.includes("submitConversation:server-ws:true"));
+});
+
+test("managed server submit blocks before auth prime when guarded config reload is required", async () => {
+  const { service, calls } = createService({
+    managedAiAccess: { providerId: "codex_oauth", defaultModel: { modelID: "gpt-5.5" } },
+    managedAiConfigFreshnessOutcome: "verified-reload-required",
+  });
+
+  await assert.rejects(
+    service.submitConversationFromVesloWriteApi("app-ws", "/repo", {
+      clientMessageId: "msg-reload-blocked",
+      origin: "session:normal",
+      target: { conversationId: "conv-a", opencodeSessionId: "open-a" },
+      draft: { mode: "prompt", text: "hello", parts: [{ type: "text", text: "hello" }] },
+    }),
+    /another run is active/,
+  );
+
+  assert.ok(calls.includes("prepareManagedAiRuntimeConfigForServerSend"));
+  assert.ok(!calls.some((call) => call.startsWith("ensureManagedAiRuntimeAuthorizationForSend:")));
+  assert.ok(!calls.some((call) => call.startsWith("submitConversation:")));
 });
 
 test("conversation submit boundary injects directory and preserves composer send intent", async () => {

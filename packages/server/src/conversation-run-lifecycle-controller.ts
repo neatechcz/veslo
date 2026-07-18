@@ -1,6 +1,7 @@
 import {
   ConversationRunQueueConflictError,
   type ConversationRunQueueStore,
+  type ConversationWorkspaceRunReservation,
 } from "./conversation-run-queue-store.js";
 import { ApiError } from "./errors.js";
 import {
@@ -224,6 +225,10 @@ export type ConversationRunLifecycleController = {
   scheduleLifecycleReconcile(input: ConversationRunLifecycleScheduleReconcileInput): void;
   reconcileConversationRunLifecycle(input: ConversationRunLifecycleScheduleReconcileInput): Promise<void>;
   abortRun(input: ConversationRunLifecycleAbortInput): Promise<ConversationRunLifecycleAbortResult>;
+  reloadWorkspaceEngineIfIdle(input: {
+    workspaceId: string;
+    reload: () => Promise<void>;
+  }): Promise<{ kind: "reloaded" } | { kind: "blocked"; reason: "active-runs" | "reconciliation-pending" }>;
   start(): void;
   stop(): void;
   snapshotForTests(): ConversationRunLifecycleSnapshot;
@@ -387,12 +392,114 @@ export function createConversationRunLifecycleController(
   const queueDrainInFlight = new Set<string>();
   const lifecycleReconcileTimers = new Map<string, unknown>();
   const lifecycleReconcileInFlight = new Set<string>();
+  const workspaceExecutionGateTails = new Map<string, Promise<void>>();
+  const workspaceRunReservations = new Map<string, Map<string, ConversationWorkspaceRunReservation>>();
+  const workspaceReconciliationPending = new Set<string>();
   let started = false;
   let diagnosticsRuns = 0;
 
   const recordTrace = (event: string, payload?: Record<string, unknown>) => {
     options.trace?.record(event, payload);
   };
+
+  const normalizeWorkspaceExecutionKey = (workspaceId: string) => workspaceId.trim();
+
+  const withWorkspaceExecutionGate = async <T>(workspaceIdRaw: string, run: () => Promise<T>): Promise<T> => {
+    const workspaceId = normalizeWorkspaceExecutionKey(workspaceIdRaw);
+    if (!workspaceId) return run();
+    const previous = workspaceExecutionGateTails.get(workspaceId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current);
+    workspaceExecutionGateTails.set(workspaceId, tail);
+    void tail.then(() => {
+      if (workspaceExecutionGateTails.get(workspaceId) === tail) {
+        workspaceExecutionGateTails.delete(workspaceId);
+      }
+    });
+    await previous;
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  };
+
+  const reservationsForWorkspace = (workspaceIdRaw: string) => {
+    const workspaceId = normalizeWorkspaceExecutionKey(workspaceIdRaw);
+    let reservations = workspaceRunReservations.get(workspaceId);
+    if (!reservations) {
+      reservations = new Map();
+      workspaceRunReservations.set(workspaceId, reservations);
+    }
+    return reservations;
+  };
+
+  const reserveStarting = (input: Pick<
+    ConversationRunLifecycleSubmitInput,
+    "workspace" | "target" | "runId" | "runTrace"
+  >) => {
+    const workspaceId = normalizeWorkspaceExecutionKey(input.workspace.id);
+    const runId = input.runId.trim();
+    if (!workspaceId || !runId) return;
+    const reservation = options.queueStore?.reserveWorkspaceRun({
+      workspaceId,
+      conversationId: input.target.conversationId,
+      runId,
+      state: "starting",
+    }) ?? {
+      workspaceId,
+      conversationId: input.target.conversationId,
+      runId,
+      state: "starting" as const,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    reservationsForWorkspace(workspaceId).set(runId, reservation);
+    workspaceReconciliationPending.delete(workspaceId);
+    input.runTrace.record("server:conversation-run:workspace-reserved", {
+      workspaceId,
+      conversationId: input.target.conversationId,
+      runId,
+      state: reservation.state,
+    });
+  };
+
+  const activateReservedRun = (input: ConversationRunLifecycleSubmitInput) => {
+    const workspaceId = normalizeWorkspaceExecutionKey(input.workspace.id);
+    const runId = input.runId.trim();
+    if (!workspaceId || !runId) return;
+    const next = options.queueStore?.activateWorkspaceRun(workspaceId, runId);
+    const reservations = reservationsForWorkspace(workspaceId);
+    const previous = reservations.get(runId);
+    if (next) {
+      reservations.set(runId, next);
+    } else if (previous) {
+      reservations.set(runId, { ...previous, state: "active", updatedAt: Date.now() });
+    }
+  };
+
+  const releaseRun = (workspaceIdRaw: string, runIdRaw: string, reason: string) => {
+    const workspaceId = normalizeWorkspaceExecutionKey(workspaceIdRaw);
+    const runId = runIdRaw.trim();
+    if (!workspaceId || !runId) return false;
+    const reservations = workspaceRunReservations.get(workspaceId);
+    const existed = reservations?.delete(runId) === true;
+    if (reservations?.size === 0) {
+      workspaceRunReservations.delete(workspaceId);
+      workspaceReconciliationPending.delete(workspaceId);
+    }
+    const persisted = options.queueStore?.releaseWorkspaceRun(workspaceId, runId) ?? false;
+    void reason;
+    return existed || persisted;
+  };
+
+  for (const reservation of options.queueStore?.listWorkspaceRunReservations?.() ?? []) {
+    reservationsForWorkspace(reservation.workspaceId).set(reservation.runId, reservation);
+    workspaceReconciliationPending.add(reservation.workspaceId);
+  }
 
   const queueRun = (input: ConversationRunLifecycleSubmitInput, activeRunId: string | null) => {
     if (!options.queueStore) {
@@ -692,8 +799,11 @@ export function createConversationRunLifecycleController(
       );
       scheduleAcceptedRunReconcile(input, "submit-failed", 0);
       unregisterRegisteredAiGatewayRun();
+      releaseRun(input.workspace.id, input.runId, "upstream-submit-failed");
       throw error;
     }
+
+    activateReservedRun(input);
 
     const providerWatchOwnsGatewayRun = scheduleProviderStartWatch(
       input,
@@ -847,6 +957,7 @@ export function createConversationRunLifecycleController(
               ...lifecycleStatusTraceFields(status),
             });
             unregisterScheduledAiGatewayRun(input);
+            releaseRun(input.workspace.id, status?.runId?.trim() || runId, "stale-reconcile-failed");
             scheduleQueueDrain(input.workspace.id, conversationId, 0);
           }).catch((error) => {
             recordTrace("server:conversation-run:lifecycle-mark-failed-error", {
@@ -886,6 +997,7 @@ export function createConversationRunLifecycleController(
 
       if (!status) {
         unregisterScheduledAiGatewayRun(input);
+        releaseRun(input.workspace.id, runId, "lifecycle-status-missing");
         if (input.abortRequested === true) {
           await lifecycleOwner.markAborted(
             input.workspace.id,
@@ -921,6 +1033,7 @@ export function createConversationRunLifecycleController(
 
       if (!isActiveLifecycleStatus(status.status)) {
         unregisterScheduledAiGatewayRun(input);
+        releaseRun(input.workspace.id, status.runId?.trim() || runId, `lifecycle-terminal-${status.status}`);
         if (input.abortRequested === true && status.status !== "aborted") {
           await lifecycleOwner.markAborted(
             input.workspace.id,
@@ -1083,29 +1196,42 @@ export function createConversationRunLifecycleController(
         opencodeSessionId: item.opencodeSessionId,
         conversationId: item.conversationId,
       };
+      const queuedItem = item;
+      const queuedRunTrace = runTrace;
+      if (!queuedItem || !queuedRunTrace) {
+        throw new Error("queue drain lost its claimed item or trace");
+      }
 
       if (lifecycleOwner) {
         try {
-          await runTrace.step(
-            "server:conversation-run:queue-lifecycle-register",
-            () => lifecycleOwner.register({
-              workspaceId: workspace.id,
-              conversationId: item!.conversationId,
-              runId: item!.reservedRunId,
-              engineSessionId: item!.opencodeSessionId,
-              clientMessageId: item!.clientMessageId,
-              origin: item!.origin,
-              directory: item!.directory,
-              kind: lifecycleRunKind(kind),
-            }),
-            {
-              workspaceId: workspace.id,
-              conversationId: item.conversationId,
-              runId: item.reservedRunId,
-              engineSessionId: item.opencodeSessionId,
-              queueItemId: item.queueItemId,
-            },
-          );
+          await withWorkspaceExecutionGate(workspace.id, async () => {
+            await queuedRunTrace.step(
+              "server:conversation-run:queue-lifecycle-register",
+              () => lifecycleOwner.register({
+                workspaceId: workspace.id,
+                conversationId: queuedItem.conversationId,
+                runId: queuedItem.reservedRunId,
+                engineSessionId: queuedItem.opencodeSessionId,
+                clientMessageId: queuedItem.clientMessageId,
+                origin: queuedItem.origin,
+                directory: queuedItem.directory,
+                kind: lifecycleRunKind(kind),
+              }),
+              {
+                workspaceId: workspace.id,
+                conversationId: queuedItem.conversationId,
+                runId: queuedItem.reservedRunId,
+                engineSessionId: queuedItem.opencodeSessionId,
+                queueItemId: queuedItem.queueItemId,
+              },
+            );
+            reserveStarting({
+              runTrace: queuedRunTrace,
+              workspace,
+              target,
+              runId: queuedItem.reservedRunId,
+            });
+          });
         } catch (error) {
           if (error instanceof RunAlreadyActiveError) {
             const pending = options.queueStore.markPending(item.queueItemId, error.activeRunId);
@@ -1135,17 +1261,26 @@ export function createConversationRunLifecycleController(
           }
           return;
         }
+      } else {
+        await withWorkspaceExecutionGate(workspace.id, async () => {
+          reserveStarting({
+            runTrace: queuedRunTrace,
+            workspace,
+            target,
+            runId: queuedItem.reservedRunId,
+          });
+        });
       }
 
       await submitAcceptedRun({
-        runTrace,
+        runTrace: queuedRunTrace,
         workspace,
         target,
-        runId: item.reservedRunId,
+        runId: queuedItem.reservedRunId,
         kind,
         body,
-        clientMessageId: item.clientMessageId,
-        origin: item.origin,
+        clientMessageId: queuedItem.clientMessageId,
+        origin: queuedItem.origin,
         expectAiGatewayStart,
         runtimeAuthorizationActorTokenHash,
         runtimeAuthorizationOrgId,
@@ -1223,11 +1358,11 @@ export function createConversationRunLifecycleController(
         runId: input.runId,
       });
       if (lifecycleOwner) {
-        await lifecycleOwner.markAborted(
+        const markedAborted = await lifecycleOwner.markAborted(
           input.workspace.id,
           input.runId,
           "user abort reconciled after OpenCode abort",
-        ).catch((error) => {
+        ).then(() => true).catch((error) => {
           recordTrace("server:conversation-run:lifecycle-mark-aborted-error", {
             workspaceId: input.workspace.id,
             conversationId: input.target.conversationId,
@@ -1235,7 +1370,11 @@ export function createConversationRunLifecycleController(
             reason: "abort-requested",
             message: error instanceof Error ? error.message : String(error),
           });
+          return false;
         });
+        if (markedAborted) {
+          releaseRun(input.workspace.id, input.runId, "abort-marked-terminal");
+        }
         scheduleQueueDrain(input.workspace.id, input.target.conversationId, 0);
       }
     } catch (error) {
@@ -1292,6 +1431,7 @@ export function createConversationRunLifecycleController(
 
   return {
     async submitRun(input) {
+      return withWorkspaceExecutionGate(input.workspace.id, async () => {
       const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
       input.runTrace.record("server:conversation-run:lifecycle-owner", {
         workspaceId: input.workspace.id,
@@ -1413,6 +1553,7 @@ export function createConversationRunLifecycleController(
       if (!options.submitOpenCode) {
         throw new Error("OpenCode submit port is required for admitted conversation runs");
       }
+      reserveStarting(input);
       const upstream = await submitAcceptedRun(input, lifecycleOwner);
       input.runTrace.record("server:conversation-run:submitted", {
         workspaceId: input.workspace.id,
@@ -1439,6 +1580,7 @@ export function createConversationRunLifecycleController(
           debugTrace: input.runTrace.entries,
         },
       };
+      });
     },
     submitAcceptedRun,
     scheduleQueueDrain,
@@ -1446,10 +1588,36 @@ export function createConversationRunLifecycleController(
     scheduleLifecycleReconcile,
     reconcileConversationRunLifecycle,
     abortRun,
+    async reloadWorkspaceEngineIfIdle(input) {
+      return withWorkspaceExecutionGate(input.workspaceId, async () => {
+        const workspaceId = normalizeWorkspaceExecutionKey(input.workspaceId);
+        if (workspaceReconciliationPending.has(workspaceId)) {
+          return { kind: "blocked" as const, reason: "reconciliation-pending" as const };
+        }
+        if ((workspaceRunReservations.get(workspaceId)?.size ?? 0) > 0) {
+          return { kind: "blocked" as const, reason: "active-runs" as const };
+        }
+        await input.reload();
+        return { kind: "reloaded" as const };
+      });
+    },
     start() {
       if (started) return;
       started = true;
       recordTrace("conversation-run-lifecycle:start");
+      for (const [workspaceId, reservations] of workspaceRunReservations) {
+        const workspace = options.resolveWorkspace?.(workspaceId) ?? null;
+        if (!workspace || workspace.workspaceType === "remote" || !options.lifecycleClient) continue;
+        for (const reservation of reservations.values()) {
+          scheduleLifecycleReconcile({
+            workspace,
+            conversationId: reservation.conversationId,
+            runId: reservation.runId,
+            reason: "startup-workspace-reservation-reconcile",
+            delayMs: 0,
+          });
+        }
+      }
       schedulePendingQueueDrains();
       scheduleDiagnosticsTimer();
     },

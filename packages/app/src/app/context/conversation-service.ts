@@ -17,9 +17,13 @@ import {
   type VesloSessionTranscriptReadOptions,
   type VesloSessionTranscriptSnapshot,
 } from "../lib/veslo-server";
+import type {
+  ManagedAiConfigSyncOutcome,
+  ManagedAiRuntimeAuthPrimeDiagnostic,
+  ManagedAiServerSendTarget,
+} from "./managed-ai-runtime-config";
 import { normalizeDirectoryPath, safeStringify } from "../utils";
 import type { StartupPreference } from "../types";
-import type { ManagedAiRuntimeAuthPrimeDiagnostic } from "./managed-ai-runtime-config";
 import type { SendTargetWorkspaceScope } from "./workspace-session-selection";
 
 export type ConversationServiceClient = {
@@ -272,6 +276,9 @@ export type ConversationServiceDeps<Client extends ConversationServiceClient = C
   ensureManagedAiRuntimeAuthorizationForSend?: (
     targetWorkspace?: SendTargetWorkspaceScope | null,
   ) => Promise<boolean>;
+  prepareManagedAiRuntimeConfigForServerSend?: (
+    input: ManagedAiServerSendTarget,
+  ) => Promise<ManagedAiConfigSyncOutcome>;
   managedAiRuntimeAuthorizationPrimeDiagnostic?: () => ManagedAiRuntimeAuthPrimeDiagnostic | null;
   activeSendTraceId: () => string | null;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
@@ -336,6 +343,7 @@ export function createConversationService<Client extends ConversationServiceClie
   type ConversationWorkspaceRegistrationFlight = {
     id: string;
     promise: Promise<ConversationWorkspaceRegistrationResult>;
+    state: "pending" | "settled";
   };
 
   const conversationWorkspaceRegistrationCacheByClient = new WeakMap<
@@ -583,7 +591,7 @@ export function createConversationService<Client extends ConversationServiceClie
     const traceId = options.traceId?.trim() || null;
     const caller = options.caller ?? (requireLiveOpencodeBaseUrl ? "submit" : "read");
     const recordRegistrationFlight = (
-      action: "start" | "join" | "settle" | "reject",
+      action: "start" | "join" | "cache-hit" | "settle" | "reject",
       flightId: string,
     ) => {
       deps.recordSendTrace("conversation-workspace-registration:flight", {
@@ -598,7 +606,10 @@ export function createConversationService<Client extends ConversationServiceClie
     if (!requireLiveOpencodeBaseUrl) {
       const liveRegistration = registrationCache.get(liveRegistrationCacheKey);
       if (liveRegistration) {
-        recordRegistrationFlight("join", liveRegistration.id);
+        recordRegistrationFlight(
+          liveRegistration.state === "pending" ? "join" : "cache-hit",
+          liveRegistration.id,
+        );
         try {
           const result = await liveRegistration.promise;
           if (result.cacheable && result.id) return result.id;
@@ -610,7 +621,10 @@ export function createConversationService<Client extends ConversationServiceClie
 
     const cachedRegistration = registrationCache.get(registrationCacheKey);
     if (cachedRegistration) {
-      recordRegistrationFlight("join", cachedRegistration.id);
+      recordRegistrationFlight(
+        cachedRegistration.state === "pending" ? "join" : "cache-hit",
+        cachedRegistration.id,
+      );
       return (await cachedRegistration.promise).id;
     }
 
@@ -714,11 +728,16 @@ export function createConversationService<Client extends ConversationServiceClie
     })();
 
     const flightId = "conversation-registration-" + String(++conversationWorkspaceRegistrationFlightSequence);
-    const registrationFlight = { id: flightId, promise: registrationPromise };
+    const registrationFlight: ConversationWorkspaceRegistrationFlight = {
+      id: flightId,
+      promise: registrationPromise,
+      state: "pending",
+    };
     registrationCache.set(registrationCacheKey, registrationFlight);
     recordRegistrationFlight("start", flightId);
     try {
       const result = await registrationPromise;
+      registrationFlight.state = "settled";
       if (!result.cacheable && registrationCache.get(registrationCacheKey) === registrationFlight) {
         registrationCache.delete(registrationCacheKey);
       }
@@ -1031,6 +1050,46 @@ export function createConversationService<Client extends ConversationServiceClie
     return result;
   };
 
+  const prepareManagedAiConfigForServerSubmit = async (input: {
+    owner: "submitConversationFromVesloWriteApi" | "submitConversationRunViaVesloWriteApi";
+    workspaceId: string;
+    workspaceRoot: string;
+    directory: string;
+    serverWorkspaceId: string;
+    traceId: string | null;
+  }) => {
+    if (!deps.prepareManagedAiRuntimeConfigForServerSend) {
+      throw new Error("Managed AI configuration freshness is unavailable for this server submit.");
+    }
+    const traceId = input.traceId?.trim() || "";
+    deps.recordSendTrace(`${input.owner}:managed-ai-config-freshness:start`, {
+      ...(traceId ? { traceId } : {}),
+      workspaceId: input.workspaceId,
+      serverWorkspaceId: input.serverWorkspaceId,
+    });
+    const outcome = await deps.prepareManagedAiRuntimeConfigForServerSend({
+      workspaceId: input.workspaceId,
+      workspaceRoot: input.workspaceRoot,
+      directory: input.directory,
+      serverWorkspaceId: input.serverWorkspaceId,
+      traceId,
+    });
+    deps.recordSendTrace(`${input.owner}:managed-ai-config-freshness:end`, {
+      ...(traceId ? { traceId } : {}),
+      workspaceId: input.workspaceId,
+      serverWorkspaceId: input.serverWorkspaceId,
+      outcome: outcome.kind,
+    });
+    if (outcome.kind === "verified") return;
+    if (outcome.kind === "verified-reload-required") {
+      throw new Error("Managed AI configuration changed while another run is active. Retry after that run finishes.");
+    }
+    if (outcome.kind === "failed") {
+      throw new Error(`Managed AI configuration freshness failed: ${outcome.error}`);
+    }
+    throw new Error("Managed AI configuration freshness is not ready for this server submit.");
+  };
+
   const submitConversationFromVesloWriteApi = async (
     workspaceId: string,
     directory: string,
@@ -1057,6 +1116,16 @@ export function createConversationService<Client extends ConversationServiceClie
     if (!resolution) {
       deps.recordSendTrace("submitConversationFromVesloWriteApi:unavailable", tracePayload);
       return null;
+    }
+    if (expectAiGatewayStart) {
+      await prepareManagedAiConfigForServerSubmit({
+        owner: "submitConversationFromVesloWriteApi",
+        workspaceId,
+        workspaceRoot: deps.resolveWorkspaceRootForConversationScope(workspaceId, directory),
+        directory,
+        serverWorkspaceId: resolution.serverWorkspaceId,
+        traceId: preflight?.traceId ?? null,
+      });
     }
     if (expectAiGatewayStart && deps.ensureManagedAiRuntimeAuthorizationForSend) {
       const targetForRuntimeAuthorization = preflight?.targetWorkspace ?? null;
@@ -1227,6 +1296,16 @@ export function createConversationService<Client extends ConversationServiceClie
     if (!resolution) {
       deps.recordSendTrace("submitConversationRunViaVesloWriteApi:unavailable", tracePayload);
       return null;
+    }
+    if (expectAiGatewayStart) {
+      await prepareManagedAiConfigForServerSubmit({
+        owner: "submitConversationRunViaVesloWriteApi",
+        workspaceId,
+        workspaceRoot,
+        directory,
+        serverWorkspaceId: resolution.serverWorkspaceId,
+        traceId: traceId || null,
+      });
     }
     if (expectAiGatewayStart && deps.ensureManagedAiRuntimeAuthorizationForSend) {
       const targetForRuntimeAuthorization = targetWorkspace ?? options.preflight?.targetWorkspace ?? null;
