@@ -280,6 +280,15 @@ function managedAiAccessConfigFingerprint(profile: ManagedAiAccessProfile | null
   return JSON.stringify({
     providerId: profile.providerId,
     effectiveModel: formatModelRef(profile.effectiveModel),
+    selectableModels: (profile.selectableModels ?? [])
+      .map((entry) => ({
+        model: formatModelRef(entry.model),
+        capabilityStatus: entry.capabilityStatus,
+        attachment: entry.attachment ?? null,
+        inputModalities: entry.modalities?.input ?? [],
+        registryVersion: entry.registryVersion ?? null,
+      }))
+      .sort((left, right) => left.model.localeCompare(right.model)),
   });
 }
 

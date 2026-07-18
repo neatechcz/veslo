@@ -1,10 +1,12 @@
-import type { ComposerDraft } from "../../types";
+import type { ComposerDraft, ModelRef } from "../../types";
 
 export type QueuedDraftState = "queued" | "editing" | "sending" | "error";
 
 export type QueuedDraftEnvelope = {
   clientMessageId: string;
   implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
+  /** Captured on enqueue so a later picker change cannot affect this draft. */
+  modelOverride?: ModelRef | null;
 };
 
 export type QueuedDraft = QueuedDraftEnvelope & {
@@ -39,6 +41,7 @@ export function appendQueuedDraft(
       ...(envelope.implicitSkillCommandPolicy
         ? { implicitSkillCommandPolicy: envelope.implicitSkillCommandPolicy }
         : {}),
+      ...(envelope.modelOverride ? { modelOverride: envelope.modelOverride } : {}),
       createdAt: now,
       updatedAt: now,
       state: "queued",
@@ -82,6 +85,9 @@ export function updateQueuedDraft(
       ...(clientMessageId ? { clientMessageId } : {}),
       ...(envelope?.implicitSkillCommandPolicy
         ? { implicitSkillCommandPolicy: envelope.implicitSkillCommandPolicy }
+        : {}),
+      ...(envelope && "modelOverride" in envelope
+        ? { modelOverride: envelope.modelOverride ?? undefined }
         : {}),
       updatedAt: now,
     };

@@ -1,7 +1,7 @@
 import { parse } from "jsonc-parser";
 
 import type { ModelRef } from "../types";
-import type { VesloGatewayProvider, VesloUserAiAccess } from "./veslo-server";
+import type { VesloGatewayModelCapability, VesloGatewayProvider, VesloUserAiAccess } from "./veslo-server";
 import { formatConfigWithDefaultModel } from "./model-persistence";
 import { deploymentServiceUrl, readViteDeploymentDomain } from "./deployment-endpoints";
 import {
@@ -88,7 +88,17 @@ export type ManagedAiAccessProfile = {
   userId: string;
   providerId: VesloGatewayProvider;
   effectiveModel: ModelRef;
+  /** Absent only in a recovered legacy/proof-cache profile; live reads populate it. */
+  selectableModels?: ManagedAiSelectableModel[];
   updatedAt: string | null;
+};
+
+export type ManagedAiSelectableModel = {
+  model: ModelRef;
+  capabilityStatus: "known" | "unknown";
+  attachment?: boolean;
+  modalities?: { input?: string[] };
+  registryVersion?: string;
 };
 
 function isLoopbackHttpUrl(value: string): boolean {
@@ -591,6 +601,7 @@ export function resolveManagedAiAccess(record: VesloUserAiAccess | null | undefi
     return { profile: null, reason: AI_ACCESS_INVALID_MESSAGE };
   }
 
+  const selectableModels = resolveManagedSelectableModels(record.selectableModels, provider);
   return {
     profile: {
       userId,
@@ -599,12 +610,40 @@ export function resolveManagedAiAccess(record: VesloUserAiAccess | null | undefi
         providerID: provider,
         modelID: effectiveModelId,
       },
+      ...(selectableModels !== undefined ? { selectableModels } : {}),
       updatedAt: typeof record.updatedAt === "string" && record.updatedAt.trim()
         ? record.updatedAt
         : null,
     },
     reason: null,
   };
+}
+
+function resolveManagedSelectableModels(
+  values: VesloGatewayModelCapability[] | undefined,
+  provider: VesloGatewayProvider,
+): ManagedAiSelectableModel[] | undefined {
+  if (values === undefined) return undefined;
+  const models: ManagedAiSelectableModel[] = [];
+  const seen = new Set<string>();
+  for (const value of values ?? []) {
+    const model = value.model?.trim() ?? "";
+    if (!model || value.provider !== provider || seen.has(model)) continue;
+    seen.add(model);
+    const capabilityStatus = value.capabilityStatus === "known" ? "known" : "unknown";
+    models.push({
+      model: { providerID: provider, modelID: model },
+      capabilityStatus,
+      ...(capabilityStatus === "known" && typeof value.attachment === "boolean"
+        ? { attachment: value.attachment }
+        : {}),
+      ...(capabilityStatus === "known" && value.modalities?.input
+        ? { modalities: { input: [...value.modalities.input] } }
+        : {}),
+      ...(value.registryVersion?.trim() ? { registryVersion: value.registryVersion.trim() } : {}),
+    });
+  }
+  return models;
 }
 
 function normalizeGatewayAccessToken(value: string | null | undefined): string {
@@ -688,13 +727,22 @@ export function formatManagedAiAccessConfig(
   },
 ): string {
   const withDefaultModel = formatConfigWithDefaultModel(content ?? "", input.profile.effectiveModel);
+  const routingModels: ManagedAiSelectableModel[] = input.profile.selectableModels?.length
+    ? input.profile.selectableModels
+    : [{ model: input.profile.effectiveModel, capabilityStatus: "unknown" }];
   return `${applyGatewayProviderRouting(withDefaultModel, {
     providerId: input.profile.providerId,
     serverBaseUrl: input.engineBaseUrl?.trim() || input.serverBaseUrl,
     serverClientToken: input.serverClientToken,
     gatewayAccessToken: input.gatewayAccessToken,
     workspaceId: input.workspaceId,
-    models: [input.profile.effectiveModel.modelID],
+    models: routingModels.map((entry) => ({
+      modelID: entry.model.modelID,
+      ...(entry.capabilityStatus === "known" && entry.attachment === true ? { attachment: true } : {}),
+      ...(entry.capabilityStatus === "known" && entry.modalities?.input?.length
+        ? { modalities: { input: entry.modalities.input } }
+        : {}),
+    })),
     trace: false,
   })}\n`;
 }

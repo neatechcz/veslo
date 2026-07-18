@@ -12,6 +12,7 @@ import type {
   ConversationSubmitResolvedRunSubmitter,
   ConversationSubmitService,
 } from "../conversation-submit-service.js";
+import type { ConversationSubmitModelDescriptorResolver } from "../conversation-submit-draft-resolution.js";
 import type {
   ConversationSubmitBlockedResult,
   ConversationSubmitDebugTraceEntry,
@@ -142,6 +143,11 @@ export type ConversationSessionRouteDependencies = {
     actor?: Actor;
     workspaceId: string;
   }): { actorTokenHash: string; orgId: string | null };
+  createManagedAiModelDescriptorResolver(input: {
+    request: Request;
+    actor?: Actor;
+    workspaceId: string;
+  }): ConversationSubmitModelDescriptorResolver;
   deleteOpenCodeSession(input: { workspace: WorkspaceInfo; sessionId: string }): Promise<unknown>;
   loadOpenCodeSession(input: {
     workspace: WorkspaceInfo;
@@ -813,6 +819,11 @@ export function registerConversationSessionRoutes(
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
     const body = await readJsonBody(ctx.request);
     const orchestratorRegistrationScope = createOrchestratorWorkspaceRegistrationScope();
+    const resolveManagedAiModelDescriptor = dependencies.createManagedAiModelDescriptorResolver({
+      request: ctx.request,
+      ...(ctx.actor ? { actor: ctx.actor } : {}),
+      workspaceId: workspace.id,
+    });
     const submitResolvedRun: ConversationSubmitResolvedRunSubmitter = async ({
       request,
       resolvedRunInput,
@@ -1101,6 +1112,7 @@ export function registerConversationSessionRoutes(
       body,
       sendTraceId,
       orchestratorRegistrationScope,
+      resolveManagedAiModelDescriptor,
       resolveDirectory: (requestedRaw) => resolveConversationReadDirectory(workspace, requestedRaw),
       submitResolvedRun,
     });

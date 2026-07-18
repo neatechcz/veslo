@@ -45,6 +45,18 @@ function createOrderedProxyApp(input: {
           throw new Error("unused")
         },
       },
+      modelPolicy: {
+        async getPolicy() {
+          input.events.push("policy")
+          return {
+            id: "platform" as const,
+            enabledModels: [{ provider: "openai" as const, model: "gpt-5.4" }],
+            activeModel: { provider: "openai" as const, model: "gpt-5.4" },
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }
+        },
+      },
       leaseBroker: {
         async getOrCreateActiveLease() {
           input.events.push("lease")
@@ -119,7 +131,7 @@ test("Gateway resolves session and entitlement before user access, lease, and cr
   }))
 
   assert.equal(response.status, 200)
-  assert.deepEqual(events, ["session", "entitlement", "access", "lease", "credential", "transport"])
+  assert.deepEqual(events, ["session", "entitlement", "access", "policy", "lease", "credential", "transport"])
 })
 
 test("denied entitlement returns stable 402 before user access or model resolution", async () => {

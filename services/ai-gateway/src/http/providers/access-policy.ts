@@ -1,6 +1,8 @@
 import type { UserAiAccessPolicyRecord } from "../../access/repository.js";
+import { resolveAuthorizedModelRoster } from "../../access/authorized-model-roster.js";
 import type { LeaseProvider } from "../../leases/repository.js";
 import type { PlatformModelRef } from "../../model-policy/repository.js";
+import type { PlatformModelPolicyRecord } from "../../model-policy/repository.js";
 
 export type AiAccessPolicyResult =
   | { ok: true; body: Record<string, unknown>; model: string }
@@ -13,6 +15,7 @@ export type PlatformModelPolicyResult =
 export function applyAiAccessPolicy(input: {
   routeProvider: LeaseProvider;
   aiAccess: UserAiAccessPolicyRecord;
+  platformPolicy?: PlatformModelPolicyRecord | null;
   body: unknown;
 }): AiAccessPolicyResult {
   if (input.aiAccess.provider !== input.routeProvider) {
@@ -50,13 +53,12 @@ export function applyAiAccessPolicy(input: {
     };
   }
 
-  const allowedModels = input.aiAccess.allowedModels.length > 0
-    ? input.aiAccess.allowedModels.map((value) => normalizeManagedModelRef(value, input.routeProvider)).filter(Boolean)
-    : defaultModel
-      ? [defaultModel]
-      : [];
+  const allowedModels = resolveAuthorizedModelRoster({
+    aiAccess: input.aiAccess,
+    ...(input.platformPolicy !== undefined ? { platformPolicy: input.platformPolicy } : {}),
+  }).map((value) => normalizeManagedModelRef(value, input.routeProvider)).filter(Boolean);
 
-  if (allowedModels.length > 0 && !allowedModels.includes(effectiveModel)) {
+  if (!allowedModels.includes(effectiveModel)) {
     return {
       ok: false,
       status: 403,

@@ -11,6 +11,7 @@ import type { GatewaySession } from "../../auth/gateway-session.js"
 import type { CredentialBinding } from "../../credentials/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js"
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js"
+import type { PlatformModelPolicyRecord } from "../../model-policy/repository.js"
 import type { ProviderTransportResponse } from "../../providers/transport.js"
 import { ProviderTransportError } from "../../providers/transport.js"
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js"
@@ -58,6 +59,7 @@ export function createCodexOAuthProxyRouter(
       ? applyAiAccessPolicy({
           routeProvider: "codex_oauth",
           aiAccess: gatewayAiAccess,
+          platformPolicy: res.locals.gatewayPlatformModelPolicy as PlatformModelPolicyRecord | null | undefined,
           body: req.body,
         })
       : { ok: true as const, body: req.body as Record<string, unknown>, model: "" }

@@ -254,6 +254,21 @@ test("session mutation workflow retries the last prompt with a fresh send correl
   });
 });
 
+test("session mutation workflow retries with the model captured when the prompt was accepted", () => {
+  const capturedModel = { providerID: "codex_oauth", modelID: "gpt-5.4" };
+  const harness = createHarness({
+    lastPromptSentModelOverride: () => capturedModel,
+  });
+
+  harness.workflow.retryLastPrompt();
+
+  assert.deepEqual(harness.calls[0]?.args[1], {
+    clientMessageId: "client_msg_1",
+    origin: "app:retry-last-prompt",
+    modelOverride: capturedModel,
+  });
+});
+
 test("session mutation workflow undo reverts the latest visible user message and restores its prompt", async () => {
   const harness = createHarness();
   await harness.workflow.undoLastUserMessage();

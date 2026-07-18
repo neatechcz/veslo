@@ -91,6 +91,7 @@ type SessionMutationClient = Client;
 
 export type SessionMutationWorkflowDeps = {
   lastPromptSent: () => string;
+  lastPromptSentModelOverride?: () => ModelRef | null;
   sendPrompt: (draft: ComposerDraft, options: SessionMutationSendOptions) => Promise<SessionSubmitResult>;
   createClientMessageId: () => string;
   selectedSessionId: () => string | null | undefined;
@@ -314,6 +315,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
   function retryLastPrompt() {
     const text = deps.lastPromptSent().trim();
     if (!text) return;
+    const modelOverride = deps.lastPromptSentModelOverride?.() ?? null;
     void deps.sendPrompt({
       mode: "prompt",
       text,
@@ -322,6 +324,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
     }, {
       clientMessageId: deps.createClientMessageId(),
       origin: "app:retry-last-prompt",
+      ...(modelOverride ? { modelOverride } : {}),
     });
   }
 

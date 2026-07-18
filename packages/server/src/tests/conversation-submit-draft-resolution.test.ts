@@ -270,6 +270,11 @@ describe("conversation submit draft resolution", () => {
           },
         },
       }),
+      resolveManagedAiModelDescriptor: () => ({
+        providerID: "openai",
+        modelID: "vision",
+        modalities: { input: ["text", "image"] },
+      }),
       workspace: localWorkspace(process.cwd()),
     });
 

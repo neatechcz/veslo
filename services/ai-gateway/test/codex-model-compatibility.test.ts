@@ -30,6 +30,13 @@ test("codex proxy rejects an assigned credential that cannot serve the request m
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+    res.locals.gatewayPlatformModelPolicy = {
+      id: "platform",
+      enabledModels: [{ provider: "codex_oauth", model: "legacy-model" }],
+      activeModel: { provider: "codex_oauth", model: "legacy-model" },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
     next();
   });
   app.use(createCodexOAuthProxyRouter({
@@ -85,6 +92,13 @@ test("codex proxy rejects a requested model not allowed by user access before cr
       credentialId: "cred_1", defaultModel: "legacy", allowedModels: ["legacy"],
       assignmentOrigin: "admin_assigned", createdAt: new Date(), updatedAt: new Date(),
     };
+    res.locals.gatewayPlatformModelPolicy = {
+      id: "platform",
+      enabledModels: [{ provider: "codex_oauth", model: "legacy" }],
+      activeModel: { provider: "codex_oauth", model: "legacy" },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
     next();
   });
   app.use(createCodexOAuthProxyRouter({
@@ -131,6 +145,13 @@ async function requestWithRepairFailure(error: Error) {
       id: "access_1", userId: "user_1", enabled: true, provider: "codex_oauth",
       credentialId: "cred_1", defaultModel: "legacy", allowedModels: ["legacy"],
       assignmentOrigin: "admin_assigned", createdAt: new Date(), updatedAt: new Date(),
+    };
+    res.locals.gatewayPlatformModelPolicy = {
+      id: "platform",
+      enabledModels: [{ provider: "codex_oauth", model: "legacy" }],
+      activeModel: { provider: "codex_oauth", model: "legacy" },
+      createdAt: new Date(),
+      updatedAt: new Date(),
     };
     next();
   });

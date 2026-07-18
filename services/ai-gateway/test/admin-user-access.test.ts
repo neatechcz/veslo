@@ -52,12 +52,12 @@ function createCredential(
   };
 }
 
-function createCodexModelPolicyRepository() {
+function createCodexModelPolicyRepository(enabledModels = ["gpt-5.5"]) {
   return {
     async getPolicy() {
       return {
         id: "platform" as const,
-        enabledModels: [{ provider: "codex_oauth" as const, model: "gpt-5.5" }],
+        enabledModels: enabledModels.map((model) => ({ provider: "codex_oauth" as const, model })),
         activeModel: { provider: "codex_oauth" as const, model: "gpt-5.5" },
         createdAt: new Date("2026-07-12T08:00:00.000Z"),
         updatedAt: new Date("2026-07-12T08:00:00.000Z"),
@@ -420,7 +420,7 @@ test("default admin AI-access write uses the audit-coupled mutation with real ac
         };
       },
     },
-    modelPolicyRepository: createCodexModelPolicyRepository(),
+    modelPolicyRepository: createCodexModelPolicyRepository(["gpt-5.5", "gpt-5.6-sol"]),
     modelCapabilities: createSupportedModelCapabilities(),
     credentialReadRepository: {
       async listAdminCredentials() {
@@ -453,7 +453,7 @@ test("default admin AI-access write uses the audit-coupled mutation with real ac
     provider: "codex_oauth",
     credentialId: "cred_codex_123",
     defaultModel: "gpt-5.5",
-    allowedModels: ["gpt-5.5"],
+    allowedModels: ["gpt-5.5", "gpt-5.6-sol"],
     assignmentOrigin: "admin_assigned",
   }]);
 
@@ -1244,6 +1244,12 @@ test("GET /api/me/ai-access returns the signed-in user's effective ai access pol
       aiAccess: {
         ...AI_ACCESS_PAYLOAD,
         effectiveModel: { provider: "openai", model: "gpt-5.5" },
+        selectableModels: [{
+          provider: "openai",
+          model: "gpt-5.5",
+          registryVersion: "unregistered",
+          capabilityStatus: "unknown",
+        }],
       },
     });
   } finally {
@@ -1290,6 +1296,7 @@ test("admin ai access updates flow through to the signed-in user's effective pol
         defaultModel: null,
         allowedModels: [],
         effectiveModel: null,
+        selectableModels: [],
       },
     });
   } finally {

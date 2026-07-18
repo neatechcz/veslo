@@ -956,6 +956,11 @@ describe("conversation submit service", () => {
           },
         },
       },
+      resolveManagedAiModelDescriptor: () => ({
+        providerID: "openai",
+        modelID: "text-only",
+        modalities: { input: ["text"] },
+      }),
       resolveDirectory: async () => {
         resolveDirectoryCalls += 1;
         return workspaceRoot;
@@ -1007,6 +1012,7 @@ describe("conversation submit service", () => {
           model: { providerID: "openai", modelID: "unknown" },
         },
       },
+      resolveManagedAiModelDescriptor: () => null,
       resolveDirectory: async () => {
         resolveDirectoryCalls += 1;
         return workspaceRoot;
@@ -1021,6 +1027,117 @@ describe("conversation submit service", () => {
       recoverable: true,
     });
     expect(resolveDirectoryCalls).toBe(0);
+  });
+
+  test("never trusts a whitespace-variant Codex image capability supplied by the client", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-attachment-whitespace-provider-"));
+    tempDirs.push(workspaceRoot);
+    const seenModels: unknown[] = [];
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-attachment-whitespace-provider-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => undefined),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-attachment-whitespace-provider",
+        origin: "session:normal",
+        target: { conversationId: "conv-existing", directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "inspect this screenshot",
+          parts: [{ type: "text", text: "inspect this screenshot" }],
+          attachments: [{
+            name: "shot.png",
+            kind: "image",
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,aGVsbG8=",
+          }],
+        },
+        options: {
+          dryRun: true,
+          model: {
+            providerID: "codex_oauth ",
+            modelID: "gpt-5.6-sol",
+            attachment: true,
+            modalities: { input: ["text", "image"] },
+          },
+        },
+      },
+      resolveManagedAiModelDescriptor: async (model) => {
+        seenModels.push(model);
+        return null;
+      },
+      resolveDirectory: async () => workspaceRoot,
+    });
+
+    expect(seenModels).toEqual([{
+      providerID: "codex_oauth ",
+      modelID: "gpt-5.6-sol",
+      attachment: true,
+      modalities: { input: ["text", "image"] },
+    }]);
+    expect(result.payload).toMatchObject({
+      status: "blocked",
+      code: "model_capabilities_unavailable",
+    });
+  });
+
+  test("uses the authenticated managed descriptor before image attachment resolution without exposing it", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-managed-image-"));
+    tempDirs.push(workspaceRoot);
+    const seenModels: unknown[] = [];
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-managed-image-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => undefined),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-managed-image",
+        origin: "session:normal",
+        target: { conversationId: "conv-existing", directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "inspect this screenshot",
+          parts: [{ type: "text", text: "inspect this screenshot" }],
+          attachments: [{
+            name: "shot.png",
+            kind: "image",
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,aGVsbG8=",
+          }],
+        },
+        options: {
+          dryRun: true,
+          model: { providerID: "codex_oauth", modelID: "gpt-5.6-sol" },
+        },
+      },
+      resolveManagedAiModelDescriptor: async (model) => {
+        seenModels.push(model);
+        return {
+          providerID: "codex_oauth",
+          modelID: "gpt-5.6-sol",
+          attachment: true,
+          modalities: { input: ["text", "image"] },
+        };
+      },
+      resolveDirectory: async () => workspaceRoot,
+    });
+
+    expect(seenModels).toEqual([{ providerID: "codex_oauth", modelID: "gpt-5.6-sol" }]);
+    expect(result.httpStatus).toBe(200);
+    expect(result.payload).toMatchObject({ status: "dry_run" });
+    expect(JSON.stringify(result.payload)).not.toContain("modalities");
+    expect(JSON.stringify(result.payload)).not.toContain("attachment");
   });
 
   test("constructs prompt parts and path injection for staged file attachments", async () => {

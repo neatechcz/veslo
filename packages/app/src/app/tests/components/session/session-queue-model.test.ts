@@ -112,6 +112,27 @@ test("queue model rotates identity only when edited content is saved and preserv
   assert.equal(retry[0]!.implicitSkillCommandPolicy, "disable");
 });
 
+test("queue model captures a model override and allows an edit to clear it", () => {
+  const selectedModel = { providerID: "codex_oauth", modelID: "gpt-5.6-sol" };
+  const queued = appendQueuedDraftModel(
+    [],
+    draft("model snapshot"),
+    { clientMessageId: "msg-model", modelOverride: selectedModel },
+    100,
+    "row-model",
+  );
+  const cleared = updateQueuedDraft(
+    queued,
+    "row-model",
+    draft("use workspace default"),
+    200,
+    { clientMessageId: "msg-model-edited", modelOverride: null },
+  );
+
+  assert.deepEqual(queued[0]!.modelOverride, selectedModel);
+  assert.equal(cleared[0]!.modelOverride, undefined);
+});
+
 test("queue model resolves a queued draft after session-key remap", () => {
   const pendingKey = "pending-draft:new-private";
   const remappedKey = "session-a";

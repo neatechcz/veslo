@@ -100,6 +100,8 @@ export type SettingsViewProps = {
   aiAccessEffectiveModelLabel: string | null;
   showThinking: boolean;
   toggleShowThinking: () => void;
+  sessionModelSelectorEnabled: boolean;
+  toggleSessionModelSelector: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   maxEngines: number;
@@ -1079,6 +1081,23 @@ export default function SettingsView(props: SettingsViewProps) {
                   </For>
                 </div>
               </div>
+
+              <Show when={props.aiAccessConfigured}>
+                <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm text-gray-12">Session model selector</div>
+                    <div class="text-xs text-gray-7">Choose a managed AI model for an individual session.</div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3 shrink-0"
+                    onClick={props.toggleSessionModelSelector}
+                    disabled={props.busy}
+                  >
+                    {props.sessionModelSelectorEnabled ? translate("common.on") : translate("common.off")}
+                  </Button>
+                </div>
+              </Show>
             </div>
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">

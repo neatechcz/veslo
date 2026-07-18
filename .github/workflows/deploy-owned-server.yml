@@ -244,6 +244,8 @@ jobs:
             sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$OWNED_SERVER_ENV_FILE" "$@"
           }
 
+          # The migration backfills each Codex assignment from the current
+          # platform policy's enabled Codex roster; the CLI model must match its active model.
           compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway ops:codex-model-migration -- --model "$CODEX_MODEL_MIGRATION"
           compose exec -T ai-gateway pnpm --filter @neatech/ai-gateway ops:codex-model-migration -- --model "$CODEX_MODEL_MIGRATION" --apply
           post_apply_summary="$(

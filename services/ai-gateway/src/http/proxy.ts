@@ -72,6 +72,18 @@ export function createProxyRouter(deps: ProxyDependencies) {
       res.locals.gatewayAiAccess = aiAccess;
     }
 
+    try {
+      res.locals.gatewayPlatformModelPolicy = await deps.modelPolicy.getPolicy();
+    } catch (error) {
+      console.error("gateway_platform_model_policy_lookup_failed", error);
+      res.status(502).json({ error: "gateway_platform_model_policy_lookup_failed" });
+      return;
+    }
+    if (!res.locals.gatewayPlatformModelPolicy) {
+      res.status(503).json({ error: "gateway_platform_model_policy_unavailable" });
+      return;
+    }
+
     next();
   }));
 

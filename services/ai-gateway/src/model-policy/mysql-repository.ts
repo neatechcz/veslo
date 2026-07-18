@@ -155,6 +155,12 @@ export class MySqlPlatformModelPolicyMutation implements PlatformModelPolicyMuta
       }
       const saved = mapPlatformModelPolicy(savedRow);
 
+      // Admin assignments deliberately publish the complete enabled roster for
+      // the active provider. Keep existing assignments in that same contract
+      // inside the policy/audit transaction, rather than relying on a desktop
+      // client to infer or repair authorization.
+      await synchronizeEnabledAssignmentRosters(tx, saved, now);
+
       try {
         await tx.insert(auditEventTable).values({
           id: `audit_${randomUUID()}`,
@@ -192,6 +198,41 @@ async function assertNoEnabledAssignmentsIncompatibleWithProvider(
   if (Number(incompatibleAssignments[0]?.count ?? 0) > 0) {
     throw new PlatformModelPolicyAssignmentConflictError();
   }
+}
+
+async function synchronizeEnabledAssignmentRosters(
+  db: Pick<AiGatewayDb, "update">,
+  policy: PlatformModelPolicyRecord,
+  now: Date,
+): Promise<void> {
+  const allowedModels = platformProviderRoster(policy);
+  await db
+    .update(userAiAccessPolicyTable)
+    .set({
+      default_model: policy.activeModel.model,
+      allowed_models_json: JSON.stringify(allowedModels),
+      updated_at: now,
+    })
+    .where(and(
+      eq(userAiAccessPolicyTable.enabled, 1),
+      eq(userAiAccessPolicyTable.provider, policy.activeModel.provider),
+    ));
+}
+
+function platformProviderRoster(policy: PlatformModelPolicyRecord): string[] {
+  const activeModel = policy.activeModel.model;
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const entry of policy.enabledModels) {
+    if (entry.provider !== policy.activeModel.provider) continue;
+    const model = entry.model.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    models.push(model);
+  }
+  return models.includes(activeModel)
+    ? [activeModel, ...models.filter((model) => model !== activeModel)]
+    : [activeModel];
 }
 
 export function formatPlatformModelPolicyAuditSummary(

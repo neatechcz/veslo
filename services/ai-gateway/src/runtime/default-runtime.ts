@@ -203,6 +203,7 @@ export function createDefaultUserCredentialDependencies(
   return {
     sessionResolver: overrides.sessionResolver ?? new DenUserSessionResolver({ denApiBase: env.denApiBase }),
     aiAccess: runtime.aiAccess,
+    modelPolicy: runtime.modelPolicy,
   };
 }
 

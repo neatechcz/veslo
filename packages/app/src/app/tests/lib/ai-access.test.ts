@@ -825,6 +825,61 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
   });
 });
 
+test("formatManagedAiAccessConfig materializes trusted selectable-model capabilities", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: {
+      ...managedCodexProfile,
+      effectiveModel: { providerID: "codex_oauth", modelID: "gpt-5.6-sol" },
+      selectableModels: [{
+        model: { providerID: "codex_oauth", modelID: "gpt-5.6-sol" },
+        capabilityStatus: "known",
+        attachment: true,
+        modalities: { input: ["text", "image"] },
+      }],
+    },
+    serverBaseUrl: "https://veslo.example.test",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "den_token_123",
+  });
+  const model = (JSON.parse(content) as {
+    provider?: {
+      codex_oauth?: {
+        models?: Record<string, { attachment?: boolean; modalities?: { input?: string[] } }>;
+      };
+    };
+  }).provider?.codex_oauth?.models?.["gpt-5.6-sol"];
+
+  assert.equal(model?.attachment, true);
+  assert.deepEqual(model?.modalities, { input: ["text", "image"] });
+});
+
+test("formatManagedAiAccessConfig does not materialize unknown selectable-model capabilities", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: {
+      ...managedCodexProfile,
+      selectableModels: [{
+        model: { providerID: "codex_oauth", modelID: "gpt-5.4" },
+        capabilityStatus: "unknown",
+        attachment: true,
+        modalities: { input: ["text", "image"] },
+      }],
+    },
+    serverBaseUrl: "https://veslo.example.test",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "den_token_123",
+  });
+  const model = (JSON.parse(content) as {
+    provider?: {
+      codex_oauth?: {
+        models?: Record<string, { attachment?: boolean; modalities?: { input?: string[] } }>;
+      };
+    };
+  }).provider?.codex_oauth?.models?.["gpt-5.4"];
+
+  assert.equal(model?.attachment, undefined);
+  assert.equal(model?.modalities, undefined);
+});
+
 test("formatManagedAiAccessConfig routes openai_compatible through the gateway", () => {
   const content = formatManagedAiAccessConfig(
     "{}",

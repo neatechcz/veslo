@@ -1956,6 +1956,15 @@ export type VesloReloadEvent = {
 
 export type VesloGatewayProvider = "openai" | "anthropic" | "codex_oauth" | "openai_compatible";
 
+export type VesloGatewayModelCapability = {
+  provider: VesloGatewayProvider;
+  model: string;
+  registryVersion?: string;
+  capabilityStatus?: "known" | "unknown";
+  attachment?: boolean;
+  modalities?: { input?: string[] };
+};
+
 export type VesloUserAiAccess = {
   id: string;
   userId: string;
@@ -1968,6 +1977,7 @@ export type VesloUserAiAccess = {
   /** Legacy gateway responses may omit effectiveModel; UI resolves defaultModel as a compatibility fallback. */
   defaultModel?: string | null;
   allowedModels?: string[];
+  selectableModels?: VesloGatewayModelCapability[];
   updatedAt: string | null;
 };
 

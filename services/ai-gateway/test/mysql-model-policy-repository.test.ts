@@ -109,6 +109,7 @@ function createModelPolicyMutationDb(options: {
   const lockedTables: string[] = [];
   const policyWrites: Array<{ values: Record<string, unknown>; set: Record<string, unknown> }> = [];
   const auditWrites: Record<string, unknown>[] = [];
+  const rosterWrites: Record<string, unknown>[] = [];
 
   const db = {
     select() {
@@ -122,15 +123,17 @@ function createModelPolicyMutationDb(options: {
 
               return {
                 limit() {
-                  return {
-                    async for() {
-                      if (table !== platformModelPolicyTable) {
-                        throw new Error("unexpected locking select table");
-                      }
-                      lockedTables.push("platform_model_policy:update");
-                      return row ? [row] : [];
-                    },
+                  const result = Promise.resolve(row ? [row] : []) as Promise<ModelPolicyRow[]> & {
+                    for(mode: string): Promise<ModelPolicyRow[]>;
                   };
+                  result.for = async () => {
+                    if (table !== platformModelPolicyTable) {
+                      throw new Error("unexpected locking select table");
+                    }
+                    lockedTables.push("platform_model_policy:update");
+                    return row ? [row] : [];
+                  };
+                  return result;
                 },
               };
             },
@@ -157,6 +160,20 @@ function createModelPolicyMutationDb(options: {
         },
       };
     },
+    update(table: unknown) {
+      if (table !== userAiAccessPolicyTable) {
+        throw new Error("unexpected policy mutation update table");
+      }
+      return {
+        set(values: Record<string, unknown>) {
+          return {
+            async where() {
+              rosterWrites.push(values);
+            },
+          };
+        },
+      };
+    },
     async transaction(callback: (tx: unknown) => Promise<unknown>) {
       return callback(db);
     },
@@ -166,6 +183,7 @@ function createModelPolicyMutationDb(options: {
     auditWrites,
     lockedTables,
     policyWrites,
+    rosterWrites,
     db,
   };
 }
@@ -293,6 +311,30 @@ test("audited model policy mutation rejects active providers that would strand e
   assert.deepEqual(writable.lockedTables, ["platform_model_policy:update"]);
   assert.deepEqual(writable.policyWrites, []);
   assert.deepEqual(writable.auditWrites, []);
+});
+
+test("audited model policy mutation backfills enabled assignment rosters transactionally", async () => {
+  const writable = createModelPolicyMutationDb();
+  const mutation = new MySqlPlatformModelPolicyMutation(writable.db as AiGatewayDb);
+
+  await mutation.replacePolicyWithAudit({
+    actorUserId: "user_platform_admin",
+    enabledModels: [
+      { provider: "codex_oauth", model: "gpt-5.6-sol" },
+      { provider: "codex_oauth", model: "gpt-5.4" },
+      { provider: "openai", model: "gpt-5.5" },
+    ],
+    activeModel: { provider: "codex_oauth", model: "gpt-5.6-sol" },
+  });
+
+  assert.equal(writable.rosterWrites.length, 1);
+  assert.deepEqual(writable.rosterWrites[0]?.default_model, "gpt-5.6-sol");
+  assert.equal(
+    writable.rosterWrites[0]?.allowed_models_json,
+    JSON.stringify(["gpt-5.6-sol", "gpt-5.4"]),
+  );
+  assert.ok(writable.rosterWrites[0]?.updated_at instanceof Date);
+  assert.equal(writable.auditWrites.length, 1);
 });
 
 test("non-audited model policy replacement rejects active providers that would strand enabled assignments", async () => {

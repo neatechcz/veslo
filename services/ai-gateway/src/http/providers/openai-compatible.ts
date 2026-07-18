@@ -8,6 +8,7 @@ import type { CredentialBinding } from "../../credentials/repository.js";
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js";
 import type { StoredSecret } from "../../credentials/secret-store.js";
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js";
+import type { PlatformModelPolicyRecord } from "../../model-policy/repository.js";
 import { openAiCompatibleCredentialSupportsModel } from "../../model-policy/capability-verifier.js";
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { ProviderTransportError } from "../../providers/transport.js";
@@ -50,6 +51,7 @@ export function createOpenAiCompatibleProxyRouter(
       ? applyAiAccessPolicy({
           routeProvider: "openai_compatible",
           aiAccess: gatewayAiAccess,
+          platformPolicy: res.locals.gatewayPlatformModelPolicy as PlatformModelPolicyRecord | null | undefined,
           body: req.body,
         })
       : { ok: true as const, body: req.body as Record<string, unknown>, model: "" };

@@ -1833,6 +1833,139 @@ function resolveAiGatewayProviderAuthorization(input: {
   });
 }
 
+function readManagedAiModelRef(value: unknown): { providerID: string; modelID: string } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const providerID = typeof record.providerID === "string" ? record.providerID.trim() : "";
+  const modelID = typeof record.modelID === "string" ? record.modelID.trim() : "";
+  return providerID && modelID ? { providerID, modelID } : null;
+}
+
+function readManagedAiCatalogDescriptor(input: {
+  value: unknown;
+  providerID: string;
+  modelID: string;
+}): { providerID: string; modelID: string; attachment?: boolean; modalities?: { input?: string[] } } | null {
+  if (!input.value || typeof input.value !== "object" || Array.isArray(input.value)) return null;
+  const aiAccess = (input.value as Record<string, unknown>).aiAccess;
+  if (!aiAccess || typeof aiAccess !== "object" || Array.isArray(aiAccess)) return null;
+  const selectableModels = (aiAccess as Record<string, unknown>).selectableModels;
+  if (!Array.isArray(selectableModels)) return null;
+  const descriptor = selectableModels.find((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+    const record = candidate as Record<string, unknown>;
+    return record.provider === input.providerID && record.model === input.modelID;
+  });
+  if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor)) return null;
+  const record = descriptor as Record<string, unknown>;
+  const attachment = typeof record.attachment === "boolean" ? record.attachment : undefined;
+  const modalitiesRecord = record.modalities && typeof record.modalities === "object" && !Array.isArray(record.modalities)
+    ? record.modalities as Record<string, unknown>
+    : null;
+  const inputModalities = Array.isArray(modalitiesRecord?.input)
+    ? modalitiesRecord.input.filter((item): item is string => typeof item === "string")
+    : undefined;
+  return {
+    providerID: input.providerID,
+    modelID: input.modelID,
+    ...(attachment !== undefined ? { attachment } : {}),
+    ...(inputModalities ? { modalities: { input: inputModalities } } : {}),
+  };
+}
+
+const MANAGED_AI_MODEL_DESCRIPTOR_CACHE_TTL_MS = 30_000;
+const MANAGED_AI_MODEL_DESCRIPTOR_REQUEST_TIMEOUT_MS = 5_000;
+
+function managedAiModelDescriptorCacheKey(input: {
+  workspaceId: string;
+  actorTokenHash?: string | null;
+  orgId?: string | null;
+  providerID: string;
+  modelID: string;
+}): string {
+  return [
+    input.workspaceId,
+    input.actorTokenHash ?? "host",
+    input.orgId ?? "",
+    input.providerID,
+    input.modelID,
+  ].join(":");
+}
+
+function createManagedAiModelDescriptorResolver(input: {
+  request: Request;
+  actor?: Actor;
+  workspaceId: string;
+}) {
+  return async (rawModel: unknown) => {
+    const model = readManagedAiModelRef(rawModel);
+    if (!model || model.providerID !== "codex_oauth") return null;
+    try {
+      const binding = resolveAiGatewayRuntimeAuthorizationBindingForRun({
+        ...(input.actor ? { actor: input.actor } : {}),
+        workspaceId: input.workspaceId,
+      });
+      const cacheKey = managedAiModelDescriptorCacheKey({
+        workspaceId: input.workspaceId,
+        actorTokenHash: binding.actorTokenHash,
+        orgId: binding.orgId,
+        providerID: model.providerID,
+        modelID: model.modelID,
+      });
+      const authorization = resolveAiGatewayProviderAuthorization({
+        request: input.request,
+        ...(input.actor ? { actor: input.actor } : {}),
+        runtimeAuthorizationActorTokenHash: binding.actorTokenHash,
+        runtimeAuthorizationOrgId: binding.orgId,
+        activeRunContextPresent: true,
+      });
+      // Authorize before reading the descriptor cache: a cached capability must
+      // never outlive the run-scoped authorization that permitted it.
+      const remainingAuthorizationMs = aiGatewayRuntimeOwner.runtimeAuthorizationRemainingMs({
+        actorTokenHash: binding.actorTokenHash,
+        orgId: binding.orgId,
+      });
+      const descriptorCacheTtlMs = Math.min(
+        MANAGED_AI_MODEL_DESCRIPTOR_CACHE_TTL_MS,
+        Math.max(0, remainingAuthorizationMs ?? 0),
+      );
+      const cached = aiGatewayRuntimeOwner.getManagedAiModelCapabilityDescriptor(cacheKey);
+      if (cached) return cached;
+      const headers = new Headers({ [AUTHORIZATION_HEADER]: authorization.authorization });
+      if (authorization.orgId) headers.set(VESLO_ORG_ID_HEADER, authorization.orgId);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), MANAGED_AI_MODEL_DESCRIPTOR_REQUEST_TIMEOUT_MS);
+      let response: Response;
+      try {
+        response = await fetch(`${resolveAiGatewayBaseUrl()}/api/me/ai-access`, {
+          headers,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!response.ok) return null;
+      const descriptor = readManagedAiCatalogDescriptor({
+        value: await response.json(),
+        providerID: model.providerID,
+        modelID: model.modelID,
+      });
+      if (descriptor) {
+        if (descriptorCacheTtlMs > 0) {
+          aiGatewayRuntimeOwner.cacheManagedAiModelCapabilityDescriptor({
+            cacheKey,
+            descriptor,
+            ttlMs: descriptorCacheTtlMs,
+          });
+        }
+      }
+      return descriptor;
+    } catch {
+      return null;
+    }
+  };
+}
+
 function listActiveAiGatewayRunContexts(now = Date.now()): ActiveAiGatewayRunContext[] {
   return aiGatewayRuntimeOwner.listActiveRunContexts(now);
 }
@@ -4411,6 +4544,7 @@ function createRoutes(
     createConversationRunTracer,
     resolveConversationExecutionTarget,
     resolveAiGatewayRuntimeAuthorizationBindingForRun,
+    createManagedAiModelDescriptorResolver,
     deleteOpenCodeSession: async ({ workspace, sessionId }) => {
       await fetchOpencodeJsonWithOrchestratorFallback(
         config,

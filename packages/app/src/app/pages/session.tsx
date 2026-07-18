@@ -24,7 +24,9 @@ import type {
   StartupPreference,
   SidebarSubagentDecoration,
   LoadedSessionPrefetchInterestChangeHandler,
+  ModelRef,
 } from "../types";
+import type { ManagedAiSelectableModel } from "../lib/ai-access";
 
 import { reportError } from "../lib/error-reporter";
 import {
@@ -419,6 +421,9 @@ export type SessionViewProps = {
   compactSession: () => Promise<void>;
   lastPromptSent: string;
   retryLastPrompt: () => void;
+  clearLastPromptModelOverride: () => void;
+  sessionModelSelectorEnabled: boolean;
+  selectableSessionModels: ManagedAiSelectableModel[];
   newTaskDisabled: boolean;
   pendingPermissionCountByWs?: Record<string, number>;
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -551,9 +556,16 @@ const reconnectStateLabelKey = (status: ReconnectState["status"]) => {
 type ImplicitSkillConfirmationRequest = {
   sessionKey: string;
   draft: ComposerDraft;
-  options: ComposerSendOptions;
+  options: SessionComposerSendOptions;
   skillName: string;
   arguments: string;
+};
+
+// The composer intentionally does not expose model routing. This is an internal
+// session-send snapshot that keeps a pending implicit-skill confirmation bound
+// to the model selected when the user first submitted the draft.
+type SessionComposerSendOptions = ComposerSendOptions & {
+  modelOverride?: ModelRef | null;
 };
 
 const snapshotImplicitSkillConfirmationDraft = (draft: ComposerDraft): ComposerDraft => ({
@@ -1992,6 +2004,10 @@ export default function SessionView(props: SessionViewProps) {
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
   const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
+  const [sessionModelOverride, setSessionModelOverride] = createSignal<{
+    sessionKey: string;
+    model: ModelRef | null;
+  }>({ sessionKey: "", model: null });
   const [serverQueuedRuns, setServerQueuedRuns] = createSignal<ServerQueuedRunProjection[]>([]);
   const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
@@ -2001,7 +2017,70 @@ export default function SessionView(props: SessionViewProps) {
   const [todoExpanded, setTodoExpanded] = createSignal(false);
   let escapeStopConfirmationSessionId = untrack(() => props.selectedSessionId);
 
+  const selectableSessionModels = createMemo(() => props.selectableSessionModels ?? []);
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
+  const activeSessionModelOverride = createMemo(() => {
+    const selection = sessionModelOverride();
+    if (selection.sessionKey !== currentSessionQueueKey() || !selection.model) return null;
+    return selectableSessionModels().some(
+      (entry) =>
+        entry.model.providerID === selection.model!.providerID &&
+        entry.model.modelID === selection.model!.modelID,
+    )
+      ? selection.model
+      : null;
+  });
+  const selectedSessionModelValue = createMemo(() => {
+    const selected = activeSessionModelOverride();
+    return selected ? `${selected.providerID}:${selected.modelID}` : "";
+  });
+  const setActiveSessionModelOverride = (value: string) => {
+    const selected = selectableSessionModels().find(
+      (entry) => `${entry.model.providerID}:${entry.model.modelID}` === value,
+    )?.model;
+    setSessionModelOverride({ sessionKey: currentSessionQueueKey(), model: selected ?? null });
+  };
+  const sessionModelSelector = () => (
+    <Show when={props.sessionModelSelectorEnabled && selectableSessionModels().length > 1}>
+      <label class="flex w-full max-w-[960px] items-center justify-end gap-2 text-xs text-gray-9">
+        <span>Model</span>
+        <select
+          data-testid="session-model-selector"
+          class="rounded-lg border border-gray-6 bg-gray-1 px-2 py-1 text-xs text-gray-12"
+          value={selectedSessionModelValue()}
+          onInput={(event) => setActiveSessionModelOverride(event.currentTarget.value)}
+        >
+          <option value="">Workspace default</option>
+          <For each={selectableSessionModels()}>
+            {(entry) => (
+              <option value={`${entry.model.providerID}:${entry.model.modelID}`}>
+                {entry.model.modelID}
+              </option>
+            )}
+          </For>
+        </select>
+      </label>
+    </Show>
+  );
+  createEffect(on(() => props.sessionModelSelectorEnabled, (enabled) => {
+    if (enabled) return;
+    batch(() => {
+      setSessionModelOverride({ sessionKey: currentSessionQueueKey(), model: null });
+      props.clearLastPromptModelOverride();
+      setImplicitSkillConfirmationBySessionKey((current) =>
+        Object.fromEntries(Object.entries(current).map(([key, pending]) => {
+          const { modelOverride: _modelOverride, ...options } = pending.options;
+          return [key, { ...pending, options }];
+        })),
+      );
+      setQueuedDraftsBySessionKey((current) =>
+        Object.fromEntries(Object.entries(current).map(([key, queue]) => [
+          key,
+          queue.map(({ modelOverride: _modelOverride, ...item }) => item),
+        ])),
+      );
+    });
+  }));
   const activeServerQueueVisibilityScope = createMemo(() => {
     const ref = props.activeUiConversationRef;
     return {
@@ -3426,11 +3505,18 @@ export default function SessionView(props: SessionViewProps) {
     if (showComposerEntryState() || showFooterComposerTargetContext()) {
       dismissComposerEntryForSessionKey(submissionSessionKey);
     }
+    const modelOverrideSnapshot = (options as SessionComposerSendOptions).modelOverride;
+    const modelOverride = modelOverrideSnapshot !== undefined
+      ? modelOverrideSnapshot
+      : props.sessionModelSelectorEnabled
+        ? activeSessionModelOverride()
+        : null;
     const result = await sessionFlowFacade.handleSendPrompt(draft, {
       sendNow: options.sendNow,
       sendTraceId: options.sendTraceId,
       source: options.source,
       implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+      modelOverride,
       onDraftTransferred: options.onDraftTransferred,
     });
     if (sessionSubmitNeedsImplicitSkillConfirmation(result)) {
@@ -3439,7 +3525,7 @@ export default function SessionView(props: SessionViewProps) {
         [submissionSessionKey]: {
           sessionKey: submissionSessionKey,
           draft: snapshotImplicitSkillConfirmationDraft(draft),
-          options: { ...options },
+          options: { ...options, modelOverride },
           skillName: result.confirmation.skillName,
           arguments: result.confirmation.arguments,
         },
@@ -4188,6 +4274,7 @@ export default function SessionView(props: SessionViewProps) {
                 <Show when={composerResetKey()} keyed>
                   {(_composerKey) => (
                     <div class="w-full text-left">
+                      {sessionModelSelector()}
                       <Composer
                         entryPlacement="center"
                         initialDraft={props.composerDraft}
@@ -4501,6 +4588,7 @@ export default function SessionView(props: SessionViewProps) {
                   </h2>
                 </div>
               </Show>
+              {sessionModelSelector()}
               <Composer
                 initialDraft={props.composerDraft}
                 prompt={props.composerDraft.text}

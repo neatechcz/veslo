@@ -7,6 +7,7 @@ import type { GatewaySession } from "../../auth/gateway-session.js";
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js";
 import { classifyUpstreamFailure, getUpstreamFailureInput } from "../../leases/error-classifier.js";
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js";
+import type { PlatformModelPolicyRecord } from "../../model-policy/repository.js";
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { readAnthropicUsage } from "../../usage/token-accounting.js";
 import { applyAiAccessPolicy } from "./access-policy.js";
@@ -44,6 +45,7 @@ export function createAnthropicProxyRouter(
       ? applyAiAccessPolicy({
           routeProvider: "anthropic",
           aiAccess: gatewayAiAccess,
+          platformPolicy: res.locals.gatewayPlatformModelPolicy as PlatformModelPolicyRecord | null | undefined,
           body: req.body,
         })
       : { ok: true as const, body: req.body as Record<string, unknown>, model: "" };

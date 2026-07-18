@@ -342,6 +342,8 @@ export type DashboardViewProps = {
   aiAccessEffectiveModelLabel: string | null;
   showThinking: boolean;
   toggleShowThinking: () => void;
+  sessionModelSelectorEnabled: boolean;
+  toggleSessionModelSelector: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   maxEngines: number;
@@ -1233,6 +1235,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   aiAccessEffectiveModelLabel={props.aiAccessEffectiveModelLabel}
                   showThinking={props.showThinking}
                   toggleShowThinking={props.toggleShowThinking}
+                  sessionModelSelectorEnabled={props.sessionModelSelectorEnabled}
+                  toggleSessionModelSelector={props.toggleSessionModelSelector}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
                   maxEngines={props.maxEngines}

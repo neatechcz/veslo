@@ -2140,7 +2140,7 @@ export function createDefaultAdminService(
       const validated = validateUserAiAccessInput({
         ...input,
         userId,
-      }, modelPolicy.activeModel);
+      }, modelPolicy);
       if (validated.enabled) {
         await assertAssignableCredential(validated.provider, validated.credentialId, modelPolicy.activeModel);
       }
@@ -2836,8 +2836,9 @@ function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
 
 function validateUserAiAccessInput(
   input: UpdateUserAiAccessInput & { userId: string },
-  activeModel: PlatformModelRef,
+  modelPolicy: PlatformModelPolicyRecord,
 ): UpsertUserAiAccessPolicyInput {
+  const activeModel = modelPolicy.activeModel;
   const enabled = input.enabled === true;
   const provider = parseAiAccessProvider(input.provider);
   const credentialId =
@@ -2862,9 +2863,26 @@ function validateUserAiAccessInput(
     provider,
     credentialId,
     defaultModel: enabled ? activeModel.model : null,
-    allowedModels: enabled ? [activeModel.model] : [],
+    allowedModels: enabled ? assignedPlatformModelRoster(modelPolicy) : [],
     assignmentOrigin: "admin_assigned",
   };
+}
+
+function assignedPlatformModelRoster(modelPolicy: PlatformModelPolicyRecord): string[] {
+  const provider = modelPolicy.activeModel.provider;
+  const activeModel = modelPolicy.activeModel.model;
+  const seen = new Set<string>();
+  const models: string[] = [];
+  for (const entry of modelPolicy.enabledModels) {
+    if (entry.provider !== provider) continue;
+    const model = entry.model.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    models.push(model);
+  }
+  return models.includes(activeModel)
+    ? [activeModel, ...models.filter((model) => model !== activeModel)]
+    : [activeModel];
 }
 
 function parseAiAccessProvider(value: unknown): AiAccessProvider | null {

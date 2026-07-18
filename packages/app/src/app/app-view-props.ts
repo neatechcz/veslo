@@ -441,6 +441,8 @@ export type AppViewPropsScope = {
   managedAiAccessEffectiveModelLabel: Accessor<string | null>;
   showThinking: Accessor<boolean>;
   setShowThinking: Setter<boolean>;
+  sessionModelSelectorEnabled: Accessor<boolean>;
+  setSessionModelSelectorEnabled: Setter<boolean>;
   hideTitlebar: Accessor<boolean>;
   setHideTitlebar: Setter<boolean>;
   maxEngines: Accessor<number>;
@@ -544,6 +546,8 @@ export type AppViewPropsScope = {
   redoLastUserMessage: () => Promise<void>;
   submitCurrentSessionCompaction: (sessionIdOverride?: string) => Promise<void>;
   lastPromptSent: Accessor<string>;
+  lastPromptSentModelOverride: Accessor<import("./types").ModelRef | null>;
+  clearLastPromptModelOverride: () => void;
   retryLastPrompt: () => void;
   selectedSessionDisplayTitle: Accessor<string | null>;
   visibleMessages: Accessor<MessageWithParts[]>;
@@ -773,6 +777,8 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     managedAiAccessEffectiveModelLabel,
     showThinking,
     setShowThinking,
+    sessionModelSelectorEnabled,
+    setSessionModelSelectorEnabled,
     hideTitlebar,
     setHideTitlebar,
     maxEngines,
@@ -872,6 +878,8 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     redoLastUserMessage,
     submitCurrentSessionCompaction,
     lastPromptSent,
+    lastPromptSentModelOverride,
+    clearLastPromptModelOverride,
     retryLastPrompt,
     selectedSessionDisplayTitle,
     visibleMessages,
@@ -1263,6 +1271,12 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
       aiAccessEffectiveModelLabel: managedAiAccessEffectiveModelLabel(),
       showThinking: showThinking(),
       toggleShowThinking: () => setShowThinking((v: boolean) => !v),
+      sessionModelSelectorEnabled: sessionModelSelectorEnabled(),
+      toggleSessionModelSelector: () => setSessionModelSelectorEnabled((v: boolean) => {
+        const next = !v;
+        if (!next) clearLastPromptModelOverride();
+        return next;
+      }),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v: boolean) => !v),
       maxEngines: maxEngines(),
@@ -1525,6 +1539,9 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     compactSession: submitCurrentSessionCompaction,
     lastPromptSent: lastPromptSent(),
     retryLastPrompt: retryLastPrompt,
+    clearLastPromptModelOverride,
+    sessionModelSelectorEnabled: sessionModelSelectorEnabled(),
+    selectableSessionModels: managedAiAccess()?.selectableModels ?? [],
     newTaskDisabled: newTaskDisabled(),
     pendingPermissionCountByWs: sessionStore.pendingPermissionCountByWs(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),

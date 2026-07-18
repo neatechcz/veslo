@@ -182,6 +182,7 @@ export type ConversationRunCompatibilityBridgeSubmitInput = {
   startSendPromptBusy: StartSendPromptBusy;
   stopSendPromptBusy: () => void;
   traceId: string;
+  modelOverride?: ModelRef | null;
 };
 
 export type ConversationRunCompatibilityBridge = {
@@ -263,7 +264,7 @@ export type ConversationRunCompatibilityBridgeOptions = {
   sessionStoreClearCommandDisplay: (messageId: string) => void;
   sessionStoreSetCommandDisplay: (messageId: string, command: string, args: string) => void;
   setError: (message: string | null) => void;
-  setLastPromptSent: (prompt: string) => void;
+  setLastPromptSent: (prompt: string, modelOverride?: ModelRef | null) => void;
   setPrompt: (value: string) => void;
   stageAttachmentsIntoSessionDirectory: (
     draft: ComposerDraft,
@@ -426,7 +427,7 @@ export type SessionSendWorkflowOptions = {
     updater: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
   ) => void;
   setError: (message: string | null) => void;
-  setLastPromptSent: (prompt: string) => void;
+  setLastPromptSent: (prompt: string, modelOverride?: ModelRef | null) => void;
   setPrompt: (value: string) => void;
   setSelectedSessionId: (sessionId: string | null) => void;
   setView: (view: View) => void;
@@ -627,7 +628,7 @@ export function createConversationRunCompatibilityBridge(
       input.stopSendPromptBusy();
       return false;
     }
-    const model = deps.modelForSession(materializedSessionID);
+    const model = input.modelOverride ?? deps.modelForSession(materializedSessionID);
     let promptSystem: string | undefined;
 
     try {
@@ -733,7 +734,7 @@ export function createConversationRunCompatibilityBridge(
 
     try {
       if (!input.compactCommand) {
-        deps.setLastPromptSent(content);
+        deps.setLastPromptSent(content, input.modelOverride ?? null);
       }
       if (!input.hasExplicitDraft) {
         deps.setPrompt("");
@@ -1392,7 +1393,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       const scope = deps.resolveSelectedSessionBrowseScope(existingSessionId);
       const conversationId = scope?.conversationId?.trim() || null;
       const opencodeSessionId = scope?.opencodeSessionId?.trim() || existingSessionId;
-      const model = deps.modelForSession(existingSessionId);
+      const model = options.modelOverride ?? deps.modelForSession(existingSessionId);
       const agent = deps.agentForSession(existingSessionId);
       const selectedVariant = deps.modelVariant() ?? undefined;
       const command = compactCommand ? null : resolvedDraft.command;
@@ -1523,6 +1524,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         options: {
           agent: agent ?? null,
           variant: selectedVariant ?? null,
+          ...(options.modelOverride ? { model: options.modelOverride } : {}),
           submitQueuePolicy: sendCorrelation.origin === "session:send-now"
             ? "send-now"
             : sendCorrelation.origin === "session:queue-drain"
@@ -1734,7 +1736,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
 
       if (result.draftDisposition === "clear") {
         if (!compactCommand) {
-          deps.setLastPromptSent(initialContent);
+          deps.setLastPromptSent(initialContent, options.modelOverride ?? null);
         }
         if (!hasExplicitDraft) {
           deps.setPrompt("");
@@ -1898,6 +1900,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       ? {
           agent: sessionID ? (deps.agentForSession(sessionID) ?? null) : null,
           variant: deps.modelVariant() ?? null,
+          ...(options.modelOverride ? { model: options.modelOverride } : {}),
           ...(options.implicitSkillCommandPolicy
             ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
             : {}),
@@ -2114,7 +2117,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
       }
       if (serverFirstSubmitResult.draftDisposition === "clear") {
-        deps.setLastPromptSent(initialContent);
+        deps.setLastPromptSent(initialContent, options.modelOverride ?? null);
         if (!hasExplicitDraft) {
           deps.setPrompt("");
         }
@@ -2257,6 +2260,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       startSendPromptBusy,
       stopSendPromptBusy,
       traceId: sendTraceId,
+      modelOverride: options.modelOverride ?? null,
     });
     return sessionSubmitCompatibilityResultFromAccepted(compatibilityAccepted, null);
     } finally {

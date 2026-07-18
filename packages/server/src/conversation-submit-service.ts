@@ -19,6 +19,7 @@ import { deriveConversationSubmitOpenCodeSessionId } from "./conversation-submit
 import {
   resolveConversationSubmitDraft,
   type ConversationSubmitDocumentRuntimeStatusReader,
+  type ConversationSubmitModelDescriptorResolver,
   type ConversationSubmitSkillCommandResolver,
 } from "./conversation-submit-draft-resolution.js";
 import type { ConversationService } from "./conversation-service.js";
@@ -35,6 +36,7 @@ export type ConversationSubmitService = {
     orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
     runtimeAuthorizationActorTokenHash?: string | null;
     runtimeAuthorizationOrgId?: string | null;
+    resolveManagedAiModelDescriptor?: ConversationSubmitModelDescriptorResolver;
     resolveDirectory: (requestedRaw: string | null) => Promise<string | null>;
     submitResolvedRun?: ConversationSubmitResolvedRunSubmitter | null;
   }): Promise<ConversationSubmitServiceResponse>;
@@ -91,6 +93,7 @@ export function createConversationSubmitService(input: {
       orchestratorRegistrationScope,
       runtimeAuthorizationActorTokenHash,
       runtimeAuthorizationOrgId,
+      resolveManagedAiModelDescriptor,
       resolveDirectory,
       submitResolvedRun,
     }) {
@@ -230,6 +233,7 @@ export function createConversationSubmitService(input: {
         includeGlobal: workspace.workspaceType === "local",
         ...(documentRuntimeStatus ? { documentRuntimeStatus } : {}),
         ...(resolveSkillCommand ? { resolveSkillCommand } : {}),
+        ...(resolveManagedAiModelDescriptor ? { resolveManagedAiModelDescriptor } : {}),
       });
       if (draftResolution.status === "blocked") {
         return {

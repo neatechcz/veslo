@@ -29,6 +29,70 @@ const activeRun = {
 };
 
 describe("createAiGatewayRuntimeOwner", () => {
+  test("caches managed model descriptors briefly and invalidates them when authorization changes", () => {
+    let now = 1000;
+    const owner = createAiGatewayRuntimeOwner({ now: () => now });
+    owner.cacheManagedAiModelCapabilityDescriptor({
+      cacheKey: "workspace:actor:org:codex_oauth:gpt-5.6-sol",
+      descriptor: {
+        providerID: "codex_oauth",
+        modelID: "gpt-5.6-sol",
+        attachment: true,
+        modalities: { input: ["text", "image"] },
+      },
+      ttlMs: 30_000,
+    });
+
+    expect(owner.getManagedAiModelCapabilityDescriptor("workspace:actor:org:codex_oauth:gpt-5.6-sol"))
+      .toEqual({
+        providerID: "codex_oauth",
+        modelID: "gpt-5.6-sol",
+        attachment: true,
+        modalities: { input: ["text", "image"] },
+      });
+    owner.registerRuntimeAuthorization({
+      actor,
+      authorization: "Bearer refreshed-access",
+      workspaceId: "workspace",
+      source: "ai-access-token",
+    });
+    expect(owner.getManagedAiModelCapabilityDescriptor("workspace:actor:org:codex_oauth:gpt-5.6-sol"))
+      .toBeNull();
+
+    owner.cacheManagedAiModelCapabilityDescriptor({
+      cacheKey: "expired",
+      descriptor: { providerID: "codex_oauth", modelID: "gpt-5.6-sol" },
+      ttlMs: 1,
+    });
+    now += 2;
+    expect(owner.getManagedAiModelCapabilityDescriptor("expired")).toBeNull();
+  });
+
+  test("bounds descriptor cache lifetime by the remaining runtime authorization", () => {
+    let now = 1_000;
+    const owner = createAiGatewayRuntimeOwner({
+      now: () => now,
+      runtimeAuthorizationMaxAgeMs: 1_000,
+    });
+    owner.registerRuntimeAuthorization({
+      actor,
+      authorization: "Bearer access",
+      source: "ai-access-token",
+    });
+
+    now = 1_750;
+    expect(owner.runtimeAuthorizationRemainingMs({ actorTokenHash: actor.tokenHash })).toBe(250);
+    owner.cacheManagedAiModelCapabilityDescriptor({
+      cacheKey: "bounded",
+      descriptor: { providerID: "codex_oauth", modelID: "gpt-5.6-sol" },
+      ttlMs: 250,
+    });
+
+    now = 2_001;
+    expect(owner.runtimeAuthorizationRemainingMs({ actorTokenHash: actor.tokenHash })).toBeNull();
+    expect(owner.getManagedAiModelCapabilityDescriptor("bounded")).toBeNull();
+  });
+
   test("resolves the only active workspace run for unresolved OpenCode placeholders", () => {
     let now = 1000;
     const owner = createAiGatewayRuntimeOwner({ now: () => now });

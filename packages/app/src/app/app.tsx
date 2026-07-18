@@ -1650,6 +1650,11 @@ export default function App() {
   };
   const prompt = createMemo(() => composerDraft().text);
   const [lastPromptSent, setLastPromptSent] = createSignal("");
+  const [lastPromptSentModelOverride, setLastPromptSentModelOverride] = createSignal<ModelRef | null>(null);
+  const setLastAcceptedPrompt = (prompt: string, modelOverride?: ModelRef | null) => {
+    setLastPromptSent(prompt);
+    setLastPromptSentModelOverride(modelOverride ?? null);
+  };
 
   const sessionAttachmentStaging = createSessionAttachmentStaging({
     vesloServerClient,
@@ -1765,7 +1770,7 @@ export default function App() {
     setActivePendingDraftMeta,
     setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
     setError,
-    setLastPromptSent,
+    setLastPromptSent: setLastAcceptedPrompt,
     setPrompt,
     setSelectedSessionId,
     setView,
@@ -1788,6 +1793,7 @@ export default function App() {
   const abortSession = sessionFlowFacade.abortSession;
   const sessionMutationWorkflow = createSessionMutationWorkflow({
     lastPromptSent,
+    lastPromptSentModelOverride,
     sendPrompt,
     createClientMessageId: createSessionClientMessageId,
     selectedSessionId,
@@ -2451,6 +2457,7 @@ export default function App() {
   } = sendRuntimeReadiness;
 
   const [showThinking, setShowThinking] = createSignal(false);
+  const [sessionModelSelectorEnabled, setSessionModelSelectorEnabled] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
   // VSLO-171 F3Ú9 — maxEngines, idleSuspendMs were moved up to ~ř.1097 so
   // workspaceRouting closures (and downstream session store memos) can
@@ -3897,6 +3904,7 @@ export default function App() {
       setLegacyDefaultModel(DEFAULT_MODEL);
       setDefaultModelExplicit(false);
       setShowThinking(false);
+      setSessionModelSelectorEnabled(false);
       setHideTitlebar(false);
       setModelVariant(DEFAULT_MODEL_VARIANT);
       setUpdateAutoCheck(true);
@@ -4475,6 +4483,8 @@ export default function App() {
     setLegacyDefaultModel,
     showThinking,
     setShowThinking,
+    sessionModelSelectorEnabled,
+    setSessionModelSelectorEnabled,
     maxEngines,
     setMaxEngines,
     idleSuspendMs,
@@ -4854,6 +4864,8 @@ export default function App() {
     managedAiAccessEffectiveModelLabel,
     showThinking,
     setShowThinking,
+    sessionModelSelectorEnabled,
+    setSessionModelSelectorEnabled,
     hideTitlebar,
     setHideTitlebar,
     maxEngines,
@@ -4953,6 +4965,8 @@ export default function App() {
     redoLastUserMessage,
     submitCurrentSessionCompaction,
     lastPromptSent,
+    lastPromptSentModelOverride,
+    clearLastPromptModelOverride: () => setLastPromptSentModelOverride(null),
     retryLastPrompt,
     selectedSessionDisplayTitle,
     visibleMessages,

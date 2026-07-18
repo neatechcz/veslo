@@ -478,7 +478,7 @@ test("provider proxy applies the user access default model when the request omit
           throw new Error("unused");
         },
       },
-      modelPolicy: createModelPolicy("openai", "gpt-5.4"),
+      modelPolicy: createModelPolicy("openai", "gpt-4o-mini"),
       credentials: {
         async getCredentialRecordById() {
           return null;
@@ -599,7 +599,7 @@ test("desktop-compatible provider proxy alias applies the user access default mo
           throw new Error("unused");
         },
       },
-      modelPolicy: createModelPolicy("openai", "gpt-5.4"),
+      modelPolicy: createModelPolicy("openai", "gpt-4o-mini"),
       credentials: {
         async getCredentialRecordById() {
           return null;
@@ -688,7 +688,7 @@ test("desktop-compatible provider proxy alias applies the user access default mo
   }
 });
 
-test("provider proxy does not require platform model policy for runtime calls", async () => {
+test("provider proxy rejects runtime calls when platform model policy is unavailable", async () => {
   const modelCalls: Array<{ userId: string; body: Record<string, unknown> }> = [];
   const app = createPolicyBoundaryApp({
     async getPolicy() {
@@ -699,14 +699,12 @@ test("provider proxy does not require platform model policy for runtime calls", 
 
   const response = await requestOpenAi(app, {});
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(response.body, { id: "response_user_one", model: "gpt-4o-mini" });
-  assert.deepEqual(modelCalls, [
-    { userId: "user_one", body: { messages: [], model: "gpt-4o-mini" } },
-  ]);
+  assert.equal(response.status, 503);
+  assert.deepEqual(response.body, { error: "gateway_platform_model_policy_unavailable" });
+  assert.deepEqual(modelCalls, []);
 });
 
-test("provider proxy ignores platform model policy read failures on runtime calls", async () => {
+test("provider proxy rejects runtime calls when platform model policy lookup fails", async () => {
   const modelCalls: Array<{ userId: string; body: Record<string, unknown> }> = [];
   const app = createPolicyBoundaryApp({
     async getPolicy() {
@@ -717,11 +715,9 @@ test("provider proxy ignores platform model policy read failures on runtime call
 
   const response = await requestOpenAi(app, {});
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(response.body, { id: "response_user_one", model: "gpt-4o-mini" });
-  assert.deepEqual(modelCalls, [
-    { userId: "user_one", body: { messages: [], model: "gpt-4o-mini" } },
-  ]);
+  assert.equal(response.status, 502);
+  assert.deepEqual(response.body, { error: "gateway_platform_model_policy_lookup_failed" });
+  assert.deepEqual(modelCalls, []);
 });
 
 test("every provider route and desktop alias rejects a route that does not match assigned user provider", async () => {
@@ -750,8 +746,16 @@ test("two enabled users receive their assigned user access model fields", async 
   const modelCalls: Array<{ userId: string; body: Record<string, unknown> }> = [];
   const app = createPolicyBoundaryApp({
     async getPolicy() {
-      assert.fail("runtime call should not read platform policy");
-      return createModelPolicy("openai", "gpt-5.4").getPolicy();
+      return {
+        id: "platform" as const,
+        enabledModels: [
+          { provider: "openai" as const, model: "historical-model-one" },
+          { provider: "openai" as const, model: "historical-model-two" },
+        ],
+        activeModel: { provider: "openai" as const, model: "historical-model-one" },
+        createdAt: new Date("2026-07-12T08:00:00.000Z"),
+        updatedAt: new Date("2026-07-12T08:00:00.000Z"),
+      };
     },
     aiAccessByUser: {
       user_one: createAiAccess({

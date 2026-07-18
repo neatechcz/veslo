@@ -184,7 +184,8 @@ test("GET /api/me/ai-access returns the signed-in user's admin-managed ai access
         provider: "openai",
         credentialId: null,
         defaultModel: "gpt-4o-mini",
-        allowedModels: ["gpt-4o-mini"],
+        allowedModels: [],
+        selectableModels: [],
         effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
         updatedAt: "2026-04-08T10:05:00.000Z",
       },
@@ -215,7 +216,8 @@ test("GET /ai-gateway/me/ai-access returns the signed-in user's admin-managed ai
         provider: "openai",
         credentialId: null,
         defaultModel: "gpt-4o-mini",
-        allowedModels: ["gpt-4o-mini"],
+        allowedModels: [],
+        selectableModels: [],
         effectiveModel: { provider: "openai", model: "gpt-4o-mini" },
         updatedAt: "2026-04-08T10:05:00.000Z",
       },
@@ -226,7 +228,7 @@ test("GET /ai-gateway/me/ai-access returns the signed-in user's admin-managed ai
   }
 });
 
-test("GET /api/me/ai-access reflects user access model fields without platform policy", async () => {
+test("GET /api/me/ai-access publishes an empty roster without platform policy", async () => {
   const runtime = createUserAiAccessApp({
     aiAccess: createAiAccessRecord({
       defaultModel: "gpt-4.1",
@@ -243,7 +245,8 @@ test("GET /api/me/ai-access reflects user access model fields without platform p
 
     assert.equal(response.status, 200);
     assert.deepEqual(body.aiAccess.defaultModel, "gpt-4.1");
-    assert.deepEqual(body.aiAccess.allowedModels, ["gpt-4.1", "gpt-4.1-mini"]);
+    assert.deepEqual(body.aiAccess.allowedModels, []);
+    assert.deepEqual(body.aiAccess.selectableModels, []);
     assert.deepEqual(body.aiAccess.effectiveModel, { provider: "openai", model: "gpt-4.1" });
   } finally {
     server.close();
@@ -258,7 +261,8 @@ test("GET /api/me/ai-access does not repair Codex credentials on the authorizati
       provider: "codex_oauth",
       credentialId: "cred_codex",
       defaultModel: "gpt-5.6-sol",
-      allowedModels: ["gpt-5.6-sol"],
+      allowedModels: [],
+      selectableModels: [],
     }),
   });
   const app = createApp({
@@ -311,7 +315,8 @@ test("GET /api/me/ai-access does not repair Codex credentials on the authorizati
       provider: "codex_oauth",
       credentialId: "cred_codex",
       defaultModel: "gpt-5.6-sol",
-      allowedModels: ["gpt-5.6-sol"],
+      allowedModels: [],
+      selectableModels: [],
       effectiveModel: { provider: "codex_oauth", model: "gpt-5.6-sol" },
       updatedAt: "2026-04-08T10:05:00.000Z",
     });
