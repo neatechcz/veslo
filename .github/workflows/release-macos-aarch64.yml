@@ -372,6 +372,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.96.0"
           targets: ${{ matrix.target }}
 
       - name: Install GlitchTip source-map CLI
@@ -845,6 +846,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.96.0"
           targets: ${{ env.TARGET_TRIPLE }}
 
       - name: Install GlitchTip source-map CLI

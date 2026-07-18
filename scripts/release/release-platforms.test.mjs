@@ -38,6 +38,21 @@ test("prerelease workflow only builds macOS and Windows desktop targets", () => 
   assert.doesNotMatch(workflow, /Install Linux build dependencies/);
 });
 
+test("desktop release workflows install the pinned Rust toolchain before cross-target builds", () => {
+  for (const workflowPath of [
+    ".github/workflows/release-macos-aarch64.yml",
+    ".github/workflows/prerelease.yml",
+    ".github/workflows/build-staging-app.yml",
+  ]) {
+    const workflow = readRepoFile(workflowPath);
+    assert.match(
+      workflow,
+      /uses: dtolnay\/rust-toolchain@stable\s+with:\s+toolchain: "1\.96\.0"\s+targets:/,
+      `${workflowPath} must install the toolchain pinned by rust-toolchain.toml before adding targets`,
+    );
+  }
+});
+
 test("desktop build workflow no longer runs Linux app builds", () => {
   const workflow = readRepoFile(".github/workflows/build-desktop.yml");
   const windowsWorkflow = readRepoFile(".github/workflows/build-windows-msi.yml");
