@@ -69,8 +69,9 @@ test("production Windows release selects the single configured WiX locale artifa
 
   assert.deepEqual(Object.keys(tauriConfig.bundle.windows.wix.language), ["cs-CZ"]);
   assert.match(workflow, /\$wixLanguageNames = @\(\$tauriConfig\.bundle\.windows\.wix\.language\.psobject\.Properties\.Name\)/);
-  assert.match(workflow, /-Filter "\*_\$wixLanguage\.msi"/);
-  assert.match(workflow, /-Filter "\*_\$wixLanguage\.msi\.sig"/);
+  assert.match(workflow, /\$releaseVersion = \$tauriConfig\.version/);
+  assert.match(workflow, /-Filter "\*_\$releaseVersion`_x64_\$wixLanguage\.msi"/);
+  assert.match(workflow, /-Filter "\*_\$releaseVersion`_x64_\$wixLanguage\.msi\.sig"/);
   assert.doesNotMatch(workflow, /\$msiFiles = @\(Get-ChildItem -Path \$bundleDir -Filter '\*\.msi' -File\)/);
 });
 

@@ -1070,17 +1070,18 @@ jobs:
           }
 
           $wixLanguage = $wixLanguageNames[0]
-          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter "*_$wixLanguage.msi" -File)
-          $msiSigFiles = @(Get-ChildItem -Path $bundleDir -Filter "*_$wixLanguage.msi.sig" -File)
+          $releaseVersion = $tauriConfig.version
+          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter "*_$releaseVersion`_x64_$wixLanguage.msi" -File)
+          $msiSigFiles = @(Get-ChildItem -Path $bundleDir -Filter "*_$releaseVersion`_x64_$wixLanguage.msi.sig" -File)
           $appExe = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\veslo.exe'
 
           if ($msiFiles.Count -ne 1) {
             $availableMsiNames = @(Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | ForEach-Object Name)
-            throw "Expected exactly one $wixLanguage MSI bundle in $bundleDir; found $($msiFiles.Count). Available MSI files: $($availableMsiNames -join ', ')"
+            throw "Expected exactly one $releaseVersion x64 $wixLanguage MSI bundle in $bundleDir; found $($msiFiles.Count). Available MSI files: $($availableMsiNames -join ', ')"
           }
           if ($msiSigFiles.Count -ne 1) {
             $availableMsiSignatureNames = @(Get-ChildItem -Path $bundleDir -Filter '*.msi.sig' -File | ForEach-Object Name)
-            throw "Expected exactly one $wixLanguage MSI updater signature in $bundleDir; found $($msiSigFiles.Count). Available MSI signatures: $($availableMsiSignatureNames -join ', ')"
+            throw "Expected exactly one $releaseVersion x64 $wixLanguage MSI updater signature in $bundleDir; found $($msiSigFiles.Count). Available MSI signatures: $($availableMsiSignatureNames -join ', ')"
           }
           if (-not (Test-Path $appExe)) {
             throw "Signed Windows app executable not found at $appExe"
