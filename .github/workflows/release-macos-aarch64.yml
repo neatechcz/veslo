@@ -1062,15 +1062,25 @@ jobs:
             throw "Windows bundle directory not found: $bundleDir"
           }
 
-          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter '*.msi' -File)
-          $msiSigFiles = @(Get-ChildItem -Path $bundleDir -Filter '*.msi.sig' -File)
+          $tauriConfigPath = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\tauri.conf.json'
+          $tauriConfig = Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json
+          $wixLanguageNames = @($tauriConfig.bundle.windows.wix.language.psobject.Properties.Name)
+          if ($wixLanguageNames.Count -ne 1) {
+            throw "Expected exactly one configured WiX release language; found $($wixLanguageNames.Count): $($wixLanguageNames -join ', ')"
+          }
+
+          $wixLanguage = $wixLanguageNames[0]
+          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter "*_$wixLanguage.msi" -File)
+          $msiSigFiles = @(Get-ChildItem -Path $bundleDir -Filter "*_$wixLanguage.msi.sig" -File)
           $appExe = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\veslo.exe'
 
           if ($msiFiles.Count -ne 1) {
-            throw "Expected exactly one MSI bundle in $bundleDir; found $($msiFiles.Count)"
+            $availableMsiNames = @(Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | ForEach-Object Name)
+            throw "Expected exactly one $wixLanguage MSI bundle in $bundleDir; found $($msiFiles.Count). Available MSI files: $($availableMsiNames -join ', ')"
           }
           if ($msiSigFiles.Count -ne 1) {
-            throw "Expected exactly one MSI updater signature in $bundleDir; found $($msiSigFiles.Count)"
+            $availableMsiSignatureNames = @(Get-ChildItem -Path $bundleDir -Filter '*.msi.sig' -File | ForEach-Object Name)
+            throw "Expected exactly one $wixLanguage MSI updater signature in $bundleDir; found $($msiSigFiles.Count). Available MSI signatures: $($availableMsiSignatureNames -join ', ')"
           }
           if (-not (Test-Path $appExe)) {
             throw "Signed Windows app executable not found at $appExe"

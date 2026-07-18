@@ -63,6 +63,17 @@ test("production Windows build keeps Tauri output below GitHub Actions log limit
   assert.doesNotMatch(workflow, /pnpm exec tauri -vvv build --config \$env:TAURI_WINDOWS_RELEASE_CONFIG/);
 });
 
+test("production Windows release selects the single configured WiX locale artifact", () => {
+  const workflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
+  const tauriConfig = JSON.parse(readRepoFile("packages/desktop/src-tauri/tauri.conf.json"));
+
+  assert.deepEqual(Object.keys(tauriConfig.bundle.windows.wix.language), ["cs-CZ"]);
+  assert.match(workflow, /\$wixLanguageNames = @\(\$tauriConfig\.bundle\.windows\.wix\.language\.psobject\.Properties\.Name\)/);
+  assert.match(workflow, /-Filter "\*_\$wixLanguage\.msi"/);
+  assert.match(workflow, /-Filter "\*_\$wixLanguage\.msi\.sig"/);
+  assert.doesNotMatch(workflow, /\$msiFiles = @\(Get-ChildItem -Path \$bundleDir -Filter '\*\.msi' -File\)/);
+});
+
 test("desktop build workflow no longer runs Linux app builds", () => {
   const workflow = readRepoFile(".github/workflows/build-desktop.yml");
   const windowsWorkflow = readRepoFile(".github/workflows/build-windows-msi.yml");
