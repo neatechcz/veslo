@@ -55,7 +55,7 @@ test("successful pending draft sends consume the pending draft only after the pr
   const bridgeSource = conversationRunCompatibilityBridgeSource();
   assert.match(
     source,
-    /const consumePendingDraftAfterAcceptedSend = async \(clearDisplayedPendingDraftState: boolean\) => \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*deps\.setComposerDraftBySessionId\(\(current\) => deleteSessionComposerDraft\(current, \{[\s\S]*storageKey: pendingDraftStorageKey,[\s\S]*\}\)\);[\s\S]*\};/s,
+    /const consumePendingDraftAfterAcceptedSend = async \(clearDisplayedPendingDraftState: boolean\) => \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*deps\.composerDraftCommands\.deleteDraft\(pendingDraftStorageKey\);[\s\S]*\};/s,
     "pending drafts should be deleted and cleared through the accepted-send cleanup helper",
   );
   assert.match(
@@ -76,12 +76,12 @@ test("first submitted runs are admitted before selection and are not admitted tw
 
   assert.match(
     source,
-    /let serverFirstSubmittedRunAdmittedDuringMaterialization = false;[\s\S]*onSubmittedRunMaterialized: \(materialized\) => \{[\s\S]*deps\.admitAcceptedConversationRun\(\{[\s\S]*\}\);[\s\S]*if \(admitted !== true\) return false;[\s\S]*deps\.emitLiveTranscriptPolicyEvent\(\{[\s\S]*serverFirstSubmittedRunAdmittedDuringMaterialization = true;[\s\S]*return true;/s,
+    /const serverFirstSubmittedRunAdmissions = new Set<true>\(\);[\s\S]*onSubmittedRunMaterialized: \(materialized\) => \{[\s\S]*deps\.admitAcceptedConversationRun\(\{[\s\S]*\}\);[\s\S]*if \(admitted !== true\) return false;[\s\S]*deps\.emitLiveTranscriptPolicyEvent\(\{[\s\S]*serverFirstSubmittedRunAdmissions\.add\(true\);[\s\S]*return true;/s,
     "a validated first submitted run should claim lifecycle and live-read ownership while creation is still materializing",
   );
   assert.match(
     source,
-    /if \(!serverFirstSubmittedRunAdmittedDuringMaterialization\) \{[\s\S]*if \(serverFirstSubmitResult\.status === "submitted"\) \{[\s\S]*deps\.admitAcceptedConversationRun\(/s,
+    /if \(!serverFirstSubmittedRunAdmissions\.has\(true\)\) \{[\s\S]*if \(serverFirstSubmitResult\.status === "submitted"\) \{[\s\S]*deps\.admitAcceptedConversationRun\(/s,
     "the post-creation admission must remain only as a fallback when the early claim did not succeed",
   );
   assert.match(
@@ -101,7 +101,7 @@ test("failed sends do not consume pending draft state", () => {
 
   assert.doesNotMatch(
     catchWindow,
-    /pendingSessionDraftsDelete\(|clearActivePendingDraftState\(|deleteSessionComposerDraft\(/,
+    /pendingSessionDraftsDelete\(|clearActivePendingDraftState\(|composerDraftCommands\.deleteDraft\(/,
     "failed sends must leave the pending draft intact",
   );
 });

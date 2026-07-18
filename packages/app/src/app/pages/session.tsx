@@ -82,6 +82,10 @@ import {
   normalizeDirectoryPath,
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
+import {
+  describeTranscriptProjectionBoundary,
+  observeTranscriptProjectionBoundary,
+} from "../context/session-transcript-write-diagnostics";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
 import {
   partText,
@@ -130,8 +134,8 @@ import { createServerQueueProjectionController } from "../components/session/ser
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
 import {
   createPendingSubmittedDraft,
+  createPendingSubmittedMessageProjection,
   pendingSubmittedDraftToEditable,
-  pendingSubmittedDraftToMessage,
 } from "../components/session/pending-submit-model";
 import {
   decidePendingSubmittedTranscriptAdoption,
@@ -495,7 +499,15 @@ export type SessionViewProps = {
   reloadError: string | null;
   busy: boolean;
   composerDraft: ComposerDraft;
-  setComposerDraft: (draft: ComposerDraft) => void;
+  composerStorageKey: string;
+  composerDraftRevision: number;
+  setComposerDraftForStorageKey: (storageKey: string, draft: ComposerDraft) => void;
+  captureComposerDraftRevision: (storageKey: string) => number;
+  clearComposerDraftIfRevision: (storageKey: string, revision: number) => boolean;
+  remapPendingComposerDraftToSession: (
+    pendingDraftKey: string | null | undefined,
+    sessionId: string | null | undefined,
+  ) => void;
   prompt: string;
   setPrompt: (value: string) => void;
   reconnectNotice: "reconnecting" | "reconnected" | null;
@@ -1339,9 +1351,10 @@ export default function SessionView(props: SessionViewProps) {
       transcriptMessageCount: props.messages.length,
     })
   );
-  const composerResetKey = createMemo(() =>
-    `${props.activeComposerTargetId ?? "__no-target"}:${transcriptDisplaySessionId() ?? "__no-session"}`
-  );
+  // A target switch moves the current draft to a different storage key; it does
+  // not replace the editor's draft. Keeping it out of this keyed boundary avoids
+  // a needless focused-editor remount while the boot target resolves.
+  const composerResetKey = createMemo(() => transcriptDisplaySessionId() ?? "__no-session");
   createEffect(() => {
     const heldMaterializedSessionId = materializedSubmitDisplayHoldSessionId();
     if (!heldMaterializedSessionId) return;
@@ -1492,6 +1505,7 @@ export default function SessionView(props: SessionViewProps) {
     return snapshot.id === baseline.assistantId && snapshot.partCount > baseline.partCount;
   });
 
+  const projectPendingSubmittedMessage = createPendingSubmittedMessageProjection();
   const localSubmittedMessage = createMemo<MessageWithParts | null>(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return null;
@@ -1503,7 +1517,7 @@ export default function SessionView(props: SessionViewProps) {
       sessionId: props.selectedSessionId,
     });
     if (renderReplacement.kind === "show-canonical") return null;
-    return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
+    return projectPendingSubmittedMessage(submitted, props.activeWorkspaceRoot);
   });
   createEffect(() => {
     const submitted = optimisticSubmittedDraft();
@@ -1666,11 +1680,13 @@ export default function SessionView(props: SessionViewProps) {
       handoff.heldMessages.length > 0,
     );
   });
-  const displayedEffectiveMessages = createMemo(() =>
-    activeSessionSwitchHandoffActive()
-      ? activeSessionSwitchHandoff()?.heldMessages ?? []
-      : effectiveRenderedMessages(),
-  );
+  const displayedEffectiveMessages = createMemo(() => {
+    const displayed = activeSessionSwitchHandoffActive()
+      ? (activeSessionSwitchHandoff()?.heldMessages ?? [])
+      : effectiveRenderedMessages();
+    observeTranscriptProjectionBoundary("session-handoff", props.selectedSessionId, displayed);
+    return displayed;
+  });
   const aiAccessLoading = createMemo(() => isAiAccessLoadingMessage(props.aiAccessBlockedReason, tr));
   const aiAccessLoadingWithoutMessages = createMemo(() =>
     aiAccessLoading() && displayedEffectiveMessages().length === 0
@@ -3372,7 +3388,9 @@ export default function SessionView(props: SessionViewProps) {
     composer: {
       clearComposerDraftForSession: (sessionId) => props.clearComposerDraftForSession(sessionId),
       currentDraftMode: () => props.composerDraft.mode,
-      setComposerDraft: (draft) => props.setComposerDraft(draft),
+      remapPendingDraftToSession: (pendingDraftKey, sessionId) =>
+        props.remapPendingComposerDraftToSession(pendingDraftKey, sessionId),
+      setComposerDraft: (draft) => props.setComposerDraftForStorageKey(props.composerStorageKey, draft),
     },
     transcriptEdit: {
       editableUserMessage,
@@ -3627,8 +3645,8 @@ export default function SessionView(props: SessionViewProps) {
     if (result.status === "blocked") setToastMessage(result.message);
   };
 
-  const handleDraftChange = (draft: ComposerDraft) => {
-    props.setComposerDraft(draft);
+  const handleDraftChange = (storageKey: string, draft: ComposerDraft) => {
+    props.setComposerDraftForStorageKey(storageKey, draft);
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {
@@ -4302,6 +4320,8 @@ export default function SessionView(props: SessionViewProps) {
                         entryPlacement="center"
                         initialDraft={props.composerDraft}
                         prompt={props.composerDraft.text}
+                        draftStorageKey={props.composerStorageKey}
+                        draftRevision={props.composerDraftRevision}
                         developerMode={props.developerMode}
                         busy={composerBusy()}
                         isStreaming={showRunIndicator()}
@@ -4311,6 +4331,8 @@ export default function SessionView(props: SessionViewProps) {
                         onSend={handleSendPrompt}
                         onStop={cancelRun}
                         onDraftChange={handleDraftChange}
+                        captureDraftRevision={props.captureComposerDraftRevision}
+                        clearDraftIfRevision={props.clearComposerDraftIfRevision}
                         selectedAgent={props.selectedSessionAgent}
                         onSelectAgent={(agent) => {
                           void applySessionAgent(agent);
@@ -4406,17 +4428,23 @@ export default function SessionView(props: SessionViewProps) {
             pendingMessageStateById={pendingMessageStateById()}
             editableUserMessage={editableUserMessage()}
             onEditUserMessage={handleEditUserMessage}
-            onMessageBlocksRecomputed={
-              sessionUiDiagnosticEnabled()
-                ? (trace) => {
-                    markTempRuntimeUiRenderSource("MessageList.messageBlocks", "recomputed", {
-                      markerKind: "message-blocks",
-                      detail: `revision=${trace.revision} blocks=${trace.blockCount} unstableKeys=${trace.unstableBlockKeyCount}`,
-                      markerPayload: { ...trace },
-                    });
-                  }
-                : undefined
-            }
+            transcriptSurfaceContext={() => ({
+              transcriptSurfaceOwner: activeSessionSwitchHandoffActive()
+                ? "session-switch-handoff"
+                : localSubmittedMessage()
+                  ? "viewport-with-local-submitted"
+                  : "viewport-canonical",
+              sourceMessageCount: props.messages.length,
+              renderedMessageCount: renderedMessages().length,
+              effectiveRenderedMessageCount: effectiveRenderedMessages().length,
+              localSubmittedMessageId: localSubmittedMessage()?.info.id ?? null,
+              transcriptProjectionBoundaries: {
+                canonical: describeTranscriptProjectionBoundary("canonical", props.selectedSessionId),
+                visible: describeTranscriptProjectionBoundary("visible", props.selectedSessionId),
+                viewportRendered: describeTranscriptProjectionBoundary("viewport-rendered", props.selectedSessionId),
+                sessionHandoff: describeTranscriptProjectionBoundary("session-handoff", props.selectedSessionId),
+              },
+            })}
             setScrollToMessageById={(handler) => {
               scrollMessageIntoViewById = handler;
             }}
@@ -4615,6 +4643,8 @@ export default function SessionView(props: SessionViewProps) {
               <Composer
                 initialDraft={props.composerDraft}
                 prompt={props.composerDraft.text}
+                draftStorageKey={props.composerStorageKey}
+                draftRevision={props.composerDraftRevision}
                 developerMode={props.developerMode}
                 busy={composerBusy()}
                 isStreaming={showRunIndicator()}
@@ -4625,6 +4655,8 @@ export default function SessionView(props: SessionViewProps) {
                 onSend={handleSendPrompt}
                 onStop={cancelRun}
                 onDraftChange={handleDraftChange}
+                captureDraftRevision={props.captureComposerDraftRevision}
+                clearDraftIfRevision={props.clearComposerDraftIfRevision}
                 selectedAgent={props.selectedSessionAgent}
                 onSelectAgent={(agent) => {
                   void applySessionAgent(agent);

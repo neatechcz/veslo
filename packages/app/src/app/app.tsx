@@ -28,6 +28,7 @@ import { parse } from "jsonc-parser";
 import { reportError } from "./lib/error-reporter";
 import { resolveDeveloperModeFromSearch } from "./lib/developer-mode";
 import { recordSendWorkflowTrace } from "./lib/send-workflow-trace";
+import { uiEffectTrace } from "./lib/ui-effect-trace";
 import { resolveRunningVesloServerHostInfo } from "./lib/veslo-server-host";
 import {
   readScopedSessionStatus,
@@ -154,10 +155,15 @@ import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import {
   createEmptyComposerDraft,
+  clearSessionComposerDraftIfRevision,
   deleteSessionComposerDraft,
   getSessionComposerDraft,
+  getSessionComposerDraftRevision,
+  remapPendingComposerDraftToSession as remapPendingComposerDraftToSessionRecord,
+  resolveActiveComposerDraftStorageKey,
   setSessionComposerDraft,
-  setSessionComposerPrompt,
+  type ComposerDraftStateCommands,
+  type ComposerDraftStateByStorageKey,
 } from "./pages/session-composer-drafts";
 import { resolveComposerStorageKey } from "./lib/pending-session-drafts";
 import {
@@ -283,6 +289,7 @@ import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import { createVisibleMessageProjection } from "./context/session-visible-messages";
+import { observeTranscriptProjectionBoundary } from "./context/session-transcript-write-diagnostics";
 import type { ReconnectNotice, ReconnectState } from "./context/session-reconnect";
 import {
   createTranscriptProjectionStore,
@@ -782,7 +789,9 @@ export default function App() {
       ensureWorkspaceForFolder: (folder) => workspaceStore.ensureWorkspaceForFolder(folder),
     },
     publishRegisteredWorkspaceToSidebar: (workspaceId) => publishRegisteredWorkspaceToSidebar(workspaceId),
-    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    composerDraftCommands: {
+      writeDraft: (storageKey, draft) => composerDraftCommands.writeDraft(storageKey, draft),
+    },
     clearDisplayedSession: () => {
       batch(() => {
         setSelectedSessionId(null);
@@ -1617,27 +1626,125 @@ export default function App() {
     return true;
   };
 
-  const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
-  const currentComposerStorageKey = createMemo(() => {
-    const sessionId = selectedSessionId();
-    if (sessionId) {
-      return resolveComposerStorageKey({ sessionId });
-    }
-    return resolveComposerStorageKey({ pendingDraftKey: activePendingDraftKey() });
+  const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<ComposerDraftStateByStorageKey>({});
+  const [materializingComposerDraftSessionId, setMaterializingComposerDraftSessionId] = createSignal<string | null>(null);
+  const clearMaterializingComposerDraftSessionId = (sessionId: string | null | undefined) => {
+    const expectedSessionId = sessionId?.trim() ?? "";
+    if (!expectedSessionId) return;
+    setMaterializingComposerDraftSessionId((current) => current === expectedSessionId ? null : current);
+  };
+  let composerDraftWriteId = 0;
+  const composerDraftStorageKeyKind = (storageKey: string) =>
+    storageKey === resolveComposerStorageKey({ pendingDraftKey: "__pending-draft__:trace" })
+      ? "unpublished"
+      : storageKey === "__no-session__"
+        ? "no-session"
+        : "session";
+  const currentComposerStorageKey = createMemo(() => resolveActiveComposerDraftStorageKey({
+    selectedSessionId: selectedSessionId(),
+    pendingDraftKey: activePendingDraftKey(),
+    materializingSessionId: materializingComposerDraftSessionId(),
+  }));
+  createEffect(() => {
+    if (!selectedSessionId()) return;
+    clearMaterializingComposerDraftSessionId(materializingComposerDraftSessionId());
   });
+  const composerStorageKey = currentComposerStorageKey;
   const composerDraft = createMemo(() =>
     getSessionComposerDraft(composerDraftBySessionId(), { storageKey: currentComposerStorageKey() }),
   );
-  const setComposerDraft = (draft: ComposerDraft) => {
-    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: currentComposerStorageKey() }, draft));
+  const composerDraftRevision = createMemo(() =>
+    getSessionComposerDraftRevision(composerDraftBySessionId(), { storageKey: currentComposerStorageKey() }),
+  );
+  const setComposerDraftForStorageKey = (storageKey: string, draft: ComposerDraft) => {
+    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey }, draft));
   };
   const clearComposerDraftForSession = (sessionId: string | null | undefined) => {
     const trimmed = sessionId?.trim() ?? "";
     if (!trimmed) return;
     setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { sessionId: trimmed }));
   };
+  const remapPendingComposerDraftToSession = (
+    pendingDraftKey: string | null | undefined,
+    sessionId: string | null | undefined,
+  ) => {
+    let remapResult: ReturnType<typeof remapPendingComposerDraftToSessionRecord>;
+    batch(() => {
+      setComposerDraftBySessionId((current) => {
+        const result = remapPendingComposerDraftToSessionRecord(current, pendingDraftKey, sessionId);
+        remapResult = result;
+        if (result.status !== "noop" || uiEffectTrace.isEnabled()) {
+          const sourceKey = pendingDraftKey
+            ? resolveComposerStorageKey({ pendingDraftKey })
+            : "__no-session__";
+          const targetKey = sessionId ? resolveComposerStorageKey({ sessionId }) : "__no-session__";
+          const previousRevision = getSessionComposerDraftRevision(current, { storageKey: sourceKey });
+          const nextRevision = getSessionComposerDraftRevision(result.state, { storageKey: targetKey });
+          uiEffectTrace.record("composer-draft:write", {
+            owner: "pending-to-real-remap",
+            operation: result.status,
+            sourceStorageKeyKind: composerDraftStorageKeyKind(sourceKey),
+            targetStorageKeyKind: composerDraftStorageKeyKind(targetKey),
+            previousRevision,
+            nextRevision,
+            writeId: result.status === "moved" || result.status === "deduplicated"
+              ? ++composerDraftWriteId
+              : null,
+          });
+          if (result.status === "conflict") {
+            uiEffectTrace.reportIncident("composer-draft-remap-conflict", {
+              sourceStorageKeyKind: composerDraftStorageKeyKind(sourceKey),
+              targetStorageKeyKind: composerDraftStorageKeyKind(targetKey),
+              policy: "preserve-both",
+            });
+          }
+        }
+        return result.state;
+      });
+      const materializedSessionId = sessionId?.trim() ?? "";
+      if (
+        materializedSessionId
+        && (remapResult!.status === "moved" || remapResult!.status === "deduplicated")
+      ) {
+        // The route still has no selected real session at this point. Switch the
+        // mounted Composer to the target bucket in the same batch as the move so
+        // it cannot observe the just-emptied no-session bucket.
+        setMaterializingComposerDraftSessionId(materializedSessionId);
+      }
+    });
+    return remapResult!;
+  };
+  const clearComposerDraftIfRevision = (storageKey: string, revision: number) => {
+    let cleared = false;
+    setComposerDraftBySessionId((current) => {
+      const actualRevision = getSessionComposerDraftRevision(current, { storageKey });
+      const result = clearSessionComposerDraftIfRevision(current, { storageKey }, revision);
+      cleared = result.cleared;
+      uiEffectTrace.record("composer-draft:conditional-clear", {
+        owner: "composer-submit",
+        storageKeyKind: composerDraftStorageKeyKind(storageKey),
+        expectedRevision: revision,
+        actualRevision,
+        applied: result.cleared,
+        writeId: result.cleared ? ++composerDraftWriteId : null,
+      });
+      return result.state;
+    });
+    return cleared;
+  };
+  const captureComposerDraftRevision = (storageKey: string) =>
+    getSessionComposerDraftRevision(composerDraftBySessionId(), { storageKey });
+  const composerDraftCommands: ComposerDraftStateCommands = {
+    writeDraft: setComposerDraftForStorageKey,
+    deleteDraft: (storageKey) => {
+      setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey }));
+    },
+    remapPendingDraft: remapPendingComposerDraftToSession,
+    captureDraftRevision: captureComposerDraftRevision,
+    clearDraftIfRevision: clearComposerDraftIfRevision,
+  };
   const setPrompt = (value: string) => {
-    setComposerDraftBySessionId((current) => setSessionComposerPrompt(current, { storageKey: currentComposerStorageKey() }, value));
+    composerDraftCommands.writeDraft(currentComposerStorageKey(), createEmptyComposerDraft(value));
   };
   const prompt = createMemo(() => composerDraft().text);
   const [lastPromptSent, setLastPromptSent] = createSignal("");
@@ -1646,6 +1753,7 @@ export default function App() {
     setLastPromptSent(prompt);
     setLastPromptSentModelOverride(modelOverride ?? null);
   };
+  const clearLastPromptModelOverride = () => setLastPromptSentModelOverride(null);
 
   const sessionAttachmentStaging = createSessionAttachmentStaging({
     vesloServerClient,
@@ -1759,7 +1867,7 @@ export default function App() {
     sessionStoreSetCommandDisplay: (messageId, command, args) => sessionStore.setCommandDisplay(messageId, command, args),
     setActivePendingDraftKey,
     setActivePendingDraftMeta,
-    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    composerDraftCommands,
     setError,
     setLastPromptSent: setLastAcceptedPrompt,
     setPrompt,
@@ -1832,8 +1940,7 @@ export default function App() {
     persistSessionDirectoryOverride,
     sessions,
     setSessions,
-    deleteSessionComposerDraft,
-    setComposerDraftBySessionId,
+    composerDraftCommands,
     removeSessionFromWorkspaceSidebar: (workspaceId, sessionId) => removeSessionFromWorkspaceSidebar(workspaceId, sessionId),
     pathname: () => location.pathname,
     navigate: (to, options) => navigate(to, options),
@@ -1949,12 +2056,14 @@ export default function App() {
   const visibleMessages = createMemo(() => {
     const sessionID = selectedSessionId();
     const errorTurns = sessionStore.selectedSessionErrorTurns();
-    return reconcileVisibleMessages({
+    const projected = reconcileVisibleMessages({
       source: messages(),
       sessionID,
       errorTurns,
       revertMessageID: selectedSession()?.revert?.messageID ?? null,
     });
+    observeTranscriptProjectionBoundary("visible", sessionID, projected);
+    return projected;
   });
 
   const [pendingSessionSwitchPerf, setPendingSessionSwitchPerf] = createSignal<{
@@ -2673,7 +2782,7 @@ export default function App() {
       ensureWorkspaceForFolder: (folder) => workspaceStore.ensureWorkspaceForFolder(folder),
     },
     publishRegisteredWorkspaceToSidebar: (workspaceId) => publishRegisteredWorkspaceToSidebar(workspaceId),
-    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    composerDraftCommands,
     setView,
     setError,
     reportError,
@@ -4355,6 +4464,7 @@ export default function App() {
         skipTranscriptRead: result.transition.skipTranscriptRead === true,
       });
     } catch (selectError) {
+      clearMaterializingComposerDraftSessionId(sessionId);
       sessionRouteSync.clearOwnNavigationSessionIf(sessionId);
       throw selectError;
     }
@@ -4945,13 +5055,14 @@ export default function App() {
     sendPrompt,
     replaceUserMessage,
     clearComposerDraftForSession,
+    remapPendingComposerDraftToSession,
     abortSession,
     undoLastUserMessage,
     redoLastUserMessage,
     submitCurrentSessionCompaction,
     lastPromptSent,
     lastPromptSentModelOverride,
-    clearLastPromptModelOverride: () => setLastPromptSentModelOverride(null),
+    clearLastPromptModelOverride,
     retryLastPrompt,
     selectedSessionDisplayTitle,
     visibleMessages,
@@ -4973,7 +5084,11 @@ export default function App() {
     activeComposerBusy,
     prompt,
     composerDraft,
-    setComposerDraft,
+    composerStorageKey,
+    composerDraftRevision,
+    setComposerDraftForStorageKey,
+    captureComposerDraftRevision,
+    clearComposerDraftIfRevision,
     activePermissionMemo,
     permissionReplyBusy,
     respondPermissionForAppViewProps,
@@ -5038,7 +5153,7 @@ export default function App() {
         </Match>
         <Match when={currentView() === "session"}>
           <SessionView
-            {...appViewProps.sessionProps()}
+            {...appViewProps.sessionProps}
             onOpenFeedback={feedbackWorkflow.openFeedbackModal}
           />
         </Match>

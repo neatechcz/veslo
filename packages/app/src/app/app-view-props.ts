@@ -541,6 +541,10 @@ export type AppViewPropsScope = {
     options: SessionMutationReplaceOptions,
   ) => Promise<SessionSubmitResult>;
   clearComposerDraftForSession: (sessionId: string | null | undefined) => void;
+  remapPendingComposerDraftToSession: (
+    pendingDraftKey: string | null | undefined,
+    sessionId: string | null | undefined,
+  ) => void;
   abortSession: (sessionId?: string, target?: ConversationAbortTarget) => Promise<void>;
   undoLastUserMessage: () => Promise<void>;
   redoLastUserMessage: () => Promise<void>;
@@ -580,7 +584,11 @@ export type AppViewPropsScope = {
   activeComposerBusy: Accessor<boolean>;
   prompt: Accessor<string>;
   composerDraft: Accessor<ComposerDraft>;
-  setComposerDraft: (draft: ComposerDraft) => void;
+  composerStorageKey: Accessor<string>;
+  composerDraftRevision: Accessor<number>;
+  setComposerDraftForStorageKey: (storageKey: string, draft: ComposerDraft) => void;
+  captureComposerDraftRevision: (storageKey: string) => number;
+  clearComposerDraftIfRevision: (storageKey: string, revision: number) => boolean;
   activePermissionMemo: Accessor<PendingPermission | null>;
   permissionReplyBusy: Accessor<boolean>;
   respondPermissionForAppViewProps: (
@@ -624,7 +632,12 @@ export type AppViewPropsScope = {
 export type AppViewPropsAdapter = {
   onboardingProps: () => OnboardingViewProps;
   dashboardProps: () => DashboardViewAdapterProps;
-  sessionProps: () => SessionViewAdapterProps;
+  /**
+   * A stable object with per-property getters. Do not replace this with a
+   * function returning an aggregate object: a function spread in Solid becomes
+   * one shared memo and couples every SessionView prop to every other one.
+   */
+  sessionProps: SessionViewAdapterProps;
 };
 
 export function shouldShowSessionReloadBanner(input: {
@@ -882,6 +895,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     sendPrompt,
     replaceUserMessage,
     clearComposerDraftForSession,
+    remapPendingComposerDraftToSession,
     abortSession,
     undoLastUserMessage,
     redoLastUserMessage,
@@ -910,7 +924,11 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     activeComposerBusy,
     prompt,
     composerDraft,
-    setComposerDraft,
+    composerStorageKey,
+    composerDraftRevision,
+    setComposerDraftForStorageKey,
+    captureComposerDraftRevision,
+    clearComposerDraftIfRevision,
     activePermissionMemo,
     permissionReplyBusy,
     respondPermissionForAppViewProps,
@@ -1421,56 +1439,121 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     }
   };
 
-  const sessionProps = () => ({
-    selectedSessionId: activeSessionId(),
-    activePendingDraftKey: activePendingDraftKey(),
-    activePendingDraftMeta: activePendingDraftMeta(),
-    composerTargetOptions: composerTargetController.composerTargetOptions(),
-    activeComposerTargetId: composerTargetController.activeComposerTargetId(),
-    switchComposerTarget: composerTargetController.switchComposerTarget,
-    setView,
-    setSessionBrowseScope,
-    tab: tab(),
-    setTab,
-    setSettingsTab,
-    activeWorkspaceDisplay: activeWorkspaceDisplay(),
-    activeWorkspaceRoot:
-      (activeSessionId() ? resolveSelectedSessionBrowseScope(activeSessionId()!)?.workspaceRoot : null) ||
-      preferredSessionWorkspaceRoot(
-        resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
-        workspaceStore.activeWorkspaceRoot().trim(),
-      ),
-    workspaces: workspaceStore.workspaces(),
-    workspacesHydrated: workspaceStore.workspacesHydrated(),
-    activeWorkspaceId: workspaceStore.activeWorkspaceId(),
-    activeUiConversationRef: activeUiConversationRef(),
-    activeWorkspaceHasRoutingEntry: activeWorkspaceHasRoutingEntry(),
-    activeWorkspaceSessionsLoaded: sessionsLoadedForActiveWorkspace(),
-    connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
-    workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
-    readyEngineWorkspaceIds: readyEngineWorkspaceIds(),
-    activateWorkspace: handleActivateWorkspace,
-    testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
-    recoverWorkspace: workspaceStore.recoverWorkspace,
-    editWorkspaceConnection: openWorkspaceConnectionSettings,
-    forgetWorkspace: workspaceStore.forgetWorkspace,
-    openCreateWorkspace: () => {
-      if (CLOUD_ONLY_MODE) {
-        openCreateRemoteWorkspace();
-        return;
-      }
-      workspaceStore.setCreateWorkspaceOpen(true);
+  const sessionProps = {
+    get selectedSessionId() {
+      return activeSessionId();
     },
-    openCreateRemoteWorkspace,
-    openNewSessionWithDirectory,
-    openDirectorySessionFromPicker: () => {
-      void pendingSessionDraftController.openDirectorySessionFromPicker();
+    get activePendingDraftKey() {
+      return activePendingDraftKey();
     },
-    openPendingDirectoryDraftInWorkspace: (workspaceId: string) => {
-      void pendingSessionDraftController.openPendingDirectoryDraftInWorkspace(workspaceId);
+    get activePendingDraftMeta() {
+      return activePendingDraftMeta();
     },
-    canChooseSessionFolder:
-      (() => {
+    get composerTargetOptions() {
+      return composerTargetController.composerTargetOptions();
+    },
+    get activeComposerTargetId() {
+      return composerTargetController.activeComposerTargetId();
+    },
+    get switchComposerTarget() {
+      return composerTargetController.switchComposerTarget;
+    },
+    get setView() {
+      return setView;
+    },
+    get setSessionBrowseScope() {
+      return setSessionBrowseScope;
+    },
+    get tab() {
+      return tab();
+    },
+    get setTab() {
+      return setTab;
+    },
+    get setSettingsTab() {
+      return setSettingsTab;
+    },
+    get activeWorkspaceDisplay() {
+      return activeWorkspaceDisplay();
+    },
+    get activeWorkspaceRoot() {
+      return (
+        (activeSessionId() ? resolveSelectedSessionBrowseScope(activeSessionId()!)?.workspaceRoot : null) ||
+        preferredSessionWorkspaceRoot(
+          resolveSessionDirectory(selectedSession() ?? { id: "", directory: "" }),
+          workspaceStore.activeWorkspaceRoot().trim(),
+        )
+      );
+    },
+    get workspaces() {
+      return workspaceStore.workspaces();
+    },
+    get workspacesHydrated() {
+      return workspaceStore.workspacesHydrated();
+    },
+    get activeWorkspaceId() {
+      return workspaceStore.activeWorkspaceId();
+    },
+    get activeUiConversationRef() {
+      return activeUiConversationRef();
+    },
+    get activeWorkspaceHasRoutingEntry() {
+      return activeWorkspaceHasRoutingEntry();
+    },
+    get activeWorkspaceSessionsLoaded() {
+      return sessionsLoadedForActiveWorkspace();
+    },
+    get connectingWorkspaceId() {
+      return workspaceStore.connectingWorkspaceId();
+    },
+    get workspaceConnectionStateById() {
+      return workspaceStore.workspaceConnectionStateById();
+    },
+    get readyEngineWorkspaceIds() {
+      return readyEngineWorkspaceIds();
+    },
+    get activateWorkspace() {
+      return handleActivateWorkspace;
+    },
+    get testWorkspaceConnection() {
+      return workspaceStore.testWorkspaceConnection;
+    },
+    get recoverWorkspace() {
+      return workspaceStore.recoverWorkspace;
+    },
+    get editWorkspaceConnection() {
+      return openWorkspaceConnectionSettings;
+    },
+    get forgetWorkspace() {
+      return workspaceStore.forgetWorkspace;
+    },
+    get openCreateWorkspace() {
+      return () => {
+        if (CLOUD_ONLY_MODE) {
+          openCreateRemoteWorkspace();
+          return;
+        }
+        workspaceStore.setCreateWorkspaceOpen(true);
+      };
+    },
+    get openCreateRemoteWorkspace() {
+      return openCreateRemoteWorkspace;
+    },
+    get openNewSessionWithDirectory() {
+      return openNewSessionWithDirectory;
+    },
+    get openDirectorySessionFromPicker() {
+      return () => {
+        void pendingSessionDraftController.openDirectorySessionFromPicker();
+      };
+    },
+    get openPendingDirectoryDraftInWorkspace() {
+      return (workspaceId: string) => {
+        void pendingSessionDraftController.openPendingDirectoryDraftInWorkspace(workspaceId);
+      };
+    },
+    get canChooseSessionFolder() {
+      return (() => {
         if (!isTauriRuntime()) return false;
         const sessionId = activeSessionId();
         if (!sessionId) return false;
@@ -1481,171 +1564,467 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
           workspaceStore.activeWorkspaceRoot().trim(),
         );
         return workspaceStore.isPrivateWorkspacePath(sourceRoot);
-      })(),
-    chooseFolderForCurrentSession,
-    showRemoteActions: showRemoteActions(),
-    importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
-    importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
-    exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
-    exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
-    engineReady: engineReady(),
-    clientConnected: Boolean(routedClient()),
-    authenticatedUser: authenticatedUser(),
-    onLogout: logoutLocalDenAuth,
-    onSignIn: startDesktopBrowserSignIn,
-    vesloServerStatus: vesloServerStatus(),
-    vesloServerConnection: vesloServerConnectionSnapshot(),
-    startupPreference: startupPreference(),
-    hideTitlebar: hideTitlebar(),
-    vesloServerClient: hydratedVesloServerClient(),
-    vesloServerSettings: vesloServerSettings(),
-    vesloServerHostInfo: vesloServerHostInfo(),
-    vesloServerWorkspaceId: vesloServerWorkspaceId(),
-    engineInfo: workspaceStore.engine(),
-    stopHost,
-    headerStatus: headerStatus(),
-    busyHint: busyHint(),
-    updateStatus: updateStatus(),
-    updateEnv: updateEnv(),
-    updateAutoDownload: updateAutoDownload(),
-    anyActiveRuns: anyActiveRuns(),
-    downloadUpdate: () => downloadUpdate(),
-    retryUpdateDownload: () => retryUpdateDownload(),
-    installUpdateAndRestart,
-    activePlugins: sidebarPluginList(),
-    activePluginStatus: sidebarPluginStatus(),
-    mcpServers: mcpServers(),
-    mcpStatuses: mcpStatuses(),
-    mcpStatus: mcpStatus(),
-    skills: skills(),
-    skillsStatus: skillsStatus(),
-    sessionCapabilities: sessionCapabilitiesSnapshot(),
-    sessionCapabilitiesStatus: sessionCapabilitiesStatus(),
-    sessionCapabilitiesError: sessionCapabilitiesError(),
-    showSkillReloadBanner: shouldShowSessionReloadBanner({
-      reloadRequired: reloadRequired(),
-      reloadTrigger: reloadTrigger(),
-      activeReloadBlockingSessionCount: activeReloadBlockingSessions().length,
-    }),
-    reloadBannerTitle: reloadCopy().title,
-    reloadBannerBody: reloadCopy().body,
-    reloadBannerBlocked: activeReloadBlockingSessions().length > 0,
-    reloadBannerActiveCount: activeReloadBlockingSessions().length,
-    canReloadWorkspace: canReloadWorkspace() || activeReloadBlockingSessions().length > 0,
-    reloadWorkspaceEngine: async () => {
-      await reloadWorkspaceEngine();
+      })();
     },
-    refreshWorkspaceConfig: refreshWorkspaceConfigForPath,
-    forceStopActiveConversations: forceStopActiveSessionsAndReload,
-    dismissReloadBanner: clearReloadRequired,
-    reloadBusy: reloadBusy(),
-    reloadError: reloadError(),
-    createSessionAndOpen: createSessionAndOpen,
-    sendPromptAsync: sendPrompt,
-    replaceUserMessageAsync: replaceUserMessage,
-    clearComposerDraftForSession,
-    abortSession: abortSession,
-    sessionRevertMessageId: selectedSession()?.revert?.messageID ?? null,
-    undoLastUserMessage: undoLastUserMessage,
-    redoLastUserMessage: redoLastUserMessage,
-    compactSession: submitCurrentSessionCompaction,
-    lastPromptSent: lastPromptSent(),
-    retryLastPrompt: retryLastPrompt,
-    clearLastPromptModelOverride,
-    sessionModelSelectorEnabled: sessionModelSelectorEnabled(),
-    selectableSessionModels: managedAiAccess()?.selectableModels ?? [],
-    newTaskDisabled: newTaskDisabled(),
-    pendingPermissionCountByWs: sessionStore.pendingPermissionCountByWs(),
-    workspaceSessionGroups: sidebarWorkspaceGroups(),
-    unreadSessionIds: unreadSessionIds(),
-    workspaceSessionPagingById: workspaceSessionPagingById(),
-    subagentDecorationsBySessionId: subagentDecorationsBySessionId(),
-    archivedSessionIds: archivedSessionIds(),
-    archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) =>
-      archiveSidebarSessionAndClearActive(workspaceId, sessionId, target).catch((error: unknown) => {
-        reportError(error, "sessionArchives.archiveSidebar");
-        setError(error instanceof Error ? error.message : safeStringify(error));
-      }),
-    unarchiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) =>
-      unarchiveSession(workspaceId, sessionId, undefined, target).catch((error: unknown) => {
-        reportError(error, "sessionArchives.unarchiveSidebar");
-        setError(error instanceof Error ? error.message : safeStringify(error));
-      }),
-    loadMoreWorkspaceSidebarSessions,
-    isPrivateWorkspacePath: workspaceStore.isPrivateWorkspacePath,
-    openRenameWorkspace,
-    selectSession: selectSession,
-    selectedSessionTitle: selectedSessionDisplayTitle(),
-    messages: visibleMessages(),
-    todos: activeTodos(),
-    busyLabel: busyLabel(),
-    developerMode: developerMode(),
-    showThinking: showThinking(),
-    groupMessageParts,
-    summarizeStep,
-    expandedStepIds: expandedStepIds(),
-    setExpandedStepIds: setExpandedStepIds,
-    expandedTimelineSectionIds: expandedTimelineSectionIds(),
-    setExpandedTimelineSectionIds: setExpandedTimelineSectionIds,
-    expandedTimelineDetailIds: expandedTimelineDetailIds(),
-    setExpandedTimelineDetailIds: setExpandedTimelineDetailIds,
-    expandedSidebarSections: expandedSidebarSections(),
-    setExpandedSidebarSections: setExpandedSidebarSections,
-    artifacts: activeArtifacts(),
-    artifactFamilies: activeArtifactFamilies(),
-    workingFiles: activeWorkingFiles(),
-    authorizedDirs: activeAuthorizedDirs(),
-    busy: activeComposerBusy(),
-    prompt: prompt(),
-    setPrompt: setPrompt,
-    reconnectNotice: sessionReconnectNotice(),
-    reconnectState: sessionReconnectState?.() ?? null,
-    clearReconnectNotice: () => setSessionReconnectNotice(null),
-    composerDraft: composerDraft(),
-    setComposerDraft: setComposerDraft,
-    activePermission: activePermissionMemo(),
-    permissionReplyBusy: permissionReplyBusy(),
-    respondPermission: respondPermissionForAppViewProps,
-    respondPermissionAndRemember: respondPermissionAndRemember,
-    activeQuestion: activeQuestion(),
-    questionReplyBusy: questionReplyBusy(),
-    respondQuestion: respondQuestion,
-    safeStringify: safeStringify,
-    showTryNotionPrompt: tryNotionPromptVisible() && notionIsActive(),
-    aiAccessBlockedReason: managedAiAccessBlockedReason(),
-    listAgents: listAgents,
-    listCommands: listCommands,
-    selectedSessionAgent: selectedSessionAgent(),
-    setSessionAgent: setSessionAgent,
-    saveSession: saveSessionExport,
-    sessionStatusById: activeSessionStatusById(),
-    sidebarSessionActivityByRowKey: sidebarSessionActivityByRowKey(),
-    conversationRunDiagnosticsBySessionKey: conversationRunDiagnosticsBySessionKey(),
-    busySessionByWorkspaceId: busySessionByWorkspaceId(),
-    historyUnavailable: selectedSessionHistoryUnavailable(),
-    historyUnavailableRetrying: selectedSessionHistoryRetrying(),
-    retryUnavailableHistory,
-    retryAcceptedRunForSession,
-    retryTerminalTranscriptRecoveryForSession,
-    hasEarlierMessages: selectedSessionHasEarlierMessages(),
-    loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
-    loadEarlierMessages,
-    searchFiles: searchWorkspaceFiles,
-    deleteSession: deleteSessionById,
-    onTryNotionPrompt: () => {
-      setPrompt("setup my crm");
-      setTryNotionPromptVisible(false);
-      setNotionSkillInstalled(true);
-      try {
-        window.localStorage.setItem("veslo.notionSkillInstalled", "1");
-      } catch {
-        // ignore
-      }
+    get chooseFolderForCurrentSession() {
+      return chooseFolderForCurrentSession;
     },
-    sessionStatus: visibleSelectedSessionStatus(),
-    renameSession: renameSessionTitle,
-    error: error(),
-  } satisfies SessionViewAdapterProps);
+    get showRemoteActions() {
+      return showRemoteActions();
+    },
+    get importWorkspaceConfig() {
+      return workspaceStore.importWorkspaceConfig;
+    },
+    get importingWorkspaceConfig() {
+      return workspaceStore.importingWorkspaceConfig();
+    },
+    get exportWorkspaceConfig() {
+      return workspaceStore.exportWorkspaceConfig;
+    },
+    get exportWorkspaceBusy() {
+      return workspaceStore.exportingWorkspaceConfig();
+    },
+    get engineReady() {
+      return engineReady();
+    },
+    get clientConnected() {
+      return Boolean(routedClient());
+    },
+    get authenticatedUser() {
+      return authenticatedUser();
+    },
+    get onLogout() {
+      return logoutLocalDenAuth;
+    },
+    get onSignIn() {
+      return startDesktopBrowserSignIn;
+    },
+    get vesloServerStatus() {
+      return vesloServerStatus();
+    },
+    get vesloServerConnection() {
+      return vesloServerConnectionSnapshot();
+    },
+    get startupPreference() {
+      return startupPreference();
+    },
+    get hideTitlebar() {
+      return hideTitlebar();
+    },
+    get vesloServerClient() {
+      return hydratedVesloServerClient();
+    },
+    get vesloServerSettings() {
+      return vesloServerSettings();
+    },
+    get vesloServerHostInfo() {
+      return vesloServerHostInfo();
+    },
+    get vesloServerWorkspaceId() {
+      return vesloServerWorkspaceId();
+    },
+    get engineInfo() {
+      return workspaceStore.engine();
+    },
+    get stopHost() {
+      return stopHost;
+    },
+    get headerStatus() {
+      return headerStatus();
+    },
+    get busyHint() {
+      return busyHint();
+    },
+    get updateStatus() {
+      return updateStatus();
+    },
+    get updateEnv() {
+      return updateEnv();
+    },
+    get updateAutoDownload() {
+      return updateAutoDownload();
+    },
+    get anyActiveRuns() {
+      return anyActiveRuns();
+    },
+    get downloadUpdate() {
+      return () => downloadUpdate();
+    },
+    get retryUpdateDownload() {
+      return () => retryUpdateDownload();
+    },
+    get installUpdateAndRestart() {
+      return installUpdateAndRestart;
+    },
+    get activePlugins() {
+      return sidebarPluginList();
+    },
+    get activePluginStatus() {
+      return sidebarPluginStatus();
+    },
+    get mcpServers() {
+      return mcpServers();
+    },
+    get mcpStatuses() {
+      return mcpStatuses();
+    },
+    get mcpStatus() {
+      return mcpStatus();
+    },
+    get skills() {
+      return skills();
+    },
+    get skillsStatus() {
+      return skillsStatus();
+    },
+    get sessionCapabilities() {
+      return sessionCapabilitiesSnapshot();
+    },
+    get sessionCapabilitiesStatus() {
+      return sessionCapabilitiesStatus();
+    },
+    get sessionCapabilitiesError() {
+      return sessionCapabilitiesError();
+    },
+    get showSkillReloadBanner() {
+      return shouldShowSessionReloadBanner({
+        reloadRequired: reloadRequired(),
+        reloadTrigger: reloadTrigger(),
+        activeReloadBlockingSessionCount: activeReloadBlockingSessions().length,
+      });
+    },
+    get reloadBannerTitle() {
+      return reloadCopy().title;
+    },
+    get reloadBannerBody() {
+      return reloadCopy().body;
+    },
+    get reloadBannerBlocked() {
+      return activeReloadBlockingSessions().length > 0;
+    },
+    get reloadBannerActiveCount() {
+      return activeReloadBlockingSessions().length;
+    },
+    get canReloadWorkspace() {
+      return canReloadWorkspace() || activeReloadBlockingSessions().length > 0;
+    },
+    get reloadWorkspaceEngine() {
+      return async () => {
+        await reloadWorkspaceEngine();
+      };
+    },
+    get refreshWorkspaceConfig() {
+      return refreshWorkspaceConfigForPath;
+    },
+    get forceStopActiveConversations() {
+      return forceStopActiveSessionsAndReload;
+    },
+    get dismissReloadBanner() {
+      return clearReloadRequired;
+    },
+    get reloadBusy() {
+      return reloadBusy();
+    },
+    get reloadError() {
+      return reloadError();
+    },
+    get createSessionAndOpen() {
+      return createSessionAndOpen;
+    },
+    get sendPromptAsync() {
+      return sendPrompt;
+    },
+    get replaceUserMessageAsync() {
+      return replaceUserMessage;
+    },
+    get clearComposerDraftForSession() {
+      return clearComposerDraftForSession;
+    },
+    get remapPendingComposerDraftToSession() {
+      return remapPendingComposerDraftToSession;
+    },
+    get abortSession() {
+      return abortSession;
+    },
+    get sessionRevertMessageId() {
+      return selectedSession()?.revert?.messageID ?? null;
+    },
+    get undoLastUserMessage() {
+      return undoLastUserMessage;
+    },
+    get redoLastUserMessage() {
+      return redoLastUserMessage;
+    },
+    get compactSession() {
+      return submitCurrentSessionCompaction;
+    },
+    get lastPromptSent() {
+      return lastPromptSent();
+    },
+    get retryLastPrompt() {
+      return retryLastPrompt;
+    },
+    get clearLastPromptModelOverride() {
+      return clearLastPromptModelOverride;
+    },
+    get sessionModelSelectorEnabled() {
+      return sessionModelSelectorEnabled();
+    },
+    get selectableSessionModels() {
+      return managedAiAccess()?.selectableModels ?? [];
+    },
+    get newTaskDisabled() {
+      return newTaskDisabled();
+    },
+    get pendingPermissionCountByWs() {
+      return sessionStore.pendingPermissionCountByWs();
+    },
+    get workspaceSessionGroups() {
+      return sidebarWorkspaceGroups();
+    },
+    get unreadSessionIds() {
+      return unreadSessionIds();
+    },
+    get workspaceSessionPagingById() {
+      return workspaceSessionPagingById();
+    },
+    get subagentDecorationsBySessionId() {
+      return subagentDecorationsBySessionId();
+    },
+    get archivedSessionIds() {
+      return archivedSessionIds();
+    },
+    get archiveSession() {
+      return (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) =>
+        archiveSidebarSessionAndClearActive(workspaceId, sessionId, target).catch((error: unknown) => {
+          reportError(error, "sessionArchives.archiveSidebar");
+          setError(error instanceof Error ? error.message : safeStringify(error));
+        });
+    },
+    get unarchiveSession() {
+      return (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) =>
+        unarchiveSession(workspaceId, sessionId, undefined, target).catch((error: unknown) => {
+          reportError(error, "sessionArchives.unarchiveSidebar");
+          setError(error instanceof Error ? error.message : safeStringify(error));
+        });
+    },
+    get loadMoreWorkspaceSidebarSessions() {
+      return loadMoreWorkspaceSidebarSessions;
+    },
+    get isPrivateWorkspacePath() {
+      return workspaceStore.isPrivateWorkspacePath;
+    },
+    get openRenameWorkspace() {
+      return openRenameWorkspace;
+    },
+    get selectSession() {
+      return selectSession;
+    },
+    get selectedSessionTitle() {
+      return selectedSessionDisplayTitle();
+    },
+    get messages() {
+      return visibleMessages();
+    },
+    get todos() {
+      return activeTodos();
+    },
+    get busyLabel() {
+      return busyLabel();
+    },
+    get developerMode() {
+      return developerMode();
+    },
+    get showThinking() {
+      return showThinking();
+    },
+    get groupMessageParts() {
+      return groupMessageParts;
+    },
+    get summarizeStep() {
+      return summarizeStep;
+    },
+    get expandedStepIds() {
+      return expandedStepIds();
+    },
+    get setExpandedStepIds() {
+      return setExpandedStepIds;
+    },
+    get expandedTimelineSectionIds() {
+      return expandedTimelineSectionIds();
+    },
+    get setExpandedTimelineSectionIds() {
+      return setExpandedTimelineSectionIds;
+    },
+    get expandedTimelineDetailIds() {
+      return expandedTimelineDetailIds();
+    },
+    get setExpandedTimelineDetailIds() {
+      return setExpandedTimelineDetailIds;
+    },
+    get expandedSidebarSections() {
+      return expandedSidebarSections();
+    },
+    get setExpandedSidebarSections() {
+      return setExpandedSidebarSections;
+    },
+    get artifacts() {
+      return activeArtifacts();
+    },
+    get artifactFamilies() {
+      return activeArtifactFamilies();
+    },
+    get workingFiles() {
+      return activeWorkingFiles();
+    },
+    get authorizedDirs() {
+      return activeAuthorizedDirs();
+    },
+    get busy() {
+      return activeComposerBusy();
+    },
+    get prompt() {
+      return prompt();
+    },
+    get setPrompt() {
+      return setPrompt;
+    },
+    get reconnectNotice() {
+      return sessionReconnectNotice();
+    },
+    get reconnectState() {
+      return sessionReconnectState?.() ?? null;
+    },
+    get clearReconnectNotice() {
+      return () => setSessionReconnectNotice(null);
+    },
+    get composerDraft() {
+      return composerDraft();
+    },
+    get composerStorageKey() {
+      return composerStorageKey();
+    },
+    get composerDraftRevision() {
+      return composerDraftRevision();
+    },
+    get setComposerDraftForStorageKey() {
+      return setComposerDraftForStorageKey;
+    },
+    get captureComposerDraftRevision() {
+      return captureComposerDraftRevision;
+    },
+    get clearComposerDraftIfRevision() {
+      return clearComposerDraftIfRevision;
+    },
+    get activePermission() {
+      return activePermissionMemo();
+    },
+    get permissionReplyBusy() {
+      return permissionReplyBusy();
+    },
+    get respondPermission() {
+      return respondPermissionForAppViewProps;
+    },
+    get respondPermissionAndRemember() {
+      return respondPermissionAndRemember;
+    },
+    get activeQuestion() {
+      return activeQuestion();
+    },
+    get questionReplyBusy() {
+      return questionReplyBusy();
+    },
+    get respondQuestion() {
+      return respondQuestion;
+    },
+    get safeStringify() {
+      return safeStringify;
+    },
+    get showTryNotionPrompt() {
+      return tryNotionPromptVisible() && notionIsActive();
+    },
+    get aiAccessBlockedReason() {
+      return managedAiAccessBlockedReason();
+    },
+    get listAgents() {
+      return listAgents;
+    },
+    get listCommands() {
+      return listCommands;
+    },
+    get selectedSessionAgent() {
+      return selectedSessionAgent();
+    },
+    get setSessionAgent() {
+      return setSessionAgent;
+    },
+    get saveSession() {
+      return saveSessionExport;
+    },
+    get sessionStatusById() {
+      return activeSessionStatusById();
+    },
+    get sidebarSessionActivityByRowKey() {
+      return sidebarSessionActivityByRowKey();
+    },
+    get conversationRunDiagnosticsBySessionKey() {
+      return conversationRunDiagnosticsBySessionKey();
+    },
+    get busySessionByWorkspaceId() {
+      return busySessionByWorkspaceId();
+    },
+    get historyUnavailable() {
+      return selectedSessionHistoryUnavailable();
+    },
+    get historyUnavailableRetrying() {
+      return selectedSessionHistoryRetrying();
+    },
+    get retryUnavailableHistory() {
+      return retryUnavailableHistory;
+    },
+    get retryAcceptedRunForSession() {
+      return retryAcceptedRunForSession;
+    },
+    get retryTerminalTranscriptRecoveryForSession() {
+      return retryTerminalTranscriptRecoveryForSession;
+    },
+    get hasEarlierMessages() {
+      return selectedSessionHasEarlierMessages();
+    },
+    get loadingEarlierMessages() {
+      return selectedSessionLoadingEarlierMessages();
+    },
+    get loadEarlierMessages() {
+      return loadEarlierMessages;
+    },
+    get searchFiles() {
+      return searchWorkspaceFiles;
+    },
+    get deleteSession() {
+      return deleteSessionById;
+    },
+    get onTryNotionPrompt() {
+      return () => {
+        setPrompt("setup my crm");
+        setTryNotionPromptVisible(false);
+        setNotionSkillInstalled(true);
+        try {
+          window.localStorage.setItem("veslo.notionSkillInstalled", "1");
+        } catch {
+          // ignore
+        }
+      };
+    },
+    get sessionStatus() {
+      return visibleSelectedSessionStatus();
+    },
+    get renameSession() {
+      return renameSessionTitle;
+    },
+    get error() {
+      return error();
+    },
+  } satisfies SessionViewAdapterProps;
 
 
   return {

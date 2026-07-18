@@ -1,7 +1,7 @@
 ---
 title: Professional Transcript Projection Hardening Plan
 date: 2026-07-18
-status: proposed
+status: in_progress
 done: false
 scope: desktop-to-app transcript transport and projection after identity stabilization
 ---
@@ -20,6 +20,23 @@ the former string-signature equality could collide for delimiter-containing
 payloads. Store equality now uses structural comparison and has a direct
 regression test. This plan is for the four remaining architectural steps, not
 for re-opening that fixed collision.
+
+## Current diagnostic checkpoint
+
+The dev-only causal sidecar now records a monotonic transcript write revision
+and keeps detailed content-free writer records only in the bounded UI-effect
+ring.  It also observes canonical, visible, viewport-rendered, and
+session-handoff array boundaries.  `MessageList` markers carry the start/end
+write revisions plus separate grouping-input, block-shape, row-reference, and
+projection-boundary fingerprints.  A marker is a memo no-op only when all four
+fingerprints and the write revision are unchanged.
+
+The next manual `pnpm dev` trace must decide ownership before Step 3: a changed
+boundary means fix that projection owner first; an unchanged boundary and
+unchanged grouping input means block derivation is eligible for structural
+sharing.  The UI-effect ring emits one bounded `message-block-memo-churn`
+incident window when 20 such no-ops occur in 30 seconds; it does not add a
+new per-recompute IPC write.
 
 ## Desired end state
 
@@ -191,6 +208,9 @@ invalidate completed prior turns.
 
 - `packages/app/src/app/components/session/message-list.tsx`
 - `packages/app/src/app/pages/session.tsx`
+- `packages/app/src/app/context/session-transcript-write-diagnostics.ts`
+- `packages/app/src/app/context/session-event-stream.ts`
+- `packages/app/src/app/context/session-transcript-controller.ts`
 - `packages/app/scripts/analyze-ui-effect-trace.mjs`
 - `docs/plans/` baseline note
 
@@ -206,12 +226,25 @@ invalidate completed prior turns.
    revisions.
 4. Gate Step 3 rollout on evidence that the remaining work is block derivation,
    rather than another upstream store/projection write.
+5. For each actual `messages`/`parts` store write, record a bounded, dev-only
+   causal sidecar before applying it. The existing `MessageList.messageBlocks`
+   marker must include only content-free message/info/parts/part identities and
+   the most recent scoped `{ causeId, owner, target }` for each entity. The
+   sidecar must be disabled before it allocates a cause or mutates its maps in
+   normal production runs. A snapshot list replacement uses one collection-level
+   cause, never a fabricated per-message cause for every item in that list. It
+   may report multiple causes in one DOM frame; it must never guess a single
+   ambient "latest cause".
+   Include the untracked viewport/local-echo/handoff surface context so an
+   identity without a store cause is visibly classified as a local projection.
 
 **Acceptance**
 
 - No per-token Tauri IPC is added.
 - Equal writer/projection revisions are not classified as a real streaming
   delta.
+- A nested dependency can be attributed to a concrete `messages`, `parts`,
+  local-echo, or terminal-hydration owner without recording message text.
 - A trace can distinguish ingress duplication, projection allocation, and a
   genuine DOM update.
 - The final record contains exact trace timestamps and counts, not a vague

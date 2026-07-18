@@ -187,9 +187,10 @@ function createHarness(overrides: Record<string, unknown> = {}) {
       sessions = next;
     },
     sessions: () => sessions,
-    deleteSessionComposerDraft: (current: Record<string, unknown>, sessionId: string) => ({ ...current, deleted: sessionId }),
-    setComposerDraftBySessionId: (updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
-      calls.push({ name: "setComposerDraftBySessionId", args: [updater({})] });
+    composerDraftCommands: {
+      deleteDraft: (storageKey: string) => {
+        calls.push({ name: "composerDraftCommands.deleteDraft", args: [storageKey] });
+      },
     },
     removeSessionFromWorkspaceSidebar: (...args: unknown[]) => {
       calls.push({ name: "removeSessionFromWorkspaceSidebar", args });

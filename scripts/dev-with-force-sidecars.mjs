@@ -1,10 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const traceMirrorDir = resolve(repoRoot, ".tmp");
+const traceMirrorFile = resolve(traceMirrorDir, "send-workflow-trace.ndjson");
+const deriveTraceChannelFile = (basePath, channel) =>
+  basePath.toLowerCase().endsWith(".ndjson")
+    ? `${basePath.slice(0, -".ndjson".length)}.${channel}.ndjson`
+    : `${basePath}.${channel}`;
+const traceMirrorFiles = [
+  traceMirrorFile,
+  ...["ui", "server", "orchestrator"].map((channel) => deriveTraceChannelFile(traceMirrorFile, channel)),
+];
 mkdirSync(traceMirrorDir, { recursive: true });
 
 const resolvePnpmInvocation = () => {
@@ -35,10 +44,11 @@ const runtimeLoggingEnv = withDefaultEnv({
   VITE_VESLO_RUNTIME_DIAGNOSTICS: "1",
   VESLO_RUNTIME_TRACE: "1",
   VESLO_SEND_WORKFLOW_TRACE: "1",
-  VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE: resolve(traceMirrorDir, "send-workflow-trace.ndjson"),
+  VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE: traceMirrorFile,
   VESLO_SEND_WORKFLOW_TRACE_CONSOLE: "1",
   VITE_VESLO_SEND_WORKFLOW_TRACE: "1",
   VITE_VESLO_SESSION_UI_MUTATION_TRACE: "1",
+  VITE_VESLO_UI_EFFECT_TRACE: "1",
   VESLO_OPENCODE_HEALTH_DIAG: "1",
   RUST_BACKTRACE: "1",
 });
@@ -59,5 +69,10 @@ const run = (args, env = process.env) => {
   }
 };
 
+const clearTraceMirrors = () => {
+  for (const file of traceMirrorFiles) rmSync(file, { force: true });
+};
+
 run(["-C", "packages/desktop", "prepare:sidecar", "--", "--force"]);
+clearTraceMirrors();
 run(["dev", ...process.argv.slice(2)], runtimeLoggingEnv);

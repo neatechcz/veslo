@@ -12,8 +12,14 @@ import {
 } from "../app-view-props.js";
 
 const appSource = readFileSync(new URL("../app.tsx", import.meta.url), "utf8");
-const viewPropsSource = readFileSync(new URL("../app-view-props.ts", import.meta.url), "utf8");
-const dashboardSource = readFileSync(new URL("../pages/dashboard.tsx", import.meta.url), "utf8");
+const viewPropsSource = readFileSync(
+  new URL("../app-view-props.ts", import.meta.url),
+  "utf8",
+);
+const dashboardSource = readFileSync(
+  new URL("../pages/dashboard.tsx", import.meta.url),
+  "utf8",
+);
 
 function extractBraceBody(source: string, openIndex: number): string {
   let depth = 0;
@@ -34,16 +40,32 @@ function extractCreateAppViewPropsInputKeys(): string[] {
   const start = appSource.indexOf("const appViewProps = createAppViewProps({");
   assert.notEqual(start, -1, "app.tsx should create app view props");
   const open = appSource.indexOf("{", start);
-  return extractIdentifierList(extractBraceBody(appSource, open), "createAppViewProps input");
+  return extractIdentifierList(
+    extractBraceBody(appSource, open),
+    "createAppViewProps input",
+  );
 }
 
 function extractCreateAppViewPropsDestructuredKeys(): string[] {
-  const functionStart = viewPropsSource.indexOf("export function createAppViewProps");
-  assert.notEqual(functionStart, -1, "app-view-props should export createAppViewProps");
+  const functionStart = viewPropsSource.indexOf(
+    "export function createAppViewProps",
+  );
+  assert.notEqual(
+    functionStart,
+    -1,
+    "app-view-props should export createAppViewProps",
+  );
   const destructureStart = viewPropsSource.indexOf("const {", functionStart);
-  assert.notEqual(destructureStart, -1, "createAppViewProps should destructure deps");
+  assert.notEqual(
+    destructureStart,
+    -1,
+    "createAppViewProps should destructure deps",
+  );
   const open = viewPropsSource.indexOf("{", destructureStart);
-  return extractIdentifierList(extractBraceBody(viewPropsSource, open), "createAppViewProps destructuring");
+  return extractIdentifierList(
+    extractBraceBody(viewPropsSource, open),
+    "createAppViewProps destructuring",
+  );
 }
 
 function extractIdentifierList(source: string, label: string): string[] {
@@ -56,7 +78,11 @@ function extractIdentifierList(source: string, label: string): string[] {
     .filter((entry) => !entry.match)
     .map((entry) => entry.line);
 
-  assert.deepEqual(unparsed, [], `${label} should stay a one-identifier-per-line dependency list`);
+  assert.deepEqual(
+    unparsed,
+    [],
+    `${label} should stay a one-identifier-per-line dependency list`,
+  );
   return parsed
     .map((entry) => entry.match?.[1])
     .filter((name): name is string => Boolean(name));
@@ -118,34 +144,55 @@ test("app view prop helpers preserve header and busy labels", () => {
 });
 
 test("session reload banner visibility keeps the skill and active-run policy explicit", () => {
-  assert.equal(shouldShowSessionReloadBanner({
-    reloadRequired: false,
-    reloadTrigger: { type: "config" },
-    activeReloadBlockingSessionCount: 1,
-  }), false);
-  assert.equal(shouldShowSessionReloadBanner({
-    reloadRequired: true,
-    reloadTrigger: { type: "config" },
-    activeReloadBlockingSessionCount: 0,
-  }), false);
-  assert.equal(shouldShowSessionReloadBanner({
-    reloadRequired: true,
-    reloadTrigger: { type: "config" },
-    activeReloadBlockingSessionCount: 1,
-  }), true);
-  assert.equal(shouldShowSessionReloadBanner({
-    reloadRequired: true,
-    reloadTrigger: { type: "skill" },
-    activeReloadBlockingSessionCount: 0,
-  }), true);
+  assert.equal(
+    shouldShowSessionReloadBanner({
+      reloadRequired: false,
+      reloadTrigger: { type: "config" },
+      activeReloadBlockingSessionCount: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowSessionReloadBanner({
+      reloadRequired: true,
+      reloadTrigger: { type: "config" },
+      activeReloadBlockingSessionCount: 0,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowSessionReloadBanner({
+      reloadRequired: true,
+      reloadTrigger: { type: "config" },
+      activeReloadBlockingSessionCount: 1,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldShowSessionReloadBanner({
+      reloadRequired: true,
+      reloadTrigger: { type: "skill" },
+      activeReloadBlockingSessionCount: 0,
+    }),
+    true,
+  );
 });
 
 test("app traces reload banner transitions without session identifiers or trigger paths", () => {
-  const marker = 'recordSendWorkflowTrace("app", "session-reload-banner:state", state';
+  const marker =
+    'recordSendWorkflowTrace("app", "session-reload-banner:state", state';
   const markerIndex = appSource.indexOf(marker);
-  assert.notEqual(markerIndex, -1, "app should trace reload banner state transitions");
+  assert.notEqual(
+    markerIndex,
+    -1,
+    "app should trace reload banner state transitions",
+  );
   const stateStart = appSource.lastIndexOf("const state = {", markerIndex);
-  assert.notEqual(stateStart, -1, "reload banner trace should build a state payload");
+  assert.notEqual(
+    stateStart,
+    -1,
+    "reload banner trace should build a state payload",
+  );
   const traceBlock = appSource.slice(stateStart, markerIndex + marker.length);
 
   assert.match(traceBlock, /visible: showSessionReloadBanner\(\)/);
@@ -185,7 +232,8 @@ test("dashboard view access preserves remote and local skill/plugin permissions"
       canInstallSkillCreator: false,
       canEditPlugins: false,
       canUseGlobalPluginScope: false,
-      skillsAccessHint: "Veslo server needs a host token to install/update skills. Add it in Advanced and reconnect.",
+      skillsAccessHint:
+        "Veslo server needs a host token to install/update skills. Add it in Advanced and reconnect.",
       pluginsAccessHint: "Veslo server needs a token to edit plugins.",
     },
   );
@@ -213,8 +261,14 @@ test("app view prop adapter dependency list stays symmetric", () => {
   const inputKeys = extractCreateAppViewPropsInputKeys();
   const destructuredKeys = extractCreateAppViewPropsDestructuredKeys();
 
-  assert.ok(inputKeys.length > 0, "app.tsx should pass dependencies into createAppViewProps");
-  assert.ok(destructuredKeys.length > 0, "createAppViewProps should destructure dependencies");
+  assert.ok(
+    inputKeys.length > 0,
+    "app.tsx should pass dependencies into createAppViewProps",
+  );
+  assert.ok(
+    destructuredKeys.length > 0,
+    "createAppViewProps should destructure dependencies",
+  );
   assert.deepEqual(
     inputKeys.filter((key) => !destructuredKeys.includes(key)),
     [],
@@ -240,42 +294,95 @@ test("app delegates view prop construction to the app view prop adapter", () => 
   assert.match(viewPropsSource, /satisfies OnboardingViewProps/);
   assert.match(viewPropsSource, /satisfies DashboardViewAdapterProps/);
   assert.match(viewPropsSource, /satisfies SessionViewAdapterProps/);
+  assert.match(
+    viewPropsSource,
+    /const sessionProps = \{[\s\S]*get messages\(\)[\s\S]*get composerDraft\(\)/s,
+    "SessionView props should be a stable object with independent reactive getters",
+  );
+  assert.doesNotMatch(
+    viewPropsSource,
+    /const sessionProps = \(\) =>/,
+    "a function spread would couple every SessionView prop through one Solid memo",
+  );
+  assert.match(
+    appSource,
+    /<SessionView[\s\S]*\.\.\.appViewProps\.sessionProps/s,
+    "App should spread the stable adapter object rather than call a prop factory",
+  );
   const unsafeTypeToken = "a" + "ny";
   assert.doesNotMatch(
     viewPropsSource,
-    new RegExp(String.raw`AppViewPropsScope\s*=\s*Record<string,\s*${unsafeTypeToken}>`),
+    new RegExp(
+      String.raw`AppViewPropsScope\s*=\s*Record<string,\s*${unsafeTypeToken}>`,
+    ),
   );
-  assert.doesNotMatch(viewPropsSource, new RegExp(String.raw`\b${unsafeTypeToken}\b`));
-  assert.doesNotMatch(viewPropsSource, /autoCompactContext|toggleAutoCompactContext/);
+  assert.doesNotMatch(
+    viewPropsSource,
+    new RegExp(String.raw`\b${unsafeTypeToken}\b`),
+  );
+  assert.doesNotMatch(
+    viewPropsSource,
+    /autoCompactContext|toggleAutoCompactContext/,
+  );
 });
 
 test("session view props carry unavailable history state and retry action", () => {
-  assert.match(viewPropsSource, /historyUnavailable: selectedSessionHistoryUnavailable\(\)/);
-  assert.match(viewPropsSource, /historyUnavailableRetrying: selectedSessionHistoryRetrying\(\)/);
-  assert.match(viewPropsSource, /retryUnavailableHistory,/);
+  assert.match(
+    viewPropsSource,
+    /get historyUnavailable\(\) \{\s*return selectedSessionHistoryUnavailable\(\);\s*\}/,
+  );
+  assert.match(
+    viewPropsSource,
+    /get historyUnavailableRetrying\(\) \{\s*return selectedSessionHistoryRetrying\(\);\s*\}/,
+  );
+  assert.match(viewPropsSource, /get retryUnavailableHistory\(\) \{/);
   assert.match(appSource, /selectedSessionHistoryUnavailable,/);
   assert.match(appSource, /selectedSessionHistoryRetrying,/);
   assert.match(appSource, /retryUnavailableHistory,/);
 });
 
 test("document runtime status is wired from Veslo server client to settings", () => {
-  assert.match(appSource, /createSignal<DocumentRuntimeStatusPayload \| null>\(null\)/);
+  assert.match(
+    appSource,
+    /createSignal<DocumentRuntimeStatusPayload \| null>\(null\)/,
+  );
   assert.match(appSource, /DOCUMENT_RUNTIME_STATUS_POLL_MS = 30_000/);
   assert.match(appSource, /DOCUMENT_RUNTIME_INSTALL_POLL_MS = 2_000/);
   assert.match(appSource, /result\.package\.installing/);
   assert.match(appSource, /client\.getDocumentRuntimeStatus\(\)/);
   assert.match(appSource, /client\.repairDocumentRuntime\(\)/);
-  assert.match(appSource, /documentRuntimeRepairBusy\(\) \|\| anyActiveRuns\(\)/);
+  assert.match(
+    appSource,
+    /documentRuntimeRepairBusy\(\) \|\| anyActiveRuns\(\)/,
+  );
   assert.match(appSource, /documentRuntimeStatus,/);
   assert.match(appSource, /documentRuntimeRepairBusy,/);
   assert.match(appSource, /repairDocumentRuntime,/);
 
-  assert.match(viewPropsSource, /documentRuntimeStatus: documentRuntimeStatus\(\)/);
-  assert.match(viewPropsSource, /documentRuntimeRepairBusy: documentRuntimeRepairBusy\(\)/);
+  assert.match(
+    viewPropsSource,
+    /documentRuntimeStatus: documentRuntimeStatus\(\)/,
+  );
+  assert.match(
+    viewPropsSource,
+    /documentRuntimeRepairBusy: documentRuntimeRepairBusy\(\)/,
+  );
   assert.match(viewPropsSource, /repairDocumentRuntime,/);
 
-  assert.match(dashboardSource, /documentRuntimeStatus: DocumentRuntimeStatusPayload \| null/);
-  assert.match(dashboardSource, /documentRuntimeStatus=\{props\.documentRuntimeStatus\}/);
-  assert.match(dashboardSource, /documentRuntimeRepairBusy=\{props\.documentRuntimeRepairBusy\}/);
-  assert.match(dashboardSource, /repairDocumentRuntime=\{props\.repairDocumentRuntime\}/);
+  assert.match(
+    dashboardSource,
+    /documentRuntimeStatus: DocumentRuntimeStatusPayload \| null/,
+  );
+  assert.match(
+    dashboardSource,
+    /documentRuntimeStatus=\{props\.documentRuntimeStatus\}/,
+  );
+  assert.match(
+    dashboardSource,
+    /documentRuntimeRepairBusy=\{props\.documentRuntimeRepairBusy\}/,
+  );
+  assert.match(
+    dashboardSource,
+    /repairDocumentRuntime=\{props\.repairDocumentRuntime\}/,
+  );
 });

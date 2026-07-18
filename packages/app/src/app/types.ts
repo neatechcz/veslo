@@ -352,6 +352,10 @@ export type ArtifactItem = {
 export type OpencodeEvent = {
   type: string;
   properties?: unknown;
+  /** Optional reconnect-stable upstream transport identity (for example SSE `id:`). */
+  eventId?: string;
+  /** An empty upstream SSE `id:` explicitly cleared the replay cursor. */
+  eventIdReset?: boolean;
 };
 
 export type View = "onboarding" | "dashboard" | "session" | "proto";

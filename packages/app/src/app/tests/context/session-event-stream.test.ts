@@ -8,6 +8,7 @@ import {
   createSessionEventStreamController,
   isPermissionRefreshEvent,
   isQuestionRefreshEvent,
+  nextUpstreamEventCursor,
   reconcileSseStreamTargets,
 } from "../../context/session-event-stream.js";
 import type { ReconnectState } from "../../context/session-reconnect.js";
@@ -465,6 +466,50 @@ test("queued SSE full part snapshots are coalesced without legacy app-side trans
 
       assert.equal(store.parts["msg-a"]?.find((part) => part.id === "part-a")?.text, "complete");
       assert.equal(transcriptIngest.length, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("an empty upstream SSE id clears the reconnect cursor", () => {
+  assert.equal(nextUpstreamEventCursor("evt-42", { eventId: "evt-43" }), "evt-43");
+  assert.equal(nextUpstreamEventCursor("evt-43", { eventIdReset: true }), null);
+  assert.equal(nextUpstreamEventCursor(null, {}), null);
+});
+
+test("identified text deltas append once per event id and preserve equal-content chunks", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, setStore, store } = makeController({
+        workspaceSessionIds: new Set(["sess-a", "sess-b"]),
+      });
+      setStore("messages", "sess-a", [makeMessage("sess-a", "msg-a")]);
+      setStore("parts", "msg-a", [makeTextPart("sess-a", "msg-a", "part-a", "")]);
+      setStore("messages", "sess-b", [makeMessage("sess-b", "msg-b")]);
+      setStore("parts", "msg-b", [makeTextPart("sess-b", "msg-b", "part-b", "")]);
+
+      const event = (sessionID: string, messageID: string, partID: string, eventId: string): OpencodeEvent => ({
+        type: "message.part.updated",
+        eventId,
+        properties: {
+          delta: "ha",
+          part: makeTextPart(sessionID, messageID, partID, "ha"),
+        },
+      });
+
+      await controller.applyEvent(event("sess-a", "msg-a", "part-a", "evt-1"), "ws-a");
+      const firstPart = store.parts["msg-a"]?.[0];
+      await controller.applyEvent(event("sess-a", "msg-a", "part-a", "evt-1"), "ws-a");
+      assert.equal(store.parts["msg-a"]?.[0], firstPart, "replayed event must not replace the part");
+
+      await controller.applyEvent(event("sess-a", "msg-a", "part-a", "evt-2"), "ws-a");
+      assert.equal(store.parts["msg-a"]?.[0]?.text, "haha");
+
+      // An opaque id is scoped: a legitimate event in another session/part is
+      // not suppressed by a replay key from the first transcript.
+      await controller.applyEvent(event("sess-b", "msg-b", "part-b", "evt-1"), "ws-a");
+      assert.equal(store.parts["msg-b"]?.[0]?.text, "ha");
     } finally {
       dispose();
     }
@@ -1448,7 +1493,7 @@ test("background SSE failures do not mark the global stream disconnected while a
   cleanupActive();
 });
 
-test("reconnect catch-up refreshes sessions that were running during the outage", async () => {
+test("reconnect catch-up avoids a transcript snapshot without a cursor fence", async () => {
   const realSetTimeout = globalThis.setTimeout;
   const realClearTimeout = globalThis.clearTimeout;
   let reconnectCallback: (() => void) | null = null;
@@ -1516,9 +1561,9 @@ test("reconnect catch-up refreshes sessions that were running during the outage"
     await tick(12);
 
     assert.deepEqual(statusRefreshes, ["sess-a"]);
-    assert.deepEqual(messageRefreshes, ["sess-a"]);
+    assert.deepEqual(messageRefreshes, []);
     assert.deepEqual(todoRefreshes, ["sess-a"]);
-    assert.deepEqual(messageWrites, ["sess-a"]);
+    assert.deepEqual(messageWrites, []);
     assert.deepEqual(permissionRefreshes, ["permissions"]);
     assert.deepEqual(questionRefreshes, ["questions"]);
 
@@ -1604,7 +1649,7 @@ test("reconnect catch-up preserves running status when status refresh fails", as
   }
 });
 
-test("reconnect catch-up stays degraded when transcript refresh fails", async () => {
+test("reconnect catch-up declares eventual transcript reconciliation without a cursor fence", async () => {
   const realSetTimeout = globalThis.setTimeout;
   const realClearTimeout = globalThis.clearTimeout;
   let reconnectCallback: (() => void) | null = null;
@@ -1657,13 +1702,10 @@ test("reconnect catch-up stays degraded when transcript refresh fails", async ()
     runReconnect();
     await tick(24);
 
-    assert.equal(
-      statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-messages-failed"),
-      true,
-    );
-    assert.equal(reconnectStates.at(-1)?.status, "degraded");
+    assert.equal(statusTraces.some((trace) => trace.event === "sse-reconnect-catchup-messages-failed"), false);
+    assert.equal(reconnectStates.at(-1)?.status, "live");
     assert.equal(reconnectStates.at(-1)?.messagesMayBeDelayed, true);
-    assert.equal(reconnectStates.at(-1)?.lastError, "transcript refresh failed");
+    assert.equal(reconnectStates.at(-1)?.lastError, null);
     assert.equal(reconnectNotices.includes("reconnected"), false);
 
     cleanup();

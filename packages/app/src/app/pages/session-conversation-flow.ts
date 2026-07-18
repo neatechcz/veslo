@@ -666,6 +666,10 @@ export type SessionConversationFlowControllerDeps = {
   composer: {
     clearComposerDraftForSession: (sessionId: string | null | undefined) => void;
     currentDraftMode: () => ComposerDraft["mode"];
+    remapPendingDraftToSession?: (
+      pendingDraftKey: string | null | undefined,
+      sessionId: string | null | undefined,
+    ) => void;
     setComposerDraft: (draft: ComposerDraft) => void;
   };
   transcriptEdit: {
@@ -931,8 +935,11 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         !isPendingSessionInstanceKey(selectedSessionId) &&
         queueKeysShareWorkspace(deps.sessionKeys.workspaceIdForQueueKey, pendingKey, sessionKey)
       ) {
-        deps.pendingHandoff.remapPendingQueueToSession(pendingKey, selectedSessionId);
-        deps.pendingHandoff.clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+        deps.effects.batch(() => {
+          deps.composer.remapPendingDraftToSession?.(deps.runtime.activePendingDraftKey(), selectedSessionId);
+          deps.pendingHandoff.remapPendingQueueToSession(pendingKey, selectedSessionId);
+          deps.pendingHandoff.clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+        });
       } else if (pendingKey && !isPendingSessionInstanceKey(selectedSessionId)) {
         // Pending sends are workspace-scoped; route switches must not materialize them elsewhere.
         deps.trace.recordSendTrace("run-state:remap-pending-to-session:blocked-workspace-mismatch", {
@@ -1125,6 +1132,9 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         sessionKey,
         pendingSessionKeyBeforeHandoff,
       } = handoffScope;
+      const pendingComposerDraftKeyBeforeHandoff = pendingSessionKeyBeforeHandoff
+        ? deps.runtime.activePendingDraftKey()
+        : null;
       if (pendingSessionBaseKeyBeforeHandoff && pendingSessionKeyBeforeHandoff) {
         deps.pendingHandoff.setPendingQueueKeyAwaitingSessionIdForBaseKey(
           pendingSessionBaseKeyBeforeHandoff,
@@ -1247,6 +1257,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           return null;
         }
         deps.effects.batch(() => {
+          deps.composer.remapPendingDraftToSession?.(
+            pendingComposerDraftKeyBeforeHandoff,
+            materializedSessionId,
+          );
           deps.pendingHandoff.setPendingQueueKeyAwaitingSessionIdForBaseKey(
             pendingSessionBaseKey,
             materializedSessionKey,

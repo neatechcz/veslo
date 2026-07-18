@@ -4,6 +4,7 @@ import type { MessageWithParts } from "../../types";
 import {
   INITIAL_MESSAGE_WINDOW,
   MESSAGE_WINDOW_LOAD_CHUNK,
+  createRenderedTranscriptProjectionCache,
   resolveHiddenMessageCount,
   resolveRevealEarlierMessagesAction,
   resolveRenderedTranscriptMessages,
@@ -45,6 +46,27 @@ test("canonical transcript source retains its array identity without a local ech
 
   assert.equal(source, messages);
   assert.equal(rendered, messages);
+});
+
+test("viewport cache preserves an output reference only for an identical input tuple", () => {
+  const messages = [message("m1"), message("m2")];
+  const localEcho = message("local-submit");
+  const resolve = createRenderedTranscriptProjectionCache<MessageWithParts>();
+  const input = {
+    messages,
+    localSubmittedMessage: localEcho,
+    searchActive: false,
+    windowExpanded: false,
+    windowStart: 0,
+  };
+
+  const first = resolve(input);
+  assert.strictEqual(resolve({ ...input }), first);
+  assert.notStrictEqual(
+    resolve({ ...input, searchActive: true }),
+    first,
+    "a changed tuple must recompute even when its ordered result is equivalent",
+  );
 });
 
 test("rendered transcript window appends a local submitted echo without masking canonical messages", () => {

@@ -309,8 +309,21 @@ test("conversation flow controller blocks before transport while preserving opti
 test("an occupied transient echo slot blocks transport before it can lose the second draft owner", () => {
   assert.match(
     sessionConversationFlowSource,
-    /pendingStored = result\.kind === "stored";[\s\S]*pendingSlotOccupied = result\.kind === "occupied";[\s\S]*if \(!pendingStored\) \{[\s\S]*code: pendingSlotOccupied \? "pending_submit_slot_occupied" : "pending_submit_slot_invalid",[\s\S]*draftDisposition: "restore",[\s\S]*\}[\s\S]*options\.onDraftTransferred\?\.\(\);[\s\S]*const aiAccessBlockedReason/s,
+    /const optimisticSlot = \{ stored: false, occupied: false \};[\s\S]*optimisticSlot\.stored = result\.kind === "stored";[\s\S]*optimisticSlot\.occupied = result\.kind === "occupied";[\s\S]*if \(!optimisticSlot\.stored\) \{[\s\S]*code: optimisticSlot\.occupied \? "pending_submit_slot_occupied" : "pending_submit_slot_invalid",[\s\S]*draftDisposition: "restore",[\s\S]*\}[\s\S]*options\.onDraftTransferred\?\.\(\);[\s\S]*const aiAccessBlockedReason/s,
     "a draft without a local pending owner must return before transport and remain in Composer",
+  );
+});
+
+test("first-session handoff transfers the pending composer bucket before the real session becomes visible", () => {
+  assert.match(
+    sessionConversationFlowSource,
+    /const pendingComposerDraftKeyBeforeHandoff = pendingSessionKeyBeforeHandoff[\s\S]*\? deps\.runtime\.activePendingDraftKey\(\)[\s\S]*: null;/,
+    "the first-send handoff must capture the pending composer bucket before asynchronous materialization",
+  );
+  assert.match(
+    sessionConversationFlowSource,
+    /deps\.composer\.remapPendingDraftToSession\?\.\([\s\S]*pendingComposerDraftKeyBeforeHandoff,[\s\S]*materializedSessionId,[\s\S]*\);/,
+    "materialization must move the follow-up draft before SessionView resolves the real session composer bucket",
   );
 });
 

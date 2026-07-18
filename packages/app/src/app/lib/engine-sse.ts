@@ -27,6 +27,8 @@ type SsePayload =
       subscriptionId: string;
       workspaceId: string;
       data: string;
+      /** Optional upstream SSE `id:`. Omitted when the upstream did not send one. */
+      eventId?: string | null;
     }
   | {
       kind: "error";
@@ -50,7 +52,10 @@ function isSsePayload(value: unknown): value is SsePayload {
     case "open":
       return true;
     case "message":
-      return typeof payload.data === "string";
+      return (
+        typeof payload.data === "string" &&
+        (payload.eventId === undefined || payload.eventId === null || typeof payload.eventId === "string")
+      );
     case "error":
       return typeof payload.message === "string";
     case "closed":
@@ -76,6 +81,8 @@ export type EngineSseSubscribeOptions = {
   directory?: string | null;
   /** Stable owner key used by the desktop bridge to replace older duplicate streams. */
   connectionKey?: string | null;
+  /** Last raw upstream SSE `id:` observed by this stream, if any. */
+  lastEventId?: string | null;
   username?: string | null;
   password?: string | null;
   /** Veslo-server bearer token. Takes precedence over username/password when set. */
@@ -214,7 +221,13 @@ async function engineSseSubscribeWithRuntime(
             console.warn("[engine-sse] dropped malformed event", { data: payload.data.slice(0, 200) });
             return;
           }
-          pushEvent(parsed);
+          // Keep the desktop bridge envelope until normalizeEvent() can retain
+          // the optional upstream SSE id. Do not generate a JS-local ID: it
+          // would be meaningless after a reconnect.
+          pushEvent({
+            payload: parsed,
+            ...(payload.eventId === "" ? { eventIdReset: true } : payload.eventId ? { eventId: payload.eventId } : {}),
+          });
           break;
         }
         case "error":
@@ -241,6 +254,7 @@ async function engineSseSubscribeWithRuntime(
         baseUrl: options.baseUrl,
         directory: options.directory ?? null,
         connectionKey: options.connectionKey ?? null,
+        lastEventId: options.lastEventId ?? null,
         username: options.username ?? null,
         password: options.password ?? null,
         bearerToken: options.bearerToken ?? null,

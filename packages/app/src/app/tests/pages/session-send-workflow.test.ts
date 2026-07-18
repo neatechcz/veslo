@@ -270,7 +270,7 @@ function createHarness(
     sessionStoreSetCommandDisplay: () => undefined,
     setActivePendingDraftKey: () => undefined,
     setActivePendingDraftMeta: () => undefined,
-    setComposerDraftBySessionId: () => undefined,
+    composerDraftCommands: { deleteDraft: () => undefined },
     setError: (message) => {
       if (message) errors.push(message);
     },
@@ -1686,10 +1686,9 @@ test("session send workflow accepts first-session server submit results without 
       throw new Error("compatibility run should not run after first-session server submit");
     },
     selectedSessionId: () => null,
-    setComposerDraftBySessionId: (updater) => {
+    composerDraftCommands: { deleteDraft: () => {
       composerDraftCleanupCalls.push("cleanup");
-      updater({});
-    },
+    } },
     submitConversationFromVesloWriteApi: async () => null,
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -1879,10 +1878,9 @@ test("session send workflow opens first materialized session and reports failed 
       activePendingDraftMeta = nextMeta;
       harness.actions.push(`set-active-pending-draft-meta:${nextMeta?.id ?? "null"}`);
     },
-    setComposerDraftBySessionId: (updater) => {
+    composerDraftCommands: { deleteDraft: () => {
       harness.actions.push("set-composer-draft-by-session");
-      updater({});
-    },
+    } },
     setView: (view) => {
       harness.actions.push(`set-view:${view}`);
     },

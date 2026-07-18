@@ -64,7 +64,9 @@ import type {
   SidebarActivityTokenScope,
 } from "../context/sidebar-session-activity-token";
 import type { UiScopeToken } from "../lib/ui-conversation-scope";
-import { deleteSessionComposerDraft } from "./session-composer-drafts";
+import {
+  type ComposerDraftStateCommands,
+} from "./session-composer-drafts";
 import type {
   Client,
   ComposerDraft,
@@ -423,9 +425,7 @@ export type SessionSendWorkflowOptions = {
   sessionStoreSetCommandDisplay: (messageId: string, command: string, args: string) => void;
   setActivePendingDraftKey: (key: string | null) => void;
   setActivePendingDraftMeta: (meta: unknown | null) => void;
-  setComposerDraftBySessionId: (
-    updater: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
-  ) => void;
+  composerDraftCommands: Pick<ComposerDraftStateCommands, "deleteDraft">;
   setError: (message: string | null) => void;
   setLastPromptSent: (prompt: string, modelOverride?: ModelRef | null) => void;
   setPrompt: (value: string) => void;
@@ -1887,9 +1887,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       if (clearDisplayedPendingDraftState) {
         deps.clearActivePendingDraftState();
       }
-      deps.setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, {
-        storageKey: pendingDraftStorageKey,
-      }));
+      deps.composerDraftCommands.deleteDraft(pendingDraftStorageKey);
       deps.refreshPendingDraftSummaries();
     };
     const serverSubmitMaterializationDraft = (() => {

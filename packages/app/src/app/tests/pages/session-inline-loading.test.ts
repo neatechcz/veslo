@@ -2,14 +2,26 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
-const sessionSource = readFileSync(new URL("../../pages/session.tsx", import.meta.url), "utf8");
-const sessionNavigationSource = readFileSync(new URL("../../pages/session-navigation.ts", import.meta.url), "utf8");
+const appSource = readFileSync(
+  new URL("../../app.tsx", import.meta.url),
+  "utf8",
+);
+const sessionSource = readFileSync(
+  new URL("../../pages/session.tsx", import.meta.url),
+  "utf8",
+);
+const sessionNavigationSource = readFileSync(
+  new URL("../../pages/session-navigation.ts", import.meta.url),
+  "utf8",
+);
 const conversationFlowSource = readFileSync(
   new URL("../../pages/session-conversation-flow.ts", import.meta.url),
   "utf8",
 );
-const transcriptViewportSource = readFileSync(new URL("../../pages/session-transcript-viewport.ts", import.meta.url), "utf8");
+const transcriptViewportSource = readFileSync(
+  new URL("../../pages/session-transcript-viewport.ts", import.meta.url),
+  "utf8",
+);
 const pendingDraftControllerSource = readFileSync(
   new URL("../../context/pending-session-draft-controller.ts", import.meta.url),
   "utf8",
@@ -77,15 +89,36 @@ test("temporary runtime UI diagnostic is gated to developer mode or explicit mut
 });
 
 test("session switch records browse scope and routes immediately without arming a preloader", () => {
-  const openSessionStart = sessionSource.indexOf("  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {");
-  const openSessionEnd = sessionSource.indexOf("\n  const ", openSessionStart + 4);
-  const helperStart = sessionNavigationSource.indexOf("export function openSidebarSessionFromList");
-  const helperEnd = sessionNavigationSource.indexOf("export async function createSessionWithWorkspaceActivation", helperStart);
+  const openSessionStart = sessionSource.indexOf(
+    "  const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {",
+  );
+  const openSessionEnd = sessionSource.indexOf(
+    "\n  const ",
+    openSessionStart + 4,
+  );
+  const helperStart = sessionNavigationSource.indexOf(
+    "export function openSidebarSessionFromList",
+  );
+  const helperEnd = sessionNavigationSource.indexOf(
+    "export async function createSessionWithWorkspaceActivation",
+    helperStart,
+  );
   assert.notEqual(openSessionStart, -1, "openSessionFromList should exist");
-  assert.notEqual(openSessionEnd, -1, "openSessionFromList block end should exist");
+  assert.notEqual(
+    openSessionEnd,
+    -1,
+    "openSessionFromList block end should exist",
+  );
   assert.notEqual(helperStart, -1, "openSidebarSessionFromList should exist");
-  assert.notEqual(helperEnd, -1, "openSidebarSessionFromList block end should exist");
-  const openSessionSource = sessionSource.slice(openSessionStart, openSessionEnd);
+  assert.notEqual(
+    helperEnd,
+    -1,
+    "openSidebarSessionFromList block end should exist",
+  );
+  const openSessionSource = sessionSource.slice(
+    openSessionStart,
+    openSessionEnd,
+  );
   const helperSource = sessionNavigationSource.slice(helperStart, helperEnd);
 
   assert.doesNotMatch(
@@ -146,10 +179,10 @@ test("dev runtime records bounded session DOM mutation batches alongside state c
     /if \(previous && changedFields\.length === 0\) return;[\s\S]*recordSendTrace\("session-ui:state-change"/s,
     "state traces should suppress callback runs that did not change a sampled state field",
   );
-  assert.match(
+  assert.doesNotMatch(
     sessionSource,
-    /<MessageList[\s\S]*onMessageBlocksRecomputed=[\s\S]*MessageList\.messageBlocks[\s\S]*markerKind: "message-blocks"/s,
-    "the direct MessageList recompute marker should remain distinct from flow markers",
+    /onMessageBlocksRecomputed/,
+    "per-recompute MessageList markers must stay in the bounded UI-effect ring buffer rather than write every marker to .tmp",
   );
   assert.match(
     sessionSource,
@@ -181,7 +214,7 @@ test("active session switch handoff suppresses empty browse and loading surfaces
   );
   assert.match(
     sessionSource,
-    /const displayedEffectiveMessages = createMemo\(\(\) =>[\s\S]*activeSessionSwitchHandoffActive\(\)[\s\S]*activeSessionSwitchHandoff\(\)\?\.heldMessages[\s\S]*effectiveRenderedMessages\(\),/s,
+    /const displayedEffectiveMessages = createMemo\(\(\) => \{[\s\S]*activeSessionSwitchHandoffActive\(\)[\s\S]*activeSessionSwitchHandoff\(\)\?\.heldMessages[\s\S]*effectiveRenderedMessages\(\);/s,
     "session switches should keep rendering the last active transcript instead of an empty browse surface",
   );
   assert.match(
@@ -285,9 +318,16 @@ test("materializing a pending submitted draft preserves the visible run indicato
 
 test("run begun trace is emitted only when the per-session state changes", () => {
   const start = sessionSource.indexOf("  const setRunHasBegunForSessionKey = ");
-  const end = sessionSource.indexOf("  const setRunTickForSessionKey = ", start);
+  const end = sessionSource.indexOf(
+    "  const setRunTickForSessionKey = ",
+    start,
+  );
   assert.notEqual(start, -1, "setRunHasBegunForSessionKey should exist");
-  assert.notEqual(end, -1, "setRunHasBegunForSessionKey block should end before setRunTickForSessionKey");
+  assert.notEqual(
+    end,
+    -1,
+    "setRunHasBegunForSessionKey block should end before setRunTickForSessionKey",
+  );
   const block = sessionSource.slice(start, end);
 
   assert.match(
@@ -330,8 +370,13 @@ test("materializing a pending submitted draft holds the transcript surface until
 
   assert.match(
     sessionSource,
-    /const composerResetKey = createMemo\(\(\) =>\s*`\$\{props\.activeComposerTargetId \?\? "__no-target"\}:\$\{transcriptDisplaySessionId\(\) \?\? "__no-session"\}`\s*\);/s,
-    "keyed composer entry boundaries should follow the display session id, not the raw route-selected session id",
+    /const composerResetKey = createMemo\(\(\) => transcriptDisplaySessionId\(\) \?\? "__no-session"\);/,
+    "keyed composer entry boundaries should follow only the display session id, so boot target resolution cannot remount a focused composer",
+  );
+  assert.doesNotMatch(
+    sessionSource,
+    /const composerResetKey = createMemo\(\(\) =>\s*`\$\{props\.activeComposerTargetId \?\? "__no-target"\}:/s,
+    "composer target changes move the existing draft and must not reset the editor boundary",
   );
 });
 

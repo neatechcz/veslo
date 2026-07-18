@@ -105,7 +105,7 @@ test("session renders an immediate local echo and synchronously defers to canoni
 
   assert.match(
     source,
-    /const localSubmittedMessage = createMemo<MessageWithParts \| null>\(\(\) => \{[\s\S]*if \(!submitted\) return null;[\s\S]*const renderReplacement = resolvePendingSubmittedRenderReplacement\([\s\S]*if \(renderReplacement\.kind === "show-canonical"\) return null;[\s\S]*pendingSubmittedDraftToMessage\(submitted, props\.activeWorkspaceRoot\)/s,
+    /const localSubmittedMessage = createMemo<MessageWithParts \| null>\(\(\) => \{[\s\S]*if \(!submitted\) return null;[\s\S]*const renderReplacement = resolvePendingSubmittedRenderReplacement\([\s\S]*if \(renderReplacement\.kind === "show-canonical"\) return null;[\s\S]*projectPendingSubmittedMessage\(submitted, props\.activeWorkspaceRoot\)/s,
     "the immediate local echo should disappear in the same render projection as a unique canonical message",
   );
 
@@ -117,7 +117,7 @@ test("session renders an immediate local echo and synchronously defers to canoni
 
   assert.match(
     viewportSource,
-    /localSubmittedMessage \? \[\.\.\.messages, localSubmittedMessage\] : \[\.\.\.messages\]/,
+    /localSubmittedMessage \? \[\.\.\.messages, localSubmittedMessage\] : messages as T\[\]/,
     "rendered transcript messages should append the local submitted echo while canonical is absent",
   );
 

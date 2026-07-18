@@ -4,8 +4,10 @@ import type { Part } from "@opencode-ai/sdk/v2/client";
 
 import {
   buildProgressRenderBlocks,
+  progressGroupingInputFingerprint,
   progressRenderBlockEntries,
   progressRenderBlockKey,
+  progressRenderBlockShapeFingerprint,
 } from "../../../components/session/progress-grouping-model.js";
 import type { ProgressRenderBlock } from "../../../components/session/progress-grouping-model.js";
 import type { MessageWithParts } from "../../../types";
@@ -26,6 +28,37 @@ function message(id: string, role: "user" | "assistant", parts: Part[]): Message
     })) as Part[],
   };
 }
+
+test("grouping fingerprints change for grouping inputs but not irrelevant message metadata", () => {
+  const initial = message("a1", "assistant", [{ type: "text", text: "hello" } as any]);
+  const metadataOnly = {
+    ...initial,
+    info: {
+      ...initial.info,
+      time: { created: 1, completed: 2 },
+      cost: 42,
+    },
+  } as MessageWithParts;
+  const changedText = {
+    ...metadataOnly,
+    parts: [{ ...metadataOnly.parts[0], text: "hello again" }] as Part[],
+  } as MessageWithParts;
+
+  assert.equal(progressGroupingInputFingerprint([initial]), progressGroupingInputFingerprint([metadataOnly]));
+  assert.notEqual(progressGroupingInputFingerprint([initial]), progressGroupingInputFingerprint([changedText]));
+
+  const initialShape = progressRenderBlockShapeFingerprint(buildProgressRenderBlocks({
+    messages: [initial],
+    developerMode: false,
+    showThinking: false,
+  }));
+  const replayShape = progressRenderBlockShapeFingerprint(buildProgressRenderBlocks({
+    messages: [metadataOnly],
+    developerMode: false,
+    showThinking: false,
+  }));
+  assert.equal(initialShape, replayShape);
+});
 
 test("collapses completed intermediate assistant activity between user and final answer", () => {
   const blocks = buildProgressRenderBlocks({

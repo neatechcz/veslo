@@ -6,6 +6,10 @@ import { createPendingSessionDraftController } from "../../context/pending-sessi
 import { resolveComposerStorageKey, resolvePendingDraftKey } from "../../lib/pending-session-drafts.js";
 import type { PendingSessionDraft, PendingSessionDraftSummary } from "../../lib/tauri.js";
 import type { ComposerDraft } from "../../types.js";
+import {
+  setSessionComposerDraft,
+  type ComposerDraftStateByStorageKey,
+} from "../../pages/session-composer-drafts.js";
 
 const GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID = "pending-global-unpublished";
 
@@ -73,7 +77,7 @@ test("pending draft controller ignores old private drafts and opens the global d
         composer: draft("global draft"),
       };
       const activatedWorkspaces: string[] = [];
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
 
       const controller = createPendingSessionDraftController({
         isTauriRuntime: () => true,
@@ -111,8 +115,10 @@ test("pending draft controller ignores old private drafts and opens the global d
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+          },
         },
         clearDisplayedSession: () => undefined,
         setView: () => undefined,
@@ -132,7 +138,7 @@ test("pending draft controller ignores old private drafts and opens the global d
       assert.deepEqual(activatedWorkspaces, ["scratch-global"]);
       assert.equal(controller.activePendingDraftKey(), pendingKey);
       assert.equal(controller.activePendingDraftMeta()?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
-      assert.equal(composerDrafts[composerStorageKey]?.text, "global draft");
+      assert.equal(composerDrafts[composerStorageKey]?.draft.text, "global draft");
     } finally {
       dispose();
     }
@@ -180,7 +186,7 @@ test("pending draft controller creates the global draft record when only old pri
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: () => undefined,
+        composerDraftCommands: { writeDraft: () => undefined },
         clearDisplayedSession: () => undefined,
         setView: () => undefined,
         setError: () => undefined,
@@ -235,7 +241,7 @@ test("pending draft controller updates one global draft record for directory tar
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: () => undefined,
+        composerDraftCommands: { writeDraft: () => undefined },
         clearDisplayedSession: () => undefined,
         setView: () => undefined,
         setError: () => undefined,
@@ -275,7 +281,7 @@ test("pending draft controller preserves global draft text when switching betwee
         updatedAt: 20,
         composer: draft("keep this directory text"),
       };
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
 
       const controller = createPendingSessionDraftController({
         isTauriRuntime: () => true,
@@ -310,8 +316,10 @@ test("pending draft controller preserves global draft text when switching betwee
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+          },
         },
         clearDisplayedSession: () => undefined,
         setView: () => undefined,
@@ -331,7 +339,7 @@ test("pending draft controller preserves global draft text when switching betwee
       assert.equal(storedDraft.workspaceId, "workspace-b");
       assert.equal(storedDraft.directory, "/repo/b");
       assert.equal(storedDraft.composer.text, "keep this directory text");
-      assert.equal(composerDrafts[composerStorageKey]?.text, "keep this directory text");
+      assert.equal(composerDrafts[composerStorageKey]?.draft.text, "keep this directory text");
     } finally {
       dispose();
     }
@@ -351,7 +359,7 @@ test("pending draft controller preserves attachments when switching directory dr
         updatedAt: 20,
         composer: draftWithAttachment("keep this attachment"),
       };
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
 
       const controller = createPendingSessionDraftController({
         isTauriRuntime: () => true,
@@ -387,8 +395,10 @@ test("pending draft controller preserves attachments when switching directory dr
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+          },
         },
         clearDisplayedSession: () => undefined,
         setView: () => undefined,
@@ -409,7 +419,7 @@ test("pending draft controller preserves attachments when switching directory dr
       assert.equal(storedDraft.privateWorkspaceId, "scratch-new");
       assert.equal(storedDraft.composer.text, "keep this attachment");
       assert.equal(storedDraft.composer.attachments[0]?.dataUrl, "data:image/png;base64,AA==");
-      assert.equal(composerDrafts[composerStorageKey]?.attachments[0]?.name, "diagram.png");
+      assert.equal(composerDrafts[composerStorageKey]?.draft.attachments[0]?.name, "diagram.png");
     } finally {
       dispose();
     }
@@ -430,7 +440,7 @@ test("pending draft controller preserves text and cleans scratch after switching
         composer: draft("private body"),
       };
       const forgottenWorkspaces: string[] = [];
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
 
       const controller = createPendingSessionDraftController({
         isTauriRuntime: () => true,
@@ -469,8 +479,10 @@ test("pending draft controller preserves text and cleans scratch after switching
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+          },
         },
         clearDisplayedSession: () => undefined,
         setView: () => undefined,
@@ -491,7 +503,7 @@ test("pending draft controller preserves text and cleans scratch after switching
       assert.equal(storedDraft.privateWorkspaceId, null);
       assert.equal(storedDraft.composer.text, "private body");
       assert.deepEqual(forgottenWorkspaces, ["scratch-old"]);
-      assert.equal(composerDrafts[composerStorageKey]?.text, "private body");
+      assert.equal(composerDrafts[composerStorageKey]?.draft.text, "private body");
     } finally {
       dispose();
     }
@@ -515,7 +527,7 @@ test("pending draft controller reopens an existing global private draft without 
       const activatedWorkspaces: string[] = [];
       const views: string[] = [];
       const openEvents: string[] = [];
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
 
       const controller = createPendingSessionDraftController({
         isTauriRuntime: () => true,
@@ -550,9 +562,11 @@ test("pending draft controller reopens an existing global private draft without 
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
-          openEvents.push("restore-composer");
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+            openEvents.push("restore-composer");
+          },
         },
         clearDisplayedSession: () => {
           openEvents.push("clear-displayed-session");
@@ -577,7 +591,7 @@ test("pending draft controller reopens an existing global private draft without 
       assert.deepEqual(activatedWorkspaces, ["scratch-1"]);
       assert.equal(controller.activePendingDraftKey(), pendingKey);
       assert.equal(controller.activePendingDraftMeta()?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
-      assert.equal(composerDrafts[composerStorageKey]?.text, "remember this");
+      assert.equal(composerDrafts[composerStorageKey]?.draft.text, "remember this");
       assert.deepEqual(views, ["session"]);
       assert.deepEqual(openEvents, ["restore-composer", "clear-displayed-session", "view:session"]);
     } finally {
@@ -616,7 +630,7 @@ test("pending draft controller reports failure when scratch workspace creation f
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: () => undefined,
+        composerDraftCommands: { writeDraft: () => undefined },
         setView: () => undefined,
         setError: (message) => {
           if (message) errors.push(message);

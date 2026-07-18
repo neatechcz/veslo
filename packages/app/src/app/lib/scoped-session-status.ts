@@ -54,6 +54,16 @@ export const withSessionStatus = (
   if (!session) return current;
   const normalizedStatus = status.trim() || "idle";
   const scoped = scopedSessionStatusKey(workspaceId, session);
+  // Keep both keys in sync for the legacy unscoped lookup, but do not publish a
+  // new map when they already contain the exact compatible representation.
+  // Session.status is emitted repeatedly while a run is active; allocating a
+  // fresh map for the same status invalidates unrelated consumers.
+  if (
+    current[session] === normalizedStatus &&
+    (!scoped || current[scoped] === normalizedStatus)
+  ) {
+    return current;
+  }
   return {
     ...current,
     [session]: normalizedStatus,

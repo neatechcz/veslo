@@ -62,8 +62,15 @@ test("turn-scoped assistant activity grouping is delegated to the progress model
   assert.doesNotMatch(source, /previousBlock\?\.kind === "steps-cluster"/);
 });
 
+test("message-block diagnostics stay in the bounded UI-effect buffer", () => {
+  assert.match(source, /uiEffectTrace\.record\("ui-model:derived"/);
+  assert.match(source, /uiEffectTrace\.reportIncident\("message-block-memo-churn"/);
+  assert.doesNotMatch(source, /onMessageBlocksRecomputed/);
+  assert.doesNotMatch(source, /recordSend(?:Workflow)?Trace/);
+});
+
 test("mixed message blocks render a single inline timeline for all step groups", () => {
-  assert.match(source, /const inlineStepGroups = \(\) =>\s*messageBlock\(\)\.groups[\s\S]*group\.kind === "steps"/);
+  assert.match(source, /const inlineStepGroups = \(\) =>\s*messageBlock\(\)\s*\.groups[\s\S]*group\.kind === "steps"/);
   assert.match(source, /stepGroups=\{inlineStepGroups\(\)\}/);
 });
 

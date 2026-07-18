@@ -49,6 +49,8 @@ type ComposerSendTraceRoot = typeof window & {
 type ComposerProps = {
   initialDraft: ComposerDraft;
   prompt: string;
+  draftStorageKey: string;
+  draftRevision: number;
   developerMode: boolean;
   busy: boolean;
   isStreaming: boolean;
@@ -59,7 +61,9 @@ type ComposerProps = {
   entryPlacement?: "footer" | "center";
   onSend: (draft: ComposerDraft, options?: ComposerSendOptions) => Promise<ComposerSendResult>;
   onStop: () => void;
-  onDraftChange: (draft: ComposerDraft) => void;
+  onDraftChange: (storageKey: string, draft: ComposerDraft) => void;
+  captureDraftRevision: (storageKey: string) => number;
+  clearDraftIfRevision: (storageKey: string, revision: number) => boolean;
   selectedAgent: string | null;
   onSelectAgent: (agent: string | null) => void;
   showNotionBanner: boolean;
@@ -465,6 +469,11 @@ export default function Composer(props: ComposerProps) {
   let fileInputRef: HTMLInputElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
+  let observedDraftStorageKey = props.draftStorageKey;
+  let storageKeyTransitionAuthorizesPromptSync = false;
+  let pendingParentConditionalClear: { storageKey: string; nextRevision: number } | null = null;
+  let scheduledDraftStorageKey: string | null = null;
+  const submittedStorageKeys = new Set<{ storageKey: string }>();
   let pasteCounter = 0;
   let draftScheduledAt = 0;
   let lastInputAt = 0;
@@ -672,17 +681,52 @@ export default function Composer(props: ComposerProps) {
     rememberRecentEmit(value);
   };
 
+  // A pending-to-real handoff deliberately changes the ownership key. The
+  // outgoing Composer can observe its old bucket becoming empty for one Solid
+  // turn while the replacement Composer receives the moved value. That is an
+  // authorized transition, not a focused draft-loss incident.
+  createEffect(() => {
+    const nextStorageKey = props.draftStorageKey;
+    if (nextStorageKey === observedDraftStorageKey) return;
+    const previousStorageKey = observedDraftStorageKey;
+    observedDraftStorageKey = nextStorageKey;
+    // A debounced edit or an accepted first submit may outlive the synchronous
+    // no-session -> real-session handoff. Follow that one ownership transfer;
+    // do not retarget later ordinary session switches.
+    const followsPendingOwnership = previousStorageKey === "__no-session__"
+      || previousStorageKey === "__unpublished-composer-draft__:global";
+    if (followsPendingOwnership && scheduledDraftStorageKey === previousStorageKey) {
+      scheduledDraftStorageKey = nextStorageKey;
+    }
+    if (followsPendingOwnership) {
+      for (const submission of submittedStorageKeys) {
+        if (submission.storageKey === previousStorageKey) submission.storageKey = nextStorageKey;
+      }
+    }
+    storageKeyTransitionAuthorizesPromptSync = true;
+    queueMicrotask(() => {
+      storageKeyTransitionAuthorizesPromptSync = false;
+    });
+  });
+
   // Sync from props: ignore echoes of what we just sent
   createEffect(() => {
     if (!editorRef) return;
     const value = props.prompt;
     const current = readEditorText(editorRef);
+    const parentConditionalClearAuthorizesPromptSync = Boolean(
+      pendingParentConditionalClear
+      && !value
+      && props.draftStorageKey === pendingParentConditionalClear.storageKey
+      && props.draftRevision === pendingParentConditionalClear.nextRevision,
+    );
     uiEffectTrace.record("ui-effect:run", {
       owner: "composer.prompt-sync",
       editorInstanceId,
       promptLength: value.length,
       currentLength: current.length,
       equal: value === current,
+      parentConditionalClearAuthorizesPromptSync,
     });
 
     // Robust Echo Cancellation:
@@ -726,8 +770,14 @@ export default function Composer(props: ComposerProps) {
       previousLength: current.length,
       nextLength: value.length,
       focused: document.activeElement === editorRef,
+      authorizedStorageKeyTransition: storageKeyTransitionAuthorizesPromptSync,
+      parentConditionalClearAuthorizesPromptSync,
     });
-    if (document.activeElement === editorRef) {
+    if (
+      document.activeElement === editorRef
+      && !storageKeyTransitionAuthorizesPromptSync
+      && !parentConditionalClearAuthorizesPromptSync
+    ) {
       uiEffectTrace.reportIncident("draft-external-sync-while-focused", { editorInstanceId });
     }
     if (value.startsWith("!") && mode() === "prompt") {
@@ -755,10 +805,13 @@ export default function Composer(props: ComposerProps) {
   });
 
   let emitTimer: number | null = null;
+  // A debounce may outlive a target remap. Keep the key from the edit event so
+  // an outgoing Composer instance can never write into the newly active target.
   const emitDraftChange = () => {
     if (!editorRef) return;
     draftHandoffController.markDraftChanged();
     draftScheduledAt = perfNow();
+    scheduledDraftStorageKey = props.draftStorageKey;
 
     if (emitTimer) window.clearTimeout(emitTimer);
     emitTimer = window.setTimeout(() => {
@@ -787,7 +840,9 @@ export default function Composer(props: ComposerProps) {
 
     suppressPromptSync = true;
     const draftChangeStartedAt = perfNow();
-    props.onDraftChange({
+    const storageKey = scheduledDraftStorageKey ?? props.draftStorageKey;
+    scheduledDraftStorageKey = null;
+    props.onDraftChange(storageKey, {
       mode: mode(),
       parts,
       attachments: attachments(),
@@ -998,7 +1053,7 @@ export default function Composer(props: ComposerProps) {
     editorRef.appendChild(chip);
     editorRef.appendChild(document.createTextNode(" "));
     suppressPromptSync = true;
-    props.onDraftChange({
+    props.onDraftChange(props.draftStorageKey, {
       mode: mode(),
       parts: [{ type: "text", text }],
       attachments: attachments(),
@@ -1072,7 +1127,7 @@ export default function Composer(props: ComposerProps) {
     renderParts(draft.parts, false);
     setDraftText(draft.text);
     setAttachments(draft.attachments ?? []);
-    props.onDraftChange(draft);
+    props.onDraftChange(props.draftStorageKey, draft);
   };
 
   const navigateHistory = (direction: "up" | "down") => {
@@ -1100,22 +1155,30 @@ export default function Composer(props: ComposerProps) {
     applyHistoryDraft(target);
   };
 
-  const clearSubmittedDraft = (submittedMode: ComposerDraft["mode"]) => {
+  const clearSubmittedDraft = (
+    submittedMode: ComposerDraft["mode"],
+    submittedStorageKey: string,
+    submittedStorageRevision: number,
+  ) => {
+    const parentClear = {
+      storageKey: submittedStorageKey,
+      nextRevision: submittedStorageRevision + 1,
+    };
+    pendingParentConditionalClear = parentClear;
+    if (!props.clearDraftIfRevision(submittedStorageKey, submittedStorageRevision)) {
+      if (pendingParentConditionalClear === parentClear) pendingParentConditionalClear = null;
+      return false;
+    }
     setAttachments([]);
     setEditorText("");
     pasteTextById.clear();
     resetRecentEmits("");
     suppressPromptSync = true;
-    props.onDraftChange({
-      mode: submittedMode,
-      parts: [],
-      attachments: [],
-      text: "",
-      resolvedText: "",
-    });
     queueMicrotask(() => {
       suppressPromptSync = false;
+      if (pendingParentConditionalClear === parentClear) pendingParentConditionalClear = null;
     });
+    return true;
   };
 
   const [sendingCount, setSendingCount] = createSignal(0);
@@ -1166,6 +1229,19 @@ export default function Composer(props: ComposerProps) {
     recordHistory(draft);
     const submittedDraft = draft;
     const submittedRevision = draftHandoffController.beginSubmission();
+    const submittedStorageKey = props.draftStorageKey;
+    const submittedStorage = { storageKey: submittedStorageKey };
+    submittedStorageKeys.add(submittedStorage);
+    const submittedStorageRevision = props.captureDraftRevision(submittedStorageKey);
+    uiEffectTrace.record("composer-draft:revision-captured", {
+      owner: "composer-submit",
+      storageKeyKind: submittedStorageKey === "__unpublished-composer-draft__:global"
+        ? "unpublished"
+        : submittedStorageKey === "__no-session__"
+          ? "no-session"
+          : "session",
+      revision: submittedStorageRevision,
+    });
     beginSending();
     if (options.sendNow) setSendNowPending(true);
     setMentionOpen(false);
@@ -1187,7 +1263,11 @@ export default function Composer(props: ComposerProps) {
       onDraftTransferred: () => {
         draftHandoffController.acknowledgeTransfer(
           submittedRevision,
-          () => untrack(() => clearSubmittedDraft(submittedDraft.mode)),
+          () => untrack(() => clearSubmittedDraft(
+            submittedDraft.mode,
+            submittedStorage.storageKey,
+            submittedStorageRevision,
+          )),
         );
       },
     };
@@ -1212,7 +1292,11 @@ export default function Composer(props: ComposerProps) {
       draftHandoffController.applyResult(
         submittedRevision,
         sendResult.draftDisposition,
-        () => untrack(() => clearSubmittedDraft(submittedDraft.mode)),
+        () => untrack(() => clearSubmittedDraft(
+          submittedDraft.mode,
+          submittedStorage.storageKey,
+          submittedStorageRevision,
+        )),
       );
     } catch (error) {
       recordSendTrace("sendDraft:onSend:error", {
@@ -1222,6 +1306,7 @@ export default function Composer(props: ComposerProps) {
         source: options.source,
       });
     } finally {
+      submittedStorageKeys.delete(submittedStorage);
       finishSending();
       setActiveSendTraceId(null);
       if (options.sendNow) setSendNowPending(false);

@@ -30,6 +30,34 @@ test("normalizeEvent keeps payload events unchanged", () => {
   });
 });
 
+test("normalizeEvent preserves an upstream SSE id from a transport envelope", () => {
+  assert.deepEqual(
+    normalizeEvent({
+      eventId: "evt-42",
+      payload: { type: "message.updated", properties: { id: "m1" } },
+    }),
+    {
+      type: "message.updated",
+      properties: { id: "m1" },
+      eventId: "evt-42",
+    },
+  );
+});
+
+test("normalizeEvent preserves an explicit empty SSE id as a cursor reset", () => {
+  assert.deepEqual(
+    normalizeEvent({
+      eventIdReset: true,
+      payload: { type: "message.updated", properties: { id: "m1" } },
+    }),
+    {
+      type: "message.updated",
+      properties: { id: "m1" },
+      eventIdReset: true,
+    },
+  );
+});
+
 test("normalizeEvent unwraps sync envelopes inside payload wrappers", () => {
   assert.deepEqual(
     normalizeEvent({ payload: { type: "sync", syncEvent: { type: "mcp.tools.changed.2", data: { server: "fs" } } } }),

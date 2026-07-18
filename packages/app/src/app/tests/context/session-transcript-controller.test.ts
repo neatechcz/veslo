@@ -10,6 +10,12 @@ import {
   createSessionTranscriptController,
   INITIAL_SESSION_MESSAGE_LIMIT,
 } from "../../context/session-transcript-controller.js";
+import {
+  describeTranscriptCollectionCause,
+  describeTranscriptSurfaceIdentities,
+  resetTranscriptWriteDiagnosticsForTests,
+  setTranscriptWriteDiagnosticsEnabledForTests,
+} from "../../context/session-transcript-write-diagnostics.js";
 import type { MessageInfo, MessageWithParts } from "../../types";
 
 const transcriptControllerSource = readFileSync(
@@ -188,6 +194,38 @@ test("hydrateTranscriptSnapshot can apply shorter authoritative snapshots", () =
       assert.deepEqual(store.messages["sess-a"].map((message) => message.id), ["msg-a", "msg-c"]);
       assert.equal(controller.getTranscriptFreshness("sess-a")?.fetchedAt, 30);
     } finally {
+      dispose();
+    }
+  });
+});
+
+test("snapshot hydration records one collection cause instead of attributing every entity", () => {
+  createRoot((dispose) => {
+    try {
+      resetTranscriptWriteDiagnosticsForTests();
+      setTranscriptWriteDiagnosticsEnabledForTests(true);
+      const { controller, store } = makeController();
+      controller.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        fetchedAt: 20,
+        limit: 2,
+        messages: [makeMessage("msg-a", 1), makeMessage("msg-b", 2)],
+        partsByMessageId: {
+          "msg-a": [makeTextPart("part-a", "msg-a")],
+          "msg-b": [makeTextPart("part-b", "msg-b")],
+        },
+      });
+
+      const rendered = store.messages["sess-a"].map((info) => ({ info, parts: store.parts[info.id] ?? [] }));
+      const collectionCause = describeTranscriptCollectionCause(rendered);
+      const identities = describeTranscriptSurfaceIdentities(rendered);
+      assert.equal(collectionCause?.owner, "transcript.snapshot-hydrate");
+      assert.equal(collectionCause?.target, "collection");
+      assert.equal(identities.every((identity) => identity.messageInfoCause === null), true);
+      assert.equal(identities.every((identity) => identity.partsCause === null), true);
+    } finally {
+      setTranscriptWriteDiagnosticsEnabledForTests(null);
       dispose();
     }
   });

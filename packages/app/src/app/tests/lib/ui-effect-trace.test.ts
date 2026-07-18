@@ -13,7 +13,7 @@ test("UI effect trace keeps normal events local and persists one bounded inciden
     schedule: (callback) => {
       scheduled = callback;
     },
-    persist: (payload) => persisted.push(payload),
+    persist: (_event, payload) => persisted.push(payload),
   });
 
   trace.record("ui-focus:changed", { editorInstanceId: "editor_1", focused: true });
@@ -46,4 +46,52 @@ test("UI effect trace is inert while disabled", () => {
   trace.reportIncident("composer-focus-lost");
 
   assert.equal(scheduled, false);
+});
+
+test("UI effect trace coalesces a pending incident kind into one persisted window", () => {
+  let scheduled: (() => void) | undefined;
+  let scheduleCount = 0;
+  const persisted: Array<Record<string, unknown>> = [];
+  const trace = createUiEffectTrace({
+    enabled: () => true,
+    schedule: (callback) => {
+      scheduleCount += 1;
+      scheduled = callback;
+    },
+    persist: (_event, payload) => persisted.push(payload),
+  });
+
+  trace.reportIncident("message-block-memo-churn");
+  trace.reportIncident("message-block-memo-churn");
+  assert.equal(scheduleCount, 1);
+  scheduled?.();
+  assert.equal(persisted.length, 1);
+});
+
+test("UI effect trace publishes one direct aggregate benchmark without retaining a window", () => {
+  const persisted: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const trace = createUiEffectTrace({
+    enabled: () => true,
+    now: () => 42_000,
+    persist: (event, payload) => persisted.push({ event, payload }),
+  });
+
+  trace.publishBenchmark("message-blocks-stream", {
+    recomputes: 18,
+    memoNoOps: 2,
+  });
+
+  assert.deepEqual(persisted, [
+    {
+      event: "ui-effect-trace:benchmark",
+      payload: {
+        schema: "ui-effect-trace/v1",
+        source: "ui-effect-trace",
+        event: "ui-effect-trace:benchmark",
+        kind: "message-blocks-stream",
+        at: 42_000,
+        payload: { recomputes: 18, memoNoOps: 2 },
+      },
+    },
+  ]);
 });

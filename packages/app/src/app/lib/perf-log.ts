@@ -18,6 +18,7 @@ const PERF_LOG_LIMIT = 500;
 const HOT_EVENT_MIN_INTERVAL_MS = 750;
 const HOT_EVENT_KEYS = new Set([
   "session.sse:flush",
+  "session.sse:writer-batch",
   "session.sse:arrival-gap",
   "session.event:message.part.updated",
   "session.compaction:synthetic-continue",

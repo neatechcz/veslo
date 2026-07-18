@@ -35,7 +35,52 @@ test("scoped session status writes scoped and legacy keys for compatibility", ()
   const statuses = withSessionStatus({}, "ws-a", "session-1", "running");
 
   assert.equal(statuses["session-1"], "running");
-  assert.equal(statuses[scopedSessionStatusKey("ws-a", "session-1")], "running");
+  assert.equal(
+    statuses[scopedSessionStatusKey("ws-a", "session-1")],
+    "running",
+  );
+});
+
+test("same status preserves the existing map only when legacy and scoped compatibility keys already agree", () => {
+  const consistent = withSessionStatus({}, "ws-a", "session-1", "running");
+  assert.strictEqual(
+    withSessionStatus(consistent, "ws-a", "session-1", " running "),
+    consistent,
+  );
+
+  const legacyStale = {
+    ...consistent,
+    "session-1": "idle",
+  };
+  const repairedLegacy = withSessionStatus(
+    legacyStale,
+    "ws-a",
+    "session-1",
+    "running",
+  );
+  assert.notStrictEqual(repairedLegacy, legacyStale);
+  assert.equal(repairedLegacy["session-1"], "running");
+  assert.equal(
+    repairedLegacy[scopedSessionStatusKey("ws-a", "session-1")],
+    "running",
+  );
+
+  const scopedStale = {
+    ...consistent,
+    [scopedSessionStatusKey("ws-a", "session-1")]: "idle",
+  };
+  const repairedScoped = withSessionStatus(
+    scopedStale,
+    "ws-a",
+    "session-1",
+    "running",
+  );
+  assert.notStrictEqual(repairedScoped, scopedStale);
+  assert.equal(repairedScoped["session-1"], "running");
+  assert.equal(
+    repairedScoped[scopedSessionStatusKey("ws-a", "session-1")],
+    "running",
+  );
 });
 
 test("removing one scoped status preserves legacy fallback while another scoped status exists", () => {

@@ -24,8 +24,9 @@ import {
   type SendBoundaryValidationMode,
 } from "../lib/send-boundary-validation";
 import {
-  deleteSessionComposerDraft as defaultDeleteSessionComposerDraft,
+  type ComposerDraftStateCommands,
 } from "./session-composer-drafts";
+import { resolveComposerStorageKey } from "../lib/pending-session-drafts";
 import { withoutSessionStatus as defaultWithoutSessionStatus } from "../lib/scoped-session-status";
 import {
   isVisibleTextPart,
@@ -161,10 +162,7 @@ export type SessionMutationWorkflowDeps = {
   persistSessionDirectoryOverride: (sessionId: string, directory: string | null) => void;
   sessions: () => Session[];
   setSessions: (next: Session[]) => void;
-  deleteSessionComposerDraft?: typeof defaultDeleteSessionComposerDraft;
-  setComposerDraftBySessionId: (
-    updater: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
-  ) => void;
+  composerDraftCommands: Pick<ComposerDraftStateCommands, "deleteDraft">;
   removeSessionFromWorkspaceSidebar: (workspaceId: string, sessionId: string) => void;
   pathname: () => string;
   navigate: (to: string, options?: { replace?: boolean }) => void;
@@ -305,7 +303,6 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
   const revertSession = deps.revertSession ?? defaultRevertSession;
   const unrevertSession = deps.unrevertSession ?? defaultUnrevertSession;
   const normalizeSendCorrelation = deps.normalizeSendCorrelation ?? normalizeSessionSendCorrelation;
-  const deleteSessionComposerDraft = deps.deleteSessionComposerDraft ?? defaultDeleteSessionComposerDraft;
   const withoutSessionStatus = deps.withoutSessionStatus ?? defaultWithoutSessionStatus;
   const unwrap = deps.unwrap ?? defaultUnwrap;
   const listCommandsTyped = deps.listCommands ?? defaultListCommands;
@@ -898,7 +895,7 @@ export function createSessionMutationWorkflow(deps: SessionMutationWorkflowDeps)
 
     deps.persistSessionDirectoryOverride(trimmed, null);
     deps.setSessions(deps.sessions().filter((s) => s.id !== trimmed));
-    deps.setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, trimmed));
+    deps.composerDraftCommands.deleteDraft(resolveComposerStorageKey({ sessionId: trimmed }));
     const sidebarWorkspaceId = workspace?.id ?? workspaceId;
     deps.removeSessionFromWorkspaceSidebar(sidebarWorkspaceId, trimmed);
 

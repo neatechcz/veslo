@@ -48,6 +48,7 @@ import {
 import { shouldRecoverLocalRuntimeFromHealthError } from "./send-runtime-readiness";
 import { shouldReleaseStaleWorkspaceRoute } from "./session-runtime-prompts";
 import { INITIAL_SESSION_MESSAGE_LIMIT } from "./session-transcript-controller";
+import { recordTranscriptStoreWrite } from "./session-transcript-write-diagnostics";
 import type { ClientEntry, RoutingClient, WorkspaceRouting } from "./workspace-routing";
 
 type EventStreamStoreState = {
@@ -119,6 +120,16 @@ export function isPermissionRefreshEvent(type: string): boolean {
 
 export function isQuestionRefreshEvent(type: string): boolean {
   return QUESTION_REFRESH_EVENT_TYPES.has(type);
+}
+
+/** Applies the SSE `id:` state machine, including the protocol's empty-id reset. */
+export function nextUpstreamEventCursor(
+  current: string | null,
+  event: Pick<OpencodeEvent, "eventId" | "eventIdReset">,
+) {
+  if (event.eventIdReset) return null;
+  const next = event.eventId?.trim();
+  return next ? next : current;
 }
 
 function cleanupReconciledSseStream(
@@ -254,9 +265,54 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   let nextSseStreamGeneration = 0;
   const chromeMcpTraceSignatureByPart = new Map<string, string>();
   const chromeMcpFirstObservedAtByPart = new Map<string, number>();
+  // Opaque SSE ids are only useful when kept across a reconnect. The key is
+  // deliberately scoped so a reused upstream id cannot suppress another
+  // workspace, session, or part.
+  const seenTextDeltaEventIdsByPart = new Map<string, Set<string>>();
+  let activeWriterBatch:
+    | { textDeltaAccepted: number; textDeltaDuplicate: number; textDeltaUnidentified: number }
+    | null = null;
 
   const sseConnectionKey = (sourceWsId: string) => sourceWsId.trim() || "__active__";
   const sseBridgeConnectionKey = (sourceWsId: string) => `session-workspace:${sseConnectionKey(sourceWsId)}`;
+  const textDeltaScopeKey = (sourceWsId: string, sessionID: string, partID: string) =>
+    `${sseConnectionKey(sourceWsId)}\u0000${sessionID}\u0000${partID}`;
+  const forgetTextDeltaPart = (sourceWsId: string, sessionID: string, partID: string) => {
+    seenTextDeltaEventIdsByPart.delete(textDeltaScopeKey(sourceWsId, sessionID, partID));
+  };
+  const forgetTextDeltaMessage = (sourceWsId: string, sessionID: string, messageID: string) => {
+    for (const part of deps.store.parts[messageID] ?? []) {
+      forgetTextDeltaPart(sourceWsId, sessionID, part.id);
+    }
+  };
+  const forgetTextDeltaSession = (sourceWsId: string, sessionID: string) => {
+    const prefix = `${sseConnectionKey(sourceWsId)}\u0000${sessionID}\u0000`;
+    for (const key of Array.from(seenTextDeltaEventIdsByPart.keys())) {
+      if (key.startsWith(prefix)) seenTextDeltaEventIdsByPart.delete(key);
+    }
+  };
+  const observeTextDelta = (
+    sourceWsId: string,
+    sessionID: string,
+    partID: string,
+    eventId: string | undefined,
+  ): "accepted" | "duplicate" | "unidentified" => {
+    const normalizedEventId = eventId?.trim();
+    if (!normalizedEventId) {
+      activeWriterBatch && (activeWriterBatch.textDeltaUnidentified += 1);
+      return "unidentified";
+    }
+    const key = textDeltaScopeKey(sourceWsId, sessionID, partID);
+    const seen = seenTextDeltaEventIdsByPart.get(key) ?? new Set<string>();
+    if (seen.has(normalizedEventId)) {
+      activeWriterBatch && (activeWriterBatch.textDeltaDuplicate += 1);
+      return "duplicate";
+    }
+    seen.add(normalizedEventId);
+    seenTextDeltaEventIdsByPart.set(key, seen);
+    activeWriterBatch && (activeWriterBatch.textDeltaAccepted += 1);
+    return "accepted";
+  };
   const routeDescriptor = (entry: ClientEntry | null, client: RoutingClient) => ({
     client: entry?.client ?? client,
     baseUrl: entry?.baseUrl ?? "",
@@ -516,6 +572,9 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const info = record.info as Session | undefined;
         if (info?.id) {
           const removedMessageIDs = (deps.store.messages[info.id] ?? []).map((message) => message.id);
+          for (const messageID of removedMessageIDs) {
+            forgetTextDeltaMessage(sourceWsId, info.id, messageID);
+          }
           deps.setStore("sessions", (current: Session[]) => removeSession(current, info.id));
           if (removedMessageIDs.length > 0) {
             deps.setStore(
@@ -709,9 +768,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         if (record.info && typeof record.info === "object") {
           const info = record.info as Message;
           if (!isKnownOrForegroundStreamSessionId(info.sessionID, sourceWsId)) return;
-          deps.setStore("messages", info.sessionID, (current: MessageInfo[] = []) =>
-            upsertMessageInfo(current, info as MessageInfo),
-          );
+          const current = deps.store.messages[info.sessionID] ?? [];
+          const next = upsertMessageInfo(current, info as MessageInfo);
+          if (next !== current) {
+            recordTranscriptStoreWrite("sse.message.updated", "message-info", info.sessionID, info.id);
+            deps.setStore("messages", info.sessionID, next);
+          }
           deps.onTranscriptObserved?.(info.sessionID);
           if ((info as { role?: string }).role === "assistant") {
             deps.onAssistantResponseObserved?.(info.sessionID);
@@ -732,14 +794,21 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const sessionID = extractSessionId(record);
         const messageID = typeof record.messageID === "string" ? record.messageID : null;
         if (sessionID && messageID) {
+          forgetTextDeltaMessage(sourceWsId, sessionID, messageID);
           const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
           if (workspaceId && isKnownSessionId(sessionID)) {
             deps.recordPendingTranscriptMessageDeletion(workspaceId, sessionID, messageID);
           }
-          deps.setStore("messages", sessionID, (current: MessageInfo[] = []) =>
-            removeMessageInfo(current, messageID),
-          );
-          deps.setStore("parts", messageID, []);
+          const currentMessages = deps.store.messages[sessionID] ?? [];
+          const nextMessages = removeMessageInfo(currentMessages, messageID);
+          if (nextMessages.length !== currentMessages.length) {
+            recordTranscriptStoreWrite("sse.message.removed", "message-info", sessionID, messageID);
+            deps.setStore("messages", sessionID, nextMessages);
+          }
+          if ((deps.store.parts[messageID] ?? []).length > 0) {
+            recordTranscriptStoreWrite("sse.message.removed", "parts", sessionID, messageID);
+            deps.setStore("parts", messageID, []);
+          }
           deps.setStore(
             "commandDisplayByMessageID",
             produce((draft: Record<string, string>) => {
@@ -779,34 +848,58 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           }
 
           const delta = typeof record.delta === "string" ? record.delta : null;
+          const textDeltaOutcome =
+            delta && part.type === "text"
+              ? observeTextDelta(sourceWsId, part.sessionID, part.id, event.eventId)
+              : null;
           const partUpdatedStartedAt = perfNow();
           const parentMessageRole =
             deps.store.messages[part.sessionID]?.find((message) => message.id === part.messageID)
               ?.role ?? null;
 
-          deps.setStore(
-            produce((draft: EventStreamStoreState) => {
-              const list = draft.messages[part.sessionID] ?? [];
-              if (!list.find((message) => message.id === part.messageID)) {
-                draft.messages[part.sessionID] = upsertMessageInfo(list, createPlaceholderMessage(part));
-              }
-
-              const parts = draft.parts[part.messageID] ?? [];
-              const existingIndex = parts.findIndex((item) => item.id === part.id);
-
-              if (delta && part.type === "text" && existingIndex !== -1) {
-                const existing = parts[existingIndex] as Part & { text?: string };
-                if (typeof existing.text === "string" && !existing.text.endsWith(delta)) {
-                  const next = { ...existing, text: `${existing.text}${delta}` } as Part;
-                  parts[existingIndex] = next;
-                  draft.parts[part.messageID] = parts;
-                  return;
+          if (textDeltaOutcome !== "duplicate") {
+            const currentMessages = deps.store.messages[part.sessionID] ?? [];
+            const hasMessage = currentMessages.some((message) => message.id === part.messageID);
+            const currentParts = deps.store.parts[part.messageID] ?? [];
+            const existingPart = currentParts.find((item) => item.id === part.id) as (Part & { text?: string }) | undefined;
+            const appendsTextDelta = Boolean(
+              delta && part.type === "text" && typeof existingPart?.text === "string",
+            );
+            const nextParts = appendsTextDelta ? currentParts : upsertPartInfo(currentParts, part);
+            const changesParts = appendsTextDelta || nextParts !== currentParts;
+            if (!hasMessage) {
+              recordTranscriptStoreWrite("sse.part.updated", "message-info", part.sessionID, part.messageID);
+            }
+            if (changesParts) {
+              recordTranscriptStoreWrite("sse.part.updated", "parts", part.sessionID, part.messageID);
+              recordTranscriptStoreWrite("sse.part.updated", "part", part.sessionID, part.messageID, part.id);
+            }
+            deps.setStore(
+              produce((draft: EventStreamStoreState) => {
+                const list = draft.messages[part.sessionID] ?? [];
+                if (!list.find((message) => message.id === part.messageID)) {
+                  draft.messages[part.sessionID] = upsertMessageInfo(list, createPlaceholderMessage(part));
                 }
-              }
 
-              draft.parts[part.messageID] = upsertPartInfo(parts, part);
-            }),
-          );
+                const parts = draft.parts[part.messageID] ?? [];
+                const existingIndex = parts.findIndex((item) => item.id === part.id);
+
+                if (delta && part.type === "text" && existingIndex !== -1) {
+                  const existing = parts[existingIndex] as Part & { text?: string };
+                  if (typeof existing.text === "string") {
+                    // A delta is an append. Never infer replay from its text:
+                    // two independent \"ha\" chunks must become \"haha\".
+                    const next = { ...existing, text: `${existing.text}${delta}` } as Part;
+                    parts[existingIndex] = next;
+                    draft.parts[part.messageID] = parts;
+                    return;
+                  }
+                }
+
+                draft.parts[part.messageID] = upsertPartInfo(parts, part);
+              }),
+            );
+          }
           deps.onTranscriptObserved?.(part.sessionID);
           const resolvedPart =
             deps.store.parts[part.messageID]?.find((item) => item.id === part.id) ??
@@ -852,6 +945,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               partType: part.type,
               role: parentMessageRole,
               deltaLength: delta?.length ?? 0,
+              deltaDelivery: textDeltaOutcome,
+              hasTransportEventId: Boolean(event.eventId),
               textLength: resolvedTextLength,
               hasText: (resolvedTextLength ?? 0) > 0,
             });
@@ -883,12 +978,19 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const messageID = typeof record.messageID === "string" ? record.messageID : null;
         const partID = typeof record.partID === "string" ? record.partID : null;
         if (messageID && partID) {
+          if (sessionID) forgetTextDeltaPart(sourceWsId, sessionID, partID);
           const resolvedSessionID = sessionID || deps.resolveSessionIdForMessage(messageID);
           const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
           if (workspaceId && resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
             deps.recordPendingTranscriptPartDeletion(workspaceId, resolvedSessionID, messageID, partID);
           }
-          deps.setStore("parts", messageID, (current: Part[] = []) => removePartInfo(current, partID));
+          const currentParts = deps.store.parts[messageID] ?? [];
+          const nextParts = removePartInfo(currentParts, partID);
+          if (nextParts.length !== currentParts.length) {
+            recordTranscriptStoreWrite("sse.part.removed", "parts", resolvedSessionID ?? "", messageID);
+            recordTranscriptStoreWrite("sse.part.removed", "part", resolvedSessionID ?? "", messageID, partID);
+            deps.setStore("parts", messageID, nextParts);
+          }
           if (resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
           }
         }
@@ -935,6 +1037,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     let outageEpisode = clearOutageEpisode();
     let currentController: AbortController | null = null;
     const activeSubscriptions = new Set<SseSubscription>();
+    let lastUpstreamEventId: string | null = null;
 
     const emitReconnectState = (
       status: ReconnectState["status"],
@@ -1006,18 +1109,34 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       let applied = 0;
       let partUpdates = 0;
       let messageUpdates = 0;
-      batch(() => {
-        for (const event of eventsToApply) {
-          if (!event) continue;
-          if (event.type === "message.part.updated") partUpdates += 1;
-          if (event.type === "message.updated") messageUpdates += 1;
-          applied += 1;
-          void applyEvent(event, sourceWsId);
-        }
-      });
+      const writerBatch = { textDeltaAccepted: 0, textDeltaDuplicate: 0, textDeltaUnidentified: 0 };
+      activeWriterBatch = writerBatch;
+      try {
+        batch(() => {
+          for (const event of eventsToApply) {
+            if (!event) continue;
+            if (event.type === "message.part.updated") partUpdates += 1;
+            if (event.type === "message.updated") messageUpdates += 1;
+            applied += 1;
+            void applyEvent(event, sourceWsId);
+          }
+        });
+      } finally {
+        activeWriterBatch = null;
+      }
 
       const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
       const dropped = eventsToApply.length - applied;
+      if (
+        deps.sessionDebugEnabled() &&
+        (writerBatch.textDeltaAccepted > 0 || writerBatch.textDeltaDuplicate > 0 || writerBatch.textDeltaUnidentified > 0)
+      ) {
+        recordPerfLog(true, "session.sse", "writer-batch", {
+          textDeltaAccepted: writerBatch.textDeltaAccepted,
+          textDeltaDuplicate: writerBatch.textDeltaDuplicate,
+          textDeltaUnidentified: writerBatch.textDeltaUnidentified,
+        });
+      }
       if (
         deps.sessionDebugEnabled() &&
         (elapsedMs >= 10 || queueWaitMs >= 40 || peakDepth >= 25 || applied >= 30 || dropped >= 12)
@@ -1057,7 +1176,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       }
     };
 
-    const runReconnectCatchup = async () => {
+    const runReconnectCatchup = async ({ refreshTranscript }: { refreshTranscript: boolean }) => {
       if (!outageEpisode.active) return;
       if (!outageEpisode.hadRunningSessions) {
         outageEpisode = clearOutageEpisode();
@@ -1095,31 +1214,31 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           continue;
         }
 
-        if (isBackgroundCatchup) {
-          continue;
+        if (!isBackgroundCatchup && refreshTranscript) {
+          try {
+            const limit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, deps.messageLimitBySession()[sessionID] ?? 0);
+            const msgs = unwrap(
+              await deps.withTimeout(c.session.messages({ sessionID, limit }), 12000, "session.messages"),
+            );
+            deps.setMessagesForSession(sessionID, msgs);
+            deps.setMessageLimitBySession((prev: Record<string, number>) => ({ ...prev, [sessionID]: limit }));
+            deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
+              ...prev,
+              [sessionID]: msgs.length < limit,
+            }));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            criticalFailureCount += 1;
+            lastCriticalFailure = message;
+            deps.recordSessionStatusTrace("sse-reconnect-catchup-messages-failed", {
+              sessionId: sessionID,
+              sourceWorkspaceId: sourceWsId || null,
+              message,
+            });
+          }
         }
 
-        try {
-          const limit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, deps.messageLimitBySession()[sessionID] ?? 0);
-          const msgs = unwrap(
-            await deps.withTimeout(c.session.messages({ sessionID, limit }), 12000, "session.messages"),
-          );
-          deps.setMessagesForSession(sessionID, msgs);
-          deps.setMessageLimitBySession((prev: Record<string, number>) => ({ ...prev, [sessionID]: limit }));
-          deps.setMessageCompleteBySession((prev: Record<string, boolean>) => ({
-            ...prev,
-            [sessionID]: msgs.length < limit,
-          }));
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          criticalFailureCount += 1;
-          lastCriticalFailure = message;
-          deps.recordSessionStatusTrace("sse-reconnect-catchup-messages-failed", {
-            sessionId: sessionID,
-            sourceWorkspaceId: sourceWsId || null,
-            message,
-          });
-        }
+        if (isBackgroundCatchup) continue;
 
         try {
           const list = unwrap(await deps.withTimeout(c.session.todo({ sessionID }), 8000, "session.todo"));
@@ -1155,7 +1274,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         return;
       }
 
-      if (shouldShowReconnected(outageEpisode)) {
+      if (refreshTranscript && shouldShowReconnected(outageEpisode)) {
         deps.onReconnectNotice?.("reconnected");
         outageEpisode = { ...outageEpisode, shownReconnected: true };
       }
@@ -1163,9 +1282,13 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "catchup-complete", {
         sessions: sessionIds.length,
         generation,
+        refreshTranscript,
       });
       outageEpisode = clearOutageEpisode();
-      emitReconnectState("live", { messagesMayBeDelayed: false });
+      // Keep the no-fence condition in the trace, not as a sticky UI error.
+      // `live` lets lifecycle recovery resume its terminal transcript path;
+      // no success toast is emitted above unless a fenced refresh succeeded.
+      emitReconnectState("live", { messagesMayBeDelayed: !refreshTranscript });
     };
 
     const connectSse = async (controller: AbortController) => {
@@ -1199,6 +1322,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               baseUrl: entry?.baseUrl ?? "",
               directory: entry?.directory ?? null,
               connectionKey: bridgeConnectionKey,
+              lastEventId: lastUpstreamEventId,
               ...engineSseAuthOptions(entry?.auth),
               signal: controller.signal,
             })
@@ -1230,7 +1354,21 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "connected", { generation });
 
         if (isReconnection) {
-          await runReconnectCatchup();
+          // Neither the engine API nor its messages endpoint currently exposes
+          // an atomic snapshot/cursor fence. Last-Event-ID is forwarded when
+          // available, but a catch-up remains eventual unless the upstream
+          // explicitly honours that cursor.
+          recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "reconnect-no-cursor-fence", {
+            hasLastUpstreamEventId: Boolean(lastUpstreamEventId),
+            contract: "eventual-reconciliation",
+          });
+          recordSendWorkflowTrace("session-sse", "session-sse:reconnect-no-cursor-fence", {
+            workspaceId: sourceWsId || null,
+            generation,
+            hasLastUpstreamEventId: Boolean(lastUpstreamEventId),
+            contract: "eventual-reconciliation",
+          });
+          await runReconnectCatchup({ refreshTranscript: false });
         } else {
           emitReconnectState("live", { messagesMayBeDelayed: false });
         }
@@ -1241,6 +1379,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
             const event = normalizeEvent(raw);
             if (!event) continue;
+            lastUpstreamEventId = nextUpstreamEventCursor(lastUpstreamEventId, event);
             if (event.type === "server.connected") {
               setStreamSseConnected(streamConnectionKey, true);
             }
@@ -1543,6 +1682,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   return {
     applyBackgroundWorkspaceEvent,
     applyEvent,
+    clearTextDeltaReplayStateForTerminalSnapshot: forgetTextDeltaSession,
     setupSseStream,
     startEventStreams,
   };

@@ -13,7 +13,7 @@ type UiEffectTraceOptions = {
   enabled: () => boolean;
   now?: () => number;
   schedule?: (callback: () => void, delayMs: number) => unknown;
-  persist?: (payload: Record<string, unknown>) => void;
+  persist?: (event: string, payload: Record<string, unknown>) => void;
 };
 
 const envUiEffectTraceEnabled = () => {
@@ -29,8 +29,9 @@ const envUiEffectTraceEnabled = () => {
 export function createUiEffectTrace(options: UiEffectTraceOptions) {
   const now = options.now ?? (() => Date.now());
   const schedule = options.schedule ?? ((callback, delayMs) => window.setTimeout(callback, delayMs));
-  const persist = options.persist ?? ((payload) => logUiEvent("send-workflow-trace", "ui-effect-trace:incident-window", payload));
+  const persist = options.persist ?? ((event, payload) => logUiEvent("send-workflow-trace", event, payload));
   const entries: UiEffectTraceEntry[] = [];
+  const pendingIncidentKinds = new Set<string>();
 
   const record = (event: string, payload: Record<string, unknown> = {}) => {
     if (!options.enabled()) return;
@@ -40,13 +41,16 @@ export function createUiEffectTrace(options: UiEffectTraceOptions) {
 
   const reportIncident = (kind: string, payload: Record<string, unknown> = {}) => {
     if (!options.enabled()) return;
+    if (pendingIncidentKinds.has(kind)) return;
+    pendingIncidentKinds.add(kind);
     const incidentAt = now();
     record("ui-incident", { kind, ...payload });
     schedule(() => {
+      pendingIncidentKinds.delete(kind);
       const settledAt = now();
       const windowStart = incidentAt - INCIDENT_WINDOW_MS;
       const windowEntries = entries.filter((entry) => entry.at >= windowStart && entry.at <= settledAt);
-      persist({
+      persist("ui-effect-trace:incident-window", {
         schema: "ui-effect-trace/v1",
         source: "ui-effect-trace",
         event: "ui-effect-trace:incident-window",
@@ -59,7 +63,20 @@ export function createUiEffectTrace(options: UiEffectTraceOptions) {
     }, INCIDENT_WINDOW_MS);
   };
 
-  return { record, reportIncident };
+  const publishBenchmark = (kind: string, payload: Record<string, unknown> = {}) => {
+    if (!options.enabled()) return;
+    const at = now();
+    persist("ui-effect-trace:benchmark", {
+      schema: "ui-effect-trace/v1",
+      source: "ui-effect-trace",
+      event: "ui-effect-trace:benchmark",
+      kind,
+      at,
+      payload,
+    });
+  };
+
+  return { isEnabled: options.enabled, record, reportIncident, publishBenchmark };
 }
 
 export const uiEffectTrace = createUiEffectTrace({ enabled: envUiEffectTraceEnabled });

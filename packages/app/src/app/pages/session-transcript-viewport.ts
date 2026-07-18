@@ -10,6 +10,7 @@ import {
   type Setter,
 } from "solid-js";
 import type { MessageWithParts } from "../types";
+import { observeTranscriptViewportProjectionBoundary } from "../context/session-transcript-write-diagnostics";
 
 export const INITIAL_MESSAGE_WINDOW = 140;
 export const MESSAGE_WINDOW_LOAD_CHUNK = 120;
@@ -97,6 +98,30 @@ export const resolveRenderedTranscriptMessages = <T,>({
   if (windowStart <= 0) return sourceMessages;
   if (windowStart >= sourceMessages.length) return [];
   return sourceMessages.slice(windowStart);
+};
+
+/** Keeps a viewport result stable only when every identity-bearing input matches. */
+export const createRenderedTranscriptProjectionCache = <T,>() => {
+  let previousInput: ResolveRenderedTranscriptMessagesInput<T> | null = null;
+  let previousOutput: T[] | null = null;
+
+  return (input: ResolveRenderedTranscriptMessagesInput<T>): T[] => {
+    if (
+      previousInput
+      && previousOutput
+      && previousInput.messages === input.messages
+      && previousInput.localSubmittedMessage === input.localSubmittedMessage
+      && previousInput.searchActive === input.searchActive
+      && previousInput.windowExpanded === input.windowExpanded
+      && previousInput.windowStart === input.windowStart
+    ) {
+      return previousOutput;
+    }
+    const output = resolveRenderedTranscriptMessages(input);
+    previousInput = input;
+    previousOutput = output;
+    return output;
+  };
 };
 
 export const resolveHiddenMessageCount = ({
@@ -296,16 +321,32 @@ export function createSessionTranscriptViewport(
   const [messageWindowSessionId, setMessageWindowSessionId] = createSignal<string | null>(null);
   const [messageWindowExpanded, setMessageWindowExpanded] = createSignal(false);
   const [initialAnchorPending, setInitialAnchorPending] = createSignal(false);
+  const resolveRenderedMessages = createRenderedTranscriptProjectionCache<MessageWithParts>();
 
-  const renderedMessages = createMemo(() =>
-    resolveRenderedTranscriptMessages({
-      messages: deps.messages(),
-      localSubmittedMessage: deps.localSubmittedMessage(),
-      searchActive: deps.searchActive(),
-      windowExpanded: messageWindowExpanded(),
-      windowStart: messageWindowStart(),
-    }),
-  );
+  const renderedMessages = createMemo(() => {
+    const messages = deps.messages();
+    const localSubmittedMessage = deps.localSubmittedMessage();
+    const searchActive = deps.searchActive();
+    const windowExpanded = messageWindowExpanded();
+    const windowStart = messageWindowStart();
+    const rendered = resolveRenderedMessages({
+      messages,
+      localSubmittedMessage,
+      searchActive,
+      windowExpanded,
+      windowStart,
+    });
+    observeTranscriptViewportProjectionBoundary({
+      sessionId: deps.selectedSessionId(),
+      canonicalMessages: messages,
+      localSubmittedMessage,
+      searchActive,
+      windowExpanded,
+      windowStart,
+      renderedMessages: rendered,
+    });
+    return rendered;
+  });
 
   const [batchedRenderedMessages, setBatchedRenderedMessages] = createSignal<MessageWithParts[]>(
     untrack(() => renderedMessages()),

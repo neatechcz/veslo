@@ -46,6 +46,7 @@ import {
 import {
   createSessionTranscriptController,
 } from "./session-transcript-controller";
+import { observeTranscriptProjectionBoundary } from "./session-transcript-write-diagnostics";
 import { createSessionRuntimePrompts } from "./session-runtime-prompts";
 import {
   createSessionSelectionController,
@@ -792,6 +793,8 @@ export function createSessionStore(options: {
     recordPendingTranscriptPartDeletion,
   } = transcriptController;
 
+  let eventStreamController: ReturnType<typeof createSessionEventStreamController> | null = null;
+
   const lifecycleRecoveryController =
     options.resolveConversationRunForSession && options.readConversationRunStatus
       ? createSessionLifecycleRecoveryController({
@@ -827,8 +830,15 @@ export function createSessionStore(options: {
           // Terminal recovery has already passed its exact durable run fence;
           // unlike a passive browse snapshot, it is allowed to replace stale
           // live parts with the canonical terminal snapshot.
-          hydrateConversationTranscript: (snapshot) =>
-            hydrateTranscriptSnapshot(snapshot, { preserveLiveParts: false }),
+          hydrateConversationTranscript: (snapshot) => {
+            hydrateTranscriptSnapshot(snapshot, { preserveLiveParts: false });
+            // The lifecycle controller admits only an exact terminal run here.
+            // Its snapshot closes the replay window for any opaque delta ids.
+            eventStreamController?.clearTextDeltaReplayStateForTerminalSnapshot(
+              snapshot.workspaceId,
+              snapshot.sessionId,
+            );
+          },
           diagnosticContext: options.lifecycleRecoveryDiagnosticContext,
           onConversationRunStatus: updateConversationRunDiagnosticsForScope,
           onConversationRunTerminal: (scope, status) => {
@@ -985,7 +995,9 @@ export function createSessionStore(options: {
       partsByMessageID: store.parts,
       commandDisplayByMessageID: store.commandDisplayByMessageID,
     });
-    return messageProjection.messages;
+    const projected = messageProjection.messages;
+    observeTranscriptProjectionBoundary("canonical", id, projected);
+    return projected;
   });
 
   const setSessions = (next: Session[]) => {
@@ -1014,7 +1026,7 @@ export function createSessionStore(options: {
     setStore("todos", id, next);
   };
 
-  const eventStreamController = createSessionEventStreamController({
+  eventStreamController = createSessionEventStreamController({
     store,
     setStore,
     routing: options.routing,
