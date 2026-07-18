@@ -33,7 +33,6 @@ export type WorkspaceRuntimeDebugProbeDeps = {
   readSnapshot: () => Promise<WorkspaceRuntimeSnapshot>;
   getRequestBrokerSnapshot: () => unknown;
   log?: (event: string, payload?: Record<string, unknown>) => void;
-  consoleLog?: (label: string, payload: unknown) => void;
 };
 
 const workspaceRuntimeDebugHelp =
@@ -391,8 +390,6 @@ function ensureWorkspaceRuntimeDiagnosis(snapshot: WorkspaceRuntimeSnapshot) {
 }
 
 export function createWorkspaceRuntimeDebugProbe(deps: WorkspaceRuntimeDebugProbeDeps) {
-  const consoleLog = deps.consoleLog ?? (() => {});
-
   const readSnapshot = async () => ensureWorkspaceRuntimeDiagnosis(await deps.readSnapshot());
 
   const readDiff = async () => {
@@ -421,12 +418,10 @@ export function createWorkspaceRuntimeDebugProbe(deps: WorkspaceRuntimeDebugProb
     const snapshotFn = async () => {
       const snapshot = await readSnapshot();
       root.__vesloWorkspaceRuntimeLastSnapshot = snapshot;
-      consoleLog("[WSDBG] runtime-snapshot", snapshot);
       return snapshot;
     };
     const diffFn = async () => {
       const diff = await readDiff();
-      consoleLog("[WSDBG] runtime-diff", diff);
       return diff;
     };
 

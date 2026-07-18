@@ -135,7 +135,7 @@ export function normalizeSkillRegistryPackagePath(path: string): string {
   return segments.join("/")
 }
 
-function normalizeMetadata(metadata: unknown): SkillRegistryPackageManifest["metadata"] {
+export function normalizeSkillRegistryPackageMetadata(metadata: unknown): SkillRegistryPackageManifest["metadata"] {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
     throw new Error("package metadata must be an object")
   }
@@ -296,7 +296,7 @@ export function validateSkillRegistryPackageArchive(value: unknown): SkillRegist
     schemaVersion: 1,
     entrypoint: ENTRYPOINT,
     files: files.map(({ contentBase64: _contentBase64, ...file }) => file),
-    metadata: normalizeMetadata(record.metadata),
+    metadata: normalizeSkillRegistryPackageMetadata(record.metadata),
   } satisfies Omit<SkillRegistryPackageManifest, "packageSha256">
   const packageSha256 = requireTrimmedString(record.packageSha256, "package packageSha256").toLowerCase()
   if (!SHA256_PATTERN.test(packageSha256)) {
@@ -375,7 +375,7 @@ export async function buildSkillRegistryPackageArchive(input: {
     files: pendingFiles
       .map(({ contentBase64: _contentBase64, ...file }) => file)
       .sort((left, right) => left.path.localeCompare(right.path)),
-    metadata: normalizeMetadata(input.metadata),
+    metadata: normalizeSkillRegistryPackageMetadata(input.metadata),
   } satisfies Omit<SkillRegistryPackageManifest, "packageSha256">
   const contentByPath = new Map(pendingFiles.map((file) => [file.path, file.contentBase64]))
 

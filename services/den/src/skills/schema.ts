@@ -119,6 +119,7 @@ export const SkillVersionTable = mysqlTable(
     status: mysqlEnum("status", SkillVersionStatus).notNull(),
     manifest_sha256: sha256Column("manifest_sha256"),
     package_sha256: sha256Column("package_sha256"),
+    package_metadata_json: longtext("package_metadata_json"),
     package_size_bytes: int("package_size_bytes", { unsigned: true }).notNull(),
     file_count: int("file_count", { unsigned: true }).notNull(),
     created_by_user_id: userIdColumn("created_by_user_id").notNull(),

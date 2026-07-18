@@ -545,7 +545,7 @@ test("terminal transcript recovery does not hydrate a selected snapshot after it
       sessionId: "open-a",
       conversationId: "conv-a",
       opencodeSessionId: "open-a",
-      runId: "run-a",
+      anchorMessageId: "msg-a",
       items: [],
     },
   });
@@ -1095,7 +1095,7 @@ test("accepted run admission watches idle UI state and hydrates the selected ter
           workspaceId: "ws-a",
           sessionId: "ses-open",
           opencodeSessionId: "ses-open",
-          runId: "run-a",
+          anchorMessageId: "msg-user-a",
           items: [],
         },
       };

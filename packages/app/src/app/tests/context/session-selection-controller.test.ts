@@ -82,6 +82,7 @@ function makeController(options: {
   activeClient?: any;
   activeWorkspaceId?: string;
   clientByWorkspaceId?: Record<string, any>;
+  initialSessions?: Session[];
   selectedSessionId?: string | null;
   conversationReader?: () => {
     listConversations: (
@@ -103,7 +104,7 @@ function makeController(options: {
   transcriptObservationVersion?: (sessionID: string) => number;
 } = {}) {
   const [store, setStore] = createStore({
-    sessions: [] as Session[],
+    sessions: options.initialSessions ?? [],
     sessionStatus: {} as Record<string, string>,
     messages: {} as Record<string, MessageInfo[]>,
     parts: {},
@@ -299,14 +300,13 @@ test("loadSessions retains the selected session while a delayed list misses it",
       const selected = makeSession("selected", "/repo", 10);
       const { controller, store } = makeController({
         selectedSessionId: "selected",
+        initialSessions: [selected],
         activeClient: {
           session: {
             list: async () => ok([makeSession("other", "/repo", 1)]),
           },
         },
       });
-      store.sessions.push(selected);
-
       await controller.loadSessions("/repo");
 
       assert.deepEqual(store.sessions.map((session) => session.id), ["selected", "other"]);
@@ -429,7 +429,7 @@ test("selectSession preserves canonical nested latest-run artifact identity when
             sessionId: "sess-open",
             conversationId: "conv-a",
             opencodeSessionId: "sess-open",
-            runId: "run-a",
+            anchorMessageId: "msg-user-a",
             items: [],
           },
         }),

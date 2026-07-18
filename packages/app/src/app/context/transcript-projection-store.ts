@@ -166,12 +166,6 @@ export function createTranscriptProjectionStore(options: TranscriptProjectionSto
     if (normalize(options.selectedSessionId()) !== normalize(scope.uiSessionId)) return reject("selected-session-mismatch");
     if (!aliasesMatchScope(currentReservation, snapshot)) return reject("identity-mismatch");
     if (!artifactsMatchSnapshot(artifacts, snapshot)) return reject("artifact-identity-mismatch");
-    if (
-      normalize(currentReservation.expectedRunId) &&
-      normalize(artifacts.runId) !== normalize(currentReservation.expectedRunId)
-    ) {
-      return reject("run-mismatch");
-    }
     if (options.isRunActive(currentReservation)) return reject("active-run");
 
     const boundScope = bindSnapshotIdentity(currentReservation, snapshot);
@@ -179,7 +173,7 @@ export function createTranscriptProjectionStore(options: TranscriptProjectionSto
     setProjection({ scope: boundScope, artifacts });
     options.trace?.("session-transcript-projection:publish", {
       callerSelectionVersion: scope.selectionVersion,
-      hasRunId: Boolean(normalize(artifacts.runId)),
+      hasAnchorMessageId: Boolean(normalize(artifacts.anchorMessageId)),
     });
     return true;
   };

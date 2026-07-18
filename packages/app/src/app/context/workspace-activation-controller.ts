@@ -180,11 +180,6 @@ export function createWorkspaceActivationController(deps: WorkspaceActivationCon
       );
     };
 
-    console.log("[workspace] activate", {
-      id: next.id,
-      type: next.workspaceType,
-      origin: activationOptions.origin,
-    });
     const activateStart = Date.now();
     deps.wsDebug("activate:start", {
       id: next.id,

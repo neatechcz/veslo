@@ -449,17 +449,8 @@ export default function App() {
   // without exposing developer-only UI panels.
   const wsDebugEnabled = () => developerMode() || workspaceDebugTraceEnabled();
 
-  const wsDebug = (label: string, payload?: unknown) => {
+  const wsDebug = (_label: string, _payload?: unknown) => {
     if (!wsDebugEnabled()) return;
-    try {
-      if (payload === undefined) {
-        console.log(`[WSDBG] ${label}`);
-      } else {
-        console.log(`[WSDBG] ${label}`, payload);
-      }
-    } catch {
-      // ignore
-    }
   };
 
   // Late-bound composition seams (lib/late-bound.ts): the store graph has true
@@ -2922,7 +2913,6 @@ export default function App() {
     readSnapshot: readWorkspaceRuntimeDebugSnapshot,
     getRequestBrokerSnapshot: getVesloRequestBrokerSnapshot,
     log: wsDebug,
-    consoleLog: (label, payload) => console.log(label, payload),
   });
 
   let cleanupWorkspaceRuntimeDebugProbe: (() => void) | null = null;

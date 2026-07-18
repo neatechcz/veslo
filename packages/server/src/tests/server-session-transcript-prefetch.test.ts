@@ -282,7 +282,7 @@ describe("session transcript prefetch routes", () => {
         directory?: string;
         conversationId?: string;
         opencodeSessionId?: string;
-        runId: string | null;
+        anchorMessageId: string | null;
       };
     };
     expect(projectionPayload.limit).toBe(12);
@@ -291,6 +291,7 @@ describe("session transcript prefetch routes", () => {
     expect(projectionPayload.latestRunArtifacts?.directory).toBe(workspaceRoot);
     expect(projectionPayload.latestRunArtifacts?.conversationId).toMatch(/^conv-/);
     expect(projectionPayload.latestRunArtifacts?.opencodeSessionId).toBe("sess-a");
+    expect(projectionPayload.latestRunArtifacts?.anchorMessageId).toBe("msg-sess-a-1");
 
     const projectionTraceEntries = (await readFile(traceFile, "utf8"))
       .trim()

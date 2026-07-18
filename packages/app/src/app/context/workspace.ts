@@ -1108,11 +1108,10 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  /** Send boot trace to console and an explicitly configured local debug sink. */
+  /** Send boot trace to an explicitly configured local debug sink. */
   function bootTrace(...args: unknown[]) {
     const msg = args.map(a => typeof a === "string" ? a : String(a)).join(" ");
     const line = `[${Date.now()}] ${msg}`;
-    console.log("[boot]", msg);
     if (!wsDebugEnabled() || !isTauriRuntime()) return;
     const sinkUrl = bootTraceSinkUrl();
     if (!sinkUrl) return;

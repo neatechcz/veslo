@@ -601,13 +601,13 @@ describe("latest-run artifact route", () => {
       const payload = await response.json() as {
         sessionId: string;
         workspaceId: string;
-        runId: string | null;
+        anchorMessageId: string | null;
         items: Array<{ family: string; kind: string; status: string; path?: string; title?: string }>;
       };
 
       expect(payload.sessionId).toBe(sessionId);
       expect(payload.workspaceId).toBe("ws_1");
-      expect(payload.runId).toBe("msg-003-user");
+      expect(payload.anchorMessageId).toBe("msg-003-user");
 
       expect(payload.items).toEqual([
         expect.objectContaining({

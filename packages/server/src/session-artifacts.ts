@@ -66,7 +66,7 @@ type ToolStateLike = {
 };
 
 type LatestRunSlice = {
-  runId: string | null;
+  anchorMessageId: string | null;
   messages: SessionArtifactMessage[];
 };
 
@@ -97,7 +97,7 @@ export function deriveLatestRunArtifacts(source: SessionArtifactSource, options:
   const items = deriveArtifactsForRun({
     sessionId,
     workspaceId,
-    runId: latestRun.runId ?? "latest-run",
+    runId: latestRun.anchorMessageId ?? "latest-run",
     messages: latestRun.messages,
     workspaceRoot: options.workspaceRoot,
     mcpServerNames: new Set((options.mcpServerNames ?? []).map((name) => name.trim().toLowerCase()).filter(Boolean)),
@@ -127,7 +127,7 @@ export function deriveLatestRunArtifactsResponse(
   return {
     sessionId: normalizeIdentifier(source.sessionId) || resolveSessionId(source.messages ?? []),
     workspaceId: normalizeIdentifier(source.workspaceId) || normalizeIdentifier(options.workspaceId),
-    runId: latestRun.runId,
+    anchorMessageId: latestRun.anchorMessageId,
     items: deriveLatestRunArtifacts(source, options),
   };
 }
@@ -464,13 +464,13 @@ function sliceLatestRun(messages: SessionArtifactMessage[]): LatestRunSlice {
     if (!message) continue;
     if (resolveMessageRole(message) !== "user") continue;
     return {
-      runId: resolveMessageId(message) || null,
+      anchorMessageId: resolveMessageId(message) || null,
       messages: messages.slice(index + 1),
     };
   }
 
   return {
-    runId: resolveMessageId(messages[0]) || null,
+    anchorMessageId: resolveMessageId(messages[0]) || null,
     messages: messages.slice(),
   };
 }

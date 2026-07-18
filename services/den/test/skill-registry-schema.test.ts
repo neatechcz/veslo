@@ -11,6 +11,7 @@ const { getTableConfig } = await import("drizzle-orm/mysql-core")
 const migrationUrls = [
   new URL("../drizzle/0013_skill_registry.sql", import.meta.url),
   new URL("../drizzle/0014_skill_rollout_policies.sql", import.meta.url),
+  new URL("../drizzle/0021_skill_version_package_metadata.sql", import.meta.url),
 ]
 
 const requiredTables = [
@@ -44,7 +45,8 @@ function tableBlock(migration: string, tableName: string) {
 }
 
 function triggerStatement(migration: string, triggerName: string) {
-  const match = migration.match(new RegExp(`CREATE TRIGGER \`${triggerName}\`[\\s\\S]*?;`))
+  const matches = [...migration.matchAll(new RegExp(`CREATE TRIGGER \`${triggerName}\`[\\s\\S]*?;`, "g"))]
+  const match = matches.at(-1)
   assert.ok(match, `missing trigger ${triggerName}`)
   return match[0]
 }
@@ -82,6 +84,7 @@ test("skill_versions, version files, and blobs are immutable schema rows", () =>
   const versionBlock = tableBlock(migration, "skill_versions")
   assert.match(versionBlock, /`manifest_sha256` varchar\(64\) NOT NULL/)
   assert.match(versionBlock, /`package_sha256` varchar\(64\) NOT NULL/)
+  assert.match(migration, /ALTER TABLE `skill_versions` ADD `package_metadata_json` longtext/)
   assert.match(migration, /CREATE INDEX `skill_version_manifest_sha256` ON `skill_versions` \(`manifest_sha256`\)/)
   assert.doesNotMatch(migration, /CREATE UNIQUE INDEX `skill_version_manifest_sha256`/)
   const skillVersionTrigger = triggerStatement(migration, "skill_versions_prevent_update")
@@ -93,6 +96,7 @@ test("skill_versions, version files, and blobs are immutable schema rows", () =>
     "version_number",
     "manifest_sha256",
     "package_sha256",
+    "package_metadata_json",
     "package_size_bytes",
     "file_count",
     "created_by_user_id",

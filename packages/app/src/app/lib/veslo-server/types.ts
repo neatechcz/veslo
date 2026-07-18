@@ -1313,7 +1313,8 @@ export type VesloSessionLatestRunArtifacts = {
   conversationId?: string;
   opencodeSessionId?: string;
   workspaceId: string;
-  runId: string | null;
+  /** Transcript message that anchors the artifact slice, not a lifecycle run id. */
+  anchorMessageId: string | null;
   items: VesloSessionArtifactItem[];
 };
 

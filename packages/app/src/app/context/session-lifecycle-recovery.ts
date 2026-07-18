@@ -445,17 +445,6 @@ export function createSessionLifecycleRecoveryController(
             scheduleTerminalTranscriptRetry("terminal-transcript-unavailable");
             return;
           }
-          const expectedRunId = normalize(scope.runId);
-          const actualRunId = normalize(snapshot.latestRunArtifacts?.runId);
-          if (snapshot.latestRunArtifacts && expectedRunId && actualRunId !== expectedRunId) {
-            traceForScope("session-lifecycle-recovery:terminal-transcript-projection-run-mismatch", scope, generation, {
-              outcome: "projection-run-mismatch",
-              expectedRunId,
-              actualRunId: actualRunId || null,
-            });
-            scheduleTerminalTranscriptRetry("terminal-transcript-unavailable");
-            return;
-          }
           const projectionPublished = options.publishTranscriptProjection?.(scope, snapshot, selectionVersion);
           const selectedRunStillVisible = isAcceptedRunVisible(scope);
           const selectionStillOwnsSnapshot =

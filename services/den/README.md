@@ -127,6 +127,15 @@ pnpm db:generate
 pnpm db:migrate
 ```
 
+### Skill-registry package metadata
+
+Each immutable skill version stores its canonical package metadata alongside the
+archive. For legacy rows without that column, the search index is only an opaque
+recovery hint: it is never trusted or persisted as a manifest, and a recovered
+candidate is served only when its recomputed package SHA-256 exactly matches the
+immutable version hash. Deploy the matching Drizzle migration before serving
+existing package versions.
+
 ## API
 
 - `GET /health`

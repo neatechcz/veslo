@@ -289,8 +289,6 @@ export function createWorkspaceLocalWorkspaces(deps: WorkspaceLocalWorkspacesDep
     const id = workspaceId.trim();
     if (!id) return false;
 
-    console.log("[workspace] forget", { id });
-
     try {
       const previousActive = deps.activeWorkspaceId();
       const mode = forgetOptions?.deleteLocalData ? "delete_local_data" : "detach_only";

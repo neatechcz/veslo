@@ -35,7 +35,7 @@ const snapshot = (
     directory: "/work/a",
     conversationId: "conv-a",
     opencodeSessionId: "open-a",
-    runId: "run-a",
+    anchorMessageId: "msg-user-a",
     items: [],
   },
   ...overrides,
@@ -53,7 +53,7 @@ test("publishes only the current selected projection with matching aliases", () 
 
     store.reserveTranscriptProjection(scope);
     assert.equal(store.publishTranscriptProjection(scope, snapshot()), true);
-    assert.equal(store.currentTranscriptProjection()?.runId, "run-a");
+    assert.equal(store.currentTranscriptProjection()?.anchorMessageId, "msg-user-a");
 
     selectedSessionId = "ui-b";
     assert.equal(store.currentTranscriptProjection(), undefined);
@@ -92,7 +92,7 @@ test("does not accept a stale alias or hide local artifacts during a new active 
   });
 });
 
-test("requires the expected durable run id for terminal recovery", () => {
+test("does not confuse the transcript anchor with the expected lifecycle run id", () => {
   createRoot((dispose) => {
     const terminalScope = { ...scope, expectedRunId: "run-terminal" };
     const store = createTranscriptProjectionStore({
@@ -102,20 +102,11 @@ test("requires the expected durable run id for terminal recovery", () => {
     });
     store.reserveTranscriptProjection(terminalScope);
 
-    assert.equal(store.publishTranscriptProjection(terminalScope, snapshot()), false);
-    assert.equal(
-      store.publishTranscriptProjection(
-        terminalScope,
-        snapshot({ latestRunArtifacts: { ...snapshot().latestRunArtifacts!, runId: "run-terminal" } }),
-      ),
-      true,
-    );
+    assert.equal(store.publishTranscriptProjection(terminalScope, snapshot()), true);
     const newerScope = { ...scope, expectedRunId: "run-newer" };
     store.invalidateTranscriptProjection(newerScope);
     assert.equal(store.currentTranscriptProjection(), undefined);
-    assert.equal(store.publishTranscriptProjection(terminalScope, snapshot({
-      latestRunArtifacts: { ...snapshot().latestRunArtifacts!, runId: "run-terminal" },
-    })), false);
+    assert.equal(store.publishTranscriptProjection(terminalScope, snapshot()), false);
     dispose();
   });
 });

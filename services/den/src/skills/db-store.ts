@@ -2,13 +2,16 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm"
 import { randomUUID } from "node:crypto"
 
 import {
+  computeSkillRegistryPackageSha256,
   decodeSkillRegistryPackageArchive,
+  normalizeSkillRegistryPackageMetadata,
   sha256Hex,
   type SkillRegistryPackageArchive,
 } from "./packages.js"
 import {
   buildSkillSearchDocument,
   queryMatchesSkillSearchText,
+  skillSearchDocumentFileValues,
 } from "./search-indexer.js"
 import {
   evaluateSkillRegistryRetentionPolicy,
@@ -192,6 +195,7 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
       status,
       manifest_sha256: manifestSha256,
       package_sha256: decoded.packageSha256,
+      package_metadata_json: serializePackageMetadata(decoded.metadata),
       package_size_bytes: decoded.files.reduce((sum, file) => sum + file.sizeBytes, 0),
       file_count: decoded.files.length,
       created_by_user_id: context.userId,
@@ -286,8 +290,8 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
     if (!canReadVersion(context, skill, version)) {
       return null
     }
-    const metadata = await this.readVersionMetadata(version, skill)
     const files = await this.readVersionArchiveFiles(versionId)
+    const metadata = await this.requireVersionMetadata(version, skill, files)
 
     return {
       versionId: version.id,
@@ -1076,17 +1080,56 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
     return files
   }
 
-  private async readVersionMetadata(version: VersionRow, skill: SkillRow): Promise<SkillRegistryPackageArchive["metadata"]> {
-    const rows = await this.database
+  private async readVersionMetadata(
+    version: VersionRow,
+    skill?: SkillRow,
+    files?: SkillRegistryPackageArchive["files"],
+  ): Promise<SkillRegistryPackageArchive["metadata"] | null> {
+    const persisted = parsePersistedPackageMetadata(version.package_metadata_json)
+    if (persisted) return persisted
+    if (!skill || !files) return null
+    return this.recoverLegacyVersionMetadata(version, skill, files)
+  }
+
+  private async requireVersionMetadata(
+    version: VersionRow,
+    skill: SkillRow,
+    files: SkillRegistryPackageArchive["files"],
+  ): Promise<SkillRegistryPackageArchive["metadata"]> {
+    const metadata = await this.readVersionMetadata(version, skill, files)
+    if (metadata) return metadata
+    throw new SkillRegistryStoreError(
+      500,
+      "skill_package_metadata_missing",
+      `Package metadata is unavailable for skill version ${version.id} (${skill.name})`,
+    )
+  }
+
+  private async recoverLegacyVersionMetadata(
+    version: VersionRow,
+    skill: SkillRow,
+    files: SkillRegistryPackageArchive["files"],
+  ): Promise<SkillRegistryPackageArchive["metadata"] | null> {
+    const documents = await this.database
       .select()
       .from(SkillSearchDocumentTable)
       .where(and(eq(SkillSearchDocumentTable.version_id, version.id), eq(SkillSearchDocumentTable.locale, MANIFEST_LOCALE)))
       .limit(1)
-    const parsed = rows[0] ? parseManifestMetadata(rows[0].search_text) : null
-    return parsed ?? {
-      name: skill.display_name ?? skill.name,
-      ...(skill.description ? { description: skill.description } : {}),
+    const document = documents[0]
+    const name = document?.title.trim() || skill.name.trim()
+    if (!document || !name) return null
+
+    const metadataValues = legacyManifestMetadataValues(document.body, name, files)
+    const languageCandidates = uniqueOptionalStrings([undefined, document.source_language])
+    const nameCandidates = uniqueRequiredStrings([name, skill.name, skill.display_name])
+    for (const candidateName of nameCandidates) {
+      for (const language of languageCandidates) {
+        for (const metadata of metadataCandidates(candidateName, metadataValues, language)) {
+          if (packageMetadataMatchesVersion(version, files, metadata)) return metadata
+        }
+      }
     }
+    return null
   }
 
   private async resolveInstallationDesiredVersion(installation: InstallationRow) {
@@ -1283,7 +1326,7 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
     const latestVersion = skill.latest_version_id ? await this.findVersion(skill.latest_version_id) : null
     const visibleLatestVersion = isManagedSkillScope(skill.scope) && latestVersion?.status !== "approved" ? null : latestVersion
     const statusVersion = await this.findLatestStatusVersionForSkill(skill.id) ?? latestVersion
-    const metadata = visibleLatestVersion ? await this.readVersionMetadata(visibleLatestVersion, skill) : null
+    const metadata = visibleLatestVersion ? await this.readVersionMetadata(visibleLatestVersion) : null
     const summary: RegistrySkillSummary = {
       id: skill.id,
       slug: skill.name,
@@ -2000,16 +2043,87 @@ function enforcePendingReviewRequest(request: ReviewRequestRow) {
   }
 }
 
-function parseManifestMetadata(value: string): SkillRegistryPackageArchive["metadata"] | null {
+function serializePackageMetadata(metadata: SkillRegistryPackageArchive["metadata"]): string {
+  return JSON.stringify(normalizeSkillRegistryPackageMetadata(metadata))
+}
+
+function parsePersistedPackageMetadata(value: string | null): SkillRegistryPackageArchive["metadata"] | null {
+  if (!value) return null
   try {
-    const parsed = JSON.parse(value) as { metadata?: SkillRegistryPackageArchive["metadata"] }
-    if (parsed.metadata?.name) {
-      return parsed.metadata
-    }
+    return normalizeSkillRegistryPackageMetadata(JSON.parse(value))
   } catch {
     return null
   }
-  return null
+}
+
+function legacyManifestMetadataValues(
+  body: string,
+  name: string,
+  files: SkillRegistryPackageArchive["files"],
+): string[] | null {
+  const searchableFileValues = skillSearchDocumentFileValues(files)
+  const suffix = searchableFileValues.join("\n")
+  const metadataBody = suffix
+    ? body.endsWith(`\n${suffix}`)
+      ? body.slice(0, -suffix.length - 1)
+      : null
+    : body
+  if (metadataBody === null) return null
+  const values = metadataBody.split("\n").map((value) => value.trim()).filter(Boolean)
+  if (values[0] !== name) return null
+  return values.slice(1)
+}
+
+function metadataCandidates(
+  name: string,
+  values: readonly string[] | null,
+  language: string | undefined,
+): SkillRegistryPackageArchive["metadata"][] {
+  if (values === null) return []
+  const candidates: SkillRegistryPackageArchive["metadata"][] = []
+  for (const hasDescription of [false, true]) {
+    for (const hasTrigger of [false, true]) {
+      let offset = 0
+      const candidate: SkillRegistryPackageArchive["metadata"] = { name }
+      if (hasDescription) {
+        const description = values[offset++]
+        if (!description) continue
+        candidate.description = description
+      }
+      if (hasTrigger) {
+        const trigger = values[offset++]
+        if (!trigger) continue
+        candidate.trigger = trigger
+      }
+      const tags = values.slice(offset)
+      if (tags.length > 0) candidate.tags = tags
+      if (language) candidate.language = language
+      candidates.push(candidate)
+    }
+  }
+  return candidates
+}
+
+function packageMetadataMatchesVersion(
+  version: VersionRow,
+  files: SkillRegistryPackageArchive["files"],
+  metadata: SkillRegistryPackageArchive["metadata"],
+): boolean {
+  const manifest = {
+    schemaVersion: 1 as const,
+    entrypoint: "SKILL.md" as const,
+    files: files.map(({ contentBase64: _contentBase64, ...file }) => file),
+    metadata,
+  }
+  return computeSkillRegistryPackageSha256(manifest) === version.package_sha256
+}
+
+function uniqueOptionalStrings(values: Array<string | undefined | null>): Array<string | undefined> {
+  return Array.from(new Set(values.map((value) => value?.trim() || undefined)))
+}
+
+function uniqueRequiredStrings(values: Array<string | undefined | null>): string[] {
+  return Array.from(new Set(values.map((value) => value?.trim() || "").filter(Boolean)))
 }
 
 function decodePackageArchive(value: unknown) {
