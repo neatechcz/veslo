@@ -154,13 +154,17 @@ const hasGlitchTipReleaseEnv = (text, options = {}) => {
 };
 
 const hasGlitchTipSourceMapUpload = (text) =>
-  /VESLO_GLITCHTIP_SOURCE_MAPS:\s*["']?1["']?/.test(text) &&
+  /VESLO_GLITCHTIP_SOURCE_MAPS:\s*\$\{\{/.test(text) &&
+  /vars\.VESLO_GLITCHTIP_URL\s*!=\s*''/.test(text) &&
+  /vars\.VESLO_GLITCHTIP_ORG\s*!=\s*''/.test(text) &&
+  /vars\.VESLO_GLITCHTIP_PROJECT\s*!=\s*''/.test(text) &&
+  /secrets\.VESLO_GLITCHTIP_AUTH_TOKEN\s*!=\s*''/.test(text) &&
   /VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD:\s*["']?0["']?/.test(text) &&
   /SENTRY_URL:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_URL\s*\}\}/.test(text) &&
   /SENTRY_AUTH_TOKEN:\s*\$\{\{\s*secrets\.VESLO_GLITCHTIP_AUTH_TOKEN\s*\}\}/.test(text) &&
   /SENTRY_ORG:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_ORG\s*\}\}/.test(text) &&
   /SENTRY_PROJECT:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_PROJECT\s*\}\}/.test(text) &&
-  /Install GlitchTip source-map CLI/.test(text) &&
+  /Install GlitchTip source-map CLI\s*\n\s*if: env\.VESLO_GLITCHTIP_SOURCE_MAPS == '1'\s*\n\s*continue-on-error: true/.test(text) &&
   /cargo install glitchtip-cli --version 1\.0\.0 --locked/.test(text);
 
 const hasStagingRendererCanary = () => [

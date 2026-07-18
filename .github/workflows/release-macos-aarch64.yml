@@ -253,7 +253,7 @@ jobs:
       VESLO_RUNTIME_DIAGNOSTICS: "0"
       VITE_VESLO_RUNTIME_DIAGNOSTICS: "0"
       VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV: "1"
-      VESLO_GLITCHTIP_SOURCE_MAPS: "1"
+      VESLO_GLITCHTIP_SOURCE_MAPS: ${{ vars.VESLO_GLITCHTIP_URL != '' && vars.VESLO_GLITCHTIP_ORG != '' && vars.VESLO_GLITCHTIP_PROJECT != '' && secrets.VESLO_GLITCHTIP_AUTH_TOKEN != '' && '1' || '0' }}
       VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: "0"
       SENTRY_URL: ${{ vars.VESLO_GLITCHTIP_URL }}
       SENTRY_AUTH_TOKEN: ${{ secrets.VESLO_GLITCHTIP_AUTH_TOKEN }}
@@ -375,6 +375,8 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install GlitchTip source-map CLI
+        if: env.VESLO_GLITCHTIP_SOURCE_MAPS == '1'
+        continue-on-error: true
         run: cargo install glitchtip-cli --version 1.0.0 --locked
 
       - name: Resolve OpenCode version
@@ -774,7 +776,7 @@ jobs:
       VESLO_RUNTIME_DIAGNOSTICS: "0"
       VITE_VESLO_RUNTIME_DIAGNOSTICS: "0"
       VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV: "1"
-      VESLO_GLITCHTIP_SOURCE_MAPS: "1"
+      VESLO_GLITCHTIP_SOURCE_MAPS: ${{ vars.VESLO_GLITCHTIP_URL != '' && vars.VESLO_GLITCHTIP_ORG != '' && vars.VESLO_GLITCHTIP_PROJECT != '' && secrets.VESLO_GLITCHTIP_AUTH_TOKEN != '' && '1' || '0' }}
       VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: "0"
       SENTRY_URL: ${{ vars.VESLO_GLITCHTIP_URL }}
       SENTRY_AUTH_TOKEN: ${{ secrets.VESLO_GLITCHTIP_AUTH_TOKEN }}
@@ -846,6 +848,8 @@ jobs:
           targets: ${{ env.TARGET_TRIPLE }}
 
       - name: Install GlitchTip source-map CLI
+        if: env.VESLO_GLITCHTIP_SOURCE_MAPS == '1'
+        continue-on-error: true
         run: cargo install glitchtip-cli --version 1.0.0 --locked
 
       - name: Resolve OpenCode version
