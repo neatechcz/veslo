@@ -1039,7 +1039,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           Push-Location packages/desktop
-          pnpm exec tauri -vvv build --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
+          pnpm exec tauri build --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
           Pop-Location
 
       - name: Upload GlitchTip source-map evidence

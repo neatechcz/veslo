@@ -53,6 +53,16 @@ test("desktop release workflows install the pinned Rust toolchain before cross-t
   }
 });
 
+test("production Windows build keeps Tauri output below GitHub Actions log limits", () => {
+  const workflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
+
+  assert.match(
+    workflow,
+    /pnpm exec tauri build --config \$env:TAURI_WINDOWS_RELEASE_CONFIG --target \$env:TARGET_TRIPLE --bundles msi/,
+  );
+  assert.doesNotMatch(workflow, /pnpm exec tauri -vvv build --config \$env:TAURI_WINDOWS_RELEASE_CONFIG/);
+});
+
 test("desktop build workflow no longer runs Linux app builds", () => {
   const workflow = readRepoFile(".github/workflows/build-desktop.yml");
   const windowsWorkflow = readRepoFile(".github/workflows/build-windows-msi.yml");
