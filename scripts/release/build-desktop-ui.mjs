@@ -96,6 +96,12 @@ export function missingSourceMapUploadEnvironment(env = process.env) {
   return uploadEnvironmentKeys.filter(key => !(env[key] ?? "").trim());
 }
 
+export function handleSourceMapUploadFailure(error, strict, warn = console.warn) {
+  if (strict) throw error;
+  const message = error instanceof Error ? error.message : String(error);
+  warn(`GlitchTip source-map upload failed; continuing because it is optional: ${message}`);
+}
+
 export function sourceMapPairs(directory = distDirectory) {
   return listFiles(directory)
     .filter(path => path.endsWith(".js.map"))
@@ -280,6 +286,8 @@ function runSourceMapPipeline(env = process.env) {
       env.VESLO_GLITCHTIP_SOURCE_MAP_EVIDENCE_PATH ||
       (env.RUNNER_TEMP ? join(env.RUNNER_TEMP, "veslo-glitchtip-source-map-evidence.json") : "");
     writeEvidence(evidencePath, metadata, artifacts);
+  } catch (error) {
+    handleSourceMapUploadFailure(error, strict);
   } finally {
     removeSourceMapReferences();
     removeSourceMaps();

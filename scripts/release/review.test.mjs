@@ -109,7 +109,7 @@ test("release review verifies GlitchTip release monitoring wiring", () => {
     "Prerelease desktop builds embed GlitchTip DSN for frontend and native monitoring",
     "Manual Windows MSI workflows embed GlitchTip DSN for frontend and native monitoring",
     "Release docs describe GlitchTip DSN as public and release-owned",
-    "Publish workflows fail closed for GlitchTip source-map upload",
+    "Publish workflows keep GlitchTip source-map upload optional",
     "Tauri bundles the injected hidden-source-map frontend build",
     "Staging renderer canary is opt-in and absent from regular desktop builds",
   ]) {

@@ -9,6 +9,7 @@ import {
   assertNoSourceMapsRemain,
   assertStagingRendererCanaryBuildPolicy,
   assertStagingRendererCanaryOutput,
+  handleSourceMapUploadFailure,
   missingSourceMapUploadEnvironment,
   removeSourceMapReferences,
   removeSourceMaps,
@@ -67,6 +68,15 @@ test("source-map helper reports every upload credential that is absent", () => {
     "SENTRY_ORG",
     "SENTRY_PROJECT",
   ]);
+});
+
+test("optional source-map upload failures warn while strict uploads fail", () => {
+  const warning = [];
+  handleSourceMapUploadFailure(new Error("upload refused"), false, message => warning.push(message));
+  assert.deepEqual(warning, [
+    "GlitchTip source-map upload failed; continuing because it is optional: upload refused",
+  ]);
+  assert.throws(() => handleSourceMapUploadFailure(new Error("upload refused"), true), /upload refused/);
 });
 
 test("staging renderer canary output is present only for its compile-time build", () => {

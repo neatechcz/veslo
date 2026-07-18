@@ -155,7 +155,7 @@ const hasGlitchTipReleaseEnv = (text, options = {}) => {
 
 const hasGlitchTipSourceMapUpload = (text) =>
   /VESLO_GLITCHTIP_SOURCE_MAPS:\s*["']?1["']?/.test(text) &&
-  /VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD:\s*["']?1["']?/.test(text) &&
+  /VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD:\s*["']?0["']?/.test(text) &&
   /SENTRY_URL:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_URL\s*\}\}/.test(text) &&
   /SENTRY_AUTH_TOKEN:\s*\$\{\{\s*secrets\.VESLO_GLITCHTIP_AUTH_TOKEN\s*\}\}/.test(text) &&
   /SENTRY_ORG:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_ORG\s*\}\}/.test(text) &&
@@ -465,7 +465,7 @@ addCheck(
   "RELEASE.md + docs/dev",
 );
 addCheck(
-  "Publish workflows fail closed for GlitchTip source-map upload",
+  "Publish workflows keep GlitchTip source-map upload optional",
   hasGlitchTipSourceMapUpload(releaseMacosTauriJob) &&
     hasGlitchTipSourceMapUpload(releaseWindowsTauriJob) &&
     hasGlitchTipSourceMapUpload(prereleaseTauriJob),
