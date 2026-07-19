@@ -24,6 +24,8 @@ test("reload banner copy is localized and no longer calls generic config changes
     "reload.toast_reload_stopped",
     "reload.toast_reloading",
     "reload.toast_dismiss",
+    "managed_ai.runtime_config_pending_reload",
+    "managed_ai.runtime_config_reloading",
   ]) {
     assert.ok(key in en, `missing English reload translation: ${key}`);
     assert.ok(key in cs, `missing Czech reload translation: ${key}`);
@@ -42,6 +44,9 @@ test("reload banner copy is localized and no longer calls generic config changes
   assert.match(sessionSource, /formatTr\("reload\.toast_warning_active"/);
   assert.match(sessionSource, /tr\("reload\.toast_reload_stopped"\)/);
   assert.match(sessionSource, /tr\("reload\.toast_reloading"\)/);
+  assert.match(sessionSource, /session-managed-ai-config-status/);
+  assert.match(sessionSource, /managed_ai\.runtime_config_pending_reload/);
+  assert.match(sessionSource, /managed_ai\.runtime_config_reloading/);
   assert.match(sessionSource, /tr\("reload\.toast_dismiss"\)/);
   assert.match(configSource, /tr\("reload\.toast_reloading"\)/);
   assert.match(configSource, /tr\("reload\.engine_button"\)/);

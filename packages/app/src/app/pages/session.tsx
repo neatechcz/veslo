@@ -114,6 +114,7 @@ import {
 } from "./session-run-presentation";
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
+import type { ManagedAiServerReloadPresentation } from "../context/managed-ai-runtime-config";
 
 import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
@@ -497,6 +498,7 @@ export type SessionViewProps = {
   dismissReloadBanner: () => void;
   reloadBusy: boolean;
   reloadError: string | null;
+  managedAiServerReloadPresentation: ManagedAiServerReloadPresentation;
   busy: boolean;
   composerDraft: ComposerDraft;
   composerStorageKey: string;
@@ -4160,6 +4162,27 @@ export default function SessionView(props: SessionViewProps) {
         )}
         reloadBanner={(
         <>
+          <Show when={props.managedAiServerReloadPresentation.kind !== "idle"}>
+            <div
+              class="border-b border-blue-6/50 bg-blue-2/70 px-6 py-2"
+              data-testid="session-managed-ai-config-status"
+              data-managed-ai-config-status={props.managedAiServerReloadPresentation.kind}
+            >
+              <div class={`mx-auto flex w-full ${searchBannerWidthClass()} items-center gap-2 rounded-lg border border-blue-6/60 bg-blue-1/85 px-3 py-2 text-xs text-blue-11 shadow-sm`}>
+                <Loader2
+                  size={14}
+                  class={props.managedAiServerReloadPresentation.kind === "reloading" ? "shrink-0 animate-spin" : "shrink-0"}
+                />
+                <span>
+                  {tr(
+                    props.managedAiServerReloadPresentation.kind === "reloading"
+                      ? "managed_ai.runtime_config_reloading"
+                      : "managed_ai.runtime_config_pending_reload",
+                  )}
+                </span>
+              </div>
+            </div>
+          </Show>
           <Show when={props.showSkillReloadBanner}>
             <div
               class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3"

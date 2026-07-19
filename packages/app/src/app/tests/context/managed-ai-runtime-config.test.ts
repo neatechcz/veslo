@@ -558,6 +558,7 @@ test("runtime config sync writes managed provider config through project file pa
 test("runtime config sync writes managed provider config through Veslo server config path", async () => {
   const client = createVesloClient();
   const registrations: Array<{ workspaceId: string; workspaceRoot?: string | null }> = [];
+  const genericReloads: string[] = [];
   const sync = createManagedAiRuntimeConfigSync(
     createOptions({
       vesloServerClient: () => client,
@@ -575,6 +576,7 @@ test("runtime config sync writes managed provider config through Veslo server co
         registrations.push({ workspaceId, workspaceRoot });
         return "ws-active";
       },
+      markReloadRequired: (_scope, change) => genericReloads.push(change.action),
     }),
   );
 
@@ -589,6 +591,8 @@ test("runtime config sync writes managed provider config through Veslo server co
       ?.options as Record<string, unknown>)?.apiKey,
     VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE,
   );
+  assert.deepEqual(genericReloads, []);
+  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-active", ifIdle: true }]);
 });
 
 test("cold server config containing the managed credential environment reference does not rewrite or request reload", async () => {
@@ -815,6 +819,94 @@ test("server-owned send freshness uses the resolved server workspace and reloads
   assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "server-resolved-exact", ifIdle: true }]);
 });
 
+test("server send acknowledges a background config patch even when the later read is already current", async () => {
+  const client = createVesloClient();
+  let activeRun = true;
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    anyActiveRuns: () => activeRun,
+  }));
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), {
+    kind: "pending",
+    workspaceId: "ws-active",
+  });
+  assert.deepEqual(client.reloadEngineCalls, []);
+
+  activeRun = false;
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-trace-pending-reload",
+  });
+
+  assert.deepEqual(outcome, { kind: "verified" });
+  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-active", ifIdle: true }]);
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
+});
+
+test("a newer server config patch is reloaded after an older reload finishes", async () => {
+  const client = createVesloClient();
+  const firstReloadStarted = createDeferred<void>();
+  const firstReloadRelease = createDeferred<void>();
+  const secondPatchDone = createDeferred<void>();
+  let reloadCount = 0;
+  let currentProfile = profile;
+  client.reloadEngine = async (workspaceId, options) => {
+    client.reloadEngineCalls.push({ workspaceId, ifIdle: options?.ifIdle === true });
+    reloadCount += 1;
+    if (reloadCount === 1) {
+      firstReloadStarted.resolve();
+      await firstReloadRelease.promise;
+    }
+    return { ok: true };
+  };
+  const patchConfig = client.patchConfig;
+  client.patchConfig = async (workspaceId, payload) => {
+    const result = await patchConfig(workspaceId, payload);
+    if (client.patched.length === 2) secondPatchDone.resolve();
+    return result;
+  };
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    managedAiAccess: () => currentProfile,
+  }));
+  const first = sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-trace-first-reload",
+  });
+  await firstReloadStarted.promise;
+
+  currentProfile = {
+    ...profile,
+    effectiveModel: { providerID: "codex_oauth", modelID: "gpt-5.1" },
+  };
+  const second = sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-trace-second-reload",
+  });
+  await secondPatchDone.promise;
+  firstReloadRelease.resolve();
+
+  assert.deepEqual(await first, { kind: "verified" });
+  assert.deepEqual(await second, { kind: "verified" });
+  assert.equal(client.patched.length, 2);
+  assert.deepEqual(client.reloadEngineCalls, [
+    { workspaceId: "ws-active", ifIdle: true },
+    { workspaceId: "ws-active", ifIdle: true },
+  ]);
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
+});
+
 test("background completed-intent skip cannot cancel an in-flight server send freshness check", async () => {
   const client = createVesloClient();
   const readGate = createDeferred<{ opencode?: Record<string, unknown> | null }>();
@@ -850,12 +942,14 @@ test("background completed-intent skip cannot cancel an in-flight server send fr
 
 test("server-owned send freshness maps guarded reload conflicts to reload-required", async () => {
   const client = createVesloClient();
+  const genericReloads: string[] = [];
   client.reloadEngine = async () => {
     throw new VesloServerError(409, "reload_blocked_active_runs", "Another run is active");
   };
   const sync = createManagedAiRuntimeConfigSync(createOptions({
     vesloServerClient: () => client,
     managedAiConfigAuthority: () => ({ kind: "project-fallback", reason: "serverless" }),
+    markReloadRequired: (_scope, change) => genericReloads.push(change.action),
   }));
 
   const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
@@ -867,6 +961,89 @@ test("server-owned send freshness maps guarded reload conflicts to reload-requir
   });
 
   assert.deepEqual(outcome, { kind: "verified-reload-required" });
+  assert.deepEqual(genericReloads, []);
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), {
+    kind: "pending",
+    workspaceId: "server-resolved-exact",
+  });
+});
+
+test("a background guarded reload retries after an atomic server race", async () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const scheduled: Array<() => void> = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      setTimeout: (callback: () => void) => {
+        scheduled.push(callback);
+        return scheduled.length;
+      },
+      clearTimeout: () => undefined,
+    },
+  });
+  try {
+    const client = createVesloClient();
+    const retryDone = createDeferred<void>();
+    let reloadAttempts = 0;
+    client.reloadEngine = async (workspaceId, options) => {
+      client.reloadEngineCalls.push({ workspaceId, ifIdle: options?.ifIdle === true });
+      reloadAttempts += 1;
+      if (reloadAttempts === 1) {
+        throw new VesloServerError(409, "reload_blocked_active_runs", "Another run is active");
+      }
+      retryDone.resolve();
+      return { ok: true };
+    };
+    const sync = createManagedAiRuntimeConfigSync(createOptions({
+      vesloServerClient: () => client,
+    }));
+
+    await sync.syncActiveWorkspaceManagedAiConfig();
+    assert.equal(scheduled.length, 1);
+    assert.deepEqual(sync.managedAiServerReloadPresentation(), {
+      kind: "pending",
+      workspaceId: "ws-active",
+    });
+
+    scheduled[0]!();
+    await retryDone.promise;
+    await Promise.resolve();
+
+    assert.deepEqual(client.reloadEngineCalls, [
+      { workspaceId: "ws-active", ifIdle: true },
+      { workspaceId: "ws-active", ifIdle: true },
+    ]);
+    assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
+  } finally {
+    if (originalWindow) {
+      Object.defineProperty(globalThis, "window", originalWindow);
+    } else {
+      Reflect.deleteProperty(globalThis, "window");
+    }
+  }
+});
+
+test("a changed Veslo server token invalidates the completed config-sync intent", async () => {
+  const client = createVesloClient();
+  const effects: Array<() => void> = [];
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    effect: (fn) => effects.push(fn),
+    vesloServerClient: () => client,
+  }));
+  const runTrackingEffect = () => {
+    const trackingEffect = effects[0];
+    if (!trackingEffect) throw new Error("managed AI tracking effect was not registered");
+    trackingEffect();
+  };
+
+  runTrackingEffect();
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  client.token = "rotated-veslo-token";
+  runTrackingEffect();
+  await sync.syncActiveWorkspaceManagedAiConfig();
+
+  assert.deepEqual(client.getConfigCalls, ["ws-active", "ws-active"]);
+  assert.equal(client.patched.length, 2);
 });
 
 test("runtime config sync registers local workspace before using fallback app id", async () => {

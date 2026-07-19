@@ -1018,6 +1018,9 @@ export default {
   "reload.banner_config_description": "Veslo detected configuration changes. Reload the engine to apply them.",
   "reload.banner_mcp_description": "MCP changes require an engine reload before the connection becomes active.",
 
+  "managed_ai.runtime_config_pending_reload": "AI settings will be applied automatically after the active response finishes.",
+  "managed_ai.runtime_config_reloading": "Applying AI settings for the next response...",
+
   // ==================== Onboarding ====================
   "onboarding.starting_host": "Starting Veslo server...",
   "onboarding.searching_host": "Connecting to Veslo server...",

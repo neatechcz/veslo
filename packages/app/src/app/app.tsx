@@ -2489,6 +2489,7 @@ export default function App() {
     ensureManagedAiRuntimeAuthorizationForSend,
     syncManagedAiRuntimeConfigForSend,
     prepareManagedAiRuntimeConfigForEngineStart,
+    managedAiServerReloadPresentation,
   } = managedAiRuntimeConfig;
   lateManagedAiRuntimeConfig.bind(managedAiRuntimeConfig);
 
@@ -5049,6 +5050,7 @@ export default function App() {
     chooseFolderForCurrentSession,
     engineReady,
     vesloServerWorkspaceId,
+    managedAiServerReloadPresentation,
     sidebarPluginList,
     sidebarPluginStatus,
     sessionCapabilitiesSnapshot,

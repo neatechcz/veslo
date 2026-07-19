@@ -1014,6 +1014,9 @@ export default {
   "reload.banner_config_description": "Veslo zjistilo změny konfigurace. Znovu načtěte engine, aby se projevily.",
   "reload.banner_mcp_description": "Změny MCP se projeví až po znovunačtení enginu.",
 
+  "managed_ai.runtime_config_pending_reload": "Nastavení AI se automaticky použije po dokončení aktivní odpovědi.",
+  "managed_ai.runtime_config_reloading": "Aktualizuji nastavení AI pro další odpověď…",
+
   // ==================== Onboarding ====================
   "onboarding.starting_host": "Spouštím server Veslo...",
   "onboarding.searching_host": "Připojuji se k serveru Veslo...",

@@ -85,6 +85,7 @@ import type { UnreadSessionMap } from "./components/session/session-unread-model
 import type { SidebarSessionOpenTarget } from "./components/session/workspace-session-list-model";
 import type { McpDirectoryInfo } from "./constants";
 import type { ConversationAbortTarget } from "./context/conversation-service";
+import type { ManagedAiServerReloadPresentation } from "./context/managed-ai-runtime-config";
 import type { createComposerTargetController } from "./context/composer-target-controller";
 import type { SessionArchiveTarget } from "./context/session-archive-store";
 import type { SessionCapabilitiesLoadStatus } from "./context/session-capabilities-store";
@@ -112,6 +113,7 @@ export type SessionViewAdapterProps = Omit<SessionViewProps, "onOpenFeedback">;
 
 type DashboardWorkspaceType = "local" | "remote" | string | null | undefined;
 const STATUS_SEPARATOR = ` ${String.fromCharCode(183)} `;
+const IDLE_MANAGED_AI_SERVER_RELOAD_PRESENTATION = { kind: "idle" } as const;
 
 type RefreshOptions = { force?: boolean };
 type RefreshAction = (optionsOverride?: RefreshOptions) => Promise<void>;
@@ -523,6 +525,7 @@ export type AppViewPropsScope = {
   chooseFolderForCurrentSession: () => Promise<boolean>;
   engineReady: Accessor<boolean>;
   vesloServerWorkspaceId: Accessor<string | null>;
+  managedAiServerReloadPresentation: Accessor<ManagedAiServerReloadPresentation>;
   sidebarPluginList: Accessor<string[]>;
   sidebarPluginStatus: Accessor<string | null>;
   sessionCapabilitiesSnapshot: Accessor<SessionCapabilitiesSnapshot | null>;
@@ -881,6 +884,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     chooseFolderForCurrentSession,
     engineReady,
     vesloServerWorkspaceId,
+    managedAiServerReloadPresentation,
     sidebarPluginList,
     sidebarPluginStatus,
     sessionCapabilitiesSnapshot,
@@ -1727,6 +1731,13 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     },
     get reloadError() {
       return reloadError();
+    },
+    get managedAiServerReloadPresentation() {
+      const presentation = managedAiServerReloadPresentation();
+      const activeServerWorkspaceId = vesloServerWorkspaceId()?.trim() || "";
+      return presentation.kind !== "idle" && presentation.workspaceId === activeServerWorkspaceId
+        ? presentation
+        : IDLE_MANAGED_AI_SERVER_RELOAD_PRESENTATION;
     },
     get createSessionAndOpen() {
       return createSessionAndOpen;
