@@ -75,6 +75,19 @@ test("production Windows release selects the single configured WiX locale artifa
   assert.doesNotMatch(workflow, /\$msiFiles = @\(Get-ChildItem -Path \$bundleDir -Filter '\*\.msi' -File\)/);
 });
 
+test("production Windows runtime validation uses the workflow revision, not the release tag checkout", () => {
+  const workflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
+
+  assert.match(
+    workflow,
+    /name: Checkout release validation scripts\s+uses: actions\/checkout@v7\s+with:\s+ref: \$\{\{ github\.sha \}\}\s+path: \.release-validation\s+sparse-checkout: scripts\/release/,
+  );
+  assert.match(
+    workflow,
+    /\.\/\.release-validation\/scripts\/release\/verify-windows-msi-runtime\.ps1 -MsiPath \$env:VESLO_WINDOWS_MSI_PATH/,
+  );
+});
+
 test("desktop build workflow no longer runs Linux app builds", () => {
   const workflow = readRepoFile(".github/workflows/build-desktop.yml");
   const windowsWorkflow = readRepoFile(".github/workflows/build-windows-msi.yml");

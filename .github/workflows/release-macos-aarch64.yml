@@ -1091,11 +1091,18 @@ jobs:
           "VESLO_WINDOWS_MSI_SIG_PATH=$($msiSigFiles[0].FullName)" >> $env:GITHUB_ENV
           "VESLO_WINDOWS_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
 
+      - name: Checkout release validation scripts
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: .release-validation
+          sparse-checkout: scripts/release
+
       - name: Verify extracted MSI payload runtime
         shell: pwsh
         run: |
           $summaryPath = Join-Path $env:RUNNER_TEMP 'veslo-windows-msi-runtime-summary.json'
-          ./scripts/release/verify-windows-msi-runtime.ps1 -MsiPath $env:VESLO_WINDOWS_MSI_PATH -SummaryPath $summaryPath
+          ./.release-validation/scripts/release/verify-windows-msi-runtime.ps1 -MsiPath $env:VESLO_WINDOWS_MSI_PATH -SummaryPath $summaryPath
 
       - name: Upload extracted Windows MSI payload verification
         if: always()
