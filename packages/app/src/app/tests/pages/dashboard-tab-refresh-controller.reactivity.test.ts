@@ -30,7 +30,7 @@ test("dashboard refresh runs once per selected tab and stops after disposal", be
   await createRoot(async (dispose) => {
     const [tab, setTab] = createSignal<DashboardTab>("skills");
     const [developerMode, setDeveloperMode] = createSignal(false);
-    const calls = { inventory: 0, hubSkills: 0, skills: 0, plugins: 0, mcp: 0, scheduled: 0, soul: 0 };
+    const calls = { inventory: 0, skills: 0, plugins: 0, mcp: 0, scheduled: 0, soul: 0 };
     const pluginDebugValues: boolean[] = [];
 
     try {
@@ -38,7 +38,6 @@ test("dashboard refresh runs once per selected tab and stops after disposal", be
         tab,
         developerMode,
         refreshSkillInventory: async () => { calls.inventory += 1; },
-        refreshHubSkills: async () => { calls.hubSkills += 1; },
         refreshSkills: async () => { calls.skills += 1; },
         refreshPlugins: async (_scope, options) => {
           calls.plugins += 1;
@@ -50,7 +49,7 @@ test("dashboard refresh runs once per selected tab and stops after disposal", be
       });
 
       await flushEffects();
-      assert.deepEqual(calls, { inventory: 1, hubSkills: 1, skills: 1, plugins: 0, mcp: 0, scheduled: 0, soul: 0 });
+      assert.deepEqual(calls, { inventory: 1, skills: 1, plugins: 0, mcp: 0, scheduled: 0, soul: 0 });
 
       setTab("skills");
       await flushEffects();

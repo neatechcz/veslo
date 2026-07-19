@@ -6,7 +6,6 @@ type DashboardTabRefreshControllerOptions = {
   tab: Accessor<DashboardTab>;
   developerMode: Accessor<boolean>;
   refreshSkillInventory: (options?: { force?: boolean }) => Promise<void>;
-  refreshHubSkills: (options?: { force?: boolean }) => Promise<void>;
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
   refreshPlugins: (scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) => Promise<void>;
   refreshMcpServers: () => Promise<void>;
@@ -17,7 +16,9 @@ type DashboardTabRefreshControllerOptions = {
 async function refreshTab(options: DashboardTabRefreshControllerOptions, tab: DashboardTab): Promise<void> {
   switch (tab) {
     case "skills":
-      await Promise.all([options.refreshSkillInventory(), options.refreshHubSkills(), options.refreshSkills()]);
+      // The inventory refresh owns the hub refresh. Starting it separately here
+      // races the inventory snapshot and needlessly invalidates it on navigation.
+      await Promise.all([options.refreshSkillInventory(), options.refreshSkills()]);
       return;
     case "plugins":
     case "mcp":

@@ -162,6 +162,13 @@
       "when": 1784372400000,
       "tag": "0021_skill_version_package_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1784462400000,
+      "tag": "0022_user_diagnostic_capture",
+      "breakpoints": true
     }
   ]
 }

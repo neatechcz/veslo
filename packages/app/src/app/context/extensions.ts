@@ -73,6 +73,7 @@ import type {
   VesloUserGlobalSkillStoreItem,
 } from "../lib/veslo-server";
 import { readDenAuth } from "../lib/den-auth";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
@@ -88,6 +89,7 @@ const USER_GLOBAL_SKILL_STORE_PATH_PREFIX = "veslo-user-store://";
 
 const vesloServerClientIdentities = new WeakMap<object, string>();
 let nextVesloServerClientIdentity = 1;
+let nextSkillInventoryTraceId = 1;
 
 type OpenCodeClientGetResult = {
   data?: unknown;
@@ -408,9 +410,11 @@ export function createExtensionsStore(options: {
 
   // Track in-flight requests to prevent duplicate calls
   let refreshSkillsInFlight = false;
-  let refreshSkillInventoryInFlight = false;
-  let refreshSkillInventoryPromise: Promise<SkillInventoryRefreshResult> | null = null;
-  let refreshSkillInventoryInFlightContextKey = "";
+  let refreshSkillInventoryInFlight: {
+    contextKey: string;
+    promise: Promise<SkillInventoryRefreshResult>;
+  } | null = null;
+  let refreshSkillInventoryForceQueued = false;
   let refreshPluginsInFlight = false;
   let refreshPluginsQueuedRequest: {
     scopeOverride?: PluginScope;
@@ -795,6 +799,34 @@ export function createExtensionsStore(options: {
 
   async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
     let forceRefresh = optionsOverride?.force === true;
+    const traceId = `skills-inventory-${nextSkillInventoryTraceId++}`;
+    const refreshStartedAt = performance.now();
+    const trace = (event: string, payload?: Record<string, unknown>) =>
+      recordSendWorkflowTrace("skills-inventory", event, {
+        traceId,
+        force: forceRefresh,
+        ...payload,
+      });
+    const phase = async <T>(name: string, action: () => Promise<T>, payload?: Record<string, unknown>) => {
+      const startedAt = performance.now();
+      trace(`skills-inventory:${name}:start`, payload);
+      try {
+        const result = await action();
+        trace(`skills-inventory:${name}:done`, {
+          ...payload,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+        return result;
+      } catch (error) {
+        trace(`skills-inventory:${name}:error`, {
+          ...payload,
+          durationMs: Math.round(performance.now() - startedAt),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    };
+    trace("skills-inventory:start");
 
     const normalizeLocalSkillInventoryWorkspace = (workspace: LocalSkillInventoryWorkspace) => ({
       id: workspace.id.trim(),
@@ -1168,18 +1200,27 @@ export function createExtensionsStore(options: {
     };
 
     for (;;) {
-      if (refreshSkillInventoryInFlight) {
-        const inFlightContextKey = refreshSkillInventoryInFlightContextKey;
-        const inFlightRefresh = refreshSkillInventoryPromise;
+      const inFlight = refreshSkillInventoryInFlight;
+      if (inFlight) {
         const rerunAfterInFlight = forceRefresh;
-        const result = inFlightRefresh ? await inFlightRefresh : "stale";
-        forceRefresh = rerunAfterInFlight;
-        if (rerunAfterInFlight) continue;
+        if (rerunAfterInFlight) refreshSkillInventoryForceQueued = true;
+        trace("skills-inventory:join-in-flight", {
+          inFlightContextKey: inFlight.contextKey,
+          rerunQueued: rerunAfterInFlight,
+        });
+        const result = await inFlight.promise;
+        trace("skills-inventory:joined-in-flight", {
+          result,
+          durationMs: Math.round(performance.now() - refreshStartedAt),
+        });
         if (result === "failed" || result === "aborted") {
-          if (inFlightContextKey && getCurrentSkillInventoryRefreshContextKey() !== inFlightContextKey) continue;
+          if (inFlight.contextKey && getCurrentSkillInventoryRefreshContextKey() !== inFlight.contextKey) continue;
           return;
         }
-        if (result === "published" && getCurrentSkillInventoryContextKey() === skillInventoryContextKey) return;
+        // The refresh owner performs the single follow-up attempt after a stale
+        // result (or a queued force request). Joiners must not spin on stale.
+        if (!rerunAfterInFlight) return;
+        forceRefresh = false;
         continue;
       }
 
@@ -1194,57 +1235,110 @@ export function createExtensionsStore(options: {
         skillInventoryLoaded = false;
       }
 
-      if (!forceRefresh && skillInventoryLoaded && !hubRefreshInFlightForCurrentContext) return;
+      if (
+        !forceRefresh &&
+        !refreshSkillInventoryForceQueued &&
+        skillInventoryLoaded &&
+        !hubRefreshInFlightForCurrentContext
+      ) return;
 
-      const refreshOptions = forceRefresh ? { force: true } : undefined;
-      refreshSkillInventoryInFlight = true;
-      refreshSkillInventoryInFlightContextKey = nextRefreshContextKey;
+      const refreshOptions = forceRefresh || refreshSkillInventoryForceQueued ? { force: true } : undefined;
+      refreshSkillInventoryForceQueued = false;
       abortedRefreshes.delete("skill-inventory");
-      refreshSkillInventoryPromise = (async (): Promise<SkillInventoryRefreshResult> => {
+      let resolveRefresh: (result: SkillInventoryRefreshResult) => void = () => undefined;
+      const refreshPromise = new Promise<SkillInventoryRefreshResult>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      const flight = {
+        contextKey: nextRefreshContextKey,
+        promise: refreshPromise,
+      };
+      // Publish the whole flight before running code that can synchronously
+      // notify Solid effects. A separate boolean and promise left a small
+      // re-entrant window where callers observed "in flight" without a promise.
+      refreshSkillInventoryInFlight = flight;
+      void (async () => {
+        let result: SkillInventoryRefreshResult = "failed";
         try {
           setSkillInventoryStatus(null);
-          await refreshHubSkills(refreshOptions);
-          if (abortedRefreshes.has("skill-inventory")) return "aborted";
+          trace("skills-inventory:attempt:start", { workspaceCount: localWorkspaces.length });
+          await phase("hub", () => refreshHubSkills(refreshOptions));
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
 
           const refreshedHubContext = resolveHubSkillsRefreshContext();
           if (hubSkillsContextKey !== refreshedHubContext.contextKey) {
             await refreshHubSkills({ force: true });
-            if (abortedRefreshes.has("skill-inventory")) return "aborted";
+            if (abortedRefreshes.has("skill-inventory")) {
+              result = "aborted";
+              return;
+            }
           }
 
           const inventoryHubContext = resolveHubSkillsRefreshContext();
           const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
           const inventoryContextAtStart = getSkillInventoryContextKey(localWorkspaces, inventoryHubContext.contextKey);
-          const disabledSkillRecords = await loadDisabledSkillRecords(localWorkspaces);
-          if (abortedRefreshes.has("skill-inventory")) return "aborted";
+          const disabledSkillRecords = await phase(
+            "disabled-state",
+            () => loadDisabledSkillRecords(localWorkspaces),
+            { workspaceCount: localWorkspaces.length },
+          );
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
 
           const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
           const removalClient = getSkillRemovalClient();
+          const listedGlobalSkills = await phase("global-local-list", () => listScopedSkills("", "global"));
+          const globalRegistry = await phase(
+            "global-materialization-status",
+            () => loadGlobalMaterializationRegistryIndex(),
+          );
           const globalSkills = attachDisabledSkillState(
             attachMaterializationRegistryMetadata(
-              await listScopedSkills("", "global"),
-              await loadGlobalMaterializationRegistryIndex(),
+              listedGlobalSkills,
+              globalRegistry,
             ),
             disabledSkillRecords,
             "user-global",
           );
-          globalSkills.push(...(await loadUserGlobalSkillStoreInputs()));
-          globalSkills.push(...(await listRemovedSkillInputs(removalClient, { scope: "user-global" })));
-          if (abortedRefreshes.has("skill-inventory")) return "aborted";
+          globalSkills.push(...(await phase("global-user-store", () => loadUserGlobalSkillStoreInputs())));
+          globalSkills.push(...(await phase("global-removals", () => listRemovedSkillInputs(removalClient, { scope: "user-global" }))));
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
 
           const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
 
           for (const workspace of localWorkspaces) {
-            const skills = attachMaterializationRegistryMetadata(
-              (await listScopedSkills(workspace.path, "workspace"))
-                .filter((skill) => !isUserGlobalSkillRuntimeMaterializationPath(skill.path)),
-              await loadWorkspaceMaterializationRegistryIndex(workspace.id),
+            const workspacePayload = { workspaceId: workspace.id };
+            const listedWorkspaceSkills = await phase(
+              "workspace-local-list",
+              () => listScopedSkills(workspace.path, "workspace"),
+              workspacePayload,
             );
-            skills.push(...(await listRemovedSkillInputs(removalClient, {
+            const workspaceRegistry = await phase(
+              "workspace-materialization-status",
+              () => loadWorkspaceMaterializationRegistryIndex(workspace.id),
+              workspacePayload,
+            );
+            const skills = attachMaterializationRegistryMetadata(
+              listedWorkspaceSkills
+                .filter((skill) => !isUserGlobalSkillRuntimeMaterializationPath(skill.path)),
+              workspaceRegistry,
+            );
+            skills.push(...(await phase("workspace-removals", () => listRemovedSkillInputs(removalClient, {
               scope: "workspace",
               workspaceId: workspace.id,
-            })));
-            if (abortedRefreshes.has("skill-inventory")) return "aborted";
+            }), workspacePayload)));
+            if (abortedRefreshes.has("skill-inventory")) {
+              result = "aborted";
+              return;
+            }
             workspaceSkillsByWorkspaceId[workspace.id] = {
               workspace: {
                 id: workspace.id,
@@ -1263,7 +1357,8 @@ export function createExtensionsStore(options: {
           );
           if (currentContextKey !== inventoryContextAtStart) {
             skillInventoryLoaded = false;
-            return "stale";
+            result = "stale";
+            return;
           }
 
           const next = buildSkillInventory({
@@ -1271,7 +1366,10 @@ export function createExtensionsStore(options: {
             workspaceSkillsByWorkspaceId,
             hubSkills: hasMatchingHubSkills ? hubSkills() : [],
           });
-          if (abortedRefreshes.has("skill-inventory")) return "aborted";
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
 
           setSkillInventory(next);
           if (!next.length) {
@@ -1281,27 +1379,41 @@ export function createExtensionsStore(options: {
           }
           skillInventoryLoaded = hasMatchingHubSkills;
           skillInventoryContextKey = inventoryContextAtStart;
-          return "published";
+          trace("skills-inventory:published", {
+            durationMs: Math.round(performance.now() - refreshStartedAt),
+            itemCount: next.length,
+            globalSkillCount: globalSkills.length,
+            workspaceCount: localWorkspaces.length,
+          });
+          result = "published";
         } catch (e) {
-          if (abortedRefreshes.has("skill-inventory")) return "aborted";
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
           skillInventoryLoaded = false;
           setSkillInventory([]);
           setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
-          return "failed";
+          trace("skills-inventory:failed", {
+            durationMs: Math.round(performance.now() - refreshStartedAt),
+            error: e instanceof Error ? e.message : String(e),
+          });
+          result = "failed";
         } finally {
-          refreshSkillInventoryInFlight = false;
-          refreshSkillInventoryInFlightContextKey = "";
-          refreshSkillInventoryPromise = null;
+          if (refreshSkillInventoryInFlight === flight) {
+            refreshSkillInventoryInFlight = null;
+          }
+          resolveRefresh(result);
         }
       })();
 
-      const result = await refreshSkillInventoryPromise;
+      const result = await refreshPromise;
       forceRefresh = false;
       if (result === "failed" || result === "aborted") {
         if (getCurrentSkillInventoryRefreshContextKey() !== nextRefreshContextKey) continue;
         return;
       }
-      if (result === "published") return;
+      if (result === "published" && !refreshSkillInventoryForceQueued) return;
       continue;
     }
   }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::debug_logs_forwarder::DebugLogsForwarder;
+use crate::user_diagnostic_capture::UserDiagnosticCaptureStatus;
 
 fn with_forwarder(app: &AppHandle, action: impl FnOnce(&DebugLogsForwarder)) {
     if let Some(forwarder) = app.try_state::<Arc<DebugLogsForwarder>>() {
@@ -44,4 +45,20 @@ pub fn clear_bootstrap_diagnostics_cloud_context(app: AppHandle) {
     with_forwarder(&app, |forwarder| {
         forwarder.clear_cloud_diagnostics_context();
     });
+}
+
+#[tauri::command]
+pub fn user_diagnostic_capture_status(app: AppHandle) -> Result<UserDiagnosticCaptureStatus, String> {
+    let forwarder = app
+        .try_state::<Arc<DebugLogsForwarder>>()
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
+    Ok(forwarder.inner().as_ref().user_diagnostic_capture_status())
+}
+
+#[tauri::command]
+pub fn start_user_diagnostic_capture(app: AppHandle) -> Result<UserDiagnosticCaptureStatus, String> {
+    let forwarder = app
+        .try_state::<Arc<DebugLogsForwarder>>()
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
+    forwarder.inner().as_ref().start_user_diagnostic_capture()
 }

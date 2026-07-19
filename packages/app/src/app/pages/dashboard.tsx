@@ -591,7 +591,6 @@ export default function DashboardView(props: DashboardViewProps) {
     tab: () => props.tab,
     developerMode: () => props.developerMode,
     refreshSkillInventory: (options) => props.refreshSkillInventory(options),
-    refreshHubSkills: (options) => props.refreshHubSkills(options),
     refreshSkills: (options) => props.refreshSkills(options),
     refreshPlugins: (scope, options) => props.refreshPlugins(scope, options),
     refreshMcpServers: () => props.refreshMcpServers(),

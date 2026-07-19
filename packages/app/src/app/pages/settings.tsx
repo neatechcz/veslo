@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMount } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
@@ -21,11 +21,14 @@ import type {
   OpenCodeRouterInfo,
   WorkspaceInfo,
   DesktopRuntimePreferences,
+  UserDiagnosticCaptureStatus,
 } from "../lib/tauri";
 import {
   appBuildInfo,
   desktopRuntimePreferencesRead,
   desktopRuntimePreferencesWrite,
+  startUserDiagnosticCapture,
+  userDiagnosticCaptureStatus,
   engineRestart,
   opencodeRouterRestart,
   opencodeRouterStop,
@@ -391,6 +394,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const [supportDiagnosticsBusy, setSupportDiagnosticsBusy] = createSignal(false);
   const [supportDiagnosticsStatus, setSupportDiagnosticsStatus] = createSignal<string | null>(null);
   const [supportDiagnosticsError, setSupportDiagnosticsError] = createSignal<string | null>(null);
+  const [userCapture, setUserCapture] = createSignal<UserDiagnosticCaptureStatus | null>(null);
+  const [userCaptureBusy, setUserCaptureBusy] = createSignal(false);
+  const [userCaptureError, setUserCaptureError] = createSignal<string | null>(null);
   const defaultDenApiBase = getDefaultDenApiBase();
   const [denApiBaseOverride, setDenApiBaseOverride] = createSignal(readDenApiBaseOverride() ?? "");
   const [denApiBaseDraft, setDenApiBaseDraft] = createSignal(getDenApiBase());
@@ -476,6 +482,28 @@ export default function SettingsView(props: SettingsViewProps) {
       setSupportDiagnosticsError(error instanceof Error ? error.message : String(error));
     } finally {
       setSupportDiagnosticsBusy(false);
+    }
+  };
+
+  const refreshUserCapture = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      setUserCapture(await userDiagnosticCaptureStatus());
+    } catch {
+      setUserCapture(null);
+    }
+  };
+
+  const startUserCapture = async () => {
+    if (props.busy || userCaptureBusy()) return;
+    setUserCaptureBusy(true);
+    setUserCaptureError(null);
+    try {
+      setUserCapture(await startUserDiagnosticCapture());
+    } catch (error) {
+      setUserCaptureError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setUserCaptureBusy(false);
     }
   };
 
@@ -757,6 +785,9 @@ export default function SettingsView(props: SettingsViewProps) {
         persistSupportDiagnosticsBrowserOverride(preferences.supportDiagnostics);
       })
       .catch(() => setRuntimePreferences(null));
+    void refreshUserCapture();
+    const timer = window.setInterval(() => void refreshUserCapture(), 5_000);
+    onCleanup(() => window.clearInterval(timer));
   });
 
   const formatUptime = (uptimeMs?: number | null) => {
@@ -1576,6 +1607,27 @@ export default function SettingsView(props: SettingsViewProps) {
             </div>
 
             <Show when={isTauriRuntime()}>
+              <Show when={userCapture()?.available}>
+                <div data-user-diagnostic-capture class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium text-gray-12">Send a diagnostic capture</div>
+                      <div class="text-xs text-gray-10">Sends a redacted, capped two-minute capture directly to Veslo support for the signed-in account. It stops automatically after 2 MiB.</div>
+                    </div>
+                    <Button data-user-diagnostic-capture-start variant="outline" class="shrink-0" disabled={props.busy || userCaptureBusy() || userCapture()?.state === "active"} onClick={() => void startUserCapture()}>
+                      {userCaptureBusy() ? "Starting…" : userCapture()?.state === "active" ? "Capturing" : "Start 2-minute capture"}
+                    </Button>
+                  </div>
+                  <Show when={userCapture()?.captureId}>
+                    <div class="text-[11px] text-gray-8">
+                      {userCapture()?.state === "active"
+                        ? `Capture in progress: ${userCapture()?.capturedEvents ?? 0} events, ${formatBytes(userCapture()?.capturedBytes ?? 0)}.`
+                        : `Capture ${userCapture()?.state ?? "idle"}: ${userCapture()?.acceptedEvents ?? 0} delivered, ${userCapture()?.pendingEvents ?? 0} pending.`}
+                    </div>
+                  </Show>
+                  <Show when={userCaptureError()}>{(error) => <div class="text-xs text-red-11">{error()}</div>}</Show>
+                </div>
+              </Show>
               <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                 <div>
                   <div class="text-sm font-medium text-gray-12">{translate("settings.appearance_title")}</div>

@@ -9,6 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 fn main() {
     emit_build_info();
     emit_glitchtip_build_env();
+    emit_user_diagnostic_capture_build_env();
     ensure_opencode_sidecar();
     ensure_veslo_server_sidecar();
     ensure_opencode_router_sidecar();
@@ -17,6 +18,19 @@ fn main() {
     ensure_versions_manifest();
     ensure_opencode_managed_deps_manifest();
     tauri_build::build();
+}
+
+fn emit_user_diagnostic_capture_build_env() {
+    const KEY: &str = "VESLO_USER_DIAGNOSTIC_CAPTURE";
+    const DOMAIN_KEY: &str = "VESLO_DEPLOYMENT_DOMAIN";
+    println!("cargo:rerun-if-env-changed={KEY}");
+    println!("cargo:rerun-if-env-changed={DOMAIN_KEY}");
+    // Omit the value in every build except an explicit production-domain release.
+    if read_non_empty_env(KEY).as_deref() == Some("1")
+        && read_non_empty_env(DOMAIN_KEY).as_deref() == Some("veslo.work")
+    {
+        println!("cargo:rustc-env={KEY}=1");
+    }
 }
 
 fn emit_glitchtip_build_env() {

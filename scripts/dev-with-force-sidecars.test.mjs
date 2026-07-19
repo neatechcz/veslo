@@ -26,3 +26,8 @@ test("force-sidecar dev helper enables bounded UI-effect diagnostics", () => {
   assert.match(source, /VITE_VESLO_SESSION_UI_MUTATION_TRACE: "1"/);
   assert.match(source, /VITE_VESLO_UI_EFFECT_TRACE: "1"/);
 });
+
+test("force-sidecar dev helper compiles the team diagnostic capture into its native runtime", () => {
+  assert.match(source, /runtimeLoggingEnv\.VESLO_USER_DIAGNOSTIC_CAPTURE = "1"/);
+  assert.match(source, /runtimeLoggingEnv\.VESLO_DEPLOYMENT_DOMAIN = "veslo\.work"/);
+});

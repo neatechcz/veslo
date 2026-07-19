@@ -540,6 +540,7 @@ export const DebugLogEventTable = mysqlTable(
     worker_id: varchar("worker_id", { length: 128 }),
     session_id: varchar("session_id", { length: 128 }),
     run_id: varchar("run_id", { length: 128 }),
+    capture_id: varchar("capture_id", { length: 36 }),
     source: varchar("source", { length: 64 }).notNull(),
     stream: varchar("stream", { length: 32 }).notNull(),
     level: varchar("level", { length: 16 }),
@@ -561,6 +562,7 @@ export const DebugLogEventTable = mysqlTable(
     index("debug_log_event_workspace_time").on(table.workspace_id, table.event_timestamp),
     index("debug_log_event_session_time").on(table.session_id, table.event_timestamp),
     index("debug_log_event_run_time").on(table.run_id, table.event_timestamp),
+    index("debug_log_event_capture_time").on(table.capture_id, table.event_timestamp),
     index("debug_log_event_expires_at").on(table.expires_at),
   ],
 )

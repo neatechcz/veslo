@@ -52,6 +52,11 @@ const runtimeLoggingEnv = withDefaultEnv({
   VESLO_OPENCODE_HEALTH_DIAG: "1",
   RUST_BACKTRACE: "1",
 });
+// This team-support launcher intentionally compiles the native diagnostic
+// capture control into its dev runtime. The capture implementation itself still
+// requires a signed-in user and only accepts the production Den endpoint.
+runtimeLoggingEnv.VESLO_USER_DIAGNOSTIC_CAPTURE = "1";
+runtimeLoggingEnv.VESLO_DEPLOYMENT_DOMAIN = "veslo.work";
 
 const run = (args, env = process.env) => {
   const result = spawnSync(pnpm.command, [...pnpm.prefixArgs, ...args], {

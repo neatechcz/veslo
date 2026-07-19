@@ -61,6 +61,7 @@ import {
   type SkillInventorySelectionId,
 } from "../lib/skill-inventory-filters";
 import { isTauriRuntime } from "../utils";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 
 type InstallResult = { ok: boolean; message: string };
 type ActionSkillCard = SkillCard & { mutationTarget: SkillMutationTarget };
@@ -284,8 +285,42 @@ export default function SkillsView(props: SkillsViewProps) {
   const [installingHubSkill, setInstallingHubSkill] = createSignal<string | null>(null);
 
   onMount(() => {
-    props.refreshSkillInventory({ force: true });
-    props.refreshHubSkills();
+    const traceId = `skills-view-${Date.now()}`;
+    const mountedAt = performance.now();
+    const workspaceId = props.activeWorkspaceId;
+    const workspaceType = props.isRemoteWorkspace ? "remote" : "local";
+    const workspaceCount = props.workspaces.length;
+    const refreshSkillInventory = props.refreshSkillInventory;
+    const trace = (event: string, payload?: Record<string, unknown>) =>
+      recordSendWorkflowTrace("skills-view", event, {
+        traceId,
+        workspaceId,
+        workspaceType,
+        workspaceCount,
+        ...payload,
+      });
+    const traceRefresh = (refresh: () => Promise<void>) => {
+      const startedAt = performance.now();
+      trace("skills-view:inventory:start");
+      void refresh().then(
+        () => trace("skills-view:inventory:done", { durationMs: Math.round(performance.now() - startedAt) }),
+        (error: unknown) => trace("skills-view:inventory:error", {
+          durationMs: Math.round(performance.now() - startedAt),
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    };
+
+    trace("skills-view:mount");
+    requestAnimationFrame(() => {
+      trace("skills-view:first-animation-frame", {
+        durationMs: Math.round(performance.now() - mountedAt),
+      });
+    });
+    onCleanup(() => {
+      trace("skills-view:unmount", { durationMs: Math.round(performance.now() - mountedAt) });
+    });
+    traceRefresh(() => Promise.resolve(refreshSkillInventory({ force: true })));
   });
 
   createEffect(() => {
