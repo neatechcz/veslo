@@ -6,6 +6,7 @@ import {
   buildCorePlatformSkillPackages,
 } from "../src/skills/core-platform-skills.js"
 import { validateSkillRegistryPackageArchive } from "../src/skills/packages.js"
+import { validateRegistrySkillPackageResponse } from "../../../packages/server/src/skill-registry-types.js"
 import { REQUIRED_MANAGED_COMMANDS } from "../../../packages/document-runtime/src/runtime.mjs"
 
 const EXPECTED_SKILLS = ["veslo-docx", "veslo-pdf", "veslo-pptx", "veslo-xlsx", "skill-creator"]
@@ -45,6 +46,13 @@ test("core platform skill packages are valid registry archives without legacy ru
 
   for (const skill of packages) {
     const archive = validateSkillRegistryPackageArchive(skill.package)
+    assert.doesNotThrow(() =>
+      validateRegistrySkillPackageResponse({
+        versionId: `version_${skill.name}`,
+        skillId: `skill_${skill.name}`,
+        package: skill.package,
+      }),
+    )
     assert.equal(archive.metadata.name, skill.name)
     assert.equal(archive.metadata.description, skill.description)
     assert.equal(archive.packageSha256, skill.packageSha256)

@@ -23,6 +23,13 @@ import type {
   ManagedAiServerSendTarget,
 } from "./managed-ai-runtime-config";
 import { normalizeDirectoryPath, safeStringify } from "../utils";
+
+export class ConversationServerSubmitPreflightError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConversationServerSubmitPreflightError";
+  }
+}
 import type { StartupPreference } from "../types";
 import type { SendTargetWorkspaceScope } from "./workspace-session-selection";
 
@@ -1059,7 +1066,9 @@ export function createConversationService<Client extends ConversationServiceClie
     traceId: string | null;
   }) => {
     if (!deps.prepareManagedAiRuntimeConfigForServerSend) {
-      throw new Error("Managed AI configuration freshness is unavailable for this server submit.");
+      throw new ConversationServerSubmitPreflightError(
+        "Managed AI configuration freshness is unavailable for this server submit.",
+      );
     }
     const traceId = input.traceId?.trim() || "";
     deps.recordSendTrace(`${input.owner}:managed-ai-config-freshness:start`, {
@@ -1082,12 +1091,16 @@ export function createConversationService<Client extends ConversationServiceClie
     });
     if (outcome.kind === "verified") return;
     if (outcome.kind === "verified-reload-required") {
-      throw new Error("Managed AI configuration changed while another run is active. Retry after that run finishes.");
+      throw new ConversationServerSubmitPreflightError(
+        "Managed AI configuration changed while another run is active. Retry after that run finishes.",
+      );
     }
     if (outcome.kind === "failed") {
-      throw new Error(`Managed AI configuration freshness failed: ${outcome.error}`);
+      throw new ConversationServerSubmitPreflightError(`Managed AI configuration freshness failed: ${outcome.error}`);
     }
-    throw new Error("Managed AI configuration freshness is not ready for this server submit.");
+    throw new ConversationServerSubmitPreflightError(
+      "Managed AI configuration freshness is not ready for this server submit.",
+    );
   };
 
   const submitConversationFromVesloWriteApi = async (
@@ -1151,7 +1164,9 @@ export function createConversationService<Client extends ConversationServiceClie
         ...(authPrimeDiagnostic ? { authPrimeDiagnostic } : {}),
       });
       if (!runtimeAuthorizationReady) {
-        throw new Error("Managed AI gateway authorization is not ready for this runtime.");
+        throw new ConversationServerSubmitPreflightError(
+          "Managed AI gateway authorization is not ready for this runtime.",
+        );
       }
     }
     const request: VesloConversationSubmitRequest = {

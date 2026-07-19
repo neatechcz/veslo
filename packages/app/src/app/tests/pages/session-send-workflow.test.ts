@@ -1041,6 +1041,42 @@ test("session send workflow replays the same client id after a transport error",
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
 });
 
+test("session send workflow does not replay a typed server-submit preflight failure", async () => {
+  let attempts = 0;
+  const harness = createHarness({
+    resolveSelectedSessionBrowseScope: (sessionId) => sessionId === "sess-target"
+      ? {
+          sessionId,
+          workspaceId: "ws-active",
+          workspaceRoot: "/active",
+          directory: "/active",
+          conversationId: "conv-target",
+          opencodeSessionId: "open-target",
+        }
+      : null,
+    submitConversationFromVesloWriteApi: async () => {
+      attempts += 1;
+      const error = new Error("Managed AI config is retrying its reload.");
+      error.name = "ConversationServerSubmitPreflightError";
+      throw error;
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("preflight failure"), {
+    clientMessageId: "client-preflight-failure",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(attempts, 1);
+  assert.equal(sent.accepted, false);
+  assert.equal(sent.code, "server_submit_preflight_failed");
+  assert.equal(sent.draftDisposition, "keep");
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing:preflight-error"));
+  assert.equal(harness.events.includes("sendPrompt:server-submit-existing:replay-after-transport-error"), false);
+});
+
 test("session send workflow blocks existing-session submit when scoped workspace activation reports missing scope", async () => {
   let submitCalls = 0;
   const harness = createHarness({

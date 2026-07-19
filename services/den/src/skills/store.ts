@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 
 import {
+  compareSkillRegistryPackagePaths,
   decodeSkillRegistryPackageArchive,
   sha256Hex,
   type SkillRegistryPackageArchive,
@@ -682,7 +683,7 @@ export class InMemorySkillRegistryStore implements SkillRegistryStore {
 
     const files = Array.from(this.versionFiles.values())
       .filter((file) => file.versionId === versionId)
-      .sort((left, right) => left.path.localeCompare(right.path))
+      .sort(compareSkillRegistryPackagePaths)
       .map((file) => {
         const blob = Array.from(this.blobs.values()).find((entry) => entry.id === file.blobId)
         if (!blob) {

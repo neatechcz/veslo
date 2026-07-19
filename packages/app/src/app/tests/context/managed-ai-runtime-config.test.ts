@@ -797,7 +797,7 @@ test("send preflight sync writes managed config for the snapshotted target works
   );
 });
 
-test("server-owned send freshness uses the resolved server workspace and reloads it after a patch", async () => {
+test("server-owned send freshness defers a reload after a patch", async () => {
   const client = createVesloClient();
   const sync = createManagedAiRuntimeConfigSync(createOptions({
     vesloServerClient: () => client,
@@ -816,10 +816,14 @@ test("server-owned send freshness uses the resolved server workspace and reloads
   assert.deepEqual(outcome, { kind: "verified" });
   assert.deepEqual(client.getConfigCalls, ["server-resolved-exact"]);
   assert.equal(client.patched[0]?.workspaceId, "server-resolved-exact");
-  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "server-resolved-exact", ifIdle: true }]);
+  assert.deepEqual(client.reloadEngineCalls, []);
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), {
+    kind: "pending",
+    workspaceId: "server-resolved-exact",
+  });
 });
 
-test("server send acknowledges a background config patch even when the later read is already current", async () => {
+test("server send does not await a pending background reload when the config is already current", async () => {
   const client = createVesloClient();
   let activeRun = true;
   const sync = createManagedAiRuntimeConfigSync(createOptions({
@@ -844,8 +848,11 @@ test("server send acknowledges a background config patch even when the later rea
   });
 
   assert.deepEqual(outcome, { kind: "verified" });
-  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-active", ifIdle: true }]);
-  assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
+  assert.deepEqual(client.reloadEngineCalls, []);
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), {
+    kind: "pending",
+    workspaceId: "ws-active",
+  });
 });
 
 test("a newer server config patch is reloaded after an older reload finishes", async () => {
@@ -940,7 +947,7 @@ test("background completed-intent skip cannot cancel an in-flight server send fr
   assert.deepEqual(await send, { kind: "verified" });
 });
 
-test("server-owned send freshness maps guarded reload conflicts to reload-required", async () => {
+test("server-owned send freshness leaves guarded reload conflicts for the background retry", async () => {
   const client = createVesloClient();
   const genericReloads: string[] = [];
   client.reloadEngine = async () => {
@@ -960,8 +967,9 @@ test("server-owned send freshness maps guarded reload conflicts to reload-requir
     traceId: "send-trace-reload-blocked",
   });
 
-  assert.deepEqual(outcome, { kind: "verified-reload-required" });
+  assert.deepEqual(outcome, { kind: "verified" });
   assert.deepEqual(genericReloads, []);
+  assert.deepEqual(client.reloadEngineCalls, []);
   assert.deepEqual(sync.managedAiServerReloadPresentation(), {
     kind: "pending",
     workspaceId: "server-resolved-exact",

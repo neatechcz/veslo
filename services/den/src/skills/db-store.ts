@@ -2,6 +2,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm"
 import { randomUUID } from "node:crypto"
 
 import {
+  compareSkillRegistryPackagePaths,
   computeSkillRegistryPackageSha256,
   decodeSkillRegistryPackageArchive,
   normalizeSkillRegistryPackageMetadata,
@@ -1058,7 +1059,7 @@ export class DbSkillRegistryStore implements SkillRegistryStore {
       .from(SkillVersionFileTable)
       .where(eq(SkillVersionFileTable.version_id, versionId))
     const files: SkillRegistryPackageArchive["files"] = []
-    for (const file of rows.sort((left, right) => left.path.localeCompare(right.path))) {
+    for (const file of rows.sort(compareSkillRegistryPackagePaths)) {
       const blob = await this.database
         .select()
         .from(SkillBlobTable)

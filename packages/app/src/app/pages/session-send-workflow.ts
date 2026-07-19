@@ -95,6 +95,9 @@ export type SessionSendWorkflowCommand = {
 type ConversationSubmitDraftInput = VesloConversationSubmitRequest["draft"];
 type ConversationSubmitOptionsInput = NonNullable<VesloConversationSubmitRequest["options"]>;
 
+const isConversationServerSubmitPreflightError = (error: unknown): error is Error =>
+  error instanceof Error && error.name === "ConversationServerSubmitPreflightError";
+
 function conversationSubmitDraftFromComposerDraft(
   draft: ComposerDraft,
   stagedAttachments: StagedSessionAttachment[] = [],
@@ -1584,6 +1587,31 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           },
         );
       } catch (firstError) {
+        if (isConversationServerSubmitPreflightError(firstError)) {
+          if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+          const message = deps.messageFromUnknownError(firstError);
+          deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+            sessionID: existingSessionId,
+            mode: resolvedDraft.mode,
+            command: commandName,
+            error: message,
+            serverSubmit: true,
+            phase: "preflight",
+          });
+          deps.recordSendTrace("sendPrompt:server-submit-existing:preflight-error", {
+            traceId: sendTraceId,
+            sessionID: existingSessionId,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
+            message,
+          });
+          reportServerSubmitError(message);
+          return sessionSubmitFailedResult({
+            code: "server_submit_preflight_failed",
+            message,
+            draftDisposition: "keep",
+          });
+        }
         // The request may already have crossed the server boundary. Replay the
         // exact idempotent submit once with the same clientMessageId before
         // classifying its outcome as unknown.

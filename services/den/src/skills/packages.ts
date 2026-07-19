@@ -64,6 +64,18 @@ export function sha256Hex(value: Buffer | string): string {
     .digest("hex")
 }
 
+// Package hashes must not depend on the process locale. The local materializer
+// uses this binary ordering too, so a package created by Den has the same
+// canonical manifest everywhere it is consumed.
+export function compareSkillRegistryPackagePaths(
+  left: Pick<SkillRegistryPackageFile, "path">,
+  right: Pick<SkillRegistryPackageFile, "path">,
+): number {
+  if (left.path < right.path) return -1
+  if (left.path > right.path) return 1
+  return 0
+}
+
 function requireTrimmedString(value: unknown, field: string): string {
   if (typeof value !== "string") {
     throw new Error(`${field} must be a string`)
@@ -285,7 +297,7 @@ export function validateSkillRegistryPackageArchive(value: unknown): SkillRegist
       seenPaths.add(file.path)
       return file
     })
-    .sort((left, right) => left.path.localeCompare(right.path))
+    .sort(compareSkillRegistryPackagePaths)
 
   if (!files.some((file) => file.path === ENTRYPOINT)) {
     throw new Error(`package requires ${ENTRYPOINT}`)
@@ -374,7 +386,7 @@ export async function buildSkillRegistryPackageArchive(input: {
     entrypoint: ENTRYPOINT,
     files: pendingFiles
       .map(({ contentBase64: _contentBase64, ...file }) => file)
-      .sort((left, right) => left.path.localeCompare(right.path)),
+      .sort(compareSkillRegistryPackagePaths),
     metadata: normalizeSkillRegistryPackageMetadata(input.metadata),
   } satisfies Omit<SkillRegistryPackageManifest, "packageSha256">
   const contentByPath = new Map(pendingFiles.map((file) => [file.path, file.contentBase64]))

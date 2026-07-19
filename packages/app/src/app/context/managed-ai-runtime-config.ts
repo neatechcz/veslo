@@ -1280,13 +1280,15 @@ export function createManagedAiRuntimeConfigSync(
           });
         }
         if (serverSendTarget && pendingServerReloads.has(vesloWorkspaceId)) {
-          const reloaded = await reloadPendingServerConfig({
-            workspaceId: vesloWorkspaceId,
-            client: vesloClient!,
-            traceContext: configSyncTracePayload,
+          // A reload is operationally useful, but it must not turn a local
+          // configuration acknowledgement into a failed user submit. The
+          // pending entry is retried after the active send/run settles.
+          deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:engine-reload", {
+            ...configSyncTracePayload,
+            ifIdle: true,
             source: "send-preflight",
+            phase: "deferred",
           });
-          if (!reloaded) return { kind: "verified-reload-required" };
         }
         return isCurrentManagedAiConfigSync() ? { kind: "verified" } : { kind: "cancelled" };
       }
