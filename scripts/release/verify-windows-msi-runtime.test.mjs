@@ -64,6 +64,8 @@ test("Windows MSI runtime verifier keeps the final-artifact contract explicit", 
     "chrome-devtools-mcp-package",
     "taskkill.exe",
     "Get-FileHash",
+    "Resolve-HostNodeExecutable",
+    "Select-Object -First 1",
     "Get-WindowsAuthenticodeSha256",
     "windows-authenticode-hash.mjs",
     "Compiled document-runtime probe",
@@ -79,4 +81,6 @@ test("Windows MSI runtime verifier keeps the final-artifact contract explicit", 
 
   assert.match(source, /MsiPath must be an exact literal path to one MSI/);
   assert.match(source, /Chrome DevTools MCP bundled-runtime probe/);
+  assert.match(source, /Get-Command node -CommandType Application -ErrorAction Stop \| Select-Object -First 1/);
+  assert.doesNotMatch(source, /& \$node\.Source/);
 });

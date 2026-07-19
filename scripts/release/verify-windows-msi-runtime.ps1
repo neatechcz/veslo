@@ -398,6 +398,15 @@ function Get-FileSha256 {
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Resolve-HostNodeExecutable {
+  $node = Get-Command node -CommandType Application -ErrorAction Stop | Select-Object -First 1
+  if ($null -eq $node -or -not $node.Source -or -not (Test-Path -LiteralPath $node.Source -PathType Leaf)) {
+    throw "Could not resolve a host Node.js executable from PATH."
+  }
+
+  return $node.Source
+}
+
 function Get-WindowsAuthenticodeSha256 {
   param(
     [Parameter(Mandatory = $true)]
@@ -409,8 +418,8 @@ function Get-WindowsAuthenticodeSha256 {
     throw "Windows Authenticode hash helper is missing: $helperPath"
   }
 
-  $node = Get-Command node -CommandType Application -ErrorAction Stop
-  $output = @(& $node.Source $helperPath --file $Path 2>&1)
+  $nodeExecutable = Resolve-HostNodeExecutable
+  $output = @(& $nodeExecutable $helperPath --file $Path 2>&1)
   $exitCode = $LASTEXITCODE
   $text = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
 
@@ -502,8 +511,8 @@ function Invoke-DocumentRuntimeProbe {
     [string]$ProbePath
   )
 
-  $node = Get-Command node -CommandType Application -ErrorAction Stop
-  $output = @(& $node.Source $ProbePath --binary $ServerFile.FullName --json 2>&1)
+  $nodeExecutable = Resolve-HostNodeExecutable
+  $output = @(& $nodeExecutable $ProbePath --binary $ServerFile.FullName --json 2>&1)
   $exitCode = $LASTEXITCODE
   $text = ($output | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine
 
