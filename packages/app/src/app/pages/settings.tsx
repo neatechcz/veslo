@@ -1085,8 +1085,8 @@ export default function SettingsView(props: SettingsViewProps) {
               <Show when={props.aiAccessConfigured}>
                 <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                   <div class="min-w-0">
-                    <div class="text-sm text-gray-12">Session model selector</div>
-                    <div class="text-xs text-gray-7">Choose a managed AI model for an individual session.</div>
+                    <div class="text-sm text-gray-12">{translate("settings.session_model_selector")}</div>
+                    <div class="text-xs text-gray-7">{translate("settings.session_model_selector_description")}</div>
                   </div>
                   <Button
                     variant="outline"

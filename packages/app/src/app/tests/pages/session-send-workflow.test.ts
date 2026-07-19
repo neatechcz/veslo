@@ -936,6 +936,55 @@ test("session send workflow submits an existing local prompt through server subm
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
+test("existing-session server submit arms its known alias before the request and promotes it on submitted", async () => {
+  const order: string[] = [];
+  const harness = createHarness({
+    armConversationRunProvisional: (input) => {
+      order.push(`arm:${input.conversationId}:${input.opencodeSessionId}:${input.clientMessageId}`);
+      return true;
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) => sessionId === "sess-target"
+      ? {
+          sessionId,
+          workspaceId: "ws-active",
+          workspaceRoot: "/active",
+          directory: "/active",
+          conversationId: "conv-target",
+          opencodeSessionId: "open-target",
+        }
+      : null,
+    submitConversationFromVesloWriteApi: async (workspaceId, _directory, input) => {
+      order.push("submit");
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        runId: "run-submit",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+    admitAcceptedConversationRun: (input) => {
+      order.push(`admit:${input.runId}`);
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("armed submit"), {
+    clientMessageId: "client-armed-submit",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.deepEqual(order, [
+    "arm:conv-target:open-target:client-armed-submit",
+    "submit",
+    "admit:run-submit",
+  ]);
+});
+
 test("session send workflow keeps its existing-session target snapshot after scope changes", async () => {
   const actionTarget = {
     workspaceId: "ws-active",

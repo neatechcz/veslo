@@ -76,7 +76,7 @@ export async function fetchWithTimeout(
     }
     throw error;
   } finally {
-    if (timeoutId !== null) clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
   }
 }
 

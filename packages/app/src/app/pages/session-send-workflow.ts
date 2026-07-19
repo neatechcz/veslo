@@ -281,6 +281,23 @@ export type ConversationRunCompatibilityBridgeOptions = {
 
 export type SessionSendWorkflowOptions = {
   admitAcceptedConversationRun: (input: AcceptedConversationRunInput) => boolean | void;
+  armConversationRunProvisional?: (input: {
+    sessionId: string;
+    workspaceId: string;
+    conversationId: string;
+    opencodeSessionId?: string | null;
+    directory?: string | null;
+    clientMessageId: string;
+  }) => boolean | void;
+  disposeConversationRunProvisional?: (input: {
+    sessionId: string;
+    workspaceId: string;
+    conversationId: string;
+    opencodeSessionId?: string | null;
+    directory?: string | null;
+    clientMessageId: string;
+  }) => boolean | void;
+  watchQueuedConversationRun?: (input: AcceptedConversationRunInput) => boolean | void;
   beginSidebarActivityToken?: (scope: SidebarActivityTokenScope) => SidebarActivityTokenHandle | null;
   migrateSidebarActivityToken?: (
     handle: SidebarActivityTokenHandle | null | undefined,
@@ -1567,6 +1584,23 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         });
       }
 
+      const provisionalRun = conversationId
+        ? {
+            sessionId: existingSessionId,
+            workspaceId,
+            conversationId,
+            opencodeSessionId,
+            directory,
+            clientMessageId: sendCorrelation.clientMessageId,
+          }
+        : null;
+      const provisionalArmed = provisionalRun
+        ? deps.armConversationRunProvisional?.(provisionalRun) === true
+        : false;
+      const disposeProvisional = () => {
+        if (provisionalArmed && provisionalRun) deps.disposeConversationRunProvisional?.(provisionalRun);
+      };
+
       let result: VesloConversationSubmitResult | null | undefined;
       try {
         result = await deps.sendTraceStep(
@@ -1588,6 +1622,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         );
       } catch (firstError) {
         if (isConversationServerSubmitPreflightError(firstError)) {
+          disposeProvisional();
           if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
           const message = deps.messageFromUnknownError(firstError);
           deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
@@ -1641,6 +1676,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             },
           );
         } catch (error) {
+          disposeProvisional();
           if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
           const message = deps.messageFromUnknownError(error);
           deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
@@ -1667,6 +1703,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       }
 
       if (!result) {
+        disposeProvisional();
         if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
         const message = "Server-owned conversation submit is unavailable for this local session.";
         deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
@@ -1703,6 +1740,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         },
       }));
       if (!resultValidation.ok) {
+        disposeProvisional();
         if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
         deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
           sessionID: existingSessionId,
@@ -1721,6 +1759,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       result = resultValidation.value;
 
       if (result.status === "blocked" || result.status === "failed") {
+        disposeProvisional();
         const implicitSkillConfirmationRequired = conversationSubmitNeedsImplicitSkillConfirmation(result);
         if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
         deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
@@ -1762,13 +1801,11 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         ) ?? false;
       }
 
-      if (result.draftDisposition === "clear") {
-        if (!compactCommand) {
-          deps.setLastPromptSent(initialContent, options.modelOverride ?? null);
-        }
-        if (!hasExplicitDraft) {
-          deps.setPrompt("");
-        }
+      if (!compactCommand) {
+        deps.setLastPromptSent(initialContent, options.modelOverride ?? null);
+      }
+      if (!hasExplicitDraft) {
+        deps.setPrompt("");
       }
       deps.finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
         sessionID: existingSessionId,
@@ -1830,6 +1867,18 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           opencodeSessionId: result.opencodeSessionId,
           directory,
           runId: result.runId,
+          clientMessageId: result.clientMessageId,
+          diagnosticTraceId: sendTraceId,
+        });
+      } else {
+        disposeProvisional();
+        deps.watchQueuedConversationRun?.({
+          sessionId: existingSessionId,
+          workspaceId,
+          conversationId: result.conversationId,
+          opencodeSessionId: result.opencodeSessionId,
+          directory,
+          runId: result.reservedRunId,
           clientMessageId: result.clientMessageId,
           diagnosticTraceId: sendTraceId,
         });
@@ -2142,11 +2191,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         stopSendPromptBusy();
         return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
       }
-      if (serverFirstSubmitResult.draftDisposition === "clear") {
-        deps.setLastPromptSent(initialContent, options.modelOverride ?? null);
-        if (!hasExplicitDraft) {
-          deps.setPrompt("");
-        }
+      deps.setLastPromptSent(initialContent, options.modelOverride ?? null);
+      if (!hasExplicitDraft) {
+        deps.setPrompt("");
       }
       deps.recordSendTrace("sendPrompt:server-submit-first-success", {
         traceId: sendTraceId,

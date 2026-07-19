@@ -1105,6 +1105,17 @@ export default function App() {
     client,
     routing: runtimeOwnedRouting,
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
+    onConversationRunBecameActive: (scope) => {
+      const input = {
+        workspaceId: scope.workspaceId,
+        conversationId: scope.conversationId,
+        opencodeSessionId: scope.opencodeSessionId,
+        uiSessionId: scope.sessionId,
+        runId: scope.runId,
+      };
+      rememberLatestConversationRunId(input);
+      rememberLatestConversationLifecycleRunId(input);
+    },
     selectedSessionId,
     setSelectedSessionId,
     directoryQueryPathMode,
@@ -1284,7 +1295,10 @@ export default function App() {
     respondQuestion,
     setSessions,
     setSessionStatusById,
+    armConversationRunProvisional,
+    disposeConversationRunProvisional,
     admitAcceptedConversationRun,
+    watchQueuedConversationRun,
     retryAcceptedRunForSession,
     retryTerminalTranscriptRecoveryForSession,
     setMessages,
@@ -1805,7 +1819,10 @@ export default function App() {
   };
 
   const sessionSendWorkflow = createSessionSendWorkflow({
+    armConversationRunProvisional,
+    disposeConversationRunProvisional,
     admitAcceptedConversationRun: admitAcceptedConversationRunWithProjectionInvalidation,
+    watchQueuedConversationRun,
     beginSidebarActivityToken: (scope) => sidebarActivityTokenModel.begin(scope),
     migrateSidebarActivityToken: (handle, scope) => sidebarActivityTokenModel.migrate(handle, scope),
     promoteSidebarActivityToken: (handle, runId) => sidebarActivityTokenModel.promote(handle, runId),
@@ -3011,17 +3028,18 @@ export default function App() {
     const reportedBusy = workspaceStore.workspaceBusy();
     const sessionStatuses = sessionStatusById();
     const runDiagnostics = conversationRunDiagnosticsBySessionKey();
-    let mergedBusy = reportedBusy;
+    let mergedBusy: WorkspaceBusyMap | null = null;
 
     const addBusySession = (workspaceIdRaw: string, sessionIdRaw: string) => {
       const workspaceId = workspaceIdRaw.trim();
       const sessionId = sessionIdRaw.trim();
-      if (!workspaceId || !sessionId || mergedBusy[workspaceId]?.[sessionId]) return;
-      if (mergedBusy === reportedBusy) mergedBusy = { ...reportedBusy };
+      const currentBusy = mergedBusy ?? reportedBusy;
+      const workspaceBusy = currentBusy[workspaceId] as WorkspaceBusyMap[string] | undefined;
+      if (!workspaceId || !sessionId || workspaceBusy?.[sessionId]) return;
       mergedBusy = {
-        ...mergedBusy,
+        ...currentBusy,
         [workspaceId]: {
-          ...(mergedBusy[workspaceId] ?? {}),
+          ...(workspaceBusy ?? {}),
           [sessionId]: { startedAt: Date.now() },
         },
       };
@@ -3038,7 +3056,7 @@ export default function App() {
       addBusySession(diagnostic.workspaceId, diagnostic.sessionId);
     }
 
-    return mergedBusy;
+    return mergedBusy ?? reportedBusy;
   };
 
   const skillRegistryOrchestrator = createSkillRegistryOrchestrator({

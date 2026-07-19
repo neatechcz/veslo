@@ -477,8 +477,8 @@ export function createConversationService<Client extends ConversationServiceClie
       });
     }
 
-    if (input.result.status === "submitted" || input.result.status === "queued") {
-      const runId = input.result.status === "submitted" ? input.result.runId : input.result.reservedRunId;
+    if (input.result.status === "submitted") {
+      const runId = input.result.runId;
       deps.rememberLatestConversationRunId({
         workspaceId,
         conversationId,
@@ -1401,16 +1401,15 @@ export function createConversationService<Client extends ConversationServiceClie
       uiSessionId: normalizedSessionId,
       runId: abortRunId,
     });
-    const lifecycleRunId = result.status === "submitted"
-      ? result.runId
-      : result.reservedRunId;
-    deps.rememberLatestConversationLifecycleRunId({
-      workspaceId,
-      conversationId: result.conversationId,
-      opencodeSessionId: result.opencodeSessionId,
-      uiSessionId: normalizedSessionId,
-      runId: lifecycleRunId,
-    });
+    if (result.status === "submitted") {
+      deps.rememberLatestConversationLifecycleRunId({
+        workspaceId,
+        conversationId: result.conversationId,
+        opencodeSessionId: result.opencodeSessionId,
+        uiSessionId: normalizedSessionId,
+        runId: result.runId,
+      });
+    }
     return result;
   };
 

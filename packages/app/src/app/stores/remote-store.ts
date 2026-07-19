@@ -352,10 +352,10 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
           directory: finalDirectory ? finalDirectory : null,
           displayName,
           remoteType,
-          vesloHostUrl: remoteType === "veslo" ? resolvedHostUrl : null,
-          vesloToken: remoteType === "veslo" ? (token || null) : null,
-          vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
-          vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
+          vesloHostUrl: resolvedHostUrl,
+          vesloToken: token || null,
+          vesloWorkspaceId: vesloWorkspace?.id ?? null,
+          vesloWorkspaceName: vesloWorkspace?.name ?? null,
         });
         deps.setWorkspaces(ws.workspaces);
         deps.syncActiveWorkspaceId(ws.activeId);
@@ -372,10 +372,10 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
           baseUrl: resolvedBaseUrl,
           directory: finalDirectory || null,
           displayName,
-          vesloHostUrl: remoteType === "veslo" ? resolvedHostUrl : null,
-          vesloToken: remoteType === "veslo" ? (token || null) : null,
-          vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
-          vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
+          vesloHostUrl: resolvedHostUrl,
+          vesloToken: token || null,
+          vesloWorkspaceId: vesloWorkspace?.id ?? null,
+          vesloWorkspaceName: vesloWorkspace?.name ?? null,
         };
 
         deps.setWorkspaces((prev: WorkspaceInfo[]) => {

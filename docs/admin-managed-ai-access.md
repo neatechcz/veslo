@@ -12,21 +12,27 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
   - `enabled`
   - `provider`
   - `credentialId` for providers that require a specific assigned credential
-- The global platform model policy separately controls the enabled backend models and exactly one active model.
-- There are no per-user or per-organization Managed-AI model overrides. A request model is either omitted and replaced with the active platform model, or rejected when it differs.
+- The global platform model policy separately controls the enabled backend
+  models and exactly one active fallback model.
+- There are no custom per-user or per-organization Managed-AI model policies.
+  The Gateway publishes the intersection of the assigned user's same-provider
+  roster and current platform `enabledModels`; an app may request one of those
+  published models, while an omitted model uses the active fallback and every
+  other model, provider, or credential override is rejected.
 
 ## Runtime flow
 
 1. The user signs into the Veslo app with the existing browser-based Den flow.
 2. The app calls `GET /ai-gateway/me/ai-access` on `packages/server` with the Den bearer token and authenticated organization id.
 3. `packages/server` proxies that to the standalone AI Gateway's `GET /api/me/ai-access` endpoint. Defaults derive the gateway from `VESLO_DEPLOYMENT_DOMAIN`, using `https://ai.veslo.work` for production and `https://ai.staging.veslo.work` for staging unless a full URL override is set.
-4. The app treats the returned provider/model as read-only admin-managed state.
+4. The app treats the returned provider, `effectiveModel`, and
+   `selectableModels` roster as Gateway-managed state.
 5. Prompt traffic still goes through the local Veslo server compatibility path.
 6. The local Veslo server forwards managed prompt traffic to standalone AI Gateway.
-7. AI Gateway evaluates the provider request in this order: authenticated session, DEN billing entitlement, user enablement/provider assignment, global model resolution, then credential selection and brokerage. Denial or unavailable billing stops before user access, model, lease, credential, or provider work.
-8. AI Gateway forwards the active global model upstream and records usage/audit state against the resolved user, organization, session, and credential.
+7. AI Gateway evaluates the provider request in this order: authenticated session, DEN billing entitlement, user enablement/provider assignment, requested authorized model or global fallback resolution, then credential selection and brokerage. Denial or unavailable billing stops before user access, model, lease, credential, or provider work.
+8. AI Gateway forwards the resolved authorized/fallback model upstream and records usage/audit state against the resolved user, organization, session, and credential.
 
-Credential selection and rotation are separate from model selection. The global policy chooses one provider/model for all managed users; credential health, capability, assignment, and capacity decide which compatible platform credential can serve it.
+Credential selection and rotation are separate from model selection. The global policy publishes the eligible same-provider roster and one active fallback; credential health, capability, assignment, and capacity decide which compatible platform credential can serve the resolved model.
 
 Local Veslo server runtime state for this proxy path is owned by
 `packages/server/src/ai-gateway-runtime-owner.ts`. The HTTP transport remains
@@ -47,13 +53,21 @@ The retained `default_model` and `allowed_models_json` values are rollback-only 
 ## App behavior
 
 - End users no longer get provider connect/disconnect controls.
-- End users no longer get the Model settings tab or session model picker for DEN-managed providers.
-- Settings now shows a read-only AI access summary.
+- End users do not get provider connect/disconnect controls or arbitrary model,
+  provider, or credential entry.
+- Settings shows the managed AI access summary and a default-off Session model
+  selector preference. It only reveals a composer picker after Gateway publishes
+  two or more eligible models, then lists the complete published roster.
 - If no admin policy is assigned, the user can sign in but cannot send prompts.
 - The desktop app caches a non-secret local proof of the user's managed-AI policy for 3 days in `${VESLO_APP_DATA_DIR or app_data_dir()}/access-proofs.v1.json`. This avoids repeatedly calling `GET /ai-gateway/me/ai-access` during normal app flow and restart without adding UI. The file stores policy metadata only; Den and gateway bearer tokens are never persisted there.
 - Generated project OpenCode config must also stay non-secret: provider routing points at the local Veslo server and references `{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}` for local auth. Managed gateway bearer tokens stay in local Veslo server runtime memory and are attached by the proxy.
 - The authenticated Den organization id follows the same local runtime-only boundary. Access priming binds it to the actor token in memory; provider proxying strips caller-supplied organization headers and injects the bound id. It is never written to OpenCode provider config.
-- Standalone AI Gateway is authoritative for inference, AI-access assignments, the global model, credentials, and usage. DEN remains authoritative for identity, organization membership, and billing entitlement. Prompt traffic still carries the current DEN auth or local Veslo server token at runtime, and failed/no-access refreshes clear the cached proof for that identity.
+- Standalone AI Gateway is authoritative for inference, AI-access assignments,
+  the live authorized model roster and active fallback, credentials, and usage.
+  DEN remains authoritative for identity, organization membership, and billing
+  entitlement. Prompt traffic still carries the current DEN auth or local Veslo
+  server token at runtime, and failed/no-access refreshes clear the cached proof
+  for that identity.
 
 ## Admin behavior
 

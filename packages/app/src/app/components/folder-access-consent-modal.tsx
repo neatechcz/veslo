@@ -27,10 +27,8 @@ export default function FolderAccessConsentModal(props: FolderAccessConsentModal
   let chooseFolderRef: HTMLButtonElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
 
-  const accessLabel = () =>
-    props.accessMode === "read" ? translate("folder_access.access_read_only") : props.accessMode;
-  const durationLabel = () =>
-    props.duration === "workspace" ? translate("folder_access.duration_workspace") : props.duration;
+  const accessLabel = () => translate("folder_access.access_read_only");
+  const durationLabel = () => translate("folder_access.duration_workspace");
 
   useFocusTrap(() => props.open, () => dialogRef, {
     onClose: () => props.onCancel(),

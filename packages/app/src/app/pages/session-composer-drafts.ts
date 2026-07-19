@@ -154,11 +154,11 @@ export const clearSessionComposerDraftIfRevision = (
   expectedRevision: number,
 ): { cleared: boolean; state: ComposerDraftStateByStorageKey } => {
   const key = resolveDraftStorageKey(target);
-  const previous = draftsByStorageKey[key];
+  const previous = draftsByStorageKey[key] as ComposerDraftStateByStorageKey[string] | undefined;
   if (!previous || previous.revision !== expectedRevision) {
     return { cleared: false, state: draftsByStorageKey };
   }
-  const entry = nextEntry(previous, createEmptyComposerDraft());
+  const entry = nextEntry(previous, createEmptyComposerDraft()) as ComposerDraftStateByStorageKey[string] | undefined;
   if (!entry) return { cleared: false, state: draftsByStorageKey };
   return { cleared: true, state: { ...draftsByStorageKey, [key]: entry } };
 };
@@ -186,9 +186,9 @@ export const remapPendingComposerDraftToSession = (
   const targetKey = resolveComposerStorageKey({ sessionId: targetSessionId });
   if (sourceKey === targetKey) return { status: "noop", state: draftsByStorageKey };
 
-  const source = draftsByStorageKey[sourceKey];
+  const source = draftsByStorageKey[sourceKey] as ComposerDraftStateByStorageKey[string] | undefined;
   if (!source) return { status: "noop", state: draftsByStorageKey };
-  const target = draftsByStorageKey[targetKey];
+  const target = draftsByStorageKey[targetKey] as ComposerDraftStateByStorageKey[string] | undefined;
   if (target) {
     if (!draftsEqual(source.draft, target.draft)) {
       return { status: "conflict", state: draftsByStorageKey };

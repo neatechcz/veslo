@@ -1355,7 +1355,7 @@ test("conversation run remembers submitted run ids under Veslo and UI identities
   assert.equal(rememberedScopes[1]?.conversationId, "conv-a");
 });
 
-test("conversation submit remembers queued run ids under request and result identities", async () => {
+test("conversation submit keeps queued run scope without replacing active run ownership", async () => {
   const { service, rememberedRuns, rememberedScopes, setSubmitConversationResult, sendTraces } = createService();
   setSubmitConversationResult({
     status: "queued",
@@ -1408,13 +1408,7 @@ test("conversation submit remembers queued run ids under request and result iden
   assert.ok(rememberedScopes.every((scope) => scope.workspaceId === "app-ws"));
   assert.ok(rememberedScopes.every((scope) => scope.conversationId === "conv-submit"));
   assert.ok(rememberedScopes.every((scope) => scope.opencodeSessionId === "open-submit"));
-  assert.deepEqual(rememberedRuns[0], {
-    workspaceId: "app-ws",
-    conversationId: "conv-submit",
-    opencodeSessionId: "open-submit",
-    uiSessionId: "ui-session",
-    runId: "run-submit-reserved",
-  });
+  assert.deepEqual(rememberedRuns, []);
   assert.ok(sendTraces.some((entry) =>
     entry.event === "submitConversationFromVesloWriteApi:conversation-scope-remembered" &&
     entry.payload?.aliasCount === 5

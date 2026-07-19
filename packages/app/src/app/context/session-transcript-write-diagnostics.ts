@@ -325,7 +325,7 @@ export const describeTranscriptSurfaceIdentities = (messages: MessageWithParts[]
 
 export const describeTranscriptCollectionCause = (messages: MessageWithParts[]): TranscriptWriteCause | null => {
   if (!transcriptWriteDiagnosticsEnabled()) return null;
-  const first = messages[0];
+  const first = messages.at(0);
   const sessionId = first ? normalize(String((first.info as { sessionID?: unknown }).sessionID ?? "")) : "";
   return sessionId ? latestCause(sessionId, "", "collection") : null;
 };

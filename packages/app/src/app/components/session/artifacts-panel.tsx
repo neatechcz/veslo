@@ -36,16 +36,14 @@ const fileGroupInteraction = (item: ArtifactFamilyItem) => {
 const fileStatusLabel = (item: ArtifactFamilyItem) => {
   const interaction = fileGroupInteraction(item);
   if (interaction === "modified") return tr("session.artifact_files_modified");
-  if (interaction === "opened") return tr("session.artifact_files_opened");
-  return statusLabel(item.status);
+  return tr("session.artifact_files_opened");
 };
 
 const familyLabel = (family: ArtifactFamily) => {
   if (family.family === "files") return tr("session.artifact_family_files");
   if (family.family === "skills") return tr("session.artifact_family_skills");
   if (family.family === "mcp") return tr("session.artifact_family_mcp");
-  if (family.family === "soul") return tr("session.artifact_family_soul");
-  return family.label;
+  return tr("session.artifact_family_soul");
 };
 
 const familyIcon = (family: ArtifactFamilyId): JSX.Element => {

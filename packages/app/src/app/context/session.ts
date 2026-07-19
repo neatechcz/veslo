@@ -55,8 +55,15 @@ import {
   type SessionOfflineTranscriptLoadContext,
 } from "./session-selection-controller";
 import { createSessionEventStreamController } from "./session-event-stream";
+import { createConversationRunOwnershipIndex } from "./conversation-run-ownership";
+import {
+  createTerminalDeliveryCoordinator,
+  type TerminalDeliveryKey,
+  type TerminalDeliveryProvisionalKey,
+} from "./terminal-delivery-coordinator";
 import {
   createSessionLifecycleRecoveryController,
+  type AcceptedConversationRunInput,
   type SessionLifecycleRecoveryScope,
   type SessionLifecycleRecoveryStatus,
   type SessionRunDiagnostic,
@@ -202,6 +209,7 @@ export function createSessionStore(options: {
     appWorkspaceId?: string | null;
     connectionSnapshot?: Record<string, string | null | undefined> | null;
   };
+  onConversationRunBecameActive?: (scope: SessionLifecycleRecoveryScope) => void;
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
@@ -749,16 +757,14 @@ export function createSessionStore(options: {
   };
 
   const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string) => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms);
     });
     try {
       return await Promise.race([promise, timeoutPromise]);
     } finally {
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-      }
+      clearTimeout(timeoutId);
     }
   };
 
@@ -794,16 +800,56 @@ export function createSessionStore(options: {
   } = transcriptController;
 
   let eventStreamController: ReturnType<typeof createSessionEventStreamController> | null = null;
+  const terminalDeliveryKeyForScope = (scope: SessionLifecycleRecoveryScope): TerminalDeliveryKey => ({
+    workspaceId: scope.workspaceId,
+    conversationId: scope.conversationId,
+    runId: scope.runId,
+  });
+  const terminalDeliveryProvisionalKeyForScope = (scope: {
+    workspaceId: string;
+    conversationId: string;
+    clientMessageId: string;
+  }): TerminalDeliveryProvisionalKey => ({
+    workspaceId: scope.workspaceId,
+    conversationId: scope.conversationId,
+    clientMessageId: scope.clientMessageId,
+  });
+  const terminalDeliveryCoordinator = createTerminalDeliveryCoordinator({
+    trace: (event, payload) => recordSessionLifecycleRecoveryTrace(event, payload),
+  });
+  const conversationRunOwnership = createConversationRunOwnershipIndex();
+  const presentPromotedRun = (promoted: {
+    scope: SessionLifecycleRecoveryScope;
+    status: SessionLifecycleRecoveryStatus;
+    commits: Array<() => void>;
+  }) => {
+    const workspaceId = statusWorkspaceId(promoted.scope.workspaceId);
+    for (const sessionKey of scopedSessionAliasKeys(workspaceId, [
+      promoted.scope.sessionId,
+      promoted.scope.opencodeSessionId,
+      promoted.scope.conversationId,
+    ])) {
+      setSessionStatusForWorkspace(sessionKey.slice(workspaceId.length + 1), promoted.status.status, workspaceId);
+    }
+    const busySessionId = promoted.scope.opencodeSessionId?.trim() || promoted.scope.sessionId;
+    if (busySessionId) notifySessionBusy(busySessionId, promoted.status.status, workspaceId);
+    updateConversationRunDiagnosticsForScope(promoted.scope, promoted.status);
+    options.onConversationRunBecameActive?.(promoted.scope);
+    for (const commit of promoted.commits) commit();
+  };
 
   const lifecycleRecoveryController =
     options.resolveConversationRunForSession && options.readConversationRunStatus
       ? createSessionLifecycleRecoveryController({
           sessionStatusById: () => store.sessionStatus,
           selectedSessionId: options.selectedSessionId,
-          resolveConversationRunForSession: options.resolveConversationRunForSession,
+          resolveConversationRunForSession: (sessionId, workspaceId, resolveOptions) =>
+            conversationRunOwnership.resolveActive(sessionId, workspaceId) ??
+            options.resolveConversationRunForSession!(sessionId, workspaceId, resolveOptions),
           readConversationRunStatus: options.readConversationRunStatus,
           recoverAcceptedConversationRunStatus: options.recoverAcceptedConversationRunStatus,
           recoverAcceptedConversationTranscript: options.recoverAcceptedConversationTranscript,
+          isConversationRunActive: (scope) => conversationRunOwnership.isActiveOrUnknown(scope),
           recoverConversationTranscript: options.recoverConversationTranscript,
           currentSelectionVersion: options.currentSelectionVersion,
           reserveTranscriptProjection: (scope, selectionVersion) => {
@@ -830,22 +876,58 @@ export function createSessionStore(options: {
           // Terminal recovery has already passed its exact durable run fence;
           // unlike a passive browse snapshot, it is allowed to replace stale
           // live parts with the canonical terminal snapshot.
-          hydrateConversationTranscript: (snapshot) => {
-            hydrateTranscriptSnapshot(snapshot, { preserveLiveParts: false });
-            // The lifecycle controller admits only an exact terminal run here.
-            // Its snapshot closes the replay window for any opaque delta ids.
-            eventStreamController?.clearTextDeltaReplayStateForTerminalSnapshot(
-              snapshot.workspaceId,
-              snapshot.sessionId,
+          hydrateConversationTranscript: (snapshot, scope) => {
+            terminalDeliveryCoordinator.retainTerminalDisplay(
+              terminalDeliveryKeyForScope(scope),
+              {
+                kind: "hydration",
+                commit: () => {
+                  hydrateTranscriptSnapshot(snapshot, { preserveLiveParts: false });
+                  // The lifecycle controller admits only an exact terminal run here.
+                  // Its snapshot closes the replay window for any opaque delta ids.
+                  eventStreamController?.clearTextDeltaReplayStateForTerminalSnapshot(
+                    snapshot.workspaceId,
+                    snapshot.sessionId,
+                  );
+                },
+              },
             );
           },
+          onTerminalTranscriptRecoverySettled: (scope) => {
+            const released = conversationRunOwnership.settleTerminalTranscript(scope);
+            for (const commit of released.commits) commit();
+            if (released.promoted) presentPromotedRun(released.promoted);
+          },
           diagnosticContext: options.lifecycleRecoveryDiagnosticContext,
-          onConversationRunStatus: updateConversationRunDiagnosticsForScope,
+          onConversationRunStatus: (scope, status) => {
+            const active = conversationRunOwnership.observeStatus(scope, status);
+            if (status && ["completed", "failed", "aborted"].includes(status.status) && !active) {
+              for (const commit of conversationRunOwnership.settleNonActiveTerminal(scope)) commit();
+              return;
+            }
+            const promoted = conversationRunOwnership.promoteReadyRun(scope);
+            if (promoted) {
+              presentPromotedRun(promoted);
+              return;
+            }
+            if (!active) return;
+            updateConversationRunDiagnosticsForScope(scope, status);
+          },
           onConversationRunTerminal: (scope, status) => {
+            const key = terminalDeliveryKeyForScope(scope);
+            conversationRunOwnership.beginTerminal(scope);
+            terminalDeliveryCoordinator.confirmTerminal(key, () => {
+              const released = conversationRunOwnership.releaseTerminal(scope);
+              for (const commit of released.commits) commit();
+              if (released.promoted) presentPromotedRun(released.promoted);
+            });
             if (status.status !== "failed" || status.stale) return;
-            appendSessionErrorTurn(scope.sessionId, status.error?.trim() || "Run failed", {
-              durableRunId: scope.runId,
-              workspaceId: scope.workspaceId,
+            terminalDeliveryCoordinator.retainTerminalDisplay(key, {
+              kind: "error",
+              commit: () => appendSessionErrorTurn(scope.sessionId, status.error?.trim() || "Run failed", {
+                durableRunId: scope.runId,
+                workspaceId: scope.workspaceId,
+              }),
             });
           },
           setSessionStatusForWorkspace,
@@ -867,7 +949,11 @@ export function createSessionStore(options: {
       if (!options.selectedSessionId()) return;
       void lifecycleRecoveryController.probeSelectedConversationLatestRun();
     });
-    onCleanup(() => lifecycleRecoveryController.dispose());
+    onCleanup(() => {
+      lifecycleRecoveryController.dispose();
+      terminalDeliveryCoordinator.disposeAll();
+      conversationRunOwnership.dispose();
+    });
   }
 
   const runtimePrompts = createSessionRuntimePrompts({
@@ -1058,6 +1144,23 @@ export function createSessionStore(options: {
     applySessionDirectoryOverride,
     resolveSessionDirectory,
     appendSessionErrorTurn,
+    deferAssistantTextPartMutation: ({ sessionId, workspaceId, commit }) => {
+      if (conversationRunOwnership.holdTransitionMutation(sessionId, workspaceId, commit)) return true;
+      const scope = conversationRunOwnership.resolveActive(sessionId, workspaceId) ??
+        options.resolveConversationRunForSession?.(sessionId, workspaceId);
+      if (scope?.runId && scope.runId !== "latest") {
+        return terminalDeliveryCoordinator.retainVisibleMutation(
+          terminalDeliveryKeyForScope(scope),
+          { kind: "assistant", commit },
+        );
+      }
+      const provisional = conversationRunOwnership.resolveProvisional(sessionId, workspaceId);
+      if (!provisional) return false;
+      return terminalDeliveryCoordinator.retainVisibleMutation(
+        terminalDeliveryProvisionalKeyForScope(provisional),
+        { kind: "assistant", commit },
+      );
+    },
     onSessionLifecycleObservation: (sessionId, workspaceId, type) =>
       lifecycleRecoveryController?.observeSessionLifecycleEvent(sessionId, workspaceId, type) === true,
     setCommandDisplay,
@@ -1140,7 +1243,45 @@ export function createSessionStore(options: {
     clearCommandDisplay,
     setSessions,
     setSessionStatusById,
-    admitAcceptedConversationRun: lifecycleRecoveryController?.admitAcceptedConversationRun ?? (() => false),
+    armConversationRunProvisional: (input: {
+      sessionId: string;
+      workspaceId: string;
+      conversationId: string;
+      opencodeSessionId?: string | null;
+      directory?: string | null;
+      clientMessageId: string;
+    }) => conversationRunOwnership.armProvisional(input),
+    disposeConversationRunProvisional: (input: {
+      sessionId: string;
+      workspaceId: string;
+      conversationId: string;
+      opencodeSessionId?: string | null;
+      directory?: string | null;
+      clientMessageId: string;
+    }) => {
+      const disposed = conversationRunOwnership.disposeProvisional(input);
+      if (disposed) {
+        terminalDeliveryCoordinator.releaseProvisionalWithoutTerminal(
+          terminalDeliveryProvisionalKeyForScope(input),
+        );
+      }
+      return disposed;
+    },
+    admitAcceptedConversationRun: (input: AcceptedConversationRunInput) => {
+      const provisional = conversationRunOwnership.promoteProvisional(input);
+      if (provisional) {
+        terminalDeliveryCoordinator.promoteProvisional(
+          terminalDeliveryProvisionalKeyForScope(provisional),
+          terminalDeliveryKeyForScope(input),
+        );
+      }
+      conversationRunOwnership.activate(input);
+      return lifecycleRecoveryController?.admitAcceptedConversationRun(input) ?? false;
+    },
+    watchQueuedConversationRun: (input: AcceptedConversationRunInput) => {
+      conversationRunOwnership.reserve(input);
+      return lifecycleRecoveryController?.watchQueuedConversationRun(input) ?? false;
+    },
     retryAcceptedRunForSession: lifecycleRecoveryController?.retryAcceptedRunForSession ?? (() => 0),
     retryTerminalTranscriptRecoveryForSession:
       lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession ?? (() => 0),

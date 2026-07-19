@@ -24,6 +24,29 @@ test('session queue runtime fixture holds, releases, and deterministically fails
     });
     assert.equal(session.status, 200);
 
+    const assistantEvent = await fetch(`${fixture.baseUrl}/__session_queue_fixture/emit-assistant-text-part`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 'ses-fixture',
+        messageId: 'msg-assistant-fixture',
+        partId: 'part-assistant-fixture',
+        text: 'Fixture assistant text',
+      }),
+    });
+    assert.equal(assistantEvent.status, 200);
+    assert.deepEqual(await assistantEvent.json(), {
+      info: { id: 'msg-assistant-fixture', sessionID: 'ses-fixture', role: 'assistant' },
+      part: {
+        id: 'part-assistant-fixture',
+        messageID: 'msg-assistant-fixture',
+        sessionID: 'ses-fixture',
+        type: 'text',
+        text: 'Fixture assistant text',
+      },
+      emittedEventCount: 2,
+    });
+
     const mirroredTranscript = await fetch(`${fixture.baseUrl}/__session_queue_fixture/append-session-transcript`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

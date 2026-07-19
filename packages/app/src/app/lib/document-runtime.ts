@@ -130,8 +130,7 @@ function documentRuntimeProgressDetail(progress: DocumentRuntimePackageInstallPr
   if (progress.phase === "selected") return redactDocumentRuntimeDetail(progress.message, "Office package selected.");
   if (progress.phase === "feed") return "Loading office package feed.";
   if (progress.phase === "failed") return redactDocumentRuntimeDetail(progress.message, "Office package install failed.");
-  if (progress.phase === "ready") return "Office package is ready.";
-  return progress.message ? redactDocumentRuntimeDetail(progress.message, "") : null;
+  return "Office package is ready.";
 }
 
 export function documentRuntimeSkillReady(

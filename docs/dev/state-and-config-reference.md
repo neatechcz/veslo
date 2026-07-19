@@ -58,7 +58,11 @@ Treat these as UI state, not product contract, unless a feature depends on them 
 Legacy `veslo.defaultModel`, `veslo.sessionModels`, and per-workspace
 `veslo.sessionModels.*` values are cleanup-only keys. Desktop startup does not
 hydrate or recreate them, and prompt submission never serializes them as model
-authority. Managed AI gets its read-only effective model from the gateway.
+authority. `veslo.sessionModelSelectorEnabled` is a separate default-off local
+UI preference: it gates the transient composer selector but is not an
+authorization or model-selection record. Managed AI gets its Gateway-owned
+`effectiveModel` fallback and live authorized `selectableModels` roster from
+the gateway.
 
 Developer-only UI surfaces are not enabled by default. The app derives developer mode from the current URL search string, and only a `debug` parameter with no value or a truthy value (`1`, `true`, `yes`, `on`) exposes debug-only panels, badges, and diagnostics. In Vite development builds the same explicit mode also attaches the Solid Devtools overlay; its autoname transform and overlay are excluded from production builds. The separate `veslo:workspace-debug` local storage flag keeps workspace tracing available without showing developer-only UI.
 
@@ -360,7 +364,7 @@ Optional:
 
 Secrets belong in deployment/runtime env or ignored local env files only. `services/den/.env.example` documents the keys with blank secret values and must not contain test or live Stripe secrets.
 
-Managed-AI access assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`, but user rows own only enablement, provider, credential assignment, and `assignment_origin`. The global AI Gateway platform model policy owns the enabled backend models and exactly one active model. The desktop reads that model as `effectiveModel` and writes local OpenCode routing for the assigned provider; users cannot choose or switch the model. `assignment_origin` is `auto_assigned` for DEN sign-up access defaults and `admin_assigned` for explicit admin edits or legacy rows.
+Managed-AI access assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`, but user rows own only enablement, provider, credential assignment, and `assignment_origin`. The global AI Gateway platform model policy owns the enabled backend models and exactly one active fallback model. The desktop reads that fallback as `effectiveModel`, receives the live authorized same-provider roster as `selectableModels`, and writes local OpenCode routing for every selectable model. With the default-off local Session model selector preference enabled, a composer may choose one published model for a send; the Gateway still authorizes every request and rejects arbitrary model, provider, and credential changes. `assignment_origin` is `auto_assigned` for DEN sign-up access defaults and `admin_assigned` for explicit admin edits or legacy rows.
 
 The committed default DEN signup bootstrap leaves `getActiveModelProvider` unwired, so it skips auto-assignment without failing account creation. An integration may explicitly inject a read-only Gateway policy resolver; a missing, unavailable, or non-Codex projection still skips assignment. DEN provider inference defaults to `denInferenceMode: "retired"` and returns `den_managed_ai_inference_retired`. Historical per-user model columns become authoritative only when code explicitly constructs the proxy dependency with `denInferenceMode: "legacy_rollback"`; there is currently no operator environment switch for this rollback. Compatibility reads are mutation-free.
 

@@ -297,22 +297,26 @@ Important behaviors:
 
 When managed AI is enabled, signed-in app identity and desktop handoff come from DEN. Standalone AI Gateway is the sole normal-runtime authority for enablement, provider and credential assignment, the enabled backend model set, exactly one active model, inference, usage, and managed-AI admin. DEN owns identity, organization membership, and billing entitlement. New desktop and orchestrator builds derive the owned standalone AI Gateway from the deployment domain: `https://ai.veslo.work` for production or `https://ai.staging.veslo.work` for staging.
 
-Every provider request resolves in the fixed order authenticated session → DEN billing entitlement → user enablement/provider assignment → global active model → compatible credential. DEN exposes only the minimal organization entitlement decision; AI Gateway caches that decision briefly and fails closed when DEN is unavailable. Billing denial or lookup failure stops before model or credential resolution. Users cannot override the active Managed-AI model.
+Every provider request resolves in the fixed order authenticated session → DEN billing entitlement → user enablement/provider assignment → requested authorized model or global active fallback → compatible credential. DEN exposes only the minimal organization entitlement decision; AI Gateway caches that decision briefly and fails closed when DEN is unavailable. Billing denial or lookup failure stops before model or credential resolution. A user can request only a model currently published in their same-provider Gateway roster; arbitrary model, provider, and credential overrides remain rejected.
 
 The committed default DEN signup bootstrap does not inject `getActiveModelProvider`, so the auth hook skips automatic managed-AI assignment without blocking account creation. An integration may explicitly inject a read-only Gateway policy projection; only a `codex_oauth` active provider and healthy eligible Codex credential creates an `auto_assigned` row. A missing, unavailable, or non-Codex projection skips assignment. Signup does not create a per-user model choice or default model.
 
 DEN provider inference defaults to the code-level dependency `denInferenceMode: "retired"` and returns `410 den_managed_ai_inference_retired`. Historical per-user inference exists only when code explicitly constructs the DEN proxy with `denInferenceMode: "legacy_rollback"`; there is currently no operator environment switch for that mode. Compatibility reads do not mutate assignments or recover model authority from retained columns.
 
-Standalone AI Gateway platform administration configures the global enabled-backend-model set and its single active model. Credential-specific model listing is infrastructure evidence for validating that policy and populating its catalog, not a model choice attached to a user assignment. OpenAI-compatible credentials use live upstream `/models` discovery, while Codex OAuth credentials use the gateway-owned Codex model catalog without relying on experimental Codex model-discovery internals. `/api/me/ai-access` and its alias compose the current active model as read-only `effectiveModel`; users cannot choose or switch it.
+Standalone AI Gateway platform administration configures the global enabled-backend-model set and its single active model. Credential-specific model listing is infrastructure evidence for validating that policy and populating its catalog, not a model choice attached to a user assignment. OpenAI-compatible credentials use live upstream `/models` discovery, while Codex OAuth credentials use the gateway-owned Codex model catalog without relying on experimental Codex model-discovery internals. `/api/me/ai-access` and its alias compose the current active fallback as `effectiveModel` and publish the live authorized same-provider `selectableModels` roster.
 
-The desktop displays that `effectiveModel` as read-only status. It does not send
-a model value with prompts, retries, replacements, shell/command compatibility
-runs, or newly created scheduled automations. Scheduled-automation edits send
-only `model: null` to erase legacy target state. Legacy global, session,
-automation, proof-cache, and transcript model choices are ignored and removed
-where they were persisted, and server automation execution ignores any legacy
-target model that remains on disk. Missing, malformed, or provider-mismatched
-`effectiveModel` data fails closed instead of reviving a legacy choice.
+The desktop displays `effectiveModel` as the managed fallback. With the local
+Session model selector preference enabled and two or more live selectable
+models, the active composer lists the complete roster and can send one selected
+`ModelRef`. The selection is
+transient and is snapshot into accepted queue/retry/confirmation work; it is
+not transcript metadata or a durable per-session model map. When omitted, a
+send uses `effectiveModel`. Scheduled automations still send only `model: null`
+to erase legacy target state. Legacy global, session, automation, proof-cache,
+and transcript model choices are ignored and removed where they were persisted,
+and server automation execution ignores any legacy target model that remains
+on disk. Missing, malformed, or provider-mismatched `effectiveModel` data fails
+closed instead of reviving a legacy choice.
 
 The standalone admin shell keeps platform administration and organization workspaces as separate route areas. Platform overview, organization directory, AI infrastructure, platform users, and global audit routes never retain an organization id. Organization overview, members, domains and invites, billing, AI access, and audit routes always include the authorized organization id in `/admin/organizations/:orgId/...`; the persistent organization selector appears only in that workspace and preserves the current organization subpage when switching. Global user creation, profile edits, platform-admin assignment, disable, and delete actions are available only on the canonical Platform Users route, which cannot mutate organization-scoped AI access. Organization Members writes only membership fields for the routed organization, while Organization AI Access writes only the server-authorized access assignment. Pending organization-scoped reads and mutations cannot update status, close dialogs, redirect, or render into a different organization after a route switch. Organization Billing proxies Den's canonical billing API without duplicating Stripe logic, preserves Den validation responses, and exposes manual controls only to platform admins.
 

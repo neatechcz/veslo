@@ -851,9 +851,7 @@ export function createExtensionsStore(options: {
     ): SkillInventorySkillInput | null => {
       const id = record.id?.trim() ?? "";
       const name = record.name?.trim() ?? "";
-      const scope = record.scope === "workspace" || record.scope === "user-global"
-        ? record.scope
-        : fallback.scope;
+      const scope = record.scope;
       if (!id || !name || record.status === "restored") return null;
       const path = record.path?.trim() || `veslo-removal:${id}`;
       return {
@@ -2750,9 +2748,8 @@ export function createExtensionsStore(options: {
 
   const managedSkillTargetAffectsActiveRuntime = (target: ManagedSkillMutationTarget) => {
     if (target.scope === "user-global" || target.scope === "platform") return true;
-    if (target.scope !== "workspace" && target.scope !== "organization") return false;
     const targetWorkspaceId = target.workspaceId?.trim() || target.restoreTarget?.workspaceId?.trim() || "";
-    if (!targetWorkspaceId) return target.scope === "workspace" || target.scope === "organization";
+    if (!targetWorkspaceId) return true;
     const activeWorkspaceId = options.activeWorkspaceId().trim();
     const vesloWorkspaceId = options.vesloServerWorkspaceId()?.trim() ?? "";
     return targetWorkspaceId === activeWorkspaceId || Boolean(vesloWorkspaceId && targetWorkspaceId === vesloWorkspaceId);

@@ -13,6 +13,10 @@ test("reload banner copy is localized and no longer calls generic config changes
   const systemStateSource = readFileSync(resolve(__dirname, "../system-state.ts"), "utf8");
   const sessionSource = readFileSync(resolve(__dirname, "../pages/session.tsx"), "utf8");
   const configSource = readFileSync(resolve(__dirname, "../pages/config.tsx"), "utf8");
+  const managedAiBannerSource = readFileSync(
+    resolve(__dirname, "../components/session/managed-ai-server-reload-banner.tsx"),
+    "utf8",
+  );
 
   for (const key of [
     "reload.banner_default_description",
@@ -44,7 +48,8 @@ test("reload banner copy is localized and no longer calls generic config changes
   assert.match(sessionSource, /formatTr\("reload\.toast_warning_active"/);
   assert.match(sessionSource, /tr\("reload\.toast_reload_stopped"\)/);
   assert.match(sessionSource, /tr\("reload\.toast_reloading"\)/);
-  assert.match(sessionSource, /session-managed-ai-config-status/);
+  assert.match(sessionSource, /ManagedAiServerReloadBanner/);
+  assert.match(managedAiBannerSource, /session-managed-ai-config-status/);
   assert.match(sessionSource, /managed_ai\.runtime_config_pending_reload/);
   assert.match(sessionSource, /managed_ai\.runtime_config_reloading/);
   assert.match(sessionSource, /tr\("reload\.toast_dismiss"\)/);

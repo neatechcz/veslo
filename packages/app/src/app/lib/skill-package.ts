@@ -204,10 +204,11 @@ async function computeSkillPackageSha256(
 }
 
 export async function validateSkillPackageManifest(manifest: SkillPackageManifest): Promise<SkillPackageManifest> {
-  if (manifest.schemaVersion !== 1) {
+  const rawManifest = manifest as { schemaVersion?: unknown; entrypoint?: unknown };
+  if (rawManifest.schemaVersion !== 1) {
     throw new Error("Skill package manifest schemaVersion must be 1");
   }
-  if (manifest.entrypoint !== ENTRYPOINT) {
+  if (rawManifest.entrypoint !== ENTRYPOINT) {
     throw new Error(`Skill package manifest entrypoint must be ${ENTRYPOINT}`);
   }
   const files = normalizeSkillPackageFiles(manifest.files);

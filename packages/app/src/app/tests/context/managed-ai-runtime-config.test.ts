@@ -992,6 +992,7 @@ test("a background guarded reload retries after an atomic server race", async ()
   try {
     const client = createVesloClient();
     const retryDone = createDeferred<void>();
+    const presentationTransitions: Array<Record<string, unknown>> = [];
     let reloadAttempts = 0;
     client.reloadEngine = async (workspaceId, options) => {
       client.reloadEngineCalls.push({ workspaceId, ifIdle: options?.ifIdle === true });
@@ -1004,6 +1005,11 @@ test("a background guarded reload retries after an atomic server race", async ()
     };
     const sync = createManagedAiRuntimeConfigSync(createOptions({
       vesloServerClient: () => client,
+      recordManagedAiWorkflowTrace: (event, payload) => {
+        if (event === "managed-ai-config-sync:reload-presentation") {
+          presentationTransitions.push(payload);
+        }
+      },
     }));
 
     await sync.syncActiveWorkspaceManagedAiConfig();
@@ -1022,6 +1028,38 @@ test("a background guarded reload retries after an atomic server race", async ()
       { workspaceId: "ws-active", ifIdle: true },
     ]);
     assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
+    assert.deepEqual(presentationTransitions, [
+      {
+        previousKind: "idle",
+        previousWorkspaceId: null,
+        nextKind: "pending",
+        nextWorkspaceId: "ws-active",
+      },
+      {
+        previousKind: "pending",
+        previousWorkspaceId: "ws-active",
+        nextKind: "reloading",
+        nextWorkspaceId: "ws-active",
+      },
+      {
+        previousKind: "reloading",
+        previousWorkspaceId: "ws-active",
+        nextKind: "pending",
+        nextWorkspaceId: "ws-active",
+      },
+      {
+        previousKind: "pending",
+        previousWorkspaceId: "ws-active",
+        nextKind: "reloading",
+        nextWorkspaceId: "ws-active",
+      },
+      {
+        previousKind: "reloading",
+        previousWorkspaceId: "ws-active",
+        nextKind: "idle",
+        nextWorkspaceId: null,
+      },
+    ]);
   } finally {
     if (originalWindow) {
       Object.defineProperty(globalThis, "window", originalWindow);

@@ -65,6 +65,14 @@ jobs:
         if: runner.os != 'Linux'
         run: pnpm test:e2e:ui
 
+      - name: Run terminal assistant ordering gate (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm --filter @neatech/veslo-e2e run test:pilot:session-run-truthfulness
+
+      - name: Run terminal assistant ordering gate (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: pnpm --filter @neatech/veslo-e2e run test:pilot:session-run-truthfulness
+
       - name: Upload visual diffs on failure
         if: failure()
         uses: actions/upload-artifact@v7

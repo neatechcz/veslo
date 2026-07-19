@@ -456,6 +456,12 @@ export function createManagedAiRuntimeConfigSync(
       (current.kind === "idle" ||
         (next.kind !== "idle" && current.workspaceId === next.workspaceId))
     ) return;
+    deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:reload-presentation", {
+      previousKind: current.kind,
+      previousWorkspaceId: current.kind === "idle" ? null : current.workspaceId,
+      nextKind: next.kind,
+      nextWorkspaceId: next.kind === "idle" ? null : next.workspaceId,
+    });
     setManagedAiServerReloadPresentation(next);
   };
 
@@ -1383,10 +1389,7 @@ export function createManagedAiRuntimeConfigSync(
     ) {
       const outcome: ManagedAiConfigSyncOutcome = { kind: "verified" };
       recordFlight("completed-intent-skip", null, outcome);
-      if (
-        reason === "active-workspace" &&
-        latestManagedAiConfigSyncFingerprintByScope.get(intent.scopeKey) === intent.fingerprint
-      ) {
+      if (latestManagedAiConfigSyncFingerprintByScope.get(intent.scopeKey) === intent.fingerprint) {
         latestManagedAiConfigSyncFingerprintByScope.delete(intent.scopeKey);
       }
       return outcome;

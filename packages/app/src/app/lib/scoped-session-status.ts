@@ -99,9 +99,9 @@ export const pickSessionStatusSnapshot = (
   for (const sessionId of sessionIds) {
     const session = normalize(sessionId);
     if (!session) continue;
-    if (statuses[session] !== undefined) next[session] = statuses[session];
+    if (Object.hasOwn(statuses, session)) next[session] = statuses[session];
     const scoped = scopedSessionStatusKey(workspaceId, session);
-    if (scoped && statuses[scoped] !== undefined) next[scoped] = statuses[scoped];
+    if (scoped && Object.hasOwn(statuses, scoped)) next[scoped] = statuses[scoped];
   }
   return next;
 };

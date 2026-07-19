@@ -28,7 +28,7 @@ test("lifecycle recovery traces are mirrored into the enabled dev-runtime send t
   );
   assert.match(
     sessionStoreSource,
-    /hydrateConversationTranscript:\s*\(snapshot\)\s*=>\s*hydrateTranscriptSnapshot\(snapshot, \{ preserveLiveParts: false \}\)/,
+    /hydrateConversationTranscript:\s*\(snapshot, scope\)\s*=>\s*\{\s*terminalDeliveryCoordinator\.retainTerminalDisplay\(\s*terminalDeliveryKeyForScope\(scope\),/s,
   );
 });
 
@@ -650,6 +650,80 @@ test("terminal transcript recovery publishes one retryable unavailable diagnosti
   assert.equal(recoveryAttempts, 3, "explicit retry restarts only this terminal transcript recovery");
 });
 
+test("a mismatched exact-run response cannot terminally release the watched run", async () => {
+  const statusWrites: string[] = [];
+  const terminals: string[] = [];
+  const traces: string[] = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => ({ runId: "run-b", status: "completed", stale: false }),
+    setSessionStatusForWorkspace: (_sessionId, status) => statusWrites.push(status),
+    notifySessionBusy: () => {},
+    onConversationRunTerminal: (scope) => terminals.push(scope.runId),
+    trace: (event) => traces.push(event),
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  assert.deepEqual(terminals, []);
+  assert.equal(statusWrites.includes("idle"), false);
+  assert.ok(traces.includes("session-lifecycle-recovery:ignored-run-mismatch"));
+});
+
+test("terminal transcript retry continues after presentation ownership transfers away", async () => {
+  const timers: Timer[] = [];
+  let ownsPresentation = true;
+  let recoveryAttempts = 0;
+  let terminalCallbacks = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => ({ runId: "run-a", status: "completed", stale: false }),
+    isConversationRunActive: () => ownsPresentation,
+    recoverConversationTranscript: async () => {
+      recoveryAttempts += 1;
+      return null;
+    },
+    onConversationRunTerminal: () => { terminalCallbacks += 1; },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => { (timer as Timer).cleared = true; },
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+  ownsPresentation = false;
+  timers.find((timer) => timer.delayMs > 0 && !timer.cleared)?.callback();
+  await waitForAsyncPoll();
+  await waitForAsyncPoll();
+
+  assert.equal(recoveryAttempts, 2);
+  assert.equal(terminalCallbacks, 1);
+});
+
 test("session lifecycle recovery clears local busy state after terminal backend status", async () => {
   const timers: Timer[] = [];
   const statuses = {
@@ -885,7 +959,7 @@ test("session lifecycle recovery keeps an admitted watch after engine idle and w
   assert.equal(controller.activeWatchCount(), 0);
 });
 
-test("session lifecycle recovery keeps a durable queued run submitted through engine idle", async () => {
+test("session lifecycle recovery keeps a durable queued run unarmed through engine idle", async () => {
   const statuses: Record<string, string> = { "ws-a\0ses-a": "running" };
   const statusWrites: string[] = [];
   const busyWrites: string[] = [];
@@ -915,10 +989,36 @@ test("session lifecycle recovery keeps a durable queued run submitted through en
   assert.equal(controller.observeSessionLifecycleEvent("ses-a", "ws-a", "session.idle"), true);
   await waitForAsyncPoll();
 
-  assert.deepEqual(statusWrites, ["ses-a:submitted", "conv-a:submitted"]);
-  assert.deepEqual(busyWrites, ["ses-a:submitted"]);
-  assert.equal(statuses["ws-a\0ses-a"], "submitted");
+  assert.deepEqual(statusWrites, []);
+  assert.deepEqual(busyWrites, []);
+  assert.equal(statuses["ws-a\0ses-a"], "idle");
   assert.equal(controller.activeWatchCount(), 1);
+});
+
+test("a terminal non-owner run cannot clear the shared visible session status", async () => {
+  const statusWrites: string[] = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => ({ runId: "run-b", status: "completed", stale: false }),
+    isConversationRunActive: () => false,
+    setSessionStatusForWorkspace: (sessionId, status) => statusWrites.push(`${sessionId}:${status}`),
+    notifySessionBusy: () => {},
+  });
+
+  controller.watchQueuedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    opencodeSessionId: "ses-a",
+    runId: "run-b",
+    clientMessageId: "msg-b",
+  });
+  await waitForAsyncPoll();
+
+  assert.deepEqual(statusWrites, []);
+  assert.equal(controller.activeWatchCount(), 0);
 });
 
 test("selected exact conversation probes latest once after reload and restores durable failure", async () => {
@@ -1018,7 +1118,7 @@ test("terminal lifecycle truth remains available after its watch is released", a
   assert.equal(diagnostics[0]?.status, "failed");
 });
 
-test("a superseded in-flight lifecycle poll cannot terminalize its replacement", async () => {
+test("an exact in-flight lifecycle poll may terminalize its own run after a newer run is watched", async () => {
   const timers: Timer[] = [];
   const terminals: string[] = [];
   const statusWrites: string[] = [];
@@ -1061,8 +1161,8 @@ test("a superseded in-flight lifecycle poll cannot terminalize its replacement",
   settleOldPoll({ runId: "run-old", status: "failed", stale: false, error: "old failure" });
   await waitForAsyncPoll();
 
-  assert.deepEqual(terminals, []);
-  assert.deepEqual(statusWrites, []);
+  assert.deepEqual(terminals, ["run-old"]);
+  assert.deepEqual(statusWrites, ["ses-a:idle", "conv-a:idle"]);
   assert.equal(controller.activeWatchCount(), 1);
 });
 
@@ -1286,7 +1386,7 @@ test("accepted run exhaustion stays explicit and resumes only on a relevant trig
   assert.deepEqual(readScopes, ["ws-a:run-a", "ws-b:run-b", "ws-a:run-a"]);
 });
 
-test("a newer admitted run fences late transcript hydration from the old run", async () => {
+test("a newer admitted run does not fence late transcript hydration from the old exact run", async () => {
   let resolveOldRecovery!: (snapshot: {
     workspaceId: string;
     sessionId: string;
@@ -1350,11 +1450,11 @@ test("a newer admitted run fences late transcript hydration from the old run", a
   });
   await waitForAsyncPoll();
 
-  assert.deepEqual(hydrated, []);
+  assert.deepEqual(hydrated, ["ses-a"]);
   assert.equal(controller.activeWatchCount(), 1);
 });
 
-test("a newer accepted run cancels the old terminal transcript retry", async () => {
+test("a newer accepted run does not cancel the old exact terminal transcript retry", async () => {
   const timers: Timer[] = [];
   let recoveryAttempts = 0;
   const controller = createSessionLifecycleRecoveryController({
@@ -1403,8 +1503,8 @@ test("a newer accepted run cancels the old terminal transcript retry", async () 
     clientMessageId: "msg-new",
   });
 
-  assert.equal(retryTimer.cleared, true);
+  assert.equal(retryTimer.cleared, false);
   retryTimer.callback();
   await waitForAsyncPoll();
-  assert.equal(recoveryAttempts, 1, "a cancelled superseded retry must not recover the old run");
+  assert.equal(recoveryAttempts, 2, "the exact old-run retry remains owned by the old run");
 });

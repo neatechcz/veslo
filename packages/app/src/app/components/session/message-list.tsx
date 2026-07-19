@@ -941,8 +941,8 @@ export default function MessageList(props: MessageListProps) {
           if (memoNoOp) {
             streamBenchmark.noOpTimestamps.push(now);
             while (
-              streamBenchmark.noOpTimestamps[0] !== undefined &&
-              now - streamBenchmark.noOpTimestamps[0] > CHURN_WINDOW_MS
+              streamBenchmark.noOpTimestamps.at(0) !== undefined &&
+              now - streamBenchmark.noOpTimestamps.at(0)! > CHURN_WINDOW_MS
             ) {
               streamBenchmark.noOpTimestamps.shift();
             }
@@ -973,7 +973,7 @@ export default function MessageList(props: MessageListProps) {
         }
         if (memoNoOp) {
           recentMemoNoOps.push(now);
-          while (recentMemoNoOps[0] !== undefined && now - recentMemoNoOps[0] > CHURN_WINDOW_MS) {
+          while (recentMemoNoOps.at(0) !== undefined && now - recentMemoNoOps.at(0)! > CHURN_WINDOW_MS) {
             recentMemoNoOps.shift();
           }
           if (recentMemoNoOps.length >= CHURN_NO_OP_THRESHOLD && now - lastMemoNoOpIncidentAt >= CHURN_WINDOW_MS) {

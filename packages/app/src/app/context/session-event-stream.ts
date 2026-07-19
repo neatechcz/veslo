@@ -198,6 +198,11 @@ export type SessionEventStreamControllerDeps = {
     workspaceId: string | null | undefined,
     type: "session.idle" | "session.error",
   ) => boolean;
+  deferAssistantTextPartMutation?: (input: {
+    sessionId: string;
+    workspaceId: string;
+    commit: () => void;
+  }) => boolean;
   sessionDebugEnabled: () => boolean;
   sessionWarn: (label: string, payload?: unknown) => void;
   recordSessionStatusTrace: (event: string, payload?: Record<string, unknown>) => void;
@@ -291,7 +296,19 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       if (key.startsWith(prefix)) seenTextDeltaEventIdsByPart.delete(key);
     }
   };
-  const observeTextDelta = (
+  const inspectTextDelta = (
+    sourceWsId: string,
+    sessionID: string,
+    partID: string,
+    eventId: string | undefined,
+  ): "accepted" | "duplicate" | "unidentified" => {
+    const normalizedEventId = eventId?.trim();
+    if (!normalizedEventId) return "unidentified";
+    const key = textDeltaScopeKey(sourceWsId, sessionID, partID);
+    const seen = seenTextDeltaEventIdsByPart.get(key) ?? new Set<string>();
+    return seen.has(normalizedEventId) ? "duplicate" : "accepted";
+  };
+  const commitTextDelta = (
     sourceWsId: string,
     sessionID: string,
     partID: string,
@@ -848,16 +865,21 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           }
 
           const delta = typeof record.delta === "string" ? record.delta : null;
-          const textDeltaOutcome =
+          const preparedTextDeltaOutcome =
             delta && part.type === "text"
-              ? observeTextDelta(sourceWsId, part.sessionID, part.id, event.eventId)
+              ? inspectTextDelta(sourceWsId, part.sessionID, part.id, event.eventId)
               : null;
           const partUpdatedStartedAt = perfNow();
           const parentMessageRole =
             deps.store.messages[part.sessionID]?.find((message) => message.id === part.messageID)
               ?.role ?? null;
 
-          if (textDeltaOutcome !== "duplicate") {
+          const commitPartMutation = () => {
+            const textDeltaOutcome =
+              delta && part.type === "text"
+                ? commitTextDelta(sourceWsId, part.sessionID, part.id, event.eventId)
+                : null;
+            if (textDeltaOutcome === "duplicate") return;
             const currentMessages = deps.store.messages[part.sessionID] ?? [];
             const hasMessage = currentMessages.some((message) => message.id === part.messageID);
             const currentParts = deps.store.parts[part.messageID] ?? [];
@@ -899,8 +921,18 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
                 draft.parts[part.messageID] = upsertPartInfo(parts, part);
               }),
             );
-          }
-          deps.onTranscriptObserved?.(part.sessionID);
+            deps.onTranscriptObserved?.(part.sessionID);
+          };
+          const deferred =
+            part.type === "text" &&
+            parentMessageRole === "assistant" &&
+            preparedTextDeltaOutcome !== "duplicate" &&
+            deps.deferAssistantTextPartMutation?.({
+              sessionId: part.sessionID,
+              workspaceId: sourceWsId,
+              commit: commitPartMutation,
+            }) === true;
+          if (!deferred) commitPartMutation();
           const resolvedPart =
             deps.store.parts[part.messageID]?.find((item) => item.id === part.id) ??
             part;
@@ -945,7 +977,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               partType: part.type,
               role: parentMessageRole,
               deltaLength: delta?.length ?? 0,
-              deltaDelivery: textDeltaOutcome,
+              deltaDelivery: deferred ? "held" : preparedTextDeltaOutcome,
               hasTransportEventId: Boolean(event.eventId),
               textLength: resolvedTextLength,
               hasText: (resolvedTextLength ?? 0) > 0,

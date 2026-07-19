@@ -140,7 +140,7 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
 
 function stringifyUnknown(value: unknown): string {
   try {
-    const stringified = JSON.stringify(value);
+    const stringified = JSON.stringify(value) as string | undefined;
     return stringified === undefined ? String(value) : stringified;
   } catch {
     return String(value);

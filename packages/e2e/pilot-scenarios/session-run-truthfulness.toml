@@ -237,6 +237,32 @@ try {
   await waitUntil(() => document.querySelectorAll(`[data-message-id="${completedMessageId}"]`).length === 1, { message: 'The completed-run canonical user transcript row did not hydrate.' });
   assert(document.querySelectorAll('[role="alert"]').length === 1, 'Completed durable run received failed-run treatment.');
 
+  stage = 'terminal-assistant-text-order';
+  await submitText('terminal-assistant-order');
+  const terminalOrderRun = await nextRun(knownRunCount);
+  knownRunCount += 1;
+  await waitUntil(() => runIndicator(), { message: 'Terminal-order fixture run did not become visibly active.' });
+  const terminalAssistantText = 'terminal-assistant-text-after-idle';
+  const beforeTerminalAssistantEvent = await fixtureState();
+  await fixturePost('/__session_queue_fixture/emit-assistant-text-part', {
+    sessionId,
+    messageId: `${terminalOrderRun.runId}-assistant`,
+    partId: `${terminalOrderRun.runId}-assistant-part`,
+    text: terminalAssistantText,
+  });
+  await waitUntil(async () => (await fixtureState()).emittedEventCount >= beforeTerminalAssistantEvent.emittedEventCount + 2, {
+    message: 'Terminal assistant SSE events were not emitted.',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert(!document.body.innerText.includes(terminalAssistantText), 'Final assistant text rendered before durable terminality hid the run indicator.');
+  await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(terminalOrderRun.runId)}/completed`);
+  await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
+  await waitUntil(() => !runIndicator(), { timeout: 45000, message: 'Terminal-order run did not hide its active indicator.' });
+  await waitUntil(() => document.body.innerText.includes(terminalAssistantText), {
+    timeout: 45000,
+    message: 'Final assistant text did not render after terminal indicator removal.',
+  });
+
   stage = 'aborted-run-submit';
   await submitText('truthfulness-aborted');
   const abortedRun = await nextRun(knownRunCount);
@@ -290,7 +316,7 @@ try {
     timeout: 45000,
     message: 'The attachment-only optimistic row was not uniquely adopted by the canonical transcript.',
   });
-  assert(document.querySelectorAll('[data-message-role="user"]').length === 4, 'Attachment-only adoption left a duplicate user row.');
+  assert(document.querySelectorAll('[data-message-role="user"]').length === 5, 'Attachment-only adoption left a duplicate user row.');
 
   stage = 'operational-run-submit';
   await submitText('truthfulness-operational-error');

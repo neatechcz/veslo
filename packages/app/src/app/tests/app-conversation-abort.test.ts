@@ -30,8 +30,8 @@ test("conversation runs remember abort and lifecycle run ids under scoped identi
   );
   assert.match(
     runSource,
-    /const lifecycleRunId = result\.status === "submitted"[\s\S]*\? result\.runId[\s\S]*: result\.reservedRunId;[\s\S]*deps\.rememberLatestConversationLifecycleRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: lifecycleRunId,[\s\S]*\}\);/,
-    "queued lifecycle recovery should watch the reserved queued run id, not the currently active blocking run",
+    /if \(result\.status === "submitted"\) \{[\s\S]*deps\.rememberLatestConversationLifecycleRunId\(\{[\s\S]*workspaceId,[\s\S]*conversationId: result\.conversationId,[\s\S]*opencodeSessionId: result\.opencodeSessionId,[\s\S]*uiSessionId: normalizedSessionId,[\s\S]*runId: result\.runId,[\s\S]*\}\);[\s\S]*\}/,
+    "a queued reservation must not replace the active lifecycle run id used by raw SSE",
   );
 });
 

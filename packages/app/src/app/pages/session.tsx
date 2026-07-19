@@ -115,11 +115,13 @@ import {
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
 import type { ManagedAiServerReloadPresentation } from "../context/managed-ai-runtime-config";
+import ManagedAiServerReloadBanner from "../components/session/managed-ai-server-reload-banner";
 
 import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions, ComposerSendResult } from "../components/session/composer";
 import ComposerTargetPicker from "../components/session/composer-target-picker";
+import SessionModelSelector from "../components/session/session-model-selector";
 import type { SidebarSessionOpenTarget } from "../components/session/workspace-session-list-model";
 import QueuedMessageList from "../components/session/queued-message-list";
 import ServerQueuedRunList from "../components/session/server-queued-run-list";
@@ -2060,37 +2062,32 @@ export default function SessionView(props: SessionViewProps) {
       ? selection.model
       : null;
   });
-  const selectedSessionModelValue = createMemo(() => {
-    const selected = activeSessionModelOverride();
-    return selected ? `${selected.providerID}:${selected.modelID}` : "";
+  const sessionModelOverrideUnavailable = createMemo(() => {
+    const selection = sessionModelOverride();
+    if (selection.sessionKey !== currentSessionQueueKey() || !selection.model) return false;
+    return !selectableSessionModels().some(
+      (entry) =>
+        entry.model.providerID === selection.model!.providerID &&
+        entry.model.modelID === selection.model!.modelID,
+    );
   });
-  const setActiveSessionModelOverride = (value: string) => {
-    const selected = selectableSessionModels().find(
-      (entry) => `${entry.model.providerID}:${entry.model.modelID}` === value,
-    )?.model;
-    setSessionModelOverride({ sessionKey: currentSessionQueueKey(), model: selected ?? null });
-  };
+  const setActiveSessionModelOverride = (model: ModelRef | null) =>
+    setSessionModelOverride({ sessionKey: currentSessionQueueKey(), model });
   const sessionModelSelector = () => (
-    <Show when={props.sessionModelSelectorEnabled && selectableSessionModels().length > 1}>
-      <label class="flex w-full max-w-[960px] items-center justify-end gap-2 text-xs text-gray-9">
-        <span>Model</span>
-        <select
-          data-testid="session-model-selector"
-          class="rounded-lg border border-gray-6 bg-gray-1 px-2 py-1 text-xs text-gray-12"
-          value={selectedSessionModelValue()}
-          onInput={(event) => setActiveSessionModelOverride(event.currentTarget.value)}
-        >
-          <option value="">Workspace default</option>
-          <For each={selectableSessionModels()}>
-            {(entry) => (
-              <option value={`${entry.model.providerID}:${entry.model.modelID}`}>
-                {entry.model.modelID}
-              </option>
-            )}
-          </For>
-        </select>
-      </label>
-    </Show>
+    <SessionModelSelector
+      enabled={props.sessionModelSelectorEnabled}
+      models={selectableSessionModels()}
+      selectedModel={activeSessionModelOverride()}
+      selectionUnavailable={sessionModelOverrideUnavailable()}
+      disabled={composerBusy()}
+      label={tr("session.managed_model_selector_label")}
+      defaultLabel={tr("session.managed_model_default")}
+      imageCapableLabel={tr("session.managed_model_image_capable")}
+      imageUnsupportedLabel={tr("session.managed_model_image_unsupported")}
+      imageUnknownLabel={tr("session.managed_model_image_unknown")}
+      selectionUnavailableMessage={tr("session.managed_model_selection_unavailable")}
+      onSelect={setActiveSessionModelOverride}
+    />
   );
   createEffect(on(() => props.sessionModelSelectorEnabled, (enabled) => {
     if (enabled) return;
@@ -4162,27 +4159,12 @@ export default function SessionView(props: SessionViewProps) {
         )}
         reloadBanner={(
         <>
-          <Show when={props.managedAiServerReloadPresentation.kind !== "idle"}>
-            <div
-              class="border-b border-blue-6/50 bg-blue-2/70 px-6 py-2"
-              data-testid="session-managed-ai-config-status"
-              data-managed-ai-config-status={props.managedAiServerReloadPresentation.kind}
-            >
-              <div class={`mx-auto flex w-full ${searchBannerWidthClass()} items-center gap-2 rounded-lg border border-blue-6/60 bg-blue-1/85 px-3 py-2 text-xs text-blue-11 shadow-sm`}>
-                <Loader2
-                  size={14}
-                  class={props.managedAiServerReloadPresentation.kind === "reloading" ? "shrink-0 animate-spin" : "shrink-0"}
-                />
-                <span>
-                  {tr(
-                    props.managedAiServerReloadPresentation.kind === "reloading"
-                      ? "managed_ai.runtime_config_reloading"
-                      : "managed_ai.runtime_config_pending_reload",
-                  )}
-                </span>
-              </div>
-            </div>
-          </Show>
+          <ManagedAiServerReloadBanner
+            presentation={props.managedAiServerReloadPresentation}
+            widthClass={searchBannerWidthClass()}
+            pendingLabel={tr("managed_ai.runtime_config_pending_reload")}
+            reloadingLabel={tr("managed_ai.runtime_config_reloading")}
+          />
           <Show when={props.showSkillReloadBanner}>
             <div
               class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3"

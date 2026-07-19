@@ -539,6 +539,23 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
       sendJson(response, 200, fixtureStatePayload(state));
       return;
     }
+    if (url.pathname === '/__session_queue_fixture/emit-assistant-text-part' && method === 'POST') {
+      const body = await readJson(request);
+      const sessionId = normalized(body.sessionId);
+      const messageId = normalized(body.messageId);
+      const partId = normalized(body.partId);
+      const text = typeof body.text === 'string' ? body.text : '';
+      if (!sessionId || !messageId || !partId || !state.sessions.has(sessionId)) {
+        sendJson(response, 400, { error: 'session_message_part_required' });
+        return;
+      }
+      const info = { id: messageId, sessionID: sessionId, role: 'assistant' };
+      const part = { id: partId, messageID: messageId, sessionID: sessionId, type: 'text', text };
+      emitFixtureEvent(state, { type: 'message.updated', properties: { info } });
+      emitFixtureEvent(state, { type: 'message.part.updated', properties: { part } });
+      sendJson(response, 200, { info, part, emittedEventCount: state.emittedEventCount });
+      return;
+    }
     if (url.pathname === '/__session_queue_fixture/emit-operational-error' && method === 'POST') {
       const body = await readJson(request);
       const message = normalized(body.message) || 'Session queue fixture emitted an unrelated operational error.';

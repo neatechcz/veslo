@@ -67,13 +67,9 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
         : __vesloT("reload.trigger_agents_changed", __vesloCurrentLocale());
     }
 
-    if (type === "command") {
-      return trimmedName
-        ? __vesloT("reload.trigger_command_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
-        : __vesloT("reload.trigger_commands_changed", __vesloCurrentLocale());
-    }
-
-    return __vesloT("reload.trigger_config_changed", __vesloCurrentLocale());
+    return trimmedName
+      ? __vesloT("reload.trigger_command_named", __vesloCurrentLocale()).replace("{name}", trimmedName).replace("{verb}", verb)
+      : __vesloT("reload.trigger_commands_changed", __vesloCurrentLocale());
   };
 
   return (

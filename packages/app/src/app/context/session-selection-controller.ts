@@ -813,13 +813,11 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             clearMessageLoadBusy();
             return;
           }
-          if (recovered.status === "unavailable") {
-            if (!abortIfStale("selection changed before unavailable history applied")) {
-              markSessionHistoryUnavailable(sessionID, recovered.history);
-            }
-            clearMessageLoadBusy();
-            return;
+          if (!abortIfStale("selection changed before unavailable history applied")) {
+            markSessionHistoryUnavailable(sessionID, recovered.history);
           }
+          clearMessageLoadBusy();
+          return;
         }
         if (!abortIfStale("selection changed before transcript read failure applied")) {
           markSessionHistoryUnavailable(sessionID, unavailableHistory("live-transcript-read-failed"));
