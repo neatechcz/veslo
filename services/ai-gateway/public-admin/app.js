@@ -147,7 +147,6 @@ const els = {
   seatLimitControls: Array.from(document.querySelectorAll("[data-seat-limit-control]")),
   organizationEditorTitle: document.getElementById("organization-editor-title"),
   organizationName: document.getElementById("organization-name"),
-  organizationSlug: document.getElementById("organization-slug"),
   organizationSeatLimit: document.getElementById("organization-seat-limit"),
   organizationSaveButton: document.getElementById("organization-save-button"),
   organizationSaveStatus: document.getElementById("organization-save-status"),
@@ -350,7 +349,7 @@ function clearRouteOwnedDom() {
   ].forEach((node) => {
     if (node) node.textContent = "";
   });
-  [els.organizationName, els.organizationSlug, els.organizationSeatLimit].forEach((input) => {
+  [els.organizationName, els.organizationSeatLimit].forEach((input) => {
     if (input) input.value = "";
   });
   els.credentialCreateName.value = "";
@@ -502,7 +501,6 @@ function releaseRouteActionsForCurrentRoute({ focusHeading = false } = {}) {
   }
   if (route?.area === "organization" && route.page === "overview") {
     els.organizationName.disabled = !canEditOrganization;
-    els.organizationSlug.disabled = !canEditOrganization;
     els.organizationSeatLimit.disabled = state.session?.platformAdmin !== true;
     els.organizationSaveButton.disabled = !canEditOrganization;
   }
@@ -1449,7 +1447,7 @@ function renderRoute() {
   els.pageTitle.textContent = title;
   els.pageDescription.textContent = description;
   const organization = currentOrganization();
-  els.operatingOrganizationLabel.textContent = `Operating organization: ${organization?.name || organization?.slug || route?.organizationId || "unavailable"}`;
+  els.operatingOrganizationLabel.textContent = `Operating organization: ${organization?.name || organization?.id || route?.organizationId || "unavailable"}`;
   if (
     route?.area === "organization"
     && route.page === "overview"
@@ -1791,9 +1789,8 @@ function currentOrganization() {
 
 function organizationSelectorLabel(organization) {
   const name = String(organization?.name || "").trim();
-  const slug = String(organization?.slug || "").trim();
   const id = String(organization?.id || "").trim();
-  return [name || slug || id, slug, id]
+  return [name || id, id]
     .filter(Boolean)
     .filter((value, index, values) => values.indexOf(value) === index)
     .join(" - ");
@@ -1812,7 +1809,6 @@ function findOrganizationFromSelectorValue(value) {
     const candidates = [
       organizationSelectorLabel(organization),
       organization?.name,
-      organization?.slug,
       organization?.id,
     ].map(normalizeSelectorText);
     return candidates.includes(normalized);
@@ -1829,13 +1825,13 @@ function renderOrganizationSelector() {
   const organizations = Array.isArray(state.organizations) ? state.organizations : [];
   const selected = currentOrganization();
   els.organizationSelectorOptions.innerHTML = organizations.map((organization) => `
-    <option value="${escapeHtml(organizationSelectorLabel(organization))}" label="${escapeHtml(organization.slug || organization.id)}"></option>
+    <option value="${escapeHtml(organizationSelectorLabel(organization))}" label="${escapeHtml(organization.name || organization.id)}"></option>
   `).join("");
   els.organizationSelectorInput.value = selected ? organizationSelectorLabel(selected) : "";
   els.organizationSelectorInput.disabled = state.routeActionsLocked || organizations.length <= 1;
   els.organizationSelectorInput.title = organizations.length <= 1
     ? "Only one organization is available."
-    : "Search by organization name, slug, or id.";
+    : "Search by organization name or ID.";
 }
 
 function hasOrganizationPendingChanges() {
@@ -1854,7 +1850,6 @@ function hasOrganizationPendingChanges() {
   const currentSeatLimit = els.organizationSeatLimit.value.trim();
   return (
     els.organizationName.value.trim() !== String(organization.name || "").trim() ||
-    els.organizationSlug.value.trim() !== String(organization.slug || "").trim() ||
     (state.session?.platformAdmin === true && currentSeatLimit !== savedSeatLimit)
   );
 }
@@ -1912,14 +1907,14 @@ function renderOrganizationsDirectory() {
   els.organizationDirectoryList.innerHTML = organizations.map((organization) => `
     <article class="list-card organization-directory-card">
       <div>
-        <strong>${escapeHtml(organization.name || organization.slug || organization.id)}</strong>
-        <p>${escapeHtml(organization.slug || "No slug")} · ${escapeHtml(organization.id)}</p>
+        <strong>${escapeHtml(organization.name || organization.id)}</strong>
+        <p>${escapeHtml(organization.id)}</p>
       </div>
       <button
         class="button button-secondary"
         type="button"
         data-enter-organization-id="${escapeHtml(organization.id)}"
-        aria-label="Open ${escapeHtml(organization.name || organization.slug || organization.id)} organization workspace"
+        aria-label="Open ${escapeHtml(organization.name || organization.id)} organization workspace"
       >Open workspace</button>
     </article>
   `).join("") || `<article class="list-card active"><div><strong>No organizations</strong><p>No organization workspaces are available.</p></div></article>`;
@@ -2511,7 +2506,6 @@ function renderOrganization() {
     renderOrganizationSelector();
     els.organizationEditorTitle.textContent = "No organization";
     els.organizationName.value = "";
-    els.organizationSlug.value = "";
     els.organizationSeatLimit.value = "";
     els.organizationDomainList.innerHTML = `<article class="list-card active"><div><strong>No organization</strong><p>No organization is available for this session.</p></div></article>`;
     els.organizationInviteList.innerHTML = `<article class="list-card active"><div><strong>No pending invites</strong><p>Select an organization first.</p></div></article>`;
@@ -2519,9 +2513,8 @@ function renderOrganization() {
   }
 
   renderOrganizationSelector();
-  els.organizationEditorTitle.textContent = organization.name || organization.slug || organization.id;
+  els.organizationEditorTitle.textContent = organization.name || organization.id;
   els.organizationName.value = organization.name || "";
-  els.organizationSlug.value = organization.slug || "";
   els.organizationSeatLimit.value = organization.seatLimit === null || organization.seatLimit === undefined
     ? ""
     : String(organization.seatLimit);
@@ -2956,8 +2949,7 @@ function organizationMemberToRouteSubject(member, organization) {
     memberships: [{
       membershipId,
       orgId: organization.id,
-      orgName: organization.name || organization.slug || organization.id,
-      orgSlug: organization.slug || "",
+      orgName: organization.name || organization.id,
       role,
       status,
     }],
@@ -3712,7 +3704,6 @@ async function saveOrganization() {
 
   const payload = {
     name: els.organizationName.value.trim(),
-    slug: els.organizationSlug.value.trim(),
   };
   if (state.session?.platformAdmin === true) {
     payload.seatLimit = els.organizationSeatLimit.value.trim() ? Number(els.organizationSeatLimit.value) : null;

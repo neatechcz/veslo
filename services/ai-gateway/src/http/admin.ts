@@ -3199,7 +3199,7 @@ export function adminFallbackShellHtml(session: AdminSessionSnapshot) {
     : "";
   const organizationNavigation = session.organizations.map((organization) => {
     const organizationId = encodeURIComponent(organization.id);
-    const organizationLabel = escapeAdminShellHtml(organization.name || organization.slug || organization.id);
+    const organizationLabel = escapeAdminShellHtml(organization.name || organization.id);
     return `<section data-organization-workspace="${escapeAdminShellHtml(organization.id)}">
           <h3>${organizationLabel}</h3>
           <nav aria-label="${organizationLabel} organization workspace">
