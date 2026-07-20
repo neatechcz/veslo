@@ -469,7 +469,7 @@ export default function Composer(props: ComposerProps) {
   let fileInputRef: HTMLInputElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
-  let observedDraftStorageKey = props.draftStorageKey;
+  let observedDraftStorageKey = untrack(() => props.draftStorageKey);
   let storageKeyTransitionAuthorizesPromptSync = false;
   let pendingParentConditionalClear: { storageKey: string; nextRevision: number } | null = null;
   let scheduledDraftStorageKey: string | null = null;

@@ -1098,12 +1098,14 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
           return false;
         })
       )
-      .then((ready) => {
-        if (!ready && vesloServerStatus() === "disconnected") {
-          setManagedAiProjectFallbackConfirmed(true);
-        }
-        return ready;
-      })
+      .then((ready) =>
+        untrack(() => {
+          if (!ready && vesloServerStatus() === "disconnected") {
+            setManagedAiProjectFallbackConfirmed(true);
+          }
+          return ready;
+        })
+      )
       .finally(() => {
         if (deadlineTimer !== null) clearTimeout(deadlineTimer);
         if (
