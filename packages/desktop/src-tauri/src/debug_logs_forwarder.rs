@@ -528,11 +528,15 @@ impl DebugLogsForwarder {
         let context = self
             .user_capture_context_snapshot()
             .ok_or_else(|| "Sign in before starting a diagnostic capture".to_string())?;
-        self.user_capture.start(&context)
+        self.user_capture.start(&context)?;
+        Ok(self.user_diagnostic_capture_status())
     }
 
     pub fn user_diagnostic_capture_status(&self) -> UserDiagnosticCaptureStatus {
-        self.user_capture.status()
+        let context = self.user_capture_context_snapshot();
+        let mut status = self.user_capture.status();
+        status.can_start = UserDiagnosticCapture::can_start_with_context(context.as_ref());
+        status
     }
 
     fn should_attempt_direct_fallback(&self, now: SystemTime) -> bool {
@@ -1433,6 +1437,32 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("secret-token"));
+    }
+
+    #[test]
+    fn diagnostic_capture_status_requires_signed_in_production_context() {
+        let dir = tempdir().unwrap();
+        let forwarder = DebugLogsForwarder::new(dir.path().to_path_buf());
+        assert!(!forwarder.user_diagnostic_capture_status().can_start);
+
+        forwarder.set_cloud_diagnostics_context(
+            "https://den.example.test".to_string(),
+            "secret-token".to_string(),
+            "user-1".to_string(),
+            "org-1".to_string(),
+            None,
+        );
+        assert!(!forwarder.user_diagnostic_capture_status().can_start);
+
+        forwarder.set_cloud_diagnostics_context(
+            "https://api.veslo.work".to_string(),
+            "secret-token".to_string(),
+            "user-1".to_string(),
+            "org-1".to_string(),
+            None,
+        );
+        assert!(forwarder.user_diagnostic_capture_status().can_start);
+        assert!(forwarder.start_user_diagnostic_capture().unwrap().can_start);
     }
 
     #[test]

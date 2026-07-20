@@ -30,7 +30,10 @@ const SSE_LINE_BUFFER_CAP: usize = 1 << 20; // 1 MiB hard cap per single event
 #[derive(Debug, PartialEq, Eq)]
 enum SseParseStep {
     None,
-    Emit { data: String, event_id: Option<String> },
+    Emit {
+        data: String,
+        event_id: Option<String>,
+    },
     Overflow,
     InvalidUtf8,
 }

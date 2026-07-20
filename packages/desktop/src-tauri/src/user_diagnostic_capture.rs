@@ -34,6 +34,7 @@ pub struct CaptureCloudContext {
 #[serde(rename_all = "camelCase")]
 pub struct UserDiagnosticCaptureStatus {
     pub available: bool,
+    pub can_start: bool,
     pub capture_id: Option<String>,
     pub state: String,
     pub started_at: Option<u64>,
@@ -101,6 +102,12 @@ enum PostBatchError {
     Rejected,
 }
 
+struct PreparedBatch {
+    batch_id: String,
+    events: Vec<serde_json::Value>,
+    body: Vec<u8>,
+}
+
 pub struct UserDiagnosticCapture {
     spool_dir: PathBuf,
     journal_path: PathBuf,
@@ -146,42 +153,100 @@ fn is_production_den_api_base(value: &str) -> bool {
     value.trim().trim_end_matches('/') == PRODUCTION_DEN_API_BASE
 }
 
-fn event_batch_len(batch_id: &str, events: &[serde_json::Value]) -> usize {
-    serde_json::to_vec(&serde_json::json!({ "batchId": batch_id, "events": events }))
-        .map(|value| value.len())
-        .unwrap_or(usize::MAX)
+fn event_id(event: &serde_json::Value) -> Option<&str> {
+    event
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
 }
 
-fn build_batches(events: &[serde_json::Value]) -> Vec<Vec<serde_json::Value>> {
+fn serialize_delivery_request(
+    context: &CaptureCloudContext,
+    batch_id: &str,
+    events: &[serde_json::Value],
+) -> Result<Vec<u8>, &'static str> {
+    serde_json::to_vec(&serde_json::json!({
+        "batchId": batch_id,
+        "events": events,
+        "installId": "user-capture",
+        "bootId": "user-capture",
+        "userId": context.user_id,
+        "orgId": context.org_id,
+        "workspaceId": context.workspace_id,
+        "deliveryPath": "desktop-direct-fallback",
+    }))
+    .map_err(|_| "queue_event_unserializable")
+}
+
+fn prepare_batch(
+    context: &CaptureCloudContext,
+    capture_id: &str,
+    events: Vec<serde_json::Value>,
+) -> Result<PreparedBatch, &'static str> {
+    let first_id = events
+        .first()
+        .and_then(event_id)
+        .ok_or("queue_invalid_event_id")?;
+    let batch_id = format!("capture:{capture_id}:{first_id}");
+    let body = serialize_delivery_request(context, &batch_id, &events)?;
+    Ok(PreparedBatch {
+        batch_id,
+        events,
+        body,
+    })
+}
+
+fn validate_delivery_events(events: &[serde_json::Value]) -> Result<(), &'static str> {
+    let mut ids = std::collections::HashSet::new();
+    for event in events {
+        let id = event_id(event).ok_or("queue_invalid_event_id")?;
+        if !ids.insert(id.to_string()) {
+            return Err("queue_duplicate_event_id");
+        }
+        let bytes = serde_json::to_vec(event).map_err(|_| "queue_event_unserializable")?;
+        if bytes.len() > CAPTURE_MAX_BYTES as usize {
+            return Err("queue_event_exceeds_capture_budget");
+        }
+    }
+    Ok(())
+}
+
+fn build_batches(
+    context: &CaptureCloudContext,
+    capture_id: &str,
+    events: &[serde_json::Value],
+) -> Result<Vec<PreparedBatch>, &'static str> {
     let mut batches = Vec::new();
     let mut current = Vec::new();
     for event in events {
-        let id = event
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or("unknown");
         let mut candidate = current.clone();
         candidate.push(event.clone());
-        let batch_id = format!(
-            "capture:{}:{id}",
-            event
-                .get("captureId")
-                .and_then(|value| value.as_str())
-                .unwrap_or("unknown")
-        );
-        if candidate.len() <= MAX_BATCH_EVENTS
-            && event_batch_len(&batch_id, &candidate) <= MAX_BATCH_BYTES
-        {
+        let candidate_batch = prepare_batch(context, capture_id, candidate.clone())?;
+        if candidate.len() <= MAX_BATCH_EVENTS && candidate_batch.body.len() <= MAX_BATCH_BYTES {
             current = candidate;
-        } else if !current.is_empty() {
-            batches.push(std::mem::take(&mut current));
+            continue;
+        }
+
+        if !current.is_empty() {
+            batches.push(prepare_batch(
+                context,
+                capture_id,
+                std::mem::take(&mut current),
+            )?);
+        }
+
+        let single = prepare_batch(context, capture_id, vec![event.clone()])?;
+        if single.body.len() > MAX_BATCH_BYTES {
+            batches.push(single);
+        } else {
             current.push(event.clone());
         }
     }
     if !current.is_empty() {
-        batches.push(current);
+        batches.push(prepare_batch(context, capture_id, current)?);
     }
-    batches
+    Ok(batches)
 }
 
 fn retry_delay_ms(attempts: u32) -> u64 {
@@ -398,6 +463,17 @@ impl UserDiagnosticCapture {
         Ok(self.status())
     }
 
+    pub fn can_start_with_context(context: Option<&CaptureCloudContext>) -> bool {
+        USER_DIAGNOSTIC_CAPTURE_ENABLED
+            && context.is_some_and(|context| {
+                !context.den_api_base.trim().is_empty()
+                    && !context.token.trim().is_empty()
+                    && !context.user_id.trim().is_empty()
+                    && !context.org_id.trim().is_empty()
+                    && is_production_den_api_base(&context.den_api_base)
+            })
+    }
+
     pub fn observe(
         &self,
         source: &str,
@@ -479,6 +555,7 @@ impl UserDiagnosticCapture {
         {
             Some(record) => UserDiagnosticCaptureStatus {
                 available: USER_DIAGNOSTIC_CAPTURE_ENABLED,
+                can_start: false,
                 capture_id: Some(record.capture_id),
                 state: record.state,
                 started_at: Some(record.started_at),
@@ -495,6 +572,7 @@ impl UserDiagnosticCapture {
             },
             None => UserDiagnosticCaptureStatus {
                 available: USER_DIAGNOSTIC_CAPTURE_ENABLED,
+                can_start: false,
                 capture_id: None,
                 state: "idle".to_string(),
                 started_at: None,
@@ -543,6 +621,25 @@ impl UserDiagnosticCapture {
     }
 
     pub fn flush(&self, context: Option<CaptureCloudContext>) {
+        self.flush_with_poster(context, post_batch);
+    }
+
+    fn reject_delivery(&self, capture_id: &str, path: &Path, dropped: u64, reason: &str) {
+        self.update_latest(capture_id, |latest| {
+            latest.dropped_delivery += dropped;
+            latest.pending_events = 0;
+            latest.state = "delivery_rejected".to_string();
+            latest.terminal_reason = Some(reason.to_string());
+            latest.next_retry_at = None;
+        });
+        let _ = fs::remove_file(path);
+        let _ = self.persist();
+    }
+
+    fn flush_with_poster<P>(&self, context: Option<CaptureCloudContext>, mut poster: P)
+    where
+        P: FnMut(&CaptureCloudContext, &PreparedBatch) -> Result<(), PostBatchError>,
+    {
         let Ok(_queue) = self.queue_lock.lock() else {
             return;
         };
@@ -629,22 +726,25 @@ impl UserDiagnosticCapture {
             let _ = self.persist();
             return;
         }
+        if let Err(reason) = validate_delivery_events(&events) {
+            self.reject_delivery(&record.capture_id, &path, events.len() as u64, reason);
+            return;
+        }
+        let batches = match build_batches(&context, &record.capture_id, &events) {
+            Ok(batches) => batches,
+            Err(reason) => {
+                self.reject_delivery(&record.capture_id, &path, events.len() as u64, reason);
+                return;
+            }
+        };
         let mut delivered = std::collections::HashSet::new();
         let mut rejected = false;
         let mut retryable = false;
-        for batch in build_batches(&events) {
-            let first_id = batch
-                .first()
-                .and_then(|event| event.get("id"))
-                .and_then(|value| value.as_str())
-                .unwrap_or("unknown");
-            let batch_id = format!("capture:{}:{first_id}", record.capture_id);
-            match post_batch(&context, &batch_id, &batch) {
+        for batch in batches {
+            match poster(&context, &batch) {
                 Ok(()) => {
-                    for event in batch {
-                        if let Some(id) = event.get("id").and_then(|value| value.as_str()) {
-                            delivered.insert(id.to_string());
-                        }
+                    for event in &batch.events {
+                        delivered.insert(event_id(event).expect("validated event ID").to_string());
                     }
                 }
                 Err(PostBatchError::Rejected) => {
@@ -718,16 +818,19 @@ impl UserDiagnosticCapture {
     }
 }
 
-fn post_batch(
-    context: &CaptureCloudContext,
-    batch_id: &str,
-    events: &[serde_json::Value],
-) -> Result<(), PostBatchError> {
+fn post_batch(context: &CaptureCloudContext, batch: &PreparedBatch) -> Result<(), PostBatchError> {
     let url = format!(
         "{}/v1/desktop-diagnostics",
         context.den_api_base.trim_end_matches('/')
     );
-    let response = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(5)).build().post(&url).set("Content-Type", "application/json").set("Authorization", &format!("Bearer {}", context.token)).set("Idempotency-Key", batch_id).send_string(&serde_json::json!({ "batchId": batch_id, "events": events, "installId": "user-capture", "bootId": "user-capture", "userId": context.user_id, "orgId": context.org_id, "workspaceId": context.workspace_id, "deliveryPath": "desktop-direct-fallback" }).to_string());
+    let response = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .post(&url)
+        .set("Content-Type", "application/json")
+        .set("Authorization", &format!("Bearer {}", context.token))
+        .set("Idempotency-Key", &batch.batch_id)
+        .send_bytes(&batch.body);
     match response {
         Ok(response) if (200..300).contains(&response.status()) => Ok(()),
         Err(ureq::Error::Status(status, _))
@@ -751,6 +854,165 @@ mod tests {
             user_id: "user-1".to_string(),
             org_id: "org-1".to_string(),
             workspace_id: Some("workspace-1".to_string()),
+        }
+    }
+
+    fn queued_event(id: &str, capture_id: &str, line: String) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "captureId": capture_id,
+            "userId": "user-1",
+            "orgId": "org-1",
+            "workspaceId": "workspace-1",
+            "source": "engine",
+            "stream": "stderr",
+            "timestamp": 1,
+            "sequenceNo": 1,
+            "payload": { "line": line },
+        })
+    }
+
+    fn replace_queue(
+        capture: &UserDiagnosticCapture,
+        capture_id: &str,
+        events: &[serde_json::Value],
+        state: &str,
+    ) {
+        let queue = queue_path(&capture.spool_dir, capture_id);
+        let raw = events
+            .iter()
+            .map(|event| event.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&queue, format!("{raw}\n")).unwrap();
+        capture.update_latest(capture_id, |latest| {
+            latest.state = state.to_string();
+            latest.pending_events = events.len() as u64;
+        });
+        capture.persist().unwrap();
+    }
+
+    #[test]
+    fn prepared_batches_preserve_oversized_event_order_and_exact_body() {
+        let capture_id = "capture-1";
+        let events = vec![
+            queued_event("small-before", capture_id, "a".to_string()),
+            queued_event("oversized", capture_id, "x".repeat(MAX_BATCH_BYTES + 1)),
+            queued_event("small-after", capture_id, "b".to_string()),
+        ];
+
+        let batches = build_batches(&context(), capture_id, &events).unwrap();
+        let ids = batches
+            .iter()
+            .flat_map(|batch| batch.events.iter())
+            .map(|event| event_id(event).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, ["small-before", "oversized", "small-after"]);
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[1].events.len(), 1);
+        assert!(batches[1].body.len() > MAX_BATCH_BYTES);
+        assert_eq!(batches[1].batch_id, "capture:capture-1:oversized");
+        let posted: serde_json::Value = serde_json::from_slice(&batches[1].body).unwrap();
+        assert_eq!(posted["batchId"], batches[1].batch_id);
+        assert_eq!(posted["events"], serde_json::json!([events[1].clone()]));
+    }
+
+    #[test]
+    fn prepared_batches_keep_the_500_event_boundary_normal() {
+        let capture_id = "capture-1";
+        let events = (0..=MAX_BATCH_EVENTS)
+            .map(|index| queued_event(&format!("event-{index}"), capture_id, "x".to_string()))
+            .collect::<Vec<_>>();
+
+        let batches = build_batches(&context(), capture_id, &events).unwrap();
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].events.len(), MAX_BATCH_EVENTS);
+        assert_eq!(batches[1].events.len(), 1);
+        assert!(batches
+            .iter()
+            .all(|batch| batch.body.len() <= MAX_BATCH_BYTES));
+    }
+
+    #[test]
+    fn successful_local_poster_removes_oversized_event_from_finished_capture() {
+        let dir = tempdir().unwrap();
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+        let capture_id = capture.start(&context()).unwrap().capture_id.unwrap();
+        let event = queued_event("oversized", &capture_id, "x".repeat(MAX_BATCH_BYTES + 1));
+        replace_queue(
+            &capture,
+            &capture_id,
+            std::slice::from_ref(&event),
+            "finished",
+        );
+
+        let mut posted = None;
+        capture.flush_with_poster(Some(context()), |_, batch| {
+            posted = Some((batch.batch_id.clone(), batch.body.clone()));
+            Ok(())
+        });
+
+        let (batch_id, body) = posted.expect("oversized batch posted");
+        assert_eq!(batch_id, format!("capture:{capture_id}:oversized"));
+        assert!(body.len() > MAX_BATCH_BYTES);
+        let status = capture.status();
+        assert_eq!(status.pending_events, 0);
+        assert_eq!(status.accepted_events, 1);
+        assert_eq!(status.state, "uploaded");
+        assert!(!queue_path(dir.path(), &capture_id).exists());
+    }
+
+    #[test]
+    fn invalid_or_over_budget_queue_event_is_terminally_dropped_without_posting() {
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+
+        for (reason, events) in [
+            (
+                "queue_invalid_event_id",
+                vec![serde_json::json!({ "captureId": "capture-1" })],
+            ),
+            (
+                "queue_invalid_event_id",
+                vec![queued_event("", "capture-1", "x".to_string())],
+            ),
+            (
+                "queue_duplicate_event_id",
+                vec![
+                    queued_event("duplicate", "capture-1", "x".to_string()),
+                    queued_event(" duplicate ", "capture-1", "y".to_string()),
+                ],
+            ),
+            (
+                "queue_event_exceeds_capture_budget",
+                vec![queued_event(
+                    "over-budget",
+                    "capture-1",
+                    "x".repeat(CAPTURE_MAX_BYTES as usize),
+                )],
+            ),
+        ] {
+            let dir = tempdir().unwrap();
+            let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+            let capture_id = capture.start(&context()).unwrap().capture_id.unwrap();
+            replace_queue(&capture, &capture_id, &events, "finished");
+            let mut post_calls = 0;
+            capture.flush_with_poster(Some(context()), |_, _| {
+                post_calls += 1;
+                Ok(())
+            });
+
+            let status = capture.status();
+            assert_eq!(post_calls, 0, "{reason}");
+            assert_eq!(status.pending_events, 0, "{reason}");
+            assert_eq!(status.dropped_delivery, events.len() as u64, "{reason}");
+            assert_eq!(status.state, "delivery_rejected", "{reason}");
+            assert_eq!(status.terminal_reason.as_deref(), Some(reason), "{reason}");
+            assert!(!queue_path(dir.path(), &capture_id).exists(), "{reason}");
         }
     }
 

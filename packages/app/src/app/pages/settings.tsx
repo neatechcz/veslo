@@ -51,7 +51,7 @@ import {
   redactDocumentRuntimeStatus,
   type DocumentRuntimeStatusPayload,
 } from "../lib/document-runtime";
-import { sanitizeBootstrapDiagnosticPayload } from "../lib/bootstrap-diagnostics";
+import { recordBootstrapDiagnostic, sanitizeBootstrapDiagnosticPayload } from "../lib/bootstrap-diagnostics";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
@@ -397,6 +397,8 @@ export default function SettingsView(props: SettingsViewProps) {
   const [userCapture, setUserCapture] = createSignal<UserDiagnosticCaptureStatus | null>(null);
   const [userCaptureBusy, setUserCaptureBusy] = createSignal(false);
   const [userCaptureError, setUserCaptureError] = createSignal<string | null>(null);
+  const [userCaptureLoadError, setUserCaptureLoadError] = createSignal<string | null>(null);
+  const [userCaptureStatusBusy, setUserCaptureStatusBusy] = createSignal(false);
   const defaultDenApiBase = getDefaultDenApiBase();
   const [denApiBaseOverride, setDenApiBaseOverride] = createSignal(readDenApiBaseOverride() ?? "");
   const [denApiBaseDraft, setDenApiBaseDraft] = createSignal(getDenApiBase());
@@ -485,12 +487,25 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
-  const refreshUserCapture = async () => {
+  const refreshUserCapture = async ({ force = false }: { force?: boolean } = {}) => {
     if (!isTauriRuntime()) return;
+    if (userCaptureStatusBusy()) return;
+    // A missing command or forwarder is terminal for this window. Do not keep
+    // invoking it every five seconds; the user can explicitly retry after a
+    // desktop restart or a Vite reload.
+    if (!force && userCaptureLoadError()) return;
+    setUserCaptureStatusBusy(true);
     try {
       setUserCapture(await userDiagnosticCaptureStatus());
-    } catch {
+      setUserCaptureLoadError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       setUserCapture(null);
+      setUserCaptureLoadError(message || "Could not load diagnostic capture status.");
+      console.warn("[user-diagnostic-capture] status unavailable", error);
+      void recordBootstrapDiagnostic("user-diagnostic-capture:status-unavailable", { message });
+    } finally {
+      setUserCaptureStatusBusy(false);
     }
   };
 
@@ -777,7 +792,10 @@ export default function SettingsView(props: SettingsViewProps) {
   const orchestratorVersionLabel = () => props.orchestratorStatus?.cliVersion ?? "—";
 
   onMount(() => {
-    if (!isTauriRuntime()) return;
+    if (!isTauriRuntime()) {
+      console.warn("[user-diagnostic-capture] status skipped: renderer is not running in Tauri");
+      return;
+    }
     void appBuildInfo().then((info) => setBuildInfo(info)).catch(() => setBuildInfo(null));
     void desktopRuntimePreferencesRead()
       .then((preferences) => {
@@ -1607,7 +1625,27 @@ export default function SettingsView(props: SettingsViewProps) {
             </div>
 
             <Show when={isTauriRuntime()}>
-              <Show when={userCapture()?.available}>
+              <Show
+                when={userCapture()?.available && userCapture()?.canStart}
+                fallback={
+                  <Show when={userCaptureLoadError()}>
+                    {(error) => (
+                      <div data-user-diagnostic-capture-unavailable class="bg-red-2/20 border border-red-7/35 rounded-2xl p-5 space-y-3">
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="min-w-0">
+                            <div class="text-sm font-medium text-gray-12">Diagnostic capture unavailable</div>
+                            <div class="text-xs text-gray-10">Veslo could not read the native diagnostic capture status.</div>
+                          </div>
+                          <Button variant="outline" class="shrink-0" disabled={userCaptureBusy() || userCaptureStatusBusy()} onClick={() => void refreshUserCapture({ force: true })}>
+                            {userCaptureStatusBusy() ? "Retrying..." : "Retry"}
+                          </Button>
+                        </div>
+                        <div class="text-xs text-red-11">{error()}</div>
+                      </div>
+                    )}
+                  </Show>
+                }
+              >
                 <div data-user-diagnostic-capture class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">

@@ -937,6 +937,7 @@ export type DesktopRuntimePreferences = {
 
 export type UserDiagnosticCaptureStatus = {
   available: boolean;
+  canStart: boolean;
   captureId: string | null;
   state: string;
   startedAt: number | null;

@@ -1,5 +1,4 @@
 mod bootstrap_diagnostics;
-mod user_diagnostic_capture;
 mod bun_env;
 mod commands;
 mod config;
@@ -20,6 +19,7 @@ mod single_window_config_tests;
 mod supervised_process;
 mod types;
 mod updater;
+mod user_diagnostic_capture;
 mod utils;
 mod veslo_server;
 mod workspace;
@@ -119,6 +119,7 @@ fn register_debug_logs_forwarder(app_handle: &tauri::AppHandle) {
         Duration::from_secs(5),
     );
     tauri::Manager::manage(app_handle, forwarder);
+    eprintln!("[debug-logs-forwarder] initialized");
 }
 
 pub(crate) fn stop_managed_services(app_handle: &tauri::AppHandle) -> Vec<u32> {

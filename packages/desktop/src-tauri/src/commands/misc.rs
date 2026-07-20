@@ -386,33 +386,33 @@ fn is_private_send_workflow_trace_key(key: &str) -> bool {
         || lower.contains("apikey")
         || matches!(
             lower.as_str(),
-        "message"
-            | "error"
-            | "failure"
-            | "stack"
-            | "body"
-            | "text"
-            | "label"
-            | "title"
-            | "content"
-            | "prompt"
-            | "transcript"
-            | "workspacepath"
-            | "workspace_path"
-            | "workspaceroot"
-            | "workspace_root"
-            | "directory"
-            | "projectdir"
-            | "project_dir"
-            | "dbpath"
-            | "db_path"
-            | "path"
-            | "filepath"
-            | "file_path"
-            | "email"
-            | "subject"
-            | "laststdout"
-            | "laststderr"
+            "message"
+                | "error"
+                | "failure"
+                | "stack"
+                | "body"
+                | "text"
+                | "label"
+                | "title"
+                | "content"
+                | "prompt"
+                | "transcript"
+                | "workspacepath"
+                | "workspace_path"
+                | "workspaceroot"
+                | "workspace_root"
+                | "directory"
+                | "projectdir"
+                | "project_dir"
+                | "dbpath"
+                | "db_path"
+                | "path"
+                | "filepath"
+                | "file_path"
+                | "email"
+                | "subject"
+                | "laststdout"
+                | "laststderr"
         )
 }
 
@@ -441,7 +441,9 @@ fn redact_send_workflow_trace_value(value: &mut serde_json::Value) {
                 }
             }
         }
-        serde_json::Value::String(text) if send_workflow_trace_string_contains_absolute_path(text) => {
+        serde_json::Value::String(text)
+            if send_workflow_trace_string_contains_absolute_path(text) =>
+        {
             *value = serde_json::Value::String("[redacted-path]".to_string());
         }
         _ => {}
@@ -454,7 +456,8 @@ fn redact_send_workflow_trace_payload(raw: &str) -> String {
     };
     redact_send_workflow_trace_value(&mut payload);
     serde_json::to_string(&payload).unwrap_or_else(|_| {
-        r#"{"schema":"send-workflow/v1","source":"ui","event":"trace-redaction-failed"}"#.to_string()
+        r#"{"schema":"send-workflow/v1","source":"ui","event":"trace-redaction-failed"}"#
+            .to_string()
     })
 }
 
@@ -757,8 +760,8 @@ pub fn read_obsidian_mirror_file(
 mod tests {
     use super::{
         append_send_workflow_trace_line, normalize_obsidian_mirror_relative_path,
-        redact_send_workflow_trace_payload, sanitize_obsidian_workspace_id, should_emit_send_workflow_trace,
-        update_session_directory_in_db,
+        redact_send_workflow_trace_payload, sanitize_obsidian_workspace_id,
+        should_emit_send_workflow_trace, update_session_directory_in_db,
     };
     use rusqlite::Connection;
     use std::fs;
@@ -790,7 +793,10 @@ mod tests {
         assert!(!redacted.contains("sensitive-prompt"));
         assert!(!redacted.contains("secret-token"));
         let parsed: serde_json::Value = serde_json::from_str(&redacted).expect("redacted JSON");
-        assert_eq!(parsed["event"], "server:conversation-run:lifecycle-register");
+        assert_eq!(
+            parsed["event"],
+            "server:conversation-run:lifecycle-register"
+        );
         assert_eq!(parsed["workspacePath"], "[redacted]");
         assert_eq!(parsed["detail"], "[redacted-path]");
         assert_eq!(parsed["nested"]["directory"], "[redacted]");

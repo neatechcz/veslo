@@ -48,15 +48,22 @@ pub fn clear_bootstrap_diagnostics_cloud_context(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn user_diagnostic_capture_status(app: AppHandle) -> Result<UserDiagnosticCaptureStatus, String> {
-    let forwarder = app
-        .try_state::<Arc<DebugLogsForwarder>>()
-        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
+pub fn user_diagnostic_capture_status(
+    app: AppHandle,
+) -> Result<UserDiagnosticCaptureStatus, String> {
+    let forwarder = app.try_state::<Arc<DebugLogsForwarder>>().ok_or_else(|| {
+        eprintln!(
+            "[user-diagnostic-capture] status requested but debug logs forwarder is unavailable"
+        );
+        "desktop diagnostics forwarder is unavailable".to_string()
+    })?;
     Ok(forwarder.inner().as_ref().user_diagnostic_capture_status())
 }
 
 #[tauri::command]
-pub fn start_user_diagnostic_capture(app: AppHandle) -> Result<UserDiagnosticCaptureStatus, String> {
+pub fn start_user_diagnostic_capture(
+    app: AppHandle,
+) -> Result<UserDiagnosticCaptureStatus, String> {
     let forwarder = app
         .try_state::<Arc<DebugLogsForwarder>>()
         .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;

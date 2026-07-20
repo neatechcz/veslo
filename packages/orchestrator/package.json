@@ -13,6 +13,7 @@
     "build:bin:bundled": "node scripts/clean-dist.mjs && node ../desktop/scripts/prepare-sidecar.mjs --outdir dist && bun --config=./script/bunfig.build.toml ./script/build.ts --outdir dist --filename veslo && bun scripts/build-bin.ts",
     "build:sidecars": "node scripts/build-sidecars.mjs",
     "typecheck": "tsc -p tsconfig.typecheck.json",
+    "test:sandbox-policy": "bun test src/tests/sandbox-resolution.test.ts",
     "test:router": "pnpm build && node scripts/router.mjs",
     "test:files": "pnpm build && node scripts/files-session.mjs",
     "prepublishOnly": "node -e \"console.error('veslo-orchestrator is published via packages/orchestrator/scripts/publish-npm.mjs (meta + platform packages)'); process.exit(1);\""
