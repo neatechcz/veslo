@@ -181,4 +181,3 @@ git diff main...HEAD -- packages/app packages/server
 ```
 
 Expected: only the design/plan, AI Gateway admin sources, and their tests changed; the final command has no output.
-

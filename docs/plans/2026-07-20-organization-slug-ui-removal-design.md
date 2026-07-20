@@ -32,4 +32,3 @@ The backend organization model and PATCH endpoint continue accepting and returni
 - Source-level UI tests assert that no slug input or visible slug copy remains and that organization saves omit the field.
 - Browser-level tests cover the organization overview as both platform admin and organization admin.
 - Existing AI Gateway tests, type checking, and the relevant Playwright admin suite must pass.
-
