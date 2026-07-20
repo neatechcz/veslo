@@ -2,6 +2,8 @@ import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 
 import { createApp } from '../../../services/ai-gateway/src/index.js';
+import type { PlatformModelCapabilityVerifier } from '../../../services/ai-gateway/src/model-policy/capability-verifier.js';
+import { listCodexModelCatalog } from '../../../services/ai-gateway/src/providers/codex-model-catalog.js';
 
 export const E2E_MANAGED_AI_USER_ID = 'user_veslo_e2e_managed_ai';
 export const E2E_MANAGED_AI_SECOND_USER_ID = 'user_veslo_e2e_managed_ai_second';
@@ -34,6 +36,7 @@ export type ManagedAiGatewayFixtureRequest = {
 
 export type ManagedAiGatewayFixture = {
   baseUrl: string;
+  modelCapabilities: PlatformModelCapabilityVerifier;
   requests: ManagedAiGatewayFixtureRequest[];
   server: Server;
 };
@@ -220,6 +223,29 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
     createdAt: now,
     updatedAt: now,
   };
+  const modelCapabilities: PlatformModelCapabilityVerifier = {
+    async checkHealthyCredentialForModel() {
+      return { status: 'supported', credentialId: CREDENTIAL_ID };
+    },
+    async checkHealthyCredentialsForModels(models) {
+      return models.map((model) => {
+        if (model.provider !== 'codex_oauth') {
+          return { model, status: 'unsupported', reason: 'no_healthy_credential' };
+        }
+        if (!listCodexModelCatalog().includes(model.model)) {
+          return { model, status: 'unsupported', reason: 'model_unsupported' };
+        }
+        return { model, status: 'supported', credentialId: CREDENTIAL_ID };
+      });
+    },
+    async checkCredentialForModel() {
+      return { status: 'supported', credentialId: CREDENTIAL_ID };
+    },
+    async hasHealthyCredentialForModel() {
+      return true;
+    },
+    invalidateCredential() {},
+  };
   const credentials = {
     async getCredentialRecordById(id: string) {
       return id === CREDENTIAL_ID ? credentialRecord : null;
@@ -325,12 +351,7 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
       credentials,
       aiAccess,
       modelPolicy,
-      modelCapabilities: {
-        async checkHealthyCredentialForModel() { return { status: 'supported' as const, credentialId: CREDENTIAL_ID }; },
-        async checkCredentialForModel() { return { status: 'supported' as const, credentialId: CREDENTIAL_ID }; },
-        async hasHealthyCredentialForModel() { return true; },
-        invalidateCredential() {},
-      },
+      modelCapabilities,
     },
     userCredentials: { sessionResolver, aiAccess, modelPolicy },
     proxy: proxy as never,
@@ -378,7 +399,7 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
     server.close();
     throw new Error('Managed AI gateway fixture did not bind to a TCP port.');
   }
-  return { baseUrl: `http://127.0.0.1:${address.port}`, requests, server };
+  return { baseUrl: `http://127.0.0.1:${address.port}`, modelCapabilities, requests, server };
 }
 
 export async function stopManagedAiGatewayFixture(fixture: ManagedAiGatewayFixture | null): Promise<void> {

@@ -102,6 +102,7 @@ function createAiAccessRecord(overrides: Partial<UserAiAccessPolicyRecord> = {})
 function createUserAiAccessApp(overrides: {
   session?: UserSession;
   aiAccess?: UserAiAccessPolicyRecord | null;
+  getAiAccess?: (userId: string) => Promise<UserAiAccessPolicyRecord | null>;
   getModelPolicy?: () => Promise<unknown>;
 } = {}) {
   const session = overrides.session ?? {
@@ -123,7 +124,12 @@ function createUserAiAccessApp(overrides: {
       aiAccess: {
         async getUserAiAccess(userId: string) {
           assert.equal(userId, session.user.id);
-          return overrides.aiAccess ?? createAiAccessRecord();
+          if (overrides.getAiAccess) {
+            return overrides.getAiAccess(userId);
+          }
+          return Object.hasOwn(overrides, "aiAccess")
+            ? overrides.aiAccess ?? null
+            : createAiAccessRecord();
         },
         async upsertUserAiAccess() {
           throw new Error("unused");
@@ -224,6 +230,110 @@ test("GET /ai-gateway/me/ai-access returns the signed-in user's admin-managed ai
         updatedAt: "2026-04-08T10:05:00.000Z",
       },
     });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("GET explicit user AI access routes return the same policy as /me", async () => {
+  const runtime = createUserAiAccessApp({});
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const meResponse = await fetch(`${baseUrl}/api/me/ai-access`, { headers: runtime.authHeader });
+
+    assert.equal(meResponse.status, 200);
+    const expected = await meResponse.json();
+    for (const path of [
+      "/api/users/user_123/ai-access",
+      "/ai-gateway/users/user_123/ai-access",
+    ]) {
+      const response = await fetch(`${baseUrl}${path}`, { headers: runtime.authHeader });
+      assert.equal(response.status, 200, path);
+      assert.deepEqual(await response.json(), expected, path);
+    }
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("GET explicit user AI access rejects a different user identity before policy lookup", async () => {
+  let aiAccessReads = 0;
+  let modelPolicyReads = 0;
+  const runtime = createUserAiAccessApp({
+    getAiAccess: async () => {
+      aiAccessReads += 1;
+      return createAiAccessRecord();
+    },
+    getModelPolicy: async () => {
+      modelPolicyReads += 1;
+      throw new Error("model policy lookup must not run for a mismatched user");
+    },
+  });
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    for (const path of [
+      "/api/users/user_456/ai-access",
+      "/ai-gateway/users/user_456/ai-access",
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, { headers: runtime.authHeader });
+      assert.equal(response.status, 403, path);
+      assert.deepEqual(await response.json(), { error: "user_identity_mismatch" }, path);
+    }
+    assert.equal(aiAccessReads, 0);
+    assert.equal(modelPolicyReads, 0);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("GET explicit user AI access requires bearer authentication", async () => {
+  const runtime = createUserAiAccessApp({});
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/api/users/user_123/ai-access`);
+
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "unauthorized" });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("GET explicit user AI access preserves the authenticated null response", async () => {
+  let modelPolicyReads = 0;
+  const runtime = createUserAiAccessApp({
+    aiAccess: null,
+    getModelPolicy: async () => {
+      modelPolicyReads += 1;
+      throw new Error("model policy lookup must not run without an AI access record");
+    },
+  });
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/api/users/user_123/ai-access`, {
+      headers: runtime.authHeader,
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { aiAccess: null });
+    assert.equal(modelPolicyReads, 0);
   } finally {
     server.close();
     await once(server, "close");

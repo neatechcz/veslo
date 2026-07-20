@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const routes = await import("../public-admin/admin-route-state.js")
@@ -235,23 +236,43 @@ test("user update payloads contain only fields authorized by the canonical route
   assert.equal(routes.buildAdminUserUpdatePayload(aiAccess, platformAccess, input), null);
 });
 
-test("route mutation tokens reject pending success and error after switching organizations", () => {
+test("route mutation tokens reject completions after every platform and organization scope change", () => {
   assert.equal(typeof routes.createAdminMutationState, "function");
   assert.equal(typeof routes.beginAdminRouteMutation, "function");
   assert.equal(typeof routes.isAdminRouteMutationCurrent, "function");
   const mutations = routes.createAdminMutationState();
+  const platform = { area: "platform", page: "platform-users", organizationId: null };
   const orgA = { area: "organization", page: "members", organizationId: "org_a" };
   const orgB = { area: "organization", page: "members", organizationId: "org_b" };
+  const pageLoad = (key: string, generation: number) => ({ key, generation, status: "ready", error: "" });
 
-  const pendingSuccess = routes.beginAdminRouteMutation(mutations, "member-save", orgA);
-  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingSuccess, orgB), false);
+  for (const [from, to, fromPage, toPage, label] of [
+    [platform, orgA, pageLoad("platform:platform-users", 1), pageLoad("organization:org_a:members", 2), "platform to organization"],
+    [orgA, platform, pageLoad("organization:org_a:members", 3), pageLoad("platform:platform-users", 4), "organization to platform"],
+    [orgA, orgB, pageLoad("organization:org_a:members", 5), pageLoad("organization:org_b:members", 6), "organization A to organization B"],
+  ]) {
+    const pending = routes.beginAdminRouteMutation(mutations, `member-save-${label}`, from, fromPage);
+    assert.equal(routes.isAdminRouteMutationCurrent(mutations, pending, to, toPage), false, label);
+    assert.equal(routes.isAdminRouteMutationCurrent(mutations, pending, from, fromPage), true, `${label} origin`);
+  }
+});
 
-  const pendingError = routes.beginAdminRouteMutation(mutations, "member-save", orgA);
-  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingError, orgB), false);
+test("route mutation tokens reject same-route refresh and leave-return ABA generations", () => {
+  const mutations = routes.createAdminMutationState();
+  const route = { area: "organization", page: "members", organizationId: "org_a" };
+  const firstPage = { key: "organization:org_a:members", generation: 10, status: "ready", error: "" };
+  const refreshedPage = { ...firstPage, generation: 11 };
+  const returnedPage = { ...firstPage, generation: 13 };
 
-  const current = routes.beginAdminRouteMutation(mutations, "member-save", orgB);
-  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pendingError, orgA), false);
-  assert.equal(routes.isAdminRouteMutationCurrent(mutations, current, orgB), true);
+  const pending = routes.beginAdminRouteMutation(mutations, "member-save", route, firstPage);
+  assert.deepEqual(pending?.page, { key: firstPage.key, generation: firstPage.generation });
+  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pending, route, firstPage), true);
+  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pending, route, refreshedPage), false, "same route refresh");
+  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pending, route, returnedPage), false, "leave-return ABA");
+
+  const current = routes.beginAdminRouteMutation(mutations, "member-save", route, returnedPage);
+  assert.equal(routes.isAdminRouteMutationCurrent(mutations, pending, route, firstPage), false, "newer mutation key generation");
+  assert.equal(routes.isAdminRouteMutationCurrent(mutations, current, route, returnedPage), true);
 });
 
 test("billing actions are organization scoped and manual controls remain platform only", () => {
@@ -270,28 +291,16 @@ test("billing actions are organization scoped and manual controls remain platfor
   ), false);
 });
 
-test("AI access organization resolution requires the canonical organization AI Access route", () => {
-  const targetUser = {
-    id: "target_user",
-    memberships: [
-      { orgId: "org_target", orgName: "Target Org" },
-      { orgId: "org_second", orgName: "Second Org" },
-    ],
-  };
+test("production client modules contain no legacy AI access organization resolver", async () => {
+  const [routeStateSource, appSource] = await Promise.all([
+    readFile(new URL("../public-admin/admin-route-state.js", import.meta.url), "utf8"),
+    readFile(new URL("../public-admin/app.js", import.meta.url), "utf8"),
+  ]);
 
-  assert.equal(
-    routes.resolveAiAccessOrganizationId({ area: "platform", page: "platform-users", organizationId: null }, targetUser, ""),
-    null,
-    "Platform Users must not infer a multi-org target from membership order",
-  );
-  assert.equal(
-    routes.resolveAiAccessOrganizationId({ area: "platform", page: "platform-users", organizationId: null }, targetUser, "org_second"),
-    null,
-  );
-  assert.equal(
-    routes.resolveAiAccessOrganizationId({ area: "organization", page: "ai-access", organizationId: "org_routed" }, targetUser, "org_second"),
-    "org_routed",
-  );
+  assert.equal(Object.hasOwn(routes, "resolveAiAccessOrganizationId"), false);
+  assert.doesNotMatch(routeStateSource, /resolveAiAccessOrganizationId|selectedOrganizationId/);
+  assert.doesNotMatch(appSource, /resolveAiAccessOrganizationId|aiAccessOrganizationIdForUser/);
+  assert.doesNotMatch(appSource, /resolveAiAccessOrganizationId\([^)]*(?:userOrg|selectedOrganization)/);
 });
 
 test("manual billing expiry round-trips through datetime-local in Europe/Prague", () => {

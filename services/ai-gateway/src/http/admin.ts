@@ -129,7 +129,7 @@ export type AdminOrganizationMemberRecord = {
   name: string;
   email: string;
   role: CurrentAdminOrganizationRole;
-  status?: "active" | "disabled" | "removed";
+  status: "active" | "disabled" | "removed";
   createdAt: string;
 };
 
@@ -2132,7 +2132,7 @@ export function createDefaultAdminService(
         availableCredentials,
       };
     },
-    async upsertUserAiAccess(token, userId, input, organizationId, actorUserId) {
+    async upsertUserAiAccess(_token, userId, input, organizationId, actorUserId) {
       const modelPolicy = await getModelPolicyRepository().getPolicy();
       if (!modelPolicy) throw new HttpError("platform_model_policy_not_configured", 503);
       const validated = validateUserAiAccessInput({
@@ -2147,13 +2147,6 @@ export function createDefaultAdminService(
       }
       if (!organizationId) {
         throw new HttpError("organization_context_required", 400);
-      }
-      const targetUser = (await denClient.listUsers(token)).find((user) => user.id === userId);
-      if (!targetUser) {
-        throw new HttpError("user_not_found", 404);
-      }
-      if (!targetUser.memberships.some((membership) => membership.orgId === organizationId)) {
-        throw new HttpError("user_not_in_organization", 422);
       }
       const availableCredentials = await listAvailableAssignmentCredentials(modelPolicy.activeModel);
       const saved = await getAiAccessMutation().upsertUserAiAccessWithAudit({
@@ -3148,6 +3141,7 @@ function adminAssetRequest(pathname: string): boolean {
   return pathname === "/admin/app.js"
     || pathname === "/admin/app.css"
     || pathname === "/admin/admin-route-state.js"
+    || pathname === "/admin/admin-page-load-state.js"
     || pathname === "/admin/model-policy-editor-state.js";
 }
 
@@ -3742,9 +3736,7 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.get("/admin/api/organizations/:orgId/members", async (req, res) => {
-    if (!requireAdminCapability(res, "organization")) {
-      return;
-    }
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
 
     try {
       const payload = await adminService.listOrganizationMembers(res.locals.adminToken as string, req.params.orgId);
@@ -3758,9 +3750,7 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.post("/admin/api/organizations/:orgId/members", async (req, res) => {
-    if (!requireAdminCapability(res, "organization")) {
-      return;
-    }
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
 
     try {
       const payload = await adminService.createOrganizationMember(
@@ -3778,9 +3768,7 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.patch("/admin/api/organizations/:orgId/members/:memberId", async (req, res) => {
-    if (!requireAdminCapability(res, "organization")) {
-      return;
-    }
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
 
     try {
       const payload = await adminService.updateOrganizationMember(
@@ -3799,9 +3787,7 @@ export function createAdminRouter(adminService: AdminService) {
   });
 
   router.delete("/admin/api/organizations/:orgId/members/:memberId", async (req, res) => {
-    if (!requireAdminCapability(res, "organization")) {
-      return;
-    }
+    if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
 
     try {
       await adminService.deleteOrganizationMember(
@@ -4378,8 +4364,85 @@ export function createAdminRouter(adminService: AdminService) {
     }
   });
 
-  router.get("/admin/api/users/:userId/ai-access", async (req, res) => {
-    if (!requireAdminCapability(res, "managedAiUserAccess")) {
+  const confirmOrganizationAiAccessMember = async (
+    res: express.Response,
+    orgId: string,
+    userId: string,
+  ): Promise<boolean> => {
+    try {
+      const payload: unknown = await adminService.listOrganizationMembers(
+        res.locals.adminToken as string,
+        orgId,
+      );
+      if (
+        !payload
+        || typeof payload !== "object"
+        || Array.isArray(payload)
+        || !Array.isArray((payload as { members?: unknown }).members)
+      ) {
+        res.status(502).json({ error: "organization_member_response_invalid" });
+        return false;
+      }
+      const members = (payload as { members: unknown[] }).members;
+      if (!members.every((member): member is AdminOrganizationMemberRecord => (
+        member != null
+        && typeof member === "object"
+        && !Array.isArray(member)
+        && typeof (member as { membershipId?: unknown }).membershipId === "string"
+        && (member as { membershipId: string }).membershipId.trim().length > 0
+        && typeof (member as { userId?: unknown }).userId === "string"
+        && (member as { userId: string }).userId.trim().length > 0
+        && typeof (member as { name?: unknown }).name === "string"
+        && typeof (member as { email?: unknown }).email === "string"
+        && (
+          (member as { role?: unknown }).role === "organization_admin"
+          || (member as { role?: unknown }).role === "member"
+        )
+        && (
+          (member as { status?: unknown }).status === "active"
+          || (member as { status?: unknown }).status === "disabled"
+          || (member as { status?: unknown }).status === "removed"
+        )
+        && typeof (member as { createdAt?: unknown }).createdAt === "string"
+        && (member as { createdAt: string }).createdAt.trim().length > 0
+      ))) {
+        res.status(502).json({ error: "organization_member_response_invalid" });
+        return false;
+      }
+      const targetMembers = members.filter((member) => member.userId === userId);
+      if (targetMembers.length > 1) {
+        res.status(502).json({ error: "organization_member_response_invalid" });
+        return false;
+      }
+      if (targetMembers.length === 0 || targetMembers[0]?.status !== "active") {
+        res.status(404).json({ error: "member_not_found" });
+        return false;
+      }
+      return true;
+    } catch (error) {
+      const status = error && typeof error === "object"
+        ? (error as { status?: unknown }).status
+        : null;
+      if (status === 401) {
+        res.status(401).json({ error: "unauthorized" });
+        return false;
+      }
+      if (status === 403) {
+        res.status(403).json({ error: "forbidden" });
+        return false;
+      }
+      res.status(502).json({ error: "organization_member_lookup_failed" });
+      return false;
+    }
+  };
+
+  router.get("/admin/api/organizations/:orgId/members/:userId/ai-access", async (req, res) => {
+    if (
+      !requireAdminCapability(res, "managedAiUserAccess")
+      || !requireOrganizationAccess(res, req.params.orgId)
+    ) return;
+
+    if (!await confirmOrganizationAiAccessMember(res, req.params.orgId, req.params.userId)) {
       return;
     }
 
@@ -4394,10 +4457,11 @@ export function createAdminRouter(adminService: AdminService) {
     }
   });
 
-  router.put("/admin/api/users/:userId/ai-access", async (req, res) => {
-    if (!requireAdminCapability(res, "managedAiUserAccess")) {
-      return;
-    }
+  router.put("/admin/api/organizations/:orgId/members/:userId/ai-access", async (req, res) => {
+    if (
+      !requireAdminCapability(res, "managedAiUserAccess")
+      || !requireOrganizationAccess(res, req.params.orgId)
+    ) return;
 
     try {
       if (
@@ -4406,20 +4470,14 @@ export function createAdminRouter(adminService: AdminService) {
       ) {
         throw new HttpError("user_model_policy_not_supported", 400);
       }
-      const organizationId = typeof req.body?.organizationId === "string"
-        ? req.body.organizationId.trim()
-        : null;
-      if (!organizationId) {
-        throw new HttpError("organization_context_required", 400);
-      }
-      if (!requireOrganizationAccess(res, organizationId)) {
+      if (!await confirmOrganizationAiAccessMember(res, req.params.orgId, req.params.userId)) {
         return;
       }
       const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
         enabled: req.body?.enabled === true,
         provider: parseAiAccessProvider(req.body?.provider),
         credentialId: typeof req.body?.credentialId === "string" ? req.body.credentialId : null,
-      }, organizationId, (res.locals.adminSession as AdminSessionSnapshot).user.id);
+      }, req.params.orgId, (res.locals.adminSession as AdminSessionSnapshot).user.id);
       res.json(payload);
     } catch (error) {
       if (error instanceof AiAccessAuditPersistenceError) {
@@ -4479,6 +4537,10 @@ export function createAdminRouter(adminService: AdminService) {
       }
       res.status(502).json({ error: "user_delete_failed" });
     }
+  });
+
+  router.use("/admin/api", (_req, res) => {
+    res.status(404).json({ error: "not_found" });
   });
 
   const sendAdminShell = (_req: express.Request, res: express.Response) => {

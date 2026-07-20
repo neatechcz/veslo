@@ -1,0 +1,224 @@
+name: Deploy Staging Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Git branch to deploy. Leave empty to use the workflow ref."
+        required: false
+        type: string
+        default: ""
+      install_backup_timer:
+        description: "Install or update the staging daily database backup scheduler."
+        required: true
+        type: boolean
+        default: true
+      run_backup_now:
+        description: "Run one staging database backup after a successful deployment."
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, x64, veslo-staging-server]
+    if: github.repository == 'neatechcz/veslo'
+    env:
+      STAGING_SERVER_APP_DIR: ${{ vars.STAGING_SERVER_APP_DIR || '/home/neatech/veslo-staging-server' }}
+      STAGING_SERVER_ENV_FILE: ${{ vars.STAGING_SERVER_ENV_FILE || '/srv/veslo/env/staging.env' }}
+      STAGING_COMPOSE_PROJECT: ${{ vars.STAGING_COMPOSE_PROJECT || 'veslo-staging-server' }}
+      STAGING_SERVER_CADDYFILE: ${{ vars.STAGING_SERVER_CADDYFILE || './Caddyfile.staging' }}
+      DEPLOY_BRANCH: ${{ github.event.inputs.branch || github.ref_name }}
+      INSTALL_BACKUP_TIMER: ${{ inputs.install_backup_timer }}
+      RUN_BACKUP_NOW: ${{ inputs.run_backup_now }}
+      REPO_URL: https://github.com/${{ github.repository }}.git
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate staging deploy configuration
+        run: |
+          set -euo pipefail
+
+          missing=0
+          for key in STAGING_SERVER_APP_DIR STAGING_SERVER_ENV_FILE STAGING_COMPOSE_PROJECT STAGING_SERVER_CADDYFILE DEPLOY_BRANCH REPO_URL GITHUB_TOKEN; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required staging deployment value: $key"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          for value in "$STAGING_SERVER_APP_DIR" "$STAGING_SERVER_ENV_FILE" "$STAGING_COMPOSE_PROJECT"; do
+            case "$value" in
+              *production*)
+                echo "::error::Staging deployment value must not point at production: $value"
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Deploy Compose stack on staging server
+        run: |
+          set -euo pipefail
+
+          git_auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+
+          git_auth() {
+            GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $git_auth_header" \
+            git "$@"
+          }
+
+          if [ ! -d "$STAGING_SERVER_APP_DIR/.git" ]; then
+            mkdir -p "$(dirname "$STAGING_SERVER_APP_DIR")"
+            git_auth clone "$REPO_URL" "$STAGING_SERVER_APP_DIR"
+          fi
+
+          cd "$STAGING_SERVER_APP_DIR"
+          git reset --hard
+          git clean -fd
+          git_auth fetch --prune origin "+refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+          git checkout --force --detach "origin/$DEPLOY_BRANCH"
+          git reset --hard "origin/$DEPLOY_BRANCH"
+          git clean -fd
+
+          test -f "$STAGING_SERVER_ENV_FILE"
+          test -f packaging/owned-server/compose.yml
+          test -f "packaging/owned-server/${STAGING_SERVER_CADDYFILE#./}"
+
+          compose() {
+            VESLO_CADDYFILE="$STAGING_SERVER_CADDYFILE" \
+              sudo -n docker compose \
+                -p "$STAGING_COMPOSE_PROJECT" \
+                -f packaging/owned-server/compose.yml \
+                --env-file "$STAGING_SERVER_ENV_FILE" \
+                "$@"
+          }
+
+          wait_for_compose_health() {
+            service="$1"
+
+            for attempt in $(seq 1 60); do
+              container_id="$(compose ps -q "$service" | tail -n 1)"
+              if [ -n "$container_id" ]; then
+                status="$(sudo -n docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+                if [ "$status" = "healthy" ]; then
+                  echo "$service is healthy"
+                  return 0
+                fi
+              fi
+
+              echo "Waiting for $service to become healthy (${attempt}/60)..."
+              sleep 5
+            done
+
+            compose ps
+            echo "::error::$service did not become healthy"
+            return 1
+          }
+
+          compose config --quiet
+          compose build worker-runtime-image worker-manager backup den ai-gateway web
+          compose up -d den-db ai-gateway-db worker-manager
+          wait_for_compose_health den-db
+          wait_for_compose_health ai-gateway-db
+          compose run --rm --no-deps den pnpm --filter @neatech/den db:migrate
+          compose run --rm --no-deps ai-gateway pnpm --filter @neatech/ai-gateway db:migrate
+          compose up -d
+          compose ps
+          compose exec -T worker-manager node -e "fetch('http://127.0.0.1:8790/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+      - name: Verify public staging endpoints
+        run: |
+          set -euo pipefail
+
+          curl -fsS https://api.staging.veslo.work/health
+          curl -fsS https://ai.staging.veslo.work/health
+          curl -fsSI https://app.staging.veslo.work >/dev/null
+          curl -fsSI https://admin.staging.veslo.work/admin >/dev/null
+
+          root_response="$(curl -fsS https://api.staging.veslo.work/)"
+          printf '%s\n' "$root_response" | grep -F '"service":"veslo-den"' >/dev/null
+
+          for forbidden in \
+            "Den Control Plane Demo" \
+            "Create account" \
+            "POST /v1/workers" \
+            "GET /v1/me" \
+            "TestPass123!"; do
+            if printf '%s\n' "$root_response" | grep -F "$forbidden" >/dev/null; then
+              echo "::error::api.staging.veslo.work root still contains forbidden text: $forbidden"
+              exit 1
+            fi
+          done
+
+      - name: Install staging backup scheduler
+        if: env.INSTALL_BACKUP_TIMER == 'true'
+        run: |
+          set -euo pipefail
+
+          cd "$STAGING_SERVER_APP_DIR"
+
+          compose() {
+            VESLO_CADDYFILE="$STAGING_SERVER_CADDYFILE" \
+              sudo -n docker compose \
+                -p "$STAGING_COMPOSE_PROJECT" \
+                -f packaging/owned-server/compose.yml \
+                --env-file "$STAGING_SERVER_ENV_FILE" \
+                "$@"
+          }
+
+          for key in LETTR_API_KEY AUTH_EMAIL_ADDRESS AUTH_EMAIL_FROM_NAME; do
+            if ! grep -Eq "^${key}=.+" "$STAGING_SERVER_ENV_FILE"; then
+              echo "::error::Missing backup alert env value: $key"
+              exit 1
+            fi
+          done
+
+          if ! grep -Eq '^(BACKUP_ALERT_EMAIL_RECIPIENTS|AI_GATEWAY_ALERT_EMAIL_RECIPIENTS)=.+@.+' "$STAGING_SERVER_ENV_FILE"; then
+            echo "::error::Missing backup alert recipients in staging env file"
+            exit 1
+          fi
+
+          compose up -d backup
+          compose ps backup
+
+      - name: Run staging backup now
+        if: env.RUN_BACKUP_NOW == 'true'
+        run: |
+          set -euo pipefail
+
+          cd "$STAGING_SERVER_APP_DIR"
+
+          compose() {
+            VESLO_CADDYFILE="$STAGING_SERVER_CADDYFILE" \
+              sudo -n docker compose \
+                -p "$STAGING_COMPOSE_PROJECT" \
+                -f packaging/owned-server/compose.yml \
+                --env-file "$STAGING_SERVER_ENV_FILE" \
+                "$@"
+          }
+
+          compose run --rm --no-deps backup bash ./packaging/owned-server/backup/backup-owned-server-databases.sh
+          compose run --rm --no-deps backup bash -lc '
+            set -euo pipefail
+            latest="$(find /srv/veslo/backups -mindepth 1 -maxdepth 1 -type d -name "????????T??????Z" -print | sort | tail -n 1)"
+            test -n "$latest"
+            cd "$latest"
+            zstd -t den.sql.zst ai-gateway.sql.zst
+            sha256sum -c den.sql.zst.sha256
+            sha256sum -c ai-gateway.sql.zst.sha256
+            printf "Latest staging backup: %s\n" "$latest"
+            ls -lh den.sql.zst ai-gateway.sql.zst manifest.json
+            cat manifest.json
+          '

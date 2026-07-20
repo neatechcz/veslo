@@ -30,6 +30,7 @@
     "test:pilot:den-managed-openai-anthropic": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario den-managed-openai-anthropic",
     "test:update-baselines": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario visual-regression",
     "test:feedback-youtrack-live": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario feedback-youtrack-live",
+    "test:ai-gateway-admin-data-isolation": "pnpm --filter @neatech/ai-gateway exec tsx --test test/admin-user-access.test.ts && playwright test ./specs/ai-gateway-admin-data-isolation.playwright.spec.ts --output=/tmp/veslo-ai-gateway-admin-data-isolation-results",
     "test:den-admin-billing-integrated": "playwright test ./specs/den-admin-billing-integrated.playwright.spec.ts",
     "test:den-admin-billing-lifecycle": "playwright test ./specs/den-admin-billing-lifecycle.playwright.spec.ts",
     "test:den-admin-billing-stripe-live": "playwright test ./specs/den-admin-billing-stripe-live.playwright.spec.ts",

@@ -8,6 +8,30 @@ import {
   stopManagedAiGatewayFixture,
 } from './managed-ai-gateway-fixture.js';
 
+test('managed AI fixture returns ordered capability evidence for every requested model', async () => {
+  const fixture = await startManagedAiGatewayFixture();
+  try {
+    const requestedModels = [
+      { provider: 'codex_oauth' as const, model: 'gpt-5.3-codex' },
+      { provider: 'codex_oauth' as const, model: 'unknown-codex-model' },
+      { provider: 'openai_compatible' as const, model: 'custom/model-v1' },
+      { provider: 'codex_oauth' as const, model: 'gpt-5.5' },
+      { provider: 'codex_oauth' as const, model: 'gpt-5.3-codex' },
+    ];
+
+    assert.deepEqual(await fixture.modelCapabilities.checkHealthyCredentialsForModels(requestedModels), [
+      { model: requestedModels[0], status: 'supported', credentialId: 'cred_veslo_e2e_codex' },
+      { model: requestedModels[1], status: 'unsupported', reason: 'model_unsupported' },
+      { model: requestedModels[2], status: 'unsupported', reason: 'no_healthy_credential' },
+      { model: requestedModels[3], status: 'supported', credentialId: 'cred_veslo_e2e_codex' },
+      { model: requestedModels[4], status: 'supported', credentialId: 'cred_veslo_e2e_codex' },
+    ]);
+    assert.deepEqual(await fixture.modelCapabilities.checkHealthyCredentialsForModels([]), []);
+  } finally {
+    await stopManagedAiGatewayFixture(fixture);
+  }
+});
+
 test('managed AI fixture exposes two enabled models and exactly one active model', async () => {
   const fixture = await startManagedAiGatewayFixture();
   try {

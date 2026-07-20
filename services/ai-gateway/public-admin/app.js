@@ -8,7 +8,6 @@ import {
   createModelDiscoveryState,
   createModelPolicyState,
   failModelDiscovery,
-  failModelPolicyLoad,
   failModelPolicySave,
   invalidateModelPolicyLoad,
   modelRefsEqual,
@@ -21,27 +20,30 @@ import {
   adminUserRoutePermissions,
   applyAdminPopState,
   beginAdminRouteMutation,
-  beginOrganizationLoad,
   buildAdminUserUpdatePayload,
   canAccessAdminRoute,
   canPerformAdminRouteAction,
-  completeOrganizationLoad,
   createAdminNavigationState,
   createAdminMutationState,
   createOrganizationLoadState,
-  failOrganizationLoad,
   fromAdminDateTimeLocalValue,
   formatAdminRoute,
   navigateAdminRoute,
   organizationIdForRoute,
   parseAdminRoute,
   planAdminHistoryUpdate,
-  resolveAiAccessOrganizationId,
   isAdminRouteMutationCurrent,
   switchOrganizationRoute,
   toAdminDateTimeLocalValue,
   toPlatformRoute,
 } from "./admin-route-state.js";
+import {
+  beginAdminPageLoad,
+  completeAdminPageLoad,
+  createAdminPageLoadState,
+  failAdminPageLoad,
+  isAdminPageLoadCurrent,
+} from "./admin-page-load-state.js";
 
 const STORAGE_KEY = "veslo.ai-gateway.admin.token";
 const BROWSER_AUTH_STORAGE_KEY = "veslo.ai-gateway.admin.browser-auth";
@@ -62,6 +64,11 @@ const state = {
   audit: [],
   users: [],
   organizations: [],
+  organizationDirectory: [],
+  organizationDirectoryCache: [],
+  organizationMembers: [],
+  pageLoad: createAdminPageLoadState(),
+  routeActionsLocked: true,
   mutations: createAdminMutationState(),
   organizationLoad: createOrganizationLoadState(),
   organizationDomains: [],
@@ -87,6 +94,9 @@ const state = {
   selectedAlertId: null,
   selectedAuditId: null,
   selectedUserId: null,
+  selectedOrganizationMemberId: null,
+  selectedOrganizationDomainId: null,
+  selectedOrganizationInviteId: null,
   codexAuthCredentialUpload: null,
   codexAuthUploadByCredentialId: {},
   userMode: "edit",
@@ -101,6 +111,12 @@ const els = {
   browserSignInButton: document.getElementById("browser-sign-in-button"),
   loginError: document.getElementById("login-error"),
   appPanel: document.getElementById("app-panel"),
+  adminPageState: document.getElementById("admin-page-state"),
+  adminPageLoading: document.getElementById("admin-page-loading"),
+  adminPageError: document.getElementById("admin-page-error"),
+  adminPageErrorMessage: document.getElementById("admin-page-error-message"),
+  adminPageRetry: document.getElementById("admin-page-retry"),
+  adminPageSkeleton: document.getElementById("admin-page-skeleton"),
   authState: document.getElementById("auth-state"),
   authUser: document.getElementById("auth-user"),
   signOutButton: document.getElementById("sign-out-button"),
@@ -116,6 +132,7 @@ const els = {
   platformNavItems: Array.from(document.querySelectorAll("[data-platform-route]")),
   organizationNavItems: Array.from(document.querySelectorAll("[data-organization-route]")),
   pages: Array.from(document.querySelectorAll("[data-page]")),
+  routeOwnedControls: Array.from(document.querySelectorAll("[data-page] button, [data-page] input, [data-page] select, [data-page] textarea")),
   organizationContextHeader: document.getElementById("organization-context-header"),
   operatingOrganizationLabel: document.getElementById("operating-organization-label"),
   organizationContextStatus: document.getElementById("organization-context-status"),
@@ -257,8 +274,7 @@ const els = {
 let pendingAdminRequests = 0;
 let backendConnectionHideTimer = 0;
 let modelDiscoveryAbortController = null;
-let modelPolicyLoadAbortController = null;
-let organizationLoadAbortController = null;
+let routeLoadAbortController = null;
 
 function openModal(modal) {
   if (!modal) {
@@ -295,6 +311,269 @@ function closeAllModals() {
     els.userEditorModal,
     els.auditDetailModal,
   ].forEach((modal) => closeModal(modal));
+}
+
+function clearRouteOwnedDom() {
+  [
+    els.organizationDirectoryList,
+    els.organizationDomainList,
+    els.organizationInviteList,
+    els.organizationBillingSummary,
+    els.organizationAuditList,
+    els.modelPolicyList,
+    els.credentialsTableBody,
+    els.credentialDetail,
+    els.usageCapacityCredentials,
+    els.usageChartBars,
+    els.usageSeries,
+    els.usageCredentialTableBody,
+    els.alertList,
+    els.alertDetail,
+    els.userList,
+    els.auditList,
+    els.auditDetail,
+  ].forEach((node) => node?.replaceChildren());
+  [
+    ...els.heroMetrics,
+    els.usageCapacityFiveHour,
+    els.usageCapacityFiveHourNote,
+    els.usageCapacityWeekly,
+    els.usageCapacityWeeklyNote,
+    els.usageCapacityMeasured,
+    els.usageCapacityMeasuredNote,
+    els.usageTotalTokens,
+    els.usageTotalRequests,
+    els.usageTopCredential,
+    els.organizationBillingStatus,
+    els.organizationAuditStatus,
+    els.organizationContextStatus,
+  ].forEach((node) => {
+    if (node) node.textContent = "";
+  });
+  [els.organizationName, els.organizationSlug, els.organizationSeatLimit].forEach((input) => {
+    if (input) input.value = "";
+  });
+  els.credentialCreateName.value = "";
+  els.credentialCreateBaseUrl.value = "";
+  els.credentialCreateSecret.value = "";
+  els.credentialCreateCodexCommand.value = "";
+  els.credentialCreateStatus.textContent = "";
+  els.modelPolicyStatus.textContent = "";
+  delete els.credentialCreateStatus.dataset.tone;
+  delete els.modelPolicyStatus.dataset.tone;
+  els.credentialCreateCodexCommand.classList.add("hidden");
+  els.credentialCreateCodexCopy.classList.add("hidden");
+  els.credentialCreateCodexCommand.disabled = true;
+  els.credentialCreateCodexCopy.disabled = true;
+}
+
+function clearRouteOwnedState() {
+  modelDiscoveryAbortController?.abort();
+  modelDiscoveryAbortController = null;
+  state.credentials = [];
+  state.alerts = [];
+  state.audit = [];
+  state.users = [];
+  state.organizationDirectory = [];
+  state.organizationMembers = [];
+  state.organizationLoad = createOrganizationLoadState();
+  state.organizationDomains = [];
+  state.organizationInvites = [];
+  state.organizationBilling = null;
+  state.organizationAudit = [];
+  state.usage = null;
+  state.selectedCredentialId = null;
+  state.selectedAlertId = null;
+  state.selectedAuditId = null;
+  state.selectedUserId = null;
+  state.selectedOrganizationMemberId = null;
+  state.selectedOrganizationDomainId = null;
+  state.selectedOrganizationInviteId = null;
+  state.organizationDomainMode = "create";
+  state.userMode = "edit";
+  state.userAiAccessByUserId = {};
+  state.userAiAccessAvailableCredentialsByUserId = {};
+  state.codexAuthCredentialUpload = null;
+  state.codexAuthUploadByCredentialId = {};
+  state.modelPolicy = createModelPolicyState();
+  state.modelDiscovery = createModelDiscoveryState();
+  clearRouteOwnedDom();
+}
+
+function setRouteActionsDisabled(disabled) {
+  if (!disabled) return;
+  state.routeActionsLocked = true;
+  els.routeOwnedControls.forEach((control) => {
+    control.disabled = true;
+  });
+  els.pages.forEach((page) => {
+    page.inert = true;
+    page.querySelectorAll("button, input, select, textarea").forEach((control) => {
+      control.disabled = true;
+    });
+  });
+  els.refreshButton.disabled = true;
+  els.createUserButton.disabled = true;
+  els.createUserButtonInline.disabled = true;
+  els.organizationSelectorInput.disabled = true;
+}
+
+function beginCurrentRouteMutation(key, route = state.route) {
+  if (state.pageLoad.status !== "ready" && state.pageLoad.status !== "empty") return null;
+  return beginAdminRouteMutation(state.mutations, key, route, state.pageLoad);
+}
+
+function isCurrentRouteMutation(mutation) {
+  return isAdminRouteMutationCurrent(state.mutations, mutation, state.route, state.pageLoad);
+}
+
+function releaseRouteActionsForCurrentRoute({ focusHeading = false } = {}) {
+  if (state.pageLoad.status !== "ready" && state.pageLoad.status !== "empty") return;
+  const route = state.route;
+  const permissions = adminUserRoutePermissions(state.route, routeAccessSnapshot());
+  const canEditOrganization = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "edit-organization-profile",
+  );
+  const canManageDomains = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "manage-organization-domains",
+  );
+  const canManageInvites = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "manage-organization-invites",
+  );
+  const canManageBilling = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "manage-organization-billing",
+  );
+  const canManagePlatformBilling = canPerformAdminRouteAction(
+    state.route,
+    routeAccessSnapshot(),
+    "manage-platform-billing",
+  );
+
+  state.routeActionsLocked = false;
+  els.refreshButton.disabled = false;
+  els.createUserButton.disabled = !permissions.createUser;
+  els.createUserButtonInline.disabled = !permissions.createUser;
+  els.organizationSelectorInput.disabled = route?.area !== "organization" || state.organizations.length <= 1;
+
+  if (route?.area === "platform" && route.page === "ai-infrastructure") {
+    [
+      els.credentialSearch,
+      els.credentialProviderFilter,
+      els.credentialStateFilter,
+      els.credentialsShowDeleted,
+      els.credentialCreateProvider,
+      els.credentialCreateName,
+      els.credentialCreateSecret,
+      els.credentialCreateSubmit,
+      els.credentialCreateCodexUpload,
+    ].forEach((control) => { control.disabled = false; });
+    updateCredentialCreateFields();
+    renderNewCodexCredentialUpload();
+    renderCredentials();
+    renderModelPolicy();
+  }
+  if (route?.area === "platform" && route.page === "ai-usage") {
+    [els.usageGroupBy, els.usageCredentialFilter, els.usageUserFilter, els.usageOrgFilter]
+      .forEach((control) => { control.disabled = false; });
+  }
+  if (route?.area === "platform" && route.page === "ai-alerts") {
+    els.alertStatusFilterButtons.forEach((control) => { control.disabled = false; });
+    renderAlerts();
+  }
+  if (route?.area === "platform" && route.page === "audit") {
+    [els.auditSearch, els.auditDateRange, els.auditActorFilter, els.auditEntityFilter]
+      .forEach((control) => { control.disabled = false; });
+  }
+  if (route?.page === "platform-users" || route?.page === "members" || route?.page === "ai-access") {
+    [els.userSearch, els.userStatusFilter, els.userRoleFilter]
+      .forEach((control) => { control.disabled = false; });
+    renderUsers();
+  }
+  if (route?.area === "platform" && route.page === "organizations") {
+    renderOrganizationsDirectory();
+  }
+  if (route?.area === "organization" && route.page === "overview") {
+    els.organizationName.disabled = !canEditOrganization;
+    els.organizationSlug.disabled = !canEditOrganization;
+    els.organizationSeatLimit.disabled = state.session?.platformAdmin !== true;
+    els.organizationSaveButton.disabled = !canEditOrganization;
+  }
+  if (route?.area === "organization" && route.page === "domains-invites") {
+    els.organizationDomainAddButton.disabled = !canManageDomains;
+    els.organizationInviteSendButton.disabled = !canManageInvites;
+    renderOrganization();
+  }
+  if (route?.area === "organization" && route.page === "billing") {
+    els.organizationBillingControls.forEach((node) => {
+      node.querySelectorAll("button, input, select, textarea")
+        .forEach((control) => { control.disabled = !canManageBilling; });
+    });
+    document.getElementById("organization-billing-platform-controls")
+      ?.querySelectorAll("button, input, select, textarea")
+      .forEach((control) => { control.disabled = !canManagePlatformBilling; });
+  }
+  els.pages.forEach((page) => {
+    page.inert = page.dataset.page !== state.page;
+  });
+  if (focusHeading) {
+    els.pageTitle.tabIndex = -1;
+    els.pageTitle.focus({ preventScroll: true });
+  }
+}
+
+function renderAdminPageState() {
+  const status = state.pageLoad.status;
+  const loading = status === "loading";
+  const error = status === "error";
+  const settled = status === "ready" || status === "empty";
+  els.adminPageState.dataset.state = status;
+  els.adminPageState.setAttribute("aria-busy", String(loading));
+  els.adminPageState.classList.toggle("hidden", settled || status === "idle");
+  els.adminPageLoading.classList.toggle("hidden", !loading);
+  els.adminPageSkeleton.classList.toggle("hidden", !loading);
+  els.adminPageError.classList.toggle("hidden", !error);
+  els.adminPageErrorMessage.textContent = error ? state.pageLoad.error : "";
+  els.adminPageRetry.classList.toggle("hidden", !error || state.pageLoad.retryable === false);
+  if (error) {
+    els.adminPageError.tabIndex = -1;
+    els.adminPageError.focus({ preventScroll: true });
+  }
+  if (!settled) setRouteActionsDisabled(true);
+}
+
+function beginRouteDataLoad(route) {
+  routeLoadAbortController?.abort();
+  const controller = new AbortController();
+  routeLoadAbortController = controller;
+  const previousKey = state.pageLoad.key;
+  const request = beginAdminPageLoad(state.pageLoad, route);
+  const focusHeading = !previousKey || previousKey !== request?.key;
+  closeAllModals();
+  clearRouteOwnedState();
+  state.pageLoad.retryable = true;
+  renderAdminPageState();
+  renderRoute();
+  setRouteActionsDisabled(true);
+  return request ? { request, signal: controller.signal, route: { ...route }, focusHeading } : null;
+}
+
+function abandonRouteDataLoad(activeLoad) {
+  if (!activeLoad) return;
+  if (routeLoadAbortController?.signal === activeLoad.signal) {
+    routeLoadAbortController.abort();
+    routeLoadAbortController = null;
+  }
+  state.pageLoad = createAdminPageLoadState();
+  state.routeActionsLocked = true;
+  renderAdminPageState();
 }
 
 function setDomainModalStatus(message, tone = "neutral") {
@@ -580,13 +859,13 @@ function applyAdminCapabilities() {
   els.userMembershipControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.editMembership));
   els.seatLimitControls.forEach((node) => node.classList.toggle("hidden", !canManagePlatform));
   if (els.userPlatformAdmin) {
-    els.userPlatformAdmin.disabled = !userPermissions.setPlatformAdmin;
+    els.userPlatformAdmin.disabled = state.routeActionsLocked || !userPermissions.setPlatformAdmin;
     if (!userPermissions.setPlatformAdmin) {
       els.userPlatformAdmin.checked = false;
     }
   }
   if (els.organizationSeatLimit) {
-    els.organizationSeatLimit.disabled = !canManagePlatform;
+    els.organizationSeatLimit.disabled = state.routeActionsLocked || !canManagePlatform;
   }
   if (els.createUserButtonInline) {
     els.createUserButtonInline.classList.toggle("hidden", !userPermissions.createUser);
@@ -730,7 +1009,7 @@ function renderModelDiscoveryControls() {
     modelDiscoveryAbortController = null;
     selectModelDiscoveryCredential(state.modelDiscovery, selectedId);
   }
-  const busy = state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
+  const busy = state.routeActionsLocked || state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
   els.modelPolicyCredential.innerHTML = [
     `<option value="">Select credential</option>`,
     ...credentials.map((credential) =>
@@ -758,11 +1037,11 @@ function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
 
   const rows = state.modelPolicy.draftEnabledModels.map((entry) => {
     const active = modelRefsEqual(entry, state.modelPolicy.draftActiveModel);
-    const removeDisabled = active || state.modelPolicy.saving;
+    const removeDisabled = state.routeActionsLocked || active || state.modelPolicy.saving;
     return `
       <article class="model-policy-row${active ? " active" : ""}">
         <label class="model-policy-active-control">
-          <input type="radio" name="model-policy-active" data-model-policy-active-provider="${escapeHtml(entry.provider)}" data-model-policy-active-model="${escapeHtml(entry.model)}"${active ? " checked" : ""}${state.modelPolicy.saving ? " disabled" : ""} />
+          <input type="radio" name="model-policy-active" data-model-policy-active-provider="${escapeHtml(entry.provider)}" data-model-policy-active-model="${escapeHtml(entry.model)}"${active ? " checked" : ""}${state.routeActionsLocked || state.modelPolicy.saving ? " disabled" : ""} />
           <span>${active ? "Active" : "Set active"}</span>
         </label>
         <div class="model-policy-ref">
@@ -777,12 +1056,13 @@ function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
     ? `<article class="model-policy-empty">Loading platform model policy...</article>`
     : rows || `<article class="model-policy-empty">No platform model policy configured. Discover and add a model to create one.</article>`;
   els.modelPolicySaveButton.disabled =
+    state.routeActionsLocked ||
     state.modelPolicy.loading ||
     state.modelPolicy.saving ||
     !state.modelPolicy.dirty ||
     !state.modelPolicy.draftActiveModel;
   els.modelPolicySaveButton.textContent = state.modelPolicy.saving ? "Saving..." : "Save model policy";
-  const busy = state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
+  const busy = state.routeActionsLocked || state.modelPolicy.loading || state.modelPolicy.saving || state.modelDiscovery.loading;
   els.modelPolicyPanel.setAttribute("aria-busy", String(busy));
   els.modelPolicyList.setAttribute("aria-disabled", String(state.modelPolicy.saving));
   renderModelDiscoveryControls();
@@ -806,36 +1086,15 @@ function renderModelPolicy(statusMessage = "", statusTone = "neutral") {
   }
 }
 
-async function loadModelPolicy() {
+async function loadModelPolicy(signal) {
   if (state.session?.platformAdmin !== true) {
-    return;
+    return createModelPolicyState();
   }
-  modelPolicyLoadAbortController?.abort();
-  const controller = new AbortController();
-  modelPolicyLoadAbortController = controller;
-  const request = beginModelPolicyLoad(state.modelPolicy);
-  renderModelPolicy();
-  try {
-    const payload = await fetchJson("/ai-infrastructure/model-policy", { signal: controller.signal });
-    if (!isModelPolicyRouteCurrent()) {
-      invalidatePendingModelPolicyLoad();
-      return;
-    }
-    completeModelPolicyLoad(state.modelPolicy, request, payload?.policy);
-  } catch (error) {
-    if (!controller.signal.aborted) {
-      failModelPolicyLoad(
-        state.modelPolicy,
-        request,
-        error instanceof Error ? error.message : "unknown_error",
-      );
-    }
-  } finally {
-    if (modelPolicyLoadAbortController === controller) {
-      modelPolicyLoadAbortController = null;
-    }
-    renderModelPolicy();
-  }
+  const payload = await fetchJson("/ai-infrastructure/model-policy", { signal });
+  const stagedModelPolicy = createModelPolicyState();
+  const request = beginModelPolicyLoad(stagedModelPolicy);
+  completeModelPolicyLoad(stagedModelPolicy, request, payload?.policy);
+  return stagedModelPolicy;
 }
 
 function isModelPolicyRouteCurrent() {
@@ -843,8 +1102,6 @@ function isModelPolicyRouteCurrent() {
 }
 
 function invalidatePendingModelPolicyLoad() {
-  modelPolicyLoadAbortController?.abort();
-  modelPolicyLoadAbortController = null;
   invalidateModelPolicyLoad(state.modelPolicy);
 }
 
@@ -852,6 +1109,8 @@ async function saveModelPolicy() {
   if (state.session?.platformAdmin !== true) {
     return;
   }
+  const mutation = beginCurrentRouteMutation("model-policy-save");
+  if (!isCurrentRouteMutation(mutation)) return;
   const submission = beginModelPolicySave(state.modelPolicy);
   if (!submission) {
     state.modelPolicy.error = "Select one enabled model as active before saving.";
@@ -869,14 +1128,17 @@ async function saveModelPolicy() {
         activeModel: submission.activeModel,
       }),
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     savedSuccessfully = completeModelPolicySave(state.modelPolicy, submission, saved?.policy);
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     failModelPolicySave(
       state.modelPolicy,
       submission,
       error instanceof Error ? error.message : "unknown_error",
     );
   } finally {
+    if (!isCurrentRouteMutation(mutation)) return;
     const message = savedSuccessfully
       ? state.modelPolicy.dirty
         ? "Submitted policy saved. Newer draft changes remain unsaved."
@@ -890,6 +1152,8 @@ async function discoverModelsForPolicy() {
   if (state.session?.platformAdmin !== true) {
     return;
   }
+  const mutation = beginCurrentRouteMutation("model-policy-discovery");
+  if (!isCurrentRouteMutation(mutation)) return;
   const credential = healthyModelDiscoveryCredentials()
     .find((entry) => entry.id === els.modelPolicyCredential.value);
   if (!credential) {
@@ -914,17 +1178,20 @@ async function discoverModelsForPolicy() {
     const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/models`, {
       signal: modelDiscoveryAbortController.signal,
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     shouldAnnounce = completeModelDiscovery(state.modelDiscovery, request, payload?.models);
     if (shouldAnnounce && state.modelDiscovery.models.length === 0) {
       state.modelDiscovery.error = "This credential did not report any models.";
     }
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     shouldAnnounce = failModelDiscovery(
       state.modelDiscovery,
       request,
       error instanceof Error ? error.message : "unknown_error",
     );
   } finally {
+    if (!isCurrentRouteMutation(mutation)) return;
     if (modelDiscoveryAbortController === controller) {
       modelDiscoveryAbortController = null;
     }
@@ -1030,6 +1297,12 @@ function defaultUserSaveStatusMessage() {
 }
 
 function userStatus(user) {
+  if (!user) return "No user selected";
+  if (state.route?.area === "organization") {
+    if (user.status === "disabled") return "Disabled";
+    if (user.status === "removed") return "Removed";
+    return "Active";
+  }
   return user.disabled ? "Disabled" : user.emailVerified ? "Active" : "Invited";
 }
 
@@ -1177,7 +1450,12 @@ function renderRoute() {
   els.pageDescription.textContent = description;
   const organization = currentOrganization();
   els.operatingOrganizationLabel.textContent = `Operating organization: ${organization?.name || organization?.slug || route?.organizationId || "unavailable"}`;
-  if (route?.area === "organization" && route.page === "overview") {
+  if (
+    route?.area === "organization"
+    && route.page === "overview"
+    && !state.routeActionsLocked
+    && (state.pageLoad.status === "ready" || state.pageLoad.status === "empty")
+  ) {
     els.organizationSaveButton.disabled = false;
   }
   applyAdminCapabilities();
@@ -1199,23 +1477,14 @@ async function setAdminRoute(route, { historyMode = "push", load = true } = {}) 
   ) {
     state.userMode = "edit";
   }
-  if (state.route.area === "platform") {
-    organizationLoadAbortController?.abort();
-    organizationLoadAbortController = null;
-    state.organizationLoad = createOrganizationLoadState();
-    state.organizationDomains = [];
-    state.organizationInvites = [];
-    state.organizationBilling = null;
-    state.organizationAudit = [];
-  }
   const historyUpdate = planAdminHistoryUpdate(state.route, location, historyMode);
   if (historyUpdate?.method === "push") {
     history.pushState(null, "", pathname);
   } else if (historyUpdate?.method === "replace") {
     history.replaceState(null, "", pathname);
   }
+  if (load) return loadRouteData(state.route);
   renderRoute();
-  if (load) await loadRouteData(state.route);
   return true;
 }
 
@@ -1278,10 +1547,27 @@ function formatAdminError(error) {
   return error instanceof Error ? error.message : "unknown_error";
 }
 
-async function bootstrapSession() {
+async function bootstrapSession({ refreshVisibleRoute = false } = {}) {
+  const activeLoad = refreshVisibleRoute && state.session && state.route
+    ? beginRouteDataLoad(state.route)
+    : null;
   setStatus("Checking session", state.token ? "validating stored token" : "validating admin cookie");
-  const { response, payload } = await api("/session", { method: "GET" });
+  let response;
+  let payload;
+  try {
+    ({ response, payload } = await api("/session", {
+      method: "GET",
+      ...(activeLoad ? { signal: activeLoad.signal } : {}),
+    }));
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    abandonRouteDataLoad(activeLoad);
+    showLogin("Unable to verify session.");
+    if (state.token) setStatus("Session check failed", "stored token kept");
+    return;
+  }
   if (!response.ok) {
+    abandonRouteDataLoad(activeLoad);
     state.session = null;
     state.user = null;
     const shouldClearToken = payload?.error === "unauthorized" || payload?.error === "forbidden"
@@ -1312,6 +1598,7 @@ async function bootstrapSession() {
     ? requestedRoute
     : firstAuthorizedRoute();
   if (!authorizedRoute) {
+    abandonRouteDataLoad(activeLoad);
     showLogin("No authorized organization workspace is available for this account.");
     return;
   }
@@ -1323,14 +1610,33 @@ async function bootstrapSession() {
       : state.session.platformAdmin ? "platform admin" : "organization admin",
   );
   showApp();
-  await loadRouteData(state.route);
+  void loadReadiness();
+  await loadRouteData(state.route, activeLoad);
 }
 
 function populateOrganizationOptions() {
-  const organizations = Array.isArray(state.session?.organizations) ? state.session.organizations : [];
-  state.organizations = organizations;
-  els.userOrg.innerHTML = organizations.length
-    ? organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join("")
+  refreshOrganizationChromeDirectory();
+}
+
+function refreshOrganizationChromeDirectory(directOrganization = null) {
+  const sessionOrganizations = Array.isArray(state.session?.organizations) ? state.session.organizations : [];
+  const sessionOrganizationIds = new Set(sessionOrganizations.map((organization) => organization.id));
+  const cachedDirectory = Array.isArray(state.organizationDirectoryCache)
+    ? state.organizationDirectoryCache.filter(
+        (organization) => state.session?.platformAdmin === true || sessionOrganizationIds.has(organization.id),
+      )
+    : [];
+  const organizationsById = new Map();
+  for (const organization of [...cachedDirectory, ...sessionOrganizations, directOrganization]) {
+    if (!organization?.id) continue;
+    organizationsById.set(organization.id, {
+      ...(organizationsById.get(organization.id) || {}),
+      ...organization,
+    });
+  }
+  state.organizations = Array.from(organizationsById.values());
+  els.userOrg.innerHTML = state.organizations.length
+    ? state.organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join("")
     : `<option value="">No organization</option>`;
   if (state.route?.area === "organization") renderOrganizationSelector();
 }
@@ -1443,42 +1749,34 @@ async function initializeAuth() {
   await bootstrapSession();
 }
 
-async function clearServerAdminSession() {
-  await api("/auth/sign-out", { method: "POST" }).catch(() => null);
+async function clearServerAdminSession(token = state.token) {
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  await api("/auth/sign-out", { method: "POST", headers }).catch(() => null);
 }
 
 async function signOut() {
+  const token = state.token;
   invalidatePendingModelPolicyLoad();
-  await clearServerAdminSession();
+  routeLoadAbortController?.abort();
+  routeLoadAbortController = null;
+  modelDiscoveryAbortController?.abort();
+  modelDiscoveryAbortController = null;
+  closeAllModals();
+  state.pageLoad = createAdminPageLoadState();
+  clearRouteOwnedState();
   state.token = "";
   state.session = null;
   state.user = null;
-  state.credentials = [];
-  state.alerts = [];
-  state.audit = [];
-  state.users = [];
   state.organizations = [];
-  state.organizationDomains = [];
-  state.organizationInvites = [];
-  state.organizationBilling = null;
-  state.organizationAudit = [];
-  state.usage = null;
-  state.selectedCredentialId = null;
-  state.selectedAlertId = null;
-  state.selectedAuditId = null;
-  state.selectedUserId = null;
-  organizationLoadAbortController?.abort();
-  organizationLoadAbortController = null;
-  state.organizationLoad = createOrganizationLoadState();
+  state.organizationDirectoryCache = [];
   state.mutations = createAdminMutationState();
   state.route = null;
   state.navigation = createAdminNavigationState(null);
-  state.userMode = "edit";
-  modelDiscoveryAbortController?.abort();
-  modelDiscoveryAbortController = null;
-  state.modelPolicy = createModelPolicyState();
-  state.modelDiscovery = createModelDiscoveryState();
+  setRouteActionsDisabled(true);
+  renderAdminPageState();
   localStorage.removeItem(STORAGE_KEY);
+  showLogin("Signing out...");
+  await clearServerAdminSession(token);
   window.location.assign("/admin");
 }
 
@@ -1534,13 +1832,17 @@ function renderOrganizationSelector() {
     <option value="${escapeHtml(organizationSelectorLabel(organization))}" label="${escapeHtml(organization.slug || organization.id)}"></option>
   `).join("");
   els.organizationSelectorInput.value = selected ? organizationSelectorLabel(selected) : "";
-  els.organizationSelectorInput.disabled = organizations.length <= 1;
+  els.organizationSelectorInput.disabled = state.routeActionsLocked || organizations.length <= 1;
   els.organizationSelectorInput.title = organizations.length <= 1
     ? "Only one organization is available."
     : "Search by organization name, slug, or id.";
 }
 
 function hasOrganizationPendingChanges() {
+  if (state.route?.area !== "organization" || state.route.page !== "overview") {
+    return false;
+  }
+
   const organization = currentOrganization();
   if (!organization) {
     return false;
@@ -1590,24 +1892,23 @@ async function selectOrganizationFromSelector() {
   setOrganizationSaveStatus("No pending changes.");
 }
 
-async function loadOrganization() {
-  if (state.route?.area !== "organization") return;
-  await loadOrganizationWorkspace(state.route);
+async function loadOrganization(mutation = beginCurrentRouteMutation("organization-refresh")) {
+  if (state.route?.area !== "organization" || !isCurrentRouteMutation(mutation)) return;
+  const result = await loadOrganizationWorkspace(state.route);
+  if (!isCurrentRouteMutation(mutation)) return;
+  Object.assign(state, result);
+  refreshOrganizationChromeDirectory(result.organizationLoad?.organization);
+  renderCurrentRouteData();
+  applyAdminCapabilities();
 }
 
-async function loadOrganizationsDirectory() {
-  try {
-    const payload = await fetchJson("/organizations");
-    state.organizations = Array.isArray(payload?.organizations) ? payload.organizations : [];
-    renderOrganizationsDirectory();
-    renderOrganizationSelector();
-  } catch (error) {
-    els.organizationDirectoryList.innerHTML = `<article class="list-card active"><div><strong>Unable to load organizations</strong><p>${escapeHtml(error instanceof Error ? error.message : "unknown_error")}</p></div></article>`;
-  }
+async function loadOrganizationsDirectory(signal) {
+  const payload = await fetchJson("/organizations", { signal });
+  return Array.isArray(payload?.organizations) ? payload.organizations : [];
 }
 
 function renderOrganizationsDirectory() {
-  const organizations = Array.isArray(state.organizations) ? state.organizations : [];
+  const organizations = Array.isArray(state.organizationDirectory) ? state.organizationDirectory : [];
   els.organizationDirectoryList.innerHTML = organizations.map((organization) => `
     <article class="list-card organization-directory-card">
       <div>
@@ -1624,47 +1925,57 @@ function renderOrganizationsDirectory() {
   `).join("") || `<article class="list-card active"><div><strong>No organizations</strong><p>No organization workspaces are available.</p></div></article>`;
 }
 
-async function loadOrganizationWorkspace(route) {
+async function loadOrganizationWorkspace(route, signal) {
   const organizationId = organizationIdForRoute(route);
-  const request = beginOrganizationLoad(state.organizationLoad, route);
-  if (!organizationId || !request) return;
-  organizationLoadAbortController?.abort();
-  const controller = new AbortController();
-  organizationLoadAbortController = controller;
-  els.organizationContextStatus.textContent = "Loading organization workspace...";
-  try {
-    const directoryPayload = await fetchJson("/organizations", { signal: controller.signal });
-    const organizations = Array.isArray(directoryPayload?.organizations) ? directoryPayload.organizations : [];
-    state.organizations = organizations;
-    if (!organizations.some((entry) => entry.id === organizationId)) {
-      throw new Error("organization_not_authorized_or_not_found");
-    }
-    const organizationPayload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}`, { signal: controller.signal });
-    if (!completeOrganizationLoad(state.organizationLoad, request, organizationPayload?.organization)) return;
-    if (route.page === "domains-invites") {
-      const [domainsPayload, invitesPayload] = await Promise.all([
-        fetchJson(`/organizations/${encodeURIComponent(organizationId)}/domains`, { signal: controller.signal }),
-        fetchJson(`/organizations/${encodeURIComponent(organizationId)}/invites`, { signal: controller.signal }),
-      ]);
-      if (state.route?.area !== "organization" || organizationIdForRoute(state.route) !== organizationId) return;
-      state.organizationDomains = Array.isArray(domainsPayload?.domains) ? domainsPayload.domains : [];
-      state.organizationInvites = Array.isArray(invitesPayload?.invites) ? invitesPayload.invites : [];
-    } else {
-      state.organizationDomains = [];
-      state.organizationInvites = [];
-    }
-    els.organizationContextStatus.textContent = "";
-    renderOrganization();
-    renderOrganizationSelector();
-    renderRoute();
-  } catch (error) {
-    if (controller.signal.aborted) return;
-    failOrganizationLoad(state.organizationLoad, request, error instanceof Error ? error.message : "unknown_error");
-    els.organizationContextStatus.textContent = "Organization unavailable or not authorized. Return to an authorized organization workspace.";
-    renderOrganization();
-  } finally {
-    if (organizationLoadAbortController === controller) organizationLoadAbortController = null;
+  if (!organizationId) {
+    throw Object.assign(new Error("organization_not_found"), { status: 404 });
   }
+  const encodedOrganizationId = encodeURIComponent(organizationId);
+  const requests = [
+    fetchJson(`/organizations/${encodedOrganizationId}`, { signal }),
+  ];
+  if (route.page === "domains-invites") {
+    requests.push(
+      fetchJson(`/organizations/${encodedOrganizationId}/domains`, { signal }),
+      fetchJson(`/organizations/${encodedOrganizationId}/invites`, { signal }),
+    );
+  }
+  if (route.page === "members" || route.page === "ai-access") {
+    requests.push(fetchJson(`/organizations/${encodedOrganizationId}/members`, { signal }));
+  }
+  if (route.page === "billing") {
+    requests.push(fetchJson(`/organizations/${encodedOrganizationId}/billing`, { signal }));
+  }
+  if (route.page === "audit") {
+    requests.push(fetchJson(`/organizations/${encodedOrganizationId}/audit`, { signal }));
+  }
+  const [organizationPayload, ...routePayloads] = await Promise.all(requests);
+  const organization = organizationPayload?.organization;
+  if (!organization || organization.id !== organizationId) {
+    throw Object.assign(new Error("organization_not_found"), { status: 404 });
+  }
+  const organizationLoad = createOrganizationLoadState();
+  organizationLoad.requestId = 1;
+  organizationLoad.organizationId = organizationId;
+  organizationLoad.organization = organization;
+  const result = {
+    organizationLoad,
+    organizationMembers: [],
+    organizationDomains: [],
+    organizationInvites: [],
+    organizationBilling: null,
+    organizationAudit: [],
+  };
+  if (route.page === "domains-invites") {
+    result.organizationDomains = Array.isArray(routePayloads[0]?.domains) ? routePayloads[0].domains : [];
+    result.organizationInvites = Array.isArray(routePayloads[1]?.invites) ? routePayloads[1].invites : [];
+  }
+  if (route.page === "members" || route.page === "ai-access") {
+    result.organizationMembers = Array.isArray(routePayloads[0]?.members) ? routePayloads[0].members : [];
+  }
+  if (route.page === "billing") result.organizationBilling = routePayloads[0]?.billing || null;
+  if (route.page === "audit") result.organizationAudit = Array.isArray(routePayloads[0]?.events) ? routePayloads[0].events : [];
+  return result;
 }
 
 function renderOrganizationBilling() {
@@ -1698,63 +2009,231 @@ function renderOrganizationAudit() {
   `).join("") || `<article class="list-card active"><div><strong>No organization events</strong><p>Legacy global events without organization scope are intentionally absent.</p></div></article>`;
 }
 
-async function loadOrganizationBilling(route) {
+async function loadOrganizationBilling(route, mutation = beginCurrentRouteMutation("organization-billing-load", route)) {
   const organizationId = organizationIdForRoute(route);
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-billing-load", route);
-  if (!organizationId || !mutation) return;
+  if (!organizationId || !isCurrentRouteMutation(mutation)) return;
   els.organizationBillingStatus.textContent = "Loading billing...";
   try {
     const payload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}/billing`);
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.organizationBilling = payload?.billing || null;
     renderOrganizationBilling();
     els.organizationBillingStatus.textContent = "Billing loaded.";
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.organizationBilling = null;
     renderOrganizationBilling();
     els.organizationBillingStatus.textContent = `Unable to load billing · ${formatAdminError(error)}`;
   }
 }
 
-async function loadOrganizationAudit(route) {
+async function loadOrganizationAudit(route, mutation = beginCurrentRouteMutation("organization-audit-load", route)) {
   const organizationId = organizationIdForRoute(route);
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-audit-load", route);
-  if (!organizationId || !mutation) return;
+  if (!organizationId || !isCurrentRouteMutation(mutation)) return;
   els.organizationAuditStatus.textContent = "Loading organization audit...";
   try {
     const payload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}/audit`);
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.organizationAudit = Array.isArray(payload?.events) ? payload.events : [];
     renderOrganizationAudit();
     els.organizationAuditStatus.textContent = state.organizationAudit.length ? "Organization audit loaded." : "No scoped events found.";
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     state.organizationAudit = [];
     renderOrganizationAudit();
     els.organizationAuditStatus.textContent = `Unable to load organization audit · ${formatAdminError(error)}`;
   }
 }
 
-async function loadRouteData(route) {
-  await loadReadiness();
+function usageRequestPath() {
+  const params = new URLSearchParams();
+  params.set("groupBy", state.usageFilters.groupBy);
+  if (state.usageFilters.credentialId) params.set("credentialId", state.usageFilters.credentialId);
+  if (state.usageFilters.userId) params.set("userId", state.usageFilters.userId);
+  if (state.usageFilters.orgId) params.set("orgId", state.usageFilters.orgId);
+  return `/usage?${params.toString()}`;
+}
+
+async function loadPlatformRouteResult(route, signal) {
+  const includeDeleted = state.showDeletedCredentials ? "?includeDeleted=true" : "";
+  if (route.page === "overview") {
+    const [credentialsPayload, alertsPayload, usersPayload, usage] = await Promise.all([
+      fetchJson(`/credentials${includeDeleted}`, { signal }),
+      fetchJson("/alerts", { signal }),
+      fetchJson("/users", { signal }),
+      fetchJson(usageRequestPath(), { signal }),
+    ]);
+    return {
+      credentials: Array.isArray(credentialsPayload?.credentials) ? credentialsPayload.credentials : [],
+      alerts: Array.isArray(alertsPayload?.alerts) ? alertsPayload.alerts : [],
+      users: Array.isArray(usersPayload?.users) ? usersPayload.users : [],
+      usage,
+    };
+  }
+  if (route.page === "organizations") {
+    return { organizationDirectory: await loadOrganizationsDirectory(signal) };
+  }
+  if (route.page === "ai-infrastructure") {
+    const [credentialsPayload, modelPolicy] = await Promise.all([
+      fetchJson(`/credentials${includeDeleted}`, { signal }),
+      loadModelPolicy(signal),
+    ]);
+    return {
+      credentials: Array.isArray(credentialsPayload?.credentials) ? credentialsPayload.credentials : [],
+      modelPolicy,
+    };
+  }
+  if (route.page === "ai-usage") {
+    const [credentialsPayload, usage] = await Promise.all([
+      fetchJson(`/credentials${includeDeleted}`, { signal }),
+      fetchJson(usageRequestPath(), { signal }),
+    ]);
+    return {
+      credentials: Array.isArray(credentialsPayload?.credentials) ? credentialsPayload.credentials : [],
+      usage,
+    };
+  }
+  if (route.page === "ai-alerts") {
+    const payload = await fetchJson("/alerts", { signal });
+    return { alerts: Array.isArray(payload?.alerts) ? payload.alerts : [] };
+  }
+  if (route.page === "platform-users") {
+    const payload = await fetchJson("/users", { signal });
+    return { users: Array.isArray(payload?.users) ? payload.users : [] };
+  }
+  if (route.page === "audit") {
+    const payload = await fetchJson("/audit", { signal });
+    return { audit: Array.isArray(payload?.events) ? payload.events : [] };
+  }
+  throw new Error("unsupported_admin_route");
+}
+
+function routeResultIsEmpty(route, result) {
   if (route.area === "platform") {
-    if (route.page === "overview") await Promise.all([loadCredentials(), loadAlerts(), loadUsers(), loadUsage()]);
-    if (route.page === "organizations") await loadOrganizationsDirectory();
-    if (route.page === "ai-infrastructure") await loadAiInfrastructure();
-    if (route.page === "ai-usage") await Promise.all([loadCredentials(), loadUsage()]);
-    if (route.page === "ai-alerts") await loadAlerts();
-    if (route.page === "platform-users") await loadUsers();
-    if (route.page === "audit") await loadAudit();
-    renderOverview();
+    if (route.page === "organizations") return result.organizationDirectory.length === 0;
+    if (route.page === "ai-infrastructure") return result.credentials.length === 0 && !result.modelPolicy?.saved;
+    if (route.page === "ai-alerts") return result.alerts.length === 0;
+    if (route.page === "platform-users") return result.users.length === 0;
+    if (route.page === "audit") return result.audit.length === 0;
+    if (route.page === "ai-usage") return !result.usage || (result.usage.series || []).length === 0;
+    return false;
+  }
+  if (route.page === "members" || route.page === "ai-access") return result.organizationMembers.length === 0;
+  if (route.page === "billing") return !result.organizationBilling;
+  if (route.page === "audit") return result.organizationAudit.length === 0;
+  return false;
+}
+
+function renderCurrentRouteData() {
+  const route = state.route;
+  if (route.area === "platform") {
+    if (route.page === "overview") renderOverview();
+    if (route.page === "organizations") renderOrganizationsDirectory();
+    if (route.page === "ai-infrastructure") {
+      renderCredentials();
+      renderModelPolicy();
+    }
+    if (route.page === "ai-usage") renderUsage();
+    if (route.page === "ai-alerts") renderAlerts();
+    if (route.page === "platform-users") renderUsers();
+    if (route.page === "audit") renderAudit();
     return;
   }
-  if (route.area === "organization") {
-    await loadOrganizationWorkspace(route);
-    if (route.page === "members" || route.page === "ai-access") await loadUsers();
-    if (route.page === "billing") await loadOrganizationBilling(route);
-    if (route.page === "audit") await loadOrganizationAudit(route);
+  if (route.page === "overview" || route.page === "domains-invites") renderOrganization();
+  if (route.page === "members" || route.page === "ai-access") renderUsers();
+  if (route.page === "billing") renderOrganizationBilling();
+  if (route.page === "audit") renderOrganizationAudit();
+  renderOrganizationSelector();
+}
+
+function finishRouteDataLoad(request, result, empty, focusHeading) {
+  if (!isAdminPageLoadCurrent(state.pageLoad, request)) return false;
+  if (!completeAdminPageLoad(state.pageLoad, request, empty)) return false;
+  if (Array.isArray(result.credentials)) result.selectedCredentialId = result.credentials[0]?.id || null;
+  if (Array.isArray(result.alerts)) result.selectedAlertId = result.alerts[0]?.id || null;
+  if (Array.isArray(result.audit)) result.selectedAuditId = result.audit[0]?.id || null;
+  if (Array.isArray(result.users)) result.selectedUserId = result.users[0]?.id || null;
+  if (Array.isArray(result.organizationMembers)) {
+    result.selectedUserId = result.organizationMembers[0]?.userId || null;
+    result.selectedOrganizationMemberId = result.organizationMembers[0]?.membershipId || null;
   }
+  if (Array.isArray(result.organizationDirectory)) {
+    state.organizationDirectoryCache = [...result.organizationDirectory];
+  }
+  Object.assign(state, result);
+  refreshOrganizationChromeDirectory(result.organizationLoad?.organization);
+  renderCurrentRouteData();
+  renderAdminPageState();
+  applyAdminCapabilities();
+  releaseRouteActionsForCurrentRoute({ focusHeading });
+  return true;
+}
+
+function failRouteDataLoad(request, error) {
+  if (!isAdminPageLoadCurrent(state.pageLoad, request)) return false;
+  if (error?.name === "AbortError") {
+    failAdminPageLoad(state.pageLoad, request, error);
+    renderAdminPageState();
+    return false;
+  }
+  if (!failAdminPageLoad(state.pageLoad, request, error)) return false;
+  if (error?.status === 401) {
+    state.token = "";
+    state.session = null;
+    state.user = null;
+    localStorage.removeItem(STORAGE_KEY);
+    showLogin("Your admin session has expired. Sign in again.");
+    return false;
+  }
+  state.pageLoad.retryable = true;
+  if (error?.status === 403) {
+    state.pageLoad.error = "Access denied";
+    state.pageLoad.retryable = false;
+  } else if (error?.status === 404 && state.route?.area === "organization") {
+    state.pageLoad.error = "Organization not found";
+    state.pageLoad.retryable = false;
+  } else {
+    state.pageLoad.error = "Unable to load data. Retry this page.";
+  }
+  renderAdminPageState();
+  return true;
+}
+
+async function loadRouteData(route, activeLoad = null) {
+  const reusableLoad = activeLoad
+    && !activeLoad.signal.aborted
+    && formatAdminRoute(activeLoad.route) === formatAdminRoute(route)
+    && isAdminPageLoadCurrent(state.pageLoad, activeLoad.request);
+  const routeLoad = reusableLoad ? activeLoad : beginRouteDataLoad(route);
+  if (!routeLoad) return;
+  const { request, signal, focusHeading } = routeLoad;
+  let completed = false;
+  try {
+    const result = route.area === "platform"
+      ? await loadPlatformRouteResult(route, signal)
+      : await loadOrganizationWorkspace(route, signal);
+    completed = finishRouteDataLoad(
+      request,
+      result,
+      routeResultIsEmpty(route, result),
+      focusHeading,
+    );
+  } catch (error) {
+    failRouteDataLoad(request, error);
+  } finally {
+    if (routeLoadAbortController?.signal === signal) routeLoadAbortController = null;
+  }
+  return completed ? routeLoad : null;
+}
+
+function isRouteLoadResultCurrent(result, route) {
+  return Boolean(
+    result?.request
+    && isAdminPageLoadCurrent(state.pageLoad, result.request)
+    && formatAdminRoute(result.route) === formatAdminRoute(route)
+    && formatAdminRoute(state.route) === formatAdminRoute(route)
+    && (state.pageLoad.status === "ready" || state.pageLoad.status === "empty")
+  );
 }
 
 async function loadReadiness() {
@@ -1792,10 +2271,12 @@ function setReadinessSignal(tone, label) {
   els.readinessLabel.textContent = label;
 }
 
-async function loadCredentials() {
+async function loadCredentials(mutation = beginCurrentRouteMutation("credentials-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
     const includeDeleted = state.showDeletedCredentials ? "?includeDeleted=true" : "";
     const payload = await fetchJson(`/credentials${includeDeleted}`);
+    if (!isCurrentRouteMutation(mutation)) return;
     state.credentials = Array.isArray(payload?.credentials) ? payload.credentials : [];
     if (!state.selectedCredentialId || !state.credentials.some((entry) => entry.id === state.selectedCredentialId)) {
       state.selectedCredentialId = state.credentials[0]?.id || null;
@@ -1805,45 +2286,44 @@ async function loadCredentials() {
       renderModelPolicy();
     }
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadCredentials failed", error);
   }
 }
 
-async function loadAiInfrastructure() {
-  await loadCredentials();
-  if (state.session?.platformAdmin !== true) {
-    return;
-  }
-  await loadModelPolicy();
-}
-
-async function loadAlerts() {
+async function loadAlerts(mutation = beginCurrentRouteMutation("alerts-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
     const payload = await fetchJson("/alerts");
+    if (!isCurrentRouteMutation(mutation)) return;
     state.alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
     if (!state.selectedAlertId || !state.alerts.some((entry) => entry.id === state.selectedAlertId)) {
       state.selectedAlertId = state.alerts[0]?.id || null;
     }
     renderAlerts();
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadAlerts failed", error);
   }
 }
 
-async function loadAudit() {
+async function loadAudit(mutation = beginCurrentRouteMutation("audit-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
     const payload = await fetchJson("/audit");
+    if (!isCurrentRouteMutation(mutation)) return;
     state.audit = Array.isArray(payload?.events) ? payload.events : [];
     if (!state.selectedAuditId || !state.audit.some((entry) => entry.id === state.selectedAuditId)) {
       state.selectedAuditId = state.audit[0]?.id || null;
     }
     renderAudit();
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadAudit failed", error);
   }
 }
 
-async function loadUserAiAccess(userId) {
+async function loadUserAiAccess(userId, mutation = null) {
   if (!canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")) {
     return null;
   }
@@ -1853,24 +2333,40 @@ async function loadUserAiAccess(userId) {
     return null;
   }
 
-  const payload = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`);
-  const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
-  state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
-    payload?.availableCredentials,
-  );
-  state.userAiAccessByUserId[resolvedUserId] = aiAccess;
-  return aiAccess;
+  const activeMutation = mutation || beginCurrentRouteMutation(`user-ai-access-load:${resolvedUserId}`);
+  const selection = captureAiAccessMemberSelection(resolvedUserId);
+  if (!selection || !isCurrentRouteMutation(activeMutation)) return null;
+  try {
+    const payload = await fetchJson(aiAccessMemberPath(selection));
+    if (!isCurrentRouteMutation(activeMutation) || !isAiAccessMemberSelectionCurrent(selection)) return null;
+    const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
+    state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
+      payload?.availableCredentials,
+    );
+    state.userAiAccessByUserId[resolvedUserId] = aiAccess;
+    return aiAccess;
+  } catch (error) {
+    if (!isCurrentRouteMutation(activeMutation) || !isAiAccessMemberSelectionCurrent(selection)) return null;
+    throw error;
+  }
 }
 
-async function saveUserAiAccess(userId, input = null) {
+async function saveUserAiAccess(
+  userId,
+  input = null,
+  mutation = beginCurrentRouteMutation(`user-ai-access-save:${userId}`),
+) {
   if (!canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")) {
     return;
   }
+  if (!isCurrentRouteMutation(mutation)) return;
 
   const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
   if (!resolvedUserId) {
-    return;
+    return false;
   }
+  const selection = captureAiAccessMemberSelection(resolvedUserId);
+  if (!selection) return false;
 
   const aiAccessInput = input && typeof input === "object"
     ? {
@@ -1883,27 +2379,71 @@ async function saveUserAiAccess(userId, input = null) {
         credentialId: readAiAccessCredentialValue(),
       };
 
-  const saved = await fetchJson(`/users/${encodeURIComponent(resolvedUserId)}/ai-access`, {
-    method: "PUT",
-    body: JSON.stringify({
-      ...aiAccessInput,
-      organizationId: aiAccessOrganizationIdForUser(resolvedUserId),
-    }),
-  });
-  state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
-    saved?.availableCredentials,
+  try {
+    const saved = await fetchJson(aiAccessMemberPath(selection), {
+      method: "PUT",
+      body: JSON.stringify(aiAccessInput),
+    });
+    if (!isCurrentRouteMutation(mutation) || !isAiAccessMemberSelectionCurrent(selection)) return false;
+    state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
+      saved?.availableCredentials,
+    );
+    state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
+    return true;
+  } catch (error) {
+    if (!isCurrentRouteMutation(mutation) || !isAiAccessMemberSelectionCurrent(selection)) return false;
+    throw error;
+  }
+}
+
+function captureAiAccessMemberSelection(userId) {
+  const resolvedUserId = typeof userId === "string" ? userId.trim() : "";
+  if (
+    !resolvedUserId
+    || state.route?.area !== "organization"
+    || state.route.page !== "ai-access"
+    || (state.pageLoad.status !== "ready" && state.pageLoad.status !== "empty")
+    || state.routeActionsLocked
+    || state.selectedUserId !== resolvedUserId
+  ) {
+    return null;
+  }
+  const organizationId = organizationIdForRoute(state.route);
+  const member = state.organizationMembers.find(
+    (member) => member.userId === resolvedUserId && member.status === "active",
   );
-  state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
+  if (!organizationId || !member?.membershipId) return null;
+  return {
+    organizationId,
+    userId: member.userId,
+    membershipId: member.membershipId,
+    pageKey: state.pageLoad.key,
+    pageGeneration: state.pageLoad.generation,
+  };
 }
 
-function aiAccessOrganizationIdForUser(userId) {
-  const user = state.users.find((entry) => entry.id === userId);
-  return resolveAiAccessOrganizationId(state.route, user, els.userOrg.value);
+function isAiAccessMemberSelectionCurrent(selection) {
+  if (!selection || state.route?.area !== "organization" || state.route.page !== "ai-access") return false;
+  const member = state.organizationMembers.find((entry) => entry.userId === selection.userId);
+  if (!member) return false;
+  return organizationIdForRoute(state.route) === selection.organizationId
+    && selection.pageGeneration === state.pageLoad.generation
+    && selection.pageKey === state.pageLoad.key
+    && state.selectedUserId === selection.userId
+    && member.membershipId === selection.membershipId
+    && member.status === "active";
 }
 
-async function loadUsers() {
+function aiAccessMemberPath(selection) {
+  return `/organizations/${encodeURIComponent(selection.organizationId)}/members/${encodeURIComponent(selection.userId)}/ai-access`;
+}
+
+async function loadUsers(mutation = beginCurrentRouteMutation("users-refresh")) {
+  if (state.route?.area !== "platform" || state.route.page !== "platform-users") return;
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
     const payload = await fetchJson("/users");
+    if (!isCurrentRouteMutation(mutation)) return;
     state.users = Array.isArray(payload?.users) ? payload.users : [];
     if (!state.selectedUserId || !state.users.some((entry) => entry.id === state.selectedUserId)) {
       state.selectedUserId = state.users[0]?.id || null;
@@ -1921,7 +2461,8 @@ async function loadUsers() {
       && state.selectedUserId
       && canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")
     ) {
-      await loadUserAiAccess(state.selectedUserId);
+      await loadUserAiAccess(state.selectedUserId, mutation);
+      if (!isCurrentRouteMutation(mutation)) return;
       const user = currentUser();
       if (user) {
         populateUserEditor(user);
@@ -1929,6 +2470,7 @@ async function loadUsers() {
     }
     setUserSaveStatus(defaultUserSaveStatusMessage());
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadUsers failed", error);
     setUserSaveStatus(
       `Unable to load users: ${error instanceof Error ? error.message : "unknown_error"}`,
@@ -1937,23 +2479,15 @@ async function loadUsers() {
   }
 }
 
-async function loadUsage() {
+async function loadUsage(mutation = beginCurrentRouteMutation("usage-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   try {
-    const params = new URLSearchParams();
-    params.set("groupBy", state.usageFilters.groupBy);
-    if (state.usageFilters.credentialId) {
-      params.set("credentialId", state.usageFilters.credentialId);
-    }
-    if (state.usageFilters.userId) {
-      params.set("userId", state.usageFilters.userId);
-    }
-    if (state.usageFilters.orgId) {
-      params.set("orgId", state.usageFilters.orgId);
-    }
-    const payload = await fetchJson(`/usage?${params.toString()}`);
+    const payload = await fetchJson(usageRequestPath());
+    if (!isCurrentRouteMutation(mutation)) return;
     state.usage = payload;
     renderUsage();
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     console.error("loadUsage failed", error);
   }
 }
@@ -1991,7 +2525,7 @@ function renderOrganization() {
   els.organizationSeatLimit.value = organization.seatLimit === null || organization.seatLimit === undefined
     ? ""
     : String(organization.seatLimit);
-  els.organizationSeatLimit.disabled = state.session?.platformAdmin !== true;
+  els.organizationSeatLimit.disabled = state.routeActionsLocked || state.session?.platformAdmin !== true;
 
   els.organizationDomainList.innerHTML = state.organizationDomains.map((domain) => `
     <article class="list-card active" data-domain-id="${escapeHtml(domain.id)}">
@@ -2402,12 +2936,49 @@ function renderAlerts() {
   }
 }
 
+function organizationMemberToRouteSubject(member, organization) {
+  const status = member?.status === "disabled" || member?.status === "removed"
+    ? member.status
+    : "active";
+  const membershipId = member?.membershipId || "";
+  const userId = member?.userId || "";
+  const role = normalizeOrganizationRoleInput(member?.role);
+  return {
+    id: userId,
+    userId,
+    membershipId,
+    name: member?.name || member?.email || userId,
+    email: member?.email || "",
+    role,
+    status,
+    disabled: status === "disabled" || status === "removed",
+    platformAdmin: false,
+    memberships: [{
+      membershipId,
+      orgId: organization.id,
+      orgName: organization.name || organization.slug || organization.id,
+      orgSlug: organization.slug || "",
+      role,
+      status,
+    }],
+  };
+}
+
+function currentRouteSubjects() {
+  if (state.route?.area === "organization") {
+    const organization = currentOrganization();
+    if (!organization) return [];
+    return state.organizationMembers.map((member) => organizationMemberToRouteSubject(member, organization));
+  }
+  return state.users;
+}
+
 function filteredUsers() {
   const term = els.userSearch.value.trim().toLowerCase();
   const status = els.userStatusFilter.value;
   const role = els.userRoleFilter.value;
 
-  return state.users.filter((user) => {
+  return currentRouteSubjects().filter((user) => {
     const organizationId = organizationIdForRoute(state.route);
     if (
       organizationId
@@ -2451,14 +3022,14 @@ function findUserByEmail(email) {
   if (!normalized) {
     return null;
   }
-  return state.users.find((user) => typeof user.email === "string" && user.email.trim().toLowerCase() === normalized) || null;
+  return currentRouteSubjects().find((user) => typeof user.email === "string" && user.email.trim().toLowerCase() === normalized) || null;
 }
 
 function currentUser() {
   if (state.userMode === "create") {
     return null;
   }
-  return state.users.find((entry) => entry.id === state.selectedUserId) || null;
+  return currentRouteSubjects().find((entry) => entry.id === state.selectedUserId) || null;
 }
 
 function currentCredential() {
@@ -2493,7 +3064,7 @@ function renderAiAccessCredentialOptions(user, aiAccess) {
       ? aiAccess.credentialId
       : "";
   els.userAiAccessCredential.value = selectedCredentialId || "";
-  els.userAiAccessCredential.disabled =
+  els.userAiAccessCredential.disabled = state.routeActionsLocked ||
     state.userMode === "create" ||
     !user ||
     (els.userAiAccessProvider.value !== "codex_oauth" && els.userAiAccessProvider.value !== "openai_compatible") ||
@@ -2533,18 +3104,18 @@ function populateUserEditor(user) {
   els.userEditorStatus.textContent = isCreate ? "Create user" : userStatus(user);
   els.userEditorTitle.textContent = isCreate ? "New user" : (user?.name || user?.email || "User");
   els.userName.value = user?.name || "";
-  els.userName.disabled = !permissions.editProfile;
+  els.userName.disabled = state.routeActionsLocked || !permissions.editProfile;
   els.userEmail.value = user?.email || "";
-  els.userEmail.disabled = !isCreate || !permissions.createUser;
-  els.userOrg.disabled = !permissions.editMembership || Boolean(organizationId);
-  els.userRole.disabled = !permissions.editMembership;
+  els.userEmail.disabled = state.routeActionsLocked || !isCreate || !permissions.createUser;
+  els.userOrg.disabled = state.routeActionsLocked || !permissions.editMembership || Boolean(organizationId);
+  els.userRole.disabled = state.routeActionsLocked || !permissions.editMembership;
   els.userPlatformAdmin.checked = user?.platformAdmin === true;
-  els.userPlatformAdmin.disabled = !permissions.setPlatformAdmin;
+  els.userPlatformAdmin.disabled = state.routeActionsLocked || !permissions.setPlatformAdmin;
   if (!permissions.setPlatformAdmin) {
     els.userPlatformAdmin.checked = false;
   }
   els.userSendInvite.checked = true;
-  els.userSendInvite.disabled = !isCreate || !permissions.createUser;
+  els.userSendInvite.disabled = state.routeActionsLocked || !isCreate || !permissions.createUser;
   if (organizationId) {
     els.userOrg.value = organizationId;
     els.userRole.value = normalizeOrganizationRoleInput(membership?.role);
@@ -2556,13 +3127,13 @@ function populateUserEditor(user) {
     els.userRole.value = "member";
   }
   els.userDisableButton.textContent = user?.disabled ? "Enable user" : "Disable user";
-  els.userDisableButton.disabled = isCreate || !user || !permissions.disableUser;
-  els.userDeleteButton.disabled = isCreate || !user || !permissions.deleteUser;
+  els.userDisableButton.disabled = state.routeActionsLocked || isCreate || !user || !permissions.disableUser;
+  els.userDeleteButton.disabled = state.routeActionsLocked || isCreate || !user || !permissions.deleteUser;
   if (permissions.editAiAccess) {
     els.userAiAccessEnabled.checked = aiAccess.enabled;
-    els.userAiAccessEnabled.disabled = isCreate || !user;
+    els.userAiAccessEnabled.disabled = state.routeActionsLocked || isCreate || !user;
     els.userAiAccessProvider.value = aiAccess.provider || "";
-    els.userAiAccessProvider.disabled = isCreate || !user;
+    els.userAiAccessProvider.disabled = state.routeActionsLocked || isCreate || !user;
     renderAiAccessCredentialOptions(user, aiAccess);
     updateAiAccessStatusText(user, aiAccess);
   }
@@ -2637,32 +3208,38 @@ function renderAudit() {
   }
 }
 
-function enterCreateMode() {
+async function enterCreateMode() {
   if (!canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "create-user")) {
     return;
   }
 
-  state.userMode = "create";
-  state.selectedUserId = null;
-  void setAdminRoute(toPlatformRoute("platform-users")).then((changed) => {
-    if (!changed) return;
-    showApp();
-    openUserEditor(null);
-    setUserSaveStatus(defaultUserSaveStatusMessage());
-  });
+  const targetRoute = toPlatformRoute("platform-users");
+  const alreadyReady = formatAdminRoute(state.route) === formatAdminRoute(targetRoute)
+    && (state.pageLoad.status === "ready" || state.pageLoad.status === "empty");
+  const routeLoad = alreadyReady
+    ? { request: { key: state.pageLoad.key, generation: state.pageLoad.generation }, route: { ...state.route } }
+    : await setAdminRoute(targetRoute);
+  if (!isRouteLoadResultCurrent(routeLoad, targetRoute)) return;
+  showApp();
+  openUserEditor(null);
+  setUserSaveStatus(defaultUserSaveStatusMessage());
 }
 
-async function refreshCredentialOperations() {
+async function refreshCredentialOperations(mutation = beginCurrentRouteMutation("credential-operations-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   await Promise.all([
-    loadCredentials(),
-    loadAlerts(),
-    loadAudit(),
+    loadCredentials(mutation),
+    loadAlerts(mutation),
+    loadAudit(mutation),
   ]);
+  if (!isCurrentRouteMutation(mutation)) return;
   renderOverview();
 }
 
-async function refreshSelectedUserAiAccessOptions() {
+async function refreshSelectedUserAiAccessOptions(mutation = beginCurrentRouteMutation("selected-user-ai-access-refresh")) {
   if (
+    !isCurrentRouteMutation(mutation)
+    ||
     !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")
     || state.userMode === "create"
     || !state.selectedUserId
@@ -2670,10 +3247,35 @@ async function refreshSelectedUserAiAccessOptions() {
     return;
   }
 
-  await loadUserAiAccess(state.selectedUserId);
+  const loaded = await loadUserAiAccess(state.selectedUserId, mutation);
+  if (!loaded) return;
+  if (!isCurrentRouteMutation(mutation)) return;
   const user = currentUser();
   if (user) {
     populateUserEditor(user);
+  }
+}
+
+async function loadSelectedUserAiAccess() {
+  const selectedUserId = state.selectedUserId;
+  if (
+    !selectedUserId
+    || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")
+  ) {
+    return;
+  }
+
+  const mutation = beginCurrentRouteMutation(`user-ai-access-selection:${selectedUserId}`);
+  if (!isCurrentRouteMutation(mutation)) return;
+  try {
+    const loaded = await loadUserAiAccess(selectedUserId, mutation);
+    if (!loaded) return;
+    if (!isCurrentRouteMutation(mutation) || state.selectedUserId !== selectedUserId) return;
+    const user = currentUser();
+    if (user) populateUserEditor(user);
+  } catch {
+    if (!isCurrentRouteMutation(mutation) || state.selectedUserId !== selectedUserId) return;
+    els.userAiAccessStatus.textContent = "Unable to load AI access assignment.";
   }
 }
 
@@ -2723,6 +3325,19 @@ function resetCredentialCreateForm() {
   updateCredentialCreateFields();
 }
 
+function renderNewCodexCredentialUpload() {
+  const command = state.codexAuthCredentialUpload?.command || "";
+  els.credentialCreateCodexCommand.value = command;
+  els.credentialCreateCodexCommand.classList.toggle("hidden", !command);
+  els.credentialCreateCodexCopy.classList.toggle("hidden", !command);
+  els.credentialCreateCodexCommand.disabled = !command;
+  els.credentialCreateCodexCopy.disabled = !command;
+  if (state.routeActionsLocked) {
+    els.credentialCreateCodexCommand.disabled = true;
+    els.credentialCreateCodexCopy.disabled = true;
+  }
+}
+
 function updateCredentialCreateFields() {
   const provider = els.credentialCreateProvider.value.trim();
   const isOpenAiCompatible = provider === "openai_compatible";
@@ -2746,6 +3361,8 @@ async function createCredential() {
     setCredentialCreateStatus("OpenAI-compatible base URL and API key are required.", "error");
     return;
   }
+  const mutation = beginCurrentRouteMutation("credential-create");
+  if (!isCurrentRouteMutation(mutation)) return;
 
   els.credentialCreateSubmit.disabled = true;
   setCredentialCreateStatus("Creating credential", "pending");
@@ -2763,22 +3380,27 @@ async function createCredential() {
       method: "POST",
       body: JSON.stringify(requestBody),
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     state.selectedCredentialId = payload?.credential?.id || state.selectedCredentialId;
     resetCredentialCreateForm();
     setCredentialCreateStatus("Credential created and attached to the platform pool.", "success");
-    await refreshCredentialOperations();
-    await refreshSelectedUserAiAccessOptions();
+    await refreshCredentialOperations(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
+    await refreshSelectedUserAiAccessOptions(mutation);
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     setCredentialCreateStatus(
       `Unable to create credential: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    els.credentialCreateSubmit.disabled = false;
+    if (isCurrentRouteMutation(mutation)) els.credentialCreateSubmit.disabled = false;
   }
 }
 
 async function prepareNewCodexCredentialUpload() {
+  const mutation = beginCurrentRouteMutation("credential-codex-upload-prepare:new");
+  if (!isCurrentRouteMutation(mutation)) return;
   els.credentialCreateCodexUpload.disabled = true;
   setCredentialCreateStatus("Preparing Codex upload command", "pending");
 
@@ -2786,22 +3408,24 @@ async function prepareNewCodexCredentialUpload() {
     const payload = await fetchJson("/credentials/codex-auth-upload-session", {
       method: "POST",
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     state.codexAuthCredentialUpload = payload;
-    els.credentialCreateCodexCommand.value = payload.command || "";
-    els.credentialCreateCodexCommand.classList.toggle("hidden", !payload.command);
-    els.credentialCreateCodexCopy.classList.toggle("hidden", !payload.command);
+    renderNewCodexCredentialUpload();
     setCredentialCreateStatus(`Run the command locally. It expires ${formatDate(payload.upload?.expiresAt)}.`, "success");
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     setCredentialCreateStatus(
       `Unable to prepare Codex upload: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    els.credentialCreateCodexUpload.disabled = false;
+    if (isCurrentRouteMutation(mutation)) els.credentialCreateCodexUpload.disabled = false;
   }
 }
 
 async function copyNewCodexCredentialUploadCommand() {
+  const mutation = beginCurrentRouteMutation("credential-codex-upload-copy:new");
+  if (!isCurrentRouteMutation(mutation)) return;
   const command = state.codexAuthCredentialUpload?.command || els.credentialCreateCodexCommand.value.trim();
   if (!command) {
     setCredentialCreateStatus("Codex upload command is not ready.", "error");
@@ -2810,20 +3434,24 @@ async function copyNewCodexCredentialUploadCommand() {
 
   try {
     await navigator.clipboard.writeText(command);
+    if (!isCurrentRouteMutation(mutation)) return;
     setCredentialCreateStatus("Command copied.", "success");
   } catch {
+    if (!isCurrentRouteMutation(mutation)) return;
     els.credentialCreateCodexCommand.focus();
     els.credentialCreateCodexCommand.select();
     setCredentialCreateStatus("Copy failed. Select the command manually.", "error");
   }
 }
 
-async function refreshAlertOperations() {
+async function refreshAlertOperations(mutation = beginCurrentRouteMutation("alert-operations-refresh")) {
+  if (!isCurrentRouteMutation(mutation)) return;
   await Promise.all([
-    loadCredentials(),
-    loadAlerts(),
-    loadAudit(),
+    loadCredentials(mutation),
+    loadAlerts(mutation),
+    loadAudit(mutation),
   ]);
+  if (!isCurrentRouteMutation(mutation)) return;
   renderOverview();
 }
 
@@ -2873,21 +3501,26 @@ async function runCredentialAction(action) {
   if (!confirmed) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`credential-action:${credential.id}:${action}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     const request = credentialActionRequest(credential.id, action);
     await fetchJson(request.path, {
       method: request.method,
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     if (action === "delete") {
       state.showDeletedCredentials = true;
       els.credentialsShowDeleted.checked = true;
     }
-    await refreshCredentialOperations();
+    await refreshCredentialOperations(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     if (action === "delete") {
-      await refreshSelectedUserAiAccessOptions();
+      await refreshSelectedUserAiAccessOptions(mutation);
     }
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     window.alert(`Unable to ${action} credential: ${error instanceof Error ? error.message : "unknown_error"}`);
   }
 }
@@ -2904,6 +3537,8 @@ async function renameSelectedCredential() {
     setInlineStatus(status, "Name is required.", "error");
     return;
   }
+  const mutation = beginCurrentRouteMutation(`credential-rename:${credential.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   input.disabled = true;
   setInlineStatus(status, "Saving name", "pending");
@@ -2912,14 +3547,17 @@ async function renameSelectedCredential() {
       method: "PATCH",
       body: JSON.stringify({ name }),
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     state.selectedCredentialId = payload?.credential?.id || credential.id;
     setInlineStatus(status, "Name saved.", "success");
-    await refreshCredentialOperations();
-    await refreshSelectedUserAiAccessOptions();
+    await refreshCredentialOperations(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
+    await refreshSelectedUserAiAccessOptions(mutation);
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     setInlineStatus(status, `Unable to save name: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
   } finally {
-    input.disabled = false;
+    if (isCurrentRouteMutation(mutation)) input.disabled = false;
   }
 }
 
@@ -2929,15 +3567,19 @@ async function prepareCodexAuthUpload() {
   if (!credential || credential.provider !== "codex_oauth") {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`credential-codex-upload-prepare:${credential.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   setInlineStatus(status, "Preparing command", "pending");
   try {
     const payload = await fetchJson(`/credentials/${encodeURIComponent(credential.id)}/codex-auth-upload-session`, {
       method: "POST",
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     state.codexAuthUploadByCredentialId[credential.id] = payload;
     renderCredentials();
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     setInlineStatus(status, `Unable to prepare command: ${error instanceof Error ? error.message : "unknown_error"}`, "error");
   }
 }
@@ -2947,6 +3589,8 @@ async function copyCodexAuthUploadCommand() {
   if (!credential) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`credential-codex-upload-copy:${credential.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
   const command = state.codexAuthUploadByCredentialId[credential.id]?.command || "";
   const status = els.credentialDetail.querySelector("[data-codex-auth-upload-status]");
   if (!command) {
@@ -2956,8 +3600,10 @@ async function copyCodexAuthUploadCommand() {
 
   try {
     await navigator.clipboard.writeText(command);
+    if (!isCurrentRouteMutation(mutation)) return;
     setInlineStatus(status, "Command copied.", "success");
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     const output = els.credentialDetail.querySelector("[data-codex-auth-upload-command]");
     output?.focus();
     output?.select();
@@ -2970,16 +3616,21 @@ async function runAlertAction(action) {
   if (!alert || !action) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`alert-action:${alert.id}:${action}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     await fetchJson(`/alerts/${encodeURIComponent(alert.id)}/${action}`, {
       method: "POST",
     });
-    await refreshAlertOperations();
+    if (!isCurrentRouteMutation(mutation)) return;
+    await refreshAlertOperations(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     if (action === "resolve") {
       closeModal(els.alertDetailModal);
     }
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     window.alert(`Unable to ${action} alert: ${error instanceof Error ? error.message : "unknown_error"}`);
   }
 }
@@ -2998,7 +3649,8 @@ async function runOrganizationBillingAction(action) {
     ? canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-platform-billing")
     : canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-organization-billing");
   if (!organizationId || !allowed) return;
-  const mutation = beginAdminRouteMutation(state.mutations, `organization-billing-${action}`, state.route);
+  const mutation = beginCurrentRouteMutation(`organization-billing-${action}`);
+  if (!isCurrentRouteMutation(mutation)) return;
   const quantities = organizationBillingQuantities();
   const manualExpiresAt = fromAdminDateTimeLocalValue(els.organizationBillingManualExpires.value);
   const platformBody = {
@@ -3023,14 +3675,14 @@ async function runOrganizationBillingAction(action) {
     platform: { method: "PATCH", body: platformBody },
   };
   const request = requests[action];
-  if (!mutation || !request) return;
+  if (!request) return;
   els.organizationBillingStatus.textContent = `Applying billing ${action}...`;
   try {
     const payload = await fetchJson(`/organizations/${encodeURIComponent(organizationId)}/billing/${action}`, {
       method: request.method,
       body: JSON.stringify(request.body),
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     const redirectUrl = payload?.checkout?.url || payload?.portal?.url;
     if (typeof redirectUrl === "string" && redirectUrl) {
       window.location.assign(redirectUrl);
@@ -3040,12 +3692,12 @@ async function runOrganizationBillingAction(action) {
       state.organizationBilling = payload.billing;
       renderOrganizationBilling();
     } else {
-      await loadOrganizationBilling(state.route);
+      await loadOrganizationBilling(state.route, mutation);
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     els.organizationBillingStatus.textContent = `Billing ${action} completed.`;
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     els.organizationBillingStatus.textContent = `Billing ${action} failed · ${formatAdminError(error)}`;
   }
 }
@@ -3055,7 +3707,8 @@ async function saveOrganization() {
   if (!orgId || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-organization-profile")) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-profile", state.route);
+  const mutation = beginCurrentRouteMutation("organization-profile");
+  if (!isCurrentRouteMutation(mutation)) return;
 
   const payload = {
     name: els.organizationName.value.trim(),
@@ -3072,26 +3725,25 @@ async function saveOrganization() {
       method: "PATCH",
       body: JSON.stringify(payload),
     });
+    if (!isCurrentRouteMutation(mutation)) return;
     const organization = saved?.organization;
     if (organization?.id) {
-      const index = state.organizations.findIndex((entry) => entry.id === organization.id);
-      if (index >= 0) {
-        state.organizations[index] = organization;
-      } else {
-        state.organizations.push(organization);
-      }
+      state.organizationLoad.organization = organization;
+      state.organizationDirectoryCache = state.organizationDirectoryCache.map((entry) =>
+        entry.id === organization.id ? organization : entry
+      );
+      refreshOrganizationChromeDirectory(organization);
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
     renderOrganization();
     setOrganizationSaveStatus("Organization saved.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus(
       `Unable to save organization: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    if (isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) {
+    if (isCurrentRouteMutation(mutation)) {
       els.organizationSaveButton.disabled = false;
     }
   }
@@ -3102,7 +3754,8 @@ async function saveOrganizationDomainModal() {
   if (!orgId || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-organization-domains")) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-domain-save", state.route);
+  const mutation = beginCurrentRouteMutation("organization-domain-save");
+  if (!isCurrentRouteMutation(mutation)) return;
   const domainMode = state.organizationDomainMode;
   const domainId = state.selectedOrganizationDomainId;
 
@@ -3131,22 +3784,22 @@ async function saveOrganizationDomainModal() {
         body: JSON.stringify(payload),
       });
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     closeModal(els.organizationDomainModal);
     setOrganizationSaveStatus(
       domainMode === "edit" ? "Domain saved." : "Domain added.",
       "success",
     );
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setDomainModalStatus(
       `Unable to save domain: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    if (isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) {
+    if (isCurrentRouteMutation(mutation)) {
       els.organizationDomainModalSave.disabled = false;
     }
   }
@@ -3166,19 +3819,20 @@ async function deleteOrganizationDomain(card) {
   if (!window.confirm(`Remove ${domainName}? Users from this domain will no longer match organization signup policy.`)) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, `organization-domain-delete:${domainId}`, state.route);
+  const mutation = beginCurrentRouteMutation(`organization-domain-delete:${domainId}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     setOrganizationSaveStatus("Removing domain...", "pending");
     await fetchJson(`/organizations/${encodeURIComponent(orgId)}/domains/${encodeURIComponent(domainId)}`, {
       method: "DELETE",
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus("Domain removed.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus(
       `Unable to remove domain: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
@@ -3191,7 +3845,8 @@ async function createOrganizationInvite() {
   if (!orgId || !canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "manage-organization-invites")) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, "organization-invite-create", state.route);
+  const mutation = beginCurrentRouteMutation("organization-invite-create");
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     els.organizationInviteModalSend.disabled = true;
@@ -3203,19 +3858,19 @@ async function createOrganizationInvite() {
         role: normalizeOrganizationRoleInput(els.organizationInviteModalRole.value),
       }),
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     closeModal(els.organizationInviteModal);
     setOrganizationSaveStatus("Invite sent.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setInviteModalStatus(
       `Unable to send invite: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    if (isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) {
+    if (isCurrentRouteMutation(mutation)) {
       els.organizationInviteModalSend.disabled = false;
     }
   }
@@ -3231,19 +3886,20 @@ async function resendOrganizationInvite(card) {
   ) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, `organization-invite-resend:${inviteId}`, state.route);
+  const mutation = beginCurrentRouteMutation(`organization-invite-resend:${inviteId}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     setOrganizationSaveStatus("Resending invite...", "pending");
     await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/resend`, {
       method: "POST",
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus("Invite resent.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus(
       `Unable to resend invite: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
@@ -3265,19 +3921,20 @@ async function revokeOrganizationInvite(card) {
   if (!window.confirm(`Revoke invite for ${inviteEmail}?`)) {
     return;
   }
-  const mutation = beginAdminRouteMutation(state.mutations, `organization-invite-revoke:${inviteId}`, state.route);
+  const mutation = beginCurrentRouteMutation(`organization-invite-revoke:${inviteId}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     setOrganizationSaveStatus("Revoking invite...", "pending");
     await fetchJson(`/organizations/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/revoke`, {
       method: "POST",
     });
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    await loadOrganization();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadOrganization(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus("Invite revoked.", "success");
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setOrganizationSaveStatus(
       `Unable to revoke invite: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
@@ -3302,6 +3959,16 @@ async function saveUser() {
   };
   const updatePayload = wasCreating ? payload : buildUserUpdatePayload(payload);
   const canEditAiAccess = permissions.editAiAccess && !wasCreating;
+  const organizationId = organizationIdForRoute(state.route);
+  const organizationMembershipSave = !wasCreating
+    && state.route?.area === "organization"
+    && state.route.page === "members"
+    && permissions.editMembership;
+  const membershipRole = normalizeOrganizationRoleInput(els.userRole.value);
+  if (organizationMembershipSave && (!organizationId || !targetUser?.membershipId)) {
+    setUserSaveStatus("Unable to save membership: the scoped membership record is missing.", "error");
+    return;
+  }
   if (!wasCreating && !updatePayload && !canEditAiAccess) return;
   const aiAccessInput = canEditAiAccess
     ? {
@@ -3309,11 +3976,10 @@ async function saveUser() {
         credentialId: readAiAccessCredentialValue(),
       }
     : null;
-  const mutation = beginAdminRouteMutation(
-    state.mutations,
+  const mutation = beginCurrentRouteMutation(
     `user-save:${targetUser?.id || "create"}`,
-    state.route,
   );
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     els.userSaveButton.disabled = true;
@@ -3321,14 +3987,14 @@ async function saveUser() {
     if (wasCreating) {
       const existingUser = findUserByEmail(payload.email);
       if (existingUser) {
-        if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+        if (!isCurrentRouteMutation(mutation)) return;
         state.userMode = "edit";
         state.selectedUserId = existingUser.id;
         renderUsers();
         if (permissions.editAiAccess) {
-          await loadUserAiAccess(existingUser.id);
+          await loadUserAiAccess(existingUser.id, mutation);
         }
-        if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+        if (!isCurrentRouteMutation(mutation)) return;
         populateUserEditor(existingUser);
         setUserSaveStatus("That email already exists. Showing the existing user record instead.", "error");
         return;
@@ -3339,30 +4005,56 @@ async function saveUser() {
         method: "POST",
         body: JSON.stringify(updatePayload),
       });
-      if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+      if (!isCurrentRouteMutation(mutation)) return;
       state.userMode = "edit";
       state.selectedUserId = created?.user?.id || null;
+    } else if (organizationMembershipSave) {
+      const saved = await fetchJson(
+        `/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(targetUser.membershipId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ role: membershipRole }),
+        },
+      );
+      if (!isCurrentRouteMutation(mutation)) return;
+      const savedMember = saved?.member;
+      if (
+        !savedMember
+        || savedMember.membershipId !== targetUser.membershipId
+        || savedMember.userId !== targetUser.userId
+      ) {
+        setUserSaveStatus("Unable to save membership: the scoped membership response did not match the selected member.", "error");
+        await loadRouteData(state.route);
+        return;
+      }
+      state.organizationMembers = state.organizationMembers.map((member) =>
+        member.membershipId === targetUser.membershipId ? savedMember : member
+      );
+      state.selectedOrganizationMemberId = targetUser.membershipId;
     } else if (updatePayload) {
       await fetchJson(`/users/${encodeURIComponent(targetUser.id)}`, {
         method: "PATCH",
         body: JSON.stringify(updatePayload),
       });
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     if (canEditAiAccess) {
-      await saveUserAiAccess(targetUser.id, aiAccessInput);
+      const savedAiAccess = await saveUserAiAccess(targetUser.id, aiAccessInput, mutation);
+      if (!savedAiAccess) return;
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    if (wasCreating || updatePayload) await loadUsers();
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
-    const selectedUser = state.users.find((entry) => entry.id === (targetUser?.id || state.selectedUserId)) || currentUser();
+    if (!isCurrentRouteMutation(mutation)) return;
+    if (!organizationMembershipSave && (wasCreating || updatePayload)) await loadUsers(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
+    const selectedUser = organizationMembershipSave
+      ? currentUser()
+      : state.users.find((entry) => entry.id === (targetUser?.id || state.selectedUserId)) || currentUser();
     if (selectedUser?.id) {
       populateUserEditor(selectedUser);
     }
     if (state.route?.area === "platform" && hasCapability("audit")) {
-      await loadAudit();
+      await loadAudit(mutation);
     }
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setUserSaveStatus(
       wasCreating
         ? "User created. Review AI access separately if needed."
@@ -3375,13 +4067,13 @@ async function saveUser() {
     );
     closeModal(els.userEditorModal);
   } catch (error) {
-    if (!isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) return;
+    if (!isCurrentRouteMutation(mutation)) return;
     setUserSaveStatus(
       `Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`,
       "error",
     );
   } finally {
-    if (isAdminRouteMutationCurrent(state.mutations, mutation, state.route)) {
+    if (isCurrentRouteMutation(mutation)) {
       els.userSaveButton.disabled = false;
     }
   }
@@ -3396,15 +4088,20 @@ async function toggleUserDisabled() {
   if (!user) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`user-disabled:${user.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     const action = user.disabled ? "enable" : "disable";
     await fetchJson(`/users/${encodeURIComponent(user.id)}/${action}`, {
       method: "POST",
     });
-    await loadUsers();
-    await loadAudit();
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadUsers(mutation);
+    if (!isCurrentRouteMutation(mutation)) return;
+    await loadAudit(mutation);
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     window.alert(`Unable to update user: ${error instanceof Error ? error.message : "unknown_error"}`);
   }
 }
@@ -3423,22 +4120,28 @@ async function deleteUser() {
   if (!confirmed) {
     return;
   }
+  const mutation = beginCurrentRouteMutation(`user-delete:${user.id}`);
+  if (!isCurrentRouteMutation(mutation)) return;
 
   try {
     await fetchJson(`/users/${encodeURIComponent(user.id)}`, {
       method: "DELETE",
     });
+    if (!isCurrentRouteMutation(mutation)) return;
   } catch (error) {
+    if (!isCurrentRouteMutation(mutation)) return;
     if (!(error instanceof Error) || error.message !== "request_failed") {
       window.alert(`Unable to delete user: ${error instanceof Error ? error.message : "unknown_error"}`);
       return;
     }
   }
 
+  if (!isCurrentRouteMutation(mutation)) return;
   state.selectedUserId = null;
   state.userMode = "edit";
-  await loadUsers();
-  await loadAudit();
+  await loadUsers(mutation);
+  if (!isCurrentRouteMutation(mutation)) return;
+  await loadAudit(mutation);
 }
 
 function bindNavigation() {
@@ -3467,9 +4170,10 @@ function bindActions() {
     void startBrowserAuth();
   });
   els.signOutButton.addEventListener("click", () => void signOut());
-  els.refreshButton.addEventListener("click", () => void bootstrapSession());
-  els.createUserButton.addEventListener("click", enterCreateMode);
-  els.createUserButtonInline.addEventListener("click", enterCreateMode);
+  els.refreshButton.addEventListener("click", () => void bootstrapSession({ refreshVisibleRoute: true }));
+  els.adminPageRetry.addEventListener("click", () => void loadRouteData(state.route));
+  els.createUserButton.addEventListener("click", () => void enterCreateMode());
+  els.createUserButtonInline.addEventListener("click", () => void enterCreateMode());
   els.organizationSaveButton.addEventListener("click", () => void saveOrganization());
   els.organizationSelectorInput.addEventListener("change", () => void selectOrganizationFromSelector());
   els.organizationSelectorInput.addEventListener("keydown", (event) => {
@@ -3627,21 +4331,7 @@ function bindActions() {
     const card = event.target.closest("[data-user-id]");
     if (!card) return;
     openUserEditor(card.dataset.userId);
-    if (
-      state.selectedUserId
-      && canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")
-    ) {
-      void loadUserAiAccess(state.selectedUserId)
-        .then(() => {
-          const user = currentUser();
-          if (user) {
-            populateUserEditor(user);
-          }
-        })
-        .catch(() => {
-          els.userAiAccessStatus.textContent = "Unable to load AI access assignment.";
-        });
-    }
+    void loadSelectedUserAiAccess();
   });
 
   els.organizationDomainList.addEventListener("click", (event) => {
