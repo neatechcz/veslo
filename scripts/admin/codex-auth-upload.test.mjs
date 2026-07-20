@@ -1,10 +1,12 @@
 import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import http from "node:http"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { once } from "node:events"
 import test from "node:test"
+import { fileURLToPath } from "node:url"
 
 import {
   parseArgs,
@@ -81,6 +83,53 @@ test("validateCodexAuthJson rejects partial auth json", () => {
     })),
     /auth\.json is missing tokens\.id_token/,
   )
+})
+
+test("CLI rejects non-interactive confirmation without --yes", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "veslo-codex-auth-upload-non-interactive-"))
+  const authJsonPath = path.join(tempDir, "auth.json")
+  await writeFile(authJsonPath, validAuthJson, "utf8")
+
+  let requestCount = 0
+  const server = http.createServer((_req, res) => {
+    requestCount += 1
+    res.statusCode = 204
+    res.end()
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address()
+    const child = spawn(process.execPath, [
+      fileURLToPath(new URL("./codex-auth-upload.mjs", import.meta.url)),
+      "--upload-url",
+      `http://127.0.0.1:${port}/upload-must-not-run`,
+      "--credential-name",
+      "Non-interactive Codex",
+      "--auth-json-path",
+      authJsonPath,
+      "--dry-run",
+    ], {
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+
+    let stderr = ""
+    child.stderr.setEncoding("utf8")
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk
+    })
+    const [exitCode] = await once(child, "exit")
+
+    assert.equal(exitCode, 1)
+    assert.match(stderr, /interactive terminal/i)
+    assert.match(stderr, /--yes/)
+    assert.equal(requestCount, 0)
+  } finally {
+    server.close()
+    await once(server, "close")
+    await rm(tempDir, { recursive: true, force: true })
+  }
 })
 
 test("runCodexAuthUpload uploads auth json without printing token values", async () => {

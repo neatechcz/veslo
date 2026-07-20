@@ -181,6 +181,10 @@ async function spawnCodexLogin(profileDir) {
 }
 
 async function promptConfirm(question) {
+  if (!process.stdin.isTTY) {
+    throw new Error("Confirmation requires an interactive terminal. Re-run with --yes to continue.")
+  }
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
