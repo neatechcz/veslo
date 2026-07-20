@@ -47,6 +47,15 @@ test("release prepare refreshes desktop sidecar metadata before release review",
   assert.ok(refresh < review, "desktop sidecar metadata must be refreshed before release review");
 });
 
+test("production workflow promotes a dispatched non-draft source release after all assets", () => {
+  const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml");
+  const workflow = readFileSync(workflowPath, "utf8");
+  const publishRelease = workflow.slice(workflow.indexOf("  publish-release:"));
+
+  assert.match(publishRelease, /github\.event_name == 'workflow_dispatch'/);
+  assert.match(publishRelease, /needs\.resolve-release\.outputs\.draft == 'false'/);
+});
+
 test("release workflow does not publish Linux AUR packages", () => {
   const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml");
   const workflow = readFileSync(workflowPath, "utf8");
