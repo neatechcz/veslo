@@ -1634,7 +1634,7 @@ function refreshOrganizationChromeDirectory(directOrganization = null) {
   }
   state.organizations = Array.from(organizationsById.values());
   els.userOrg.innerHTML = state.organizations.length
-    ? state.organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(entry.name)}</option>`).join("")
+    ? state.organizations.map((entry) => `<option value="${escapeHtml(entry.id)}">${escapeHtml(organizationSelectorLabel(entry))}</option>`).join("")
     : `<option value="">No organization</option>`;
   if (state.route?.area === "organization") renderOrganizationSelector();
 }
@@ -1805,14 +1805,17 @@ function findOrganizationFromSelectorValue(value) {
   if (!normalized) {
     return null;
   }
-  return state.organizations.find((organization) => {
-    const candidates = [
-      organizationSelectorLabel(organization),
-      organization?.name,
-      organization?.id,
-    ].map(normalizeSelectorText);
-    return candidates.includes(normalized);
-  }) || null;
+  const exactMatch = state.organizations.find((organization) => [
+    organizationSelectorLabel(organization),
+    organization?.id,
+  ].map(normalizeSelectorText).includes(normalized));
+  if (exactMatch) {
+    return exactMatch;
+  }
+  const nameMatches = state.organizations.filter(
+    (organization) => normalizeSelectorText(organization?.name) === normalized,
+  );
+  return nameMatches.length === 1 ? nameMatches[0] : null;
 }
 
 function renderOrganizationSelector() {
@@ -1825,7 +1828,7 @@ function renderOrganizationSelector() {
   const organizations = Array.isArray(state.organizations) ? state.organizations : [];
   const selected = currentOrganization();
   els.organizationSelectorOptions.innerHTML = organizations.map((organization) => `
-    <option value="${escapeHtml(organizationSelectorLabel(organization))}" label="${escapeHtml(organization.name || organization.id)}"></option>
+    <option value="${escapeHtml(organizationSelectorLabel(organization))}" label="${escapeHtml(organizationSelectorLabel(organization))}"></option>
   `).join("");
   els.organizationSelectorInput.value = selected ? organizationSelectorLabel(selected) : "";
   els.organizationSelectorInput.disabled = state.routeActionsLocked || organizations.length <= 1;
@@ -1864,8 +1867,10 @@ async function selectOrganizationFromSelector() {
   const currentId = organizationIdForRoute(state.route);
   if (!selected) {
     renderOrganizationSelector();
+    els.organizationContextStatus.textContent = "Choose an organization by its unique name and ID.";
     return;
   }
+  els.organizationContextStatus.textContent = "";
   if (selected.id === currentId) {
     renderOrganizationSelector();
     return;
@@ -1914,7 +1919,7 @@ function renderOrganizationsDirectory() {
         class="button button-secondary"
         type="button"
         data-enter-organization-id="${escapeHtml(organization.id)}"
-        aria-label="Open ${escapeHtml(organization.name || organization.id)} organization workspace"
+        aria-label="Open ${escapeHtml(organizationSelectorLabel(organization))} organization workspace"
       >Open workspace</button>
     </article>
   `).join("") || `<article class="list-card active"><div><strong>No organizations</strong><p>No organization workspaces are available.</p></div></article>`;

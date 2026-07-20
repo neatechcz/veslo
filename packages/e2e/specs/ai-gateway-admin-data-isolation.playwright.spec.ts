@@ -360,6 +360,89 @@ test.describe('AI Gateway admin data isolation', () => {
     expect.soft(await selector.inputValue()).not.toContain(privateSlugMarker);
   });
 
+  test('organization slug stays private while duplicate and nameless organization labels remain unique', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const duplicateOrganization = organization(
+      'org-a-duplicate',
+      ORG_A.name,
+      'DUPLICATE-ORGANIZATION-PRIVATE-SLUG-MARKER',
+      44_004,
+    );
+    const namelessOrganization = organization(
+      'org-nameless-labels',
+      '',
+      'NAMELESS-LABELS-PRIVATE-SLUG-MARKER',
+      55_005,
+    );
+    for (const entry of [duplicateOrganization, namelessOrganization]) {
+      harness.state.organizations.push(entry);
+      harness.state.session.organizations.push({
+        id: entry.id,
+        name: entry.name,
+        slug: entry.slug,
+        role: 'organization_admin',
+      });
+    }
+
+    await openAdmin(page, '/admin/organizations');
+
+    for (const entry of [ORG_A, duplicateOrganization, namelessOrganization]) {
+      const uniqueLabel = entry.name ? `${entry.name} - ${entry.id}` : entry.id;
+      const openButton = page.locator(`[data-enter-organization-id="${entry.id}"]`);
+      const directoryCard = openButton.locator('..');
+      await expect(directoryCard).toContainText(entry.id);
+      if (entry.name) await expect(directoryCard).toContainText(entry.name);
+      await expect(openButton).toHaveAttribute(
+        'aria-label',
+        `Open ${uniqueLabel} organization workspace`,
+      );
+    }
+
+    await page.locator('[data-platform-route="platform-users"]').click();
+    await waitForPageReady(page);
+    await page.locator('[data-user-id="global-alice"]').click();
+    await expect(page.locator('#user-editor-modal')).toHaveAttribute('open', '');
+    await expect(page.locator(`#user-org option[value="${ORG_A.id}"]`)).toHaveText(
+      `${ORG_A.name} - ${ORG_A.id}`,
+    );
+    await expect(page.locator(`#user-org option[value="${duplicateOrganization.id}"]`)).toHaveText(
+      `${duplicateOrganization.name} - ${duplicateOrganization.id}`,
+    );
+    await expect(page.locator(`#user-org option[value="${namelessOrganization.id}"]`)).toHaveText(
+      namelessOrganization.id,
+    );
+    await page.locator('#user-modal-close').click();
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/overview`);
+    for (const entry of [ORG_A, duplicateOrganization, namelessOrganization]) {
+      const uniqueLabel = entry.name ? `${entry.name} - ${entry.id}` : entry.id;
+      const option = page.locator(`#organization-selector-options option[value="${uniqueLabel}"]`);
+      await expect(option).toHaveCount(1);
+      await expect(option).toHaveAttribute('label', uniqueLabel);
+    }
+
+    await switchOrganization(page, duplicateOrganization);
+    await waitForPageReady(page);
+    await expect(page).toHaveURL(
+      new RegExp(`/admin/organizations/${duplicateOrganization.id}/overview$`),
+    );
+
+    const selector = page.locator('#organization-selector-input');
+    await selector.evaluate((input, duplicateName) => {
+      const control = input as HTMLInputElement;
+      control.value = duplicateName;
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+    }, ORG_A.name);
+
+    await expect(page.locator('#organization-context-status')).toHaveText(/ambiguous|name and ID/i);
+    await expect(page).toHaveURL(
+      new RegExp(`/admin/organizations/${duplicateOrganization.id}/overview$`),
+    );
+    await expect(selector).toHaveValue(
+      `${duplicateOrganization.name} - ${duplicateOrganization.id}`,
+    );
+  });
+
   test('organization admin organization slug stays server-side and PATCH submits only the editable name', async ({ page }) => {
     const harness = await installAdminHarness(page);
     harness.state.session = {

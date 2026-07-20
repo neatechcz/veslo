@@ -1863,6 +1863,39 @@ test("GET /admin/app.js supports platform-admin searchable organization selectio
   }
 })
 
+test("GET /admin/app.js uses unique organization labels and rejects ambiguous names", async () => {
+  const script = await readFile(new URL("../public-admin/app.js", import.meta.url), "utf8")
+  const refreshDirectory = topLevelFunctionSource(script, "refreshOrganizationChromeDirectory")
+  const findFromSelector = topLevelFunctionSource(script, "findOrganizationFromSelectorValue")
+  const renderSelector = topLevelFunctionSource(script, "renderOrganizationSelector")
+  const renderDirectory = topLevelFunctionSource(script, "renderOrganizationsDirectory")
+  const selectFromSelector = topLevelFunctionSource(script, "selectOrganizationFromSelector")
+
+  assert.match(
+    refreshDirectory,
+    /<option[^>]*>\$\{escapeHtml\(organizationSelectorLabel\(entry\)\)\}<\/option>/,
+    "user membership organization options must distinguish duplicate and nameless organizations",
+  )
+  assert.match(
+    renderSelector,
+    /label="\$\{escapeHtml\(organizationSelectorLabel\(organization\)\)\}"/,
+    "organization datalist labels must expose the same unique name-and-ID label as their values",
+  )
+  assert.match(
+    renderDirectory,
+    /aria-label="Open \$\{escapeHtml\(organizationSelectorLabel\(organization\)\)\} organization workspace"/,
+    "organization directory actions must have unique accessible labels",
+  )
+  assert.match(findFromSelector, /exactMatch/)
+  assert.match(findFromSelector, /nameMatches/)
+  assert.match(findFromSelector, /nameMatches\.length === 1/)
+  assert.match(
+    selectFromSelector,
+    /organizationContextStatus\.textContent\s*=\s*"[^"]*(?:name and ID|ambiguous)[^"]*"/i,
+    "an ambiguous organization name must be rejected with accessible guidance",
+  )
+})
+
 test("organization slug remains a backend compatibility field and is absent from the admin UI contract", async () => {
   const [html, script, adminSource] = await Promise.all([
     readFile(new URL("../public-admin/index.html", import.meta.url), "utf8"),
