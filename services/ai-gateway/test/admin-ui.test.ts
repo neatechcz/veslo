@@ -1441,6 +1441,49 @@ test("GET /admin/ai-infrastructure presents platform model policy controls", asy
   }
 })
 
+test("GET /admin serves every JavaScript module imported by app.js as JavaScript", async () => {
+  const app = createApp({ admin: createAdminServiceStub() })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const baseUrl = `http://127.0.0.1:${port}`
+    const headers = { cookie: ADMIN_COOKIE }
+    const entryResponse = await fetch(`${baseUrl}/admin/app.js`, { headers })
+
+    assert.equal(entryResponse.status, 200)
+    assert.match(entryResponse.headers.get("content-type") ?? "", /(?:java|ecma)script/i)
+
+    const entryScript = await entryResponse.text()
+    const fromImportPaths = [...entryScript.matchAll(/\bfrom\s+(["'])(\.\/[^"'?]+\.js)\1/g)]
+      .map((match) => match[2])
+    const sideEffectImportPaths = [...entryScript.matchAll(/\bimport\s+(["'])(\.\/[^"'?]+\.js)\1/g)]
+      .map((match) => match[2])
+    const importedModulePaths = [
+      ...new Set(
+        [...fromImportPaths, ...sideEffectImportPaths]
+          .map((modulePath) => modulePath?.slice(2))
+          .filter((modulePath): modulePath is string => Boolean(modulePath)),
+      ),
+    ]
+
+    assert.ok(importedModulePaths.length > 0, "app.js must expose at least one relative JavaScript import")
+
+    for (const modulePath of importedModulePaths) {
+      const pathname = `/admin/${modulePath}`
+      const moduleResponse = await fetch(`${baseUrl}${pathname}`, { headers })
+
+      assert.equal(moduleResponse.status, 200, pathname)
+      assert.match(moduleResponse.headers.get("content-type") ?? "", /(?:java|ecma)script/i, pathname)
+      assert.doesNotMatch(await moduleResponse.text(), /^\s*<!doctype html>/i, pathname)
+    }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("GET /admin shell separates platform administration from organization workspaces", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")

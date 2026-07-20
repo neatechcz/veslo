@@ -3121,6 +3121,7 @@ function adminAssetRequest(pathname: string): boolean {
   return pathname === "/admin/app.js"
     || pathname === "/admin/app.css"
     || pathname === "/admin/admin-route-state.js"
+    || pathname === "/admin/admin-page-load-state.js"
     || pathname === "/admin/model-policy-editor-state.js";
 }
 
