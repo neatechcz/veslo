@@ -7,6 +7,7 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
 - `docs/dev/documentation-map.md`
 - `docs/dev/app-map.md`
 - `docs/dev/testing-playbook.md`
+- `docs/dev/engineering-quality-gates.md`
 - `docs/dev/development-startup.md`
 - `docs/dev/state-and-config-reference.md`
 - `docs/dev/opencode-workspace-runtime-architecture.md`
@@ -28,6 +29,7 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
 - Prefer OpenCode and server surfaces over Tauri-only filesystem behavior. Any capability that mutates `.opencode/` should stay expressible via the Veslo server API when possible.
 - If you change `packages/server/src`, rebuild the server binary with `pnpm --filter veslo-server build:bin` before relying on orchestrator-backed flows.
 - When verified changes affect durable behavior, configuration, runtime flow, or developer workflow, update the canonical docs in `docs/dev/` or `docs/features/`. Use `docs/plans/` only as history.
+- For a normal source-code handoff, finish with `pnpm check`. This does not replace a focused real-desktop recovery check or release verification when the changed surface requires one; use `docs/dev/engineering-quality-gates.md` to select those lanes.
 - For release requests, load the repo-local `veslo-release` skill before mutating release state. Use `.opencode/skills/veslo-release` for Codex/OpenAI-compatible surfaces and `.claude/skills/veslo-release` for Claude Code; `RELEASE.md` remains the canonical CLI checklist.
 - Keep the repo portable and do not commit secrets.
 
@@ -42,6 +44,7 @@ Veslo is a local-first, cloud-backed control surface for agentic work. Treat the
 ## Task-Specific References
 
 - Feature verification and Docker-backed flow checks: `docs/dev/testing-playbook.md` and `packaging/docker/README.md`
+- Routine quality, desktop-recovery, and release-diagnostics gates: `docs/dev/engineering-quality-gates.md`
 - Development startup and run procedure: `docs/dev/development-startup.md`
 - OpenCode workspace runtime, Veslo server conversation/run boundary, and sandbox/no-sandbox execution: `docs/dev/opencode-workspace-runtime-architecture.md`
 - Veslo production/application log locations and safe read commands: `docs/dev/veslo-application-logs.md`

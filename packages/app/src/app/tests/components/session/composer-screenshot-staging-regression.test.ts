@@ -2,28 +2,60 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const appViewPropsSource = readFileSync(new URL("../../../app-view-props.ts", import.meta.url), "utf8");
-const composerSource = readFileSync(new URL("../../../components/session/composer.tsx", import.meta.url), "utf8");
-const sessionPageSource = readFileSync(new URL("../../../pages/session.tsx", import.meta.url), "utf8");
-const sessionSendWorkflowSource = readFileSync(new URL("../../../pages/session-send-workflow.ts", import.meta.url), "utf8");
-const stagingSource = readFileSync(new URL("../../../pages/session-attachment-staging.ts", import.meta.url), "utf8");
+const appViewPropsSource = readFileSync(
+  new URL("../../../app-view-props.ts", import.meta.url),
+  "utf8",
+);
+const composerSource = readFileSync(
+  new URL("../../../components/session/composer.tsx", import.meta.url),
+  "utf8",
+);
+const sessionPageSource = readFileSync(
+  new URL("../../../pages/session.tsx", import.meta.url),
+  "utf8",
+);
+const sessionSendWorkflowSource = readFileSync(
+  new URL("../../../pages/session-send-workflow.ts", import.meta.url),
+  "utf8",
+);
+const stagingSource = readFileSync(
+  new URL("../../../pages/session-attachment-staging.ts", import.meta.url),
+  "utf8",
+);
 
 function conversationRunCompatibilityBridgeSource(): string {
-  const start = sessionSendWorkflowSource.indexOf("export function createConversationRunCompatibilityBridge(");
-  const end = sessionSendWorkflowSource.indexOf("export function createSessionSendWorkflow", start);
-  assert.notEqual(start, -1, "conversation run compatibility bridge source should exist");
-  assert.notEqual(end, -1, "conversation run compatibility bridge block should end before createSessionSendWorkflow");
+  const start = sessionSendWorkflowSource.indexOf(
+    "export function createConversationRunCompatibilityBridge(",
+  );
+  const end = sessionSendWorkflowSource.indexOf(
+    "export function createSessionSendWorkflow",
+    start,
+  );
+  assert.notEqual(
+    start,
+    -1,
+    "conversation run compatibility bridge source should exist",
+  );
+  assert.notEqual(
+    end,
+    -1,
+    "conversation run compatibility bridge block should end before createSessionSendWorkflow",
+  );
   return sessionSendWorkflowSource.slice(start, end);
 }
 
 test("staging failure blocks send with an explicit error and no draft clear", () => {
   const bridgeSource = conversationRunCompatibilityBridgeSource();
-  const stagingStart = bridgeSource.indexOf(
-    '"sendPrompt:stage-attachments"',
+  const stagingStart = bridgeSource.indexOf('"sendPrompt:stage-attachments"');
+  const stagingEnd = bridgeSource.indexOf(
+    "const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();",
   );
-  const stagingEnd = bridgeSource.indexOf("const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();");
   assert.notEqual(stagingStart, -1, "staging call should exist in send flow");
-  assert.notEqual(stagingEnd, -1, "send flow should continue after staging call");
+  assert.notEqual(
+    stagingEnd,
+    -1,
+    "send flow should continue after staging call",
+  );
   const stagingWindow = bridgeSource.slice(stagingStart, stagingEnd);
 
   assert.match(
@@ -40,25 +72,48 @@ test("staging failure blocks send with an explicit error and no draft clear", ()
 });
 
 test("send flow snapshots pending draft context before materializing a real session", () => {
-  const sendStart = sessionSendWorkflowSource.indexOf("async function sendPrompt");
-  const sessionTarget = sessionSendWorkflowSource.indexOf("const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)", sendStart);
-  const pendingSnapshot = sessionSendWorkflowSource.indexOf("const pendingDraftSendState = (() => {", sessionTarget);
-  const pendingKey = sessionSendWorkflowSource.indexOf("const pendingDraftKey = (deps.activePendingDraftKey() ?? \"\").trim();", pendingSnapshot);
+  const sendStart = sessionSendWorkflowSource.indexOf(
+    "async function sendPrompt",
+  );
+  const sessionTarget = sessionSendWorkflowSource.indexOf(
+    "const explicitTargetSessionId = deps.isPendingSessionInstanceKey(options.targetSessionId)",
+    sendStart,
+  );
+  const pendingSnapshot = sessionSendWorkflowSource.indexOf(
+    "const pendingDraftSendState = (() => {",
+    sessionTarget,
+  );
+  const pendingKey = sessionSendWorkflowSource.indexOf(
+    'const pendingDraftKey = (deps.activePendingDraftKey() ?? "").trim();',
+    pendingSnapshot,
+  );
   const sessionCreate = sessionSendWorkflowSource.indexOf(
     "createSessionAndOpen(initialSessionTitle",
     pendingSnapshot,
   );
 
   assert.notEqual(sendStart, -1, "sendPrompt should exist");
-  assert.ok(sessionTarget > sendStart, "send flow should resolve the target session before pending draft snapshot");
+  assert.ok(
+    sessionTarget > sendStart,
+    "send flow should resolve the target session before pending draft snapshot",
+  );
   assert.match(
     sessionSendWorkflowSource.slice(sessionTarget, pendingSnapshot),
     /let sessionID = explicitTargetSessionId \|\| selectedRealSessionId;/,
     "send flow should preserve the explicit target session before pending draft snapshot",
   );
-  assert.ok(pendingSnapshot > sessionTarget, "send flow should snapshot pending draft identity");
-  assert.ok(pendingKey > pendingSnapshot, "pending draft snapshot should capture active pending draft key");
-  assert.ok(sessionCreate > pendingSnapshot, "pending draft snapshot should happen before creating the real session");
+  assert.ok(
+    pendingSnapshot > sessionTarget,
+    "send flow should snapshot pending draft identity",
+  );
+  assert.ok(
+    pendingKey > pendingSnapshot,
+    "pending draft snapshot should capture active pending draft key",
+  );
+  assert.ok(
+    sessionCreate > pendingSnapshot,
+    "pending draft snapshot should happen before creating the real session",
+  );
 });
 
 test("composer keeps dropped files as attachment chips", () => {
@@ -104,7 +159,7 @@ test("composer clears transferred drafts through the revision-owned handoff", ()
 
   assert.match(
     composerSource,
-    /const submittedRevision = draftHandoffController\.beginSubmission\(\);[\s\S]*onDraftTransferred: \(\) => \{[\s\S]*draftHandoffController\.acknowledgeTransfer\(submittedRevision,[\s\S]*sendResult = await sendPromise;[\s\S]*draftHandoffController\.applyResult\(/,
+    /const submittedRevision = draftHandoffController\.beginSubmission\(\);[\s\S]*onDraftTransferred: \(\) => \{[\s\S]*draftHandoffController\.acknowledgeTransfer\(\s*submittedRevision,[\s\S]*sendResult = await sendPromise;[\s\S]*draftHandoffController\.applyResult\(/,
     "composer should allow synchronous ownership transfer and guard delayed result clearing with one submitted revision",
   );
 
@@ -132,7 +187,7 @@ test("session page enables attachments only when Veslo server is connected", () 
 test("session props do not borrow devtools workspace fallbacks for attachment gating", () => {
   assert.match(
     appViewPropsSource,
-    /const sessionProps = \(\) => \(\{[\s\S]*?vesloServerWorkspaceId: vesloServerWorkspaceId\(\),/s,
+    /const sessionProps = \{[\s\S]*?get vesloServerWorkspaceId\(\) \{[\s\S]*?return vesloServerWorkspaceId\(\);/s,
     "session view should use the real Veslo workspace signal, not a devtools-only fallback that can point at the wrong workspace",
   );
 });

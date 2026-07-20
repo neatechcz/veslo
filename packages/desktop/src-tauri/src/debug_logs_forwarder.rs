@@ -10,10 +10,14 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
+use crate::user_diagnostic_capture::{
+    CaptureCloudContext, UserDiagnosticCapture, UserDiagnosticCaptureStatus,
+};
 use crate::veslo_server::manager::VesloServerManager;
 
 const PENDING_FILE: &str = "pending.jsonl";
 const FLUSHING_PREFIX: &str = "flushing-";
+const BOOTSTRAP_READY_MARKER_FILE: &str = "desktop-bootstrap-ready.json";
 const SPOOL_MAX_BYTES: u64 = 50 * 1024 * 1024; // 50 MB before retention drop
 const RETENTION_LOW_BYTES: u64 = 35 * 1024 * 1024; // truncate down to ~35 MB
 const MAX_EVENTS_PER_BATCH: usize = 500;
@@ -80,6 +84,7 @@ pub struct DebugLogsForwarder {
     local_cloud_upload_disabled_log_after: Mutex<Option<SystemTime>>,
     write_lock: Mutex<()>,
     sequence: AtomicU64,
+    user_capture: UserDiagnosticCapture,
 }
 
 #[derive(Debug)]
@@ -279,6 +284,13 @@ fn redact_inline_secret_assignments(input: &str) -> String {
         "authorization",
         "api_key",
         "apikey",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "private_key",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
     ] {
         out = redact_inline_secret_key(&out, key);
     }
@@ -311,16 +323,74 @@ fn redact_inline_authorization(input: &str) -> String {
 fn redact_inline_secret_key(input: &str, key: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let lower = input.to_ascii_lowercase();
-    let needle = format!("{key}=");
     let mut cursor = 0;
-    while let Some(relative_idx) = lower[cursor..].find(&needle) {
+    while let Some(relative_idx) = lower[cursor..].find(key) {
         let idx = cursor + relative_idx;
-        out.push_str(&input[cursor..idx + needle.len()]);
+        let before_is_key_char = idx > 0
+            && input[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-');
+        let mut separator = idx + key.len();
+        while separator < input.len()
+            && input[separator..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+        {
+            separator += input[separator..].chars().next().unwrap().len_utf8();
+        }
+        if input[separator..]
+            .chars()
+            .next()
+            .is_some_and(|ch| matches!(ch, '\'' | '"'))
+        {
+            separator += input[separator..].chars().next().unwrap().len_utf8();
+        }
+        while separator < input.len()
+            && input[separator..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+        {
+            separator += input[separator..].chars().next().unwrap().len_utf8();
+        }
+        let Some(separator_char) = input[separator..].chars().next() else {
+            break;
+        };
+        if before_is_key_char || !matches!(separator_char, '=' | ':') {
+            let advance = idx + key.len();
+            out.push_str(&input[cursor..advance]);
+            cursor = advance;
+            continue;
+        }
+        separator += separator_char.len_utf8();
+        while separator < input.len()
+            && input[separator..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
+        {
+            separator += input[separator..].chars().next().unwrap().len_utf8();
+        }
+        let quote = input[separator..]
+            .chars()
+            .next()
+            .filter(|ch| matches!(ch, '\'' | '"'));
+        let mut value_start = separator + quote.map(char::len_utf8).unwrap_or(0);
+        if key == "authorization" && lower[value_start..].starts_with("bearer ") {
+            value_start += "bearer ".len();
+        }
+        out.push_str(&input[cursor..value_start]);
         out.push_str(REDACTED);
-        let mut end = idx + needle.len();
+        let header_value = matches!(key, "authorization" | "cookie" | "set-cookie");
+        let mut end = value_start;
         while end < input.len() {
             let ch = input[end..].chars().next().unwrap();
-            if ch.is_whitespace() || matches!(ch, ',' | ';' | '&') {
+            if quote == Some(ch)
+                || (!header_value && ch.is_whitespace())
+                || matches!(ch, ',' | ';' | '&' | '}')
+            {
                 break;
             }
             end += ch.len_utf8();
@@ -380,7 +450,7 @@ impl DebugLogsForwarder {
         let pending_path = spool_dir.join(PENDING_FILE);
         let install_id = load_or_create_install_id(&spool_dir);
         Self {
-            spool_dir,
+            spool_dir: spool_dir.clone(),
             pending_path,
             install_id,
             boot_id: Uuid::new_v4().to_string(),
@@ -390,6 +460,7 @@ impl DebugLogsForwarder {
             local_cloud_upload_disabled_log_after: Mutex::new(None),
             write_lock: Mutex::new(()),
             sequence: AtomicU64::new(0),
+            user_capture: UserDiagnosticCapture::new(spool_dir.clone()),
         }
     }
 
@@ -440,6 +511,32 @@ impl DebugLogsForwarder {
             .lock()
             .ok()
             .and_then(|guard| guard.clone())
+    }
+
+    fn user_capture_context_snapshot(&self) -> Option<CaptureCloudContext> {
+        self.cloud_context_snapshot()
+            .map(|context| CaptureCloudContext {
+                den_api_base: context.den_api_base,
+                token: context.token,
+                user_id: context.user_id,
+                org_id: context.org_id,
+                workspace_id: context.workspace_id,
+            })
+    }
+
+    pub fn start_user_diagnostic_capture(&self) -> Result<UserDiagnosticCaptureStatus, String> {
+        let context = self
+            .user_capture_context_snapshot()
+            .ok_or_else(|| "Sign in before starting a diagnostic capture".to_string())?;
+        self.user_capture.start(&context)?;
+        Ok(self.user_diagnostic_capture_status())
+    }
+
+    pub fn user_diagnostic_capture_status(&self) -> UserDiagnosticCaptureStatus {
+        let context = self.user_capture_context_snapshot();
+        let mut status = self.user_capture.status();
+        status.can_start = UserDiagnosticCapture::can_start_with_context(context.as_ref());
+        status
     }
 
     fn should_attempt_direct_fallback(&self, now: SystemTime) -> bool {
@@ -520,12 +617,23 @@ impl DebugLogsForwarder {
             serde_json::json!({ "line": trimmed }),
             self.cloud_context_snapshot(),
         );
+        self.user_capture.observe(
+            source,
+            stream.as_str(),
+            &trimmed,
+            self.sequence.load(Ordering::Relaxed),
+            |value| sanitize_diagnostic_string(value, true),
+        );
     }
 
-    pub fn append_bootstrap_diagnostic(&self, event_type: &str, payload: serde_json::Value) {
+    pub fn append_bootstrap_diagnostic(
+        &self,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), String> {
         let event_type = event_type.trim();
         if event_type.is_empty() {
-            return;
+            return Ok(());
         }
         let sanitized = sanitize_diagnostic_payload(payload);
         let mut payload = match sanitized {
@@ -540,12 +648,53 @@ impl DebugLogsForwarder {
             "eventType".to_string(),
             serde_json::Value::String(event_type.to_string()),
         );
+        let ready_marker_payload = (event_type == "desktop-bootstrap:ready")
+            .then(|| serde_json::Value::Object(payload.clone()));
         self.append_event(
             "Veslo bootstrap",
             LogStream::Diagnostic,
             serde_json::Value::Object(payload),
             self.cloud_context_snapshot(),
         );
+        if let Some(marker_payload) = ready_marker_payload {
+            self.write_bootstrap_ready_marker(marker_payload)?;
+        }
+        Ok(())
+    }
+
+    fn write_bootstrap_ready_marker(&self, payload: serde_json::Value) -> Result<(), String> {
+        let marker_path = self.spool_dir.join(BOOTSTRAP_READY_MARKER_FILE);
+        let temporary_path = self.spool_dir.join(format!(
+            ".{BOOTSTRAP_READY_MARKER_FILE}.{}.tmp",
+            Uuid::new_v4()
+        ));
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let marker = serde_json::json!({
+            "source": "Veslo bootstrap",
+            "stream": "diagnostic",
+            "timestamp": timestamp,
+            "bootId": self.boot_id,
+            "payload": payload,
+        });
+        let serialized = serde_json::to_vec(&marker)
+            .map_err(|error| format!("could not serialize bootstrap readiness marker: {error}"))?;
+        fs::write(&temporary_path, serialized)
+            .map_err(|error| format!("could not write bootstrap readiness marker: {error}"))?;
+        if marker_path.exists() {
+            fs::remove_file(&marker_path).map_err(|error| {
+                format!("could not replace bootstrap readiness marker: {error}")
+            })?;
+        }
+        if let Err(error) = fs::rename(&temporary_path, &marker_path) {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(format!(
+                "could not finalize bootstrap readiness marker: {error}"
+            ));
+        }
+        Ok(())
     }
 
     fn append_event(
@@ -678,7 +827,7 @@ impl DebugLogsForwarder {
         let _guard = self
             .write_lock
             .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "lock poisoned"))?;
+            .map_err(|_| std::io::Error::other("lock poisoned"))?;
 
         if !self.pending_path.exists() {
             return Ok(None);
@@ -985,6 +1134,9 @@ pub fn spawn_flush_task(
 
         let local_state = collect_server_state(&app);
         let cloud_context = forwarder.cloud_context_snapshot();
+        forwarder
+            .user_capture
+            .flush(forwarder.user_capture_context_snapshot());
         for file in files {
             let events = match parse_events(&file) {
                 Ok(e) => e,
@@ -1248,13 +1400,15 @@ mod tests {
             Some("workspace-1".to_string()),
         );
 
-        forwarder.append_bootstrap_diagnostic(
-            "bootstrap.server_unavailable",
-            serde_json::json!({
-                "message": "server unavailable",
-                "stderrTail": "failed with token=secret-token",
-            }),
-        );
+        forwarder
+            .append_bootstrap_diagnostic(
+                "bootstrap.server_unavailable",
+                serde_json::json!({
+                    "message": "server unavailable",
+                    "stderrTail": "failed with token=secret-token",
+                }),
+            )
+            .unwrap();
 
         let raw = fs::read_to_string(dir.path().join(PENDING_FILE)).unwrap();
         let event: serde_json::Value = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
@@ -1283,6 +1437,78 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("secret-token"));
+    }
+
+    #[test]
+    fn diagnostic_capture_status_requires_signed_in_production_context() {
+        let dir = tempdir().unwrap();
+        let forwarder = DebugLogsForwarder::new(dir.path().to_path_buf());
+        assert!(!forwarder.user_diagnostic_capture_status().can_start);
+
+        forwarder.set_cloud_diagnostics_context(
+            "https://den.example.test".to_string(),
+            "secret-token".to_string(),
+            "user-1".to_string(),
+            "org-1".to_string(),
+            None,
+        );
+        assert!(!forwarder.user_diagnostic_capture_status().can_start);
+
+        forwarder.set_cloud_diagnostics_context(
+            "https://api.veslo.work".to_string(),
+            "secret-token".to_string(),
+            "user-1".to_string(),
+            "org-1".to_string(),
+            None,
+        );
+        assert!(forwarder.user_diagnostic_capture_status().can_start);
+        assert!(forwarder.start_user_diagnostic_capture().unwrap().can_start);
+    }
+
+    #[test]
+    fn capture_sanitizer_redacts_json_headers_and_colon_secrets() {
+        let value = sanitize_diagnostic_string(
+            r#"{"token":"json-token","client_secret": "client-value"} Cookie: session-value X-Api-Key: header-value Authorization: Basic basic-value"#,
+            false,
+        );
+        for secret in [
+            "json-token",
+            "client-value",
+            "session-value",
+            "header-value",
+            "basic-value",
+        ] {
+            assert!(!value.contains(secret), "secret leaked: {secret}");
+        }
+        assert!(value.contains(REDACTED));
+    }
+
+    #[test]
+    fn desktop_bootstrap_ready_writes_a_durable_redacted_marker() {
+        let dir = tempdir().unwrap();
+        let forwarder = DebugLogsForwarder::new(dir.path().to_path_buf());
+
+        forwarder
+            .append_bootstrap_diagnostic(
+                "desktop-bootstrap:ready",
+                serde_json::json!({
+                    "serverStatus": "connected",
+                    "runtimeReadiness": "ready",
+                    "apiToken": "secret-token",
+                }),
+            )
+            .unwrap();
+
+        let raw = fs::read_to_string(dir.path().join(BOOTSTRAP_READY_MARKER_FILE)).unwrap();
+        let marker: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(marker["source"], "Veslo bootstrap");
+        assert_eq!(marker["stream"], "diagnostic");
+        assert!(marker["timestamp"].as_u64().unwrap_or(0) > 0);
+        assert_eq!(marker["bootId"], forwarder.boot_id());
+        assert_eq!(marker["payload"]["eventType"], "desktop-bootstrap:ready");
+        assert_eq!(marker["payload"]["serverStatus"], "connected");
+        assert_eq!(marker["payload"]["runtimeReadiness"], "ready");
+        assert_eq!(marker["payload"]["apiToken"], "[redacted]");
     }
 
     #[test]

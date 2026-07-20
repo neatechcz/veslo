@@ -129,8 +129,8 @@ const hydrateSidebarSessionAncestors = async (
 const sidebarSessionItemsEqual = (left: SidebarSessionItem[], right: SidebarSessionItem[]) => {
   if (left.length !== right.length) return false;
   for (let index = 0; index < left.length; index += 1) {
-    const a = left[index];
-    const b = right[index];
+    const a = left.at(index);
+    const b = right.at(index);
     if (!a || !b) return false;
     if (
       a.id !== b.id ||
@@ -203,7 +203,6 @@ export const mergeSidebarSessionItemsByActivity = (
       return;
     }
     const existing = items[existingIndex];
-    if (!existing) return;
     items[existingIndex] = mergeSidebarSessionItem(existing, item);
   };
 

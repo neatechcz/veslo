@@ -5,7 +5,6 @@ import type {
   Config,
   ConfigProvidersResponse,
   Event,
-  GlobalHealthResponse,
   LspStatus,
   Project,
   ProviderAuthResponse,
@@ -32,6 +31,20 @@ export type WorkspaceState = {
 };
 
 type WorkspaceStore = [Store<WorkspaceState>, SetStoreFunction<WorkspaceState>];
+
+type RuntimeGlobalHealth = {
+  healthy?: boolean;
+  version?: string;
+};
+
+const readRuntimeGlobalHealth = (value: unknown): RuntimeGlobalHealth => {
+  if (!value || typeof value !== "object") return {};
+  const health = value as Record<string, unknown>;
+  return {
+    healthy: health.healthy === true,
+    version: typeof health.version === "string" ? health.version : undefined,
+  };
+};
 
 type ProjectMeta = {
   name?: string;
@@ -189,8 +202,8 @@ export function GlobalSyncProvider(props: ParentProps) {
     setGlobalStore("error", undefined);
 
     try {
-      const health = unwrap(await globalSDK.client().global.health()) as GlobalHealthResponse;
-      if (!health?.healthy) {
+      const health = readRuntimeGlobalHealth(unwrap(await globalSDK.client().global.health()));
+      if (!health.healthy || !health.version) {
         setGlobalStore("error", "Server reported unhealthy status.");
         return;
       }
@@ -230,7 +243,8 @@ export function GlobalSyncProvider(props: ParentProps) {
     const key = keyFor(directory);
     const existing = children.get(key);
     if (existing) return existing;
-    const store = createStore<WorkspaceState>(createWorkspaceState());
+    const [state, setState] = createStore<WorkspaceState>(createWorkspaceState());
+    const store: WorkspaceStore = [state, setState];
     children.set(key, store);
     void refreshDirectory(directory);
     if (!subscriptions.has(key)) {

@@ -11,11 +11,11 @@ import type { GatewaySession } from "../../auth/gateway-session.js"
 import type { CredentialBinding } from "../../credentials/repository.js"
 import { getPlatformCredentialOwnerUserId } from "../../credentials/platform-owner.js"
 import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js"
-import type { PlatformModelRef } from "../../model-policy/repository.js"
+import type { PlatformModelPolicyRecord } from "../../model-policy/repository.js"
 import type { ProviderTransportResponse } from "../../providers/transport.js"
 import { ProviderTransportError } from "../../providers/transport.js"
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js"
-import { applyPlatformModelPolicy } from "./access-policy.js"
+import { applyAiAccessPolicy } from "./access-policy.js"
 import {
   recordProviderCredentialFailureAlert,
   recordProviderProxyFailureAlert,
@@ -54,19 +54,24 @@ export function createCodexOAuthProxyRouter(
 
     const sessionId = normalizeGatewaySessionId(rawSessionId, gatewaySession.user.id, "codex_oauth")
 
-    const activeModel = res.locals.gatewayActiveModel as PlatformModelRef
-    const policyResult = applyPlatformModelPolicy({
-      routeProvider: "codex_oauth",
-      activeModel,
-      body: req.body,
-    })
+    let gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined
+    const policyResult = gatewayAiAccess
+      ? applyAiAccessPolicy({
+          routeProvider: "codex_oauth",
+          aiAccess: gatewayAiAccess,
+          platformPolicy: res.locals.gatewayPlatformModelPolicy as PlatformModelPolicyRecord | null | undefined,
+          body: req.body,
+        })
+      : { ok: true as const, body: req.body as Record<string, unknown>, model: "" }
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error })
       return
     }
 
-    let gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined
-    if (gatewayAiAccess && deps.autoAssignedCodexCredentialRotation) {
+    const activeModel = policyResult.model
+      ? { provider: "codex_oauth" as const, model: policyResult.model }
+      : null
+    if (gatewayAiAccess && activeModel && deps.autoAssignedCodexCredentialRotation) {
       try {
         gatewayAiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
           aiAccess: gatewayAiAccess,

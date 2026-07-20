@@ -21,7 +21,7 @@ export function createSkillReloadGuard(options: {
   let pendingTrigger: ReloadTrigger | undefined;
 
   const cancel = () => {
-    if (!timer) return;
+    if (timer === null) return;
     scheduler.clearTimeout(timer);
     timer = null;
     pendingTrigger = undefined;
@@ -29,7 +29,7 @@ export function createSkillReloadGuard(options: {
 
   const scheduleSkillFallback = (trigger?: ReloadTrigger) => {
     pendingTrigger = trigger;
-    if (timer) {
+    if (timer !== null) {
       scheduler.clearTimeout(timer);
       timer = null;
     }

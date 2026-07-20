@@ -6,13 +6,12 @@ type Props = {
 };
 
 export default function VesloLogo(props: Props): JSX.Element {
-  const size = props.size ?? 24;
   return (
     <img
       src="/veslo-logo.svg"
       alt="Veslo"
-      width={size}
-      height={size}
+      width={props.size ?? 24}
+      height={props.size ?? 24}
       class={`inline-block ${props.class ?? ""}`}
     />
   );

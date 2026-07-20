@@ -8,6 +8,7 @@ export type DebugLogEvent = {
   workerId?: string | null
   sessionId?: string | null
   runId?: string | null
+  captureId?: string | null
   source: string
   stream: string
   level?: DebugLogLevel | null
@@ -27,6 +28,7 @@ export type DebugLogSearchFilters = {
   workspaceId?: string
   sessionId?: string
   runId?: string
+  captureId?: string
   source?: string
   stream?: string
   level?: DebugLogLevel
@@ -54,6 +56,7 @@ export type StoredDebugLogEvent = {
   workerId: string | null
   sessionId: string | null
   runId: string | null
+  captureId: string | null
   source: string
   stream: string
   level: DebugLogLevel | null
@@ -79,6 +82,7 @@ export type DebugLogListEntry = {
   workerId: string | null
   sessionId: string | null
   runId: string | null
+  captureId: string | null
   source: string
   stream: string
   level: DebugLogLevel | null

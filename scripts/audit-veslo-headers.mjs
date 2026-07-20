@@ -50,6 +50,11 @@ const allowRules = [
     reason: "server inbound request header owner",
   },
   {
+    path: "services/ai-gateway/src/headers.ts",
+    reason: "AI gateway organization identity header owner",
+    tokens: ["x-veslo-org-id", "x-veslo-den-org-id"],
+  },
+  {
     path: "packages/server/src/ai-gateway-proxy-headers.ts",
     reason: "AI gateway proxy strip profile owner",
   },
@@ -201,6 +206,21 @@ const allowRules = [
     path: "services/den/src/http/org-auth.ts",
     reason: "Den org identity header owner",
     tokens: ["x-veslo-org-id", "x-veslo-den-org-id"],
+  },
+  {
+    path: "services/den/src/http/diagnostic-dump-headers.ts",
+    reason: "Den desktop diagnostic-dump header owner",
+    tokens: [
+      "x-veslo-org-id",
+      "x-veslo-den-org-id",
+      "x-veslo-dump-org-id",
+      "x-veslo-dump-source",
+      "x-veslo-dump-kind",
+      "x-veslo-dump-filename",
+      "x-veslo-dump-sha256",
+      "x-veslo-dump-uncompressed-bytes",
+      "x-veslo-dump-workspace-id",
+    ],
   },
   {
     path: "services/den/src/http/org-mcp-catalog.ts",

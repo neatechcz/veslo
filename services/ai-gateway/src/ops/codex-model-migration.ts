@@ -1,10 +1,11 @@
 import { and, eq, inArray } from "drizzle-orm";
 
 import type { AiGatewayDb } from "../db/index.js";
-import { userAiAccessPolicyTable } from "../db/schema.js";
+import { platformModelPolicyTable, userAiAccessPolicyTable } from "../db/schema.js";
 import { CODEX_OAUTH_PROVIDER } from "../providers/ids.js";
 
 const CODEX_MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+const PLATFORM_POLICY_ID = "platform";
 
 export type CodexPolicySnapshot = {
   id: string;
@@ -18,7 +19,13 @@ export type CodexPolicySnapshot = {
 
 export interface CodexPolicyMigrationStore {
   preview(): Promise<CodexPolicySnapshot[]>;
-  apply(input: { model: string; now: Date }): Promise<CodexPolicySnapshot[]>;
+  /**
+   * The legacy migration CLI names the intended default model. When the current
+   * platform policy is a matching Codex policy, its enabled Codex roster is the
+   * authoritative allow-list for the backfill.
+   */
+  resolveAllowedModels?(model: string): Promise<string[]>;
+  apply(input: { model: string; allowedModels?: string[]; now: Date }): Promise<CodexPolicySnapshot[]>;
 }
 
 export type CodexModelMigrationSummary = {
@@ -38,10 +45,18 @@ export async function runCodexModelMigration(input: {
 }): Promise<CodexModelMigrationSummary> {
   assertValidCodexModelId(input.model);
 
+  const allowedModels = input.store.resolveAllowedModels
+    ? await input.store.resolveAllowedModels(input.model)
+    : [input.model];
+  const targetAllowedModelsJson = JSON.stringify(allowedModels);
+
   const rows = input.apply
-    ? await input.store.apply({ model: input.model, now: input.now ?? new Date() })
+    ? await input.store.apply({
+      model: input.model,
+      allowedModels,
+      now: input.now ?? new Date(),
+    })
     : await input.store.preview();
-  const targetAllowedModelsJson = JSON.stringify([input.model]);
 
   return {
     mode: input.apply ? "apply" : "dry-run",
@@ -64,6 +79,20 @@ export function assertValidCodexModelId(model: string): void {
 export class MySqlCodexPolicyMigrationStore implements CodexPolicyMigrationStore {
   constructor(private readonly db: AiGatewayDb) {}
 
+  async resolveAllowedModels(model: string): Promise<string[]> {
+    const rows = await this.db
+      .select({
+        enabledModelsJson: platformModelPolicyTable.enabled_models_json,
+        activeProvider: platformModelPolicyTable.active_provider,
+        activeModel: platformModelPolicyTable.active_model,
+      })
+      .from(platformModelPolicyTable)
+      .where(eq(platformModelPolicyTable.id, PLATFORM_POLICY_ID))
+      .limit(1);
+
+    return codexRosterFromPlatformPolicy(rows[0], model);
+  }
+
   async preview(): Promise<CodexPolicySnapshot[]> {
     const rows = await this.db
       .select({
@@ -81,7 +110,7 @@ export class MySqlCodexPolicyMigrationStore implements CodexPolicyMigrationStore
     return rows.map(mapPolicySnapshot);
   }
 
-  async apply(input: { model: string; now: Date }): Promise<CodexPolicySnapshot[]> {
+  async apply(input: { model: string; allowedModels?: string[]; now: Date }): Promise<CodexPolicySnapshot[]> {
     return this.db.transaction(async (tx) => {
       const rows = await tx
         .select({
@@ -97,7 +126,10 @@ export class MySqlCodexPolicyMigrationStore implements CodexPolicyMigrationStore
         .where(eq(userAiAccessPolicyTable.provider, CODEX_OAUTH_PROVIDER))
         .for("update");
       const snapshots = rows.map(mapPolicySnapshot);
-      const targetAllowedModelsJson = JSON.stringify([input.model]);
+      const targetAllowedModelsJson = JSON.stringify(normalizeCodexRoster(
+        input.allowedModels ?? [input.model],
+        input.model,
+      ));
       const changedIds = snapshots
         .filter(
           (row) => row.defaultModel !== input.model || row.allowedModelsJson !== targetAllowedModelsJson,
@@ -121,6 +153,52 @@ export class MySqlCodexPolicyMigrationStore implements CodexPolicyMigrationStore
       return snapshots;
     });
   }
+}
+
+function codexRosterFromPlatformPolicy(
+  row: {
+    enabledModelsJson: string;
+    activeProvider: string;
+    activeModel: string;
+  } | undefined,
+  requestedModel: string,
+): string[] {
+  if (!row || row.activeProvider !== CODEX_OAUTH_PROVIDER) {
+    return [requestedModel];
+  }
+  if (row.activeModel !== requestedModel) {
+    throw new Error("Codex migration model must match the active platform model");
+  }
+
+  let rawEnabledModels: unknown;
+  try {
+    rawEnabledModels = JSON.parse(row.enabledModelsJson);
+  } catch {
+    throw new Error("Platform model policy has invalid enabled model data");
+  }
+  if (!Array.isArray(rawEnabledModels)) {
+    throw new Error("Platform model policy has invalid enabled model data");
+  }
+
+  const models = rawEnabledModels.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const value = entry as { provider?: unknown; model?: unknown };
+    if (value.provider !== CODEX_OAUTH_PROVIDER || typeof value.model !== "string") return [];
+    return [value.model];
+  });
+  return normalizeCodexRoster(models, requestedModel);
+}
+
+function normalizeCodexRoster(models: string[], activeModel: string): string[] {
+  const normalized = new Set<string>();
+  for (const model of models) {
+    assertValidCodexModelId(model);
+    normalized.add(model);
+  }
+  if (!normalized.has(activeModel)) {
+    throw new Error("Platform model policy does not enable the active Codex model");
+  }
+  return [activeModel, ...[...normalized].filter((model) => model !== activeModel)];
 }
 
 function mapPolicySnapshot(row: {

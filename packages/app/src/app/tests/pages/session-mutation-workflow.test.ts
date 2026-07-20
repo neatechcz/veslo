@@ -135,7 +135,11 @@ function createHarness(overrides: Record<string, unknown> = {}) {
       calls.push({ name: "recordSendTrace", args: [event, payload] });
     },
     sendTraceStep: async (_event: string, run: () => Promise<boolean>) => run(),
-    resolveSendTargetWorkspaceScope: () => null,
+    resolveSendTargetWorkspaceScope: () => ({
+      workspaceId: "ws_1",
+      workspaceRoot: "/repo",
+      directory: "/repo",
+    }),
     prepareSendRuntimeForSend: async () => ({ ok: true }),
     resolveRuntimeSandboxStateForTarget: () => null,
     routedClientForSendTarget: () => ({}),
@@ -156,7 +160,13 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     perfNow: () => 100,
     sessionDirectoryOverrideById: () => ({}),
     workspaceProjectDir: () => "/repo",
-    resolveSelectedSessionBrowseScope: () => null,
+    resolveSelectedSessionBrowseScope: () => ({
+      workspaceId: "ws_1",
+      workspaceRoot: "/repo",
+      directory: "/repo",
+      conversationId: "conv_1",
+      opencodeSessionId: "open_1",
+    }),
     messageFromUnknownError: String,
     safeStringify: JSON.stringify,
     renameSession: async (...args: unknown[]) => {
@@ -177,9 +187,10 @@ function createHarness(overrides: Record<string, unknown> = {}) {
       sessions = next;
     },
     sessions: () => sessions,
-    deleteSessionComposerDraft: (current: Record<string, unknown>, sessionId: string) => ({ ...current, deleted: sessionId }),
-    setComposerDraftBySessionId: (updater: (current: Record<string, unknown>) => Record<string, unknown>) => {
-      calls.push({ name: "setComposerDraftBySessionId", args: [updater({})] });
+    composerDraftCommands: {
+      deleteDraft: (storageKey: string) => {
+        calls.push({ name: "composerDraftCommands.deleteDraft", args: [storageKey] });
+      },
     },
     removeSessionFromWorkspaceSidebar: (...args: unknown[]) => {
       calls.push({ name: "removeSessionFromWorkspaceSidebar", args });
@@ -244,6 +255,21 @@ test("session mutation workflow retries the last prompt with a fresh send correl
   });
 });
 
+test("session mutation workflow retries with the model captured when the prompt was accepted", () => {
+  const capturedModel = { providerID: "codex_oauth", modelID: "gpt-5.4" };
+  const harness = createHarness({
+    lastPromptSentModelOverride: () => capturedModel,
+  });
+
+  harness.workflow.retryLastPrompt();
+
+  assert.deepEqual(harness.calls[0]?.args[1], {
+    clientMessageId: "client_msg_1",
+    origin: "app:retry-last-prompt",
+    modelOverride: capturedModel,
+  });
+});
+
 test("session mutation workflow undo reverts the latest visible user message and restores its prompt", async () => {
   const harness = createHarness();
   await harness.workflow.undoLastUserMessage();
@@ -262,6 +288,93 @@ test("session mutation workflow redo unreverts at the end of the revert chain an
   assert.equal(harness.prompt, "");
 });
 
+test("session mutation workflow keeps one target snapshot for compact and replacement submits", async () => {
+  const target = {
+    workspaceId: "ws_1",
+    workspaceRoot: "/repo/owned",
+    directory: "/repo/owned",
+  };
+  let targetResolutions = 0;
+  const guardTargets: unknown[] = [];
+  const submissions: Array<{ workspaceId: string; directory: string }> = [];
+  const harness = createHarness({
+    activeWorkspaceId: () => "ws_stale",
+    resolveSendTargetWorkspaceScope: () => {
+      targetResolutions += 1;
+      return target;
+    },
+    resolveSelectedSessionBrowseScope: () => ({
+      workspaceId: "ws_stale",
+      workspaceRoot: "/stale",
+      directory: "/stale",
+      conversationId: "conv_1",
+      opencodeSessionId: "open_1",
+    }),
+    ensureSelectedSessionWorkspaceActiveForSend: async (_sessionId: string, _traceId: string | undefined, scope: unknown) => {
+      guardTargets.push(scope);
+      return true;
+    },
+    submitConversationFromVesloWriteApi: async (workspaceId: string, directory: string, input: Record<string, unknown>) => {
+      submissions.push({ workspaceId, directory });
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv_1",
+        opencodeSessionId: "open_1",
+        runId: `run_${String(input.clientMessageId)}`,
+        clientMessageId: String(input.clientMessageId),
+        draftDisposition: "clear",
+      };
+    },
+  });
+
+  await harness.workflow.submitCurrentSessionCompaction("ses_1");
+  const replacement = await harness.workflow.replaceUserMessage("msg_1", replacementDraft, {
+    clientMessageId: "client_replace_1",
+    origin: "session:replacement",
+  });
+
+  assert.equal(replacement.accepted, true);
+  assert.equal(targetResolutions, 2, "each independent action resolves its target once");
+  assert.deepEqual(guardTargets, [target, target]);
+  assert.deepEqual(submissions, [
+    { workspaceId: "ws_1", directory: "/repo/owned" },
+    { workspaceId: "ws_1", directory: "/repo/owned" },
+  ]);
+});
+
+test("session mutation workflow scopes undo and redo clients to each action target", async () => {
+  const target = {
+    workspaceId: "ws_1",
+    workspaceRoot: "/repo/owned",
+    directory: "/repo/owned",
+  };
+  let targetResolutions = 0;
+  const guardTargets: unknown[] = [];
+  const clientTargets: unknown[] = [];
+  const harness = createHarness({
+    resolveSendTargetWorkspaceScope: () => {
+      targetResolutions += 1;
+      return target;
+    },
+    ensureSelectedSessionWorkspaceActiveForSend: async (_sessionId: string, _traceId: string | undefined, scope: unknown) => {
+      guardTargets.push(scope);
+      return true;
+    },
+    routedClientForSendTarget: (scope: unknown) => {
+      clientTargets.push(scope);
+      return {};
+    },
+  });
+
+  await harness.workflow.undoLastUserMessage();
+  await harness.workflow.redoLastUserMessage();
+
+  assert.equal(targetResolutions, 2, "undo and redo each take a fresh action snapshot");
+  assert.deepEqual(guardTargets, [target, target]);
+  assert.deepEqual(clientTargets, [target, target]);
+});
+
 test("session mutation workflow delete clears selected state and removes sidebar/session state", async () => {
   const harness = createHarness();
   await harness.workflow.deleteSessionById("ses_1");
@@ -270,6 +383,104 @@ test("session mutation workflow delete clears selected state and removes sidebar
   assert.deepEqual(harness.sessions, []);
   assert.equal(harness.calls.some((call) => call.name === "removeSessionFromWorkspaceSidebar"), true);
   assert.equal(harness.statusById.ses_1, undefined);
+});
+
+test("session mutation workflow renames through the canonical session workspace", async () => {
+  const harness = createHarness({
+    activeWorkspaceId: () => "ws_stale",
+    resolveSendTargetWorkspaceScope: () => ({
+      workspaceId: "ws_1",
+      workspaceRoot: "/repo/owned",
+      directory: "/repo/owned",
+    }),
+    resolveSelectedSessionBrowseScope: () => ({ workspaceId: "ws_stale" }),
+  });
+
+  await harness.workflow.renameSessionTitle("ses_1", "Renamed");
+
+  assert.deepEqual(harness.calls.find((call) => call.name === "renameSession")?.args, ["ses_1", "Renamed", "ws_1"]);
+  assert.deepEqual(
+    harness.calls.find((call) => call.name === "refreshSidebarWorkspaceSessions")?.args,
+    ["ws_1"],
+  );
+});
+
+test("session mutation workflow deletes through the canonical session workspace and directory", async () => {
+  const harness = createHarness({
+    activeWorkspaceId: () => "ws_stale",
+    activeWorkspaceRoot: () => "/stale",
+    resolveSendTargetWorkspaceScope: () => ({
+      workspaceId: "ws_1",
+      workspaceRoot: "/repo/owned",
+      directory: "/repo/owned",
+    }),
+    resolveSelectedSessionBrowseScope: () => ({ workspaceId: "ws_stale" }),
+  });
+
+  await harness.workflow.deleteSessionById("ses_1");
+
+  assert.deepEqual(harness.calls.find((call) => call.name === "routedClient")?.args, ["ws_1"]);
+  assert.deepEqual(harness.calls.find((call) => call.name === "session.delete")?.args, [{
+    sessionID: "ses_1",
+    directory: "/repo/owned",
+  }]);
+  assert.deepEqual(
+    harness.calls.find((call) => call.name === "clearWorkspaceLastSessionIfSelected")?.args,
+    ["ws_1", "ses_1"],
+  );
+});
+
+test("session mutation workflow refuses rename and delete without an authoritative session workspace", async () => {
+  const harness = createHarness({
+    activeWorkspaceId: () => "ws_must_not_be_used",
+    resolveSendTargetWorkspaceScope: () => null,
+    resolveSelectedSessionBrowseScope: () => null,
+  });
+
+  await assert.rejects(
+    () => harness.workflow.renameSessionTitle("ses_1", "Renamed"),
+    /workspace is unavailable for rename/,
+  );
+  await assert.rejects(
+    () => harness.workflow.deleteSessionById("ses_1"),
+    /workspace is unavailable for deletion/,
+  );
+  await assert.rejects(
+    () => harness.workflow.saveSessionExport("ses_1"),
+    /workspace is unavailable for export/,
+  );
+  assert.equal(harness.calls.some((call) => call.name === "routedClient"), false);
+});
+
+test("session mutation workflow exports through the canonical session workspace", async () => {
+  const target = {
+    workspaceId: "ws_1",
+    workspaceRoot: "/repo/owned",
+    directory: "/repo/owned",
+  };
+  const clientTargets: unknown[] = [];
+  const harness = createHarness({
+    activeWorkspaceId: () => "ws_stale",
+    resolveSendTargetWorkspaceScope: () => target,
+    unwrap: (value: unknown) => value,
+    routedClientForSendTarget: (scope: unknown) => {
+      clientTargets.push(scope);
+      return {
+        session: {
+          get: async () => ({ id: "ses_1", title: "Exported" }),
+          messages: async () => [],
+          todo: async () => [],
+        },
+      };
+    },
+  });
+
+  const fileName = await harness.workflow.saveSessionExport("ses_1");
+
+  assert.equal(fileName, "session-export.json");
+  assert.deepEqual(clientTargets, [target]);
+  assert.equal(harness.calls.some((call) => call.name === "routedClient"), false);
+  assert.equal(harness.calls.some((call) => call.name === "downloadSessionExport"), true);
 });
 
 test("session mutation workflow compact submits through server submit when local scope is available", async () => {
@@ -309,6 +520,11 @@ test("session mutation workflow compact submits through server submit when local
     directory: "/repo",
     traceId: "trace_1",
   }]);
+  assert.deepEqual(harness.calls.find((call) => call.name === "ensureWorkspace")?.args[2], {
+    workspaceId: "ws_1",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+  });
   assert.deepEqual(submitCalls[0]?.input, {
     clientMessageId: "client_msg_1",
     origin: "app:compact-session",
@@ -396,6 +612,11 @@ test("session mutation workflow replaces a user message through server-owned sub
     directory: "/repo",
     traceId: "trace_1",
   }]);
+  assert.deepEqual(harness.calls.find((call) => call.name === "ensureWorkspace")?.args[2], {
+    workspaceId: "ws_1",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+  });
   assert.deepEqual(submitCalls[0]?.input, {
     clientMessageId: "client_replace_1",
     origin: "session:replacement",

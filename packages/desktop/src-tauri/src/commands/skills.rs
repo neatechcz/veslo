@@ -536,12 +536,11 @@ fn extract_frontmatter_value(raw: &str, keys: &[&str]) -> Option<String> {
             continue;
         }
         let mut cleaned = value.trim().to_string();
-        if (cleaned.starts_with('"') && cleaned.ends_with('"'))
-            || (cleaned.starts_with('\'') && cleaned.ends_with('\''))
+        if ((cleaned.starts_with('"') && cleaned.ends_with('"'))
+            || (cleaned.starts_with('\'') && cleaned.ends_with('\'')))
+            && cleaned.len() >= 2
         {
-            if cleaned.len() >= 2 {
-                cleaned = cleaned[1..cleaned.len() - 1].to_string();
-            }
+            cleaned = cleaned[1..cleaned.len() - 1].to_string();
         }
         let cleaned = cleaned.trim();
         if cleaned.is_empty() {
@@ -583,7 +582,7 @@ fn extract_trigger(raw: &str) -> Option<String> {
         }
 
         let cleaned = trimmed
-            .trim_start_matches(|c: char| c == '-' || c == '*' || c == '+')
+            .trim_start_matches(['-', '*', '+'])
             .trim_start_matches(|c: char| c.is_whitespace())
             .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ')')
             .trim();

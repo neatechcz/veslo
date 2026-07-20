@@ -328,7 +328,8 @@ export function installStartupRequestAudit(
     root.fetch = patchedFetch;
   }
 
-  if (originalOpen && root.XMLHttpRequest) {
+  const XMLHttpRequestConstructor = (root as { XMLHttpRequest?: typeof XMLHttpRequest }).XMLHttpRequest;
+  if (originalOpen && XMLHttpRequestConstructor) {
     patchedOpen = function patchedStartupAuditXhrOpen(
       this: XMLHttpRequest,
       method: string,
@@ -353,7 +354,7 @@ export function installStartupRequestAudit(
   const restore = (reason = "manual") => {
     if (finished) return;
     finished = true;
-    if (timer) {
+    if (timer !== null) {
       timerClear(timer);
       timer = null;
     }

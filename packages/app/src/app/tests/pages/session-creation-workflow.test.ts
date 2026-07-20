@@ -260,6 +260,55 @@ test("session creation prepares runtime before first server submit", async () =>
   assert.doesNotMatch(harness.actions.join("\n"), /ensure-managed-ai|create-conversation/);
 });
 
+test("submitted first runs are admitted after materialization and before selection", async () => {
+  const phaseOrder: string[] = [];
+  const harness = createHarness({
+    applyCreatedSessionState: () => {
+      phaseOrder.push("state");
+    },
+    applyCreatedSessionTransition: async (result) => {
+      phaseOrder.push(`transition:${String(result.transition.skipTranscriptRead === true)}`);
+    },
+    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input) => ({
+      status: "submitted",
+      workspaceId: "server-ws-main",
+      conversationId: "conv-submit",
+      opencodeSessionId: "open-submit",
+      runId: "run-submit",
+      clientMessageId: input.clientMessageId,
+      draftDisposition: "clear",
+      materializedSession: {
+        ...session({ id: "sess-submit" }),
+        conversationId: "conv-submit",
+        opencodeSessionId: "open-submit",
+      },
+    }),
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello", {
+    clientMessageId: "client-submit",
+    submitDraft: {
+      mode: "prompt",
+      text: "hello",
+      resolvedText: "hello",
+      parts: [{ type: "text", text: "hello" }],
+      command: null,
+      attachments: [],
+    },
+    onSubmittedRunMaterialized: (materialized) => {
+      assert.equal(materialized.sessionId, "sess-submit");
+      assert.equal(materialized.workspaceId, "ws-main");
+      assert.equal(materialized.result.runId, "run-submit");
+      phaseOrder.push("admit");
+      return true;
+    },
+  });
+
+  assert.equal(result, "sess-submit");
+  assert.deepEqual(phaseOrder, ["state", "admit", "transition:true"]);
+});
+
 test("session creation blocks first server submit when runtime preparation fails", async () => {
   let submitCalled = false;
   const harness = createHarness({

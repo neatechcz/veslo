@@ -57,6 +57,10 @@ pub fn build_engine_env_overrides(
     env
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The process owner receives explicit launch inputs to avoid hidden runtime state."
+)]
 pub fn spawn_engine(
     app: &AppHandle,
     program: &Path,

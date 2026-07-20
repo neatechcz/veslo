@@ -227,7 +227,10 @@ import {
 } from "./route-helpers.js";
 import { FileSessionStore } from "./file-sessions.js";
 import { createSessionArchiveStore } from "./session-archives.js";
-import { createSessionTranscriptPrefetchStore } from "./session-transcript-prefetch.js";
+import {
+  createSessionTranscriptDisplayView,
+  createSessionTranscriptPrefetchStore,
+} from "./session-transcript-prefetch.js";
 import {
   type AutomationExecutionInput,
   type AutomationExecutionResult,
@@ -244,6 +247,7 @@ import { createConversationRunQueueStore } from "./conversation-run-queue-store.
 import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
 import { createConversationSubmitService } from "./conversation-submit-service.js";
 import { createConversationSubmitSkillCommandResolver } from "./conversation-submit-skill-command-resolution.js";
+import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
 import {
   createOrchestratorLifecycleClient,
   type OrchestratorLifecycleClient,
@@ -277,6 +281,7 @@ const CONVERSATION_RUN_LIFECYCLE_RECONCILE_MAX_ATTEMPTS_DEFAULT = 600;
 const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
+const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE = "{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}";
 const AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES = 64 * 1024;
 const AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES = 64 * 1024;
 const AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES = 64 * 1024;
@@ -412,6 +417,13 @@ function isSensitiveConfigKey(key: string): boolean {
   return REDACTED_CONFIG_KEYS.some((segment) => normalized === segment || normalized.endsWith(segment));
 }
 
+function isSafeManagedConfigCredentialReference(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim();
+  return normalized === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE ||
+    normalized === `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`;
+}
+
 export function redactSensitiveConfig<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => redactSensitiveConfig(item)) as T;
@@ -422,6 +434,13 @@ export function redactSensitiveConfig<T>(value: T): T {
   const output: Record<string, unknown> = {};
   for (const [key, rawValue] of Object.entries(input)) {
     if (isSensitiveConfigKey(key)) {
+      // This is a public reference to a local runtime environment variable, not
+      // the credential itself. Keeping it intact makes a read-after-write
+      // stable while real values remain redacted and continue to be scrubbed.
+      if (isSafeManagedConfigCredentialReference(rawValue)) {
+        output[key] = rawValue;
+        continue;
+      }
       output[key] = rawValue === null || rawValue === undefined || rawValue === ""
         ? rawValue
         : REDACTED_SECRET_VALUE;
@@ -1029,6 +1048,7 @@ async function fetchOpencodeJson(
     timeoutMs?: number;
     sendTraceId?: string | null;
     conversationRunId?: string | null;
+    orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   },
 ) {
   const baseUrl = workspace.baseUrl?.trim() ?? "";
@@ -1225,7 +1245,38 @@ function orchestratorFallbackWorkspace(config: ServerConfig, workspace: Workspac
   return { ...workspace, baseUrl };
 }
 
-async function ensureOrchestratorWorkspaceRegistered(
+function orchestratorWorkspaceRegistrationKey(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+): string | null {
+  if (workspace.workspaceType !== "local") return null;
+  const daemonUrl = config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
+  const workspaceId = workspace.id?.trim() ?? "";
+  const workspacePath = workspace.path?.trim() ?? "";
+  if (!daemonUrl || !workspaceId || !workspacePath) return null;
+  return daemonUrl + "\0" + workspaceId + "\0" + normalizeOpencodeDirectory(workspacePath);
+}
+
+let unscopedOrchestratorRegistrationFlightSequence = 0;
+
+function recordOrchestratorWorkspaceRegistrationFlight(
+  init: Pick<Parameters<typeof fetchOpencodeJson>[2], "sendTraceId">,
+  input: {
+    action: "start" | "join" | "settle" | "reject";
+    flightId: string;
+    scope: "http-submit" | "background";
+  },
+): void {
+  recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:flight", {
+    traceId: init.sendTraceId?.trim() || null,
+    action: input.action,
+    flightId: input.flightId,
+    caller: input.scope === "http-submit" ? "submit" : "background",
+    scope: input.scope,
+  });
+}
+
+async function performOrchestratorWorkspaceRegistration(
   config: ServerConfig,
   workspace: WorkspaceInfo,
   init: Pick<Parameters<typeof fetchOpencodeJson>[2], "method" | "sendTraceId">,
@@ -1319,6 +1370,87 @@ async function ensureOrchestratorWorkspaceRegistered(
     });
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function ensureOrchestratorWorkspaceRegistered(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  init: Pick<
+    Parameters<typeof fetchOpencodeJson>[2],
+    "method" | "sendTraceId" | "orchestratorRegistrationScope"
+  >,
+): Promise<void> {
+  const scope = init.orchestratorRegistrationScope ?? null;
+  const registrationKey = orchestratorWorkspaceRegistrationKey(config, workspace);
+  if (!registrationKey) {
+    return await performOrchestratorWorkspaceRegistration(config, workspace, init);
+  }
+
+  if (scope) {
+    const existing = scope.registrations.get(registrationKey);
+    if (existing) {
+      recordOrchestratorWorkspaceRegistrationFlight(init, {
+        action: "join",
+        flightId: existing.id,
+        scope: "http-submit",
+      });
+      return await existing.promise;
+    }
+
+    const flightId = scope.nextFlightId();
+    let promise!: Promise<void>;
+    promise = Promise.resolve()
+      .then(() => performOrchestratorWorkspaceRegistration(config, workspace, init))
+      .then(
+        () => {
+          recordOrchestratorWorkspaceRegistrationFlight(init, {
+            action: "settle",
+            flightId,
+            scope: "http-submit",
+          });
+        },
+        (error) => {
+          if (scope.registrations.get(registrationKey)?.promise === promise) {
+            scope.registrations.delete(registrationKey);
+          }
+          recordOrchestratorWorkspaceRegistrationFlight(init, {
+            action: "reject",
+            flightId,
+            scope: "http-submit",
+          });
+          throw error;
+        },
+      );
+    scope.registrations.set(registrationKey, { id: flightId, promise });
+    recordOrchestratorWorkspaceRegistrationFlight(init, {
+      action: "start",
+      flightId,
+      scope: "http-submit",
+    });
+    return await promise;
+  }
+
+  const flightId = "background-registration-" + String(++unscopedOrchestratorRegistrationFlightSequence);
+  recordOrchestratorWorkspaceRegistrationFlight(init, {
+    action: "start",
+    flightId,
+    scope: "background",
+  });
+  try {
+    await performOrchestratorWorkspaceRegistration(config, workspace, init);
+    recordOrchestratorWorkspaceRegistrationFlight(init, {
+      action: "settle",
+      flightId,
+      scope: "background",
+    });
+  } catch (error) {
+    recordOrchestratorWorkspaceRegistrationFlight(init, {
+      action: "reject",
+      flightId,
+      scope: "background",
+    });
+    throw error;
   }
 }
 
@@ -1714,6 +1846,139 @@ function resolveAiGatewayProviderAuthorization(input: {
     ...input,
     accessTokenHeader: GATEWAY_ACCESS_TOKEN_HEADER,
   });
+}
+
+function readManagedAiModelRef(value: unknown): { providerID: string; modelID: string } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const providerID = typeof record.providerID === "string" ? record.providerID.trim() : "";
+  const modelID = typeof record.modelID === "string" ? record.modelID.trim() : "";
+  return providerID && modelID ? { providerID, modelID } : null;
+}
+
+function readManagedAiCatalogDescriptor(input: {
+  value: unknown;
+  providerID: string;
+  modelID: string;
+}): { providerID: string; modelID: string; attachment?: boolean; modalities?: { input?: string[] } } | null {
+  if (!input.value || typeof input.value !== "object" || Array.isArray(input.value)) return null;
+  const aiAccess = (input.value as Record<string, unknown>).aiAccess;
+  if (!aiAccess || typeof aiAccess !== "object" || Array.isArray(aiAccess)) return null;
+  const selectableModels = (aiAccess as Record<string, unknown>).selectableModels;
+  if (!Array.isArray(selectableModels)) return null;
+  const descriptor = selectableModels.find((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+    const record = candidate as Record<string, unknown>;
+    return record.provider === input.providerID && record.model === input.modelID;
+  });
+  if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor)) return null;
+  const record = descriptor as Record<string, unknown>;
+  const attachment = typeof record.attachment === "boolean" ? record.attachment : undefined;
+  const modalitiesRecord = record.modalities && typeof record.modalities === "object" && !Array.isArray(record.modalities)
+    ? record.modalities as Record<string, unknown>
+    : null;
+  const inputModalities = Array.isArray(modalitiesRecord?.input)
+    ? modalitiesRecord.input.filter((item): item is string => typeof item === "string")
+    : undefined;
+  return {
+    providerID: input.providerID,
+    modelID: input.modelID,
+    ...(attachment !== undefined ? { attachment } : {}),
+    ...(inputModalities ? { modalities: { input: inputModalities } } : {}),
+  };
+}
+
+const MANAGED_AI_MODEL_DESCRIPTOR_CACHE_TTL_MS = 30_000;
+const MANAGED_AI_MODEL_DESCRIPTOR_REQUEST_TIMEOUT_MS = 5_000;
+
+function managedAiModelDescriptorCacheKey(input: {
+  workspaceId: string;
+  actorTokenHash?: string | null;
+  orgId?: string | null;
+  providerID: string;
+  modelID: string;
+}): string {
+  return [
+    input.workspaceId,
+    input.actorTokenHash ?? "host",
+    input.orgId ?? "",
+    input.providerID,
+    input.modelID,
+  ].join(":");
+}
+
+function createManagedAiModelDescriptorResolver(input: {
+  request: Request;
+  actor?: Actor;
+  workspaceId: string;
+}) {
+  return async (rawModel: unknown) => {
+    const model = readManagedAiModelRef(rawModel);
+    if (!model || model.providerID !== "codex_oauth") return null;
+    try {
+      const binding = resolveAiGatewayRuntimeAuthorizationBindingForRun({
+        ...(input.actor ? { actor: input.actor } : {}),
+        workspaceId: input.workspaceId,
+      });
+      const cacheKey = managedAiModelDescriptorCacheKey({
+        workspaceId: input.workspaceId,
+        actorTokenHash: binding.actorTokenHash,
+        orgId: binding.orgId,
+        providerID: model.providerID,
+        modelID: model.modelID,
+      });
+      const authorization = resolveAiGatewayProviderAuthorization({
+        request: input.request,
+        ...(input.actor ? { actor: input.actor } : {}),
+        runtimeAuthorizationActorTokenHash: binding.actorTokenHash,
+        runtimeAuthorizationOrgId: binding.orgId,
+        activeRunContextPresent: true,
+      });
+      // Authorize before reading the descriptor cache: a cached capability must
+      // never outlive the run-scoped authorization that permitted it.
+      const remainingAuthorizationMs = aiGatewayRuntimeOwner.runtimeAuthorizationRemainingMs({
+        actorTokenHash: binding.actorTokenHash,
+        orgId: binding.orgId,
+      });
+      const descriptorCacheTtlMs = Math.min(
+        MANAGED_AI_MODEL_DESCRIPTOR_CACHE_TTL_MS,
+        Math.max(0, remainingAuthorizationMs ?? 0),
+      );
+      const cached = aiGatewayRuntimeOwner.getManagedAiModelCapabilityDescriptor(cacheKey);
+      if (cached) return cached;
+      const headers = new Headers({ [AUTHORIZATION_HEADER]: authorization.authorization });
+      if (authorization.orgId) headers.set(VESLO_ORG_ID_HEADER, authorization.orgId);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), MANAGED_AI_MODEL_DESCRIPTOR_REQUEST_TIMEOUT_MS);
+      let response: Response;
+      try {
+        response = await fetch(`${resolveAiGatewayBaseUrl()}/api/me/ai-access`, {
+          headers,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!response.ok) return null;
+      const descriptor = readManagedAiCatalogDescriptor({
+        value: await response.json(),
+        providerID: model.providerID,
+        modelID: model.modelID,
+      });
+      if (descriptor) {
+        if (descriptorCacheTtlMs > 0) {
+          aiGatewayRuntimeOwner.cacheManagedAiModelCapabilityDescriptor({
+            cacheKey,
+            descriptor,
+            ttlMs: descriptorCacheTtlMs,
+          });
+        }
+      }
+      return descriptor;
+    } catch {
+      return null;
+    }
+  };
 }
 
 function listActiveAiGatewayRunContexts(now = Date.now()): ActiveAiGatewayRunContext[] {
@@ -2173,6 +2438,10 @@ async function proxyAiGatewayRequest(input: {
     !sessionId &&
     (
       !isSessionlessFallback ||
+      // A placeholder cannot be safely forwarded when the runtime owner found
+      // more than one possible run. Doing so loses run correlation and lets a
+      // managed-AI provider request escape the local fail-closed boundary.
+      sessionResolution?.workspaceFallbackSuppressedReason === "ambiguous-active-run-context" ||
       (
         isAiGatewayChatCompletionsPath(input.gatewayPath) &&
         !hasActiveGatewayResolutionContext()
@@ -3876,12 +4145,20 @@ function createRoutes(
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
     transcriptStore: conversationTranscriptStore,
-    createOpenCodeSession: async ({ workspace, directory, title, requestedOpenCodeSessionId, sendTraceId }) => {
+    createOpenCodeSession: async ({
+      workspace,
+      directory,
+      title,
+      requestedOpenCodeSessionId,
+      sendTraceId,
+      orchestratorRegistrationScope,
+    }) => {
       const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
       return await fetchOpencodeJsonWithOrchestratorFallback(config, scopedWorkspace, "/session", {
         method: "POST",
         timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
         sendTraceId,
+        orchestratorRegistrationScope,
         body: {
           ...(requestedOpenCodeSessionId?.trim() ? { id: requestedOpenCodeSessionId.trim() } : {}),
           ...(directory ? { directory } : {}),
@@ -3970,6 +4247,7 @@ function createRoutes(
     sessionOrConversationId: string;
     limit: number;
     directory: string | null;
+    includeSource?: boolean;
   }) => {
     const binding = await conversationService.resolveOpenCodeSessionForRead({
       workspaceId: input.workspace.id,
@@ -3981,15 +4259,26 @@ function createRoutes(
       throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
     }
     const opencodeSessionId = binding.engineSessionId;
-    const snapshot = await sessionTranscriptPrefetch.getOrLoad({
-      workspaceId: input.workspace.id,
-      sessionId: opencodeSessionId,
-      limit: input.limit,
-      directory: input.directory,
-    });
+    const sourceResult = input.includeSource
+      ? await sessionTranscriptPrefetch.getOrLoadSource({
+          workspaceId: input.workspace.id,
+          sessionId: opencodeSessionId,
+          limit: input.limit,
+          directory: input.directory,
+        })
+      : null;
+    const snapshot = sourceResult
+      ? createSessionTranscriptDisplayView(sourceResult.snapshot, input.limit)
+      : await sessionTranscriptPrefetch.getOrLoad({
+          workspaceId: input.workspace.id,
+          sessionId: opencodeSessionId,
+          limit: input.limit,
+          directory: input.directory,
+        });
     return {
       workspaceId: input.workspace.id,
       sessionId: opencodeSessionId,
+      ...(input.directory ? { directory: input.directory } : {}),
       conversationId: binding.conversationId,
       opencodeSessionId,
       limit: snapshot.limit,
@@ -3999,6 +4288,10 @@ function createRoutes(
       staleAt: snapshot.staleAt,
       source: snapshot.source,
       ...(snapshot.diagnostic ? { diagnostic: snapshot.diagnostic } : {}),
+      ...(sourceResult ? {
+        sourceSnapshot: sourceResult.snapshot,
+        cacheOutcome: sourceResult.outcome,
+      } : {}),
     };
   };
 
@@ -4075,6 +4368,7 @@ function createRoutes(
     body: Record<string, unknown>;
     clientMessageId: string | null;
     origin: string | null;
+    orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   }) => {
     const {
       runTrace,
@@ -4085,6 +4379,7 @@ function createRoutes(
       body,
       clientMessageId,
       origin,
+      orchestratorRegistrationScope,
     } = input;
     const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
     const opencodeRunBody = buildConversationRunBody(kind, body);
@@ -4106,6 +4401,7 @@ function createRoutes(
         body: opencodeRunBody,
         sendTraceId: runTrace.traceId,
         conversationRunId: runId,
+        orchestratorRegistrationScope,
       }),
       {
         workspaceId: workspace.id,
@@ -4119,7 +4415,14 @@ function createRoutes(
     );
   };
 
-  const CONVERSATION_QUEUE_DRAIN_POLL_MS = 1_500;
+  const testQueueDrainPollMs = Number.parseInt(
+    process.env.VESLO_SERVICE_TEST_QUEUE_DRAIN_POLL_MS ?? "",
+    10,
+  );
+  const CONVERSATION_QUEUE_DRAIN_POLL_MS =
+    Number.isFinite(testQueueDrainPollMs) && testQueueDrainPollMs > 0
+      ? testQueueDrainPollMs
+      : 1_500;
 
   const conversationRunLifecycleControllerFactory =
     conversationRunLifecycleControllerFactoryForTests ?? createConversationRunLifecycleController;
@@ -4236,6 +4539,7 @@ function createRoutes(
     writeVesloConfig,
     buildConfigTrigger,
     reloadOpencodeEngine,
+    reloadWorkspaceEngineIfIdle: conversationRunLifecycleController.reloadWorkspaceEngineIfIdle,
     exportWorkspace,
     importWorkspace,
   });
@@ -4263,6 +4567,7 @@ function createRoutes(
     createConversationRunTracer,
     resolveConversationExecutionTarget,
     resolveAiGatewayRuntimeAuthorizationBindingForRun,
+    createManagedAiModelDescriptorResolver,
     deleteOpenCodeSession: async ({ workspace, sessionId }) => {
       await fetchOpencodeJsonWithOrchestratorFallback(
         config,

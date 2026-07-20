@@ -148,6 +148,89 @@ test("desktop diagnostics ingest rejects non-diagnostics events", async () => {
   }
 })
 
+test("desktop diagnostics ingest accepts a UUID-marked user capture and preserves its metadata", async () => {
+  const { service, store } = createService()
+  const server = await startServer({ service, authorize: async () => authorize() })
+  const captureId = "a34c2c9a-4196-4f32-8e8f-f7bfc5e56f2d"
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/desktop-diagnostics`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "capture:user_1:1" },
+      body: JSON.stringify(makeEnvelope({
+        batchId: "capture:a34c2c9a-4196-4f32-8e8f-f7bfc5e56f2d:1",
+        events: [makeEvent({
+          source: "engine",
+          stream: "stderr",
+          captureId,
+          payload: { line: "engine failed" },
+        })],
+      })),
+    })
+
+    assert.equal(response.status, 202)
+    assert.equal(store.events.length, 1)
+    assert.equal(store.events[0]?.captureId, captureId)
+  } finally {
+    await server.close()
+  }
+})
+
+test("desktop diagnostics ingest accepts a capture event above the desktop batch guard", async () => {
+  const { service, store } = createService()
+  const server = await startServer({ service, authorize: async () => authorize() })
+  const captureId = "a34c2c9a-4196-4f32-8e8f-f7bfc5e56f2d"
+  const body = JSON.stringify(makeEnvelope({
+    batchId: "capture:a34c2c9a-4196-4f32-8e8f-f7bfc5e56f2d:oversized",
+    events: [makeEvent({
+      id: "oversized-capture-event",
+      source: "engine",
+      stream: "stderr",
+      captureId,
+      payload: { line: "x".repeat(225 * 1024) },
+    })],
+  }))
+
+  assert.ok(Buffer.byteLength(body, "utf8") > 224 * 1024)
+  assert.ok(Buffer.byteLength(body, "utf8") < 2 * 1024 * 1024)
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/desktop-diagnostics`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    })
+
+    assert.equal(response.status, 202)
+    assert.equal(store.events.length, 1)
+    assert.equal(store.events[0]?.captureId, captureId)
+    assert.ok(store.events[0]?.payloadBytes > 224 * 1024)
+  } finally {
+    await server.close()
+  }
+})
+
+test("desktop diagnostics ingest rejects capture-like events without a UUID", async () => {
+  const { service, store } = createService()
+  const server = await startServer({ service, authorize: async () => authorize() })
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/desktop-diagnostics`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(makeEnvelope({
+        events: [makeEvent({ source: "engine", stream: "stderr", captureId: "not-a-uuid" })],
+      })),
+    })
+
+    assert.equal(response.status, 400)
+    assert.equal((await response.json()).error, "invalid_debug_log_batch")
+    assert.equal(store.events.length, 0)
+  } finally {
+    await server.close()
+  }
+})
+
 test("desktop diagnostics ingest rejects user mismatches", async () => {
   const { service, store } = createService()
   const server = await startServer({ service, authorize: async () => authorize() })

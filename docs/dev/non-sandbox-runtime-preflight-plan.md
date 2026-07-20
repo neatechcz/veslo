@@ -8,6 +8,11 @@ desktop/app layers preserve it, pre-send managed AI routing uses effective
 sandbox state after runtime preparation, and the Windows Tauri fallback probe
 confirms startup plus direct non-sandbox engine launch when WSL is unavailable.
 
+> Current installer override (2026-07-15): this is a historical runtime-fallback
+> plan. Current Windows MSI packages do not bundle, provision, or repair WSL or
+> `VesloSandbox`, and onboarding/Settings no longer mount the WSL repair UI.
+> Use `state-and-config-reference.md` for the active installer contract.
+
 ## Update Convention
 
 Agents working on this plan should update both fields on every task:

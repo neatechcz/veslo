@@ -18,7 +18,7 @@ export async function waitForManagedAiBootstrapReady(input: {
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const startedAt = now();
 
-  while (true) {
+  for (;;) {
     if (!input.isBootstrapBusy() && !input.isReloadBusy() && input.hasClient()) {
       return;
     }

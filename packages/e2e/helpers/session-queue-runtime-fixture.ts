@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23,7 +24,7 @@ type FixtureRun = {
   createdAt: number;
 };
 
-type FixtureSession = {
+export type SessionQueueFixtureSession = {
   id: string;
   title: string;
   directory: string;
@@ -31,14 +32,18 @@ type FixtureSession = {
   time: { created: number; updated: number };
 };
 
-type FixtureTranscript = {
+export type SessionQueueFixtureTranscript = {
   messages: unknown[];
   partsByMessageId: Record<string, unknown[]>;
 };
 
+type FixtureSession = SessionQueueFixtureSession;
+type FixtureTranscript = SessionQueueFixtureTranscript;
+
 type FixtureState = {
   sessions: Map<string, FixtureSession>;
   transcripts: Map<string, FixtureTranscript>;
+  workspacePath: string | null;
   runs: Map<string, FixtureRun>;
   eventStreams: Set<ServerResponse>;
   emittedEventCount: number;
@@ -153,6 +158,145 @@ const transcriptMessageId = (value: unknown) =>
     ? normalized((value as Record<string, unknown>).id)
     : '';
 
+const transcriptPartId = (value: unknown) =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? normalized((value as Record<string, unknown>).id)
+    : '';
+
+const transcriptRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+
+const fixtureOpenCodeDatabasePath = (workspacePath: string) =>
+  join(workspacePath, '.opencode', 'opencode.db');
+
+const fixtureOpenCodeSchema = `
+  CREATE TABLE IF NOT EXISTS session (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    directory TEXT NOT NULL,
+    parent_id TEXT,
+    time_created INTEGER NOT NULL,
+    time_updated INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS message (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    data TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS part (
+    id TEXT PRIMARY KEY,
+    message_id TEXT,
+    session_id TEXT NOT NULL,
+    data TEXT NOT NULL
+  );
+`;
+
+function ensureFixtureOpenCodeDatabase(workspacePath: string): string {
+  const databasePath = fixtureOpenCodeDatabasePath(workspacePath);
+  mkdirSync(dirname(databasePath), { recursive: true });
+  const database = new DatabaseSync(databasePath);
+  try {
+    database.exec(fixtureOpenCodeSchema);
+    return databasePath;
+  } finally {
+    database.close();
+  }
+}
+
+export function materializeSessionQueueFixtureTranscript(
+  workspacePath: string,
+  session: SessionQueueFixtureSession,
+  transcript: SessionQueueFixtureTranscript | undefined,
+): string {
+  const databasePath = ensureFixtureOpenCodeDatabase(workspacePath);
+  const database = new DatabaseSync(databasePath);
+  let transactionStarted = false;
+  try {
+    database.exec('BEGIN IMMEDIATE');
+    transactionStarted = true;
+    database.prepare(`
+      INSERT INTO session (id, title, directory, parent_id, time_created, time_updated)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        directory = excluded.directory,
+        parent_id = excluded.parent_id,
+        time_created = excluded.time_created,
+        time_updated = excluded.time_updated
+    `).run(
+      session.id,
+      session.title,
+      session.directory,
+      session.parentID,
+      session.time.created,
+      session.time.updated,
+    );
+
+    const upsertMessage = database.prepare(`
+      INSERT INTO message (id, session_id, data)
+      VALUES (?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        session_id = excluded.session_id,
+        data = excluded.data
+    `);
+    const upsertPart = database.prepare(`
+      INSERT INTO part (id, message_id, session_id, data)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        message_id = excluded.message_id,
+        session_id = excluded.session_id,
+        data = excluded.data
+    `);
+    for (const message of transcript?.messages ?? []) {
+      const id = transcriptMessageId(message);
+      const record = transcriptRecord(message);
+      if (!id || !record) continue;
+      upsertMessage.run(id, session.id, JSON.stringify(record));
+    }
+    for (const [messageId, parts] of Object.entries(transcript?.partsByMessageId ?? {})) {
+      const normalizedMessageId = messageId.trim();
+      if (!normalizedMessageId || !Array.isArray(parts)) continue;
+      for (const part of parts) {
+        const id = transcriptPartId(part);
+        const record = transcriptRecord(part);
+        if (!id || !record) continue;
+        upsertPart.run(id, normalizedMessageId, session.id, JSON.stringify(record));
+      }
+    }
+    database.exec('COMMIT');
+    transactionStarted = false;
+    return databasePath;
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        database.exec('ROLLBACK');
+      } catch {
+        // Preserve the materialization error; the connection will close below.
+      }
+    }
+    throw error;
+  } finally {
+    database.close();
+  }
+}
+
+function materializeFixtureSession(state: FixtureState, sessionId: string): string | null {
+  const workspacePath = state.workspacePath;
+  const session = state.sessions.get(sessionId);
+  if (!workspacePath || !session) return null;
+  return materializeSessionQueueFixtureTranscript(workspacePath, session, state.transcripts.get(sessionId));
+}
+
+function materializeFixtureState(state: FixtureState): string | null {
+  let databasePath: string | null = null;
+  for (const sessionId of state.sessions.keys()) {
+    databasePath = materializeFixtureSession(state, sessionId) ?? databasePath;
+  }
+  return databasePath;
+}
+
 const appendFixtureTranscript = (state: FixtureState, sessionId: string, input: Record<string, unknown>) => {
   const messages = Array.isArray(input.messages) ? input.messages : [];
   const suppliedParts = input.partsByMessageId;
@@ -173,6 +317,7 @@ const appendFixtureTranscript = (state: FixtureState, sessionId: string, input: 
   }
   const transcript = { messages: mergedMessages, partsByMessageId: mergedParts };
   state.transcripts.set(sessionId, transcript);
+  materializeFixtureSession(state, sessionId);
   return transcript;
 };
 
@@ -241,6 +386,7 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
   const state: FixtureState = {
     sessions: new Map(),
     transcripts: new Map(),
+    workspacePath: null,
     runs: new Map(),
     eventStreams: new Set(),
     emittedEventCount: 0,
@@ -263,6 +409,9 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
     }
     mkdirSync(options.workspacePath, { recursive: true });
     mkdirSync(options.dataDir, { recursive: true });
+    state.workspacePath = options.workspacePath;
+    const openCodeDatabasePath = ensureFixtureOpenCodeDatabase(options.workspacePath);
+    materializeFixtureState(state);
     const secretsPath = join(options.dataDir, 'session-queue-secrets.json');
     writeFileSync(secretsPath, JSON.stringify({
       clientToken: SESSION_QUEUE_VESLO_SERVER_TOKEN,
@@ -286,6 +435,7 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
         ...process.env,
         VESLO_DATA_DIR: options.dataDir,
         VESLO_SECRETS_FILE: secretsPath,
+        VESLO_OPENCODE_DB_PATH: openCodeDatabasePath,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
@@ -389,6 +539,23 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
       sendJson(response, 200, fixtureStatePayload(state));
       return;
     }
+    if (url.pathname === '/__session_queue_fixture/emit-assistant-text-part' && method === 'POST') {
+      const body = await readJson(request);
+      const sessionId = normalized(body.sessionId);
+      const messageId = normalized(body.messageId);
+      const partId = normalized(body.partId);
+      const text = typeof body.text === 'string' ? body.text : '';
+      if (!sessionId || !messageId || !partId || !state.sessions.has(sessionId)) {
+        sendJson(response, 400, { error: 'session_message_part_required' });
+        return;
+      }
+      const info = { id: messageId, sessionID: sessionId, role: 'assistant' };
+      const part = { id: partId, messageID: messageId, sessionID: sessionId, type: 'text', text };
+      emitFixtureEvent(state, { type: 'message.updated', properties: { info } });
+      emitFixtureEvent(state, { type: 'message.part.updated', properties: { part } });
+      sendJson(response, 200, { info, part, emittedEventCount: state.emittedEventCount });
+      return;
+    }
     if (url.pathname === '/__session_queue_fixture/emit-operational-error' && method === 'POST') {
       const body = await readJson(request);
       const message = normalized(body.message) || 'Session queue fixture emitted an unrelated operational error.';
@@ -443,6 +610,7 @@ export async function startSessionQueueRuntimeFixture(): Promise<SessionQueueRun
         time: { created: Date.now(), updated: Date.now() },
       };
       state.sessions.set(id, session);
+      materializeFixtureSession(state, id);
       sendJson(response, 200, session);
       return;
     }

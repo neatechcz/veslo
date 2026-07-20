@@ -1,4 +1,4 @@
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, untrack } from "solid-js";
 
 import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
@@ -73,6 +73,7 @@ import type {
   VesloUserGlobalSkillStoreItem,
 } from "../lib/veslo-server";
 import { readDenAuth } from "../lib/den-auth";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
@@ -88,6 +89,7 @@ const USER_GLOBAL_SKILL_STORE_PATH_PREFIX = "veslo-user-store://";
 
 const vesloServerClientIdentities = new WeakMap<object, string>();
 let nextVesloServerClientIdentity = 1;
+let nextSkillInventoryTraceId = 1;
 
 type OpenCodeClientGetResult = {
   data?: unknown;
@@ -408,9 +410,11 @@ export function createExtensionsStore(options: {
 
   // Track in-flight requests to prevent duplicate calls
   let refreshSkillsInFlight = false;
-  let refreshSkillInventoryInFlight = false;
-  let refreshSkillInventoryPromise: Promise<SkillInventoryRefreshResult> | null = null;
-  let refreshSkillInventoryInFlightContextKey = "";
+  let refreshSkillInventoryInFlight: {
+    contextKey: string;
+    promise: Promise<SkillInventoryRefreshResult>;
+  } | null = null;
+  let refreshSkillInventoryForceQueued = false;
   let refreshPluginsInFlight = false;
   let refreshPluginsQueuedRequest: {
     scopeOverride?: PluginScope;
@@ -423,14 +427,11 @@ export function createExtensionsStore(options: {
   let refreshSkillImportCandidatesInFlight = false;
   let refreshHubSkillsPromise: Promise<void> | null = null;
   let refreshHubSkillsInFlightContextKey = "";
-  let refreshSkillsAborted = false;
-  let refreshSkillInventoryAborted = false;
-  let refreshPluginsAborted = false;
-  let refreshHubSkillsAborted = false;
-  let refreshSkillImportCandidatesAborted = false;
+  const abortedRefreshes = new Set<
+    "skills" | "skill-inventory" | "plugins" | "hub-skills" | "skill-import-candidates" | "hub-mcp"
+  >();
   let refreshHubMcpInFlight = false;
-  let refreshHubMcpForcePending = false;
-  let refreshHubMcpAborted = false;
+  const pendingForcedRefreshes = new Set<"hub-mcp">();
   let skillsLoaded = false;
   let hubSkillsLoaded = false;
   let skillImportCandidatesLoaded = false;
@@ -483,15 +484,15 @@ export function createExtensionsStore(options: {
     if (!optionsOverride?.force && hubMcpLoaded) return;
     if (refreshHubMcpInFlight) {
       if (optionsOverride?.force) {
-        refreshHubMcpForcePending = true;
+        pendingForcedRefreshes.add("hub-mcp");
         hubMcpLoaded = false;
       }
       return;
     }
 
     refreshHubMcpInFlight = true;
-    refreshHubMcpForcePending = false;
-    refreshHubMcpAborted = false;
+    pendingForcedRefreshes.delete("hub-mcp");
+    abortedRefreshes.delete("hub-mcp");
 
     try {
       setHubMcpStatus(null);
@@ -511,7 +512,7 @@ export function createExtensionsStore(options: {
           denToken,
           denOrgId,
         });
-        if (refreshHubMcpAborted) return;
+        if (abortedRefreshes.has("hub-mcp")) return;
         const next: HubMcpCard[] = Array.isArray(response?.items)
           ? response.items.map((entry: HubMcpItem) => ({
               id: String(entry.id ?? entry.name ?? ""),
@@ -538,19 +539,19 @@ export function createExtensionsStore(options: {
         return;
       }
 
-      if (refreshHubMcpAborted) return;
+      if (abortedRefreshes.has("hub-mcp")) return;
       setHubMcpCards([]);
       setHubMcpStatus(orgCatalogPlaceholder);
       hubMcpRoot = root;
       hubMcpContextKey = nextContextKey;
     } catch (e) {
-      if (refreshHubMcpAborted) return;
+      if (abortedRefreshes.has("hub-mcp")) return;
       setHubMcpCards([]);
       setHubMcpStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_hub_mcp_1s9f65", __vesloIndirectLocale()));
     } finally {
       refreshHubMcpInFlight = false;
-      if (refreshHubMcpForcePending && !refreshHubMcpAborted) {
-        refreshHubMcpForcePending = false;
+      if (pendingForcedRefreshes.has("hub-mcp") && !abortedRefreshes.has("hub-mcp")) {
+        pendingForcedRefreshes.delete("hub-mcp");
         void refreshHubMcp({ force: true });
       }
     }
@@ -636,7 +637,7 @@ export function createExtensionsStore(options: {
 
     refreshHubSkillsInFlight = true;
     refreshHubSkillsInFlightContextKey = contextKey;
-    refreshHubSkillsAborted = false;
+    abortedRefreshes.delete("hub-skills");
     refreshHubSkillsPromise = (async () => {
       try {
         setHubSkillsStatus(null);
@@ -657,7 +658,7 @@ export function createExtensionsStore(options: {
             denToken,
             denOrgId,
           });
-          if (refreshHubSkillsAborted) return;
+          if (abortedRefreshes.has("hub-skills")) return;
           const next: HubSkillCard[] = response.items.map((entry) => ({
             name: entry.name,
             description: entry.description,
@@ -674,7 +675,7 @@ export function createExtensionsStore(options: {
           return;
         }
 
-        if (refreshHubSkillsAborted) return;
+        if (abortedRefreshes.has("hub-skills")) return;
         setHubSkills([]);
         setHubSkillsStatus(orgCatalogPlaceholder);
         hubSkillsLoaded = true;
@@ -683,7 +684,7 @@ export function createExtensionsStore(options: {
         markHubSkillsSourceChanged();
         void refreshHubMcp({ force: true });
       } catch (e) {
-        if (refreshHubSkillsAborted) return;
+        if (abortedRefreshes.has("hub-skills")) return;
         hubSkillsLoaded = false;
         setHubSkills([]);
         hubSkillsRoot = root;
@@ -798,6 +799,34 @@ export function createExtensionsStore(options: {
 
   async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
     let forceRefresh = optionsOverride?.force === true;
+    const traceId = `skills-inventory-${nextSkillInventoryTraceId++}`;
+    const refreshStartedAt = performance.now();
+    const trace = (event: string, payload?: Record<string, unknown>) =>
+      recordSendWorkflowTrace("skills-inventory", event, {
+        traceId,
+        force: forceRefresh,
+        ...payload,
+      });
+    const phase = async <T>(name: string, action: () => Promise<T>, payload?: Record<string, unknown>) => {
+      const startedAt = performance.now();
+      trace(`skills-inventory:${name}:start`, payload);
+      try {
+        const result = await action();
+        trace(`skills-inventory:${name}:done`, {
+          ...payload,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+        return result;
+      } catch (error) {
+        trace(`skills-inventory:${name}:error`, {
+          ...payload,
+          durationMs: Math.round(performance.now() - startedAt),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    };
+    trace("skills-inventory:start");
 
     const normalizeLocalSkillInventoryWorkspace = (workspace: LocalSkillInventoryWorkspace) => ({
       id: workspace.id.trim(),
@@ -854,9 +883,7 @@ export function createExtensionsStore(options: {
     ): SkillInventorySkillInput | null => {
       const id = record.id?.trim() ?? "";
       const name = record.name?.trim() ?? "";
-      const scope = record.scope === "workspace" || record.scope === "user-global"
-        ? record.scope
-        : fallback.scope;
+      const scope = record.scope;
       if (!id || !name || record.status === "restored") return null;
       const path = record.path?.trim() || `veslo-removal:${id}`;
       return {
@@ -1173,18 +1200,27 @@ export function createExtensionsStore(options: {
     };
 
     for (;;) {
-      if (refreshSkillInventoryInFlight) {
-        const inFlightContextKey = refreshSkillInventoryInFlightContextKey;
-        const inFlightRefresh = refreshSkillInventoryPromise;
+      const inFlight = refreshSkillInventoryInFlight;
+      if (inFlight) {
         const rerunAfterInFlight = forceRefresh;
-        const result = inFlightRefresh ? await inFlightRefresh : "stale";
-        forceRefresh = rerunAfterInFlight;
-        if (rerunAfterInFlight) continue;
+        if (rerunAfterInFlight) refreshSkillInventoryForceQueued = true;
+        trace("skills-inventory:join-in-flight", {
+          inFlightContextKey: inFlight.contextKey,
+          rerunQueued: rerunAfterInFlight,
+        });
+        const result = await inFlight.promise;
+        trace("skills-inventory:joined-in-flight", {
+          result,
+          durationMs: Math.round(performance.now() - refreshStartedAt),
+        });
         if (result === "failed" || result === "aborted") {
-          if (inFlightContextKey && getCurrentSkillInventoryRefreshContextKey() !== inFlightContextKey) continue;
+          if (inFlight.contextKey && getCurrentSkillInventoryRefreshContextKey() !== inFlight.contextKey) continue;
           return;
         }
-        if (result === "published" && getCurrentSkillInventoryContextKey() === skillInventoryContextKey) return;
+        // The refresh owner performs the single follow-up attempt after a stale
+        // result (or a queued force request). Joiners must not spin on stale.
+        if (!rerunAfterInFlight) return;
+        forceRefresh = false;
         continue;
       }
 
@@ -1199,57 +1235,110 @@ export function createExtensionsStore(options: {
         skillInventoryLoaded = false;
       }
 
-      if (!forceRefresh && skillInventoryLoaded && !hubRefreshInFlightForCurrentContext) return;
+      if (
+        !forceRefresh &&
+        !refreshSkillInventoryForceQueued &&
+        skillInventoryLoaded &&
+        !hubRefreshInFlightForCurrentContext
+      ) return;
 
-      const refreshOptions = forceRefresh ? { force: true } : undefined;
-      refreshSkillInventoryInFlight = true;
-      refreshSkillInventoryInFlightContextKey = nextRefreshContextKey;
-      refreshSkillInventoryAborted = false;
-      refreshSkillInventoryPromise = (async (): Promise<SkillInventoryRefreshResult> => {
+      const refreshOptions = forceRefresh || refreshSkillInventoryForceQueued ? { force: true } : undefined;
+      refreshSkillInventoryForceQueued = false;
+      abortedRefreshes.delete("skill-inventory");
+      let resolveRefresh: (result: SkillInventoryRefreshResult) => void = () => undefined;
+      const refreshPromise = new Promise<SkillInventoryRefreshResult>((resolve) => {
+        resolveRefresh = resolve;
+      });
+      const flight = {
+        contextKey: nextRefreshContextKey,
+        promise: refreshPromise,
+      };
+      // Publish the whole flight before running code that can synchronously
+      // notify Solid effects. A separate boolean and promise left a small
+      // re-entrant window where callers observed "in flight" without a promise.
+      refreshSkillInventoryInFlight = flight;
+      void (async () => {
+        let result: SkillInventoryRefreshResult = "failed";
         try {
           setSkillInventoryStatus(null);
-          await refreshHubSkills(refreshOptions);
-          if (refreshSkillInventoryAborted) return "aborted";
+          trace("skills-inventory:attempt:start", { workspaceCount: localWorkspaces.length });
+          await phase("hub", () => refreshHubSkills(refreshOptions));
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
 
           const refreshedHubContext = resolveHubSkillsRefreshContext();
           if (hubSkillsContextKey !== refreshedHubContext.contextKey) {
             await refreshHubSkills({ force: true });
-            if (refreshSkillInventoryAborted) return "aborted";
+            if (abortedRefreshes.has("skill-inventory")) {
+              result = "aborted";
+              return;
+            }
           }
 
           const inventoryHubContext = resolveHubSkillsRefreshContext();
           const hasMatchingHubSkills = hubSkillsLoaded && hubSkillsContextKey === inventoryHubContext.contextKey;
           const inventoryContextAtStart = getSkillInventoryContextKey(localWorkspaces, inventoryHubContext.contextKey);
-          const disabledSkillRecords = await loadDisabledSkillRecords(localWorkspaces);
-          if (refreshSkillInventoryAborted) return "aborted";
+          const disabledSkillRecords = await phase(
+            "disabled-state",
+            () => loadDisabledSkillRecords(localWorkspaces),
+            { workspaceCount: localWorkspaces.length },
+          );
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
 
           const listScopedSkills = options.listLocalSkillsScoped ?? listLocalSkillsScopedCommand;
           const removalClient = getSkillRemovalClient();
+          const listedGlobalSkills = await phase("global-local-list", () => listScopedSkills("", "global"));
+          const globalRegistry = await phase(
+            "global-materialization-status",
+            () => loadGlobalMaterializationRegistryIndex(),
+          );
           const globalSkills = attachDisabledSkillState(
             attachMaterializationRegistryMetadata(
-              await listScopedSkills("", "global"),
-              await loadGlobalMaterializationRegistryIndex(),
+              listedGlobalSkills,
+              globalRegistry,
             ),
             disabledSkillRecords,
             "user-global",
           );
-          globalSkills.push(...(await loadUserGlobalSkillStoreInputs()));
-          globalSkills.push(...(await listRemovedSkillInputs(removalClient, { scope: "user-global" })));
-          if (refreshSkillInventoryAborted) return "aborted";
+          globalSkills.push(...(await phase("global-user-store", () => loadUserGlobalSkillStoreInputs())));
+          globalSkills.push(...(await phase("global-removals", () => listRemovedSkillInputs(removalClient, { scope: "user-global" }))));
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
 
           const workspaceSkillsByWorkspaceId: BuildSkillInventoryInput["workspaceSkillsByWorkspaceId"] = {};
 
           for (const workspace of localWorkspaces) {
-            const skills = attachMaterializationRegistryMetadata(
-              (await listScopedSkills(workspace.path, "workspace"))
-                .filter((skill) => !isUserGlobalSkillRuntimeMaterializationPath(skill.path)),
-              await loadWorkspaceMaterializationRegistryIndex(workspace.id),
+            const workspacePayload = { workspaceId: workspace.id };
+            const listedWorkspaceSkills = await phase(
+              "workspace-local-list",
+              () => listScopedSkills(workspace.path, "workspace"),
+              workspacePayload,
             );
-            skills.push(...(await listRemovedSkillInputs(removalClient, {
+            const workspaceRegistry = await phase(
+              "workspace-materialization-status",
+              () => loadWorkspaceMaterializationRegistryIndex(workspace.id),
+              workspacePayload,
+            );
+            const skills = attachMaterializationRegistryMetadata(
+              listedWorkspaceSkills
+                .filter((skill) => !isUserGlobalSkillRuntimeMaterializationPath(skill.path)),
+              workspaceRegistry,
+            );
+            skills.push(...(await phase("workspace-removals", () => listRemovedSkillInputs(removalClient, {
               scope: "workspace",
               workspaceId: workspace.id,
-            })));
-            if (refreshSkillInventoryAborted) return "aborted";
+            }), workspacePayload)));
+            if (abortedRefreshes.has("skill-inventory")) {
+              result = "aborted";
+              return;
+            }
             workspaceSkillsByWorkspaceId[workspace.id] = {
               workspace: {
                 id: workspace.id,
@@ -1268,7 +1357,8 @@ export function createExtensionsStore(options: {
           );
           if (currentContextKey !== inventoryContextAtStart) {
             skillInventoryLoaded = false;
-            return "stale";
+            result = "stale";
+            return;
           }
 
           const next = buildSkillInventory({
@@ -1276,7 +1366,10 @@ export function createExtensionsStore(options: {
             workspaceSkillsByWorkspaceId,
             hubSkills: hasMatchingHubSkills ? hubSkills() : [],
           });
-          if (refreshSkillInventoryAborted) return "aborted";
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
 
           setSkillInventory(next);
           if (!next.length) {
@@ -1286,27 +1379,41 @@ export function createExtensionsStore(options: {
           }
           skillInventoryLoaded = hasMatchingHubSkills;
           skillInventoryContextKey = inventoryContextAtStart;
-          return "published";
+          trace("skills-inventory:published", {
+            durationMs: Math.round(performance.now() - refreshStartedAt),
+            itemCount: next.length,
+            globalSkillCount: globalSkills.length,
+            workspaceCount: localWorkspaces.length,
+          });
+          result = "published";
         } catch (e) {
-          if (refreshSkillInventoryAborted) return "aborted";
+          if (abortedRefreshes.has("skill-inventory")) {
+            result = "aborted";
+            return;
+          }
           skillInventoryLoaded = false;
           setSkillInventory([]);
           setSkillInventoryStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
-          return "failed";
+          trace("skills-inventory:failed", {
+            durationMs: Math.round(performance.now() - refreshStartedAt),
+            error: e instanceof Error ? e.message : String(e),
+          });
+          result = "failed";
         } finally {
-          refreshSkillInventoryInFlight = false;
-          refreshSkillInventoryInFlightContextKey = "";
-          refreshSkillInventoryPromise = null;
+          if (refreshSkillInventoryInFlight === flight) {
+            refreshSkillInventoryInFlight = null;
+          }
+          resolveRefresh(result);
         }
       })();
 
-      const result = await refreshSkillInventoryPromise;
+      const result = await refreshPromise;
       forceRefresh = false;
       if (result === "failed" || result === "aborted") {
         if (getCurrentSkillInventoryRefreshContextKey() !== nextRefreshContextKey) continue;
         return;
       }
-      if (result === "published") return;
+      if (result === "published" && !refreshSkillInventoryForceQueued) return;
       continue;
     }
   }
@@ -1347,11 +1454,11 @@ export function createExtensionsStore(options: {
     if (refreshSkillImportCandidatesInFlight) return;
 
     refreshSkillImportCandidatesInFlight = true;
-    refreshSkillImportCandidatesAborted = false;
+      abortedRefreshes.delete("skill-import-candidates");
     try {
       setSkillImportStatus(null);
       const response = await client.listSkillImportCandidates!();
-      if (refreshSkillImportCandidatesAborted) return;
+      if (abortedRefreshes.has("skill-import-candidates")) return;
       const next = Array.isArray(response.items) ? response.items : [];
       setSkillImportCandidates(next);
       if (!next.length) {
@@ -1360,7 +1467,7 @@ export function createExtensionsStore(options: {
       skillImportCandidatesLoaded = true;
       skillImportCandidatesContextKey = contextKey;
     } catch (e) {
-      if (refreshSkillImportCandidatesAborted) return;
+      if (abortedRefreshes.has("skill-import-candidates")) return;
       skillImportCandidatesLoaded = false;
       setSkillImportCandidates([]);
       setSkillImportStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1419,7 +1526,6 @@ export function createExtensionsStore(options: {
   async function installHubSkill(name: string, target: HubSkillInstallTarget): Promise<{ ok: boolean; message: string }> {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, message: __vesloIndirectT("ui.indirect.skill_name_is_required_5te74i", __vesloIndirectLocale()) };
-    if (!target) return { ok: false, message: translate("skills.install_target_required") };
     if (target.scope === "global") {
       return { ok: false, message: translate("skills.install_target_global_unavailable") };
     }
@@ -1547,10 +1653,10 @@ export function createExtensionsStore(options: {
   const loadPluginsFromConfig = (config: OpencodeConfigFile | null) => {
     loadPluginsFromConfigHelpers(
       config,
-      (next) => {
+      (next) => untrack(() => {
         setPluginList(next);
         setPluginInventory(unmanagedPluginInventoryFromSpecs(next, pluginScope()));
-      },
+      }),
       (message) => setPluginStatus(message),
     );
   };
@@ -1590,14 +1696,14 @@ export function createExtensionsStore(options: {
       }
 
       refreshSkillsInFlight = true;
-      refreshSkillsAborted = false;
+      abortedRefreshes.delete("skills");
 
       try {
         setSkillsStatus(null);
         const response = await vesloClient.listSkills(vesloWorkspaceId, {
           includeGlobal: isLocalWorkspace,
         });
-        if (refreshSkillsAborted) return;
+        if (abortedRefreshes.has("skills")) return;
         const next: SkillCard[] = Array.isArray(response.items)
           ? response.items.map((entry) => ({
               name: entry.name,
@@ -1615,7 +1721,7 @@ export function createExtensionsStore(options: {
         skillsLoaded = true;
         skillsRoot = root;
       } catch (e) {
-        if (refreshSkillsAborted) return;
+        if (abortedRefreshes.has("skills")) return;
         setSkills([]);
         markLocalSkillsSourceChanged();
         setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1642,12 +1748,12 @@ export function createExtensionsStore(options: {
       }
 
       refreshSkillsInFlight = true;
-      refreshSkillsAborted = false;
+      abortedRefreshes.delete("skills");
 
       try {
         setSkillsStatus(null);
         const local = await listLocalSkills(root);
-        if (refreshSkillsAborted) return;
+        if (abortedRefreshes.has("skills")) return;
 
         const next: SkillCard[] = Array.isArray(local)
           ? local.map((entry) => ({
@@ -1667,7 +1773,7 @@ export function createExtensionsStore(options: {
         skillsLoaded = true;
         skillsRoot = root;
       } catch (e) {
-        if (refreshSkillsAborted) return;
+        if (abortedRefreshes.has("skills")) return;
         setSkills([]);
         markLocalSkillsSourceChanged();
         setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1699,12 +1805,12 @@ export function createExtensionsStore(options: {
     }
 
     refreshSkillsInFlight = true;
-    refreshSkillsAborted = false;
+    abortedRefreshes.delete("skills");
 
     try {
       setSkillsStatus(null);
 
-      if (refreshSkillsAborted) return;
+      if (abortedRefreshes.has("skills")) return;
 
       const rawClient = c as unknown as { _client?: { get: (input: { url: string }) => Promise<OpenCodeClientGetResult> } };
       if (!rawClient._client) {
@@ -1720,7 +1826,7 @@ export function createExtensionsStore(options: {
       }
       const data = result.data;
 
-      if (refreshSkillsAborted) return;
+      if (abortedRefreshes.has("skills")) return;
 
       const next: SkillCard[] = Array.isArray(data)
         ? data
@@ -1741,7 +1847,7 @@ export function createExtensionsStore(options: {
       skillsLoaded = true;
       skillsRoot = root;
     } catch (e) {
-      if (refreshSkillsAborted) return;
+      if (abortedRefreshes.has("skills")) return;
       setSkills([]);
       markLocalSkillsSourceChanged();
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
@@ -1774,7 +1880,7 @@ export function createExtensionsStore(options: {
     }
 
     refreshPluginsInFlight = true;
-    refreshPluginsAborted = false;
+    abortedRefreshes.delete("plugins");
 
     try {
       const isRemoteWorkspace = options.workspaceType() === "remote";
@@ -1806,14 +1912,14 @@ export function createExtensionsStore(options: {
           setPluginStatus(null);
           setSidebarPluginStatus(null);
 
-          if (refreshPluginsAborted) return;
+          if (abortedRefreshes.has("plugins")) return;
 
           const listOptions = {
             includeGlobal: false,
             ...(optionsOverride?.debug ? { debug: true } : {}),
           };
           const result = await vesloClient.plugins.list(vesloWorkspaceId, listOptions);
-          if (refreshPluginsAborted) return;
+          if (abortedRefreshes.has("plugins")) return;
 
           const hasServerInventory = Array.isArray(result.inventory);
           const inventory = hasServerInventory
@@ -1830,7 +1936,7 @@ export function createExtensionsStore(options: {
             setPluginStatus(__vesloIndirectT("plugins.no_plugins_yet", __vesloIndirectLocale()));
           }
         } catch (e) {
-          if (refreshPluginsAborted) return;
+          if (abortedRefreshes.has("plugins")) return;
           clearPluginState();
           setSidebarPluginStatus(__vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
           setPluginStatus(e instanceof Error ? e.message : __vesloIndirectT("ui.indirect.failed_to_load_plugins_i1skhr", __vesloIndirectLocale()));
@@ -1864,11 +1970,11 @@ export function createExtensionsStore(options: {
         setPluginStatus(null);
         setSidebarPluginStatus(null);
 
-        if (refreshPluginsAborted) return;
+        if (abortedRefreshes.has("plugins")) return;
 
         const config = await readOpencodeConfig(scope, targetDir);
 
-        if (refreshPluginsAborted) return;
+        if (abortedRefreshes.has("plugins")) return;
 
         setPluginConfig(config);
         setPluginConfigPath(config.path ?? null);
@@ -1892,7 +1998,7 @@ export function createExtensionsStore(options: {
 
         loadPluginsFromConfig(config);
       } catch (e) {
-        if (refreshPluginsAborted) return;
+        if (abortedRefreshes.has("plugins")) return;
         setPluginConfig(null);
         setPluginConfigPath(null);
         clearPluginState();
@@ -1904,7 +2010,7 @@ export function createExtensionsStore(options: {
       const queuedRequest = refreshPluginsQueuedRequest;
       refreshPluginsQueuedRequest = null;
       if (queuedRequest) {
-        if (refreshPluginsAborted) {
+        if (abortedRefreshes.has("plugins")) {
           queuedRequest.resolve();
         } else {
           try {
@@ -2627,7 +2733,7 @@ export function createExtensionsStore(options: {
       vesloClient &&
       vesloCapabilities?.skills?.read;
 
-    if (canUseVesloServer && vesloClient) {
+    if (canUseVesloServer) {
       try {
         setSkillsStatus(null);
         if (target.scope === "user-global" && typeof vesloClient.getGlobalSkillFiles === "function") {
@@ -2754,9 +2860,8 @@ export function createExtensionsStore(options: {
 
   const managedSkillTargetAffectsActiveRuntime = (target: ManagedSkillMutationTarget) => {
     if (target.scope === "user-global" || target.scope === "platform") return true;
-    if (target.scope !== "workspace" && target.scope !== "organization") return false;
     const targetWorkspaceId = target.workspaceId?.trim() || target.restoreTarget?.workspaceId?.trim() || "";
-    if (!targetWorkspaceId) return target.scope === "workspace" || target.scope === "organization";
+    if (!targetWorkspaceId) return true;
     const activeWorkspaceId = options.activeWorkspaceId().trim();
     const vesloWorkspaceId = options.vesloServerWorkspaceId()?.trim() ?? "";
     return targetWorkspaceId === activeWorkspaceId || Boolean(vesloWorkspaceId && targetWorkspaceId === vesloWorkspaceId);
@@ -3314,14 +3419,13 @@ export function createExtensionsStore(options: {
     }
 
     // Cross-location transfers are retarget operations: one active source per skill.
-    const deleteSource = true;
     options.setBusy(true);
     options.setError(null);
     setSkillsStatus(null);
 
     try {
       const current = await readLocalSkillAtPath(sourceRoot, name, entryFilePath);
-      if (!current || skillEntryFilePathForMutationPath(current.path) !== entryFilePath) {
+      if (skillEntryFilePathForMutationPath(current.path) !== entryFilePath) {
         const message = translate("skills.failed_load_skill");
         setSkillsStatus(message);
         return { ok: false, message };
@@ -3335,21 +3439,19 @@ export function createExtensionsStore(options: {
           enabled: true,
         });
 
-        if (deleteSource) {
-          const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
-          if (!deleteResult.ok) {
-            throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
-          }
+        const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
+        if (!deleteResult.ok) {
+          throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
         }
 
         await syncUserGlobalSkillStoreForActiveWorkspace();
-        const message = translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global");
+        const message = translate("skills.moved_to_global");
         setSkillsStatus(message);
         if (isActiveWorkspaceTarget) {
           options.markReloadRequired?.("skills", {
             type: "skill",
             name,
-            action: deleteSource ? "updated" : "added",
+            action: "updated",
           });
           await refreshSkills({ force: true });
         }
@@ -3364,20 +3466,18 @@ export function createExtensionsStore(options: {
         return { ok: false, message };
       }
 
-      if (deleteSource) {
-        const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
-        if (!deleteResult.ok) {
-          throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
-        }
+      const deleteResult = await uninstallSkillAtPath(sourceRoot, name, entryFilePath);
+      if (!deleteResult.ok) {
+        throw new Error(deleteResult.stderr || deleteResult.stdout || translate("skills.uninstall_failed"));
       }
 
-      const message = translate(deleteSource ? "skills.moved_to_global" : "skills.copied_to_global");
+      const message = translate("skills.moved_to_global");
       setSkillsStatus(message);
       if (isActiveWorkspaceTarget) {
         options.markReloadRequired?.("skills", {
           type: "skill",
           name,
-          action: deleteSource ? "updated" : "added",
+          action: "updated",
         });
         await refreshSkills({ force: true });
       }
@@ -3603,12 +3703,12 @@ export function createExtensionsStore(options: {
   }
 
   function abortRefreshes() {
-    refreshSkillsAborted = true;
-    refreshSkillInventoryAborted = true;
-    refreshPluginsAborted = true;
-    refreshHubSkillsAborted = true;
-    refreshSkillImportCandidatesAborted = true;
-    refreshHubMcpAborted = true;
+    abortedRefreshes.add("skills");
+    abortedRefreshes.add("skill-inventory");
+    abortedRefreshes.add("plugins");
+    abortedRefreshes.add("hub-skills");
+    abortedRefreshes.add("skill-import-candidates");
+    abortedRefreshes.add("hub-mcp");
   }
 
   return {

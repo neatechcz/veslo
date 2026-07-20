@@ -177,6 +177,48 @@ export function captureReportedError(
   });
 }
 
+function normalizeIncidentId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const incidentId = value.trim();
+  return incidentId || null;
+}
+
+/**
+ * Captures a renderer-fatal exception without changing reportError's
+ * fire-and-forget contract. A returned event id is safe to display as a short
+ * support reference; all event payload redaction remains owned by the SDK
+ * configuration above.
+ */
+export function captureFatalRenderError(
+  error: unknown,
+  client: ErrorMonitoringClient | null = activeClient,
+): string | null {
+  if (!client) return null;
+
+  try {
+    let eventId: unknown;
+    client.withScope(scope => {
+      scope.setTag("veslo.context", "renderer.fatal");
+      scope.setTag("veslo.severity", "error");
+      scope.setTag("veslo.fatal", "true");
+      scope.setLevel("error");
+      scope.setContext("veslo", {
+        context: "renderer.fatal",
+        severity: "error",
+        fatal: true,
+      });
+
+      eventId = error instanceof Error
+        ? client.captureException(error)
+        : client.captureMessage(safeMessage(error));
+    });
+    return normalizeIncidentId(eventId);
+  } catch {
+    // A recovery UI must still render if monitoring itself is unavailable.
+    return null;
+  }
+}
+
 export function setErrorMonitoringClientForTests(client: ErrorMonitoringClient | null): void {
   activeClient = client;
 }

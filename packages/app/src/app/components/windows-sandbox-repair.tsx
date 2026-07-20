@@ -1,10 +1,20 @@
-import { Show, createSignal, onMount } from "solid-js";
+import { Show, createSignal, onMount, untrack } from "solid-js";
 import { CheckCircle2, Loader2, ShieldAlert } from "lucide-solid";
 
 import Button from "./button";
 import VesloLogo from "./veslo-logo";
 import { isTauriRuntime, isWindowsPlatform } from "../utils";
-import { wslPrerequisitesRepair, wslSandboxRepair, type ExecResult } from "../lib/tauri";
+import {
+  desktopRuntimePreferencesRead,
+  wslPrerequisitesRepair,
+  wslSandboxRepair,
+  type DesktopRuntimePreferences,
+  type ExecResult,
+} from "../lib/tauri";
+import {
+  maybeStartWindowsSandboxAutoPrepare,
+  resolveWindowsSandboxRepairPolicy,
+} from "../lib/windows-sandbox-repair-policy";
 import { currentLocale, t } from "../../i18n";
 
 type RepairStatus = {
@@ -17,6 +27,9 @@ type WindowsSandboxRepairProps = {
   // When true the component renders as a full-screen gate. The default inline
   // card is non-blocking so local startup can fall back to a direct local engine.
   blocking?: boolean;
+  // Support/admin flows may explicitly offer the repair UI without changing the
+  // persisted runtime preference.
+  supportFlow?: boolean;
 };
 
 const resultOutput = (result: ExecResult) => [result.stdout, result.stderr]
@@ -46,19 +59,24 @@ const statusClass = (tone: RepairStatus["tone"]) => {
   }
 };
 
-// The MSI enables WSL as LocalSystem; the per-user VesloSandbox distro is left
-// to the app so it can be imported without admin. We auto-run that finish step
-// once per app session so onboarding completes the sandbox on its own.
+// The per-user VesloSandbox distro is prepared at most once per app session,
+// and only when the user explicitly selected the sandbox runtime.
 let autoPrepareStarted = false;
-// Keep sandbox setup visible in the installed app; the installer itself does
-// not run WSL preparation unless the explicit rollback flag is enabled.
-const WINDOWS_WSL_SANDBOX_REPAIR_ENABLED = true;
 
 export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   const translate = (key: string) => t(key, currentLocale());
   const [busy, setBusy] = createSignal(false);
   const [status, setStatus] = createSignal<RepairStatus | null>(null);
   const [dismissed, setDismissed] = createSignal(false);
+  const [runtimePreferences, setRuntimePreferences] = createSignal<DesktopRuntimePreferences | null>(null);
+  const isWindowsDesktop = () => isTauriRuntime() && isWindowsPlatform();
+  const sandboxRepairPolicy = () =>
+    resolveWindowsSandboxRepairPolicy({
+      isWindowsDesktop: isWindowsDesktop(),
+      preferences: runtimePreferences(),
+      supportFlow: props.supportFlow,
+    });
+  const sandboxRepairAvailable = () => sandboxRepairPolicy() === "available";
 
   const ready = () => status()?.tone === "success";
   // Active work (checking / provisioning): no way to proceed, only a spinner.
@@ -72,7 +90,7 @@ export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   // needs no admin. The manual button passes `auto = false` so an explicit
   // click may still install the WSL features with elevation.
   const prepareSandbox = async (auto = false) => {
-    if (!WINDOWS_WSL_SANDBOX_REPAIR_ENABLED) return;
+    if (!sandboxRepairAvailable()) return;
     if (busy()) return;
     setBusy(true);
     setStatus({ tone: "info", message: translate("settings.windows_sandbox_checking") });
@@ -148,7 +166,7 @@ export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   // as ready; if WSL still needs installing/restarting we leave that as a
   // manual, clearly labelled option (it requires elevation).
   const autoPrepare = async () => {
-    if (!WINDOWS_WSL_SANDBOX_REPAIR_ENABLED) return;
+    if (!sandboxRepairAvailable()) return;
     if (busy()) return;
     setBusy(true);
     setStatus({ tone: "info", message: translate("settings.windows_sandbox_checking") });
@@ -170,10 +188,22 @@ export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   };
 
   onMount(() => {
-    if (!(isTauriRuntime() && isWindowsPlatform())) return;
-    if (autoPrepareStarted) return;
-    autoPrepareStarted = true;
-    void autoPrepare();
+    if (!isWindowsDesktop()) return;
+    void desktopRuntimePreferencesRead()
+      .then((preferences) => untrack(() => {
+        setRuntimePreferences(preferences);
+        const policy = resolveWindowsSandboxRepairPolicy({
+          isWindowsDesktop: true,
+          preferences,
+          supportFlow: props.supportFlow,
+        });
+        maybeStartWindowsSandboxAutoPrepare(policy, () => untrack(() => {
+          if (autoPrepareStarted) return;
+          autoPrepareStarted = true;
+          void autoPrepare();
+        }));
+      }))
+      .catch(() => setRuntimePreferences(null));
   });
 
   const statusBlock = () => (
@@ -194,7 +224,7 @@ export default function WindowsSandboxRepair(props: WindowsSandboxRepairProps) {
   );
 
   return (
-    <Show when={isTauriRuntime() && isWindowsPlatform() && WINDOWS_WSL_SANDBOX_REPAIR_ENABLED}>
+    <Show when={sandboxRepairAvailable()}>
       <Show
         when={props.blocking}
         fallback={

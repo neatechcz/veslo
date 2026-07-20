@@ -1,16 +1,16 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
-import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
-import type { AiAccessRepository } from "../access/repository.js";
+import type { AiAccessRepository, UserAiAccessPolicyRecord } from "../access/repository.js";
+import { resolveAuthorizedModelRoster } from "../access/authorized-model-roster.js";
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js";
-import type { PlatformModelPolicyRepository } from "../model-policy/repository.js";
+import type { PlatformModelPolicyRepository, PlatformModelRef } from "../model-policy/repository.js";
+import { resolveGatewayModelCapabilityDescriptor } from "../providers/model-capability-registry.js";
 import { asyncHandler, jsonErrorHandler } from "./async-handler.js";
 
 export type UserCredentialDependencies = {
   sessionResolver: UserSessionResolver;
   aiAccess?: AiAccessRepository;
-  modelPolicy?: Pick<PlatformModelPolicyRepository, "getPolicy">;
-  autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService;
+  modelPolicy?: PlatformModelPolicyRepository;
 };
 
 export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
@@ -57,31 +57,9 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
       res.json({ aiAccess: null });
       return;
     }
-
-    let modelPolicy;
-    try {
-      modelPolicy = await deps.modelPolicy?.getPolicy();
-    } catch (error) {
-      console.error("platform_model_policy_lookup_failed", error);
-      res.status(502).json({ error: "platform_model_policy_lookup_failed" });
-      return;
-    }
-    if (!modelPolicy) {
-      res.status(503).json({ error: "platform_model_policy_not_configured" });
-      return;
-    }
-
-    if (aiAccess?.provider === "codex_oauth" && deps.autoAssignedCodexCredentialRotation) {
-      try {
-        aiAccess = await deps.autoAssignedCodexCredentialRotation.repairCodexAccess({
-          aiAccess,
-          activeModel: modelPolicy.activeModel,
-          reason: "user_ai_access_read",
-        });
-      } catch (error) {
-        console.error("user_codex_assignment_repair_failed", error);
-      }
-    }
+    const platformPolicy = await deps.modelPolicy?.getPolicy();
+    const allowedModels = resolveAuthorizedModelRoster({ aiAccess, platformPolicy });
+    const effectiveModel = toEffectiveModel(aiAccess.provider, aiAccess.defaultModel);
 
     res.json({
       aiAccess: aiAccess
@@ -91,7 +69,10 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
             enabled: aiAccess.enabled,
             provider: aiAccess.provider,
             credentialId: aiAccess.credentialId,
-            effectiveModel: modelPolicy.activeModel,
+            defaultModel: aiAccess.defaultModel,
+            allowedModels,
+            selectableModels: selectableModelsForAccess(aiAccess.provider, allowedModels),
+            effectiveModel,
             updatedAt: toIsoString(aiAccess.updatedAt),
           }
         : null,
@@ -113,6 +94,24 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
   return router;
 }
 
+function selectableModelsForAccess(
+  provider: UserAiAccessPolicyRecord["provider"],
+  allowedModels: string[],
+) {
+  if (!provider) return [];
+  return allowedModels.map((model) => resolveGatewayModelCapabilityDescriptor({ provider, model }));
+}
+
 function toIsoString(value: Date | string) {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function toEffectiveModel(provider: string | null, model: string | null): PlatformModelRef | null {
+  if (
+    (provider === "openai" || provider === "anthropic" || provider === "codex_oauth" || provider === "openai_compatible")
+    && model?.trim()
+  ) {
+    return { provider, model: model.trim() };
+  }
+  return null;
 }

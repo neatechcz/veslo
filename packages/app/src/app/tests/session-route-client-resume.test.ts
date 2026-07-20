@@ -9,6 +9,7 @@ const pendingDraftControllerSource = readFileSync(
   new URL("../context/pending-session-draft-controller.ts", import.meta.url),
   "utf8",
 );
+const composerDraftSource = readFileSync(new URL("../pages/session-composer-drafts.ts", import.meta.url), "utf8");
 
 test("hydrates active pending draft state from the desktop draft store and prefers real session composer keys", () => {
   assert.match(
@@ -28,8 +29,13 @@ test("hydrates active pending draft state from the desktop draft store and prefe
   );
   assert.match(
     source,
-    /const currentComposerStorageKey = createMemo\(\(\) => \{\s*const sessionId = selectedSessionId\(\);\s*if \(sessionId\) \{\s*return resolveComposerStorageKey\(\{ sessionId \}\);\s*\}\s*return resolveComposerStorageKey\(\{ pendingDraftKey: activePendingDraftKey\(\) \}\);\s*\}\);/s,
+    /const currentComposerStorageKey = createMemo\(\(\) => resolveActiveComposerDraftStorageKey\(\{\s*selectedSessionId: selectedSessionId\(\),\s*pendingDraftKey: activePendingDraftKey\(\),\s*materializingSessionId: materializingComposerDraftSessionId\(\),\s*\}\)\);/s,
     "real sessions should keep their own composer key even when a pending draft remains active in the background",
+  );
+  assert.match(
+    composerDraftSource,
+    /const selected = selectedSessionId\?\.trim\(\) \?\? "";\s*if \(selected\) return resolveComposerStorageKey\(\{ sessionId: selected \}\);[\s\S]*const materializing = materializingSessionId\?\.trim\(\) \?\? "";\s*if \(materializing\) return resolveComposerStorageKey\(\{ sessionId: materializing \}\);[\s\S]*return resolveComposerStorageKey\(\{ pendingDraftKey \}\);/s,
+    "the composer draft helper should prefer selected and materializing real sessions over pending draft keys",
   );
   assert.doesNotMatch(
     pendingDraftControllerSource,
@@ -119,7 +125,7 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
   const setSessionsIndex = stateSource.indexOf("setSessions([result.session, ...currentStoreSessions]);");
   const sidebarIndex = stateSource.indexOf("materializePendingSessionInWorkspaceSidebar({");
   const ownNavigationIndex = transitionSource.indexOf("sessionRouteSync.markOwnNavigationSession(sessionId);");
-  const selectIndex = transitionSource.indexOf("await selectSession(sessionId);");
+  const selectIndex = transitionSource.indexOf("await selectSession(sessionId");
   assert.ok(setSessionsIndex >= 0, "created session should be injected into the session store");
   assert.ok(sidebarIndex > setSessionsIndex, "sidebar materialization should happen after session store injection");
   assert.ok(handoffIndex > sidebarIndex, "scoped materialized handoff should publish after sidebar materialization");
@@ -128,7 +134,7 @@ test("createSessionAndOpen injects the new session before selecting it", () => {
 
   assert.match(
     `${stateSource}\n${transitionSource}`,
-    /const displaySession = applyPendingInitialSessionTitle\(result\.session\);[\s\S]*setSessions\(\[result\.session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*options\.onMaterializedSessionId\?\.\(result\.handoff\);[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*await selectSession\(sessionId\);[\s\S]*goToSession\(sessionId\);/s,
+    /const displaySession = applyPendingInitialSessionTitle\(result\.session\);[\s\S]*setSessions\(\[result\.session, \.\.\.currentStoreSessions\]\);[\s\S]*materializePendingSessionInWorkspaceSidebar\(\{[\s\S]*options\.onMaterializedSessionId\?\.\(result\.handoff\);[\s\S]*sessionRouteSync\.markOwnNavigationSession\(sessionId\);[\s\S]*await selectSession\(sessionId, \{[\s\S]*skipTranscriptRead: result\.transition\.skipTranscriptRead === true,[\s\S]*\}\);[\s\S]*goToSession\(sessionId\);/s,
     "newly created sessions should enter session/sidebar state, publish handoff, arm route guard, select, then route",
   );
 });

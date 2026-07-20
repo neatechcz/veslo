@@ -52,7 +52,7 @@ function wrapClientWithGuard<T extends object>(
 ): T {
   return new Proxy(target, {
     get(inner, prop, receiver) {
-      const value = Reflect.get(inner, prop, receiver);
+      const value: unknown = Reflect.get(inner, prop, receiver);
       if (typeof value === "function") {
         return new Proxy(value as (...args: unknown[]) => unknown, {
           apply(fn, thisArg, args) {

@@ -21,7 +21,7 @@ export const extractFilesFromDataTransfer = (transfer: Pick<DataTransfer, "files
   const itemFiles: File[] = [];
   const items = Array.from((transfer.items ?? []) as ArrayLike<DataTransferItem>);
   for (const item of items) {
-    if (!item || item.kind !== "file") continue;
+    if (item.kind !== "file") continue;
     const file = item.getAsFile?.();
     if (file) itemFiles.push(file);
   }

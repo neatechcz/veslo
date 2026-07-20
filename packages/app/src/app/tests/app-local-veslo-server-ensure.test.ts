@@ -12,7 +12,7 @@ test("local Veslo server ensure is not gated by an existing OpenCode client", ()
   const effectStart = connectionSource.indexOf('let lastLocalVesloEnsureKey = "";');
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
-  const ensureCall = "void ensureLocalVesloServerRunning()";
+  const ensureCall = "void ensureLocalVesloServerRunning({ requireRuntimeChainReady: true })";
   const ensureIdx = connectionSource.indexOf(ensureCall, effectStart);
   assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
 
@@ -28,7 +28,7 @@ test("local Veslo server ensure only deduplicates after a successful ensure", ()
   const effectStart = connectionSource.indexOf('let lastLocalVesloEnsureKey = "";');
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
-  const ensureCall = "void ensureLocalVesloServerRunning()";
+  const ensureCall = "void ensureLocalVesloServerRunning({ requireRuntimeChainReady: true })";
   const ensureIdx = connectionSource.indexOf(ensureCall, effectStart);
   assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
 
@@ -52,7 +52,7 @@ test("local Veslo server ensure runs as an app service on a clean profile", () =
   const effectStart = connectionSource.indexOf('let lastLocalVesloEnsureKey = "";');
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
-  const ensureCall = "void ensureLocalVesloServerRunning()";
+  const ensureCall = "void ensureLocalVesloServerRunning({ requireRuntimeChainReady: true })";
   const ensureIdx = connectionSource.indexOf(ensureCall, effectStart);
   assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
 
@@ -67,7 +67,7 @@ test("local Veslo server ensure runs as an app service on a clean profile", () =
   );
   assert.match(
     effectSource,
-    /const nextKey = activeWorkspaceId \|\| activeWorkspaceRoot[\s\S]*: "app-service";/,
+    /const nextKey =\s*activeWorkspaceId \|\| activeWorkspaceRoot\s*\?\s*\[[\s\S]*\]\.join\("::"\)\s*:\s*"app-service";/,
     "clean-profile local server startup should use an app-service key when no workspace exists yet",
   );
   assert.doesNotMatch(
@@ -110,7 +110,7 @@ test("new Chat opens the pending draft and then ensures the local Veslo server",
 });
 
 test("local Veslo server ensure effect is registered after the real implementation is assigned", () => {
-  const effectStart = connectionSource.indexOf("void ensureLocalVesloServerRunning()");
+  const effectStart = connectionSource.indexOf("void ensureLocalVesloServerRunning({ requireRuntimeChainReady: true })");
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
   const implementationStart = connectionSource.indexOf("const ensureLocalVesloServerRunning = async");

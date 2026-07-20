@@ -19,11 +19,13 @@ import { deriveConversationSubmitOpenCodeSessionId } from "./conversation-submit
 import {
   resolveConversationSubmitDraft,
   type ConversationSubmitDocumentRuntimeStatusReader,
+  type ConversationSubmitModelDescriptorResolver,
   type ConversationSubmitSkillCommandResolver,
 } from "./conversation-submit-draft-resolution.js";
 import type { ConversationService } from "./conversation-service.js";
 import type { ConversationRunQueueItem } from "./conversation-run-queue-store.js";
 import { ApiError } from "./errors.js";
+import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
 import type { WorkspaceInfo } from "./types.js";
 
 export type ConversationSubmitService = {
@@ -31,8 +33,10 @@ export type ConversationSubmitService = {
     workspace: WorkspaceInfo;
     body: Record<string, unknown>;
     sendTraceId?: string | null;
+    orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
     runtimeAuthorizationActorTokenHash?: string | null;
     runtimeAuthorizationOrgId?: string | null;
+    resolveManagedAiModelDescriptor?: ConversationSubmitModelDescriptorResolver;
     resolveDirectory: (requestedRaw: string | null) => Promise<string | null>;
     submitResolvedRun?: ConversationSubmitResolvedRunSubmitter | null;
   }): Promise<ConversationSubmitServiceResponse>;
@@ -49,6 +53,7 @@ export type ConversationSubmitResolvedRunSubmitter = (input: {
   resolvedRunInput: ConversationSubmitResolvedRunInput;
   directory: string | null;
   sendTraceId?: string | null;
+  orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   runtimeAuthorizationActorTokenHash?: string | null;
   runtimeAuthorizationOrgId?: string | null;
 }) => Promise<{
@@ -85,8 +90,10 @@ export function createConversationSubmitService(input: {
       workspace,
       body,
       sendTraceId,
+      orchestratorRegistrationScope,
       runtimeAuthorizationActorTokenHash,
       runtimeAuthorizationOrgId,
+      resolveManagedAiModelDescriptor,
       resolveDirectory,
       submitResolvedRun,
     }) {
@@ -226,6 +233,7 @@ export function createConversationSubmitService(input: {
         includeGlobal: workspace.workspaceType === "local",
         ...(documentRuntimeStatus ? { documentRuntimeStatus } : {}),
         ...(resolveSkillCommand ? { resolveSkillCommand } : {}),
+        ...(resolveManagedAiModelDescriptor ? { resolveManagedAiModelDescriptor } : {}),
       });
       if (draftResolution.status === "blocked") {
         return {
@@ -281,6 +289,7 @@ export function createConversationSubmitService(input: {
               resolvedRunInput: draftResolution.resolvedRunInput,
               directory,
               sendTraceId: sendTraceId ?? null,
+              orchestratorRegistrationScope: orchestratorRegistrationScope ?? null,
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
               runtimeAuthorizationOrgId: runtimeAuthorizationOrgId ?? null,
             });
@@ -350,6 +359,7 @@ export function createConversationSubmitService(input: {
           title: deriveSubmitConversationTitle(request),
           requestedOpenCodeSessionId,
           sendTraceId: sendTraceId ?? null,
+          orchestratorRegistrationScope: orchestratorRegistrationScope ?? null,
         });
         attemptStore.update({
           workspaceId: workspace.id,
@@ -375,6 +385,7 @@ export function createConversationSubmitService(input: {
               resolvedRunInput: draftResolution.resolvedRunInput,
               directory,
               sendTraceId: sendTraceId ?? null,
+              orchestratorRegistrationScope: orchestratorRegistrationScope ?? null,
               runtimeAuthorizationActorTokenHash: runtimeAuthorizationActorTokenHash ?? null,
               runtimeAuthorizationOrgId: runtimeAuthorizationOrgId ?? null,
             });

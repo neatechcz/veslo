@@ -12,6 +12,7 @@ import {
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
   isAiAccessLoadingMessage,
+  resolveActionableAiAccessBlockedReason,
   type ManagedAiAccessProfile,
   resolveManagedAiAccess,
   resolveManagedAiAccessBundleState,
@@ -118,19 +119,27 @@ test("resolveManagedAiAccess returns a configured profile for valid admin policy
   });
 });
 
-test("resolveManagedAiAccess ignores legacy per-user model fields without effectiveModel", () => {
+test("resolveManagedAiAccess accepts legacy defaultModel when effectiveModel is absent", () => {
   const result = resolveManagedAiAccess({
     id: "ai_access_legacy",
     userId: "user_123",
     enabled: true,
-    provider: "openai",
-    defaultModel: "gpt-4o-mini",
+    provider: "codex_oauth",
+    defaultModel: "gpt-5-codex",
     updatedAt: null,
   } as never);
 
   assert.deepEqual(result, {
-    profile: null,
-    reason: AI_ACCESS_INVALID_MESSAGE,
+    profile: {
+      userId: "user_123",
+      providerId: "codex_oauth",
+      effectiveModel: {
+        providerID: "codex_oauth",
+        modelID: "gpt-5-codex",
+      },
+      updatedAt: null,
+    },
+    reason: null,
   });
 });
 
@@ -141,6 +150,21 @@ test("isAiAccessLoadingMessage accepts localized loading copy", () => {
   assert.equal(isAiAccessLoadingMessage(AI_ACCESS_LOADING_MESSAGE), true);
   assert.equal(isAiAccessLoadingMessage("Načítám konfiguraci přístupu k AI.", tr), true);
   assert.equal(isAiAccessLoadingMessage("AI access blocked", tr), false);
+});
+
+test("resolveActionableAiAccessBlockedReason hides transient loading and keeps permanent blocks", () => {
+  const tr = (key: string) =>
+    key === AI_ACCESS_LOADING_MESSAGE_KEY ? "Načítám konfiguraci přístupu k AI." : key;
+
+  assert.equal(resolveActionableAiAccessBlockedReason(null, tr), null);
+  assert.equal(resolveActionableAiAccessBlockedReason("   ", tr), null);
+  assert.equal(resolveActionableAiAccessBlockedReason(AI_ACCESS_LOADING_MESSAGE, tr), null);
+  assert.equal(resolveActionableAiAccessBlockedReason(AI_ACCESS_LOADING_MESSAGE_KEY, tr), null);
+  assert.equal(resolveActionableAiAccessBlockedReason("Načítám konfiguraci přístupu k AI.", tr), null);
+  assert.equal(
+    resolveActionableAiAccessBlockedReason(` ${AI_ACCESS_INVALID_MESSAGE} `, tr),
+    AI_ACCESS_INVALID_MESSAGE,
+  );
 });
 
 test("resolveManagedAiAccess reports unconfigured access for missing or disabled records", () => {
@@ -799,6 +823,61 @@ test("formatManagedAiAccessConfig routes codex_oauth through the gateway", () =>
   assert.deepEqual(parsed.provider?.codex_oauth?.models?.["gpt-5.4"]?.headers, {
     "x-veslo-session-id": OPENCODE_SESSION_ID_TEMPLATE,
   });
+});
+
+test("formatManagedAiAccessConfig materializes trusted selectable-model capabilities", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: {
+      ...managedCodexProfile,
+      effectiveModel: { providerID: "codex_oauth", modelID: "gpt-5.6-sol" },
+      selectableModels: [{
+        model: { providerID: "codex_oauth", modelID: "gpt-5.6-sol" },
+        capabilityStatus: "known",
+        attachment: true,
+        modalities: { input: ["text", "image"] },
+      }],
+    },
+    serverBaseUrl: "https://veslo.example.test",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "den_token_123",
+  });
+  const model = (JSON.parse(content) as {
+    provider?: {
+      codex_oauth?: {
+        models?: Record<string, { attachment?: boolean; modalities?: { input?: string[] } }>;
+      };
+    };
+  }).provider?.codex_oauth?.models?.["gpt-5.6-sol"];
+
+  assert.equal(model?.attachment, true);
+  assert.deepEqual(model?.modalities, { input: ["text", "image"] });
+});
+
+test("formatManagedAiAccessConfig does not materialize unknown selectable-model capabilities", () => {
+  const content = formatManagedAiAccessConfig("{}", {
+    profile: {
+      ...managedCodexProfile,
+      selectableModels: [{
+        model: { providerID: "codex_oauth", modelID: "gpt-5.4" },
+        capabilityStatus: "unknown",
+        attachment: true,
+        modalities: { input: ["text", "image"] },
+      }],
+    },
+    serverBaseUrl: "https://veslo.example.test",
+    serverClientToken: "veslo-client-token",
+    gatewayAccessToken: "den_token_123",
+  });
+  const model = (JSON.parse(content) as {
+    provider?: {
+      codex_oauth?: {
+        models?: Record<string, { attachment?: boolean; modalities?: { input?: string[] } }>;
+      };
+    };
+  }).provider?.codex_oauth?.models?.["gpt-5.4"];
+
+  assert.equal(model?.attachment, undefined);
+  assert.equal(model?.modalities, undefined);
 });
 
 test("formatManagedAiAccessConfig routes openai_compatible through the gateway", () => {

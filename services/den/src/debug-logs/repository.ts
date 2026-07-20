@@ -61,6 +61,7 @@ function toListEntry(event: StoredDebugLogEvent, payload: unknown): DebugLogList
     workerId: event.workerId,
     sessionId: event.sessionId,
     runId: event.runId,
+    captureId: event.captureId,
     source: event.source,
     stream: event.stream,
     level: event.level,
@@ -83,6 +84,7 @@ function rowToStoredEvent(row: typeof DebugLogEventTable.$inferSelect): StoredDe
     workerId: row.worker_id,
     sessionId: row.session_id,
     runId: row.run_id,
+    captureId: row.capture_id,
     source: row.source,
     stream: row.stream,
     level: row.level === "info" || row.level === "warn" || row.level === "error" ? row.level : null,
@@ -116,6 +118,7 @@ function matchesFilters(event: StoredDebugLogEvent, filters: DebugLogSearchFilte
   if (filters.workspaceId && event.workspaceId !== filters.workspaceId) return false
   if (filters.sessionId && event.sessionId !== filters.sessionId) return false
   if (filters.runId && event.runId !== filters.runId) return false
+  if (filters.captureId && event.captureId !== filters.captureId) return false
   if (filters.source && event.source !== filters.source) return false
   if (filters.stream && event.stream !== filters.stream) return false
   if (filters.level && event.level !== filters.level) return false
@@ -131,6 +134,7 @@ function buildWhere(filters: DebugLogSearchFilters): SQL[] {
   if (filters.workspaceId) conditions.push(eq(DebugLogEventTable.workspace_id, filters.workspaceId))
   if (filters.sessionId) conditions.push(eq(DebugLogEventTable.session_id, filters.sessionId))
   if (filters.runId) conditions.push(eq(DebugLogEventTable.run_id, filters.runId))
+  if (filters.captureId) conditions.push(eq(DebugLogEventTable.capture_id, filters.captureId))
   if (filters.source) conditions.push(eq(DebugLogEventTable.source, filters.source))
   if (filters.stream) conditions.push(eq(DebugLogEventTable.stream, filters.stream))
   if (filters.level) conditions.push(eq(DebugLogEventTable.level, filters.level))
@@ -222,6 +226,7 @@ export function createDbDebugLogStore(database: DenDb): DebugLogStore {
           worker_id: event.workerId,
           session_id: event.sessionId,
           run_id: event.runId,
+          capture_id: event.captureId,
           source: event.source,
           stream: event.stream,
           level: event.level,
@@ -346,6 +351,7 @@ export function createDebugLogService(input: {
           workerId: event.workerId ?? null,
           sessionId: event.sessionId ?? null,
           runId: event.runId ?? null,
+          captureId: event.captureId ?? null,
           source: event.source,
           stream: event.stream,
           level: event.level ?? null,

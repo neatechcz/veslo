@@ -58,55 +58,22 @@ const appendMarker = (selector, payload) => {
 if (!window.__vesloLiveSkillsFinderRoundtripStarted) {
   window.__vesloLiveSkillsFinderRoundtripStarted = true;
   window.__vesloLiveSkillsFinderRoundtripPromise = (async () => {
-    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+    const pilotE2E = window.__vesloPilotE2E;
+    if (!pilotE2E) throw new Error("Pilot browser prelude is unavailable.");
+    const {
+      sleep,
+      normalize,
+      assert,
+      waitUntil,
+      invoke: tauriInvoke,
+      visible: isVisibleElement,
+      findVisibleButton,
+      insertContenteditableThroughBrowser,
+      recentTraceSummary,
+    } = pilotE2E;
     const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
-    const assert = (condition, message) => {
-      if (!condition) throw new Error(message);
-    };
-    const withTimeout = async (promise, timeout, message) => {
-      let timeoutId;
-      try {
-        return await Promise.race([
-          promise,
-          new Promise((_, reject) => {
-            timeoutId = setTimeout(() => reject(new Error(message)), timeout);
-          }),
-        ]);
-      } finally {
-        if (timeoutId) clearTimeout(timeoutId);
-      }
-    };
-    const waitUntil = async (predicate, options = {}) => {
-      const timeout = options.timeout ?? 10000;
-      const interval = options.interval ?? 250;
-      const message = options.message ?? "Condition was not met";
-      const deadline = Date.now() + timeout;
-      let latest;
-      while (Date.now() < deadline) {
-        latest = await predicate();
-        if (latest) return latest;
-        await sleep(interval);
-      }
-      throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
-    };
-    const tauriInvoke = async (command, payload = {}, timeout = 90000) => {
-      const invoke = window.__TAURI_INTERNALS__?.invoke;
-      assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
-      return await withTimeout(
-        invoke(command, payload),
-        timeout,
-        `Tauri command ${command} did not resolve within ${timeout}ms`,
-      );
-    };
     const workflowTrace = () =>
       Array.isArray(window.__vesloSendWorkflowTrace) ? window.__vesloSendWorkflowTrace.slice(-200) : [];
-    const isVisibleElement = (element) => {
-      if (!(element instanceof HTMLElement)) return false;
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return Boolean(element.offsetParent) && rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
-    };
     const conversationPane = () =>
       document.querySelector('[data-testid="session-conversation-pane"]') ??
       document.querySelector("main") ??
@@ -125,13 +92,6 @@ if (!window.__vesloLiveSkillsFinderRoundtripStarted) {
       normalize(button.title),
       normalize(button.getAttribute("aria-label")),
     ].filter(Boolean);
-    const buttonMatchesLabel = (button, labels) => {
-      if (!isVisibleElement(button) || button.disabled) return false;
-      const values = buttonValues(button);
-      return labels.some((label) => values.some((value) => value === label || value.includes(label)));
-    };
-    const findButton = (labels, root = document) =>
-      Array.from(root.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
     const findComposerSendButton = (textbox) => {
       const labels = [
         "Send now",
@@ -150,11 +110,10 @@ if (!window.__vesloLiveSkillsFinderRoundtripStarted) {
         current = current.parentElement;
       }
       for (const container of containers) {
-        const matching = Array.from(container.querySelectorAll("button"))
-          .find((button) => buttonMatchesLabel(button, labels));
+        const matching = findVisibleButton(labels, container);
         if (matching) return matching;
       }
-      return findButton(labels);
+      return findVisibleButton(labels);
     };
     const dispatchClickSequence = (element) => {
       element.focus?.();
@@ -196,17 +155,18 @@ if (!window.__vesloLiveSkillsFinderRoundtripStarted) {
       });
     };
     const setComposerText = (textbox, text) => {
-      textbox.focus();
       if (textbox.isContentEditable) {
-        textbox.replaceChildren(document.createTextNode(text));
+        return insertContenteditableThroughBrowser(textbox, text);
       } else {
+        textbox.focus();
         textbox.value = text;
+        textbox.dispatchEvent(new InputEvent("input", {
+          bubbles: true,
+          data: text,
+          inputType: "insertText",
+        }));
       }
-      textbox.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        data: text,
-        inputType: "insertText",
-      }));
+      return text;
     };
     const waitForLocalVesloServerReady = async () => {
       let latest = null;
@@ -300,15 +260,67 @@ if (!window.__vesloLiveSkillsFinderRoundtripStarted) {
     };
     const waitForActiveManagedConfigReady = async (workspace) => {
       setProgress("waiting-active-managed-ai-config", { workspaceId: workspace.id });
-      return await waitUntil(() =>
-        workflowTrace().find((entry) =>
-          entry?.source === "opencode-config" &&
-          entry?.event === "apply-gateway-provider-routing:done" &&
-          entry?.workspaceId === workspace.id),
-      {
+      return await waitUntil(() => {
+        const workspaceId = normalize(workspace.id);
+        const belongsToWorkspace = (entry) => {
+          const entryWorkspaceId = normalize(entry?.workspaceId);
+          const targetWorkspaceId = normalize(entry?.targetWorkspaceId);
+          return !workspaceId || entryWorkspaceId === workspaceId || targetWorkspaceId === workspaceId;
+        };
+        const trace = workflowTrace();
+        const bootEngineStart = trace.find((entry) =>
+          entry?.source === "workspace-runtime" &&
+          entry?.event === "ensure-engine:start" &&
+          entry?.reason === "boot-warmup" &&
+          belongsToWorkspace(entry));
+        const bootEngineStartId = Number(bootEngineStart?.id ?? 0);
+        const configDecision = trace.find((entry) =>
+          entry?.source === "app" &&
+          entry?.event === "managed-ai-config-sync:managed-decision" &&
+          belongsToWorkspace(entry) &&
+          Number(entry?.id ?? 0) > bootEngineStartId &&
+          entry?.providerRoutingReady === true &&
+          (entry?.decision === "write-managed-config" ||
+            (entry?.decision === "skip" && entry?.reason === "managed-config-current")));
+        const configDecisionId = Number(configDecision?.id ?? 0);
+        const runtimeStartGate = trace.find((entry) =>
+          entry?.source === "app" &&
+          entry?.event === "managed-ai-config-sync:runtime-start-gate" &&
+          belongsToWorkspace(entry) &&
+          Number(entry?.id ?? 0) > bootEngineStartId &&
+          entry?.accessReady === true &&
+          entry?.managedProfilePresent === true);
+        const runtimeStartGateId = Number(runtimeStartGate?.id ?? 0);
+        const configPatch = trace.find((entry) =>
+          entry?.source === "app" &&
+          entry?.event === "managed-ai-config-sync:patch-done" &&
+          belongsToWorkspace(entry) &&
+          Number(entry?.id ?? 0) > configDecisionId);
+        const engineReadyAfterId = Math.max(
+          runtimeStartGateId,
+          configDecision?.decision === "write-managed-config"
+            ? Number(configPatch?.id ?? 0)
+            : configDecisionId,
+        );
+        const engineReady = trace.find((entry) =>
+          entry?.source === "workspace-runtime" &&
+          entry?.event === "ensure-engine:success" &&
+          entry?.reason === "boot-warmup" &&
+          belongsToWorkspace(entry) &&
+          Number(entry?.id ?? 0) > engineReadyAfterId);
+        const configSettled = Boolean(configDecision) &&
+          (configDecision.decision !== "write-managed-config" || Boolean(configPatch));
+        return runtimeStartGate && configSettled && engineReady ? {
+          bootEngineStart: bootEngineStart?.id ?? null,
+          runtimeStartGate: runtimeStartGate?.id ?? null,
+          configDecision: configDecision?.id ?? null,
+          configPatch: configPatch?.id ?? null,
+          engineReady: engineReady?.id ?? null,
+        } : false;
+      }, {
         timeout: 90000,
         interval: 500,
-        message: `Managed AI routing config did not settle for ${workspace.id}. Workflow=${JSON.stringify(workflowTrace())}`,
+        message: `Managed AI routing config did not settle for ${workspace.id}. Trace=${JSON.stringify(recentTraceSummary())}`,
       });
     };
     const waitForBootWarmup = async (workspace) => {
@@ -322,7 +334,7 @@ if (!window.__vesloLiveSkillsFinderRoundtripStarted) {
       {
         timeout: 180000,
         interval: 500,
-        message: `Boot warmup did not complete. Workflow=${JSON.stringify(workflowTrace())}`,
+        message: `Boot warmup did not complete. Trace=${JSON.stringify(recentTraceSummary())}`,
       });
     };
     const waitForAiAccessUiSettle = async () => {

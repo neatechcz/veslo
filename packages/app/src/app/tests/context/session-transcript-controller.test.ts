@@ -10,6 +10,12 @@ import {
   createSessionTranscriptController,
   INITIAL_SESSION_MESSAGE_LIMIT,
 } from "../../context/session-transcript-controller.js";
+import {
+  describeTranscriptCollectionCause,
+  describeTranscriptSurfaceIdentities,
+  resetTranscriptWriteDiagnosticsForTests,
+  setTranscriptWriteDiagnosticsEnabledForTests,
+} from "../../context/session-transcript-write-diagnostics.js";
 import type { MessageInfo, MessageWithParts } from "../../types";
 
 const transcriptControllerSource = readFileSync(
@@ -193,6 +199,38 @@ test("hydrateTranscriptSnapshot can apply shorter authoritative snapshots", () =
   });
 });
 
+test("snapshot hydration records one collection cause instead of attributing every entity", () => {
+  createRoot((dispose) => {
+    try {
+      resetTranscriptWriteDiagnosticsForTests();
+      setTranscriptWriteDiagnosticsEnabledForTests(true);
+      const { controller, store } = makeController();
+      controller.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        fetchedAt: 20,
+        limit: 2,
+        messages: [makeMessage("msg-a", 1), makeMessage("msg-b", 2)],
+        partsByMessageId: {
+          "msg-a": [makeTextPart("part-a", "msg-a")],
+          "msg-b": [makeTextPart("part-b", "msg-b")],
+        },
+      });
+
+      const rendered = store.messages["sess-a"].map((info) => ({ info, parts: store.parts[info.id] ?? [] }));
+      const collectionCause = describeTranscriptCollectionCause(rendered);
+      const identities = describeTranscriptSurfaceIdentities(rendered);
+      assert.equal(collectionCause?.owner, "transcript.snapshot-hydrate");
+      assert.equal(collectionCause?.target, "collection");
+      assert.equal(identities.every((identity) => identity.messageInfoCause === null), true);
+      assert.equal(identities.every((identity) => identity.partsCause === null), true);
+    } finally {
+      setTranscriptWriteDiagnosticsEnabledForTests(null);
+      dispose();
+    }
+  });
+});
+
 test("hydrateTranscriptSnapshot does not erase a live assistant part with an equally sized snapshot", () => {
   const root = globalThis as unknown as Record<string, unknown>;
   const hadWindow = Object.prototype.hasOwnProperty.call(root, "window");
@@ -289,6 +327,69 @@ test("terminal-authoritative snapshot can clear stale live parts", () => {
       );
 
       assert.deepEqual(store.parts["msg-a"], []);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("equivalent snapshots are store no-ops, while a terminal replacement happens once", () => {
+  createRoot((dispose) => {
+    try {
+      const { controller, store, setStore } = makeController();
+      const message = makeMessage("msg-a", 1);
+      const partial = makeTextPart("part-a", "msg-a", "sess-a", "partial response");
+      const durable = makeTextPart("part-a", "msg-a", "sess-a", "durable response");
+
+      controller.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        fetchedAt: 10,
+        limit: 1,
+        messages: [message],
+        partsByMessageId: { "msg-a": [durable] },
+      });
+      const firstMessages = store.messages["sess-a"];
+      const firstParts = store.parts["msg-a"];
+
+      controller.hydrateTranscriptSnapshot({
+        workspaceId: "ws-a",
+        sessionId: "sess-a",
+        fetchedAt: 11,
+        limit: 1,
+        messages: [{ ...message }],
+        partsByMessageId: { "msg-a": [{ ...durable }] },
+      });
+      assert.equal(store.messages["sess-a"], firstMessages);
+      assert.equal(store.parts["msg-a"], firstParts);
+
+      setStore("parts", "msg-a", [partial]);
+      controller.hydrateTranscriptSnapshot(
+        {
+          workspaceId: "ws-a",
+          sessionId: "sess-a",
+          fetchedAt: 12,
+          limit: 1,
+          messages: [{ ...message }],
+          partsByMessageId: { "msg-a": [{ ...durable }] },
+        },
+        { preserveLiveParts: false },
+      );
+      const terminalParts = store.parts["msg-a"];
+      assert.deepEqual(terminalParts, [durable]);
+
+      controller.hydrateTranscriptSnapshot(
+        {
+          workspaceId: "ws-a",
+          sessionId: "sess-a",
+          fetchedAt: 13,
+          limit: 1,
+          messages: [{ ...message }],
+          partsByMessageId: { "msg-a": [{ ...durable }] },
+        },
+        { preserveLiveParts: false },
+      );
+      assert.equal(store.parts["msg-a"], terminalParts);
     } finally {
       dispose();
     }

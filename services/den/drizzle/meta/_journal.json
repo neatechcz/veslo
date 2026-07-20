@@ -148,6 +148,27 @@
       "when": 1783007885542,
       "tag": "0019_fuzzy_red_ghost",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1784294000000,
+      "tag": "0020_manual_access_unlimited",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1784372400000,
+      "tag": "0021_skill_version_package_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1784462400000,
+      "tag": "0022_user_diagnostic_capture",
+      "breakpoints": true
     }
   ]
 }

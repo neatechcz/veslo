@@ -49,3 +49,17 @@ test("Den Drizzle migration journal lists every SQL migration", async () => {
 
   assert.deepEqual(journalTags, migrationTags)
 })
+
+test("Den migrations avoid MySQL-unsupported ADD COLUMN IF NOT EXISTS", async () => {
+  const entries = await readdir(migrationsDir)
+  const migrationFiles = entries.filter((entry) => entry.endsWith(".sql")).sort()
+
+  for (const fileName of migrationFiles) {
+    const contents = await readFile(path.join(migrationsDir, fileName), "utf8")
+    assert.doesNotMatch(
+      contents,
+      /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS/i,
+      `${fileName} uses ADD COLUMN IF NOT EXISTS, which production MySQL does not support`,
+    )
+  }
+})

@@ -19,8 +19,8 @@ async function readErrorMessage(response: Response): Promise<string> {
     const text = await response.text();
     if (!text.trim()) return "";
     try {
-      const json = JSON.parse(text) as Record<string, unknown>;
-      if (json && typeof json.message === "string" && json.message.trim()) {
+      const json: unknown = JSON.parse(text);
+      if (json && typeof json === "object" && "message" in json && typeof json.message === "string" && json.message.trim()) {
         return json.message.trim();
       }
     } catch {

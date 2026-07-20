@@ -700,7 +700,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
   onMount(() => {
     void refreshAll({ force: true });
-    const interval = window.setInterval(() => void refreshAll(), 10_000);
+    const interval = setInterval(() => void refreshAll(), 10_000);
     onCleanup(() => window.clearInterval(interval));
   });
 

@@ -100,6 +100,7 @@ function documentRuntimePayload(
       installing: false,
       rollback: false,
       remoteOnly: status === "remote_only",
+      progress: null,
     },
     repair: {
       available: status === "missing",
@@ -269,7 +270,7 @@ function createHarness(
     sessionStoreSetCommandDisplay: () => undefined,
     setActivePendingDraftKey: () => undefined,
     setActivePendingDraftMeta: () => undefined,
-    setComposerDraftBySessionId: () => undefined,
+    composerDraftCommands: { deleteDraft: () => undefined },
     setError: (message) => {
       if (message) errors.push(message);
     },
@@ -935,6 +936,111 @@ test("session send workflow submits an existing local prompt through server subm
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
+test("existing-session server submit arms its known alias before the request and promotes it on submitted", async () => {
+  const order: string[] = [];
+  const harness = createHarness({
+    armConversationRunProvisional: (input) => {
+      order.push(`arm:${input.conversationId}:${input.opencodeSessionId}:${input.clientMessageId}`);
+      return true;
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) => sessionId === "sess-target"
+      ? {
+          sessionId,
+          workspaceId: "ws-active",
+          workspaceRoot: "/active",
+          directory: "/active",
+          conversationId: "conv-target",
+          opencodeSessionId: "open-target",
+        }
+      : null,
+    submitConversationFromVesloWriteApi: async (workspaceId, _directory, input) => {
+      order.push("submit");
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        runId: "run-submit",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+    admitAcceptedConversationRun: (input) => {
+      order.push(`admit:${input.runId}`);
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("armed submit"), {
+    clientMessageId: "client-armed-submit",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.deepEqual(order, [
+    "arm:conv-target:open-target:client-armed-submit",
+    "submit",
+    "admit:run-submit",
+  ]);
+});
+
+test("session send workflow keeps its existing-session target snapshot after scope changes", async () => {
+  const actionTarget = {
+    workspaceId: "ws-active",
+    workspaceRoot: "/owned",
+    directory: "/owned",
+  };
+  let targetResolutions = 0;
+  const activationTargets: unknown[] = [];
+  const submitTargets: Array<{ workspaceId: string; directory: string }> = [];
+  const harness = createHarness({
+    resolveSendTargetWorkspaceScope: () => {
+      targetResolutions += 1;
+      return actionTarget;
+    },
+    resolveSelectedSessionBrowseScope: (sessionId) => sessionId === "sess-target"
+      ? {
+          sessionId,
+          workspaceId: "ws-stale",
+          workspaceRoot: "/stale",
+          directory: "/stale",
+          conversationId: "conv-target",
+          opencodeSessionId: "open-target",
+        }
+      : null,
+    ensureSelectedSessionWorkspaceActiveForSend: async (_sessionId, _traceId, scope) => {
+      activationTargets.push(scope);
+      return true;
+    },
+    submitConversationFromVesloWriteApi: async (workspaceId, directory, input) => {
+      submitTargets.push({ workspaceId, directory });
+      return {
+        status: "submitted",
+        workspaceId,
+        conversationId: "conv-target",
+        opencodeSessionId: "open-target",
+        runId: "run-snapshot",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+      };
+    },
+    vesloServerStatus: () => "connected",
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("snapshot"), {
+    clientMessageId: "client-snapshot",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(sent.accepted, true);
+  assert.equal(targetResolutions, 1);
+  assert.deepEqual(activationTargets, [actionTarget]);
+  assert.deepEqual(submitTargets, [{ workspaceId: "ws-active", directory: "/owned" }]);
+});
+
 test("session send workflow replays the same client id after a transport error", async () => {
   const clientMessageIds: string[] = [];
   let attempts = 0;
@@ -982,6 +1088,42 @@ test("session send workflow replays the same client id after a transport error",
   assert.deepEqual(clientMessageIds, ["client-replay-same-id", "client-replay-same-id"]);
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing:replay-after-transport-error"));
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
+});
+
+test("session send workflow does not replay a typed server-submit preflight failure", async () => {
+  let attempts = 0;
+  const harness = createHarness({
+    resolveSelectedSessionBrowseScope: (sessionId) => sessionId === "sess-target"
+      ? {
+          sessionId,
+          workspaceId: "ws-active",
+          workspaceRoot: "/active",
+          directory: "/active",
+          conversationId: "conv-target",
+          opencodeSessionId: "open-target",
+        }
+      : null,
+    submitConversationFromVesloWriteApi: async () => {
+      attempts += 1;
+      const error = new Error("Managed AI config is retrying its reload.");
+      error.name = "ConversationServerSubmitPreflightError";
+      throw error;
+    },
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  const sent = await workflow.sendPrompt(promptDraft("preflight failure"), {
+    clientMessageId: "client-preflight-failure",
+    origin: "session:normal",
+    targetSessionId: "sess-target",
+  });
+
+  assert.equal(attempts, 1);
+  assert.equal(sent.accepted, false);
+  assert.equal(sent.code, "server_submit_preflight_failed");
+  assert.equal(sent.draftDisposition, "keep");
+  assert.ok(harness.events.includes("sendPrompt:server-submit-existing:preflight-error"));
+  assert.equal(harness.events.includes("sendPrompt:server-submit-existing:replay-after-transport-error"), false);
 });
 
 test("session send workflow blocks existing-session submit when scoped workspace activation reports missing scope", async () => {
@@ -1526,8 +1668,8 @@ test("session send workflow blocks compatibility run when server submit target i
     },
     workspace: {
       activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
-      activeWorkspaceId: () => "",
-      activeWorkspaceRoot: () => "",
+      activeWorkspaceId: () => "ws-must-not-be-used",
+      activeWorkspaceRoot: () => "/must-not-be-used",
       workspaces: () => [],
     },
   });
@@ -1629,10 +1771,9 @@ test("session send workflow accepts first-session server submit results without 
       throw new Error("compatibility run should not run after first-session server submit");
     },
     selectedSessionId: () => null,
-    setComposerDraftBySessionId: (updater) => {
+    composerDraftCommands: { deleteDraft: () => {
       composerDraftCleanupCalls.push("cleanup");
-      updater({});
-    },
+    } },
     submitConversationFromVesloWriteApi: async () => null,
   });
   const workflow = createSessionSendWorkflow(harness.options);
@@ -1822,10 +1963,9 @@ test("session send workflow opens first materialized session and reports failed 
       activePendingDraftMeta = nextMeta;
       harness.actions.push(`set-active-pending-draft-meta:${nextMeta?.id ?? "null"}`);
     },
-    setComposerDraftBySessionId: (updater) => {
+    composerDraftCommands: { deleteDraft: () => {
       harness.actions.push("set-composer-draft-by-session");
-      updater({});
-    },
+    } },
     setView: (view) => {
       harness.actions.push(`set-view:${view}`);
     },

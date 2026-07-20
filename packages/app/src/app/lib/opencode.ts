@@ -391,6 +391,12 @@ function gatewayServerAuthorizationHeader(): string {
   return `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`;
 }
 
+export type GatewayProviderRoutingModel = {
+  modelID: string;
+  attachment?: boolean;
+  modalities?: { input?: string[] };
+};
+
 export function applyGatewayProviderRouting(
   content: string | null | undefined,
   input: {
@@ -399,7 +405,7 @@ export function applyGatewayProviderRouting(
     serverClientToken: string;
     gatewayAccessToken?: string | null;
     workspaceId?: string | null;
-    models?: string[];
+    models?: Array<string | GatewayProviderRoutingModel>;
     trace?: boolean;
   },
 ) {
@@ -427,9 +433,7 @@ export function applyGatewayProviderRouting(
   const existingHeaders = sanitizeGatewayProviderHeaders(existingOptions.headers);
   const existingModels = readConfigObject(existingProvider.models);
   const isOpenAiCompatibleGatewayProvider = providerId === "codex_oauth" || providerId === "openai_compatible";
-  const assignedModels = Array.from(
-    new Set((input.models ?? []).map((value) => value.trim()).filter(Boolean)),
-  );
+  const assignedModels = normalizeGatewayProviderRoutingModels(input.models);
   const shouldTrace = input.trace !== false;
   if (shouldTrace) {
     recordOpencodeConfigTrace("apply-gateway-provider-routing:start", {
@@ -437,7 +441,7 @@ export function applyGatewayProviderRouting(
       workspaceId: workspaceId || null,
       serverBaseUrl: summarizeUrlForTrace(serverBaseUrl),
       modelCount: assignedModels.length,
-      models: assignedModels,
+      models: assignedModels.map((model) => model.modelID),
       openAiCompatible: isOpenAiCompatibleGatewayProvider,
       hasServerClientToken: Boolean(serverClientToken),
       hasGatewayAccessToken: Boolean(input.gatewayAccessToken?.trim()),
@@ -450,8 +454,10 @@ export function applyGatewayProviderRouting(
       existingModelNames: modelNamesForTrace(existingModels),
     });
   }
-  const routedModels = assignedModels.reduce<Record<string, unknown>>((models, modelId) => {
+  const routedModels = assignedModels.reduce<Record<string, unknown>>((models, assignedModel) => {
+    const modelId = assignedModel.modelID;
     const existingModel = sanitizeGatewayProviderModel(existingModels[modelId]);
+    const { attachment: _existingAttachment, modalities: _existingModalities, ...existingModelConfig } = existingModel.config;
     const modelConfig: Record<string, unknown> = {
       ...(isOpenAiCompatibleGatewayProvider
         ? {
@@ -460,7 +466,11 @@ export function applyGatewayProviderRouting(
             reasoning: true,
           }
         : {}),
-      ...existingModel.config,
+      ...existingModelConfig,
+      ...(assignedModel.attachment === true ? { attachment: true } : {}),
+      ...(assignedModel.modalities?.input?.length
+        ? { modalities: { input: [...assignedModel.modalities.input] } }
+        : {}),
       headers: {
         ...existingModel.headers,
         ...(isOpenAiCompatibleGatewayProvider
@@ -534,11 +544,11 @@ export function applyGatewayProviderRouting(
       serverBaseUrl: summarizeUrlForTrace(serverBaseUrl),
       routeBaseUrl: summarizeUrlForTrace(`${serverBaseUrl}/ai-gateway/providers/${providerId}/v1`),
       modelCount: assignedModels.length,
-      models: assignedModels,
+      models: assignedModels.map((model) => model.modelID),
       modelHeaderNames: Object.fromEntries(
-        assignedModels.map((modelId) => [
-          modelId,
-          headerNamesForTrace(readConfigObject(readConfigObject(routedModels[modelId]).headers)),
+        assignedModels.map(({ modelID }) => [
+          modelID,
+          headerNamesForTrace(readConfigObject(readConfigObject(routedModels[modelID]).headers)),
         ]),
       ),
       providerOptionKeys: Object.keys(nextProvider.options as Record<string, unknown>).sort((a, b) =>
@@ -548,6 +558,25 @@ export function applyGatewayProviderRouting(
     });
   }
   return output;
+}
+
+function normalizeGatewayProviderRoutingModels(
+  input: Array<string | GatewayProviderRoutingModel> | undefined,
+): GatewayProviderRoutingModel[] {
+  const byModelId = new Map<string, GatewayProviderRoutingModel>();
+  for (const value of input ?? []) {
+    const modelID = (typeof value === "string" ? value : value.modelID).trim();
+    if (!modelID) continue;
+    const inputModalities = typeof value === "string"
+      ? []
+      : (value.modalities?.input ?? []).filter((item) => typeof item === "string" && item.trim());
+    byModelId.set(modelID, {
+      modelID,
+      ...(typeof value !== "string" && value.attachment === true ? { attachment: true } : {}),
+      ...(inputModalities.length ? { modalities: { input: Array.from(new Set(inputModalities)) } } : {}),
+    });
+  }
+  return Array.from(byModelId.values());
 }
 
 export async function waitForHealthy(
@@ -568,7 +597,8 @@ export async function waitForHealthy(
     const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const health = unwrap(await client.global.health({ signal: controller.signal }));
-      if (health.healthy) {
+      const isHealthy = Boolean(health.healthy);
+      if (isHealthy) {
         return health;
       }
       lastError = "Server reported unhealthy";

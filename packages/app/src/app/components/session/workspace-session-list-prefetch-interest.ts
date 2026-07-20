@@ -217,3 +217,86 @@ export function deriveLoadedSidebarPrefetchInterest(input: {
 
   return interests;
 }
+
+export type SidebarPrefetchReservation = {
+  workspaceId?: string | null;
+  uiSessionId: string;
+  conversationId?: string | null;
+  opencodeSessionId?: string | null;
+};
+
+type SidebarPrefetchInterestInput = Omit<
+  LoadedSidebarPrefetchInterestType,
+  | "clickedSessionId"
+  | "selectedSessionId"
+  | "sessionDirectoriesById"
+  | "clickedSession"
+  | "selectedSession"
+> & {
+  clickedSessionId?: string | null;
+  selectedSessionId?: string | null;
+  sessionDirectoriesById?: Record<string, string | null | undefined>;
+  clickedSession?: LoadedSidebarPrefetchSessionRef | null;
+  selectedSession?: LoadedSidebarPrefetchSessionRef | null;
+};
+
+/**
+ * Sidebar prefetch is a background-only reader. The selected/clicked target
+ * and any aliases reserved by direct selection or terminal recovery are left
+ * to their owning read path.
+ */
+export function deriveBackgroundSidebarPrefetchInterest(
+  input: SidebarPrefetchInterestInput,
+  reservation?: SidebarPrefetchReservation | null,
+  workspaceId?: string | null,
+): LoadedSidebarPrefetchInterestType {
+  const reservationApplies =
+    Boolean(reservation) &&
+    (!normalizeId(reservation?.workspaceId) || normalizeId(reservation?.workspaceId) === normalizeId(workspaceId));
+  const excluded = new Set(
+    [
+      input.clickedSessionId,
+      input.selectedSessionId,
+      input.clickedSession?.sessionId,
+      input.selectedSession?.sessionId,
+      ...(reservationApplies
+        ? [reservation?.uiSessionId, reservation?.conversationId, reservation?.opencodeSessionId]
+        : []),
+    ]
+      .map(normalizeId)
+      .filter(Boolean),
+  );
+  const keepId = (sessionId: string | null | undefined) => !excluded.has(normalizeId(sessionId));
+  const keepRef = (ref: LoadedSidebarPrefetchSessionRef) => keepId(ref.sessionId);
+  const loadedTopLevelSessions = (input.loadedTopLevelSessions ?? []).filter(keepRef);
+  const expandedSubagentSessions = (input.expandedSubagentSessions ?? []).filter(keepRef);
+  const loadedTopLevelSessionIds = input.loadedTopLevelSessionIds.filter(keepId);
+  const expandedSubagentSessionIds = input.expandedSubagentSessionIds.filter(keepId);
+  const retainedIds = new Set([
+    ...loadedTopLevelSessionIds,
+    ...expandedSubagentSessionIds,
+    ...loadedTopLevelSessions.map((item) => item.sessionId),
+    ...expandedSubagentSessions.map((item) => item.sessionId),
+  ].map(normalizeId).filter(Boolean));
+  const sessionDirectoriesById = Object.fromEntries(
+    Object.entries(input.sessionDirectoriesById ?? {})
+      .flatMap(([sessionId, directory]) =>
+        retainedIds.has(normalizeId(sessionId)) && typeof directory === "string"
+          ? [[sessionId, directory.trim()] as const]
+          : [],
+      ),
+  );
+
+  return {
+    ...input,
+    clickedSessionId: null,
+    selectedSessionId: null,
+    clickedSession: null,
+    selectedSession: null,
+    loadedTopLevelSessionIds,
+    expandedSubagentSessionIds,
+    loadedTopLevelSessions,
+    expandedSubagentSessions,
+    sessionDirectoriesById,
+  };
+}

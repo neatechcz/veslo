@@ -39,7 +39,7 @@ test("browse cold start is owned by workspace runtime controller and lifecycle",
 
   assert.match(
     lifecycleSource,
-    /deps\.prepareWorkspaceRuntime\(\{/,
+    /const nativePrepare = deps\.prepareWorkspaceRuntime\(input\);/,
     "local runtime lifecycle should delegate process preparation to the backend command",
   );
   assert.doesNotMatch(

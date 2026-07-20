@@ -86,7 +86,7 @@ export default function ShareWorkspaceModal(props: {
           {/* Header Section */}
           <div class="px-6 pt-6 pb-4 relative border-b border-transparent shrink-0">
             <button
-              onClick={props.onClose}
+              onClick={() => props.onClose()}
               class="absolute right-6 top-6 rounded-md p-1.5 text-[var(--dls-button-ghost)] transition-all hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent"
               aria-label={__vesloT("common.close", __vesloCurrentLocale())}
               title={__vesloT("common.close", __vesloCurrentLocale())}

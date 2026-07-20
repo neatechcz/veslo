@@ -24,7 +24,9 @@ import type {
   StartupPreference,
   SidebarSubagentDecoration,
   LoadedSessionPrefetchInterestChangeHandler,
+  ModelRef,
 } from "../types";
+import type { ManagedAiSelectableModel } from "../lib/ai-access";
 
 import { reportError } from "../lib/error-reporter";
 import {
@@ -36,7 +38,7 @@ import {
   workspaceGrantFolderAccess,
 } from "../lib/tauri";
 import { acquireBlankNativeWindowTitleLease } from "../lib/native-window-title-lease";
-import { isAiAccessLoadingMessage } from "../lib/ai-access";
+import { isAiAccessLoadingMessage, resolveActionableAiAccessBlockedReason } from "../lib/ai-access";
 
 import {
   ChevronDown,
@@ -80,6 +82,10 @@ import {
   normalizeDirectoryPath,
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
+import {
+  describeTranscriptProjectionBoundary,
+  observeTranscriptProjectionBoundary,
+} from "../context/session-transcript-write-diagnostics";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
 import {
   partText,
@@ -108,11 +114,14 @@ import {
 } from "./session-run-presentation";
 import { currentLocale, t } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
+import type { ManagedAiServerReloadPresentation } from "../context/managed-ai-runtime-config";
+import ManagedAiServerReloadBanner from "../components/session/managed-ai-server-reload-banner";
 
 import MessageList, { type PendingMessageState } from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { ComposerSendOptions, ComposerSendResult } from "../components/session/composer";
 import ComposerTargetPicker from "../components/session/composer-target-picker";
+import SessionModelSelector from "../components/session/session-model-selector";
 import type { SidebarSessionOpenTarget } from "../components/session/workspace-session-list-model";
 import QueuedMessageList from "../components/session/queued-message-list";
 import ServerQueuedRunList from "../components/session/server-queued-run-list";
@@ -128,8 +137,8 @@ import { createServerQueueProjectionController } from "../components/session/ser
 import { getEditableUserMessageDraft, type EditableUserMessageDraft } from "../components/session/message-editability";
 import {
   createPendingSubmittedDraft,
+  createPendingSubmittedMessageProjection,
   pendingSubmittedDraftToEditable,
-  pendingSubmittedDraftToMessage,
 } from "../components/session/pending-submit-model";
 import {
   decidePendingSubmittedTranscriptAdoption,
@@ -264,6 +273,18 @@ const describeSessionUiMutationTarget = (node: Node) => {
   if (node.id) return `#${node.id}`;
   const classes = Array.from(node.classList).slice(0, 2);
   return `${node.tagName.toLowerCase()}${classes.length ? `.${classes.join(".")}` : ""}`;
+};
+
+const isTempRuntimeUiDiagnosticNode = (node: Node | null) => {
+  const element = node instanceof Element ? node : node?.parentElement;
+  return Boolean(element?.closest("[data-temp-runtime-ui-render-source]"));
+};
+
+const isTempRuntimeUiDiagnosticMutation = (record: MutationRecord) => {
+  if (isTempRuntimeUiDiagnosticNode(record.target)) return true;
+  if (record.type !== "childList") return false;
+  const changedNodes = [...record.addedNodes, ...record.removedNodes];
+  return changedNodes.length > 0 && changedNodes.every((node) => isTempRuntimeUiDiagnosticNode(node));
 };
 
 type TempRuntimeUiRenderSurface = "workspace-initial" | "conversation";
@@ -419,6 +440,9 @@ export type SessionViewProps = {
   compactSession: () => Promise<void>;
   lastPromptSent: string;
   retryLastPrompt: () => void;
+  clearLastPromptModelOverride: () => void;
+  sessionModelSelectorEnabled: boolean;
+  selectableSessionModels: ManagedAiSelectableModel[];
   newTaskDisabled: boolean;
   pendingPermissionCountByWs?: Record<string, number>;
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -476,9 +500,18 @@ export type SessionViewProps = {
   dismissReloadBanner: () => void;
   reloadBusy: boolean;
   reloadError: string | null;
+  managedAiServerReloadPresentation: ManagedAiServerReloadPresentation;
   busy: boolean;
   composerDraft: ComposerDraft;
-  setComposerDraft: (draft: ComposerDraft) => void;
+  composerStorageKey: string;
+  composerDraftRevision: number;
+  setComposerDraftForStorageKey: (storageKey: string, draft: ComposerDraft) => void;
+  captureComposerDraftRevision: (storageKey: string) => number;
+  clearComposerDraftIfRevision: (storageKey: string, revision: number) => boolean;
+  remapPendingComposerDraftToSession: (
+    pendingDraftKey: string | null | undefined,
+    sessionId: string | null | undefined,
+  ) => void;
   prompt: string;
   setPrompt: (value: string) => void;
   reconnectNotice: "reconnecting" | "reconnected" | null;
@@ -551,9 +584,16 @@ const reconnectStateLabelKey = (status: ReconnectState["status"]) => {
 type ImplicitSkillConfirmationRequest = {
   sessionKey: string;
   draft: ComposerDraft;
-  options: ComposerSendOptions;
+  options: SessionComposerSendOptions;
   skillName: string;
   arguments: string;
+};
+
+// The composer intentionally does not expose model routing. This is an internal
+// session-send snapshot that keeps a pending implicit-skill confirmation bound
+// to the model selected when the user first submitted the draft.
+type SessionComposerSendOptions = ComposerSendOptions & {
+  modelOverride?: ModelRef | null;
 };
 
 const snapshotImplicitSkillConfirmationDraft = (draft: ComposerDraft): ComposerDraft => ({
@@ -788,8 +828,10 @@ export default function SessionView(props: SessionViewProps) {
     if (!leftDockedVisible() || !rightDockedVisible()) return false;
     return availableChatWidthForLayout(rootWidth, sidebarLayoutState(), leftSidebarWidth()) < 740;
   });
-  const centerColumnWidthClass = (wideWidth: string) =>
-    createMemo(() => (useCompactCenterColumn() ? "max-w-full" : wideWidth));
+  const centerColumnWidthClass = (wideWidth: string) => {
+    const widthClass = createMemo(() => (useCompactCenterColumn() ? "max-w-full" : wideWidth));
+    return widthClass;
+  };
   const searchBannerWidthClass = centerColumnWidthClass("max-w-[800px]");
   const chatBodyWidthClass = centerColumnWidthClass("max-w-[960px]");
   const railWidthClass = centerColumnWidthClass("max-w-[68ch]");
@@ -819,7 +861,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const queueSidebarRootMeasurement = () => {
     if (sidebarLayoutResizeFrame !== undefined) return;
-    sidebarLayoutResizeFrame = window.requestAnimationFrame(() => {
+    sidebarLayoutResizeFrame = requestAnimationFrame(() => {
       sidebarLayoutResizeFrame = undefined;
       const rootWidth = responsiveLayoutRootWidth(
         sessionLayoutRootEl?.clientWidth ?? 0,
@@ -889,6 +931,7 @@ export default function SessionView(props: SessionViewProps) {
     const initialX = event.clientX;
     const previousUserSelect = document.body.style.userSelect;
     const previousCursor = document.body.style.cursor;
+    const resizeListeners = new AbortController();
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
 
@@ -900,14 +943,12 @@ export default function SessionView(props: SessionViewProps) {
     const onPointerUp = () => stopLeftSidebarResize(true);
     const onPointerCancel = () => stopLeftSidebarResize(true);
 
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp, { once: true });
-    window.addEventListener("pointercancel", onPointerCancel, { once: true });
+    window.addEventListener("pointermove", onPointerMove, { signal: resizeListeners.signal });
+    window.addEventListener("pointerup", onPointerUp, { once: true, signal: resizeListeners.signal });
+    window.addEventListener("pointercancel", onPointerCancel, { once: true, signal: resizeListeners.signal });
 
     leftSidebarResizeCleanup = () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerCancel);
+      resizeListeners.abort();
       document.body.style.userSelect = previousUserSelect;
       document.body.style.cursor = previousCursor;
     };
@@ -1113,9 +1154,11 @@ export default function SessionView(props: SessionViewProps) {
       pendingQueueKeyAwaitingSessionIdByBaseKey: pendingQueueKeyAwaitingSessionIdByBaseKey(),
     });
   });
-  const implicitSkillConfirmation = createMemo(() =>
-    implicitSkillConfirmationBySessionKey()[currentSessionQueueKey()] ?? null,
-  );
+  const implicitSkillConfirmation = createMemo(() => {
+    const confirmations = implicitSkillConfirmationBySessionKey();
+    const sessionKey = currentSessionQueueKey();
+    return Object.hasOwn(confirmations, sessionKey) ? confirmations[sessionKey]! : null;
+  });
   const [composerEntryDismissedBySessionKey, setComposerEntryDismissedBySessionKey] =
     createSignal<Record<string, boolean>>({});
   const composerEntryDismissed = createMemo(() => {
@@ -1312,9 +1355,10 @@ export default function SessionView(props: SessionViewProps) {
       transcriptMessageCount: props.messages.length,
     })
   );
-  const composerResetKey = createMemo(() =>
-    `${props.activeComposerTargetId ?? "__no-target"}:${transcriptDisplaySessionId() ?? "__no-session"}`
-  );
+  // A target switch moves the current draft to a different storage key; it does
+  // not replace the editor's draft. Keeping it out of this keyed boundary avoids
+  // a needless focused-editor remount while the boot target resolves.
+  const composerResetKey = createMemo(() => transcriptDisplaySessionId() ?? "__no-session");
   createEffect(() => {
     const heldMaterializedSessionId = materializedSubmitDisplayHoldSessionId();
     if (!heldMaterializedSessionId) return;
@@ -1356,8 +1400,9 @@ export default function SessionView(props: SessionViewProps) {
   const resetRunState = (sessionKey = currentSessionQueueKey(), reason = "unspecified-reset") => {
     const key = sessionKey.trim();
     if (!key) return;
-    const previous = untrack(runStateBySessionKey)[key];
-    if (previous) {
+    const runStates = untrack(runStateBySessionKey);
+    if (Object.hasOwn(runStates, key)) {
+      const previous = runStates[key]!;
       recordSendTrace("run-state:reset", {
         reason,
         sessionKey: key,
@@ -1371,8 +1416,9 @@ export default function SessionView(props: SessionViewProps) {
   const preserveRunStateOnSessionSwitch = (sessionKey: string) => {
     const key = sessionKey.trim();
     if (!key) return;
-    const previous = untrack(runStateBySessionKey)[key];
-    if (!previous) return;
+    const runStates = untrack(runStateBySessionKey);
+    if (!Object.hasOwn(runStates, key)) return;
+    const previous = runStates[key]!;
     recordSendTrace("run-state:preserve-session-switch", {
       sessionKey: key,
       status: statusForQueueKey(key, props.sessionStatusById),
@@ -1463,6 +1509,7 @@ export default function SessionView(props: SessionViewProps) {
     return snapshot.id === baseline.assistantId && snapshot.partCount > baseline.partCount;
   });
 
+  const projectPendingSubmittedMessage = createPendingSubmittedMessageProjection();
   const localSubmittedMessage = createMemo<MessageWithParts | null>(() => {
     const submitted = optimisticSubmittedDraft();
     if (!submitted) return null;
@@ -1474,7 +1521,7 @@ export default function SessionView(props: SessionViewProps) {
       sessionId: props.selectedSessionId,
     });
     if (renderReplacement.kind === "show-canonical") return null;
-    return pendingSubmittedDraftToMessage(submitted, props.activeWorkspaceRoot);
+    return projectPendingSubmittedMessage(submitted, props.activeWorkspaceRoot);
   });
   createEffect(() => {
     const submitted = optimisticSubmittedDraft();
@@ -1542,7 +1589,7 @@ export default function SessionView(props: SessionViewProps) {
     hasEarlierMessages: () => props.hasEarlierMessages,
     isChatContainerReady,
     totalPartCount,
-    loadEarlierMessages: props.loadEarlierMessages,
+    loadEarlierMessages: (sessionId) => props.loadEarlierMessages(sessionId),
     messagesEndElement: () => messagesEndEl,
     bottomVisibilityElement: () => bottomVisibilityEl,
     chatContainerElement: () => chatContainerEl,
@@ -1557,8 +1604,8 @@ export default function SessionView(props: SessionViewProps) {
   const [activeSessionSwitchHandoff, setActiveSessionSwitchHandoff] =
     createSignal<ActiveSessionSwitchHandoff | null>(null);
   let activeSessionSwitchHandoffToken = 0;
-  let lastSelectedSessionId = props.selectedSessionId?.trim() ?? "";
-  let lastPaintedSessionId = props.selectedSessionId?.trim() ?? "";
+  let lastSelectedSessionId = untrack(() => props.selectedSessionId?.trim() ?? "");
+  let lastPaintedSessionId = untrack(() => props.selectedSessionId?.trim() ?? "");
   let lastPaintedMessages: MessageWithParts[] = [];
   createEffect(
     on(
@@ -1637,11 +1684,21 @@ export default function SessionView(props: SessionViewProps) {
       handoff.heldMessages.length > 0,
     );
   });
-  const displayedEffectiveMessages = createMemo(() =>
-    activeSessionSwitchHandoffActive()
-      ? activeSessionSwitchHandoff()?.heldMessages ?? []
-      : effectiveRenderedMessages(),
+  const displayedEffectiveMessages = createMemo(() => {
+    const displayed = activeSessionSwitchHandoffActive()
+      ? (activeSessionSwitchHandoff()?.heldMessages ?? [])
+      : effectiveRenderedMessages();
+    observeTranscriptProjectionBoundary("session-handoff", props.selectedSessionId, displayed);
+    return displayed;
+  });
+  const aiAccessLoading = createMemo(() => isAiAccessLoadingMessage(props.aiAccessBlockedReason, tr));
+  const aiAccessLoadingWithoutMessages = createMemo(() =>
+    aiAccessLoading() && displayedEffectiveMessages().length === 0
   );
+  const visibleAiAccessBlockedReason = createMemo(() =>
+    resolveActionableAiAccessBlockedReason(props.aiAccessBlockedReason, tr)
+  );
+  const composerBusy = createMemo(() => props.busy);
   const hiddenMessageCount = transcriptViewport.hiddenMessageCount;
   const nextRevealCount = transcriptViewport.nextRevealCount;
   const hasServerEarlierMessages = transcriptViewport.hasServerEarlierMessages;
@@ -1699,7 +1756,7 @@ export default function SessionView(props: SessionViewProps) {
     if (typeof window === "undefined") return;
 
     let expectedAt = perfNow() + MAIN_THREAD_LAG_INTERVAL_MS;
-    const interval = window.setInterval(() => {
+    const interval = setInterval(() => {
       const now = perfNow();
       const lagMs = Math.round((now - expectedAt) * 100) / 100;
       expectedAt = now + MAIN_THREAD_LAG_INTERVAL_MS;
@@ -1979,6 +2036,10 @@ export default function SessionView(props: SessionViewProps) {
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
   const [queuedDraftsBySessionKey, setQueuedDraftsBySessionKey] = createSignal<Record<string, QueuedDraft[]>>({});
+  const [sessionModelOverride, setSessionModelOverride] = createSignal<{
+    sessionKey: string;
+    model: ModelRef | null;
+  }>({ sessionKey: "", model: null });
   const [serverQueuedRuns, setServerQueuedRuns] = createSignal<ServerQueuedRunProjection[]>([]);
   const [queuePausedAfterStopBySessionKey, setQueuePausedAfterStopBySessionKey] = createSignal<Record<string, boolean>>({});
   const [editingQueuedDraftId, setEditingQueuedDraftId] = createSignal<string | null>(null);
@@ -1986,9 +2047,67 @@ export default function SessionView(props: SessionViewProps) {
   const [abortBusy, setAbortBusy] = createSignal(false);
   const [escapeStopConfirmationPending, setEscapeStopConfirmationPending] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
-  let escapeStopConfirmationSessionId = props.selectedSessionId;
+  let escapeStopConfirmationSessionId = untrack(() => props.selectedSessionId);
 
+  const selectableSessionModels = createMemo(() => props.selectableSessionModels ?? []);
   const queuedDrafts = createMemo(() => queuedDraftsBySessionKey()[currentSessionQueueKey()] ?? []);
+  const activeSessionModelOverride = createMemo(() => {
+    const selection = sessionModelOverride();
+    if (selection.sessionKey !== currentSessionQueueKey() || !selection.model) return null;
+    return selectableSessionModels().some(
+      (entry) =>
+        entry.model.providerID === selection.model!.providerID &&
+        entry.model.modelID === selection.model!.modelID,
+    )
+      ? selection.model
+      : null;
+  });
+  const sessionModelOverrideUnavailable = createMemo(() => {
+    const selection = sessionModelOverride();
+    if (selection.sessionKey !== currentSessionQueueKey() || !selection.model) return false;
+    return !selectableSessionModels().some(
+      (entry) =>
+        entry.model.providerID === selection.model!.providerID &&
+        entry.model.modelID === selection.model!.modelID,
+    );
+  });
+  const setActiveSessionModelOverride = (model: ModelRef | null) =>
+    setSessionModelOverride({ sessionKey: currentSessionQueueKey(), model });
+  const sessionModelSelector = () => (
+    <SessionModelSelector
+      enabled={props.sessionModelSelectorEnabled}
+      models={selectableSessionModels()}
+      selectedModel={activeSessionModelOverride()}
+      selectionUnavailable={sessionModelOverrideUnavailable()}
+      disabled={composerBusy()}
+      label={tr("session.managed_model_selector_label")}
+      defaultLabel={tr("session.managed_model_default")}
+      imageCapableLabel={tr("session.managed_model_image_capable")}
+      imageUnsupportedLabel={tr("session.managed_model_image_unsupported")}
+      imageUnknownLabel={tr("session.managed_model_image_unknown")}
+      selectionUnavailableMessage={tr("session.managed_model_selection_unavailable")}
+      onSelect={setActiveSessionModelOverride}
+    />
+  );
+  createEffect(on(() => props.sessionModelSelectorEnabled, (enabled) => {
+    if (enabled) return;
+    batch(() => {
+      setSessionModelOverride({ sessionKey: currentSessionQueueKey(), model: null });
+      props.clearLastPromptModelOverride();
+      setImplicitSkillConfirmationBySessionKey((current) =>
+        Object.fromEntries(Object.entries(current).map(([key, pending]) => {
+          const { modelOverride: _modelOverride, ...options } = pending.options;
+          return [key, { ...pending, options }];
+        })),
+      );
+      setQueuedDraftsBySessionKey((current) =>
+        Object.fromEntries(Object.entries(current).map(([key, queue]) => [
+          key,
+          queue.map(({ modelOverride: _modelOverride, ...item }) => item),
+        ])),
+      );
+    });
+  }));
   const activeServerQueueVisibilityScope = createMemo(() => {
     const ref = props.activeUiConversationRef;
     return {
@@ -2218,6 +2337,12 @@ export default function SessionView(props: SessionViewProps) {
     "pendingDraftKey",
     "sessionSwitchHandoffActive",
     "loadingEarlierMessages",
+    "appBusy",
+    "composerBusy",
+    "aiAccessLoading",
+    "aiAccessLoadingWithoutMessages",
+    "aiAccessBlockedReason",
+    "visibleAiAccessBlockedReason",
   ] as const;
   createEffect(
     on(
@@ -2240,6 +2365,12 @@ export default function SessionView(props: SessionViewProps) {
           props.activePendingDraftKey,
           activeSessionSwitchHandoffActive(),
           props.loadingEarlierMessages,
+          props.busy,
+          composerBusy(),
+          aiAccessLoading(),
+          aiAccessLoadingWithoutMessages(),
+          props.aiAccessBlockedReason,
+          visibleAiAccessBlockedReason(),
         ] as const,
       (state, previous) => {
         if (!sessionUiMutationTraceEnabled()) return;
@@ -2266,6 +2397,12 @@ export default function SessionView(props: SessionViewProps) {
           pendingDraftKey: state[14],
           sessionSwitchHandoffActive: state[15],
           loadingEarlierMessages: state[16],
+          appBusy: state[17],
+          composerBusy: state[18],
+          aiAccessLoading: state[19],
+          aiAccessLoadingWithoutMessages: state[20],
+          aiAccessBlockedReason: state[21],
+          visibleAiAccessBlockedReason: state[22],
         });
       },
     ),
@@ -2282,10 +2419,15 @@ export default function SessionView(props: SessionViewProps) {
     let attributeCount = 0;
     let addedNodeCount = 0;
     let removedNodeCount = 0;
+    let ignoredDiagnosticRecordCount = 0;
     const attributeNames = new Set<string>();
     const targets: string[] = [];
     const collect = (records: MutationRecord[]) => {
       for (const record of records) {
+        if (isTempRuntimeUiDiagnosticMutation(record)) {
+          ignoredDiagnosticRecordCount += 1;
+          continue;
+        }
         recordCount += 1;
         if (record.type === "childList") {
           childListCount += 1;
@@ -2313,6 +2455,7 @@ export default function SessionView(props: SessionViewProps) {
         attributeCount,
         addedNodeCount,
         removedNodeCount,
+        ignoredDiagnosticRecordCount,
         attributeNames: [...attributeNames].sort(),
         targets: [...targets],
         latestUiMarker: renderSource.source,
@@ -2332,6 +2475,7 @@ export default function SessionView(props: SessionViewProps) {
       attributeCount = 0;
       addedNodeCount = 0;
       removedNodeCount = 0;
+      ignoredDiagnosticRecordCount = 0;
       attributeNames.clear();
       targets.length = 0;
     };
@@ -2341,6 +2485,10 @@ export default function SessionView(props: SessionViewProps) {
       frame = window.requestAnimationFrame(() => flush("animation-frame"));
     });
     observer.observe(root, { attributes: true, childList: true, subtree: true });
+    recordSendTrace("session-ui:mutation-observer-ready", {
+      diagnosticNodesExcluded: true,
+      root: "session-center-pane",
+    });
 
     onCleanup(() => {
       collect(observer.takeRecords());
@@ -3182,8 +3330,6 @@ export default function SessionView(props: SessionViewProps) {
   const publishWorkspaceProfileLink = shareController.publishWorkspaceProfileLink;
   const publishSkillsSetLink = shareController.publishSkillsSetLink;
 
-  const aiAccessLoading = createMemo(() => isAiAccessLoadingMessage(props.aiAccessBlockedReason, tr));
-
   const conversationFlow = createSessionConversationFlow({
     identity: {
       createClientMessageId: createSessionClientMessageId,
@@ -3239,9 +3385,11 @@ export default function SessionView(props: SessionViewProps) {
       updateQueueForSessionKey,
     },
     composer: {
-      clearComposerDraftForSession: props.clearComposerDraftForSession,
+      clearComposerDraftForSession: (sessionId) => props.clearComposerDraftForSession(sessionId),
       currentDraftMode: () => props.composerDraft.mode,
-      setComposerDraft: props.setComposerDraft,
+      remapPendingDraftToSession: (pendingDraftKey, sessionId) =>
+        props.remapPendingComposerDraftToSession(pendingDraftKey, sessionId),
+      setComposerDraft: (draft) => props.setComposerDraftForStorageKey(props.composerStorageKey, draft),
     },
     transcriptEdit: {
       editableUserMessage,
@@ -3252,7 +3400,7 @@ export default function SessionView(props: SessionViewProps) {
       abortBusy,
       abortSession: (sessionId) => props.abortSession(sessionId),
       lastPromptSent: () => props.lastPromptSent,
-      retryLastPrompt: props.retryLastPrompt,
+      retryLastPrompt: () => props.retryLastPrompt(),
       runPhase,
       hasAbortableBackendRun,
       setAbortBusy,
@@ -3397,11 +3545,18 @@ export default function SessionView(props: SessionViewProps) {
     if (showComposerEntryState() || showFooterComposerTargetContext()) {
       dismissComposerEntryForSessionKey(submissionSessionKey);
     }
+    const modelOverrideSnapshot = (options as SessionComposerSendOptions).modelOverride;
+    const modelOverride = modelOverrideSnapshot !== undefined
+      ? modelOverrideSnapshot
+      : props.sessionModelSelectorEnabled
+        ? activeSessionModelOverride()
+        : null;
     const result = await sessionFlowFacade.handleSendPrompt(draft, {
       sendNow: options.sendNow,
       sendTraceId: options.sendTraceId,
       source: options.source,
       implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+      modelOverride,
       onDraftTransferred: options.onDraftTransferred,
     });
     if (sessionSubmitNeedsImplicitSkillConfirmation(result)) {
@@ -3410,7 +3565,7 @@ export default function SessionView(props: SessionViewProps) {
         [submissionSessionKey]: {
           sessionKey: submissionSessionKey,
           draft: snapshotImplicitSkillConfirmationDraft(draft),
-          options: { ...options },
+          options: { ...options, modelOverride },
           skillName: result.confirmation.skillName,
           arguments: result.confirmation.arguments,
         },
@@ -3489,8 +3644,8 @@ export default function SessionView(props: SessionViewProps) {
     if (result.status === "blocked") setToastMessage(result.message);
   };
 
-  const handleDraftChange = (draft: ComposerDraft) => {
-    props.setComposerDraft(draft);
+  const handleDraftChange = (storageKey: string, draft: ComposerDraft) => {
+    props.setComposerDraftForStorageKey(storageKey, draft);
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => {
@@ -3568,7 +3723,7 @@ export default function SessionView(props: SessionViewProps) {
     const serverWorkspaceId = resolveVesloWorkspaceId(workspaceId);
     if (!serverWorkspaceId) return;
 
-    void client.prefetchSessionTranscripts(serverWorkspaceId, interest).catch((error) => {
+    void client.prefetchSessionTranscripts(serverWorkspaceId, interest, { appWorkspaceId: workspaceId }).catch((error) => {
       console.warn("[session.loaded-session-prefetch] failed", {
         workspaceId,
         serverWorkspaceId,
@@ -3861,8 +4016,8 @@ export default function SessionView(props: SessionViewProps) {
         rightContent={
           <button
             type="button"
+            onClick={() => props.onOpenFeedback()}
             class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent focus:outline-none focus-visible:ring-0"
-            onClick={props.onOpenFeedback}
             aria-label={feedbackButtonLabel()}
             title={feedbackButtonLabel()}
           >
@@ -4004,6 +4159,12 @@ export default function SessionView(props: SessionViewProps) {
         )}
         reloadBanner={(
         <>
+          <ManagedAiServerReloadBanner
+            presentation={props.managedAiServerReloadPresentation}
+            widthClass={searchBannerWidthClass()}
+            pendingLabel={tr("managed_ai.runtime_config_pending_reload")}
+            reloadingLabel={tr("managed_ai.runtime_config_reloading")}
+          />
           <Show when={props.showSkillReloadBanner}>
             <div
               class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3"
@@ -4048,7 +4209,7 @@ export default function SessionView(props: SessionViewProps) {
                   <button
                     type="button"
                     class="rounded-xl border border-amber-6/70 bg-transparent px-3 py-2 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3"
-                    onClick={props.dismissReloadBanner}
+                    onClick={() => props.dismissReloadBanner()}
                   >
                     {tr("reload.toast_dismiss")}
                   </button>
@@ -4159,12 +4320,15 @@ export default function SessionView(props: SessionViewProps) {
                 <Show when={composerResetKey()} keyed>
                   {(_composerKey) => (
                     <div class="w-full text-left">
+                      {sessionModelSelector()}
                       <Composer
                         entryPlacement="center"
                         initialDraft={props.composerDraft}
                         prompt={props.composerDraft.text}
+                        draftStorageKey={props.composerStorageKey}
+                        draftRevision={props.composerDraftRevision}
                         developerMode={props.developerMode}
-                        busy={props.busy}
+                        busy={composerBusy()}
                         isStreaming={showRunIndicator()}
                         recoveryBlocked={recoveryBlockedComposer()}
                         stopShortcutConfirmPending={escapeStopConfirmationPending()}
@@ -4172,9 +4336,11 @@ export default function SessionView(props: SessionViewProps) {
                         onSend={handleSendPrompt}
                         onStop={cancelRun}
                         onDraftChange={handleDraftChange}
+                        captureDraftRevision={props.captureComposerDraftRevision}
+                        clearDraftIfRevision={props.clearComposerDraftIfRevision}
                         selectedAgent={props.selectedSessionAgent}
                         onSelectAgent={(agent) => {
-                          applySessionAgent(agent);
+                          void applySessionAgent(agent);
                         }}
                         showNotionBanner={props.showTryNotionPrompt}
                         onNotionBannerClick={props.onTryNotionPrompt}
@@ -4267,17 +4433,23 @@ export default function SessionView(props: SessionViewProps) {
             pendingMessageStateById={pendingMessageStateById()}
             editableUserMessage={editableUserMessage()}
             onEditUserMessage={handleEditUserMessage}
-            onMessageBlocksRecomputed={
-              sessionUiDiagnosticEnabled()
-                ? (trace) => {
-                    markTempRuntimeUiRenderSource("MessageList.messageBlocks", "recomputed", {
-                      markerKind: "message-blocks",
-                      detail: `revision=${trace.revision} blocks=${trace.blockCount} unstableKeys=${trace.unstableBlockKeyCount}`,
-                      markerPayload: { ...trace },
-                    });
-                  }
-                : undefined
-            }
+            transcriptSurfaceContext={() => ({
+              transcriptSurfaceOwner: activeSessionSwitchHandoffActive()
+                ? "session-switch-handoff"
+                : localSubmittedMessage()
+                  ? "viewport-with-local-submitted"
+                  : "viewport-canonical",
+              sourceMessageCount: props.messages.length,
+              renderedMessageCount: renderedMessages().length,
+              effectiveRenderedMessageCount: effectiveRenderedMessages().length,
+              localSubmittedMessageId: localSubmittedMessage()?.info.id ?? null,
+              transcriptProjectionBoundaries: {
+                canonical: describeTranscriptProjectionBoundary("canonical", props.selectedSessionId),
+                visible: describeTranscriptProjectionBoundary("visible", props.selectedSessionId),
+                viewportRendered: describeTranscriptProjectionBoundary("viewport-rendered", props.selectedSessionId),
+                sessionHandoff: describeTranscriptProjectionBoundary("session-handoff", props.selectedSessionId),
+              },
+            })}
             setScrollToMessageById={(handler) => {
               scrollMessageIntoViewById = handler;
             }}
@@ -4433,9 +4605,9 @@ export default function SessionView(props: SessionViewProps) {
         composerArea={(
       <Show when={showFooterComposerArea()}>
         <>
-              <Show when={props.aiAccessBlockedReason}>
+              <Show when={visibleAiAccessBlockedReason()}>
                 <div class="mx-auto mb-3 w-full max-w-[min(100%,72rem)] rounded-2xl border border-amber-7/30 bg-amber-2/30 px-4 py-3 text-sm text-amber-12">
-                  {props.aiAccessBlockedReason}
+                  {visibleAiAccessBlockedReason()}
                 </div>
               </Show>
               <Show when={queuedDrafts().length > 0}>
@@ -4472,11 +4644,14 @@ export default function SessionView(props: SessionViewProps) {
                   </h2>
                 </div>
               </Show>
+              {sessionModelSelector()}
               <Composer
                 initialDraft={props.composerDraft}
                 prompt={props.composerDraft.text}
+                draftStorageKey={props.composerStorageKey}
+                draftRevision={props.composerDraftRevision}
                 developerMode={props.developerMode}
-                busy={props.busy || aiAccessLoading()}
+                busy={composerBusy()}
                 isStreaming={showRunIndicator()}
                 recoveryBlocked={recoveryBlockedComposer()}
                 stopShortcutConfirmPending={escapeStopConfirmationPending()}
@@ -4485,9 +4660,11 @@ export default function SessionView(props: SessionViewProps) {
                 onSend={handleSendPrompt}
                 onStop={cancelRun}
                 onDraftChange={handleDraftChange}
+                captureDraftRevision={props.captureComposerDraftRevision}
+                clearDraftIfRevision={props.clearComposerDraftIfRevision}
                 selectedAgent={props.selectedSessionAgent}
                 onSelectAgent={(agent) => {
-                  applySessionAgent(agent);
+                  void applySessionAgent(agent);
                 }}
                 showNotionBanner={props.showTryNotionPrompt}
                 onNotionBannerClick={props.onTryNotionPrompt}

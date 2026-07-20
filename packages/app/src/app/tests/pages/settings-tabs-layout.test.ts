@@ -88,13 +88,13 @@ test("settings keeps compact update controls in general instead of a floating to
   assert.match(source, /settings\.sidebar_update_preparing/);
   assert.match(source, /updateState\(\) === "available" && props\.updateAutoDownload/);
   assert.match(generalUpdateControlsRow, /settings\.auto_update_label/, "general update action row should include the automatic update download switch");
-  assert.match(generalUpdateControlsRow, /onClick=\{props\.toggleUpdateAutoDownload\}/);
+  assert.match(generalUpdateControlsRow, /onClick=\{\(\) => props\.toggleUpdateAutoDownload\(\)\}/);
   assert.doesNotMatch(source, /settings\.auto_update_hint/, "settings should not explain the automatic update download switch inline");
   assert.doesNotMatch(source, /settings\.automatic_checks_label|settings\.automatic_checks_hint/);
   assert.doesNotMatch(source, /props\.updateAutoCheck|props\.toggleUpdateAutoCheck/);
   assert.match(
     generalSection,
-    /<Show when=\{showGeneralUpdateControls\(\)\}>[\s\S]*onClick=\{props\.toggleUpdateAutoDownload\}/,
+    /<Show when=\{showGeneralUpdateControls\(\)\}>[\s\S]*onClick=\{\(\) => props\.toggleUpdateAutoDownload\(\)\}/,
     "general settings update card should wire the automatic update download switch",
   );
   assert.match(

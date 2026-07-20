@@ -64,6 +64,18 @@ export function sha256Hex(value: Buffer | string): string {
     .digest("hex")
 }
 
+// Package hashes must not depend on the process locale. The local materializer
+// uses this binary ordering too, so a package created by Den has the same
+// canonical manifest everywhere it is consumed.
+export function compareSkillRegistryPackagePaths(
+  left: Pick<SkillRegistryPackageFile, "path">,
+  right: Pick<SkillRegistryPackageFile, "path">,
+): number {
+  if (left.path < right.path) return -1
+  if (left.path > right.path) return 1
+  return 0
+}
+
 function requireTrimmedString(value: unknown, field: string): string {
   if (typeof value !== "string") {
     throw new Error(`${field} must be a string`)
@@ -135,7 +147,7 @@ export function normalizeSkillRegistryPackagePath(path: string): string {
   return segments.join("/")
 }
 
-function normalizeMetadata(metadata: unknown): SkillRegistryPackageManifest["metadata"] {
+export function normalizeSkillRegistryPackageMetadata(metadata: unknown): SkillRegistryPackageManifest["metadata"] {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
     throw new Error("package metadata must be an object")
   }
@@ -285,7 +297,7 @@ export function validateSkillRegistryPackageArchive(value: unknown): SkillRegist
       seenPaths.add(file.path)
       return file
     })
-    .sort((left, right) => left.path.localeCompare(right.path))
+    .sort(compareSkillRegistryPackagePaths)
 
   if (!files.some((file) => file.path === ENTRYPOINT)) {
     throw new Error(`package requires ${ENTRYPOINT}`)
@@ -296,7 +308,7 @@ export function validateSkillRegistryPackageArchive(value: unknown): SkillRegist
     schemaVersion: 1,
     entrypoint: ENTRYPOINT,
     files: files.map(({ contentBase64: _contentBase64, ...file }) => file),
-    metadata: normalizeMetadata(record.metadata),
+    metadata: normalizeSkillRegistryPackageMetadata(record.metadata),
   } satisfies Omit<SkillRegistryPackageManifest, "packageSha256">
   const packageSha256 = requireTrimmedString(record.packageSha256, "package packageSha256").toLowerCase()
   if (!SHA256_PATTERN.test(packageSha256)) {
@@ -374,8 +386,8 @@ export async function buildSkillRegistryPackageArchive(input: {
     entrypoint: ENTRYPOINT,
     files: pendingFiles
       .map(({ contentBase64: _contentBase64, ...file }) => file)
-      .sort((left, right) => left.path.localeCompare(right.path)),
-    metadata: normalizeMetadata(input.metadata),
+      .sort(compareSkillRegistryPackagePaths),
+    metadata: normalizeSkillRegistryPackageMetadata(input.metadata),
   } satisfies Omit<SkillRegistryPackageManifest, "packageSha256">
   const contentByPath = new Map(pendingFiles.map((file) => [file.path, file.contentBase64]))
 

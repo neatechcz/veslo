@@ -119,6 +119,11 @@ The current managed Codex target is GPT-5.6 Sol, canonical model id `gpt-5.6-sol
 )
 ```
 
+The migration is the explicit Codex assignment backfill. When the active platform
+policy is `codex_oauth`, it writes every enabled Codex model from that policy into
+each Codex assignment's allow-list. `--model` must equal the active platform
+model; it is never used to reduce a multi-model roster.
+
 The first migration command is the pre-apply dry run and the third is the post-apply dry run. Their matched counts must agree, and the post-apply result must report `changedCount: 0`. The probe covers every non-deleted Codex credential, including unhealthy records, runs sequentially, continues after individual failures, and persists rotated auth through the encrypted secret store without printing it. Authentication-failing, exhausted, or permanently ineligible credentials are reported for reconnect or recovery; runtime lazy repair may bind another healthy eligible credential while retaining `gpt-5.6-sol`, and the request fails only when no eligible replacement exists. An `unsupported_model` result intentionally leaves the selected credential eligible, does not trigger lazy repair, and can fail its probe or request even when another credential exists. An admin must explicitly reassign/select a supported credential or model. Neither path changes the migrated model policy or falls back automatically to GPT-5.5.
 
 For production, the equivalent guarded workflow dispatch is:

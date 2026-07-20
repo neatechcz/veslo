@@ -54,6 +54,12 @@ export type ManagedAiAccessProofCacheState = {
   record: ManagedAiAccessCacheRecord | null;
 };
 
+export function shouldResetMissingManagedAiAccessProofCache(
+  state: ManagedAiAccessProofCacheState,
+): boolean {
+  return state.cacheKey !== "" || !state.loaded || state.record !== null;
+}
+
 export type ManagedAiAccessStorage = {
   getItem: (key: string) => string | null;
   setItem: (key: string, value: string) => void;
@@ -135,12 +141,14 @@ export type ManagedAiAccessStoreOptions = ManagedAiAccessCacheDeps & {
   windowTarget?: ManagedAiAccessWindowTarget | null;
   documentTarget?: ManagedAiAccessDocumentTarget | null;
   effect?: (fn: () => void) => void;
+  recordManagedAiWorkflowTrace?: (event: string, payload: Record<string, unknown>) => void;
 };
 
 export type ManagedAiAccessStore = {
   managedAiAccess: Accessor<ManagedAiAccessProfile | null>;
   managedAiGatewayAccessToken: Accessor<string>;
   managedAiAccessBusy: Accessor<boolean>;
+  managedAiAccessReady: Accessor<boolean>;
   managedAiAccessError: Accessor<string | null>;
   managedAiAccessRetryScheduled: Accessor<boolean>;
   managedAiAccessModel: Accessor<ManagedAiAccessProfile["effectiveModel"] | null>;
@@ -163,10 +171,24 @@ export type ManagedAiAccessStore = {
   setManagedAiAccessError: Setter<string | null>;
 };
 
-let managedAiAccessRefreshInFlight: {
-  cacheKey: string;
+type ManagedAiAccessRefreshFlight = {
+  id: string;
   promise: Promise<VesloManagedAiAccessBundle>;
-} | null = null;
+};
+
+type ManagedAiAccessFlightOptions = {
+  caller: "active-effect";
+  traceId?: string | null;
+  recordFlight?: (input: {
+    action: "start" | "join" | "settle" | "reject";
+    flightId: string;
+    caller: "active-effect";
+    traceId: string | null;
+  }) => void;
+};
+
+const managedAiAccessRefreshInFlight = new Map<string, ManagedAiAccessRefreshFlight>();
+let managedAiAccessRefreshFlightSequence = 0;
 
 function defaultStorage(): ManagedAiAccessStorage | null {
   if (typeof window === "undefined") return null;
@@ -224,8 +246,23 @@ export const buildManagedAiAccessCacheKey = (input: {
   const userId = input.userId?.trim() ?? "";
   const orgId = input.orgId?.trim() ?? "";
   const gatewayBaseUrl = input.gatewayBaseUrl?.trim().replace(/\/+$/, "") ?? "";
-  return userId && gatewayBaseUrl ? `${userId}|${orgId}|${gatewayBaseUrl}` : "";
+  return userId && orgId && gatewayBaseUrl ? `${userId}|${orgId}|${gatewayBaseUrl}` : "";
 };
+
+function buildManagedAiAccessRequestKey(input: {
+  cacheKey: string;
+  managedAiGatewayBaseUrl: string;
+  runtimeWorkspaceId: string;
+}): string {
+  const cacheKey = input.cacheKey.trim();
+  if (!cacheKey) return "";
+  const managedAiGatewayBaseUrl = input.managedAiGatewayBaseUrl.trim();
+  if (managedAiGatewayBaseUrl) {
+    return [cacheKey, "managed-gateway", "global"].join("\0");
+  }
+  return [cacheKey, "veslo-server", "runtime-workspace:" + (input.runtimeWorkspaceId.trim() || "global")]
+    .join("\0");
+}
 
 export const readManagedAiAccessCache = (
   cacheKey: string,
@@ -355,21 +392,49 @@ export const readManagedAiAccessProofCache = async (
 export const loadManagedAiAccessSingleFlight = (
   cacheKey: string,
   load: () => Promise<VesloManagedAiAccessBundle>,
+  options?: ManagedAiAccessFlightOptions,
 ): Promise<VesloManagedAiAccessBundle> => {
-  if (cacheKey && managedAiAccessRefreshInFlight?.cacheKey === cacheKey) {
-    return managedAiAccessRefreshInFlight.promise;
+  const normalizedCacheKey = cacheKey.trim();
+  if (!normalizedCacheKey) {
+    throw new Error("Managed AI access refresh requires a stable context key");
+  }
+  const traceId = options?.traceId?.trim() || null;
+  const recordFlight = (action: "start" | "join" | "settle" | "reject", flightId: string) => {
+    options?.recordFlight?.({
+      action,
+      flightId,
+      caller: options?.caller ?? "active-effect",
+      traceId,
+    });
+  };
+  const existing = managedAiAccessRefreshInFlight.get(normalizedCacheKey);
+  if (existing) {
+    recordFlight("join", existing.id);
+    return existing.promise;
   }
 
-  const promise = load().finally(() => {
-    if (managedAiAccessRefreshInFlight?.cacheKey === cacheKey) {
-      managedAiAccessRefreshInFlight = null;
-    }
-  });
-
-  if (cacheKey) {
-    managedAiAccessRefreshInFlight = { cacheKey, promise };
-  }
-
+  const flightId = "managed-ai-access-" + String(++managedAiAccessRefreshFlightSequence);
+  let promise!: Promise<VesloManagedAiAccessBundle>;
+  promise = Promise.resolve()
+    .then(load)
+    .then(
+      (result) => {
+        if (managedAiAccessRefreshInFlight.get(normalizedCacheKey)?.promise === promise) {
+          managedAiAccessRefreshInFlight.delete(normalizedCacheKey);
+        }
+        recordFlight("settle", flightId);
+        return result;
+      },
+      (error) => {
+        if (managedAiAccessRefreshInFlight.get(normalizedCacheKey)?.promise === promise) {
+          managedAiAccessRefreshInFlight.delete(normalizedCacheKey);
+        }
+        recordFlight("reject", flightId);
+        throw error;
+      },
+    );
+  managedAiAccessRefreshInFlight.set(normalizedCacheKey, { id: flightId, promise });
+  recordFlight("start", flightId);
   return promise;
 };
 
@@ -377,6 +442,7 @@ export function createManagedAiAccessStore(
   options: ManagedAiAccessStoreOptions,
 ): ManagedAiAccessStore {
   const effect = options.effect ?? ((fn: () => void) => createEffect(fn));
+  const recordManagedAiWorkflowTrace = options.recordManagedAiWorkflowTrace ?? (() => undefined);
   const timers = {
     setTimeout:
       options.timers?.setTimeout ??
@@ -400,6 +466,7 @@ export function createManagedAiAccessStore(
     createSignal<ManagedAiAccessProfile | null>(null);
   const [managedAiGatewayAccessToken, setManagedAiGatewayAccessToken] = createSignal("");
   const [managedAiAccessBusy, setManagedAiAccessBusy] = createSignal(false);
+  const [managedAiAccessReady, setManagedAiAccessReady] = createSignal(false);
   const [managedAiAccessError, setManagedAiAccessError] = createSignal<string | null>(null);
   const [managedAiAccessRefreshNonce, setManagedAiAccessRefreshNonce] = createSignal(0);
   const [managedAiAccessRetryAttempt, setManagedAiAccessRetryAttempt] = createSignal(0);
@@ -425,12 +492,12 @@ export function createManagedAiAccessStore(
   const managedAiAccessCacheContext = createMemo(() => {
     options.denAuthRevision();
     const gatewayClient = options.gatewayVesloServerClient();
-    const managedAiBaseUrl = options.managedAiGatewayBaseUrl();
+    const managedAiBaseUrl = options.managedAiGatewayBaseUrl().trim();
     const denAuth = options.readDenAuth();
     const gatewayBaseUrl =
       managedAiBaseUrl ||
-      (options.isTauriRuntime() ? denAuth?.denApiBase ?? "" : "") ||
       gatewayClient?.baseUrl ||
+      (options.isTauriRuntime() ? denAuth?.denApiBase ?? "" : "") ||
       "";
     return {
       cacheKey: buildManagedAiAccessCacheKey({
@@ -556,21 +623,62 @@ export function createManagedAiAccessStore(
     managedAiAccessRefreshNonce();
 
     const gatewayClient = options.gatewayVesloServerClient();
-    const managedAiBaseUrl = options.managedAiGatewayBaseUrl();
+    const managedAiBaseUrl = options.managedAiGatewayBaseUrl().trim();
     const userToken = denGatewayAccessToken();
-    const denOrgId = options.readDenAuth()?.orgId?.trim() ?? "";
+    const denAuth = options.readDenAuth();
+    const denOrgId = denAuth?.orgId?.trim() || denAuth?.org?.id?.trim() || "";
     const cacheContext = managedAiAccessCacheContext();
     const managedAiCacheKey = cacheContext.cacheKey;
     const gatewayLocalAuth = options.vesloServerAuth();
     const runtimeWorkspaceId = options.activeVesloServerWorkspaceId?.()?.trim() ?? "";
     const proofCacheState = managedAiAccessProofCacheState();
+    const managedAiAccessRequestKey = buildManagedAiAccessRequestKey({
+      cacheKey: managedAiCacheKey,
+      managedAiGatewayBaseUrl: managedAiBaseUrl,
+      runtimeWorkspaceId,
+    });
+    const preflightTrace = (phase: string, payload?: Record<string, unknown>) => {
+      recordManagedAiWorkflowTrace("managed-ai-access:preflight", {
+        phase,
+        hasRequestKey: Boolean(managedAiAccessRequestKey),
+        hasCacheKey: Boolean(managedAiCacheKey),
+        hasGatewayClient: Boolean(gatewayClient),
+        hasManagedAiGatewayBaseUrl: Boolean(managedAiBaseUrl),
+        hasUserToken: Boolean(userToken),
+        hasOrgId: Boolean(denOrgId),
+        runtimeWorkspaceId: runtimeWorkspaceId || null,
+        hasLocalClientToken: Boolean(gatewayLocalAuth.token?.trim()),
+        proofCacheLoaded: proofCacheState.loaded,
+        proofCacheRecordPresent: Boolean(proofCacheState.record),
+        ...payload,
+      });
+    };
+    if (!managedAiAccessRequestKey) {
+      preflightTrace("request-key-missing");
+      // This effect observes the proof-cache state. Replacing an already-empty
+      // object here schedules the effect again, which used to create a tight
+      // reactive loop while desktop auth hydration was still incomplete.
+      if (shouldResetMissingManagedAiAccessProofCache(proofCacheState)) {
+        setManagedAiAccessProofCacheState({ cacheKey: "", loaded: true, record: null });
+      }
+      setManagedAiAccess(null);
+      setManagedAiGatewayAccessToken("");
+      setManagedAiAccessBusy(false);
+      setManagedAiAccessReady(false);
+      setManagedAiAccessError(null);
+      setManagedAiAccessRetryAttempt(0);
+      setManagedAiAccessRetryScheduled(false);
+      return;
+    }
     if (
       options.isTauriRuntime() &&
       managedAiCacheKey &&
       (!proofCacheState.loaded || proofCacheState.cacheKey !== managedAiCacheKey)
     ) {
+      preflightTrace("proof-cache-pending");
       if (!managedAiAccess()) {
         setManagedAiAccessBusy(true);
+        setManagedAiAccessReady(false);
       }
       return;
     }
@@ -581,22 +689,31 @@ export function createManagedAiAccessStore(
         : null;
     const cachedAccess =
       proofCachedAccess ?? readManagedAiAccessCache(managedAiCacheKey, cacheOptions());
+    const deferForLocalGateway = shouldDeferManagedAiAccessRefresh({
+      gatewayBaseUrl: managedAiBaseUrl || gatewayClient?.baseUrl || "",
+      isDesktopRuntime: options.isTauriRuntime(),
+      localClientToken: gatewayLocalAuth.token,
+    });
     const refreshPreflight = resolveManagedAiAccessRefreshPreflight({
       hasGatewayClient: Boolean(gatewayClient),
       managedAiBaseUrl,
       userToken,
-      deferForLocalGateway: shouldDeferManagedAiAccessRefresh({
-        gatewayBaseUrl: managedAiBaseUrl || gatewayClient?.baseUrl || "",
-        isDesktopRuntime: options.isTauriRuntime(),
-        localClientToken: gatewayLocalAuth.token,
-      }),
+      deferForLocalGateway,
       cachedAccessPresent: Boolean(cachedAccess),
       freshCachedAccessPresent: Boolean(proofCachedAccess?.gatewayAccessToken),
+    });
+    preflightTrace("resolved", {
+      decision: refreshPreflight.type,
+      reason: refreshPreflight.type === "reset" ? refreshPreflight.reason : null,
+      deferForLocalGateway,
+      cachedAccessPresent: Boolean(cachedAccess),
+      proofCachedAccessPresent: Boolean(proofCachedAccess),
     });
     if (refreshPreflight.type === "reset") {
       setManagedAiAccess(null);
       setManagedAiGatewayAccessToken("");
       setManagedAiAccessBusy(false);
+      setManagedAiAccessReady(false);
       setManagedAiAccessError(null);
       setManagedAiAccessRetryAttempt(0);
       setManagedAiAccessRetryScheduled(false);
@@ -609,6 +726,7 @@ export function createManagedAiAccessStore(
         setManagedAiAccessError(null);
       }
       setManagedAiAccessBusy(false);
+      setManagedAiAccessReady(true);
       setManagedAiAccessRetryAttempt(0);
       return;
     }
@@ -618,6 +736,7 @@ export function createManagedAiAccessStore(
     if (refreshPreflight.applyCachedAccessFirst && cachedAccess) {
       setManagedAiAccess(cachedAccess.profile);
       setManagedAiGatewayAccessToken(cachedAccess.gatewayAccessToken);
+      setManagedAiAccessReady(true);
       setManagedAiAccessError(null);
     }
     setManagedAiAccessBusy(true);
@@ -647,9 +766,7 @@ export function createManagedAiAccessStore(
     };
 
     const loadManagedAiAccess = loadManagedAiAccessSingleFlight(
-      gatewayClient && runtimeWorkspaceId
-        ? `${managedAiCacheKey}|runtime-workspace:${runtimeWorkspaceId}`
-        : managedAiCacheKey,
+      managedAiAccessRequestKey,
       () => {
         if (managedAiBaseUrl) {
           if (!options.requestManagedAiAccessBundle) {
@@ -659,10 +776,22 @@ export function createManagedAiAccessStore(
         }
         return gatewayClient!.getMyAiAccess(userToken, denOrgId, runtimeWorkspaceId || undefined);
       },
+      {
+        caller: "active-effect",
+        recordFlight: ({ action, flightId, caller, traceId }) => {
+          recordManagedAiWorkflowTrace("managed-ai-access:flight", {
+            action,
+            flightId,
+            caller,
+            scope: "app",
+            traceId,
+          });
+        },
+      },
     );
 
     void loadManagedAiAccess
-      .then((response) => {
+      .then((response) => untrack(() => {
         if (cancelled) return;
         const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
           aiAccess: response.aiAccess,
@@ -679,6 +808,7 @@ export function createManagedAiAccessStore(
           setManagedAiAccess(successDecision.profile);
           setManagedAiGatewayAccessToken(successDecision.gatewayAccessToken);
           setManagedAiAccessError(successDecision.error);
+          setManagedAiAccessReady(true);
           writeManagedAiAccessCache(
             managedAiCacheKey,
             successDecision.profile,
@@ -693,9 +823,15 @@ export function createManagedAiAccessStore(
         setManagedAiGatewayAccessToken(successDecision.gatewayAccessToken);
         setManagedAiAccessError(successDecision.error);
         clearManagedAiAccessCache(managedAiCacheKey, cacheOptions());
-        scheduleRetry(false);
-      })
-      .catch((error) => {
+        if (successDecision.retry) {
+          scheduleRetry(false);
+        } else {
+          setManagedAiAccessRetryAttempt(0);
+          setManagedAiAccessRetryScheduled(false);
+          setManagedAiAccessReady(true);
+        }
+      }))
+      .catch((error) => untrack(() => {
         if (cancelled) return;
         const failureDecision = resolveManagedAiAccessRefreshFailure({
           cachedAccessPresent: Boolean(cachedAccess),
@@ -712,7 +848,10 @@ export function createManagedAiAccessStore(
         }
         setManagedAiAccessError(failureDecision.error);
         scheduleRetry(false);
-      })
+        if (!managedAiAccessRetryScheduled()) {
+          setManagedAiAccessReady(true);
+        }
+      }))
       .finally(() => {
         if (cancelled) return;
         setManagedAiAccessBusy(false);
@@ -770,6 +909,7 @@ export function createManagedAiAccessStore(
   ) => {
     setManagedAiAccess(profile);
     setManagedAiGatewayAccessToken(gatewayAccessToken);
+    setManagedAiAccessReady(true);
     setManagedAiAccessError(null);
     if (applyOptions?.writeCache) {
       writeCurrentManagedAiAccessCache(profile, gatewayAccessToken);
@@ -780,6 +920,7 @@ export function createManagedAiAccessStore(
     managedAiAccess,
     managedAiGatewayAccessToken,
     managedAiAccessBusy,
+    managedAiAccessReady,
     managedAiAccessError,
     managedAiAccessRetryScheduled,
     managedAiAccessModel,

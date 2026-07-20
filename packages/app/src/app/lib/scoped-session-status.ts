@@ -54,6 +54,16 @@ export const withSessionStatus = (
   if (!session) return current;
   const normalizedStatus = status.trim() || "idle";
   const scoped = scopedSessionStatusKey(workspaceId, session);
+  // Keep both keys in sync for the legacy unscoped lookup, but do not publish a
+  // new map when they already contain the exact compatible representation.
+  // Session.status is emitted repeatedly while a run is active; allocating a
+  // fresh map for the same status invalidates unrelated consumers.
+  if (
+    current[session] === normalizedStatus &&
+    (!scoped || current[scoped] === normalizedStatus)
+  ) {
+    return current;
+  }
   return {
     ...current,
     [session]: normalizedStatus,
@@ -89,9 +99,9 @@ export const pickSessionStatusSnapshot = (
   for (const sessionId of sessionIds) {
     const session = normalize(sessionId);
     if (!session) continue;
-    if (statuses[session] !== undefined) next[session] = statuses[session];
+    if (Object.hasOwn(statuses, session)) next[session] = statuses[session];
     const scoped = scopedSessionStatusKey(workspaceId, session);
-    if (scoped && statuses[scoped] !== undefined) next[scoped] = statuses[scoped];
+    if (scoped && Object.hasOwn(statuses, scoped)) next[scoped] = statuses[scoped];
   }
   return next;
 };

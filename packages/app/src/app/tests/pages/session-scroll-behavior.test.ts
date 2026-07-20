@@ -105,7 +105,7 @@ test("session renders an immediate local echo and synchronously defers to canoni
 
   assert.match(
     source,
-    /const localSubmittedMessage = createMemo<MessageWithParts \| null>\(\(\) => \{[\s\S]*if \(!submitted\) return null;[\s\S]*const renderReplacement = resolvePendingSubmittedRenderReplacement\([\s\S]*if \(renderReplacement\.kind === "show-canonical"\) return null;[\s\S]*pendingSubmittedDraftToMessage\(submitted, props\.activeWorkspaceRoot\)/s,
+    /const localSubmittedMessage = createMemo<MessageWithParts \| null>\(\(\) => \{[\s\S]*if \(!submitted\) return null;[\s\S]*const renderReplacement = resolvePendingSubmittedRenderReplacement\([\s\S]*if \(renderReplacement\.kind === "show-canonical"\) return null;[\s\S]*projectPendingSubmittedMessage\(submitted, props\.activeWorkspaceRoot\)/s,
     "the immediate local echo should disappear in the same render projection as a unique canonical message",
   );
 
@@ -117,7 +117,7 @@ test("session renders an immediate local echo and synchronously defers to canoni
 
   assert.match(
     viewportSource,
-    /localSubmittedMessage \? \[\.\.\.messages, localSubmittedMessage\] : \[\.\.\.messages\]/,
+    /localSubmittedMessage \? \[\.\.\.messages, localSubmittedMessage\] : messages as T\[\]/,
     "rendered transcript messages should append the local submitted echo while canonical is absent",
   );
 
@@ -215,7 +215,7 @@ test("throttled auto-scroll keeps a trailing bottom anchor while pinned", () => 
 
   assert.match(
     viewportSource,
-    /const now = deps\.now\(\);\s*const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - \(now - lastAutoScrollAt\);\s*if \(nextBehavior === "auto" && remainingMs > 0\) \{\s*if \(trailingAutoScrollTimer === undefined\) \{\s*trailingAutoScrollTimer = window\.setTimeout\(\(\) => \{\s*trailingAutoScrollTimer = undefined;\s*if \(!stickToBottom\(\)\) return;\s*scheduleScrollToLatest\("auto"\);\s*\}, remainingMs\);\s*\}\s*return;\s*\}/s,
+    /const now = deps\.now\(\);\s*const remainingMs = STREAM_SCROLL_MIN_INTERVAL_MS - \(now - lastAutoScrollAt\);\s*if \(nextBehavior === "auto" && remainingMs > 0\) \{\s*if \(trailingAutoScrollTimer === undefined\) \{\s*trailingAutoScrollTimer = window\.setTimeout\(\(\) => untrack\(\(\) => \{\s*trailingAutoScrollTimer = undefined;\s*if \(!stickToBottom\(\)\) return;\s*scheduleScrollToLatest\("auto"\);\s*\}\), remainingMs\);\s*\}\s*return;\s*\}/s,
     "throttled auto-scroll should schedule one trailing scroll while bottom pinning is still active",
   );
 

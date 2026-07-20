@@ -60,7 +60,7 @@ export function useFocusTrap(
 
     const focusInsideDialog = (target: "first" | "last") => {
       const elements = getFocusableElements();
-      const el = target === "first" ? elements[0] : elements[elements.length - 1];
+      const el = target === "first" ? elements.at(0) : elements.at(-1);
       if (el) el.focus();
       else dialogRef?.focus();
     };

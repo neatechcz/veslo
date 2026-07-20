@@ -5,6 +5,7 @@ import { recordSendWorkflowTrace } from "../../lib/send-workflow-trace.js";
 
 type TraceWindow = {
   localStorage: { getItem: (key: string) => string | null };
+  __PILOT__?: Record<string, never>;
   __vesloSendWorkflowTraceEnabled?: boolean;
   __vesloSendWorkflowTrace?: Array<Record<string, unknown>>;
   __vesloSendWorkflowTraceSeq?: number;
@@ -12,8 +13,9 @@ type TraceWindow = {
 };
 
 function withTraceWindow(
-  supportDiagnostics: "0" | "1",
+  supportDiagnostics: "0" | "1" | null,
   run: (target: TraceWindow) => void,
+  options?: { pilot?: boolean },
 ) {
   return () => {
     const root = globalThis as unknown as Record<string, unknown>;
@@ -24,6 +26,7 @@ function withTraceWindow(
         getItem: (key) => key === "veslo.supportDiagnostics" ? supportDiagnostics : null,
       },
       __vesloSendWorkflowTraceEnabled: true,
+      ...(options?.pilot ? { __PILOT__: {} } : {}),
     };
     root.window = target;
 
@@ -56,4 +59,14 @@ test(
 
     assert.equal(target.__vesloSendWorkflowTrace, undefined);
   }),
+);
+
+test(
+  "tauri-pilot records managed runtime traces without enabling developer mode",
+  withTraceWindow(null, (target) => {
+    recordSendWorkflowTrace("test", "pilot:managed-runtime", undefined, { developerMode: false });
+
+    assert.equal(target.__vesloSendWorkflowTrace?.length, 1);
+    assert.equal(target.__vesloSendWorkflowTrace?.[0]?.event, "pilot:managed-runtime");
+  }, { pilot: true }),
 );

@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js";
 
 import type {
   HubSkillCard,
@@ -61,6 +61,7 @@ import {
   type SkillInventorySelectionId,
 } from "../lib/skill-inventory-filters";
 import { isTauriRuntime } from "../utils";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 
 type InstallResult = { ok: boolean; message: string };
 type ActionSkillCard = SkillCard & { mutationTarget: SkillMutationTarget };
@@ -284,8 +285,42 @@ export default function SkillsView(props: SkillsViewProps) {
   const [installingHubSkill, setInstallingHubSkill] = createSignal<string | null>(null);
 
   onMount(() => {
-    props.refreshSkillInventory({ force: true });
-    props.refreshHubSkills();
+    const traceId = `skills-view-${Date.now()}`;
+    const mountedAt = performance.now();
+    const workspaceId = props.activeWorkspaceId;
+    const workspaceType = props.isRemoteWorkspace ? "remote" : "local";
+    const workspaceCount = props.workspaces.length;
+    const refreshSkillInventory = props.refreshSkillInventory;
+    const trace = (event: string, payload?: Record<string, unknown>) =>
+      recordSendWorkflowTrace("skills-view", event, {
+        traceId,
+        workspaceId,
+        workspaceType,
+        workspaceCount,
+        ...payload,
+      });
+    const traceRefresh = (refresh: () => Promise<void>) => {
+      const startedAt = performance.now();
+      trace("skills-view:inventory:start");
+      void refresh().then(
+        () => trace("skills-view:inventory:done", { durationMs: Math.round(performance.now() - startedAt) }),
+        (error: unknown) => trace("skills-view:inventory:error", {
+          durationMs: Math.round(performance.now() - startedAt),
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    };
+
+    trace("skills-view:mount");
+    requestAnimationFrame(() => {
+      trace("skills-view:first-animation-frame", {
+        durationMs: Math.round(performance.now() - mountedAt),
+      });
+    });
+    onCleanup(() => {
+      trace("skills-view:unmount", { durationMs: Math.round(performance.now() - mountedAt) });
+    });
+    traceRefresh(() => Promise.resolve(refreshSkillInventory({ force: true })));
   });
 
   createEffect(() => {
@@ -387,7 +422,7 @@ export default function SkillsView(props: SkillsViewProps) {
     const matchingInstance = instances.find((instance) => instance.id === detail.instance.id);
     const replacementInstance = matchingInstance
       ?? instances.find((instance) => inventoryInstanceLifecycle(instance) === "active")
-      ?? instances[0]
+      ?? instances.at(0)
       ?? null;
 
     return replacementInstance ? { item: matchingItem, instance: replacementInstance } : null;
@@ -773,7 +808,7 @@ export default function SkillsView(props: SkillsViewProps) {
   });
   const bulkPublishDisabledReason = createMemo(() => {
     const selectedRows = selectedInventoryRows();
-    const row = selectedRows[0];
+    const row = selectedRows.at(0);
     const reasonKey = resolveSkillsBulkPublishDisabledReasonKey({
       selectedCount: selectedRows.length,
       selectedPublishable: Boolean(row && isPublishableInventoryInstance(row.instance)),
@@ -856,7 +891,7 @@ export default function SkillsView(props: SkillsViewProps) {
       setToast(disabledReason);
       return;
     }
-    const row = selectedInventoryRows()[0];
+    const row = selectedInventoryRows().at(0);
     if (!row) return;
     openSkillReviewDialog("organization", skillDetailActionForInventoryRow(row), row);
   };
@@ -1179,10 +1214,10 @@ export default function SkillsView(props: SkillsViewProps) {
       return;
     }
 
-    void props.copySkillInstanceToGlobal(target, { deleteSource: true }).then((result) => {
+    void props.copySkillInstanceToGlobal(target, { deleteSource: true }).then((result) => untrack(() => {
       setToast(result.message ?? translate(result.ok ? "skills.moved_to_global" : "skills.failed_save_skill"));
       if (result.ok) props.refreshSkillInventory({ force: true });
-    });
+    }));
   };
 
   const workspaceInstallTargetWorkspaces = createMemo<WorkspaceInfo[]>(() =>

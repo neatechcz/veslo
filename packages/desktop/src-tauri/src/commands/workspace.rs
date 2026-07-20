@@ -227,17 +227,12 @@ fn set_active_workspace(
     Ok(())
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceForgetMode {
+    #[default]
     DetachOnly,
     DeleteLocalData,
-}
-
-impl Default for WorkspaceForgetMode {
-    fn default() -> Self {
-        Self::DetachOnly
-    }
 }
 
 fn cleanup_workspace_local_state(
@@ -636,6 +631,10 @@ pub fn workspace_create(
 }
 
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The desktop IPC command keeps its established remote-workspace contract."
+)]
 pub fn workspace_create_remote(
     app: tauri::AppHandle,
     base_url: String,
@@ -737,6 +736,10 @@ pub fn workspace_create_remote(
 }
 
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The desktop IPC command keeps its established remote-workspace contract."
+)]
 pub fn workspace_update_remote(
     app: tauri::AppHandle,
     workspace_id: String,
@@ -1167,9 +1170,9 @@ fn should_exclude(path: &Path) -> bool {
     is_secret_name(name)
 }
 
-fn collect_workspace_entries(
-    workspace_root: &Path,
-) -> Result<(Vec<(PathBuf, String)>, Vec<String>), String> {
+type WorkspaceConfigEntries = (Vec<(PathBuf, String)>, Vec<String>);
+
+fn collect_workspace_entries(workspace_root: &Path) -> Result<WorkspaceConfigEntries, String> {
     let mut entries: Vec<(PathBuf, String)> = Vec::new();
     let mut excluded: Vec<String> = Vec::new();
 
@@ -1339,11 +1342,13 @@ pub fn workspace_import_config(
             continue;
         }
         let entry_path = Path::new(&name);
-        if entry_path.components().any(|component| match component {
-            std::path::Component::ParentDir
-            | std::path::Component::RootDir
-            | std::path::Component::Prefix(_) => true,
-            _ => false,
+        if entry_path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
         }) {
             return Err("Archive contains an unsafe path".to_string());
         }

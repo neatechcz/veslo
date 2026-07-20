@@ -17,6 +17,7 @@ import type {
   VesloSessionLatestRunArtifacts,
   VesloSessionTranscriptPrefetchInput,
   VesloSessionTranscriptPrefetchResult,
+  VesloSessionTranscriptReadOptions,
   VesloSessionTranscriptRecoveryInput,
   VesloSessionTranscriptRecoveryResult,
   VesloSessionTranscriptSnapshot,
@@ -50,7 +51,7 @@ export type ConversationsClientContext = {
   };
 };
 
-type TranscriptOptions = {
+type TranscriptOptions = VesloSessionTranscriptReadOptions & {
   limit?: number;
   directory?: string | null;
 };
@@ -278,10 +279,20 @@ export function createConversationsClient(context: ConversationsClientContext) {
       search.set("limit", String(options?.limit ?? 140));
       const directoryRaw = options?.directory?.trim() ?? "";
       if (directoryRaw) search.set("directory", directoryRaw);
+      const includeProjection = options?.includeLatestRunArtifacts === true && Boolean(options.caller);
+      if (includeProjection) {
+        search.set("include", "latest-run-artifacts");
+        search.set("caller", options!.caller!);
+      }
       return requestJson<VesloSessionTranscriptSnapshot>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript?${search.toString()}`,
-        { token, hostToken, timeoutMs: timeouts.sessionTranscript },
+        {
+          token,
+          hostToken,
+          timeoutMs: timeouts.sessionTranscript,
+          extraHeaders: sendTraceHeaders(options),
+        },
       );
     },
 

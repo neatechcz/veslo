@@ -1,4 +1,4 @@
-import { createContext, useContext, type ParentProps } from "solid-js";
+import { createContext, untrack, useContext, type ParentProps } from "solid-js";
 import type { SetStoreFunction, Store } from "solid-js/store";
 
 import { useGlobalSync, type WorkspaceState } from "./global-sync";
@@ -13,10 +13,11 @@ const SyncContext = createContext<SyncContextValue | undefined>(undefined);
 
 export function SyncProvider(props: ParentProps & { directory: string }) {
   const globalSync = useGlobalSync();
-  const [store, setStore] = globalSync.child(props.directory);
+  const directory = untrack(() => props.directory);
+  const [store, setStore] = globalSync.child(directory);
 
   const value: SyncContextValue = {
-    directory: props.directory,
+    directory,
     data: store,
     set: setStore,
   };

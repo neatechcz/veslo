@@ -16,7 +16,11 @@ import {
   type LifecycleRunStatusResult,
   type OrchestratorLifecycleClient,
 } from "../orchestrator-lifecycle-client.js";
-import type { ConversationRunQueueItem, ConversationRunQueueStore } from "../conversation-run-queue-store.js";
+import type {
+  ConversationRunQueueItem,
+  ConversationRunQueueStore,
+  ConversationWorkspaceRunReservation,
+} from "../conversation-run-queue-store.js";
 import {
   setConversationRunLifecycleControllerFactoryForTests,
   startServer,
@@ -155,6 +159,7 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
 class QueueHarness implements ConversationRunQueueStore {
   private nextId = 1;
   readonly items: ConversationRunQueueItem[] = [];
+  readonly reservations = new Map<string, ConversationWorkspaceRunReservation>();
   readonly enqueueCalls: Array<Parameters<ConversationRunQueueStore["enqueue"]>[0]> = [];
   lostClaimQueueItemId: string | null = null;
 
@@ -306,6 +311,39 @@ class QueueHarness implements ConversationRunQueueStore {
     }
     return [...keys.values()];
   }
+
+  reserveWorkspaceRun(input: Parameters<ConversationRunQueueStore["reserveWorkspaceRun"]>[0]) {
+    const key = `${input.workspaceId}\0${input.runId}`;
+    const previous = this.reservations.get(key);
+    const timestamp = Date.now();
+    const reservation: ConversationWorkspaceRunReservation = {
+      workspaceId: input.workspaceId,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      state: input.state ?? "starting",
+      createdAt: previous?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+    };
+    this.reservations.set(key, reservation);
+    return reservation;
+  }
+
+  activateWorkspaceRun(workspaceId: string, runId: string) {
+    const key = `${workspaceId}\0${runId}`;
+    const previous = this.reservations.get(key);
+    if (!previous) return null;
+    const reservation = { ...previous, state: "active" as const, updatedAt: Date.now() };
+    this.reservations.set(key, reservation);
+    return reservation;
+  }
+
+  releaseWorkspaceRun(workspaceId: string, runId: string) {
+    return this.reservations.delete(`${workspaceId}\0${runId}`);
+  }
+
+  listWorkspaceRunReservations() {
+    return [...this.reservations.values()];
+  }
 }
 
 function createRunTrace() {
@@ -349,7 +387,10 @@ function submitInput(overrides: Partial<ConversationRunLifecycleSubmitInput> = {
   };
 }
 
-function controllerHarness(options?: { ingestTerminalTranscript?: (input: { runId: string }) => Promise<void> }) {
+function controllerHarness(options?: {
+  ingestTerminalTranscript?: (input: { runId: string }) => Promise<void>;
+  withLifecycle?: boolean;
+}) {
   const lifecycle = new LifecycleHarness();
   const queue = new QueueHarness();
   const timers = new TimerHarness();
@@ -382,7 +423,7 @@ function controllerHarness(options?: { ingestTerminalTranscript?: (input: { runI
     delayMs: number | undefined;
   }> = [];
   const controller = createConversationRunLifecycleController({
-    lifecycleClient: lifecycle,
+    lifecycleClient: options?.withLifecycle === false ? null : lifecycle,
     queueStore: queue,
     timers: timers.port,
     resolveWorkspace: (workspaceId) => workspaces.find((workspace) => workspace.id === workspaceId) ?? null,
@@ -612,6 +653,9 @@ test("server stop calls the lifecycle controller stop hook", async () => {
     },
     abortRun: async () => {
       throw new Error("abortRun should not be called by the shutdown fixture");
+    },
+    reloadWorkspaceEngineIfIdle: async () => {
+      throw new Error("reloadWorkspaceEngineIfIdle should not be called by the shutdown fixture");
     },
     scheduleQueueDrain: () => {
       throw new Error("scheduleQueueDrain should not be called by the shutdown fixture");
@@ -959,6 +1003,68 @@ test("submitRun provider-start timeout records diagnostics without failing, abor
   expect(typeof (providerWatchCalls[0] as { startedAt?: unknown }).startedAt).toBe("number");
   expect(abortCalls).toEqual([]);
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
+});
+
+test("guarded workspace reload blocks an admitted run and succeeds after terminal release", async () => {
+  const { controller, lifecycle } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  let reloads = 0;
+
+  await controller.submitRun(submitInput());
+  const blocked = await controller.reloadWorkspaceEngineIfIdle({
+    workspaceId: "ws_1",
+    reload: async () => {
+      reloads += 1;
+    },
+  });
+  expect(blocked).toEqual({ kind: "blocked", reason: "active-runs" });
+  expect(reloads).toBe(0);
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: submitInput().workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "test-terminal-release",
+  });
+  const reloaded = await controller.reloadWorkspaceEngineIfIdle({
+    workspaceId: "ws_1",
+    reload: async () => {
+      reloads += 1;
+    },
+  });
+  expect(reloaded).toEqual({ kind: "reloaded" });
+  expect(reloads).toBe(1);
+});
+
+test("terminal release is idempotent for guarded workspace reload", async () => {
+  const { controller, lifecycle } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  await controller.submitRun(submitInput());
+  const terminal = {
+    workspace: submitInput().workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "test-terminal-release",
+  };
+
+  await controller.reconcileConversationRunLifecycle(terminal);
+  await controller.reconcileConversationRunLifecycle(terminal);
+  const result = await controller.reloadWorkspaceEngineIfIdle({
+    workspaceId: "ws_1",
+    reload: async () => undefined,
+  });
+  expect(result).toEqual({ kind: "reloaded" });
+});
+
+test("submitRun retains managed-AI correlation in direct start mode until the runtime-owner TTL", async () => {
+  const { controller, activeGatewayCalls, providerWatchCalls } = controllerHarness({ withLifecycle: false });
+
+  const result = await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
+
+  expect(result.httpStatus).toBe(200);
+  expect(result.payload.status).toBe("submitted");
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
+  expect(providerWatchCalls).toEqual([]);
 });
 
 test("submitRun keeps active gateway context after provider start and clears it on terminal lifecycle reconcile", async () => {

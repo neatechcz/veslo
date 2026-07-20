@@ -62,6 +62,7 @@ export type SessionLifecycleRecoveryControllerOptions = {
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<SessionLifecycleRecoveryStatus | null>;
   isAcceptedRunVisible?: (scope: SessionLifecycleRecoveryScope) => boolean;
+  isConversationRunActive?: (scope: SessionLifecycleRecoveryScope) => boolean;
   onConversationRunStatus?: (
     scope: SessionLifecycleRecoveryScope,
     status: SessionLifecycleRecoveryStatus | null,
@@ -81,11 +82,26 @@ export type SessionLifecycleRecoveryControllerOptions = {
     sessionId: string;
     directory?: string | null;
     expectedRunId?: string | null;
+    diagnosticTraceId?: string | null;
   }) => Promise<VesloSessionTranscriptSnapshot | null>;
   recoverAcceptedConversationTranscript?: (
     scope: SessionLifecycleRecoveryScope,
   ) => Promise<VesloSessionTranscriptSnapshot | null>;
-  hydrateConversationTranscript?: (snapshot: VesloSessionTranscriptSnapshot) => void;
+  currentSelectionVersion?: () => number;
+  reserveTranscriptProjection?: (
+    scope: SessionLifecycleRecoveryScope,
+    selectionVersion: number,
+  ) => void;
+  publishTranscriptProjection?: (
+    scope: SessionLifecycleRecoveryScope,
+    snapshot: VesloSessionTranscriptSnapshot,
+    selectionVersion: number,
+  ) => boolean | void;
+  hydrateConversationTranscript?: (
+    snapshot: VesloSessionTranscriptSnapshot,
+    scope: SessionLifecycleRecoveryScope,
+  ) => void;
+  onTerminalTranscriptRecoverySettled?: (scope: SessionLifecycleRecoveryScope) => void;
   diagnosticContext?: () => {
     appWorkspaceId?: string | null;
     connectionSnapshot?: Record<string, string | null | undefined> | null;
@@ -156,9 +172,23 @@ const recoveryKey = (scope: SessionLifecycleRecoveryScope) => {
   return workspaceId && conversationId && runId ? `${workspaceId}\0${conversationId}\0${runId}` : "";
 };
 
+const exactStatusMatchesScope = (
+  scope: SessionLifecycleRecoveryScope,
+  status: SessionLifecycleRecoveryStatus,
+) => {
+  const requestedRunId = normalize(scope.runId);
+  return requestedRunId === "latest" || (Boolean(requestedRunId) && normalize(status.runId) === requestedRunId);
+};
+
 export function createSessionLifecycleRecoveryController(
   options: SessionLifecycleRecoveryControllerOptions,
 ) {
+  // A conversation id identifies the durable Veslo conversation, not a separate
+  // OpenCode run. Status aliases remain useful for transcript and route recovery,
+  // but busy ownership must have exactly one runtime identity.
+  const busySessionIdForScope = (scope: SessionLifecycleRecoveryScope) =>
+    normalize(scope.opencodeSessionId) || normalize(scope.sessionId);
+
   const initialDelayMs = Math.max(0, options.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS);
   const pollMs = Math.max(250, options.pollMs ?? DEFAULT_POLL_MS);
   const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
@@ -187,7 +217,7 @@ export function createSessionLifecycleRecoveryController(
     scope: SessionLifecycleRecoveryScope;
     status: SessionLifecycleRecoveryStatus;
     generation: number;
-    outcome: "pending" | "hydrated" | "unavailable";
+    outcome: "pending" | "hydrated" | "unavailable" | "discarded";
     inFlight: boolean;
     automaticRetryUsed: boolean;
     retryTimer: unknown | null;
@@ -196,14 +226,16 @@ export function createSessionLifecycleRecoveryController(
   const watches = new Map<string, Watch>();
   const exhaustedWatches = new Map<string, Watch>();
   const latestProbeScopes = new Set<string>();
-  const currentRunKeyByConversation = new Map<string, string>();
   const admittedRunKeys = new Set<string>();
   const settledRunKeys = new Set<string>();
   const terminalTranscriptRecoveries = new Map<string, TerminalTranscriptRecovery>();
   let disposed = false;
 
+  // This key is only for deduplicating a best-effort latest-run probe. It must
+  // never decide which exact run owns a watch or terminal hydration.
   const conversationKey = (scope: SessionLifecycleRecoveryScope) =>
     `${normalize(scope.workspaceId)}\0${normalize(scope.conversationId)}`;
+
 
   const trace = (event: string, payload?: Record<string, unknown>) => {
     options.trace?.(event, payload);
@@ -286,21 +318,6 @@ export function createSessionLifecycleRecoveryController(
     });
   };
 
-  const clearReplacedConversationWatches = (scope: SessionLifecycleRecoveryScope, keepKey: string) => {
-    const targetConversationKey = conversationKey(scope);
-    for (const [key, watch] of [...watches, ...exhaustedWatches]) {
-      if (key === keepKey || conversationKey(watch.scope) !== targetConversationKey) continue;
-      if (watches.has(key)) clearWatch(key);
-      exhaustedWatches.delete(key);
-      admittedRunKeys.delete(key);
-    }
-    for (const [key, recovery] of terminalTranscriptRecoveries) {
-      if (key === keepKey || conversationKey(recovery.scope) !== targetConversationKey) continue;
-      clearTerminalHydrationRecovery(key);
-    }
-    currentRunKeyByConversation.set(targetConversationKey, keepKey);
-  };
-
   const scheduleWatch = (key: string, delayMs: number) => {
     const watch = watches.get(key);
     if (!watch || watch.timer) return;
@@ -318,28 +335,47 @@ export function createSessionLifecycleRecoveryController(
     source: "watch" | "latest-probe",
     admitted = false,
     generation = 1,
+    terminalResult?: SessionLifecycleRecoveryStatus,
   ) => {
+    const key = recoveryKey(scope);
+    const existingTerminalRecovery = key ? terminalTranscriptRecoveries.get(key) : undefined;
+    const ownsPresentation = !options.isConversationRunActive || options.isConversationRunActive(scope);
+    if (!ownsPresentation && !existingTerminalRecovery) {
+      traceForScope("session-lifecycle-recovery:terminal-non-owner", scope, generation, {
+        status,
+        outcome: "terminal-non-owner-ignored-for-presentation",
+      });
+      return;
+    }
     const workspaceId = normalize(scope.workspaceId);
     const sessionIds = unique([
       scope.sessionId,
       scope.opencodeSessionId,
       scope.conversationId,
     ]);
-    for (const sessionId of sessionIds) {
-      options.setSessionStatusForWorkspace(sessionId, "idle", workspaceId);
-      options.notifySessionBusy(sessionId, "idle", workspaceId);
-    }
-
-    const selectedSessionId = normalize(options.selectedSessionId());
-    const selectedRun = Boolean(selectedSessionId && sessionIds.includes(selectedSessionId));
-    const transcriptSessionId = normalize(scope.opencodeSessionId) || normalize(scope.sessionId);
-    const key = recoveryKey(scope);
-    const terminalStatus: SessionLifecycleRecoveryStatus = {
+    const terminalStatus: SessionLifecycleRecoveryStatus = terminalResult ?? existingTerminalRecovery?.status ?? {
       runId: scope.runId,
       status,
       stale: false,
       clientMessageId: scope.clientMessageId ?? null,
     };
+    if (ownsPresentation && !existingTerminalRecovery) {
+      for (const sessionId of sessionIds) {
+        options.setSessionStatusForWorkspace(sessionId, "idle", workspaceId);
+      }
+      const busySessionId = busySessionIdForScope(scope);
+      if (busySessionId) options.notifySessionBusy(busySessionId, "idle", workspaceId);
+      options.onConversationRunTerminal?.(scope, terminalStatus);
+    } else if (!ownsPresentation) {
+      traceForScope("session-lifecycle-recovery:terminal-non-owner", scope, generation, {
+        status,
+        outcome: "terminal-hydration-retry-without-presentation-ownership",
+      });
+    }
+
+    const selectedSessionId = normalize(options.selectedSessionId());
+    const selectedRun = Boolean(selectedSessionId && sessionIds.includes(selectedSessionId));
+    const transcriptSessionId = normalize(scope.opencodeSessionId) || normalize(scope.sessionId);
     const scheduleTerminalTranscriptRetry = (outcome: "terminal-transcript-unavailable" | "terminal-transcript-error") => {
       if (!key) return;
       const recovery = terminalTranscriptRecoveries.get(key);
@@ -350,12 +386,13 @@ export function createSessionLifecycleRecoveryController(
           outcome: "terminal-transcript-retry-exhausted",
         });
         publishTranscriptUnavailable(recovery);
+        options.onTerminalTranscriptRecoverySettled?.(scope);
         return;
       }
       recovery.automaticRetryUsed = true;
       const timer = setTimer(() => {
         recovery.retryTimer = null;
-        if (disposed || currentRunKeyByConversation.get(conversationKey(scope)) !== key) {
+        if (disposed || terminalTranscriptRecoveries.get(key) !== recovery) {
           return;
         }
         if (terminalTranscriptRecoveries.get(key) !== recovery || recovery.generation !== generation) {
@@ -384,9 +421,14 @@ export function createSessionLifecycleRecoveryController(
             sessionId: transcriptSessionId,
             directory: scope.directory,
             expectedRunId: scope.runId,
+            ...(scope.diagnosticTraceId?.trim() ? { diagnosticTraceId: scope.diagnosticTraceId.trim() } : {}),
           })
         : null;
     if (shouldHydrate && key && recoverTranscript) {
+      const selectionVersion = options.currentSelectionVersion?.() ?? 0;
+      if (selectedRun) {
+        options.reserveTranscriptProjection?.(scope, selectionVersion);
+      }
       const existingRecovery = terminalTranscriptRecoveries.get(key);
       const recovery = existingRecovery?.generation === generation
         ? existingRecovery
@@ -402,13 +444,17 @@ export function createSessionLifecycleRecoveryController(
       recovery.scope = scope;
       recovery.status = terminalStatus;
       terminalTranscriptRecoveries.set(key, recovery);
-      if (!recovery.inFlight && !recovery.retryTimer && recovery.outcome !== "hydrated") {
+      if (
+        !recovery.inFlight &&
+        !recovery.retryTimer &&
+        recovery.outcome !== "hydrated" &&
+        recovery.outcome !== "discarded"
+      ) {
         recovery.inFlight = true;
         void recoverTranscript().then((snapshot) => {
           const currentRecovery = terminalTranscriptRecoveries.get(key);
           if (
             disposed ||
-            currentRunKeyByConversation.get(conversationKey(scope)) !== key ||
             currentRecovery !== recovery ||
             recovery.generation !== generation
           ) {
@@ -424,17 +470,40 @@ export function createSessionLifecycleRecoveryController(
             scheduleTerminalTranscriptRetry("terminal-transcript-unavailable");
             return;
           }
-          options.hydrateConversationTranscript?.(retargetSnapshotForUiSession(snapshot, scope.sessionId));
+          const projectionPublished = options.publishTranscriptProjection?.(scope, snapshot, selectionVersion);
+          const selectedRunStillVisible = isAcceptedRunVisible(scope);
+          const selectionStillOwnsSnapshot =
+            selectedRun &&
+            selectedRunStillVisible &&
+            (options.currentSelectionVersion?.() ?? selectionVersion) === selectionVersion;
+          const shouldHydrateSnapshot =
+            (!selectedRun && !selectedRunStillVisible) ||
+            (selectionStillOwnsSnapshot && projectionPublished !== false);
+          if (shouldHydrateSnapshot) {
+            options.hydrateConversationTranscript?.(
+              retargetSnapshotForUiSession(snapshot, scope.sessionId),
+              scope,
+            );
+          } else {
+            recovery.inFlight = false;
+            recovery.outcome = "discarded";
+            traceForScope("session-lifecycle-recovery:terminal-transcript-discarded", scope, generation, {
+              outcome: "terminal-transcript-discarded",
+              reason: selectionStillOwnsSnapshot ? "projection-rejected" : "selection-changed",
+            });
+            options.onTerminalTranscriptRecoverySettled?.(scope);
+            return;
+          }
           recovery.inFlight = false;
           recovery.outcome = "hydrated";
           traceForScope("session-lifecycle-recovery:terminal-transcript-hydrated", scope, generation, {
             outcome: "terminal-transcript-hydrated",
           });
+          options.onTerminalTranscriptRecoverySettled?.(scope);
         }).catch((error) => {
           const currentRecovery = terminalTranscriptRecoveries.get(key);
           if (
             disposed ||
-            currentRunKeyByConversation.get(conversationKey(scope)) !== key ||
             currentRecovery !== recovery ||
             recovery.generation !== generation
           ) {
@@ -450,6 +519,8 @@ export function createSessionLifecycleRecoveryController(
           scheduleTerminalTranscriptRetry("terminal-transcript-error");
         });
       }
+    } else {
+      options.onTerminalTranscriptRecoverySettled?.(scope);
     }
 
     traceForScope("session-lifecycle-recovery:terminal", scope, generation, {
@@ -460,18 +531,8 @@ export function createSessionLifecycleRecoveryController(
   };
 
   const retainQueuedRun = (scope: SessionLifecycleRecoveryScope, generation = 1) => {
-    const workspaceId = normalize(scope.workspaceId);
-    const sessionIds = unique([
-      scope.sessionId,
-      scope.opencodeSessionId,
-      scope.conversationId,
-    ]);
-    for (const sessionId of sessionIds) {
-      options.setSessionStatusForWorkspace(sessionId, "submitted", workspaceId);
-      options.notifySessionBusy(sessionId, "submitted", workspaceId);
-    }
     traceForScope("session-lifecycle-recovery:queued", scope, generation, {
-      sessionIds,
+      queueOwnership: "unarmed",
     });
   };
 
@@ -536,6 +597,14 @@ export function createSessionLifecycleRecoveryController(
       return;
     }
 
+    if (!exactStatusMatchesScope(watch.scope, recoveredStatus)) {
+      traceForScope("session-lifecycle-recovery:ignored-run-mismatch", watch.scope, watch.generation, {
+        outcome: "exact-status-run-mismatch",
+        returnedRunId: normalize(recoveredStatus.runId) || null,
+      });
+      return;
+    }
+
     const recoveredTerminal = recoveredStatus.stale !== true &&
       TERMINAL_LIFECYCLE_STATUSES.has(recoveredStatus.status);
     traceForScope("session-lifecycle-recovery:foreground-recovery-status", watch.scope, watch.generation, {
@@ -549,13 +618,13 @@ export function createSessionLifecycleRecoveryController(
     if (recoveredStatus.status === "queued") retainQueuedRun(watch.scope, watch.generation);
     if (recoveredTerminal) {
       settledRunKeys.add(key);
-      options.onConversationRunTerminal?.(watch.scope, recoveredStatus);
       recoverTerminalRun(
         watch.scope,
         recoveredStatus.status,
         "watch",
         watch.admitted,
         watch.generation,
+        recoveredStatus,
       );
       clearWatch(key, { clearDiagnostic: false });
     }
@@ -591,6 +660,14 @@ export function createSessionLifecycleRecoveryController(
         attempt: watch.attempts,
         durationMs: Date.now() - pollStartedAt,
       });
+      if (status && !exactStatusMatchesScope(watch.scope, status)) {
+        traceForScope("session-lifecycle-recovery:ignored-run-mismatch", watch.scope, watch.generation, {
+          outcome: "exact-status-run-mismatch",
+          returnedRunId: normalize(status.runId) || null,
+        });
+        scheduleWatch(key, pollMs);
+        return;
+      }
       const terminal = Boolean(status && status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status));
       if (!status) {
         traceForScope("session-lifecycle-recovery:status-unavailable", watch.scope, watch.generation, {
@@ -608,8 +685,7 @@ export function createSessionLifecycleRecoveryController(
       }
       if (terminal && status) {
         settledRunKeys.add(key);
-        options.onConversationRunTerminal?.(watch.scope, status);
-        recoverTerminalRun(watch.scope, status.status, "watch", watch.admitted, watch.generation);
+        recoverTerminalRun(watch.scope, status.status, "watch", watch.admitted, watch.generation, status);
         clearWatch(key, { clearDiagnostic: false });
         return;
       }
@@ -665,15 +741,6 @@ export function createSessionLifecycleRecoveryController(
       if (key) desired.set(key, scope);
     }
 
-    for (const [key, watch] of watches) {
-      const replacement = [...desired.values()].some((next) =>
-        next.workspaceId === watch.scope.workspaceId &&
-        next.conversationId === watch.scope.conversationId &&
-        next.runId !== watch.scope.runId
-      );
-      if (replacement) clearWatch(key);
-    }
-
     for (const [key, scope] of desired) {
       const existing = watches.get(key);
       if (existing) {
@@ -693,7 +760,6 @@ export function createSessionLifecycleRecoveryController(
         foregroundRecoveryAttemptedGeneration: null,
         lastStatus: null,
       });
-      clearReplacedConversationWatches(scope, key);
       traceForScope("session-lifecycle-recovery:watch", scope, 1, {
         outcome: "watch-started",
       });
@@ -718,12 +784,10 @@ export function createSessionLifecycleRecoveryController(
       const runId = normalize(status.runId);
       if (!runId) return true;
       const resolvedScope = { ...scope, runId };
-      currentRunKeyByConversation.set(conversationKey(resolvedScope), recoveryKey(resolvedScope));
       const terminal = status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status);
       options.onConversationRunStatus?.(resolvedScope, status);
       if (terminal) {
-        options.onConversationRunTerminal?.(resolvedScope, status);
-        recoverTerminalRun(resolvedScope, status.status, "latest-probe", false, 1);
+        recoverTerminalRun(resolvedScope, status.status, "latest-probe", false, 1, status);
         return true;
       }
       const key = recoveryKey(resolvedScope);
@@ -738,7 +802,6 @@ export function createSessionLifecycleRecoveryController(
           foregroundRecoveryAttemptedGeneration: null,
           lastStatus: status,
         });
-        clearReplacedConversationWatches(resolvedScope, key);
         scheduleWatch(key, pollMs);
       }
       return true;
@@ -770,6 +833,42 @@ export function createSessionLifecycleRecoveryController(
   };
 
   return {
+    watchQueuedConversationRun(input: AcceptedConversationRunInput) {
+      const scope: SessionLifecycleRecoveryScope = {
+        ...input,
+        sessionId: normalize(input.sessionId),
+        workspaceId: normalize(input.workspaceId),
+        conversationId: normalize(input.conversationId),
+        opencodeSessionId: normalize(input.opencodeSessionId) || null,
+        directory: normalize(input.directory) || null,
+        runId: normalize(input.runId),
+        clientMessageId: normalize(input.clientMessageId),
+        diagnosticTraceId: normalize(input.diagnosticTraceId) || null,
+      };
+      const key = recoveryKey(scope);
+      if (!key || !scope.sessionId || !scope.clientMessageId) return false;
+      if (settledRunKeys.has(key)) return true;
+      if (!watches.has(key) && !exhaustedWatches.has(key)) {
+        watches.set(key, {
+          scope,
+          generation: 1,
+          attempts: 0,
+          inFlight: false,
+          timer: null,
+          admitted: false,
+          foregroundRecoveryAttemptedGeneration: null,
+          lastStatus: {
+            runId: scope.runId,
+            status: "queued",
+            stale: false,
+            clientMessageId: scope.clientMessageId,
+          },
+        });
+      }
+      retainQueuedRun(scope);
+      void pollWatch(key, true);
+      return true;
+    },
     admitAcceptedConversationRun(input: AcceptedConversationRunInput) {
       const scope: SessionLifecycleRecoveryScope = {
         ...input,
@@ -784,7 +883,6 @@ export function createSessionLifecycleRecoveryController(
       };
       const key = recoveryKey(scope);
       if (!key || !scope.sessionId || !scope.clientMessageId) return false;
-      clearReplacedConversationWatches(scope, key);
       if (settledRunKeys.has(key)) return true;
 
       const existingWatch = watches.get(key) ?? exhaustedWatches.get(key);
@@ -818,8 +916,9 @@ export function createSessionLifecycleRecoveryController(
         const workspaceId = normalize(scope.workspaceId);
         for (const sessionId of unique([scope.sessionId, scope.opencodeSessionId, scope.conversationId])) {
           options.setSessionStatusForWorkspace(sessionId, admittedStatus.status, workspaceId);
-          options.notifySessionBusy(sessionId, admittedStatus.status, workspaceId);
         }
+        const busySessionId = busySessionIdForScope(scope);
+        if (busySessionId) options.notifySessionBusy(busySessionId, admittedStatus.status, workspaceId);
         options.onConversationRunStatus?.(scope, admittedStatus);
         traceForScope("session-lifecycle-recovery:admitted", scope, existingWatch.generation, {
           outcome: "accepted-run-promoted-existing-watch",
@@ -852,8 +951,9 @@ export function createSessionLifecycleRecoveryController(
       const workspaceId = normalize(scope.workspaceId);
       for (const sessionId of unique([scope.sessionId, scope.opencodeSessionId, scope.conversationId])) {
         options.setSessionStatusForWorkspace(sessionId, "submitted", workspaceId);
-        options.notifySessionBusy(sessionId, "submitted", workspaceId);
       }
+      const busySessionId = busySessionIdForScope(scope);
+      if (busySessionId) options.notifySessionBusy(busySessionId, "submitted", workspaceId);
       options.onConversationRunStatus?.(scope, submittedStatus);
       traceForScope("session-lifecycle-recovery:admitted", scope, 1, {
         outcome: "accepted-run-admitted",
@@ -894,7 +994,6 @@ export function createSessionLifecycleRecoveryController(
           foregroundRecoveryAttemptedGeneration: null,
           lastStatus: null,
         });
-        clearReplacedConversationWatches(scope, key);
         traceForScope("session-lifecycle-recovery:watch", scope, 1, {
           source: eventType ?? "observation",
           outcome: "watch-started",
@@ -993,7 +1092,6 @@ export function createSessionLifecycleRecoveryController(
           recovery.scope.conversationId,
         ]);
         if (!aliases.includes(targetSessionId)) continue;
-        if (currentRunKeyByConversation.get(conversationKey(recovery.scope)) !== key) continue;
         if (recovery.retryTimer) clearTimer(recovery.retryTimer);
         recovery.retryTimer = null;
         recovery.inFlight = false;

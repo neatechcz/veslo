@@ -1,10 +1,12 @@
-import { createEffect, createSignal, type Accessor } from "solid-js";
+import { createEffect, createSignal, untrack, type Accessor } from "solid-js";
 
 import {
   openPendingDraftFromDirectorySelection,
   openPendingDraftWithWorkspaceActivation,
 } from "../pages/session-navigation";
-import { setSessionComposerDraft } from "../pages/session-composer-drafts";
+import {
+  type ComposerDraftStateCommands,
+} from "../pages/session-composer-drafts";
 import {
   GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
   isGlobalUnpublishedPendingDraftSummary,
@@ -51,10 +53,6 @@ type PendingDraftWorkspace = {
   ) => Promise<{ id: string } | null> | { id: string } | null;
 };
 
-type SetComposerDraftBySessionId = (
-  updater: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
-) => void;
-
 export type PendingSessionDraftControllerDeps = {
   isTauriRuntime: () => boolean;
   storage?: PendingDraftStorage | null;
@@ -66,7 +64,7 @@ export type PendingSessionDraftControllerDeps = {
   pendingSessionDraftsDelete: (draftId: string) => Promise<boolean>;
   workspace: PendingDraftWorkspace;
   publishRegisteredWorkspaceToSidebar: (workspaceId: string) => Promise<void> | void;
-  setComposerDraftBySessionId: SetComposerDraftBySessionId;
+  composerDraftCommands: Pick<ComposerDraftStateCommands, "writeDraft">;
   clearDisplayedSession?: () => void;
   setView: (view: View) => void;
   setError: (message: string | null) => void;
@@ -202,7 +200,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
   };
 
   const restorePendingDraftComposer = (storageKey: string, draft: ComposerDraft) => {
-    deps.setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey }, draft));
+    deps.composerDraftCommands.writeDraft(storageKey, draft);
   };
 
   const openPendingDraftSession = (
@@ -286,7 +284,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
       const generation = ++pendingDraftPersistenceGeneration;
 
       pendingDraftPersistenceQueue = pendingDraftPersistenceQueue
-        .then(async () => {
+        .then(() => untrack(() => (async () => {
           if (pendingDraftPersistenceGeneration !== generation) return;
           const activePendingDraftKeyValue = activePendingDraftKey();
           const activePendingDraftId = activePendingDraftMeta()?.id.trim() || "";
@@ -303,7 +301,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
             updatedAt: Date.now(),
             composer: persistedDraft,
           });
-        })
+        })()))
         .catch((error) => {
           deps.reportError(error, "pendingDrafts.persist");
         });
@@ -528,7 +526,7 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
         }
       }
 
-      const existingGlobalPendingDraft = pendingDrafts[0] ?? null;
+      const existingGlobalPendingDraft = pendingDrafts.at(0) ?? null;
       if (existingGlobalPendingDraft) {
         const loadedGlobalDraft = await deps.pendingSessionDraftsGet(existingGlobalPendingDraft.id);
         if (loadedGlobalDraft) {

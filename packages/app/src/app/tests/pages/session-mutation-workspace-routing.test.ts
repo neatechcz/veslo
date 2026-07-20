@@ -16,26 +16,35 @@ const sourceBetween = (source: string, startNeedle: string, endNeedle: string) =
   return source.slice(start, end);
 };
 
-test("rename routes through the selected session workspace scope", () => {
+test("rename routes through the authoritative send-target workspace scope", () => {
   const source = sourceBetween(
     mutationWorkflowSource,
     "  async function renameSessionTitle(",
     "  async function deleteSessionById(",
   );
 
-  assert.match(source, /deps\.resolveSelectedSessionBrowseScope\(sessionID\)\?\.workspaceId/);
-  assert.match(source, /await deps\.renameSession\(sessionID, trimmed, targetWorkspaceId \|\| undefined\)/);
+  assert.match(
+    source,
+    /const targetWorkspaceId = deps\.resolveSendTargetWorkspaceScope\(sessionID\)\?\.workspaceId\?\.trim\(\) \|\| "";/,
+  );
+  assert.match(source, /await deps\.renameSession\(sessionID, trimmed, targetWorkspaceId\)/);
+  assert.doesNotMatch(source, /deps\.resolveSelectedSessionBrowseScope\(sessionID\)/);
   assert.doesNotMatch(source, /await deps\.renameSession\(sessionID, trimmed\);/);
 });
 
-test("delete uses the explicit or selected session workspace client", () => {
+test("delete uses the explicit or authoritative send-target workspace client", () => {
   const source = sourceBetween(
     mutationWorkflowSource,
     "  async function deleteSessionById(",
     "  async function listAgents()",
   );
 
-  assert.match(source, /deps\.resolveSelectedSessionBrowseScope\(trimmed\)\?\.workspaceId/);
+  assert.match(source, /const sendTargetWorkspace = deps\.resolveSendTargetWorkspaceScope\(trimmed\);/);
+  assert.match(
+    source,
+    /const workspaceId =[\s\S]*\(workspaceID \?\? ""\)\.trim\(\) \|\|[\s\S]*sendTargetWorkspace\?\.workspaceId\?\.trim\(\) \|\|/,
+  );
   assert.match(source, /const c = deps\.routedClient\(workspaceId\);/);
+  assert.doesNotMatch(source, /deps\.resolveSelectedSessionBrowseScope\(trimmed\)/);
   assert.doesNotMatch(source, /const c = deps\.routedClient\(\);/);
 });

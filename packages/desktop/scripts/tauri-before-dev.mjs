@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -14,6 +14,8 @@ const hostOverride = process.env.VESLO_DEV_HOST?.trim() || null;
 const port = readPort();
 const baseUrls = (hostOverride ? [hostOverride] : ["127.0.0.1", "localhost"]).map((host) => `http://${host}:${port}`);
 const VESLO_DEV_SERVER_MARKER = 'name="veslo-dev-server" content="1"';
+const repoRoot = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../.."));
+const expectedDevServerIdentity = Buffer.from(repoRoot).toString("base64url");
 
 const fetchWithTimeout = async (url, { timeoutMs = 1200 } = {}) => {
   const controller = new AbortController();
@@ -97,10 +99,10 @@ const portHasHttpServer = async (baseUrl) => {
   }
 };
 
-const looksLikeVesloDevServer = async (baseUrl) => {
+const inspectVesloDevServer = async (baseUrl) => {
   try {
     const res = await fetchWithTimeout(`${baseUrl}/@vite/client`, { timeoutMs: 1200 });
-    if (!res.ok) return false;
+    if (!res.ok) return { kind: "not-vite" };
 
     const contentType = (res.headers.get("content-type") || "").toLowerCase();
     let viteClientLooksValid = contentType.includes("javascript");
@@ -108,18 +110,23 @@ const looksLikeVesloDevServer = async (baseUrl) => {
       const body = await res.text();
       viteClientLooksValid = body.includes("import.meta.hot") || body.includes("@vite/client");
     }
-    if (!viteClientLooksValid) return false;
+    if (!viteClientLooksValid) return { kind: "not-vite" };
 
     const html = await fetchWithTimeout(baseUrl, { timeoutMs: 1200 });
-    if (!html.ok) return false;
+    if (!html.ok) return { kind: "not-vite" };
 
     const htmlContentType = (html.headers.get("content-type") || "").toLowerCase();
-    if (!htmlContentType.includes("text/html")) return false;
+    if (!htmlContentType.includes("text/html")) return { kind: "not-vite" };
 
     const body = await html.text();
-    return body.includes(VESLO_DEV_SERVER_MARKER);
+    if (!body.includes(VESLO_DEV_SERVER_MARKER)) return { kind: "not-veslo" };
+
+    const identityResponse = await fetchWithTimeout(`${baseUrl}/__veslo-dev-server`, { timeoutMs: 1200 });
+    if (!identityResponse.ok) return { kind: "foreign-veslo" };
+    const identity = await identityResponse.json().then((value) => value?.identity).catch(() => null);
+    return identity === expectedDevServerIdentity ? { kind: "owned-veslo" } : { kind: "foreign-veslo" };
   } catch {
-    return false;
+    return { kind: "not-vite" };
   }
 };
 
@@ -213,6 +220,7 @@ const runUiDevServer = () => {
       ...process.env,
       // Make sure vite sees the intended port.
       PORT: String(port),
+      VESLO_DEV_SERVER_ID: expectedDevServerIdentity,
     },
   });
 
@@ -240,17 +248,28 @@ ensureLinuxDesktopDependencies();
 
 const main = async () => {
   let detectedViteUrl = null;
+  let foreignViteUrl = null;
   for (const candidate of baseUrls) {
-    if (await looksLikeVesloDevServer(candidate)) {
+    const inspection = await inspectVesloDevServer(candidate);
+    if (inspection.kind === "owned-veslo") {
       detectedViteUrl = candidate;
       break;
     }
+    if (inspection.kind === "foreign-veslo") foreignViteUrl = candidate;
   }
 
   if (detectedViteUrl) {
     console.log(`[veslo] UI dev server already running at ${detectedViteUrl} (reusing).`);
     holdOpenUntilSignal();
     return;
+  }
+
+  if (foreignViteUrl) {
+    console.error(
+      `[veslo] Port ${port} is serving a Veslo dev server from another checkout or an older launcher.\n` +
+        `Stop that server or set PORT to a free port (e.g. PORT=5174); it will not be reused for ${repoRoot}.`,
+    );
+    process.exit(1);
   }
 
   let portInUse = false;

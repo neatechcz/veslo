@@ -49,7 +49,7 @@ fn append_veslo_server_launch_diagnostic(
     payload: serde_json::Value,
 ) {
     if let Some(forwarder) = app.try_state::<Arc<DebugLogsForwarder>>() {
-        forwarder.append_bootstrap_diagnostic(event_type, payload);
+        let _ = forwarder.append_bootstrap_diagnostic(event_type, payload);
     }
 }
 
@@ -131,10 +131,7 @@ pub(crate) fn resolve_engine_url(port: u16) -> Option<String> {
     {
         let mut candidates = Vec::new();
         if let Ok(interfaces) = list_afinet_netifas() {
-            candidates.extend(resolve_engine_urls_from_interfaces(
-                port,
-                interfaces.into_iter(),
-            ));
+            candidates.extend(resolve_engine_urls_from_interfaces(port, interfaces));
         }
         if let Some(url) = resolve_engine_url_from_wsl_interface(port) {
             candidates.push(url);
@@ -721,7 +718,7 @@ pub fn read_persisted_veslo_server_info(dir: &Path) -> Result<Option<VesloServer
     read_persisted_veslo_server_info_with_cleanup(
         dir,
         server_health_identity,
-        |pid| kill_stale_veslo_server_process(pid),
+        kill_stale_veslo_server_process,
         |_, _| {},
     )
 }
@@ -982,7 +979,7 @@ pub fn recover_persisted_veslo_server_info(
     let from_disk = read_persisted_veslo_server_info_with_cleanup(
         &dir,
         server_health_identity,
-        |pid| kill_stale_veslo_server_process(pid),
+        kill_stale_veslo_server_process,
         |pid, error| {
             append_veslo_server_launch_diagnostic(
                 app,
@@ -1004,9 +1001,11 @@ pub fn recover_persisted_veslo_server_info(
     // If the dev scripts expose `VESLO_DEV_SERVER_URL` we probe it and persist
     // explicit env auth so subsequent reads stay consistent. Skipped in release
     // builds (env var unset by default).
-    if let Some(info) = discover_external_veslo_server() {
-        let _ = persist_veslo_server_info(app, &info);
-        return Ok(Some(info));
+    if !crate::supervised_process::packaged_smoke_mode() {
+        if let Some(info) = discover_external_veslo_server() {
+            let _ = persist_veslo_server_info(app, &info);
+            return Ok(Some(info));
+        }
     }
 
     Ok(None)
@@ -1120,7 +1119,7 @@ fn write_token_state_file(path: &Path, payload: &str) -> Result<(), String> {
         permissions.set_mode(0o600);
         fs::set_permissions(path, permissions)
             .map_err(|e| format!("Failed to chmod {}: {e}", path.display()))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]
@@ -1189,7 +1188,23 @@ fn client_token_for_spawn(previous: Option<String>, requested: Option<String>) -
     previous.or(requested).unwrap_or_else(generate_token)
 }
 
+fn persisted_client_token_matches_request(
+    requested_client_token: Option<&str>,
+    persisted_client_token: Option<&str>,
+) -> bool {
+    let Some(requested_client_token) = normalize_launch_token(requested_client_token) else {
+        return true;
+    };
+
+    normalize_launch_token(persisted_client_token).as_deref()
+        == Some(requested_client_token.as_str())
+}
+
 #[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The test helper mirrors the launch-configuration comparison inputs."
+)]
 fn launch_config_matches(
     state: &manager::VesloServerState,
     _workspace_paths: &[String],
@@ -1213,6 +1228,10 @@ fn launch_config_matches(
     .is_empty()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each launch input is compared independently to produce actionable restart reasons."
+)]
 fn launch_config_mismatch_reasons(
     state: &manager::VesloServerState,
     _workspace_paths: &[String],
@@ -1295,6 +1314,10 @@ fn launch_decision_payload(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The desktop server owner keeps explicit launch inputs at its process boundary."
+)]
 pub fn start_veslo_server(
     app: &AppHandle,
     manager: &VesloServerManager,
@@ -1311,6 +1334,7 @@ pub fn start_veslo_server(
         .start_queue
         .lock()
         .map_err(|_| "veslo server start queue mutex poisoned".to_string())?;
+    let requested_client_token = normalize_launch_token(veslo_server_client_token);
 
     // VSLO-86 — extend caller-supplied workspaces with every local workspace
     // from veslo-workspaces.json before spawn. The frontend passes only the
@@ -1351,12 +1375,21 @@ pub fn start_veslo_server(
     };
     if should_try_persisted_recovery {
         if let Ok(Some(info)) = recover_persisted_veslo_server_info(app) {
+            let recovered_client_token = normalize_launch_token(info.client_token.as_deref());
             let mut state = manager
                 .inner
                 .lock()
                 .map_err(|_| "veslo server mutex poisoned".to_string())?;
-            if state.child.is_none() && state.external_info.is_none() {
+            if state.child.is_none()
+                && state.external_info.is_none()
+                && persisted_client_token_matches_request(
+                    requested_client_token.as_deref(),
+                    recovered_client_token.as_deref(),
+                )
+            {
                 state.external_info = Some(info.clone());
+                state.client_token = recovered_client_token;
+                state.host_token = info.host_token.clone();
                 append_veslo_server_launch_diagnostic(
                     app,
                     "veslo-server-launch:persisted-adopted",
@@ -1374,6 +1407,18 @@ pub fn start_veslo_server(
                 emit_veslo_server_state(app, &info);
                 return Ok(info);
             }
+            if state.child.is_none() && state.external_info.is_none() {
+                append_veslo_server_launch_diagnostic(
+                    app,
+                    "veslo-server-launch:persisted-rejected",
+                    serde_json::json!({
+                        "decision": "rejected",
+                        "reason": "requested_client_token_mismatch",
+                        "hasRequestedClientToken": requested_client_token.is_some(),
+                        "hasRecoveredClientToken": recovered_client_token.is_some(),
+                    }),
+                );
+            }
         }
     }
 
@@ -1389,7 +1434,6 @@ pub fn start_veslo_server(
     let normalized_orchestrator_daemon_url = normalize_launch_url(orchestrator_daemon_url);
     let normalized_orchestrator_lifecycle_token =
         normalize_launch_token(orchestrator_lifecycle_token);
-    let requested_client_token = normalize_launch_token(veslo_server_client_token);
     let host = resolve_veslo_host();
     let shared_unsandboxed_engine =
         crate::runtime_preferences::read_shared_unsandboxed_engine_override(app)?;
@@ -1455,7 +1499,12 @@ pub fn start_veslo_server(
         } else {
             "veslo-server-launch:start-accepted"
         },
-        launch_decision_payload(launch_decision, &state, &start_reasons, workspace_paths.len()),
+        launch_decision_payload(
+            launch_decision,
+            &state,
+            &start_reasons,
+            workspace_paths.len(),
+        ),
     );
     let previous_client_token = state.client_token.clone();
     let previous_host_token = state.host_token.clone();
@@ -1733,8 +1782,8 @@ mod tests {
         build_urls_for_host_with_engine_resolver, classify_stale_veslo_server_process,
         client_token_for_spawn, discover_external_host_token, launch_config_matches,
         launch_config_mismatch_reasons, launch_decision_payload, normalize_launch_token,
-        normalize_launch_url, parse_macos_lsof_current_dir, publishes_external_urls,
-        read_persisted_veslo_server_info,
+        normalize_launch_url, parse_macos_lsof_current_dir, persisted_client_token_matches_request,
+        publishes_external_urls, read_persisted_veslo_server_info,
         read_persisted_veslo_server_info_with_cleanup, ready_signal_bound_port,
         ready_signal_instance_id, resolve_engine_url_for_bind_host, should_bind_wsl_bridge,
         start_decision_reasons, unix_kill_term_args, veslo_server_state_event_payload,
@@ -1756,6 +1805,26 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::thread;
     use uuid::Uuid;
+
+    #[test]
+    fn persisted_server_adoption_requires_the_requested_client_token_to_match() {
+        assert!(persisted_client_token_matches_request(
+            None,
+            Some("persisted-token")
+        ));
+        assert!(persisted_client_token_matches_request(
+            Some(" requested-token "),
+            Some("requested-token"),
+        ));
+        assert!(!persisted_client_token_matches_request(
+            Some("requested-token"),
+            Some("persisted-token"),
+        ));
+        assert!(!persisted_client_token_matches_request(
+            Some("requested-token"),
+            None
+        ));
+    }
 
     #[cfg(windows)]
     #[test]

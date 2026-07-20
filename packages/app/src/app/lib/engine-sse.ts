@@ -27,6 +27,8 @@ type SsePayload =
       subscriptionId: string;
       workspaceId: string;
       data: string;
+      /** Optional upstream SSE `id:`. Omitted when the upstream did not send one. */
+      eventId?: string | null;
     }
   | {
       kind: "error";
@@ -40,6 +42,28 @@ type SsePayload =
       workspaceId: string;
       reason: string;
     };
+
+function isSsePayload(value: unknown): value is SsePayload {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  if (typeof payload.subscriptionId !== "string" || typeof payload.workspaceId !== "string") return false;
+
+  switch (payload.kind) {
+    case "open":
+      return true;
+    case "message":
+      return (
+        typeof payload.data === "string" &&
+        (payload.eventId === undefined || payload.eventId === null || typeof payload.eventId === "string")
+      );
+    case "error":
+      return typeof payload.message === "string";
+    case "closed":
+      return typeof payload.reason === "string";
+    default:
+      return false;
+  }
+}
 
 type EngineSseInvoke = <T = unknown>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 type EngineSseListen = <T>(event: string, handler: (event: { payload: T }) => void) => Promise<UnlistenFn>;
@@ -57,6 +81,8 @@ export type EngineSseSubscribeOptions = {
   directory?: string | null;
   /** Stable owner key used by the desktop bridge to replace older duplicate streams. */
   connectionKey?: string | null;
+  /** Last raw upstream SSE `id:` observed by this stream, if any. */
+  lastEventId?: string | null;
   username?: string | null;
   password?: string | null;
   /** Veslo-server bearer token. Takes precedence over username/password when set. */
@@ -173,9 +199,9 @@ async function engineSseSubscribeWithRuntime(
   let activeSubscriptionCount: number | undefined;
   let activeConnectionCount: number | undefined;
   try {
-    unlisten = await runtime.listen<SsePayload>(SSE_EVENT_NAME, (event) => {
+    unlisten = await runtime.listen<unknown>(SSE_EVENT_NAME, (event) => {
+      if (!isSsePayload(event.payload) || event.payload.subscriptionId !== subscriptionId) return;
       const payload = event.payload;
-      if (!payload || payload.subscriptionId !== subscriptionId) return;
 
       switch (payload.kind) {
         case "open":
@@ -195,7 +221,13 @@ async function engineSseSubscribeWithRuntime(
             console.warn("[engine-sse] dropped malformed event", { data: payload.data.slice(0, 200) });
             return;
           }
-          pushEvent(parsed);
+          // Keep the desktop bridge envelope until normalizeEvent() can retain
+          // the optional upstream SSE id. Do not generate a JS-local ID: it
+          // would be meaningless after a reconnect.
+          pushEvent({
+            payload: parsed,
+            ...(payload.eventId === "" ? { eventIdReset: true } : payload.eventId ? { eventId: payload.eventId } : {}),
+          });
           break;
         }
         case "error":
@@ -222,6 +254,7 @@ async function engineSseSubscribeWithRuntime(
         baseUrl: options.baseUrl,
         directory: options.directory ?? null,
         connectionKey: options.connectionKey ?? null,
+        lastEventId: options.lastEventId ?? null,
         username: options.username ?? null,
         password: options.password ?? null,
         bearerToken: options.bearerToken ?? null,
@@ -319,7 +352,8 @@ async function engineSseSubscribeWithRuntime(
 }
 
 function createSubscriptionId(): string {
-  const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+  const crypto: Partial<Crypto> = globalThis.crypto;
+  const randomUUID = crypto.randomUUID?.bind(crypto);
   if (randomUUID) return randomUUID();
   return `engine-sse-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }

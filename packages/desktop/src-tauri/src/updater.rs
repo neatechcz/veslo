@@ -163,7 +163,7 @@ pub fn relaunch_after_update_install(app: &tauri::AppHandle) -> Result<(), Strin
 
         spawn_macos_relaunch_after_exit(std::process::id(), &app_bundle_path)?;
         app.exit(0);
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]

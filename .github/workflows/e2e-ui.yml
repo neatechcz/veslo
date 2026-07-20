@@ -17,17 +17,17 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: packages/desktop/src-tauri
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.27.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: 'pnpm'
@@ -65,9 +65,17 @@ jobs:
         if: runner.os != 'Linux'
         run: pnpm test:e2e:ui
 
+      - name: Run terminal assistant ordering gate (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm --filter @neatech/veslo-e2e run test:pilot:session-run-truthfulness
+
+      - name: Run terminal assistant ordering gate (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: pnpm --filter @neatech/veslo-e2e run test:pilot:session-run-truthfulness
+
       - name: Upload visual diffs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-artifacts-${{ matrix.os }}
           path: |

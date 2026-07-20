@@ -132,18 +132,18 @@ test("allows explicit remote-docs-only profile without local bundled runtime", (
   }
 });
 
-test("repo Windows installer policy keeps WSL document runtime path dormant", () => {
+test("repo Windows installer excludes WSL sandbox payload", () => {
   const report = verifyDocumentRuntimeWindows({
     repoRoot,
     profile: "remote-docs-only",
   });
 
   assert.equal(
-    report.checks.find((check) => check.label === "Windows document runtime keeps WSL installer disabled by default")?.ok,
+    report.checks.find((check) => check.label === "Windows document runtime installer excludes WSL sandbox payload and hooks")?.ok,
     true,
   );
   assert.equal(
-    report.checks.find((check) => check.label === "Windows document runtime does not use WSL scripts as package readiness")?.ok,
+    report.checks.find((check) => check.label === "Windows document runtime stays outside the MSI payload")?.ok,
     true,
   );
 });

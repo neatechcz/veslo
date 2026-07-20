@@ -2,6 +2,10 @@
 
 Date: 2026-06-25
 
+> Current installer override (2026-07-15): the WSL MSI path described below is
+> historical. Current Windows MSI packages do not bundle, provision, or repair
+> WSL/`VesloSandbox`; the supported fresh-install path is shared non-sandbox.
+
 Status: root cause confirmed for the `AI gateway provider request did not start
 within 30000ms` failure. Implementation plan is tracked separately in
 `docs/dev/VSLO-250-fix-implementation-plan.md`.

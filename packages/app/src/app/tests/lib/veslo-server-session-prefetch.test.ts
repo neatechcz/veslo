@@ -61,6 +61,7 @@ test("veslo server client exposes transcript prefetch methods", async () => {
           sessionDirectoriesById?: Record<string, string | null | undefined>;
           limit?: number;
         },
+        clientOptions?: { appWorkspaceId?: string | null },
       ) => Promise<unknown>;
     }).prefetchSessionTranscripts("ws 1", {
       clickedSessionId: "sess-clicked",
@@ -85,7 +86,7 @@ test("veslo server client exposes transcript prefetch methods", async () => {
         "sub-1": "/tmp/work space/sub",
       },
       limit: 12,
-    });
+    }, { appWorkspaceId: "app-ws-1" });
     const conversations = await (client as {
       listConversations: (workspaceId: string, directory?: string) => Promise<unknown>;
     }).listConversations("ws 1", "/tmp/work space");

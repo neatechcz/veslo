@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { deriveLatestRunArtifacts } from "../session-artifacts.js";
@@ -111,52 +112,83 @@ const useTempVesloDataDir = async (prefix: string) => {
   return dataDir;
 };
 
-const appendHostTranscript = async (input: {
-  port: number;
-  workspaceId: string;
+const useOpenCodeDbPath = (dbPath: string) => {
+  const previous = process.env.VESLO_OPENCODE_DB_PATH;
+  process.env.VESLO_OPENCODE_DB_PATH = dbPath;
+  envRestores.push(() => {
+    if (previous === undefined) {
+      delete process.env.VESLO_OPENCODE_DB_PATH;
+    } else {
+      process.env.VESLO_OPENCODE_DB_PATH = previous;
+    }
+  });
+};
+
+const seedHostTranscript = (input: {
+  dbPath: string;
   sessionId: string;
   directory: string;
   messages: Array<Record<string, unknown>>;
   partsByMessageId: Record<string, unknown[]>;
 }) => {
-  const importResponse = await fetch(
-    `http://127.0.0.1:${input.port}/workspace/${input.workspaceId}/conversations/import`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer client-token",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        directory: input.directory,
-        sessions: [{
-          id: input.sessionId,
-          title: input.sessionId,
-          parentID: null,
-          time: { created: 1, updated: 1 },
-        }],
-      }),
-    },
-  );
-  expect(importResponse.status).toBe(200);
+  const db = new Database(input.dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        directory TEXT,
+        parent_id TEXT,
+        time_created INTEGER,
+        time_updated INTEGER
+      );
+      CREATE TABLE message (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        data TEXT NOT NULL
+      );
+      CREATE TABLE part (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        data TEXT NOT NULL
+      );
+    `);
 
-  const response = await fetch(
-    `http://127.0.0.1:${input.port}/workspace/${input.workspaceId}/sessions/${input.sessionId}/transcript`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer client-token",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        directory: input.directory,
-        limit: input.messages.length,
-        messages: input.messages,
-        partsByMessageId: input.partsByMessageId,
-      }),
-    },
-  );
-  expect(response.status).toBe(200);
+    const seedRows = db.transaction(() => {
+      db.query(
+        "INSERT INTO session (id, title, directory, parent_id, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      ).run(input.sessionId, input.sessionId, input.directory, null, 1, 1);
+      const insertMessage = db.query("INSERT INTO message (id, session_id, data) VALUES (?1, ?2, ?3)");
+      const insertPart = db.query("INSERT INTO part (id, session_id, message_id, data) VALUES (?1, ?2, ?3, ?4)");
+
+      for (const message of input.messages) {
+        const messageId = typeof message.id === "string" ? message.id : "";
+        if (!messageId) throw new Error("fixture message needs an id");
+        const storedMessage = { ...message, id: messageId, sessionID: input.sessionId };
+        insertMessage.run(messageId, input.sessionId, JSON.stringify(storedMessage));
+
+        for (const part of input.partsByMessageId[messageId] ?? []) {
+          if (!part || typeof part !== "object" || Array.isArray(part)) {
+            throw new Error(`fixture part for ${messageId} must be an object`);
+          }
+          const record = part as Record<string, unknown>;
+          const partId = typeof record.id === "string" ? record.id : "";
+          if (!partId) throw new Error(`fixture part for ${messageId} needs an id`);
+          const storedPart = {
+            ...record,
+            id: partId,
+            messageID: messageId,
+            sessionID: input.sessionId,
+          };
+          insertPart.run(partId, input.sessionId, messageId, JSON.stringify(storedPart));
+        }
+      }
+    });
+    seedRows();
+  } finally {
+    db.close();
+  }
 };
 
 describe("deriveLatestRunArtifacts", () => {
@@ -496,6 +528,8 @@ describe("latest-run artifact route", () => {
     await useTempVesloDataDir("veslo-session-artifacts-data-");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-session-artifacts-"));
     const sessionId = "sess_1";
+    const dbPath = join(workspaceRoot, "opencode.db");
+    useOpenCodeDbPath(dbPath);
 
     try {
       const server = startServer({
@@ -532,9 +566,8 @@ describe("latest-run artifact route", () => {
       });
       runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
 
-      await appendHostTranscript({
-        port: server.port,
-        workspaceId: "ws_1",
+      seedHostTranscript({
+        dbPath,
         sessionId,
         directory: workspaceRoot,
         messages: [
@@ -568,13 +601,13 @@ describe("latest-run artifact route", () => {
       const payload = await response.json() as {
         sessionId: string;
         workspaceId: string;
-        runId: string | null;
+        anchorMessageId: string | null;
         items: Array<{ family: string; kind: string; status: string; path?: string; title?: string }>;
       };
 
       expect(payload.sessionId).toBe(sessionId);
       expect(payload.workspaceId).toBe("ws_1");
-      expect(payload.runId).toBe("msg-003-user");
+      expect(payload.anchorMessageId).toBe("msg-003-user");
 
       expect(payload.items).toEqual([
         expect.objectContaining({
@@ -610,6 +643,8 @@ describe("latest-run artifact route", () => {
     await mkdir(conversationDirectory, { recursive: true });
     const requestedDirectory = toWslMountPath(conversationDirectory);
     const sessionId = "sess_wsl";
+    const dbPath = join(workspaceRoot, "opencode.db");
+    useOpenCodeDbPath(dbPath);
 
     try {
       const server = startServer({
@@ -646,11 +681,10 @@ describe("latest-run artifact route", () => {
       });
       runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
 
-      await appendHostTranscript({
-        port: server.port,
-        workspaceId: "ws_1",
+      seedHostTranscript({
+        dbPath,
         sessionId,
-        directory: requestedDirectory,
+        directory: conversationDirectory,
         messages: [
           { id: "msg-001-user", sessionID: sessionId, role: "user" },
           { id: "msg-002-assistant", sessionID: sessionId, role: "assistant" },
@@ -696,6 +730,8 @@ describe("latest-run artifact route", () => {
     const conversationDirectory = join(workspaceRoot, "opencode-working-dir");
     await mkdir(conversationDirectory, { recursive: true });
     const sessionId = "sess_directory_alias";
+    const dbPath = join(workspaceRoot, "opencode.db");
+    useOpenCodeDbPath(dbPath);
 
     try {
       const server = startServer({
@@ -733,11 +769,10 @@ describe("latest-run artifact route", () => {
       });
       runningServers.push(server as { stop?: (closeActiveConnections?: boolean) => void });
 
-      await appendHostTranscript({
-        port: server.port,
-        workspaceId: "ws_1",
+      seedHostTranscript({
+        dbPath,
         sessionId,
-        directory: "/workspace",
+        directory: conversationDirectory,
         messages: [
           { id: "msg-001-user", sessionID: sessionId, role: "user" },
           { id: "msg-002-assistant", sessionID: sessionId, role: "assistant" },

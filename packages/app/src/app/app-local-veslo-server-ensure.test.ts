@@ -9,7 +9,7 @@ test("local Veslo server ensure is not gated by an existing OpenCode client", ()
   const effectStart = connectionSource.indexOf('let lastLocalVesloEnsureKey = "";');
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
-  const ensureCall = "void ensureLocalVesloServerRunning()";
+  const ensureCall = "void ensureLocalVesloServerRunning({ requireRuntimeChainReady: true })";
   const ensureIdx = connectionSource.indexOf(ensureCall, effectStart);
   assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
 
@@ -25,7 +25,7 @@ test("local Veslo server ensure only deduplicates after a successful ensure", ()
   const effectStart = connectionSource.indexOf('let lastLocalVesloEnsureKey = "";');
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
-  const ensureCall = "void ensureLocalVesloServerRunning()";
+  const ensureCall = "void ensureLocalVesloServerRunning({ requireRuntimeChainReady: true })";
   const ensureIdx = connectionSource.indexOf(ensureCall, effectStart);
   assert.notStrictEqual(ensureIdx, -1, "local Veslo server ensure call is missing");
 
@@ -63,8 +63,40 @@ test("local Veslo workspace readiness uses only the server-owned workspace id", 
   );
 });
 
+test("desktop bootstrap ready is gated on authenticated runtime readiness", () => {
+  const markerStart = connectionSource.indexOf("const recordDesktopBootstrapReady = async (): Promise<boolean> => {");
+  assert.notStrictEqual(markerStart, -1, "desktop bootstrap ready marker is missing");
+  const markerEnd = connectionSource.indexOf("const markVesloServerReachable", markerStart);
+  assert.notStrictEqual(markerEnd, -1, "desktop bootstrap ready marker end is missing");
+  const marker = connectionSource.slice(markerStart, markerEnd);
+
+  assert.match(marker, /vesloServerStatus\(\) !== "connected" \|\| vesloRuntimeReadiness\(\) !== "ready"/);
+  assert.match(marker, /await tryRecordBootstrapDiagnostic\("desktop-bootstrap:ready"/);
+  assert.match(marker, /if \(recorded\) desktopBootstrapReadyRecorded = true;/);
+  assert.match(marker, /desktopBootstrapReadyRecording = true;/);
+  assert.ok(
+    marker.indexOf('await tryRecordBootstrapDiagnostic("desktop-bootstrap:ready"') <
+      marker.indexOf("desktopBootstrapReadyRecorded = true"),
+    "the ready latch must be set only after a durable diagnostic write succeeds",
+  );
+});
+
+test("desktop bootstrap ready observes later runtime readiness and retries a failed durable write", () => {
+  const attemptStart = connectionSource.indexOf("const attemptRecord = () => {");
+  assert.notStrictEqual(attemptStart, -1, "desktop bootstrap readiness attempt is missing");
+  const observerStart = connectionSource.lastIndexOf("  createEffect(() => {", attemptStart);
+  assert.notStrictEqual(observerStart, -1, "desktop bootstrap readiness observer is missing");
+  const observerEnd = connectionSource.indexOf("return {", observerStart);
+  assert.notStrictEqual(observerEnd, -1, "desktop bootstrap readiness observer end is missing");
+  const observer = connectionSource.slice(observerStart, observerEnd);
+
+  assert.match(observer, /void recordDesktopBootstrapReady\(\)\.then/);
+  assert.match(observer, /window\.setTimeout\(attemptRecord, 1_000\)/);
+  assert.match(observer, /vesloServerStatus\(\) !== "connected" \|\| vesloRuntimeReadiness\(\) !== "ready"/);
+});
+
 test("local Veslo server ensure effect is registered after the real implementation is assigned", () => {
-  const effectStart = connectionSource.indexOf("void ensureLocalVesloServerRunning()");
+  const effectStart = connectionSource.indexOf("void ensureLocalVesloServerRunning({ requireRuntimeChainReady: true })");
   assert.notStrictEqual(effectStart, -1, "local Veslo server ensure effect is missing");
 
   const implementationStart = connectionSource.indexOf("const ensureLocalVesloServerRunning = async");

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
+const {
+  batch,
+  createComputed,
+  createMemo,
+  createRoot,
+  createSignal,
+} = createRequire(import.meta.url)("solid-js/dist/solid.cjs") as typeof import("solid-js");
 
 import type { ComposerDraft } from "../../types";
 import {
@@ -9,8 +17,12 @@ import {
 } from "../../lib/pending-session-drafts.js";
 import {
   createEmptyComposerDraft,
+  clearSessionComposerDraftIfRevision,
   deleteSessionComposerDraft,
   getSessionComposerDraft,
+  getSessionComposerDraftRevision,
+  remapPendingComposerDraftToSession,
+  resolveActiveComposerDraftStorageKey,
   setSessionComposerDraft,
   setSessionComposerPrompt,
 } from "../../pages/session-composer-drafts.js";
@@ -123,6 +135,203 @@ test("real session composer storage keys remain separate from each other", () =>
 
   assert.equal(getSessionComposerDraft(store, { storageKey: "session-a" }).text, "Draft A");
   assert.equal(getSessionComposerDraft(store, { storageKey: "session-b" }).text, "Draft B");
+});
+
+test("preserves entry identity for a semantic no-op and rejects a stale conditional clear", () => {
+  const initial = setSessionComposerDraft({}, "session-a", withText("first"));
+  const revision = getSessionComposerDraftRevision(initial, "session-a");
+
+  assert.strictEqual(
+    setSessionComposerDraft(initial, "session-a", withText("first")),
+    initial,
+    "a semantic no-op must not wake unrelated Composer consumers",
+  );
+
+  const newer = setSessionComposerDraft(initial, "session-a", withText("second"));
+  const staleClear = clearSessionComposerDraftIfRevision(newer, "session-a", revision);
+  assert.equal(staleClear.cleared, false);
+  assert.strictEqual(staleClear.state, newer);
+  assert.equal(getSessionComposerDraft(staleClear.state, "session-a").text, "second");
+
+  const currentClear = clearSessionComposerDraftIfRevision(
+    newer,
+    "session-a",
+    getSessionComposerDraftRevision(newer, "session-a"),
+  );
+  assert.equal(currentClear.cleared, true);
+  assert.equal(getSessionComposerDraft(currentClear.state, "session-a").text, "");
+});
+
+test("materializing a pending session moves its follow-up composer draft into the real session", () => {
+  const pendingDraftKey = resolvePendingDraftKey({
+    kind: "directory",
+    workspaceId: "workspace-a",
+    directory: "/Users/demo/project",
+  });
+  const pendingStorageKey = resolveComposerStorageKey({ pendingDraftKey });
+  const sessionStorageKey = resolveComposerStorageKey({ sessionId: "session-a" });
+  const followUp = withText("Keep this follow-up", {
+    attachments: [
+      {
+        id: "attachment-1",
+        name: "diagram.png",
+        mimeType: "image/png",
+        size: 4,
+        kind: "image",
+        dataUrl: "data:image/png;base64,AAECAw==",
+      },
+    ],
+  });
+  const pendingStore = setSessionComposerDraft({}, { storageKey: pendingStorageKey }, followUp);
+
+  const remap = remapPendingComposerDraftToSession(pendingStore, pendingDraftKey, "session-a");
+  assert.equal(remap.status, "moved");
+  const materialized = remap.state;
+
+  assert.equal(getSessionComposerDraft(materialized, { storageKey: sessionStorageKey }).text, "Keep this follow-up");
+  assert.equal(getSessionComposerDraft(materialized, { storageKey: sessionStorageKey }).attachments.length, 1);
+  assert.equal(getSessionComposerDraft(materialized, { storageKey: pendingStorageKey }).text, "");
+  assert.strictEqual(
+    remapPendingComposerDraftToSession(materialized, pendingDraftKey, "session-a").state,
+    materialized,
+    "a repeated materialization must be a no-op",
+  );
+});
+
+test("first-session materialization moves the no-session draft when no pending key exists", () => {
+  const noSessionStorageKey = resolveComposerStorageKey({ sessionId: null });
+  const sessionStorageKey = resolveComposerStorageKey({ sessionId: "session-a" });
+  const noSession = setSessionComposerDraft({}, { storageKey: noSessionStorageKey }, withText("follow-up"));
+  const revision = getSessionComposerDraftRevision(noSession, { storageKey: noSessionStorageKey });
+
+  const remap = remapPendingComposerDraftToSession(noSession, null, "session-a");
+
+  assert.equal(remap.status, "moved");
+  assert.equal(getSessionComposerDraft(remap.state, { storageKey: sessionStorageKey }).text, "follow-up");
+  assert.equal(getSessionComposerDraftRevision(remap.state, { storageKey: sessionStorageKey }), revision);
+  assert.equal(getSessionComposerDraft(remap.state, { storageKey: noSessionStorageKey }).text, "");
+});
+
+test("first-session handoff reads the materialized draft before route selection completes", () => {
+  const noSessionStorageKey = resolveComposerStorageKey({ sessionId: null });
+  const sessionStorageKey = resolveComposerStorageKey({ sessionId: "session-a" });
+  const pending = setSessionComposerDraft({}, { storageKey: noSessionStorageKey }, withText("follow-up"));
+  const moved = remapPendingComposerDraftToSession(pending, null, "session-a");
+
+  const activeStorageKey = resolveActiveComposerDraftStorageKey({
+    selectedSessionId: null,
+    pendingDraftKey: null,
+    materializingSessionId: "session-a",
+  });
+
+  assert.equal(activeStorageKey, sessionStorageKey);
+  assert.equal(getSessionComposerDraft(moved.state, { storageKey: activeStorageKey }).text, "follow-up");
+});
+
+test("reactive first-session handoff never exposes the emptied source draft", () => {
+  createRoot((dispose) => {
+    const noSessionStorageKey = resolveComposerStorageKey({ sessionId: null });
+    const initial = setSessionComposerDraft(
+      {},
+      { storageKey: noSessionStorageKey },
+      withText("follow-up"),
+    );
+    const [drafts, setDrafts] = createSignal(initial);
+    const [selectedSessionId] = createSignal<string | null>(null);
+    const [materializingSessionId, setMaterializingSessionId] = createSignal<string | null>(null);
+    const activeStorageKey = createMemo(() => resolveActiveComposerDraftStorageKey({
+      selectedSessionId: selectedSessionId(),
+      pendingDraftKey: null,
+      materializingSessionId: materializingSessionId(),
+    }));
+    const observedPrompts: string[] = [];
+    createComputed(() => {
+      observedPrompts.push(getSessionComposerDraft(drafts(), { storageKey: activeStorageKey() }).text);
+    });
+
+    batch(() => {
+      const moved = remapPendingComposerDraftToSession(drafts(), null, "session-a");
+      assert.equal(moved.status, "moved");
+      setDrafts(moved.state);
+      setMaterializingSessionId("session-a");
+    });
+
+    assert.deepEqual(observedPrompts, ["follow-up", "follow-up"]);
+    dispose();
+  });
+});
+
+test("materialization preserves the moved revision and never overwrites a real-session draft", () => {
+  const pendingDraftKey = resolvePendingDraftKey({ kind: "new-private" });
+  const pendingStorageKey = resolveComposerStorageKey({ pendingDraftKey });
+  const sessionStorageKey = resolveComposerStorageKey({ sessionId: "session-a" });
+  const pending = setSessionComposerDraft({}, { storageKey: pendingStorageKey }, withText("follow-up"));
+  const pendingRevision = getSessionComposerDraftRevision(pending, { storageKey: pendingStorageKey });
+
+  const moved = remapPendingComposerDraftToSession(pending, pendingDraftKey, "session-a");
+  assert.equal(moved.status, "moved");
+  assert.equal(getSessionComposerDraftRevision(moved.state, { storageKey: sessionStorageKey }), pendingRevision);
+
+  const conflicting = setSessionComposerDraft(
+    pending,
+    { storageKey: sessionStorageKey },
+    withText("already there"),
+  );
+  const conflict = remapPendingComposerDraftToSession(conflicting, pendingDraftKey, "session-a");
+  assert.equal(conflict.status, "conflict");
+  assert.strictEqual(conflict.state, conflicting);
+  assert.equal(getSessionComposerDraft(conflict.state, { storageKey: pendingStorageKey }).text, "follow-up");
+  assert.equal(getSessionComposerDraft(conflict.state, { storageKey: sessionStorageKey }).text, "already there");
+
+  const duplicate = setSessionComposerDraft(
+    pending,
+    { storageKey: sessionStorageKey },
+    withText("follow-up"),
+  );
+  const deduplicated = remapPendingComposerDraftToSession(duplicate, pendingDraftKey, "session-a");
+  assert.equal(deduplicated.status, "deduplicated");
+  assert.equal(getSessionComposerDraft(deduplicated.state, { storageKey: sessionStorageKey }).text, "follow-up");
+  assert.equal(getSessionComposerDraft(deduplicated.state, { storageKey: pendingStorageKey }).text, "");
+});
+
+test("a delayed writer or clearer captured on the pending key cannot touch the materialized session draft", () => {
+  const pendingDraftKey = resolvePendingDraftKey({ kind: "new-private" });
+  const pendingStorageKey = resolveComposerStorageKey({ pendingDraftKey });
+  const sessionStorageKey = resolveComposerStorageKey({ sessionId: "session-a" });
+  const pending = setSessionComposerDraft({}, { storageKey: pendingStorageKey }, withText("follow-up"));
+  const pendingRevision = getSessionComposerDraftRevision(pending, { storageKey: pendingStorageKey });
+  const moved = remapPendingComposerDraftToSession(pending, pendingDraftKey, "session-a");
+  assert.equal(moved.status, "moved");
+
+  const delayedClear = clearSessionComposerDraftIfRevision(
+    moved.state,
+    { storageKey: pendingStorageKey },
+    pendingRevision,
+  );
+  assert.equal(delayedClear.cleared, false);
+  assert.equal(getSessionComposerDraft(delayedClear.state, { storageKey: sessionStorageKey }).text, "follow-up");
+
+  const delayedWrite = setSessionComposerDraft(
+    delayedClear.state,
+    { storageKey: pendingStorageKey },
+    withText("stale owner"),
+  );
+  assert.equal(getSessionComposerDraft(delayedWrite, { storageKey: sessionStorageKey }).text, "follow-up");
+  assert.equal(getSessionComposerDraft(delayedWrite, { storageKey: pendingStorageKey }).text, "stale owner");
+});
+
+test("a clear scoped to one real session cannot affect another session's draft", () => {
+  const withA = setSessionComposerDraft({}, "session-a", withText("A"));
+  const withBoth = setSessionComposerDraft(withA, "session-b", withText("B"));
+  const clearA = clearSessionComposerDraftIfRevision(
+    withBoth,
+    "session-a",
+    getSessionComposerDraftRevision(withBoth, "session-a"),
+  );
+
+  assert.equal(clearA.cleared, true);
+  assert.equal(getSessionComposerDraft(clearA.state, "session-a").text, "");
+  assert.equal(getSessionComposerDraft(clearA.state, "session-b").text, "B");
 });
 
 test("deleting a pending composer draft clears only the unpublished draft bucket", () => {

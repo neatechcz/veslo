@@ -9,6 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 fn main() {
     emit_build_info();
     emit_glitchtip_build_env();
+    emit_user_diagnostic_capture_build_env();
     ensure_opencode_sidecar();
     ensure_veslo_server_sidecar();
     ensure_opencode_router_sidecar();
@@ -17,6 +18,19 @@ fn main() {
     ensure_versions_manifest();
     ensure_opencode_managed_deps_manifest();
     tauri_build::build();
+}
+
+fn emit_user_diagnostic_capture_build_env() {
+    const KEY: &str = "VESLO_USER_DIAGNOSTIC_CAPTURE";
+    const DOMAIN_KEY: &str = "VESLO_DEPLOYMENT_DOMAIN";
+    println!("cargo:rerun-if-env-changed={KEY}");
+    println!("cargo:rerun-if-env-changed={DOMAIN_KEY}");
+    // Omit the value in every build except an explicit production-domain release.
+    if read_non_empty_env(KEY).as_deref() == Some("1")
+        && read_non_empty_env(DOMAIN_KEY).as_deref() == Some("veslo.work")
+    {
+        println!("cargo:rustc-env={KEY}=1");
+    }
 }
 
 fn emit_glitchtip_build_env() {
@@ -248,10 +262,11 @@ fn ensure_orchestrator_sidecar() {
         return;
     }
 
-    if target_dest_path.exists() && !dest_path.exists() {
-        if copy_sidecar(&target_dest_path, &dest_path, &target) {
-            return;
-        }
+    if target_dest_path.exists()
+        && !dest_path.exists()
+        && copy_sidecar(&target_dest_path, &dest_path, &target)
+    {
+        return;
     }
 
     let source_path = env::var("VESLO_ORCHESTRATOR_BIN_PATH")
@@ -345,10 +360,11 @@ fn ensure_opencode_sidecar() {
         return;
     }
 
-    if target_dest_path.exists() && !dest_path.exists() {
-        if copy_sidecar(&target_dest_path, &dest_path, &target) {
-            return;
-        }
+    if target_dest_path.exists()
+        && !dest_path.exists()
+        && copy_sidecar(&target_dest_path, &dest_path, &target)
+    {
+        return;
     }
 
     let source_path = env::var("OPENCODE_BIN_PATH")
@@ -427,10 +443,8 @@ fn ensure_veslo_server_sidecar() {
         return;
     }
 
-    if target_dest_path.exists() {
-        if copy_sidecar(&target_dest_path, &dest_path, &target) {
-            return;
-        }
+    if target_dest_path.exists() && copy_sidecar(&target_dest_path, &dest_path, &target) {
+        return;
     }
 
     let source_path = env::var("VESLO_SERVER_BIN_PATH")
@@ -520,10 +534,8 @@ fn ensure_opencode_router_sidecar() {
         return;
     }
 
-    if target_dest_path.exists() {
-        if copy_sidecar(&target_dest_path, &dest_path, &target) {
-            return;
-        }
+    if target_dest_path.exists() && copy_sidecar(&target_dest_path, &dest_path, &target) {
+        return;
     }
 
     let source_path = env::var("OPENCODE_ROUTER_BIN_PATH")
@@ -592,17 +604,13 @@ fn copy_sidecar(source_path: &PathBuf, dest_path: &PathBuf, target: &str) -> boo
     let mut copied = fs::copy(source_path, dest_path).is_ok();
 
     #[cfg(unix)]
-    if !copied {
-        if std::os::unix::fs::symlink(source_path, dest_path).is_ok() {
-            copied = true;
-        }
+    if !copied && std::os::unix::fs::symlink(source_path, dest_path).is_ok() {
+        copied = true;
     }
 
     #[cfg(windows)]
-    if !copied {
-        if fs::hard_link(source_path, dest_path).is_ok() {
-            copied = true;
-        }
+    if !copied && fs::hard_link(source_path, dest_path).is_ok() {
+        copied = true;
     }
 
     if copied {

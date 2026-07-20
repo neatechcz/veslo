@@ -11,6 +11,7 @@ const debugLogEventSchema = z.object({
   workerId: z.string().max(128).nullish(),
   sessionId: z.string().max(128).nullish(),
   runId: z.string().max(128).nullish(),
+  captureId: z.string().uuid().nullish(),
   source: z.string().trim().min(1).max(64),
   stream: z.string().trim().min(1).max(32),
   level: debugLogLevelSchema.nullish(),

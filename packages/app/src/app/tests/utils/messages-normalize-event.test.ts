@@ -1,7 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeEvent } from "../../utils/messages.js";
+import { modelFromUserMessage, normalizeEvent } from "../../utils/messages.js";
+
+test("modelFromUserMessage accepts only complete user model payloads", () => {
+  assert.deepEqual(
+    modelFromUserMessage({
+      role: "user",
+      model: { providerID: "openai", modelID: "gpt-5" },
+    }),
+    { providerID: "openai", modelID: "gpt-5" },
+  );
+  assert.equal(modelFromUserMessage({ role: "assistant", model: { providerID: "openai", modelID: "gpt-5" } }), null);
+  assert.equal(modelFromUserMessage({ role: "user", model: { providerID: "openai" } }), null);
+  assert.equal(modelFromUserMessage(undefined), null);
+});
 
 test("normalizeEvent keeps direct events unchanged", () => {
   assert.deepEqual(normalizeEvent({ type: "session.updated", properties: { id: "s1" } }), {
@@ -15,6 +28,34 @@ test("normalizeEvent keeps payload events unchanged", () => {
     type: "message.updated",
     properties: { id: "m1" },
   });
+});
+
+test("normalizeEvent preserves an upstream SSE id from a transport envelope", () => {
+  assert.deepEqual(
+    normalizeEvent({
+      eventId: "evt-42",
+      payload: { type: "message.updated", properties: { id: "m1" } },
+    }),
+    {
+      type: "message.updated",
+      properties: { id: "m1" },
+      eventId: "evt-42",
+    },
+  );
+});
+
+test("normalizeEvent preserves an explicit empty SSE id as a cursor reset", () => {
+  assert.deepEqual(
+    normalizeEvent({
+      eventIdReset: true,
+      payload: { type: "message.updated", properties: { id: "m1" } },
+    }),
+    {
+      type: "message.updated",
+      properties: { id: "m1" },
+      eventIdReset: true,
+    },
+  );
 });
 
 test("normalizeEvent unwraps sync envelopes inside payload wrappers", () => {

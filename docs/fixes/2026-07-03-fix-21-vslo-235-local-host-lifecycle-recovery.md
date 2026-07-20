@@ -109,3 +109,21 @@ Result:
 VSLO-235 is complete for this KISS lifecycle recovery checkpoint. The desktop
 local host now has structured lifecycle reporting and real Tauri-pilot coverage
 for the old startup failure modes that still matter in the current app.
+
+## 2026-07-16 scenario correction
+
+The first `Quality / Desktop recovery` CI run exposed a test-side defect: Tauri
+Pilot 0.7.2 applies a fixed 10 s timeout to one `eval`, regardless of the
+scenario step's `timeout_ms`. The old scenario polled for up to 8.5 s inside one
+`eval`, so ordinary IPC overhead could turn a valid recovery into
+`eval timed out after 10s`.
+
+The current scenario starts each long probe asynchronously, waits for a DOM
+completion/error marker, then performs a short assertion. It also follows the
+actual app-owned runtime behavior: the kill command immediately exposes
+`exited/child_exited`; the UI recovery path then replaces the child. The gate
+requires a different PID, healthy `/health`, and a valid workspace `/status`.
+It does not change the native command or production lifecycle behavior.
+
+Two consecutive `pnpm check:desktop-recovery` runs passed with this contract,
+each with a fresh isolated profile and launcher cleanup.

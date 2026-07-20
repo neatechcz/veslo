@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type {
   DashboardTab,
   McpServerEntry,
@@ -117,6 +117,23 @@ import { currentLocale, t } from "../../i18n";
 import type { Language } from "../../i18n";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
+import { createDashboardTabRefreshController } from "./dashboard-tab-refresh-controller";
+
+function createLeftSidebarResizeCleanup(input: {
+  onPointerMove: (event: PointerEvent) => void;
+  onPointerUp: () => void;
+  onPointerCancel: () => void;
+  previousUserSelect: string;
+  previousCursor: string;
+}): () => void {
+  return () => {
+    window.removeEventListener("pointermove", input.onPointerMove);
+    window.removeEventListener("pointerup", input.onPointerUp);
+    window.removeEventListener("pointercancel", input.onPointerCancel);
+    document.body.style.userSelect = input.previousUserSelect;
+    document.body.style.cursor = input.previousCursor;
+  };
+}
 
 export type DashboardViewProps = {
   tab: DashboardTab;
@@ -211,7 +228,7 @@ export type DashboardViewProps = {
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
   scheduledJobsUpdatedAt: number | null;
-  refreshScheduledJobs: (options?: { force?: boolean }) => void;
+  refreshScheduledJobs: (options?: { force?: boolean }) => Promise<void>;
   createAutomation: (workspaceId: string, payload: VesloAutomationCreatePayload) => Promise<void> | void;
   updateAutomation: (workspaceId: string, automationId: string, payload: VesloAutomationUpdatePayload) => Promise<void> | void;
   deleteAutomation: (workspaceId: string, automationId: string) => Promise<void> | void;
@@ -225,15 +242,15 @@ export type DashboardViewProps = {
   skillRegistryAuthContext: VesloSkillRegistryAuthContext;
   soulWorkspaceMap: Record<string, string>;
   soulError: string | null;
-  refreshSoulData: (options?: { force?: boolean }) => void;
+  refreshSoulData: (options?: { force?: boolean }) => Promise<void>;
   activeWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
-  refreshSkills: (options?: { force?: boolean }) => void;
-  refreshSkillInventory: (options?: { force?: boolean }) => void;
-  refreshSkillImportCandidates: (options?: { force?: boolean }) => void;
-  refreshHubSkills: (options?: { force?: boolean }) => void;
-  refreshPlugins: (scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) => void;
-  refreshMcpServers: () => void;
+  refreshSkills: (options?: { force?: boolean }) => Promise<void>;
+  refreshSkillInventory: (options?: { force?: boolean }) => Promise<void>;
+  refreshSkillImportCandidates: (options?: { force?: boolean }) => Promise<void>;
+  refreshHubSkills: (options?: { force?: boolean }) => Promise<void>;
+  refreshPlugins: (scopeOverride?: PluginScope, optionsOverride?: { debug?: boolean }) => Promise<void>;
+  refreshMcpServers: () => Promise<void>;
   skills: SkillCard[];
   skillsStatus: string | null;
   skillInventory: SkillInventoryItem[];
@@ -325,6 +342,8 @@ export type DashboardViewProps = {
   aiAccessEffectiveModelLabel: string | null;
   showThinking: boolean;
   toggleShowThinking: () => void;
+  sessionModelSelectorEnabled: boolean;
+  toggleSessionModelSelector: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   maxEngines: number;
@@ -487,7 +506,7 @@ export default function DashboardView(props: DashboardViewProps) {
     const serverWorkspaceId = resolveVesloWorkspaceId(workspaceId);
     if (!serverWorkspaceId) return;
 
-    void client.prefetchSessionTranscripts(serverWorkspaceId, interest).catch((error) => {
+    void client.prefetchSessionTranscripts(serverWorkspaceId, interest, { appWorkspaceId: workspaceId }).catch((error) => {
       console.warn("[dashboard.loaded-session-prefetch] failed", {
         workspaceId,
         serverWorkspaceId,
@@ -496,9 +515,6 @@ export default function DashboardView(props: DashboardViewProps) {
     });
   };
 
-  // Track last refreshed tab to avoid duplicate calls
-  const [lastRefreshedTab, setLastRefreshedTab] = createSignal<string | null>(null);
-  const [refreshInProgress, setRefreshInProgress] = createSignal(false);
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
   const [leftSidebarWidth, setLeftSidebarWidth] = createSignal(readLeftSidebarWidth());
   const [leftSidebarResizing, setLeftSidebarResizing] = createSignal(false);
@@ -560,65 +576,26 @@ export default function DashboardView(props: DashboardViewProps) {
     window.addEventListener("pointerup", onPointerUp, { once: true });
     window.addEventListener("pointercancel", onPointerCancel, { once: true });
 
-    leftSidebarResizeCleanup = () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerCancel);
-      document.body.style.userSelect = previousUserSelect;
-      document.body.style.cursor = previousCursor;
-    };
+    leftSidebarResizeCleanup = createLeftSidebarResizeCleanup({
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel,
+      previousUserSelect,
+      previousCursor,
+    });
   };
 
   onCleanup(() => stopLeftSidebarResize(false));
 
-  createEffect(() => {
-    const currentTab = props.tab;
-
-    // Skip if we already refreshed this tab or a refresh is in progress
-    if (lastRefreshedTab() === currentTab || refreshInProgress()) {
-      return;
-    }
-
-    // Track that we're refreshing this tab
-    setRefreshInProgress(true);
-    setLastRefreshedTab(currentTab);
-
-    // Use a cancelled flag to prevent stale updates after navigation
-    let cancelled = false;
-
-    const doRefresh = async () => {
-      try {
-        if (currentTab === "skills" && !cancelled) {
-          await Promise.all([
-            props.refreshSkillInventory(),
-            props.refreshHubSkills(),
-            props.refreshSkills(),
-          ]);
-        }
-        if ((currentTab === "plugins" || currentTab === "mcp") && !cancelled) {
-          await Promise.all([props.refreshPlugins(undefined, { debug: props.developerMode }), props.refreshMcpServers()]);
-        }
-        if (currentTab === "scheduled" && !cancelled) {
-          await props.refreshScheduledJobs();
-        }
-        if (currentTab === "soul" && !cancelled) {
-          await props.refreshSoulData();
-        }
-      } catch {
-        // Ignore errors during navigation
-      } finally {
-        if (!cancelled) {
-          setRefreshInProgress(false);
-        }
-      }
-    };
-
-    doRefresh();
-
-    onCleanup(() => {
-      cancelled = true;
-      setRefreshInProgress(false);
-    });
+  createDashboardTabRefreshController({
+    tab: () => props.tab,
+    developerMode: () => props.developerMode,
+    refreshSkillInventory: (options) => props.refreshSkillInventory(options),
+    refreshSkills: (options) => props.refreshSkills(options),
+    refreshPlugins: (scope, options) => props.refreshPlugins(scope, options),
+    refreshMcpServers: () => props.refreshMcpServers(),
+    refreshScheduledJobs: (options) => props.refreshScheduledJobs(options),
+    refreshSoulData: (options) => props.refreshSoulData(options),
   });
 
   const runtimeAvailableWithoutClient = createMemo(() => {
@@ -840,8 +817,8 @@ export default function DashboardView(props: DashboardViewProps) {
         rightContent={
           <button
             type="button"
+            onClick={() => props.onOpenFeedback()}
             class="mr-1 inline-flex h-6 items-center rounded-md px-2.5 text-[11px] font-medium leading-6 text-[var(--dls-button-ghost)] transition-colors hover:bg-[var(--dls-accent-tint)] hover:text-dls-accent focus:outline-none focus-visible:ring-0"
-            onClick={props.onOpenFeedback}
             aria-label={feedbackButtonLabel()}
             title={feedbackButtonLabel()}
           >
@@ -1257,6 +1234,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   aiAccessEffectiveModelLabel={props.aiAccessEffectiveModelLabel}
                   showThinking={props.showThinking}
                   toggleShowThinking={props.toggleShowThinking}
+                  sessionModelSelectorEnabled={props.sessionModelSelectorEnabled}
+                  toggleSessionModelSelector={props.toggleSessionModelSelector}
                   hideTitlebar={props.hideTitlebar}
                   toggleHideTitlebar={props.toggleHideTitlebar}
                   maxEngines={props.maxEngines}

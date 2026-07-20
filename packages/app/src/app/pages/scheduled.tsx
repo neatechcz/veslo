@@ -1,4 +1,5 @@
-import { For, Match, Show, Switch, createMemo, createSignal, type Component } from "solid-js";
+import { For, Match, Show, Switch, createMemo, createSignal, untrack, type Component } from "solid-js";
+import { Dynamic } from "solid-js/web";
 
 import type {
   AutomationWorkspaceSummary,
@@ -208,18 +209,17 @@ const AutomationTemplateCard = (props: {
   onClick?: () => void;
   disabled?: boolean;
 }) => {
-  const Icon = props.icon;
   return (
     <button
       type="button"
-      onClick={props.onClick}
+      onClick={() => props.onClick?.()}
       disabled={props.disabled}
       class={`group w-full rounded-2xl border bg-gray-1 p-5 text-left transition-shadow hover:shadow-md ${
         props.disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
       } border-gray-4 hover:border-gray-5`}
     >
       <div class={`mb-4 flex h-8 w-8 items-center justify-center rounded-lg border border-gray-3 bg-gray-1 ${props.tone ?? ""}`}>
-        <Icon size={18} />
+        <Dynamic component={props.icon} size={18} />
       </div>
       <div class="mb-1 text-sm font-semibold text-gray-12">{props.name}</div>
       <p class="text-[13px] text-gray-10 leading-relaxed group-hover:text-gray-12">{props.description}</p>
@@ -275,7 +275,7 @@ const AutomationCard = (props: {
           <button
             type="button"
             data-testid="scheduled-automation-run"
-            onClick={props.onRun}
+            onClick={() => props.onRun()}
             disabled={props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
               props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId
@@ -289,7 +289,7 @@ const AutomationCard = (props: {
           <button
             type="button"
             data-testid="scheduled-automation-edit"
-            onClick={props.onEdit}
+            onClick={() => props.onEdit()}
             disabled={props.busy || !workspace().serverWorkspaceId}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
               props.busy || !workspace().serverWorkspaceId
@@ -302,7 +302,7 @@ const AutomationCard = (props: {
           <button
             type="button"
             data-testid="scheduled-automation-delete"
-            onClick={props.onDelete}
+            onClick={() => props.onDelete()}
             disabled={props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
               props.busy || automation().status === "cancelled" || !workspace().serverWorkspaceId
@@ -530,7 +530,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const handleCreateAutomation = async () => {
     const schedule = selectedSchedule();
     if (!schedule || !canCreateAutomation()) return;
-    await createAction.execute(async () => {
+    await createAction.execute(() => untrack(() => (async () => {
       const targetTitle = automationProject().trim() || automationName().trim();
       await props.createAutomation(automationWorkspaceId(), {
         name: automationName().trim(),
@@ -539,7 +539,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         target: targetTitle ? { fallbackTitle: targetTitle } : undefined,
         });
       setCreateModalOpen(false);
-    });
+    })()));
   };
 
   const handleUpdateAutomation = async () => {
@@ -547,7 +547,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     const schedule = selectedSchedule();
     const workspaceId = target?.workspace.serverWorkspaceId;
     if (!target || !workspaceId || !schedule || automationName().trim().length === 0 || automationPrompt().trim().length === 0) return;
-    await updateAction.execute(async () => {
+    await updateAction.execute(() => untrack(() => (async () => {
       const targetPayload = {
         fallbackTitle: automationProject().trim() || undefined,
         agent: automationAgent().trim() || undefined,
@@ -563,25 +563,25 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         target: Object.values(targetPayload).some((value) => value) ? targetPayload : null,
       });
       setEditTarget(null);
-    });
+    })()));
   };
 
   const runAutomationNow = async (item: WorkspaceAutomationItem) => {
     const workspaceId = item.workspace.serverWorkspaceId;
     if (!workspaceId) return;
-    await runAction.execute(async () => {
+    await runAction.execute(() => untrack(() => (async () => {
       await props.runAutomation(workspaceId, item.automation.id);
-    });
+    })()));
   };
 
   const confirmDelete = async () => {
     const target = deleteTarget();
     const workspaceId = target?.workspace.serverWorkspaceId;
     if (!target || !workspaceId) return;
-    await deleteAction.execute(async () => {
+    await deleteAction.execute(() => untrack(() => (async () => {
       await props.deleteAutomation(workspaceId, target.automation.id);
       setDeleteTarget(null);
-    });
+    })()));
   };
 
   const toggleDay = (id: string) => {

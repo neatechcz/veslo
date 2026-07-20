@@ -30,6 +30,7 @@ import type {
   SessionAttachmentFilePartInput,
   SessionAttachmentPartInput,
 } from "./session-attachment-staging";
+import type { MaterializedSubmittedConversationRun } from "./session-creation-workflow";
 import type {
   VesloConversationRunInput,
   VesloConversationSubmitRequest,
@@ -63,7 +64,9 @@ import type {
   SidebarActivityTokenScope,
 } from "../context/sidebar-session-activity-token";
 import type { UiScopeToken } from "../lib/ui-conversation-scope";
-import { deleteSessionComposerDraft } from "./session-composer-drafts";
+import {
+  type ComposerDraftStateCommands,
+} from "./session-composer-drafts";
 import type {
   Client,
   ComposerDraft,
@@ -91,6 +94,9 @@ export type SessionSendWorkflowCommand = {
 
 type ConversationSubmitDraftInput = VesloConversationSubmitRequest["draft"];
 type ConversationSubmitOptionsInput = NonNullable<VesloConversationSubmitRequest["options"]>;
+
+const isConversationServerSubmitPreflightError = (error: unknown): error is Error =>
+  error instanceof Error && error.name === "ConversationServerSubmitPreflightError";
 
 function conversationSubmitDraftFromComposerDraft(
   draft: ComposerDraft,
@@ -181,6 +187,7 @@ export type ConversationRunCompatibilityBridgeSubmitInput = {
   startSendPromptBusy: StartSendPromptBusy;
   stopSendPromptBusy: () => void;
   traceId: string;
+  modelOverride?: ModelRef | null;
 };
 
 export type ConversationRunCompatibilityBridge = {
@@ -262,7 +269,7 @@ export type ConversationRunCompatibilityBridgeOptions = {
   sessionStoreClearCommandDisplay: (messageId: string) => void;
   sessionStoreSetCommandDisplay: (messageId: string, command: string, args: string) => void;
   setError: (message: string | null) => void;
-  setLastPromptSent: (prompt: string) => void;
+  setLastPromptSent: (prompt: string, modelOverride?: ModelRef | null) => void;
   setPrompt: (value: string) => void;
   stageAttachmentsIntoSessionDirectory: (
     draft: ComposerDraft,
@@ -274,6 +281,23 @@ export type ConversationRunCompatibilityBridgeOptions = {
 
 export type SessionSendWorkflowOptions = {
   admitAcceptedConversationRun: (input: AcceptedConversationRunInput) => boolean | void;
+  armConversationRunProvisional?: (input: {
+    sessionId: string;
+    workspaceId: string;
+    conversationId: string;
+    opencodeSessionId?: string | null;
+    directory?: string | null;
+    clientMessageId: string;
+  }) => boolean | void;
+  disposeConversationRunProvisional?: (input: {
+    sessionId: string;
+    workspaceId: string;
+    conversationId: string;
+    opencodeSessionId?: string | null;
+    directory?: string | null;
+    clientMessageId: string;
+  }) => boolean | void;
+  watchQueuedConversationRun?: (input: AcceptedConversationRunInput) => boolean | void;
   beginSidebarActivityToken?: (scope: SidebarActivityTokenScope) => SidebarActivityTokenHandle | null;
   migrateSidebarActivityToken?: (
     handle: SidebarActivityTokenHandle | null | undefined,
@@ -322,6 +346,7 @@ export type SessionSendWorkflowOptions = {
       submitOrigin?: string | null;
       submitSource?: string | null;
       onSubmitResult?: (result: VesloConversationSubmitResult) => void;
+      onSubmittedRunMaterialized?: (input: MaterializedSubmittedConversationRun) => boolean;
       onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
       preflight?: SessionSendPreflightContext;
     },
@@ -333,6 +358,7 @@ export type SessionSendWorkflowOptions = {
   ensureSelectedSessionWorkspaceActiveForSend: (
     sessionId: string,
     sendTraceId?: string | null,
+    resolvedTarget?: SendTargetWorkspaceScope | null,
   ) => Promise<boolean>;
   emitFlowProgress: (event: SessionFlowProgressEvent) => void;
   finishPerf: (
@@ -419,11 +445,9 @@ export type SessionSendWorkflowOptions = {
   sessionStoreSetCommandDisplay: (messageId: string, command: string, args: string) => void;
   setActivePendingDraftKey: (key: string | null) => void;
   setActivePendingDraftMeta: (meta: unknown | null) => void;
-  setComposerDraftBySessionId: (
-    updater: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
-  ) => void;
+  composerDraftCommands: Pick<ComposerDraftStateCommands, "deleteDraft">;
   setError: (message: string | null) => void;
-  setLastPromptSent: (prompt: string) => void;
+  setLastPromptSent: (prompt: string, modelOverride?: ModelRef | null) => void;
   setPrompt: (value: string) => void;
   setSelectedSessionId: (sessionId: string | null) => void;
   setView: (view: View) => void;
@@ -624,7 +648,7 @@ export function createConversationRunCompatibilityBridge(
       input.stopSendPromptBusy();
       return false;
     }
-    const model = deps.modelForSession(materializedSessionID);
+    const model = input.modelOverride ?? deps.modelForSession(materializedSessionID);
     let promptSystem: string | undefined;
 
     try {
@@ -730,7 +754,7 @@ export function createConversationRunCompatibilityBridge(
 
     try {
       if (!input.compactCommand) {
-        deps.setLastPromptSent(content);
+        deps.setLastPromptSent(content, input.modelOverride ?? null);
       }
       if (!input.hasExplicitDraft) {
         deps.setPrompt("");
@@ -1251,7 +1275,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       scopedSessionID &&
       !(await deps.sendTraceStep(
         "sendPrompt:ensure-scoped-workspace-active",
-        () => deps.ensureSelectedSessionWorkspaceActiveForSend(scopedSessionID, sendTraceId),
+        () => deps.ensureSelectedSessionWorkspaceActiveForSend(scopedSessionID, sendTraceId, sendTargetWorkspace),
         {
           traceId: sendTraceId,
           sessionID: scopedSessionID,
@@ -1269,7 +1293,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       });
     }
     if (scopedSessionID) {
-      sendTargetWorkspace = deps.resolveSendTargetWorkspaceScope(scopedSessionID) ?? sendTargetWorkspace;
       sendPreflight.targetWorkspace = sendTargetWorkspace;
       sendPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(sendTargetWorkspace);
     }
@@ -1367,11 +1390,11 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         deps.setError(hintedMessage);
         deps.sessionStoreAppendSessionErrorTurn(existingSessionId, hintedMessage);
       };
-      const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || deps.workspace.activeWorkspaceId().trim();
+      const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
       const directory =
         sendTargetWorkspace?.directory?.trim() ||
         sendTargetWorkspace?.workspaceRoot?.trim() ||
-        deps.workspace.activeWorkspaceRoot().trim();
+        "";
       if (!workspaceId || !directory) {
         const message = "Server-owned conversation submit is missing a workspace or directory for this local session.";
         deps.recordSendTrace("sendPrompt:server-submit-existing-missing-target", {
@@ -1390,7 +1413,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       const scope = deps.resolveSelectedSessionBrowseScope(existingSessionId);
       const conversationId = scope?.conversationId?.trim() || null;
       const opencodeSessionId = scope?.opencodeSessionId?.trim() || existingSessionId;
-      const model = deps.modelForSession(existingSessionId);
+      const model = options.modelOverride ?? deps.modelForSession(existingSessionId);
       const agent = deps.agentForSession(existingSessionId);
       const selectedVariant = deps.modelVariant() ?? undefined;
       const command = compactCommand ? null : resolvedDraft.command;
@@ -1521,6 +1544,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         options: {
           agent: agent ?? null,
           variant: selectedVariant ?? null,
+          ...(options.modelOverride ? { model: options.modelOverride } : {}),
           submitQueuePolicy: sendCorrelation.origin === "session:send-now"
             ? "send-now"
             : sendCorrelation.origin === "session:queue-drain"
@@ -1560,6 +1584,23 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         });
       }
 
+      const provisionalRun = conversationId
+        ? {
+            sessionId: existingSessionId,
+            workspaceId,
+            conversationId,
+            opencodeSessionId,
+            directory,
+            clientMessageId: sendCorrelation.clientMessageId,
+          }
+        : null;
+      const provisionalArmed = provisionalRun
+        ? deps.armConversationRunProvisional?.(provisionalRun) === true
+        : false;
+      const disposeProvisional = () => {
+        if (provisionalArmed && provisionalRun) deps.disposeConversationRunProvisional?.(provisionalRun);
+      };
+
       let result: VesloConversationSubmitResult | null | undefined;
       try {
         result = await deps.sendTraceStep(
@@ -1580,6 +1621,32 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           },
         );
       } catch (firstError) {
+        if (isConversationServerSubmitPreflightError(firstError)) {
+          disposeProvisional();
+          if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
+          const message = deps.messageFromUnknownError(firstError);
+          deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+            sessionID: existingSessionId,
+            mode: resolvedDraft.mode,
+            command: commandName,
+            error: message,
+            serverSubmit: true,
+            phase: "preflight",
+          });
+          deps.recordSendTrace("sendPrompt:server-submit-existing:preflight-error", {
+            traceId: sendTraceId,
+            sessionID: existingSessionId,
+            clientMessageId: sendCorrelation.clientMessageId,
+            origin: sendCorrelation.origin,
+            message,
+          });
+          reportServerSubmitError(message);
+          return sessionSubmitFailedResult({
+            code: "server_submit_preflight_failed",
+            message,
+            draftDisposition: "keep",
+          });
+        }
         // The request may already have crossed the server boundary. Replay the
         // exact idempotent submit once with the same clientMessageId before
         // classifying its outcome as unknown.
@@ -1609,6 +1676,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
             },
           );
         } catch (error) {
+          disposeProvisional();
           if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
           const message = deps.messageFromUnknownError(error);
           deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
@@ -1635,6 +1703,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       }
 
       if (!result) {
+        disposeProvisional();
         if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
         const message = "Server-owned conversation submit is unavailable for this local session.";
         deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
@@ -1671,6 +1740,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         },
       }));
       if (!resultValidation.ok) {
+        disposeProvisional();
         if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
         deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
           sessionID: existingSessionId,
@@ -1689,6 +1759,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       result = resultValidation.value;
 
       if (result.status === "blocked" || result.status === "failed") {
+        disposeProvisional();
         const implicitSkillConfirmationRequired = conversationSubmitNeedsImplicitSkillConfirmation(result);
         if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
         deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
@@ -1730,13 +1801,11 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         ) ?? false;
       }
 
-      if (result.draftDisposition === "clear") {
-        if (!compactCommand) {
-          deps.setLastPromptSent(initialContent);
-        }
-        if (!hasExplicitDraft) {
-          deps.setPrompt("");
-        }
+      if (!compactCommand) {
+        deps.setLastPromptSent(initialContent, options.modelOverride ?? null);
+      }
+      if (!hasExplicitDraft) {
+        deps.setPrompt("");
       }
       deps.finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
         sessionID: existingSessionId,
@@ -1798,6 +1867,18 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           opencodeSessionId: result.opencodeSessionId,
           directory,
           runId: result.runId,
+          clientMessageId: result.clientMessageId,
+          diagnosticTraceId: sendTraceId,
+        });
+      } else {
+        disposeProvisional();
+        deps.watchQueuedConversationRun?.({
+          sessionId: existingSessionId,
+          workspaceId,
+          conversationId: result.conversationId,
+          opencodeSessionId: result.opencodeSessionId,
+          directory,
+          runId: result.reservedRunId,
           clientMessageId: result.clientMessageId,
           diagnosticTraceId: sendTraceId,
         });
@@ -1883,9 +1964,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       if (clearDisplayedPendingDraftState) {
         deps.clearActivePendingDraftState();
       }
-      deps.setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, {
-        storageKey: pendingDraftStorageKey,
-      }));
+      deps.composerDraftCommands.deleteDraft(pendingDraftStorageKey);
       deps.refreshPendingDraftSummaries();
     };
     const serverSubmitMaterializationDraft = (() => {
@@ -1896,6 +1975,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       ? {
           agent: sessionID ? (deps.agentForSession(sessionID) ?? null) : null,
           variant: deps.modelVariant() ?? null,
+          ...(options.modelOverride ? { model: options.modelOverride } : {}),
           ...(options.implicitSkillCommandPolicy
             ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
             : {}),
@@ -1905,6 +1985,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       current: ConversationSubmitTerminalResult | null;
       invalidMessage: string | null;
     } = { current: null, invalidMessage: null };
+    const serverFirstSubmittedRunAdmissions = new Set<true>();
     if (!sessionID) {
       deps.recordSendTrace("sendPrompt:create-session-needed", {
         traceId: sendTraceId,
@@ -1943,6 +2024,56 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
                 serverFirstSubmitResultHolder.invalidMessage = validation.message;
               }
             }
+          },
+          onSubmittedRunMaterialized: (materialized) => {
+            const acceptedResult = serverFirstSubmitResultHolder.current;
+            if (
+              !acceptedResult ||
+              acceptedResult.status !== "submitted" ||
+              acceptedResult.runId !== materialized.result.runId ||
+              acceptedResult.clientMessageId !== materialized.result.clientMessageId
+            ) {
+              return false;
+            }
+
+            const workspaceId = materialized.workspaceId.trim();
+            const directory = materialized.directory.trim();
+            const sessionId = materialized.sessionId.trim();
+            if (!workspaceId || !directory || !sessionId) {
+              deps.recordSendTrace("sendPrompt:server-submit-first-admission-missing-target", {
+                traceId: sendTraceId,
+                sessionID: sessionId || null,
+                runId: acceptedResult.runId,
+              });
+              return false;
+            }
+
+            const admitted = deps.admitAcceptedConversationRun({
+              sessionId,
+              workspaceId,
+              conversationId: acceptedResult.conversationId,
+              opencodeSessionId: acceptedResult.opencodeSessionId,
+              directory,
+              runId: acceptedResult.runId,
+              clientMessageId: acceptedResult.clientMessageId,
+              diagnosticTraceId: sendTraceId,
+            });
+            if (admitted !== true) return false;
+
+            deps.emitLiveTranscriptPolicyEvent({
+              type: "conversation-run.succeeded",
+              reason: "sendPrompt:success",
+              workspaceId,
+              sessionId,
+              traceId: sendTraceId,
+            });
+            serverFirstSubmittedRunAdmissions.add(true);
+            deps.recordSendTrace("sendPrompt:server-submit-first-admitted-before-select", {
+              traceId: sendTraceId,
+              sessionID: sessionId,
+              runId: acceptedResult.runId,
+            });
+            return true;
           },
           onMaterializedSessionId: options.onMaterializedSessionId,
           preflight: sendPreflight,
@@ -2060,11 +2191,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         stopSendPromptBusy();
         return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
       }
-      if (serverFirstSubmitResult.draftDisposition === "clear") {
-        deps.setLastPromptSent(initialContent);
-        if (!hasExplicitDraft) {
-          deps.setPrompt("");
-        }
+      deps.setLastPromptSent(initialContent, options.modelOverride ?? null);
+      if (!hasExplicitDraft) {
+        deps.setPrompt("");
       }
       deps.recordSendTrace("sendPrompt:server-submit-first-success", {
         traceId: sendTraceId,
@@ -2078,48 +2207,50 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         queueItemId: serverFirstSubmitResult.status === "queued" ? serverFirstSubmitResult.queueItemId : null,
         draftDisposition: serverFirstSubmitResult.draftDisposition,
       });
-      if (serverFirstSubmitResult.status === "queued") {
-        deps.emitLiveTranscriptPolicyEvent({
-          type: "conversation-run.queued",
-          reason: "sendPrompt:queued",
-          workspaceId: serverFirstSubmitResult.workspaceId,
-          sessionId: sessionID,
-          traceId: sendTraceId,
-          queueItemId: serverFirstSubmitResult.queueItemId,
-          reservedRunId: serverFirstSubmitResult.reservedRunId,
-        });
-      } else {
-        deps.emitLiveTranscriptPolicyEvent({
-          type: "conversation-run.succeeded",
-          reason: "sendPrompt:success",
-          workspaceId: serverFirstSubmitResult.workspaceId,
-          sessionId: sessionID,
-          traceId: sendTraceId,
-        });
-      }
-      if (serverFirstSubmitResult.status === "submitted") {
+      if (!serverFirstSubmittedRunAdmissions.has(true)) {
         const workspaceId = sendTargetWorkspace?.workspaceId?.trim() || "";
-        const directory =
-          sendTargetWorkspace?.directory?.trim() ||
-          sendTargetWorkspace?.workspaceRoot?.trim() ||
-          "";
-        if (!workspaceId || !directory) {
-          deps.recordSendTrace("sendPrompt:server-submit-first-admission-missing-target", {
+        if (serverFirstSubmitResult.status === "queued") {
+          deps.emitLiveTranscriptPolicyEvent({
+            type: "conversation-run.queued",
+            reason: "sendPrompt:queued",
+            workspaceId: workspaceId || serverFirstSubmitResult.workspaceId,
+            sessionId: sessionID,
             traceId: sendTraceId,
-            sessionID,
-            runId: serverFirstSubmitResult.runId,
+            queueItemId: serverFirstSubmitResult.queueItemId,
+            reservedRunId: serverFirstSubmitResult.reservedRunId,
           });
         } else {
-          deps.admitAcceptedConversationRun({
+          deps.emitLiveTranscriptPolicyEvent({
+            type: "conversation-run.succeeded",
+            reason: "sendPrompt:success",
+            workspaceId: workspaceId || serverFirstSubmitResult.workspaceId,
             sessionId: sessionID,
-            workspaceId,
-            conversationId: serverFirstSubmitResult.conversationId,
-            opencodeSessionId: serverFirstSubmitResult.opencodeSessionId,
-            directory,
-            runId: serverFirstSubmitResult.runId,
-            clientMessageId: serverFirstSubmitResult.clientMessageId,
-            diagnosticTraceId: sendTraceId,
+            traceId: sendTraceId,
           });
+        }
+        if (serverFirstSubmitResult.status === "submitted") {
+          const directory =
+            sendTargetWorkspace?.directory?.trim() ||
+            sendTargetWorkspace?.workspaceRoot?.trim() ||
+            "";
+          if (!workspaceId || !directory) {
+            deps.recordSendTrace("sendPrompt:server-submit-first-admission-missing-target", {
+              traceId: sendTraceId,
+              sessionID,
+              runId: serverFirstSubmitResult.runId,
+            });
+          } else {
+            deps.admitAcceptedConversationRun({
+              sessionId: sessionID,
+              workspaceId,
+              conversationId: serverFirstSubmitResult.conversationId,
+              opencodeSessionId: serverFirstSubmitResult.opencodeSessionId,
+              directory,
+              runId: serverFirstSubmitResult.runId,
+              clientMessageId: serverFirstSubmitResult.clientMessageId,
+              diagnosticTraceId: sendTraceId,
+            });
+          }
         }
       }
       await consumePendingDraftAfterAcceptedSend(true);
@@ -2202,6 +2333,7 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       startSendPromptBusy,
       stopSendPromptBusy,
       traceId: sendTraceId,
+      modelOverride: options.modelOverride ?? null,
     });
     return sessionSubmitCompatibilityResultFromAccepted(compatibilityAccepted, null);
     } finally {

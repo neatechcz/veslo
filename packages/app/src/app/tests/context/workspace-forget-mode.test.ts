@@ -7,6 +7,8 @@ import { readContextSource, readWorkspaceBehaviorSources } from "./workspace-sou
 const workspaceSource = readWorkspaceBehaviorSources();
 const tauriSource = readFileSync(new URL("../../lib/tauri.ts", import.meta.url), "utf8");
 const workspaceDebugSource = readContextSource("workspace-debug.ts");
+const workspaceRuntimeProbeSource = readContextSource("workspace-runtime-debug-probe.ts");
+const remoteStoreSource = readFileSync(new URL("../../stores/remote-store.ts", import.meta.url), "utf8");
 
 test("workspace store maps forget options to detach/delete modes", () => {
   assert.match(
@@ -82,4 +84,12 @@ test("workspace debug activation log uses a typed window root", () => {
     new RegExp(`\\(window as ${unsafeTypeToken}\\)\\.__wsActivateLog`),
     "workspace debug should not cast the activation log window root to any",
   );
+});
+
+test("workspace diagnostics stay out of the DevTools console", () => {
+  const consoleOutput = /\bconsole\.(?:log|warn|debug|info)\s*\(/;
+
+  assert.doesNotMatch(workspaceSource, consoleOutput);
+  assert.doesNotMatch(remoteStoreSource, consoleOutput);
+  assert.doesNotMatch(workspaceRuntimeProbeSource, consoleOutput);
 });

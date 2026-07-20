@@ -30,7 +30,7 @@ test("workspace session sidebar uses a more visible project collapse profile", (
 });
 
 test("workspace session sidebar collapse primitive guards lifecycle edge cases", () => {
-  assert.match(source, /let previousOpen = props\.open;/);
+  assert.match(source, /let previousOpen = untrack\(\(\) => props\.open\);/);
   assert.match(source, /let hasMounted = false;/);
   assert.match(source, /if \(!hasMounted\) \{[\s\S]*hasMounted = true;[\s\S]*previousOpen = open;[\s\S]*return;/);
   assert.match(source, /if \(previousOpen === open\) return;/);

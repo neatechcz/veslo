@@ -36,7 +36,9 @@ const switchComposerTargetQueueSource = composerTargetControllerSource.slice(
 );
 
 const assertComposerDraftSeededBeforeActivation = (source: string, draftName: string) => {
-  const seedIndex = source.indexOf(`setSessionComposerDraft(current, { storageKey: target.id }, ${draftName})`);
+  const seedIndex = source.indexOf(
+    `deps.composerDraftCommands.writeDraft(resolveMovedComposerStorageKey(target.id), ${draftName})`,
+  );
   const activationIndex = source.indexOf("deps.setActivePendingDraftKey(target.id)");
   assert.ok(seedIndex >= 0, `${draftName} should be seeded into the target storage key`);
   assert.ok(activationIndex >= 0, "target key should be activated");
@@ -46,9 +48,18 @@ const assertComposerDraftSeededBeforeActivation = (source: string, draftName: st
 test("session view receives composer target picker state from app", () => {
   assert.match(typesSource, /export type ComposerTargetOption = \{/);
   assert.match(typesSource, /export type ComposerTargetSwitchResult =/);
-  assert.match(appViewPropsSource, /composerTargetOptions: composerTargetController\.composerTargetOptions\(\)/);
-  assert.match(appViewPropsSource, /activeComposerTargetId: composerTargetController\.activeComposerTargetId\(\)/);
-  assert.match(appViewPropsSource, /switchComposerTarget: composerTargetController\.switchComposerTarget/);
+  assert.match(
+    appViewPropsSource,
+    /get composerTargetOptions\(\) \{\s*return composerTargetController\.composerTargetOptions\(\);\s*\}/s,
+  );
+  assert.match(
+    appViewPropsSource,
+    /get activeComposerTargetId\(\) \{\s*return composerTargetController\.activeComposerTargetId\(\);\s*\}/s,
+  );
+  assert.match(
+    appViewPropsSource,
+    /get switchComposerTarget\(\) \{\s*return composerTargetController\.switchComposerTarget;\s*\}/s,
+  );
   assert.match(sessionSource, /composerTargetOptions: ComposerTargetOption\[\];/);
 });
 
@@ -105,7 +116,9 @@ test("switchComposerTarget moves current pending drafts instead of cloning them"
     "target switches should snapshot the original composer storage before writing the destination",
   );
 
-  const seedIndex = switchComposerTargetSource.indexOf("setSessionComposerDraft(current, { storageKey: target.id }, currentDraft)");
+  const seedIndex = switchComposerTargetSource.indexOf(
+    "deps.composerDraftCommands.writeDraft(resolveMovedComposerStorageKey(target.id), currentDraft)",
+  );
   const activationIndex = switchComposerTargetSource.indexOf("deps.setActivePendingDraftKey(target.id)");
   const cleanupIndex = switchComposerTargetSource.indexOf("await consumeMovedPendingDraft({");
 
@@ -130,7 +143,7 @@ test("switchComposerTarget serializes rapid target changes", () => {
   );
   assert.match(
     switchComposerTargetQueueSource,
-    /const queuedSwitch = composerTargetSwitchQueue[\s\S]*\.then\(\(\) => switchComposerTargetNow\(targetId\)\);/,
+    /const queuedSwitch = composerTargetSwitchQueue[\s\S]*\.then\(\(\) => untrack\(\(\) => switchComposerTargetNow\(targetId\)\)\);/,
     "each target switch should run after the previous switch settles",
   );
   assert.match(
@@ -191,7 +204,7 @@ test("composer entry heading uses the same width cap as the centered composer", 
 test("centered composer entry keeps composer text left aligned", () => {
   assert.match(
     sessionSource,
-    /<div class="w-full text-left">\s*<Composer\s+entryPlacement="center"/s,
+    /<div class="w-full text-left">\s*\{sessionModelSelector\(\)\}\s*<Composer\s+entryPlacement="center"/s,
     "the centered entry heading can be centered, but the composer editor must inherit left-aligned text",
   );
 });

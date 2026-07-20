@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
-import { startSessionQueueRuntimeFixture } from './session-queue-runtime-fixture.js';
+import {
+  materializeSessionQueueFixtureTranscript,
+  startSessionQueueRuntimeFixture,
+} from './session-queue-runtime-fixture.js';
 
 test('session queue runtime fixture holds, releases, and deterministically fails queued OpenCode submissions', async () => {
   const fixture = await startSessionQueueRuntimeFixture();
@@ -16,6 +23,29 @@ test('session queue runtime fixture holds, releases, and deterministically fails
       body: JSON.stringify({ id: 'ses-fixture', directory: '/fixture/workspace' }),
     });
     assert.equal(session.status, 200);
+
+    const assistantEvent = await fetch(`${fixture.baseUrl}/__session_queue_fixture/emit-assistant-text-part`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: 'ses-fixture',
+        messageId: 'msg-assistant-fixture',
+        partId: 'part-assistant-fixture',
+        text: 'Fixture assistant text',
+      }),
+    });
+    assert.equal(assistantEvent.status, 200);
+    assert.deepEqual(await assistantEvent.json(), {
+      info: { id: 'msg-assistant-fixture', sessionID: 'ses-fixture', role: 'assistant' },
+      part: {
+        id: 'part-assistant-fixture',
+        messageID: 'msg-assistant-fixture',
+        sessionID: 'ses-fixture',
+        type: 'text',
+        text: 'Fixture assistant text',
+      },
+      emittedEventCount: 2,
+    });
 
     const mirroredTranscript = await fetch(`${fixture.baseUrl}/__session_queue_fixture/append-session-transcript`, {
       method: 'POST',
@@ -88,5 +118,69 @@ test('session queue runtime fixture holds, releases, and deterministically fails
     }]);
   } finally {
     await fixture.stop();
+  }
+});
+
+test('session queue runtime fixture materializes canonical OpenCode rows for host transcript recovery', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'veslo-session-queue-fixture-'));
+  const workspacePath = join(root, 'workspace');
+  try {
+    materializeSessionQueueFixtureTranscript(
+      workspacePath,
+      {
+        id: 'ses-sqlite',
+        title: 'SQLite fixture session',
+        directory: workspacePath,
+        parentID: null,
+        time: { created: 1_000, updated: 2_000 },
+      },
+      {
+        messages: [{ id: 'msg-sqlite', sessionID: 'ses-sqlite', role: 'user' }],
+        partsByMessageId: {
+          'msg-sqlite': [{
+            id: 'part-sqlite',
+            messageID: 'msg-sqlite',
+            sessionID: 'ses-sqlite',
+            type: 'text',
+            text: 'Canonical fixture text',
+          }],
+        },
+      },
+    );
+
+    const database = new DatabaseSync(join(workspacePath, '.opencode', 'opencode.db'));
+    try {
+      assert.deepEqual(
+        { ...database.prepare('SELECT id, title, directory FROM session WHERE id = ?').get('ses-sqlite') as object },
+        { id: 'ses-sqlite', title: 'SQLite fixture session', directory: workspacePath },
+      );
+      assert.deepEqual(
+        { ...database.prepare('SELECT id, session_id, data FROM message WHERE id = ?').get('msg-sqlite') as object },
+        {
+          id: 'msg-sqlite',
+          session_id: 'ses-sqlite',
+          data: JSON.stringify({ id: 'msg-sqlite', sessionID: 'ses-sqlite', role: 'user' }),
+        },
+      );
+      assert.deepEqual(
+        { ...database.prepare('SELECT id, message_id, session_id, data FROM part WHERE id = ?').get('part-sqlite') as object },
+        {
+          id: 'part-sqlite',
+          message_id: 'msg-sqlite',
+          session_id: 'ses-sqlite',
+          data: JSON.stringify({
+            id: 'part-sqlite',
+            messageID: 'msg-sqlite',
+            sessionID: 'ses-sqlite',
+            type: 'text',
+            text: 'Canonical fixture text',
+          }),
+        },
+      );
+    } finally {
+      database.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

@@ -71,7 +71,7 @@ test("extensions store retries hub mcp after Veslo server auth context becomes r
   const autoRefreshSource =
     extensionsSource.match(/createEffect\(\(\) => \{[\s\S]*?refreshHubMcp\(\)\.catch[\s\S]*?\}\);/)?.[0] ?? "";
 
-  assert.match(extensionsSource, /import \{ createEffect, createSignal \} from "solid-js";/);
+  assert.match(extensionsSource, /import \{ createEffect, createSignal, untrack \} from "solid-js";/);
   assert.match(autoRefreshSource, /options\.vesloServerStatus\(\) === "connected"/);
   assert.match(autoRefreshSource, /vesloCapabilities\?\.hub\?\.mcp\?\.read/);
   assert.match(autoRefreshSource, /readDenAuth\(\)/);
@@ -82,10 +82,16 @@ test("extensions store retries hub mcp after Veslo server auth context becomes r
 test("forced hub MCP refresh queues behind in-flight refreshes", () => {
   const refreshHubMcpSource = extensionsSource.match(/async function refreshHubMcp[\s\S]*?createEffect/)?.[0] ?? "";
 
-  assert.match(extensionsSource, /let refreshHubMcpForcePending = false/);
-  assert.match(refreshHubMcpSource, /if \(refreshHubMcpInFlight\) \{[\s\S]*optionsOverride\?\.force[\s\S]*refreshHubMcpForcePending = true/);
+  assert.match(extensionsSource, /const pendingForcedRefreshes = new Set<"hub-mcp">\(\)/);
+  assert.match(
+    refreshHubMcpSource,
+    /if \(refreshHubMcpInFlight\) \{[\s\S]*optionsOverride\?\.force[\s\S]*pendingForcedRefreshes\.add\("hub-mcp"\)/,
+  );
   assert.match(refreshHubMcpSource, /hubMcpLoaded = false/);
-  assert.match(refreshHubMcpSource, /if \(refreshHubMcpForcePending && !refreshHubMcpAborted\) \{[\s\S]*void refreshHubMcp\(\{ force: true \}\)/);
+  assert.match(
+    refreshHubMcpSource,
+    /if \(pendingForcedRefreshes\.has\("hub-mcp"\) && !abortedRefreshes\.has\("hub-mcp"\)\) \{[\s\S]*pendingForcedRefreshes\.delete\("hub-mcp"\);[\s\S]*void refreshHubMcp\(\{ force: true \}\)/,
+  );
 });
 
 test("hub MCP requests and server-managed logout carry the Den API base context", () => {
@@ -263,6 +269,8 @@ test("app prompts once to install the managed SharePoint MCP from the Den catalo
   assert.match(appSource, /markReloadRequired\("mcp", \{ type: "mcp", name: SHAREPOINT_MCP_ID, action: "added" \}\)/);
   assert.match(appSource, /setMcpStatus\(t\("mcp\.sharepoint_prompt_reload_required"/);
   assert.match(appSource, /data-testid="sharepoint-mcp-install-prompt"/);
+  assert.match(appSource, /cancelTestId="sharepoint-mcp-install-dismiss"/);
+  assert.match(appSource, /confirmTestId="sharepoint-mcp-install-confirm"/);
 });
 
 test("hub mcp cards label shared provider context without merging card installs", () => {

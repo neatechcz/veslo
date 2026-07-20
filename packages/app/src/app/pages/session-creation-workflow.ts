@@ -40,8 +40,16 @@ export type SessionCreationWorkflowCreateOptions = {
   submitOrigin?: string | null;
   submitSource?: string | null;
   onSubmitResult?: (result: VesloConversationSubmitResult) => void;
+  onSubmittedRunMaterialized?: (input: MaterializedSubmittedConversationRun) => boolean;
   onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
   preflight?: SessionCreationPreflightContext;
+};
+
+export type MaterializedSubmittedConversationRun = {
+  sessionId: string;
+  workspaceId: string;
+  directory: string;
+  result: Extract<VesloConversationSubmitResult, { status: "submitted" }>;
 };
 
 type SessionCreationWorkspaceAccess = {
@@ -62,6 +70,7 @@ export type SessionCreationWorkspaceScope = {
 export type SessionCreationTransitionRecommendation = {
   shouldRouteAfterSelect: boolean;
   sessionId: string;
+  skipTranscriptRead?: boolean;
 };
 
 export type SessionCreationResult = {
@@ -417,6 +426,10 @@ export function createSessionCreationWorkflow(
 
       const submitDraft = options.submitDraft;
       const submitConversation = deps.submitConversationFromVesloWriteApi;
+      const materializedSubmittedRuns = new Map<
+        "current",
+        Extract<VesloConversationSubmitResult, { status: "submitted" }>
+      >();
       const createViaVeslo = async (retry: boolean): Promise<CreatedSession> => {
         const retryPayload = retry ? { retry: true } : {};
         const vesloCreated = submitDraft && clientMessageId && submitConversation
@@ -448,6 +461,9 @@ export function createSessionCreationWorkflow(
               },
             );
             if (submitResult) options.onSubmitResult?.(submitResult);
+            if (submitResult?.status === "submitted") {
+              materializedSubmittedRuns.set("current", submitResult);
+            }
             return createdSessionFromSubmitResult(submitResult);
           })()
           : await deps.sendTraceStep(
@@ -582,6 +598,16 @@ export function createSessionCreationWorkflow(
       }
       if (applyEffects) {
         deps.applyCreatedSessionState(creationResult, options);
+        const materializedSubmittedRun = materializedSubmittedRuns.get("current");
+        if (materializedSubmittedRun) {
+          creationResult.transition.skipTranscriptRead =
+            options.onSubmittedRunMaterialized?.({
+              sessionId: createdSession.id,
+              workspaceId: createdWorkspaceId,
+              directory: sessionDirectory,
+              result: materializedSubmittedRun,
+            }) === true;
+        }
 
         mark("session:select:start", { sessionID: createdSession.id });
         await deps.sendTraceStep(

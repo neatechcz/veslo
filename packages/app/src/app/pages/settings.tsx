@@ -1,10 +1,9 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMount } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js";
 
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
 import DashboardTabRail, { type DashboardTabRailDashboardTab } from "../components/dashboard-tab-rail";
-import WindowsSandboxRepair from "../components/windows-sandbox-repair";
 import { CircleAlert, Copy, Download, FolderOpen, Loader2, PlugZap, RefreshCcw, Smartphone, X } from "lucide-solid";
 import type { OpencodeConnectStatus, SessionArchiveItem, SettingsTab, StartupPreference } from "../types";
 import type {
@@ -22,11 +21,14 @@ import type {
   OpenCodeRouterInfo,
   WorkspaceInfo,
   DesktopRuntimePreferences,
+  UserDiagnosticCaptureStatus,
 } from "../lib/tauri";
 import {
   appBuildInfo,
   desktopRuntimePreferencesRead,
   desktopRuntimePreferencesWrite,
+  startUserDiagnosticCapture,
+  userDiagnosticCaptureStatus,
   engineRestart,
   opencodeRouterRestart,
   opencodeRouterStop,
@@ -46,8 +48,10 @@ import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
 import {
   documentRuntimeSettingsRow,
+  redactDocumentRuntimeStatus,
   type DocumentRuntimeStatusPayload,
 } from "../lib/document-runtime";
+import { recordBootstrapDiagnostic, sanitizeBootstrapDiagnosticPayload } from "../lib/bootstrap-diagnostics";
 import { MODEL_VARIANT_OPTIONS } from "../lib/model-variant";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
 import type { UpdateDownloadRetryInfo } from "../context/updater";
@@ -99,6 +103,8 @@ export type SettingsViewProps = {
   aiAccessEffectiveModelLabel: string | null;
   showThinking: boolean;
   toggleShowThinking: () => void;
+  sessionModelSelectorEnabled: boolean;
+  toggleSessionModelSelector: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   maxEngines: number;
@@ -219,10 +225,12 @@ export default function SettingsView(props: SettingsViewProps) {
   });
   const documentRuntimeActionLabel = createMemo(() => {
     switch (documentRuntimeRow().action) {
+      case "install":
+        return props.documentRuntimeRepairBusy ? "Installing..." : "Install office package";
       case "repair":
         return props.documentRuntimeRepairBusy ? "Repairing..." : "Repair";
       case "update":
-        return "Check updates";
+        return props.documentRuntimeRepairBusy ? "Updating..." : "Update office package";
       case "wait":
         return "Waiting";
       case "none":
@@ -231,11 +239,10 @@ export default function SettingsView(props: SettingsViewProps) {
   });
   const handleDocumentRuntimeAction = () => {
     const action = documentRuntimeRow().action;
-    if (action === "repair") {
+    if (action === "install" || action === "repair" || action === "update") {
       props.repairDocumentRuntime?.();
       return;
     }
-    if (action === "update") props.checkForUpdates();
   };
   const updateDownloadPercent = createMemo<number | null>(() => {
     const total = updateTotalBytes();
@@ -318,8 +325,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const documentRuntimeActionDisabled = createMemo(() => {
     const action = documentRuntimeRow().action;
     if (action === "wait") return true;
-    if (action === "repair") return !props.repairDocumentRuntime || Boolean(props.documentRuntimeRepairBusy) || props.anyActiveRuns;
-    if (action === "update") return generalUpdateDisabled();
+    if (action === "install" || action === "repair" || action === "update") {
+      return !props.repairDocumentRuntime || Boolean(props.documentRuntimeRepairBusy) || props.anyActiveRuns;
+    }
     return true;
   });
 
@@ -386,6 +394,11 @@ export default function SettingsView(props: SettingsViewProps) {
   const [supportDiagnosticsBusy, setSupportDiagnosticsBusy] = createSignal(false);
   const [supportDiagnosticsStatus, setSupportDiagnosticsStatus] = createSignal<string | null>(null);
   const [supportDiagnosticsError, setSupportDiagnosticsError] = createSignal<string | null>(null);
+  const [userCapture, setUserCapture] = createSignal<UserDiagnosticCaptureStatus | null>(null);
+  const [userCaptureBusy, setUserCaptureBusy] = createSignal(false);
+  const [userCaptureError, setUserCaptureError] = createSignal<string | null>(null);
+  const [userCaptureLoadError, setUserCaptureLoadError] = createSignal<string | null>(null);
+  const [userCaptureStatusBusy, setUserCaptureStatusBusy] = createSignal(false);
   const defaultDenApiBase = getDefaultDenApiBase();
   const [denApiBaseOverride, setDenApiBaseOverride] = createSignal(readDenApiBaseOverride() ?? "");
   const [denApiBaseDraft, setDenApiBaseDraft] = createSignal(getDenApiBase());
@@ -471,6 +484,41 @@ export default function SettingsView(props: SettingsViewProps) {
       setSupportDiagnosticsError(error instanceof Error ? error.message : String(error));
     } finally {
       setSupportDiagnosticsBusy(false);
+    }
+  };
+
+  const refreshUserCapture = async ({ force = false }: { force?: boolean } = {}) => {
+    if (!isTauriRuntime()) return;
+    if (userCaptureStatusBusy()) return;
+    // A missing command or forwarder is terminal for this window. Do not keep
+    // invoking it every five seconds; the user can explicitly retry after a
+    // desktop restart or a Vite reload.
+    if (!force && userCaptureLoadError()) return;
+    setUserCaptureStatusBusy(true);
+    try {
+      setUserCapture(await userDiagnosticCaptureStatus());
+      setUserCaptureLoadError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setUserCapture(null);
+      setUserCaptureLoadError(message || "Could not load diagnostic capture status.");
+      console.warn("[user-diagnostic-capture] status unavailable", error);
+      void recordBootstrapDiagnostic("user-diagnostic-capture:status-unavailable", { message });
+    } finally {
+      setUserCaptureStatusBusy(false);
+    }
+  };
+
+  const startUserCapture = async () => {
+    if (props.busy || userCaptureBusy()) return;
+    setUserCaptureBusy(true);
+    setUserCaptureError(null);
+    try {
+      setUserCapture(await startUserDiagnosticCapture());
+    } catch (error) {
+      setUserCaptureError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setUserCaptureBusy(false);
     }
   };
 
@@ -744,7 +792,10 @@ export default function SettingsView(props: SettingsViewProps) {
   const orchestratorVersionLabel = () => props.orchestratorStatus?.cliVersion ?? "—";
 
   onMount(() => {
-    if (!isTauriRuntime()) return;
+    if (!isTauriRuntime()) {
+      console.warn("[user-diagnostic-capture] status skipped: renderer is not running in Tauri");
+      return;
+    }
     void appBuildInfo().then((info) => setBuildInfo(info)).catch(() => setBuildInfo(null));
     void desktopRuntimePreferencesRead()
       .then((preferences) => {
@@ -752,6 +803,9 @@ export default function SettingsView(props: SettingsViewProps) {
         persistSupportDiagnosticsBrowserOverride(preferences.supportDiagnostics);
       })
       .catch(() => setRuntimePreferences(null));
+    void refreshUserCapture();
+    const timer = window.setInterval(() => void untrack(refreshUserCapture), 5_000);
+    onCleanup(() => window.clearInterval(timer));
   });
 
   const formatUptime = (uptimeMs?: number | null) => {
@@ -877,7 +931,19 @@ export default function SettingsView(props: SettingsViewProps) {
     },
     diagnostics: props.vesloServerDiagnostics,
     capabilities: props.vesloServerCapabilities,
+    documentRuntime: redactDocumentRuntimeStatus(props.documentRuntimeStatus),
     runtimeSandbox: runtimeSandboxReport(),
+    bootstrap: sanitizeBootstrapDiagnosticPayload({
+      serverStatus: props.vesloServerStatus,
+      headerStatus: props.headerStatus,
+      lastServerLaunch: props.vesloServerHostInfo
+        ? {
+            running: props.vesloServerHostInfo.running,
+            lifecycleStatus: props.vesloServerHostInfo.lifecycleStatus ?? null,
+            lifecycleReason: props.vesloServerHostInfo.lifecycleReason ?? null,
+          }
+        : null,
+    }),
     pendingPermissions: props.pendingPermissions,
     recentEvents: props.events,
     workspaceDebugEvents: props.workspaceDebugEvents,
@@ -886,12 +952,13 @@ export default function SettingsView(props: SettingsViewProps) {
   const runtimeDebugReportJson = createMemo(() => `${JSON.stringify(runtimeDebugReport(), null, 2)}\n`);
 
   const copyRuntimeDebugReport = async () => {
-    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    const navigatorApi = (globalThis as { navigator?: Navigator }).navigator;
+    if (!navigatorApi?.clipboard?.writeText) {
       setDebugReportStatus(translate("settings.clipboard_unavailable"));
       return;
     }
     try {
-      await navigator.clipboard.writeText(runtimeDebugReportJson());
+      await navigatorApi.clipboard.writeText(runtimeDebugReportJson());
       setDebugReportStatus(translate("settings.copied_runtime_report"));
     } catch (error) {
       setDebugReportStatus(error instanceof Error ? error.message : translate("settings.copy_runtime_report_failed"));
@@ -1063,6 +1130,23 @@ export default function SettingsView(props: SettingsViewProps) {
                   </For>
                 </div>
               </div>
+
+              <Show when={props.aiAccessConfigured}>
+                <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm text-gray-12">{translate("settings.session_model_selector")}</div>
+                    <div class="text-xs text-gray-7">{translate("settings.session_model_selector_description")}</div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3 shrink-0"
+                    onClick={props.toggleSessionModelSelector}
+                    disabled={props.busy}
+                  >
+                    {props.sessionModelSelectorEnabled ? translate("common.on") : translate("common.off")}
+                  </Button>
+                </div>
+              </Show>
             </div>
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
@@ -1075,6 +1159,14 @@ export default function SettingsView(props: SettingsViewProps) {
                     </span>
                   </div>
                   <div class="text-xs text-gray-7">{documentRuntimeRow().detail}</div>
+                  <Show when={documentRuntimeRow().progressPercent !== null}>
+                    <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-5">
+                      <div
+                        class="h-full rounded-full bg-blue-9 transition-[width] duration-300"
+                        style={{ width: `${documentRuntimeRow().progressPercent ?? 0}%` }}
+                      />
+                    </div>
+                  </Show>
                 </div>
                 <Show when={documentRuntimeActionLabel()}>
                   {(label) => (
@@ -1083,7 +1175,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       class="text-xs h-8 py-0 px-3 shrink-0"
                       onClick={handleDocumentRuntimeAction}
                       disabled={documentRuntimeActionDisabled()}
-                      title={props.anyActiveRuns && documentRuntimeRow().action === "repair" ? translate("settings.stop_runs_to_update") : ""}
+                      title={props.anyActiveRuns && ["install", "repair", "update"].includes(documentRuntimeRow().action) ? translate("settings.stop_runs_to_update") : ""}
                     >
                       {label()}
                     </Button>
@@ -1133,7 +1225,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     role="switch"
                     aria-checked={props.updateAutoDownload}
                     class="inline-flex h-8 max-w-full items-center justify-between gap-2 rounded-full border border-gray-6 bg-gray-1 px-3 text-left transition-colors hover:bg-gray-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)]"
-                    onClick={props.toggleUpdateAutoDownload}
+                    onClick={() => props.toggleUpdateAutoDownload()}
                   >
                     <span class="min-w-0 whitespace-nowrap text-xs font-medium text-gray-12">{translate("settings.auto_update_label")}</span>
                     <span class={`relative h-4 w-8 shrink-0 rounded-full border transition-colors ${
@@ -1364,7 +1456,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   <button
                     type="button"
                     class={compactDangerActionClass}
-                    onClick={props.stopHost}
+                    onClick={() => props.stopHost()}
                     disabled={props.busy}
                   >
                     <CircleAlert size={14} />
@@ -1374,7 +1466,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   <button
                     type="button"
                     class={compactOutlineActionClass}
-                    onClick={props.stopHost}
+                    onClick={() => props.stopHost()}
                     disabled={props.busy}
                   >
                     {__vesloT("ui.literal.disconnect_server_1xj61t", __vesloCurrentLocale())}</button>
@@ -1433,8 +1525,6 @@ export default function SettingsView(props: SettingsViewProps) {
               </Show>
             </div>
 
-            <WindowsSandboxRepair />
-
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
               <div class="flex items-start justify-between gap-4">
                 <div>
@@ -1458,7 +1548,7 @@ export default function SettingsView(props: SettingsViewProps) {
                               <Button
                                 variant="outline"
                                 class="h-8 px-3 py-0 text-xs"
-                                onClick={props.toggleUpdateAutoDownload}
+                                onClick={() => props.toggleUpdateAutoDownload()}
                               >
                                 {translate("settings.pause_update_download")}
                               </Button>
@@ -1472,7 +1562,7 @@ export default function SettingsView(props: SettingsViewProps) {
                                   ? "border-[var(--dls-accent-border)] bg-dls-accent"
                                   : "border-gray-6 bg-gray-3 hover:bg-gray-4"
                               }`}
-                              onClick={props.toggleUpdateAutoDownload}
+                              onClick={() => props.toggleUpdateAutoDownload()}
                             >
                               <span class={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-gray-1 shadow-sm transition-transform ${
                                 props.updateAutoDownload ? "translate-x-5" : "translate-x-0"
@@ -1535,6 +1625,47 @@ export default function SettingsView(props: SettingsViewProps) {
             </div>
 
             <Show when={isTauriRuntime()}>
+              <Show
+                when={userCapture()?.available && userCapture()?.canStart}
+                fallback={
+                  <Show when={userCaptureLoadError()}>
+                    {(error) => (
+                      <div data-user-diagnostic-capture-unavailable class="bg-red-2/20 border border-red-7/35 rounded-2xl p-5 space-y-3">
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="min-w-0">
+                            <div class="text-sm font-medium text-gray-12">Diagnostic capture unavailable</div>
+                            <div class="text-xs text-gray-10">Veslo could not read the native diagnostic capture status.</div>
+                          </div>
+                          <Button variant="outline" class="shrink-0" disabled={userCaptureBusy() || userCaptureStatusBusy()} onClick={() => void refreshUserCapture({ force: true })}>
+                            {userCaptureStatusBusy() ? "Retrying..." : "Retry"}
+                          </Button>
+                        </div>
+                        <div class="text-xs text-red-11">{error()}</div>
+                      </div>
+                    )}
+                  </Show>
+                }
+              >
+                <div data-user-diagnostic-capture class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="text-sm font-medium text-gray-12">Send a diagnostic capture</div>
+                      <div class="text-xs text-gray-10">Sends a redacted, capped two-minute capture directly to Veslo support for the signed-in account. It stops automatically after 2 MiB.</div>
+                    </div>
+                    <Button data-user-diagnostic-capture-start variant="outline" class="shrink-0" disabled={props.busy || userCaptureBusy() || userCapture()?.state === "active"} onClick={() => void startUserCapture()}>
+                      {userCaptureBusy() ? "Starting…" : userCapture()?.state === "active" ? "Capturing" : "Start 2-minute capture"}
+                    </Button>
+                  </div>
+                  <Show when={userCapture()?.captureId}>
+                    <div class="text-[11px] text-gray-8">
+                      {userCapture()?.state === "active"
+                        ? `Capture in progress: ${userCapture()?.capturedEvents ?? 0} events, ${formatBytes(userCapture()?.capturedBytes ?? 0)}.`
+                        : `Capture ${userCapture()?.state ?? "idle"}: ${userCapture()?.acceptedEvents ?? 0} delivered, ${userCapture()?.pendingEvents ?? 0} pending.`}
+                    </div>
+                  </Show>
+                  <Show when={userCaptureError()}>{(error) => <div class="text-xs text-red-11">{error()}</div>}</Show>
+                </div>
+              </Show>
               <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                 <div>
                   <div class="text-sm font-medium text-gray-12">{translate("settings.appearance_title")}</div>

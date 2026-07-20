@@ -82,14 +82,10 @@ export function createWorkspaceConnectionController(
   ) => {
     try {
       await deps.loadSessions(context?.targetRoot);
-    } catch (error) {
-      console.warn("[workspace] multi loadSessions failed", error);
-    }
+    } catch {}
     try {
       await deps.refreshPendingPermissions();
-    } catch (error) {
-      console.warn("[workspace] multi refreshPendingPermissions failed", error);
-    }
+    } catch {}
     if (navigate && !deps.selectedSessionId()) {
       deps.setTab("scheduled");
       deps.setView("session");
@@ -146,12 +142,6 @@ export function createWorkspaceConnectionController(
         activeRootScope,
         reason: context?.reason ?? null,
       });
-      console.log("[workspace] connect ABORT (stale workspace - user switched away)", {
-        baseUrl: nextBaseUrl,
-        directory: incomingDirectory,
-        activeRoot,
-        reason: context?.reason ?? null,
-      });
       return false;
     }
 
@@ -173,11 +163,6 @@ export function createWorkspaceConnectionController(
         directory: incomingDirectory || null,
         reason: context?.reason ?? null,
         reboundGlobalClient: deps.client() === cachedRoutingClient,
-      });
-      console.log("[workspace] connect SKIP (idempotent - already connected)", {
-        baseUrl: nextBaseUrl,
-        directory: incomingDirectory || null,
-        reason: context?.reason ?? null,
       });
       return true;
     }
@@ -266,14 +251,6 @@ export function createWorkspaceConnectionController(
             activeRootScope: currentActiveRootScope || null,
             reason: context?.reason ?? null,
             ms: Date.now() - connectStart,
-          });
-          console.log("[workspace] connect ABORT (stale workspace after ensure)", {
-            workspaceId,
-            activeWorkspaceId: currentActiveId || null,
-            baseUrl: nextBaseUrl,
-            directory: incomingDirectory || null,
-            activeRoot: currentActiveRoot || null,
-            reason: context?.reason ?? null,
           });
           return false;
         }

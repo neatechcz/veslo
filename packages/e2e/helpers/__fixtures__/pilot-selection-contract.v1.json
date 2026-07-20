@@ -1,0 +1,3734 @@
+{
+  "schema": "veslo-tauri-pilot-selection-contract/v1",
+  "cases": [
+    {
+      "id": "scenario:admin-managed-ai-access",
+      "scenarios": [
+        "admin-managed-ai-access"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "admin-managed-ai-access"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:attachment-staging",
+      "scenarios": [
+        "attachment-staging"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "attachment-staging"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:automations",
+      "scenarios": [
+        "automations"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "automations"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "automation-secondary-workspace"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SEED_AUTOMATIONS_SECONDARY_WORKSPACE",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:boot-freeze",
+      "scenarios": [
+        "boot-freeze"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "boot-freeze"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:browse-no-engine-spawn",
+      "scenarios": [
+        "browse-no-engine-spawn"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "browse-no-engine-spawn"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:composer",
+      "scenarios": [
+        "composer"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "composer"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:composer-draft-workspace-move",
+      "scenarios": [
+        "composer-draft-workspace-move"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "composer-draft-workspace-move"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:composer-target-picker-submit-dismissal",
+      "scenarios": [
+        "composer-target-picker-submit-dismissal"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "composer-target-picker-submit-dismissal"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:default-session-right-menu-visible",
+      "scenarios": [
+        "default-session-right-menu-visible"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "default-session-right-menu-visible"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:den-managed-openai-anthropic",
+      "scenarios": [
+        "den-managed-openai-anthropic"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "den-managed-openai-anthropic"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:desktop-context-menu",
+      "scenarios": [
+        "desktop-context-menu"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "desktop-context-menu"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:escape-stop-confirmation",
+      "scenarios": [
+        "escape-stop-confirmation"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "escape-stop-confirmation"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:extensions-mcp",
+      "scenarios": [
+        "extensions-mcp"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "extensions-mcp"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:feedback-bug-report",
+      "scenarios": [
+        "feedback-bug-report"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "feedback-bug-report"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:feedback-modal-dismissal",
+      "scenarios": [
+        "feedback-modal-dismissal"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "feedback-modal-dismissal"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:feedback-youtrack-live",
+      "scenarios": [
+        "feedback-youtrack-live"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "feedback-youtrack-live"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:folder-access-consent",
+      "scenarios": [
+        "folder-access-consent"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "folder-access-consent"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:global-managed-ai-model-policy",
+      "scenarios": [
+        "global-managed-ai-model-policy"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "global-managed-ai-model-policy"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "fixture",
+        "fixtures": [
+          "managed-ai-gateway"
+        ],
+        "environment": [
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_MANAGED_AI_GATEWAY_FIXTURE",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
+          }
+        ],
+        "preconditions": [
+          "focused-managed-ai-gateway",
+          "isolated-managed-ai-gateway-profile"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:global-unpublished-draft",
+      "scenarios": [
+        "global-unpublished-draft"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "global-unpublished-draft"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:google-mcp-connectors",
+      "scenarios": [
+        "google-mcp-connectors"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "google-mcp-connectors"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "google-mcp-catalog"
+        ],
+        "environment": [
+          {
+            "key": "E2E_GOOGLE_MCP_CATALOG_FIXTURE",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:gpt-5-6-sol-three-message-roundtrip",
+      "scenarios": [
+        "gpt-5-6-sol-three-message-roundtrip"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "gpt-5-6-sol-three-message-roundtrip"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:language-persistence",
+      "scenarios": [
+        "language-persistence"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "language-persistence"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:live-admin-codex-roundtrip",
+      "scenarios": [
+        "live-admin-codex-roundtrip"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "live-admin-codex-roundtrip"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:live-skills-finder-roundtrip",
+      "scenarios": [
+        "live-skills-finder-roundtrip"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "live-skills-finder-roundtrip"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:loopback-request-broker",
+      "scenarios": [
+        "loopback-request-broker"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "loopback-request-broker"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:loopback-request-broker-idle",
+      "scenarios": [
+        "loopback-request-broker-idle"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "loopback-request-broker-idle"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:markdown-drop-guard",
+      "scenarios": [
+        "markdown-drop-guard"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "markdown-drop-guard"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:message-send-registry-degraded",
+      "scenarios": [
+        "message-send-registry-degraded"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "message-send-registry-degraded"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:model-stream-retry-no-progress",
+      "scenarios": [
+        "model-stream-retry-no-progress"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "model-stream-retry-no-progress"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [
+          "model-stream-retry"
+        ],
+        "environment": [
+          {
+            "key": "E2E_RUN_ACTIVITY_PROBE_MODE",
+            "operation": "set-if-empty",
+            "value": "model-retry-no-progress"
+          },
+          {
+            "key": "E2E_MANAGED_AI_RESPONSE_DELAY_MS",
+            "operation": "set-if-empty",
+            "value": "30000"
+          },
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "VESLO_MODEL_RETRY_NO_PROGRESS_HARD_MS",
+            "operation": "set-if-empty",
+            "value": "10000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "focused-model-stream-retry",
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:multi-workspace-restart",
+      "scenarios": [
+        "multi-workspace-restart"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "multi-workspace-restart"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:navigation",
+      "scenarios": [
+        "navigation"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "navigation"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:packaged-smoke",
+      "scenarios": [
+        "packaged-smoke"
+      ],
+      "env": {
+        "VESLO_PACKAGED_SMOKE": "1"
+      },
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "packaged-smoke"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "packaged-smoke",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "packaged-smoke-model"
+        ],
+        "environment": [
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_PACKAGED_SMOKE_MODEL_BASE_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_PACKAGED_SMOKE_MODEL_ID",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
+          }
+        ],
+        "preconditions": [
+          "focused-packaged-smoke",
+          "packaged-smoke-launch-mode"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:pending-session-instance-isolation",
+      "scenarios": [
+        "pending-session-instance-isolation"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "pending-session-instance-isolation"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:pnpm-dev-3-clicks",
+      "scenarios": [
+        "pnpm-dev-3-clicks"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "pnpm-dev-3-clicks"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:private-chat-user-skills",
+      "scenarios": [
+        "private-chat-user-skills"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "private-chat-user-skills"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:runtime-cold-start-session-handoff",
+      "scenarios": [
+        "runtime-cold-start-session-handoff"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "runtime-cold-start-session-handoff"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session",
+      "scenarios": [
+        "session"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-artifacts",
+      "scenarios": [
+        "session-artifacts"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-artifacts"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-capabilities",
+      "scenarios": [
+        "session-capabilities"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-capabilities"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-media-evidence",
+      "scenarios": [
+        "session-media-evidence"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-media-evidence"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-message-replacement",
+      "scenarios": [
+        "session-message-replacement"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-message-replacement"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-prefetch",
+      "scenarios": [
+        "session-prefetch"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-prefetch"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-progress-grouping",
+      "scenarios": [
+        "session-progress-grouping"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-progress-grouping"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-queue-durability",
+      "scenarios": [
+        "session-queue-durability"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-queue-durability"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "session-queue-runtime"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SESSION_QUEUE_FIXTURE_BASE_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "set",
+            "value": "{}"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "focused-session-queue-runtime",
+          "isolated-session-queue-profile"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-render-stability",
+      "scenarios": [
+        "session-render-stability"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-render-stability"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "session-queue-runtime"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SESSION_QUEUE_FIXTURE_BASE_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "set",
+            "value": "{}"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "focused-session-queue-runtime",
+          "isolated-session-queue-profile"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [
+          "session-render"
+        ],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-run-truthfulness",
+      "scenarios": [
+        "session-run-truthfulness"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-run-truthfulness"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "session-queue-runtime"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SESSION_QUEUE_FIXTURE_BASE_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "set",
+            "value": "{}"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "focused-session-queue-runtime",
+          "isolated-session-queue-profile"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:session-sidebar-context-menu",
+      "scenarios": [
+        "session-sidebar-context-menu"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-sidebar-context-menu"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:settings-dashboard-link-tabs",
+      "scenarios": [
+        "settings-dashboard-link-tabs"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "settings-dashboard-link-tabs"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:settings-gear-navigation",
+      "scenarios": [
+        "settings-gear-navigation"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "settings-gear-navigation"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:shared-workspace-skill-lock",
+      "scenarios": [
+        "shared-workspace-skill-lock"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "shared-workspace-skill-lock"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:sharepoint-mcp-connectors",
+      "scenarios": [
+        "sharepoint-mcp-connectors"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "sharepoint-mcp-connectors"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "sharepoint-mcp-catalog"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SHAREPOINT_MCP_CATALOG_FIXTURE",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_SKILL_REGISTRY_FIXTURE",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_SKILL_REGISTRY_AUTH_BASE",
+            "operation": "set-if-empty",
+            "value": "fixture"
+          }
+        ],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:sidebar-archive-last-session",
+      "scenarios": [
+        "sidebar-archive-last-session"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "sidebar-archive-last-session"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:sidebar-collapse-animation",
+      "scenarios": [
+        "sidebar-collapse-animation"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "sidebar-collapse-animation"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:sidebar-empty-private-chat",
+      "scenarios": [
+        "sidebar-empty-private-chat"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "sidebar-empty-private-chat"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:sidebar-primary-actions-overflow",
+      "scenarios": [
+        "sidebar-primary-actions-overflow"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "sidebar-primary-actions-overflow"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:sidebar-primary-actions-pointer-navigation",
+      "scenarios": [
+        "sidebar-primary-actions-pointer-navigation"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "sidebar-primary-actions-pointer-navigation"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:sidebar-session-retention",
+      "scenarios": [
+        "sidebar-session-retention"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "sidebar-session-retention"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:skill-publish-dialog",
+      "scenarios": [
+        "skill-publish-dialog"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "skill-publish-dialog"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:skill-registry-materialization",
+      "scenarios": [
+        "skill-registry-materialization"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "skill-registry-materialization"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:skill-registry-user-skill-removal",
+      "scenarios": [
+        "skill-registry-user-skill-removal"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "skill-registry-user-skill-removal"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:skills-enabled-state",
+      "scenarios": [
+        "skills-enabled-state"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "skills-enabled-state"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "skill-enable-inventory"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SEED_SKILL_ENABLE_INVENTORY",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:skills-global-inventory",
+      "scenarios": [
+        "skills-global-inventory"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "skills-global-inventory"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:skills-removal-restore",
+      "scenarios": [
+        "skills-removal-restore"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "skills-removal-restore"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:smoke",
+      "scenarios": [
+        "smoke"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "smoke"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:soul-dashboard",
+      "scenarios": [
+        "soul-dashboard"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "soul-dashboard"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "skill-registry-auth"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SKILL_REGISTRY_AUTH_BASE",
+            "operation": "set-if-empty",
+            "value": "fixture"
+          }
+        ],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:soul-den-local",
+      "scenarios": [
+        "soul-den-local"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "soul-den-local"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "skill-registry-auth",
+          "legacy-soul-runtime"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SKILL_REGISTRY_AUTH_BASE",
+            "operation": "set-if-empty",
+            "value": "fixture"
+          },
+          {
+            "key": "E2E_SEED_LEGACY_SOUL_RUNTIME",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:startup-sidebar-existing-sessions",
+      "scenarios": [
+        "startup-sidebar-existing-sessions"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "startup-sidebar-existing-sessions"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:titlebar-window-controls",
+      "scenarios": [
+        "titlebar-window-controls"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "titlebar-window-controls"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:typography",
+      "scenarios": [
+        "typography"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "typography"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:veslo-server-startup",
+      "scenarios": [
+        "veslo-server-startup"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "veslo-server-startup"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:visual-regression",
+      "scenarios": [
+        "visual-regression"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "visual-regression"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:vslo-171-multi-mode",
+      "scenarios": [
+        "vslo-171-multi-mode"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-171-multi-mode"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:vslo-171-switch-scenario",
+      "scenarios": [
+        "vslo-171-switch-scenario"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-171-switch-scenario"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:vslo-235-local-host-child-exit",
+      "scenarios": [
+        "vslo-235-local-host-child-exit"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-235-local-host-child-exit"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:vslo-235-local-host-no-workspace",
+      "scenarios": [
+        "vslo-235-local-host-no-workspace"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-235-local-host-no-workspace"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "none"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "E2E_SKIP_DEFAULT_WORKSPACE_STATE",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:vslo-235-local-host-port-contention",
+      "scenarios": [
+        "vslo-235-local-host-port-contention"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-235-local-host-port-contention"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "port-contention"
+        ],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:vslo-235-local-host-with-workspace",
+      "scenarios": [
+        "vslo-235-local-host-with-workspace"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-235-local-host-with-workspace"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:vslo-270-relaunch-reconnect",
+      "scenarios": [
+        "vslo-270-relaunch-reconnect"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-270-relaunch-reconnect"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:vslo-270-stop-reload-reconnect",
+      "scenarios": [
+        "vslo-270-stop-reload-reconnect"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-270-stop-reload-reconnect"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [
+          "model-stream-retry",
+          "skill-registry-workspace-events"
+        ],
+        "environment": [
+          {
+            "key": "E2E_RUN_ACTIVITY_PROBE_MODE",
+            "operation": "set-if-empty",
+            "value": "model-retry-no-progress"
+          },
+          {
+            "key": "E2E_MANAGED_AI_RESPONSE_DELAY_MS",
+            "operation": "set-if-empty",
+            "value": "30000"
+          },
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "VESLO_MODEL_RETRY_NO_PROGRESS_HARD_MS",
+            "operation": "set-if-empty",
+            "value": "10000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "E2E_SKILL_REGISTRY_EVENTS_MODE",
+            "operation": "set-if-empty",
+            "value": "workspace-update-repeat"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "focused-model-stream-retry",
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "vslo-270"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "scenario:vslo-271-windows-idle-runtime-chain-recovery",
+      "scenarios": [
+        "vslo-271-windows-idle-runtime-chain-recovery"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-271-windows-idle-runtime-chain-recovery"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "suite:current-gate",
+      "suite": "current-gate",
+      "scenarios": [
+        "smoke",
+        "navigation",
+        "admin-managed-ai-access",
+        "attachment-staging",
+        "composer",
+        "extensions-mcp",
+        "feedback-bug-report",
+        "markdown-drop-guard",
+        "skill-publish-dialog",
+        "skills-global-inventory",
+        "session-capabilities",
+        "session-message-replacement",
+        "skill-registry-materialization",
+        "shared-workspace-skill-lock",
+        "session-artifacts",
+        "session-prefetch",
+        "session",
+        "settings-dashboard-link-tabs",
+        "settings-gear-navigation",
+        "sidebar-primary-actions-overflow",
+        "sidebar-primary-actions-pointer-navigation",
+        "typography",
+        "veslo-server-startup",
+        "visual-regression",
+        "language-persistence"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "smoke",
+          "navigation",
+          "admin-managed-ai-access",
+          "attachment-staging",
+          "composer",
+          "extensions-mcp",
+          "feedback-bug-report",
+          "markdown-drop-guard",
+          "skill-publish-dialog",
+          "skills-global-inventory",
+          "session-capabilities",
+          "session-message-replacement",
+          "skill-registry-materialization",
+          "shared-workspace-skill-lock",
+          "session-artifacts",
+          "session-prefetch",
+          "session",
+          "settings-dashboard-link-tabs",
+          "settings-gear-navigation",
+          "sidebar-primary-actions-overflow",
+          "sidebar-primary-actions-pointer-navigation",
+          "typography",
+          "veslo-server-startup",
+          "visual-regression",
+          "language-persistence"
+        ],
+        "suite": "current-gate",
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [],
+        "environment": [],
+        "preconditions": [],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "suite:live-inference",
+      "suite": "live-inference",
+      "scenarios": [
+        "message-send-registry-degraded"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "message-send-registry-degraded"
+        ],
+        "suite": "live-inference",
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "E2E_MANAGED_AI_GATEWAY_FIXTURE",
+            "operation": "set",
+            "value": "0"
+          },
+          {
+            "key": "E2E_SKILL_REGISTRY_FIXTURE",
+            "operation": "set",
+            "value": "0"
+          },
+          {
+            "key": "E2E_SKILL_REGISTRY_SERVER_ENV",
+            "operation": "set",
+            "value": "0"
+          },
+          {
+            "key": "E2E_SKILL_REGISTRY_AUTH_BASE",
+            "operation": "clear"
+          },
+          {
+            "key": "E2E_GOOGLE_MCP_CATALOG_FIXTURE",
+            "operation": "set",
+            "value": "0"
+          },
+          {
+            "key": "E2E_SHAREPOINT_MCP_CATALOG_FIXTURE",
+            "operation": "set",
+            "value": "0"
+          },
+          {
+            "key": "E2E_RUN_ACTIVITY_PROBE_MODE",
+            "operation": "clear"
+          },
+          {
+            "key": "E2E_MANAGED_AI_RESPONSE_DELAY_MS",
+            "operation": "clear"
+          },
+          {
+            "key": "E2E_SKILL_REGISTRY_EVENTS_MODE",
+            "operation": "clear"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "clear"
+          },
+          {
+            "key": "E2E_FORWARD_APP_LOGS",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_SEND_WORKFLOW_TRACE",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_SEND_WORKFLOW_TRACE_CONSOLE",
+            "operation": "clear"
+          }
+        ],
+        "preconditions": [
+          "canonical-timeout-cap",
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "canonical-live",
+          "relaunch": "none"
+        },
+        "successArtifacts": [
+          "live-inference"
+        ],
+        "rejection": null
+      }
+    },
+    {
+      "id": "suite:live-inference-lifecycle",
+      "suite": "live-inference-lifecycle",
+      "scenarios": [
+        "runtime-cold-start-session-handoff"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "runtime-cold-start-session-handoff"
+        ],
+        "suite": "live-inference-lifecycle",
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
+      "id": "topology:focused-managed-ai-gateway",
+      "scenarios": [
+        "global-managed-ai-model-policy",
+        "smoke"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "global-managed-ai-model-policy",
+          "smoke"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "fixture",
+        "fixtures": [
+          "managed-ai-gateway"
+        ],
+        "environment": [
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_MANAGED_AI_GATEWAY_FIXTURE",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
+          }
+        ],
+        "preconditions": [
+          "focused-managed-ai-gateway",
+          "isolated-managed-ai-gateway-profile"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "focused-managed-ai-gateway"
+      }
+    },
+    {
+      "id": "topology:focused-model-stream-retry",
+      "scenarios": [
+        "model-stream-retry-no-progress",
+        "smoke"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "model-stream-retry-no-progress",
+          "smoke"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [
+          "model-stream-retry"
+        ],
+        "environment": [
+          {
+            "key": "E2E_RUN_ACTIVITY_PROBE_MODE",
+            "operation": "set-if-empty",
+            "value": "model-retry-no-progress"
+          },
+          {
+            "key": "E2E_MANAGED_AI_RESPONSE_DELAY_MS",
+            "operation": "set-if-empty",
+            "value": "30000"
+          },
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "VESLO_MODEL_RETRY_NO_PROGRESS_HARD_MS",
+            "operation": "set-if-empty",
+            "value": "10000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "focused-model-stream-retry",
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "focused-model-stream-retry"
+      }
+    },
+    {
+      "id": "topology:focused-session-queue-runtime",
+      "scenarios": [
+        "session-queue-durability",
+        "smoke"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-queue-durability",
+          "smoke"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "session-queue-runtime"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SESSION_QUEUE_FIXTURE_BASE_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "set",
+            "value": "{}"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "focused-session-queue-runtime",
+          "isolated-session-queue-profile"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "focused-session-queue-runtime"
+      }
+    },
+    {
+      "id": "topology:focused-packaged-smoke",
+      "scenarios": [
+        "packaged-smoke",
+        "smoke"
+      ],
+      "env": {
+        "VESLO_PACKAGED_SMOKE": "1"
+      },
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "packaged-smoke",
+          "smoke"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "packaged-smoke",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "packaged-smoke-model"
+        ],
+        "environment": [
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_PACKAGED_SMOKE_MODEL_BASE_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_PACKAGED_SMOKE_MODEL_ID",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
+          }
+        ],
+        "preconditions": [
+          "focused-packaged-smoke",
+          "packaged-smoke-launch-mode"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "focused-packaged-smoke"
+      }
+    },
+    {
+      "id": "topology:session-queue-existing-profile",
+      "scenarios": [
+        "session-queue-durability"
+      ],
+      "env": {
+        "E2E_USE_EXISTING_PROFILE": "1"
+      },
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "session-queue-durability"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "real-profile",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "session-queue-runtime"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SESSION_QUEUE_FIXTURE_BASE_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "set",
+            "value": "{}"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "focused-session-queue-runtime",
+          "isolated-session-queue-profile"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "session-queue-existing-profile"
+      }
+    },
+    {
+      "id": "topology:managed-ai-gateway-existing-profile",
+      "scenarios": [
+        "global-managed-ai-model-policy"
+      ],
+      "env": {
+        "E2E_USE_EXISTING_PROFILE": "1"
+      },
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "global-managed-ai-model-policy"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "real-profile",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "fixture",
+        "fixtures": [
+          "managed-ai-gateway"
+        ],
+        "environment": [
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_MANAGED_AI_GATEWAY_FIXTURE",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
+          }
+        ],
+        "preconditions": [
+          "focused-managed-ai-gateway",
+          "isolated-managed-ai-gateway-profile"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "managed-ai-gateway-existing-profile"
+      }
+    },
+    {
+      "id": "topology:managed-ai-gateway-custom-opencode-home",
+      "scenarios": [
+        "global-managed-ai-model-policy"
+      ],
+      "env": {
+        "E2E_OPENCODE_HOME": "/tmp/custom-profile"
+      },
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "global-managed-ai-model-policy"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "custom-opencode-home",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "fixture",
+        "fixtures": [
+          "managed-ai-gateway"
+        ],
+        "environment": [
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_MANAGED_AI_GATEWAY_FIXTURE",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
+          }
+        ],
+        "preconditions": [
+          "focused-managed-ai-gateway",
+          "isolated-managed-ai-gateway-profile"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "managed-ai-gateway-custom-opencode-home"
+      }
+    },
+    {
+      "id": "topology:live-managed-ai-existing-profile",
+      "scenarios": [
+        "message-send-registry-degraded"
+      ],
+      "env": {
+        "E2E_USE_EXISTING_PROFILE": "1"
+      },
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "message-send-registry-degraded"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "real-profile",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "live-managed-ai-existing-profile"
+      }
+    },
+    {
+      "id": "topology:live-managed-ai-custom-opencode-home",
+      "scenarios": [
+        "message-send-registry-degraded"
+      ],
+      "env": {
+        "E2E_OPENCODE_HOME": "/tmp/custom-profile"
+      },
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "message-send-registry-degraded"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "custom-opencode-home",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "live-den",
+        "fixtures": [],
+        "environment": [
+          {
+            "key": "VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS",
+            "operation": "set-if-empty",
+            "value": "90000"
+          },
+          {
+            "key": "E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE",
+            "operation": "preserve-or-default"
+          }
+        ],
+        "preconditions": [
+          "live-managed-ai-auth"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "live-managed-ai-custom-opencode-home"
+      }
+    },
+    {
+      "id": "topology:packaged-smoke-launch-mode",
+      "scenarios": [
+        "packaged-smoke"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "packaged-smoke"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "packaged-smoke",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "packaged-smoke-model"
+        ],
+        "environment": [
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_PACKAGED_SMOKE_MODEL_BASE_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_PACKAGED_SMOKE_MODEL_ID",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
+          }
+        ],
+        "preconditions": [
+          "focused-packaged-smoke",
+          "packaged-smoke-launch-mode"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": "packaged-smoke-launch-mode"
+      }
+    }
+  ]
+}

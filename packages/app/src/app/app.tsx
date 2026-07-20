@@ -26,9 +26,12 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
 import { reportError } from "./lib/error-reporter";
+import { resolveDeveloperModeFromSearch } from "./lib/developer-mode";
 import { recordSendWorkflowTrace } from "./lib/send-workflow-trace";
+import { uiEffectTrace } from "./lib/ui-effect-trace";
 import { resolveRunningVesloServerHostInfo } from "./lib/veslo-server-host";
 import {
+  readScopedSessionStatus,
   readSessionStatus,
   withoutSessionStatus,
 } from "./lib/scoped-session-status";
@@ -137,7 +140,7 @@ import McpAuthModal from "./components/mcp-auth-modal";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
-import { createAppViewProps } from "./app-view-props";
+import { createAppViewProps, shouldShowSessionReloadBanner } from "./app-view-props";
 import { createScheduledAutomationStore } from "./pages/scheduled-automation-store";
 import {
   createSessionCreationWorkflow,
@@ -152,10 +155,15 @@ import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import {
   createEmptyComposerDraft,
+  clearSessionComposerDraftIfRevision,
   deleteSessionComposerDraft,
   getSessionComposerDraft,
+  getSessionComposerDraftRevision,
+  remapPendingComposerDraftToSession as remapPendingComposerDraftToSessionRecord,
+  resolveActiveComposerDraftStorageKey,
   setSessionComposerDraft,
-  setSessionComposerPrompt,
+  type ComposerDraftStateCommands,
+  type ComposerDraftStateByStorageKey,
 } from "./pages/session-composer-drafts";
 import { resolveComposerStorageKey } from "./lib/pending-session-drafts";
 import {
@@ -216,7 +224,6 @@ import {
   removeMcpFromConfig,
   validateMcpServerName,
 } from "./mcp";
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
   MessageWithParts,
@@ -281,7 +288,13 @@ import {
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
+import { createVisibleMessageProjection } from "./context/session-visible-messages";
+import { observeTranscriptProjectionBoundary } from "./context/session-transcript-write-diagnostics";
 import type { ReconnectNotice, ReconnectState } from "./context/session-reconnect";
+import {
+  createTranscriptProjectionStore,
+  type TranscriptProjectionScope,
+} from "./context/transcript-projection-store";
 import { createSidebarWorkspaceSessions } from "./context/sidebar-workspace-sessions";
 import { createWorkspaceSessionSnapshots } from "./context/workspace-session-snapshots";
 import { createExtensionsStore } from "./context/extensions";
@@ -330,7 +343,6 @@ import {
   readVesloServerSettings,
   writeVesloServerSettings,
   clearVesloServerSettings,
-  type VesloSessionLatestRunArtifacts,
   type VesloSessionTranscriptSnapshot,
   type VesloServerClient,
   VesloServerError,
@@ -342,6 +354,7 @@ import {
 import { routeStagedAttachmentsForModel } from "./lib/attachment-prompt-routing";
 import { createSessionAttachmentStaging } from "./pages/session-attachment-staging";
 import { resolveArtifactFamilies } from "./components/session/artifact-family-model";
+import { deriveBackgroundSidebarPrefetchInterest } from "./components/session/workspace-session-list-prefetch-interest";
 import {
   clearUnreadSession,
   markUnreadAfterAssistantResponse,
@@ -408,13 +421,6 @@ type CommandListScope = {
 const SEND_TRACE_LIMIT = 500;
 const E2E_APP_IDENTIFIER = "com.neatech.veslo.e2e";
 
-function resolveDeveloperModeFromSearch(search: string) {
-  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
-  if (!params.has("debug")) return false;
-  const value = params.get("debug")?.trim().toLowerCase() ?? "";
-  return value === "" || value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
 export default function App() {
   const cloudEnvironment = resolveVesloCloudEnvironment(import.meta.env as Record<string, string | undefined>);
   const envVesloWorkspaceId = cloudEnvironment.workspaceId ?? null;
@@ -450,17 +456,8 @@ export default function App() {
   // without exposing developer-only UI panels.
   const wsDebugEnabled = () => developerMode() || workspaceDebugTraceEnabled();
 
-  const wsDebug = (label: string, payload?: unknown) => {
+  const wsDebug = (_label: string, _payload?: unknown) => {
     if (!wsDebugEnabled()) return;
-    try {
-      if (payload === undefined) {
-        console.log(`[WSDBG] ${label}`);
-      } else {
-        console.log(`[WSDBG] ${label}`, payload);
-      }
-    } catch {
-      // ignore
-    }
   };
 
   // Late-bound composition seams (lib/late-bound.ts): the store graph has true
@@ -579,6 +576,7 @@ export default function App() {
     setDevtoolsWorkspaceId,
     activeVesloServerHostInfo,
     activeVesloServerRoutingInfo,
+    managedAiConfigAuthority,
     vesloServerBaseUrl,
     vesloServerAuth,
     vesloServerClient,
@@ -792,7 +790,9 @@ export default function App() {
       ensureWorkspaceForFolder: (folder) => workspaceStore.ensureWorkspaceForFolder(folder),
     },
     publishRegisteredWorkspaceToSidebar: (workspaceId) => publishRegisteredWorkspaceToSidebar(workspaceId),
-    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    composerDraftCommands: {
+      writeDraft: (storageKey, draft) => composerDraftCommands.writeDraft(storageKey, draft),
+    },
     clearDisplayedSession: () => {
       batch(() => {
         setSelectedSessionId(null);
@@ -991,6 +991,12 @@ export default function App() {
         ? runtimeConfig.ensureManagedAiRuntimeAuthorizationForSend(targetWorkspace)
         : Promise.resolve(false);
     },
+    prepareManagedAiRuntimeConfigForServerSend: (input) => {
+      const runtimeConfig = lateManagedAiRuntimeConfig.current();
+      return runtimeConfig
+        ? runtimeConfig.prepareManagedAiRuntimeConfigForServerSend(input)
+        : Promise.resolve({ kind: "skipped-pending" });
+    },
     managedAiRuntimeAuthorizationPrimeDiagnostic: () =>
       lateManagedAiRuntimeConfig.current()?.lastManagedAiRuntimeAuthorizationPrimeDiagnostic() ?? null,
     activeSendTraceId,
@@ -1019,10 +1025,97 @@ export default function App() {
     recoverAcceptedConversationTranscript,
     recoverConversationTranscript,
   } = conversationService;
+  const ACTIVE_TRANSCRIPT_PROJECTION_STATUSES = new Set(["submitted", "running", "retry", "blocked"]);
+  let currentTranscriptSelectionVersion = 0;
+  let readSessionStatusForTranscriptProjection: () => Record<string, string> = () => ({});
+  const resolveTranscriptProjectionServerWorkspaceId = (workspaceId: string | null | undefined) => {
+    const clientWorkspaceId = workspaceId?.trim() ?? "";
+    return resolveConversationServerWorkspaceId(clientWorkspaceId);
+  };
+  const createTranscriptProjectionScope = (
+    sessionId: string,
+    selectionVersion: number,
+    expectedRunId?: string | null,
+  ): TranscriptProjectionScope | null => {
+    const uiSessionId = sessionId.trim();
+    if (!uiSessionId || isPendingSessionInstanceKey(uiSessionId)) return null;
+    const sessionScope = resolveSelectedSessionBrowseScope(uiSessionId);
+    const appWorkspaceId = sessionScope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
+    const serverWorkspaceId = resolveTranscriptProjectionServerWorkspaceId(appWorkspaceId);
+    const workspaceId = serverWorkspaceId || appWorkspaceId;
+    const workspaceRoot = sessionScope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
+    const directory = sessionScope?.directory?.trim() || sessionDirectoryOverrideById()[uiSessionId]?.trim() || workspaceRoot;
+    if (!workspaceId || !directory) return null;
+    return {
+      workspaceId,
+      appWorkspaceId,
+      serverWorkspaceId: serverWorkspaceId || null,
+      directory,
+      uiSessionId,
+      conversationId: sessionScope?.conversationId ?? null,
+      opencodeSessionId: sessionScope?.opencodeSessionId ?? null,
+      selectionVersion,
+      expectedRunId: expectedRunId?.trim() || null,
+    };
+  };
+  const transcriptProjectionStore = createTranscriptProjectionStore({
+    selectedSessionId,
+    currentSelectionVersion: () => currentTranscriptSelectionVersion,
+    isRunActive: (scope) => {
+      const appWorkspaceId = scope.appWorkspaceId?.trim() || scope.workspaceId.trim();
+      return [scope.uiSessionId, scope.conversationId, scope.opencodeSessionId]
+        .map((value) => value?.trim() ?? "")
+        .filter(Boolean)
+        .some((sessionId) =>
+          ACTIVE_TRANSCRIPT_PROJECTION_STATUSES.has(
+            readScopedSessionStatus(readSessionStatusForTranscriptProjection(), appWorkspaceId, sessionId),
+          ),
+        );
+    },
+    trace: (event, payload) => recordSendWorkflowTrace("transcript-projection", event, payload, {
+      developerMode: developerMode(),
+    }),
+  });
+  const normalizeTranscriptProjectionScope = (scope: TranscriptProjectionScope): TranscriptProjectionScope => {
+    const appWorkspaceId = scope.appWorkspaceId?.trim() || scope.workspaceId.trim();
+    const serverWorkspaceId =
+      scope.serverWorkspaceId?.trim() || resolveTranscriptProjectionServerWorkspaceId(appWorkspaceId);
+    return {
+      ...scope,
+      workspaceId: serverWorkspaceId || scope.workspaceId.trim() || appWorkspaceId,
+      appWorkspaceId,
+      serverWorkspaceId: serverWorkspaceId || null,
+      directory: scope.directory?.trim() || null,
+      conversationId: scope.conversationId?.trim() || null,
+      opencodeSessionId: scope.opencodeSessionId?.trim() || null,
+    };
+  };
+  const reserveTranscriptProjection = (scope: TranscriptProjectionScope) =>
+    transcriptProjectionStore.reserveTranscriptProjection(normalizeTranscriptProjectionScope(scope));
+  const invalidateTranscriptProjection = (scope: TranscriptProjectionScope) =>
+    transcriptProjectionStore.invalidateTranscriptProjection(normalizeTranscriptProjectionScope(scope));
+  const publishTranscriptProjection = (
+    scope: TranscriptProjectionScope,
+    snapshot: VesloSessionTranscriptSnapshot,
+  ) => transcriptProjectionStore.publishTranscriptProjection(
+    normalizeTranscriptProjectionScope(scope),
+    snapshot,
+  );
   const sessionStore = createSessionStore({
     client,
     routing: runtimeOwnedRouting,
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
+    onConversationRunBecameActive: (scope) => {
+      const input = {
+        workspaceId: scope.workspaceId,
+        conversationId: scope.conversationId,
+        opencodeSessionId: scope.opencodeSessionId,
+        uiSessionId: scope.sessionId,
+        runId: scope.runId,
+      };
+      rememberLatestConversationRunId(input);
+      rememberLatestConversationLifecycleRunId(input);
+    },
     selectedSessionId,
     setSelectedSessionId,
     directoryQueryPathMode,
@@ -1081,7 +1174,15 @@ export default function App() {
         }),
       );
     },
-    loadOfflineTranscript: async (sessionId, limit) => {
+    onSessionSelectionStart: (sessionId, selectionVersion) => {
+      currentTranscriptSelectionVersion = selectionVersion;
+      const scope = createTranscriptProjectionScope(sessionId, selectionVersion);
+      if (scope) reserveTranscriptProjection(scope);
+    },
+    currentSelectionVersion: () => currentTranscriptSelectionVersion,
+    reserveTranscriptProjection,
+    publishTranscriptProjection,
+    loadOfflineTranscript: async (sessionId, limit, readContext) => {
       const transcriptScope = resolveSelectedSessionBrowseScope(sessionId);
       const transcriptWorkspaceId = transcriptScope?.workspaceId ?? workspaceStore.activeWorkspaceId().trim();
       const workspaceRoot = transcriptScope?.workspaceRoot || workspaceStore.activeWorkspaceRoot().trim();
@@ -1097,11 +1198,25 @@ export default function App() {
       if (!workspaceRoot) {
         return { status: "unavailable" as const, scope, reason: "missing-workspace-root" };
       }
+      const projectionScope = readContext.purpose === "selection" &&
+        typeof readContext.selectionVersion === "number" &&
+        readContext.selectionVersion === currentTranscriptSelectionVersion &&
+        selectedSessionId()?.trim() === sessionId.trim()
+        ? createTranscriptProjectionScope(sessionId, readContext.selectionVersion)
+        : null;
+      if (projectionScope) reserveTranscriptProjection(projectionScope);
       const snapshot = await getTranscriptFromVesloReadApi(
         transcriptWorkspaceId,
         sessionId,
         limit,
         transcriptDirectory || undefined,
+        projectionScope
+          ? {
+              includeLatestRunArtifacts: true,
+              caller: "passive-selection",
+              sendTraceId: activeSendTraceId(),
+            }
+          : undefined,
       );
       if (!snapshot) {
         return { status: "unavailable" as const, scope, reason: "veslo-read-api-unavailable" };
@@ -1118,9 +1233,14 @@ export default function App() {
           reason: "source-unavailable",
         };
       }
+      const resolvedProjectionScope = projectionScope &&
+        readContext.selectionVersion === currentTranscriptSelectionVersion &&
+        selectedSessionId()?.trim() === sessionId.trim()
+        ? projectionScope
+        : null;
       return snapshot.messages.length === 0
-        ? { status: "empty" as const, snapshot }
-        : { status: "loaded" as const, snapshot };
+        ? { status: "empty" as const, snapshot, ...(resolvedProjectionScope ? { projectionScope: resolvedProjectionScope } : {}) }
+        : { status: "loaded" as const, snapshot, ...(resolvedProjectionScope ? { projectionScope: resolvedProjectionScope } : {}) };
     },
     resolveConversationRunForSession,
     readConversationRunStatus,
@@ -1175,7 +1295,10 @@ export default function App() {
     respondQuestion,
     setSessions,
     setSessionStatusById,
+    armConversationRunProvisional,
+    disposeConversationRunProvisional,
     admitAcceptedConversationRun,
+    watchQueuedConversationRun,
     retryAcceptedRunForSession,
     retryTerminalTranscriptRecoveryForSession,
     setMessages,
@@ -1188,6 +1311,26 @@ export default function App() {
     hasWarmTranscript,
     getCachedTranscriptMessages,
   } = sessionStore;
+  readSessionStatusForTranscriptProjection = sessionStatusById;
+  const admitAcceptedConversationRunWithProjectionInvalidation = (
+    input: Parameters<typeof admitAcceptedConversationRun>[0],
+  ) => {
+    const workspaceId = input.workspaceId?.trim() ?? "";
+    const directory = input.directory?.trim() ?? "";
+    const uiSessionId = input.sessionId?.trim() ?? "";
+    if (workspaceId && directory && uiSessionId) {
+      invalidateTranscriptProjection({
+        workspaceId,
+        directory,
+        uiSessionId,
+        conversationId: input.conversationId,
+        opencodeSessionId: input.opencodeSessionId,
+        selectionVersion: currentTranscriptSelectionVersion,
+        expectedRunId: input.runId,
+      });
+    }
+    return admitAcceptedConversationRun(input);
+  };
 
   const [sidebarActivityTokenByScopedSessionKey, setSidebarActivityTokenByScopedSessionKey] = createSignal({});
   const sidebarActivityTokenModel = createSidebarSessionActivityTokenModel(
@@ -1362,18 +1505,40 @@ export default function App() {
 
     const hydratedClient: VesloServerClient = {
       ...client,
-      prefetchSessionTranscripts: async (workspaceId, input) => {
-        const result = await client.prefetchSessionTranscripts(workspaceId, input);
+      prefetchSessionTranscripts: async (workspaceId, input, clientOptions) => {
+        const backgroundInterest = deriveBackgroundSidebarPrefetchInterest(
+          input,
+          transcriptProjectionStore.reservation(),
+          workspaceId,
+        );
+        const hasBackgroundRows =
+          backgroundInterest.loadedTopLevelSessionIds.length > 0 ||
+          backgroundInterest.expandedSubagentSessionIds.length > 0 ||
+          (backgroundInterest.loadedTopLevelSessions?.length ?? 0) > 0 ||
+          (backgroundInterest.expandedSubagentSessions?.length ?? 0) > 0;
+        if (!hasBackgroundRows) {
+          return { workspaceId, queuedSessionIds: [], items: [] };
+        }
+        const result = await client.prefetchSessionTranscripts(workspaceId, backgroundInterest);
+        const appWorkspaceId = clientOptions?.appWorkspaceId?.trim() || "";
         for (const item of result.items) {
-          rememberConversationScopeFromTranscript(workspaceId, undefined, item);
+          if (transcriptProjectionStore.isReservedTranscriptSnapshot(item)) continue;
+          if (appWorkspaceId) {
+            rememberConversationScopeFromTranscript(appWorkspaceId, undefined, item);
+          }
           hydrateTranscriptSnapshot(item);
         }
         return result;
       },
-      getSessionTranscript: async (workspaceId, sessionId, limit = 140, directory) => {
-        const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit, directory);
-        rememberConversationScopeFromTranscript(workspaceId, directory, snapshot);
-        hydrateTranscriptSnapshot(snapshot);
+      getSessionTranscript: async (workspaceId, sessionId, limit = 140, directory, options) => {
+        const snapshot = await client.getSessionTranscript(workspaceId, sessionId, limit, directory, options);
+        const appWorkspaceId = options?.appWorkspaceId?.trim() || "";
+        if (appWorkspaceId) {
+          rememberConversationScopeFromTranscript(appWorkspaceId, directory, snapshot);
+        }
+        if (!transcriptProjectionStore.isReservedTranscriptSnapshot(snapshot)) {
+          hydrateTranscriptSnapshot(snapshot);
+        }
         return snapshot;
       },
     };
@@ -1386,7 +1551,6 @@ export default function App() {
     deriveArtifacts(messages(), { maxMessages: ARTIFACT_SCAN_MESSAGE_WINDOW }),
   );
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
-  const [latestRunArtifactResponse, setLatestRunArtifactResponse] = createSignal<VesloSessionLatestRunArtifacts | undefined>(undefined);
   const activeSessionId = createMemo(() => selectedSessionId());
   const activeSessionStatusById = createMemo(() => sessionStatusById());
   const busySessionByWorkspaceId = createMemo<WorkspaceBusyMap>(
@@ -1417,98 +1581,6 @@ export default function App() {
   const activeTodos = createMemo(() => todos());
   const activeArtifacts = createMemo(() => artifacts());
   const activeWorkingFiles = createMemo(() => workingFiles());
-  const [latestRunArtifactResponseKey, setLatestRunArtifactResponseKey] = createSignal("");
-  const latestRunArtifactScope = createMemo(() => {
-    const sessionId = selectedSessionId()?.trim() ?? "";
-    if (!sessionId) return null;
-    if (isPendingSessionInstanceKey(sessionId)) return null;
-    const scope = resolveSelectedSessionBrowseScope(sessionId);
-    const workspaceId = scope?.workspaceId?.trim() || workspaceStore.activeWorkspaceId().trim();
-    const workspaceRoot = scope?.workspaceRoot?.trim() || workspaceStore.activeWorkspaceRoot().trim();
-    const directory = scope?.directory?.trim() || sessionDirectoryOverrideById()[sessionId]?.trim() || workspaceRoot;
-    if (!workspaceId || !directory) return null;
-    return { sessionId, workspaceId, directory };
-  });
-  const latestRunArtifactRefreshKey = createMemo(() => {
-    const client = vesloServerClient();
-    const scope = latestRunArtifactScope();
-    if (!client || !scope || vesloServerStatus() !== "connected") return "";
-
-    const list = messages();
-    let partCount = 0;
-    let lastUserMessageId = "";
-    for (const message of list) {
-      partCount += Array.isArray(message.parts) ? message.parts.length : 0;
-      const role = typeof message.info?.role === "string" ? message.info.role : "";
-      if (role === "user" && typeof message.info?.id === "string") {
-        lastUserMessageId = message.info.id;
-      }
-    }
-
-    return [
-      scope.workspaceId,
-      scope.directory,
-      scope.sessionId,
-      lastUserMessageId,
-      String(partCount),
-    ].join(":");
-  });
-  const currentLatestRunArtifactResponse = createMemo(() => {
-    const response = latestRunArtifactResponse();
-    const key = latestRunArtifactRefreshKey();
-    if (!response || !key || latestRunArtifactResponseKey() !== key) return undefined;
-    return response;
-  });
-  createEffect(() => {
-    const key = latestRunArtifactRefreshKey();
-    if (!key) {
-      setLatestRunArtifactResponse(undefined);
-      setLatestRunArtifactResponseKey("");
-      return;
-    }
-
-    const client = vesloServerClient();
-    const scope = latestRunArtifactScope();
-    if (!client || !scope) {
-      setLatestRunArtifactResponse(undefined);
-      setLatestRunArtifactResponseKey("");
-      return;
-    }
-
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        const serverWorkspaceId = await ensureConversationReadWorkspaceRegistered(
-          client,
-          scope.workspaceId,
-          scope.directory,
-        );
-        if (!serverWorkspaceId) return null;
-        return await client.getSessionLatestRunArtifacts(serverWorkspaceId, scope.sessionId, scope.directory);
-      })()
-        .then((response) => {
-          if (cancelled) return;
-          if (!response) {
-            setLatestRunArtifactResponse(undefined);
-            setLatestRunArtifactResponseKey("");
-            return;
-          }
-          if (response.sessionId !== scope.sessionId) return;
-          setLatestRunArtifactResponse(response);
-          setLatestRunArtifactResponseKey(key);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setLatestRunArtifactResponse(undefined);
-          setLatestRunArtifactResponseKey("");
-        });
-    }, 120);
-
-    onCleanup(() => {
-      cancelled = true;
-      clearTimeout(timer);
-    });
-  });
 
   type SessionsLoadReadyState = {
     workspaceId: string;
@@ -1575,30 +1647,134 @@ export default function App() {
     return true;
   };
 
-  const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<Record<string, ComposerDraft>>({});
-  const currentComposerStorageKey = createMemo(() => {
-    const sessionId = selectedSessionId();
-    if (sessionId) {
-      return resolveComposerStorageKey({ sessionId });
-    }
-    return resolveComposerStorageKey({ pendingDraftKey: activePendingDraftKey() });
+  const [composerDraftBySessionId, setComposerDraftBySessionId] = createSignal<ComposerDraftStateByStorageKey>({});
+  const [materializingComposerDraftSessionId, setMaterializingComposerDraftSessionId] = createSignal<string | null>(null);
+  const clearMaterializingComposerDraftSessionId = (sessionId: string | null | undefined) => {
+    const expectedSessionId = sessionId?.trim() ?? "";
+    if (!expectedSessionId) return;
+    setMaterializingComposerDraftSessionId((current) => current === expectedSessionId ? null : current);
+  };
+  let composerDraftWriteId = 0;
+  const composerDraftStorageKeyKind = (storageKey: string) =>
+    storageKey === resolveComposerStorageKey({ pendingDraftKey: "__pending-draft__:trace" })
+      ? "unpublished"
+      : storageKey === "__no-session__"
+        ? "no-session"
+        : "session";
+  const currentComposerStorageKey = createMemo(() => resolveActiveComposerDraftStorageKey({
+    selectedSessionId: selectedSessionId(),
+    pendingDraftKey: activePendingDraftKey(),
+    materializingSessionId: materializingComposerDraftSessionId(),
+  }));
+  createEffect(() => {
+    if (!selectedSessionId()) return;
+    clearMaterializingComposerDraftSessionId(materializingComposerDraftSessionId());
   });
+  const composerStorageKey = currentComposerStorageKey;
   const composerDraft = createMemo(() =>
     getSessionComposerDraft(composerDraftBySessionId(), { storageKey: currentComposerStorageKey() }),
   );
-  const setComposerDraft = (draft: ComposerDraft) => {
-    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey: currentComposerStorageKey() }, draft));
+  const composerDraftRevision = createMemo(() =>
+    getSessionComposerDraftRevision(composerDraftBySessionId(), { storageKey: currentComposerStorageKey() }),
+  );
+  const setComposerDraftForStorageKey = (storageKey: string, draft: ComposerDraft) => {
+    setComposerDraftBySessionId((current) => setSessionComposerDraft(current, { storageKey }, draft));
   };
   const clearComposerDraftForSession = (sessionId: string | null | undefined) => {
     const trimmed = sessionId?.trim() ?? "";
     if (!trimmed) return;
     setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { sessionId: trimmed }));
   };
+  const remapPendingComposerDraftToSession = (
+    pendingDraftKey: string | null | undefined,
+    sessionId: string | null | undefined,
+  ) => {
+    let remapResult: ReturnType<typeof remapPendingComposerDraftToSessionRecord>;
+    batch(() => {
+      setComposerDraftBySessionId((current) => {
+        const result = remapPendingComposerDraftToSessionRecord(current, pendingDraftKey, sessionId);
+        remapResult = result;
+        if (result.status !== "noop" || uiEffectTrace.isEnabled()) {
+          const sourceKey = pendingDraftKey
+            ? resolveComposerStorageKey({ pendingDraftKey })
+            : "__no-session__";
+          const targetKey = sessionId ? resolveComposerStorageKey({ sessionId }) : "__no-session__";
+          const previousRevision = getSessionComposerDraftRevision(current, { storageKey: sourceKey });
+          const nextRevision = getSessionComposerDraftRevision(result.state, { storageKey: targetKey });
+          uiEffectTrace.record("composer-draft:write", {
+            owner: "pending-to-real-remap",
+            operation: result.status,
+            sourceStorageKeyKind: composerDraftStorageKeyKind(sourceKey),
+            targetStorageKeyKind: composerDraftStorageKeyKind(targetKey),
+            previousRevision,
+            nextRevision,
+            writeId: result.status === "moved" || result.status === "deduplicated"
+              ? ++composerDraftWriteId
+              : null,
+          });
+          if (result.status === "conflict") {
+            uiEffectTrace.reportIncident("composer-draft-remap-conflict", {
+              sourceStorageKeyKind: composerDraftStorageKeyKind(sourceKey),
+              targetStorageKeyKind: composerDraftStorageKeyKind(targetKey),
+              policy: "preserve-both",
+            });
+          }
+        }
+        return result.state;
+      });
+      const materializedSessionId = sessionId?.trim() ?? "";
+      if (
+        materializedSessionId
+        && (remapResult!.status === "moved" || remapResult!.status === "deduplicated")
+      ) {
+        // The route still has no selected real session at this point. Switch the
+        // mounted Composer to the target bucket in the same batch as the move so
+        // it cannot observe the just-emptied no-session bucket.
+        setMaterializingComposerDraftSessionId(materializedSessionId);
+      }
+    });
+    return remapResult!;
+  };
+  const clearComposerDraftIfRevision = (storageKey: string, revision: number) => {
+    let cleared = false;
+    setComposerDraftBySessionId((current) => {
+      const actualRevision = getSessionComposerDraftRevision(current, { storageKey });
+      const result = clearSessionComposerDraftIfRevision(current, { storageKey }, revision);
+      cleared = result.cleared;
+      uiEffectTrace.record("composer-draft:conditional-clear", {
+        owner: "composer-submit",
+        storageKeyKind: composerDraftStorageKeyKind(storageKey),
+        expectedRevision: revision,
+        actualRevision,
+        applied: result.cleared,
+        writeId: result.cleared ? ++composerDraftWriteId : null,
+      });
+      return result.state;
+    });
+    return cleared;
+  };
+  const captureComposerDraftRevision = (storageKey: string) =>
+    getSessionComposerDraftRevision(composerDraftBySessionId(), { storageKey });
+  const composerDraftCommands: ComposerDraftStateCommands = {
+    writeDraft: setComposerDraftForStorageKey,
+    deleteDraft: (storageKey) => {
+      setComposerDraftBySessionId((current) => deleteSessionComposerDraft(current, { storageKey }));
+    },
+    remapPendingDraft: remapPendingComposerDraftToSession,
+    captureDraftRevision: captureComposerDraftRevision,
+    clearDraftIfRevision: clearComposerDraftIfRevision,
+  };
   const setPrompt = (value: string) => {
-    setComposerDraftBySessionId((current) => setSessionComposerPrompt(current, { storageKey: currentComposerStorageKey() }, value));
+    composerDraftCommands.writeDraft(currentComposerStorageKey(), createEmptyComposerDraft(value));
   };
   const prompt = createMemo(() => composerDraft().text);
   const [lastPromptSent, setLastPromptSent] = createSignal("");
+  const [lastPromptSentModelOverride, setLastPromptSentModelOverride] = createSignal<ModelRef | null>(null);
+  const setLastAcceptedPrompt = (prompt: string, modelOverride?: ModelRef | null) => {
+    setLastPromptSent(prompt);
+    setLastPromptSentModelOverride(modelOverride ?? null);
+  };
+  const clearLastPromptModelOverride = () => setLastPromptSentModelOverride(null);
 
   const sessionAttachmentStaging = createSessionAttachmentStaging({
     vesloServerClient,
@@ -1643,7 +1819,10 @@ export default function App() {
   };
 
   const sessionSendWorkflow = createSessionSendWorkflow({
-    admitAcceptedConversationRun,
+    armConversationRunProvisional,
+    disposeConversationRunProvisional,
+    admitAcceptedConversationRun: admitAcceptedConversationRunWithProjectionInvalidation,
+    watchQueuedConversationRun,
     beginSidebarActivityToken: (scope) => sidebarActivityTokenModel.begin(scope),
     migrateSidebarActivityToken: (handle, scope) => sidebarActivityTokenModel.migrate(handle, scope),
     promoteSidebarActivityToken: (handle, runId) => sidebarActivityTokenModel.promote(handle, runId),
@@ -1668,8 +1847,8 @@ export default function App() {
     displayedConversationStillMatches,
     engineReady,
     emitFlowProgress: (event) => sessionFlowProgressPresenter.emit(event),
-    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId) =>
-      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId),
+    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId, resolvedTarget) =>
+      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId, resolvedTarget),
     finishPerf,
     holdVisibleRuntimeActivity,
     isPendingSessionInstanceKey,
@@ -1712,9 +1891,9 @@ export default function App() {
     sessionStoreSetCommandDisplay: (messageId, command, args) => sessionStore.setCommandDisplay(messageId, command, args),
     setActivePendingDraftKey,
     setActivePendingDraftMeta,
-    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    composerDraftCommands,
     setError,
-    setLastPromptSent,
+    setLastPromptSent: setLastAcceptedPrompt,
     setPrompt,
     setSelectedSessionId,
     setView,
@@ -1737,14 +1916,15 @@ export default function App() {
   const abortSession = sessionFlowFacade.abortSession;
   const sessionMutationWorkflow = createSessionMutationWorkflow({
     lastPromptSent,
+    lastPromptSentModelOverride,
     sendPrompt,
     createClientMessageId: createSessionClientMessageId,
     selectedSessionId,
     selectedSession,
     messages,
     setPrompt,
-    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId) =>
-      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId),
+    ensureSelectedSessionWorkspaceActiveForSend: (sessionId, sendTraceId, resolvedTarget) =>
+      ensureSelectedSessionWorkspaceActiveForSend(sessionId, sendTraceId, resolvedTarget),
     routedClient: (workspaceId) => routedClient(workspaceId ?? undefined),
     abortSessionSafe,
     revertSession,
@@ -1784,8 +1964,7 @@ export default function App() {
     persistSessionDirectoryOverride,
     sessions,
     setSessions,
-    deleteSessionComposerDraft,
-    setComposerDraftBySessionId,
+    composerDraftCommands,
     removeSessionFromWorkspaceSidebar: (workspaceId, sessionId) => removeSessionFromWorkspaceSidebar(workspaceId, sessionId),
     pathname: () => location.pathname,
     navigate: (to, options) => navigate(to, options),
@@ -1845,13 +2024,6 @@ export default function App() {
     void triggerAutoCompaction(sessionID);
   });
 
-  const messageIdFromInfo = (message: MessageWithParts) => {
-    const id = (message.info as { id?: string | number }).id;
-    if (typeof id === "string") return id;
-    if (typeof id === "number") return String(id);
-    return "";
-  };
-
   const createSyntheticSessionErrorMessage = (
     sessionID: string,
     errorTurn: SessionErrorTurn,
@@ -1885,31 +2057,7 @@ export default function App() {
     };
   };
 
-  const insertSyntheticSessionErrors = (
-    list: MessageWithParts[],
-    sessionID: string | null,
-    errorTurns: SessionErrorTurn[],
-  ) => {
-    if (!sessionID || errorTurns.length === 0) return list;
-
-    const next = list.slice();
-    errorTurns.forEach((errorTurn) => {
-      if (next.some((message) => messageIdFromInfo(message) === errorTurn.id)) return;
-      const syntheticMessage = createSyntheticSessionErrorMessage(sessionID, errorTurn);
-      const anchorIndex = errorTurn.afterMessageID
-        ? next.findIndex((message) => messageIdFromInfo(message) === errorTurn.afterMessageID)
-        : -1;
-
-      if (anchorIndex === -1) {
-        next.push(syntheticMessage);
-        return;
-      }
-
-      next.splice(anchorIndex + 1, 0, syntheticMessage);
-    });
-
-    return next;
-  };
+  const reconcileVisibleMessages = createVisibleMessageProjection(createSyntheticSessionErrorMessage);
 
   const upsertLocalSession = (next: Session | null | undefined) => {
     const id = (next as { id?: string } | null)?.id ?? "";
@@ -1932,16 +2080,14 @@ export default function App() {
   const visibleMessages = createMemo(() => {
     const sessionID = selectedSessionId();
     const errorTurns = sessionStore.selectedSessionErrorTurns();
-    const list = messages().filter((message) => {
-      const id = messageIdFromInfo(message);
-      return !id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+    const projected = reconcileVisibleMessages({
+      source: messages(),
+      sessionID,
+      errorTurns,
+      revertMessageID: selectedSession()?.revert?.messageID ?? null,
     });
-    const revert = selectedSession()?.revert?.messageID ?? null;
-    const visible = !revert ? list : list.filter((message) => {
-      const id = messageIdFromInfo(message);
-      return Boolean(id) && id < revert;
-    });
-    return insertSyntheticSessionErrors(visible, sessionID, errorTurns);
+    observeTranscriptProjectionBoundary("visible", sessionID, projected);
+    return projected;
   });
 
   const [pendingSessionSwitchPerf, setPendingSessionSwitchPerf] = createSignal<{
@@ -2236,6 +2382,9 @@ export default function App() {
   };
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
+  const recordManagedAiWorkflowTrace = (event: string, payload: Record<string, unknown>) => {
+    recordSendWorkflowTrace("app", event, payload, { developerMode: developerMode() });
+  };
   const managedAiAccessStore = createManagedAiAccessStore({
     authenticatedUser,
     denAuthRevision,
@@ -2259,13 +2408,16 @@ export default function App() {
       write: accessProofAiWrite,
       clear: accessProofAiClear,
     },
+    recordManagedAiWorkflowTrace,
   });
   lateManagedAiAccessStore.bind(managedAiAccessStore);
   const {
     managedAiAccess,
     managedAiGatewayAccessToken,
     managedAiAccessBusy,
+    managedAiAccessReady,
     managedAiAccessError,
+    managedAiAccessRetryScheduled,
     managedAiAccessModel,
     denGatewayAccessToken,
     managedAiAccessMessage,
@@ -2289,10 +2441,6 @@ export default function App() {
     };
   };
 
-  const recordManagedAiWorkflowTrace = (event: string, payload: Record<string, unknown>) => {
-    recordSendWorkflowTrace("app", event, payload, { developerMode: developerMode() });
-  };
-
   const managedAiRuntimeConfig = createManagedAiRuntimeConfigSync({
     isTauriRuntime,
     workspaceDefaultModelReady,
@@ -2300,7 +2448,9 @@ export default function App() {
     defaultModel,
     managedAiAccess,
     managedAiAccessBusy,
+    managedAiAccessReady,
     managedAiAccessError,
+    managedAiAccessRetryScheduled,
     managedAiGatewayAccessToken,
     denGatewayAccessToken,
     denOrgId: () => readDenAuth()?.orgId?.trim() ?? "",
@@ -2309,6 +2459,7 @@ export default function App() {
     vesloServerClient,
     vesloServerStatus,
     vesloServerWorkspaceId,
+    managedAiConfigAuthority,
     resolvedVesloCapabilities: () => resolvedVesloCapabilities(),
     activeVesloServerRoutingInfo,
     baseUrl,
@@ -2354,6 +2505,8 @@ export default function App() {
     hasUsableManagedAiRuntimeConfigForSend,
     ensureManagedAiRuntimeAuthorizationForSend,
     syncManagedAiRuntimeConfigForSend,
+    prepareManagedAiRuntimeConfigForEngineStart,
+    managedAiServerReloadPresentation,
   } = managedAiRuntimeConfig;
   lateManagedAiRuntimeConfig.bind(managedAiRuntimeConfig);
 
@@ -2395,6 +2548,7 @@ export default function App() {
   } = sendRuntimeReadiness;
 
   const [showThinking, setShowThinking] = createSignal(false);
+  const [sessionModelSelectorEnabled, setSessionModelSelectorEnabled] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
   // VSLO-171 F3Ú9 — maxEngines, idleSuspendMs were moved up to ~ř.1097 so
   // workspaceRouting closures (and downstream session store memos) can
@@ -2478,6 +2632,8 @@ export default function App() {
     activeSendTraceId,
     setEngineReady,
     isWorkspaceRuntimeReady,
+    syncManagedAiRuntimeConfigBeforeRuntime: (target) =>
+      prepareManagedAiRuntimeConfigForEngineStart(target),
     requestWorkspaceFolderAccess,
     populateSidebarFromDb: async (workspaceId: string, directory: string) => {
       // Set status to "loading" SYNCHRONOUSLY before any await, so the idle-loader
@@ -2505,7 +2661,6 @@ export default function App() {
         (rememberedSessionId ? visible.find((item) => item.id === rememberedSessionId) : undefined) ??
         visible[0] ??
         result.items[0];
-      if (!latest) return;
       const snapshot = await getTranscriptFromVesloReadApi(workspaceId, latest.id, 50, directory);
       if (!snapshot) return;
       // Warm the cache before selecting so browse-mode selectSession can stay on
@@ -2653,7 +2808,7 @@ export default function App() {
       ensureWorkspaceForFolder: (folder) => workspaceStore.ensureWorkspaceForFolder(folder),
     },
     publishRegisteredWorkspaceToSidebar: (workspaceId) => publishRegisteredWorkspaceToSidebar(workspaceId),
-    setComposerDraftBySessionId: (updater) => setComposerDraftBySessionId(updater),
+    composerDraftCommands,
     setView,
     setError,
     reportError,
@@ -2858,7 +3013,6 @@ export default function App() {
     readSnapshot: readWorkspaceRuntimeDebugSnapshot,
     getRequestBrokerSnapshot: getVesloRequestBrokerSnapshot,
     log: wsDebug,
-    consoleLog: (label, payload) => console.log(label, payload),
   });
 
   let cleanupWorkspaceRuntimeDebugProbe: (() => void) | null = null;
@@ -2870,11 +3024,46 @@ export default function App() {
     cleanupWorkspaceRuntimeDebugProbe = null;
   });
 
+  const workspaceBusyForSkillRegistry = (): WorkspaceBusyMap => {
+    const reportedBusy = workspaceStore.workspaceBusy();
+    const sessionStatuses = sessionStatusById();
+    const runDiagnostics = conversationRunDiagnosticsBySessionKey();
+    let mergedBusy: WorkspaceBusyMap | null = null;
+
+    const addBusySession = (workspaceIdRaw: string, sessionIdRaw: string) => {
+      const workspaceId = workspaceIdRaw.trim();
+      const sessionId = sessionIdRaw.trim();
+      const currentBusy = mergedBusy ?? reportedBusy;
+      const workspaceBusy = currentBusy[workspaceId] as WorkspaceBusyMap[string] | undefined;
+      if (!workspaceId || !sessionId || workspaceBusy?.[sessionId]) return;
+      mergedBusy = {
+        ...currentBusy,
+        [workspaceId]: {
+          ...(workspaceBusy ?? {}),
+          [sessionId]: { startedAt: Date.now() },
+        },
+      };
+    };
+
+    for (const [key, status] of Object.entries(sessionStatuses)) {
+      const separator = key.indexOf("\0");
+      if (separator <= 0 || status.trim() === "idle") continue;
+      addBusySession(key.slice(0, separator), key.slice(separator + 1));
+    }
+
+    for (const diagnostic of Object.values(runDiagnostics)) {
+      if (diagnostic.stale || !["submitted", "running", "blocked"].includes(diagnostic.status)) continue;
+      addBusySession(diagnostic.workspaceId, diagnostic.sessionId);
+    }
+
+    return mergedBusy ?? reportedBusy;
+  };
+
   const skillRegistryOrchestrator = createSkillRegistryOrchestrator({
     vesloServerClient,
     vesloServerStatus,
     activeWorkspaceId: () => workspaceStore.activeWorkspaceId(),
-    workspaceBusy: () => workspaceStore.workspaceBusy(),
+    workspaceBusy: workspaceBusyForSkillRegistry,
     denAuthRevision,
     readDenAuth,
     refreshSkills,
@@ -2885,17 +3074,18 @@ export default function App() {
   });
   const skillRegistryMaterializationAuthContext = skillRegistryOrchestrator.materializationAuthContext;
 
-  const activeArtifactFamilies = createMemo(() =>
-    resolveArtifactFamilies({
-      serverArtifacts: currentLatestRunArtifactResponse()?.items,
-      preferServerArtifacts: Boolean(currentLatestRunArtifactResponse()),
-      legacyArtifacts: currentLatestRunArtifactResponse() ? [] : artifacts(),
-      workingFiles: currentLatestRunArtifactResponse() ? [] : workingFiles(),
+  const activeArtifactFamilies = createMemo(() => {
+    const projection = transcriptProjectionStore.currentTranscriptProjection();
+    return resolveArtifactFamilies({
+      serverArtifacts: projection?.items,
+      preferServerArtifacts: Boolean(projection),
+      legacyArtifacts: projection ? [] : artifacts(),
+      workingFiles: projection ? [] : workingFiles(),
       workspaceRoot:
         (activeSessionId() ? resolveSelectedSessionBrowseScope(activeSessionId()!)?.workspaceRoot : null) ||
         workspaceStore.activeWorkspaceRoot().trim(),
-    }),
-  );
+    });
+  });
 
   const shouldSyncConversationReadForWorkspace =
     runtimeOwner.shouldSyncConversationReadForWorkspace;
@@ -3651,6 +3841,8 @@ export default function App() {
     setProviderDefaults,
     setProviderConnectedIds,
     setError,
+    recordReloadTrace: (event, payload) =>
+      recordSendWorkflowTrace("system-state", event, payload, { developerMode: developerMode() }),
     notion: {
       status: notionStatus,
       setStatus: setNotionStatus,
@@ -3717,6 +3909,7 @@ export default function App() {
   });
 
   const DOCUMENT_RUNTIME_STATUS_POLL_MS = 30_000;
+  const DOCUMENT_RUNTIME_INSTALL_POLL_MS = 2_000;
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -3730,12 +3923,22 @@ export default function App() {
 
     let active = true;
     let inFlight = false;
+    let timeoutId: number | null = null;
+
+    const schedule = (delayMs: number) => {
+      if (!active) return;
+      timeoutId = window.setTimeout(run, delayMs);
+    };
 
     const run = async () => {
       if (inFlight) return;
       inFlight = true;
+      let nextPollMs = DOCUMENT_RUNTIME_STATUS_POLL_MS;
       try {
         const result = await client.getDocumentRuntimeStatus();
+        if (result.package.installing) {
+          nextPollMs = DOCUMENT_RUNTIME_INSTALL_POLL_MS;
+        }
         if (active && vesloServerClient() === client) {
           setDocumentRuntimeStatus(result);
         }
@@ -3745,14 +3948,14 @@ export default function App() {
         }
       } finally {
         inFlight = false;
+        schedule(nextPollMs);
       }
     };
 
-    run();
-    const interval = window.setInterval(run, DOCUMENT_RUNTIME_STATUS_POLL_MS);
+    void run();
     onCleanup(() => {
       active = false;
-      window.clearInterval(interval);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
     });
   });
 
@@ -3794,6 +3997,7 @@ export default function App() {
       setLegacyDefaultModel(DEFAULT_MODEL);
       setDefaultModelExplicit(false);
       setShowThinking(false);
+      setSessionModelSelectorEnabled(false);
       setHideTitlebar(false);
       setModelVariant(DEFAULT_MODEL_VARIANT);
       setUpdateAutoCheck(true);
@@ -3933,7 +4137,55 @@ export default function App() {
       }
     }
 
+    for (const diagnostic of Object.values(conversationRunDiagnosticsBySessionKey())) {
+      if (diagnostic.stale || diagnostic.status !== "blocked") continue;
+      const workspaceId = diagnostic.workspaceId.trim();
+      const sessionId = diagnostic.sessionId.trim();
+      if (!workspaceId || !sessionId) continue;
+      const sidebarSession = findSidebarSessionForWorkspace(workspaceId, sessionId);
+      const directory = sidebarSession?.directory?.trim() || "";
+      const workspaceTitle = workspaceTitleForActiveRun(workspaceId);
+      const title = sidebarSession?.title?.trim() || sidebarSession?.slug?.trim() || sessionId;
+      addSession({
+        id: sessionId,
+        title: `${title} (${workspaceTitle})`,
+        workspaceId,
+        workspaceRoot: resolveWorkspaceRootForConversationScope(workspaceId, directory),
+        directory,
+        conversationId: diagnostic.conversationId,
+        opencodeSessionId: diagnostic.opencodeSessionId ?? sessionId,
+      });
+    }
+
     return Array.from(byKey.values());
+  });
+
+  const showSessionReloadBanner = createMemo(() => shouldShowSessionReloadBanner({
+    reloadRequired: reloadRequired(),
+    reloadTrigger: reloadTrigger(),
+    activeReloadBlockingSessionCount: activeReloadBlockingSessions().length,
+  }));
+  let lastSessionReloadBannerTraceKey: string | null = null;
+  createEffect(() => {
+    const trigger = reloadTrigger();
+    const activeCount = activeReloadBlockingSessions().length;
+    const state = {
+      visible: showSessionReloadBanner(),
+      blocked: activeCount > 0,
+      reloadRequired: reloadRequired(),
+      reasons: reloadReasons(),
+      triggerType: trigger?.type ?? null,
+      triggerAction: trigger?.action ?? null,
+      activeCount,
+    };
+    const traceKey = JSON.stringify(state);
+    if (traceKey === lastSessionReloadBannerTraceKey) return;
+    const hadPreviousState = lastSessionReloadBannerTraceKey !== null;
+    lastSessionReloadBannerTraceKey = traceKey;
+    if (!hadPreviousState && !state.visible) return;
+    recordSendWorkflowTrace("app", "session-reload-banner:state", state, {
+      developerMode: developerMode(),
+    });
   });
 
   createEffect(() => {
@@ -4235,8 +4487,11 @@ export default function App() {
       sessionRouteSync.markOwnNavigationSession(sessionId);
     }
     try {
-      await selectSession(sessionId);
+      await selectSession(sessionId, {
+        skipTranscriptRead: result.transition.skipTranscriptRead === true,
+      });
     } catch (selectError) {
+      clearMaterializingComposerDraftSessionId(sessionId);
       sessionRouteSync.clearOwnNavigationSessionIf(sessionId);
       throw selectError;
     }
@@ -4350,6 +4605,8 @@ export default function App() {
     setLegacyDefaultModel,
     showThinking,
     setShowThinking,
+    sessionModelSelectorEnabled,
+    setSessionModelSelectorEnabled,
     maxEngines,
     setMaxEngines,
     idleSuspendMs,
@@ -4729,6 +4986,8 @@ export default function App() {
     managedAiAccessEffectiveModelLabel,
     showThinking,
     setShowThinking,
+    sessionModelSelectorEnabled,
+    setSessionModelSelectorEnabled,
     hideTitlebar,
     setHideTitlebar,
     maxEngines,
@@ -4809,6 +5068,7 @@ export default function App() {
     chooseFolderForCurrentSession,
     engineReady,
     vesloServerWorkspaceId,
+    managedAiServerReloadPresentation,
     sidebarPluginList,
     sidebarPluginStatus,
     sessionCapabilitiesSnapshot,
@@ -4823,11 +5083,14 @@ export default function App() {
     sendPrompt,
     replaceUserMessage,
     clearComposerDraftForSession,
+    remapPendingComposerDraftToSession,
     abortSession,
     undoLastUserMessage,
     redoLastUserMessage,
     submitCurrentSessionCompaction,
     lastPromptSent,
+    lastPromptSentModelOverride,
+    clearLastPromptModelOverride,
     retryLastPrompt,
     selectedSessionDisplayTitle,
     visibleMessages,
@@ -4849,7 +5112,11 @@ export default function App() {
     activeComposerBusy,
     prompt,
     composerDraft,
-    setComposerDraft,
+    composerStorageKey,
+    composerDraftRevision,
+    setComposerDraftForStorageKey,
+    captureComposerDraftRevision,
+    clearComposerDraftIfRevision,
     activePermissionMemo,
     permissionReplyBusy,
     respondPermissionForAppViewProps,
@@ -4914,7 +5181,7 @@ export default function App() {
         </Match>
         <Match when={currentView() === "session"}>
           <SessionView
-            {...appViewProps.sessionProps()}
+            {...appViewProps.sessionProps}
             onOpenFeedback={feedbackWorkflow.openFeedbackModal}
           />
         </Match>
@@ -4983,15 +5250,13 @@ export default function App() {
           setMcpAuthEntry(null);
           setMcpAuthNeedsReload(false);
         }}
-        onComplete={async () => {
+        onComplete={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
           setMcpAuthNeedsReload(false);
-          await refreshMcpServers({ mode: "explicit", reason: "mcp-auth-complete" });
+          void refreshMcpServers({ mode: "explicit", reason: "mcp-auth-complete" });
         }}
-        onReloadEngine={async () => {
-          await reloadWorkspaceEngine();
-        }}
+        onReloadEngine={() => void reloadWorkspaceEngine()}
       />
 
       <Show when={sharePointMcpInstallPromptOpen()}>
@@ -5004,6 +5269,8 @@ export default function App() {
               ? t("mcp.installing_button", currentLocale())
               : t("mcp.sharepoint_prompt_install", currentLocale())}
             cancelLabel={t("mcp.sharepoint_prompt_later", currentLocale())}
+            confirmTestId="sharepoint-mcp-install-confirm"
+            cancelTestId="sharepoint-mcp-install-dismiss"
             onConfirm={() => {
               void confirmSharePointMcpInstallPrompt();
             }}

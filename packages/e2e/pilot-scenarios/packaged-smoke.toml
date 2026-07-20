@@ -1,0 +1,214 @@
+[scenario]
+name = "packaged-smoke"
+fail_fast = true
+global_timeout_ms = 300000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 30000
+
+[[step]]
+name = "fresh packaged runtime reaches first workspace and first server-owned send"
+action = "eval"
+timeout_ms = 280000
+script = '''
+const completeSelector = '[data-testid="packaged-smoke-complete"]';
+const errorSelector = '[data-testid="packaged-smoke-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+if (!window.__packagedSmokeStarted) {
+window.__packagedSmokeStarted = true;
+window.__packagedSmokePromise = (async () => {
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const normalize = (value) => String(value ?? "").trim().replace(/\s+/g, " ");
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const waitUntil = async (predicate, options = {}) => {
+  const timeout = options.timeout ?? 30000;
+  const interval = options.interval ?? 250;
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error((options.message ?? "condition was not met") + "; latest=" + JSON.stringify(latest));
+};
+const invoke = async (command, payload = {}) => {
+  const bridge = window.__TAURI_INTERNALS__?.invoke;
+  assert(typeof bridge === "function", "Tauri invoke bridge is unavailable.");
+  return await bridge(command, payload);
+};
+const bodyText = () => normalize(document.body.innerText).slice(0, 3000);
+const isVisible = (element) => {
+  if (!(element instanceof HTMLElement)) return false;
+  const rect = element.getBoundingClientRect();
+  return Boolean(element.offsetParent) && rect.width > 0 && rect.height > 0;
+};
+const findComposer = () =>
+  Array.from(document.querySelectorAll('[role="textbox"][contenteditable="true"], [contenteditable="true"][role="textbox"]'))
+    .find(isVisible) ?? null;
+const findSendButton = (composer) => {
+  const labels = ["Send now", "Steer agent now", "Queue message", "Send", "Poslat hned", "Odeslat"];
+  let current = composer;
+  for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
+    const button = Array.from(current.querySelectorAll("button")).find((candidate) => {
+      if (!isVisible(candidate) || candidate.disabled) return false;
+      const values = [candidate.textContent, candidate.title, candidate.getAttribute("aria-label")]
+        .map(normalize)
+        .filter(Boolean);
+      return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+    });
+    if (button) return button;
+    current = current.parentElement;
+  }
+  return Array.from(document.querySelectorAll("button")).find((candidate) => {
+    if (!isVisible(candidate) || candidate.disabled) return false;
+    const values = [candidate.textContent, candidate.title, candidate.getAttribute("aria-label")]
+      .map(normalize)
+      .filter(Boolean);
+    return labels.some((label) => values.some((value) => value === label || value.includes(label)));
+  }) ?? null;
+};
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(selector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector.slice('[data-testid="'.length, -2);
+  marker.textContent = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  document.body.append(marker);
+};
+
+try {
+  const localServer = await waitUntil(async () => {
+    const info = await invoke("veslo_server_info").catch(() => null);
+    const baseUrl = normalize(info?.baseUrl).replace(/\/+$/, "");
+    const clientToken = normalize(info?.clientToken);
+    if (!info?.running || !baseUrl || !clientToken) return false;
+    const health = await fetch(baseUrl + "/health").catch(() => null);
+    const payload = health?.ok ? await health.json().catch(() => null) : null;
+    return payload?.ok === true ? { baseUrl, clientToken } : false;
+  }, {
+    timeout: 90000,
+    interval: 500,
+    message: "Bundled local Veslo server did not become ready",
+  });
+
+  const bootstrap = await invoke("workspace_bootstrap");
+  const workspace = bootstrap?.workspaces?.find((entry) => entry.id === bootstrap?.activeId) ?? bootstrap?.workspaces?.[0];
+  const workspacePath = normalize(workspace?.path || workspace?.directory);
+  assert(workspacePath, "Fresh packaged profile did not expose a first workspace.");
+
+  window.localStorage.setItem("veslo.onboardingComplete", "1");
+  window.localStorage.setItem("veslo.language", "en");
+  const oldUrl = window.location.href;
+  window.location.hash = "/session";
+  window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: oldUrl, newURL: window.location.href }));
+
+  const composer = await waitUntil(() => findComposer(), {
+    timeout: 90000,
+    message: "Composer did not become available for the fresh packaged workspace. body=" + bodyText(),
+  });
+  const prompt = "PACKAGED_SMOKE_REQUEST";
+  const traceOffset = Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.length : 0;
+  composer.focus();
+  composer.replaceChildren(document.createTextNode(prompt));
+  composer.dispatchEvent(new InputEvent("input", {
+    bubbles: true,
+    data: prompt,
+    inputType: "insertText",
+  }));
+  await waitUntil(() => normalize(composer.textContent).includes(prompt), {
+    message: "Composer did not retain the deterministic fixture prompt.",
+  });
+  const sendButton = await waitUntil(() => findSendButton(composer), {
+    message: "Composer send button did not become enabled. body=" + bodyText(),
+  });
+  sendButton.click();
+
+  await waitUntil(() => bodyText().includes(prompt), {
+    timeout: 90000,
+    interval: 500,
+    message: "First prompt was not rendered in the desktop conversation.",
+  });
+  await waitUntil(() => bodyText().includes("PACKAGED_SMOKE_RESPONSE"), {
+    timeout: 150000,
+    interval: 500,
+    message: "Local deterministic model response was not rendered. body=" + bodyText(),
+  });
+
+  const trace = Array.isArray(window.__vesloSendTrace)
+    ? window.__vesloSendTrace.slice(traceOffset)
+    : [];
+  const failed = trace.some((entry) =>
+    /(^|:)error$|failed|blocked/i.test(String(entry?.event ?? "")) ||
+    String(entry?.outcome ?? "") === "error",
+  );
+  assert(!failed, "First send recorded a failed or blocked workflow state.");
+
+  const workspacesResponse = await fetch(localServer.baseUrl + "/workspaces", {
+    headers: { authorization: "Bearer " + localServer.clientToken },
+  });
+  const workspacesPayload = await workspacesResponse.json();
+  assert(workspacesResponse.ok && Array.isArray(workspacesPayload?.items), "Bundled server did not list workspaces.");
+  const serverWorkspace = workspacesPayload.items.find((entry) =>
+    normalize(entry?.path || entry?.directory) === workspacePath,
+  );
+  assert(serverWorkspace?.id, "First workspace was not registered by the bundled Veslo server.");
+  const conversationsResponse = await fetch(
+    localServer.baseUrl + "/workspace/" + encodeURIComponent(serverWorkspace.id) + "/conversations",
+    { headers: { authorization: "Bearer " + localServer.clientToken } },
+  );
+  const conversationsPayload = await conversationsResponse.json();
+  assert(
+    conversationsResponse.ok &&
+    Array.isArray(conversationsPayload?.items) &&
+    conversationsPayload.items.length > 0,
+    "First send did not materialize a server-owned conversation.",
+  );
+
+  appendMarker(completeSelector, {
+    serverWorkspaceId: serverWorkspace.id,
+    conversationCount: conversationsPayload.items.length,
+    response: "PACKAGED_SMOKE_RESPONSE",
+  });
+} catch (error) {
+  appendMarker(errorSelector, {
+    message: error?.message || String(error),
+    body: bodyText(),
+    sendTrace: Array.isArray(window.__vesloSendTrace)
+      ? window.__vesloSendTrace.slice(-60).map((entry) => ({
+          event: entry?.event ?? null,
+          outcome: entry?.outcome ?? null,
+          workspaceId: entry?.workspaceId ?? null,
+          conversationId: entry?.conversationId ?? null,
+        }))
+      : [],
+  });
+}
+
+})();
+}
+true;
+'''
+
+[[step]]
+name = "packaged smoke flow finished"
+action = "wait"
+target = "[data-testid=\"packaged-smoke-complete\"], [data-testid=\"packaged-smoke-error\"]"
+timeout_ms = 290000
+
+[[step]]
+name = "packaged smoke flow succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="packaged-smoke-error"]');
+if (error) {
+  throw new Error("Packaged smoke failed: " + (error.textContent || "no diagnostic").slice(0, 6000));
+}
+true;
+'''

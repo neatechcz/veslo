@@ -291,12 +291,6 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
     }
 
     deps.setError(null);
-    console.log("[workspace] create remote request", {
-      hostUrl: hostUrl || null,
-      directory: directory || null,
-      displayName,
-    });
-
     deps.setStartupPreference("server");
 
     let remoteType: "veslo" = "veslo";
@@ -358,15 +352,14 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
           directory: finalDirectory ? finalDirectory : null,
           displayName,
           remoteType,
-          vesloHostUrl: remoteType === "veslo" ? resolvedHostUrl : null,
-          vesloToken: remoteType === "veslo" ? (token || null) : null,
-          vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
-          vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
+          vesloHostUrl: resolvedHostUrl,
+          vesloToken: token || null,
+          vesloWorkspaceId: vesloWorkspace?.id ?? null,
+          vesloWorkspaceName: vesloWorkspace?.name ?? null,
         });
         deps.setWorkspaces(ws.workspaces);
         deps.syncActiveWorkspaceId(ws.activeId);
         remoteWorkspaceId = ws.activeId;
-        console.log("[workspace] create remote complete:", ws.activeId ?? "none");
       } else {
         const workspaceId = `remote:${resolvedBaseUrl}:${finalDirectory}`;
         const nextWorkspace: WorkspaceInfo = {
@@ -379,10 +372,10 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
           baseUrl: resolvedBaseUrl,
           directory: finalDirectory || null,
           displayName,
-          vesloHostUrl: remoteType === "veslo" ? resolvedHostUrl : null,
-          vesloToken: remoteType === "veslo" ? (token || null) : null,
-          vesloWorkspaceId: remoteType === "veslo" ? vesloWorkspace?.id ?? null : null,
-          vesloWorkspaceName: remoteType === "veslo" ? vesloWorkspace?.name ?? null : null,
+          vesloHostUrl: resolvedHostUrl,
+          vesloToken: token || null,
+          vesloWorkspaceId: vesloWorkspace?.id ?? null,
+          vesloWorkspaceName: vesloWorkspace?.name ?? null,
         };
 
         deps.setWorkspaces((prev: WorkspaceInfo[]) => {
@@ -391,7 +384,6 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
         });
         deps.syncActiveWorkspaceId(workspaceId);
         remoteWorkspaceId = workspaceId;
-        console.log("[workspace] create remote complete:", workspaceId);
       }
 
       const ok = await deps.connectToServer(
@@ -428,7 +420,6 @@ export function createRemoteStore(deps: RemoteStoreDeps) {
       return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
-      console.log("[workspace] create remote failed:", message);
       deps.setError(addOpencodeCacheHint(message));
       return false;
     } finally {

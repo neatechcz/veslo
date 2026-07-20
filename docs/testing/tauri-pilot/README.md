@@ -112,19 +112,16 @@ Use this when the scenario must run through the same debug binary and isolated
 profile model as `packages/e2e`.
 
 ```powershell
-pnpm --filter veslo-server build:bin
-
-$env:VESLO_SIDECAR_FORCE_BUILD = "1"
-pnpm --filter @neatech/veslo run prepare:sidecar
-Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
-
-Push-Location packages\desktop
-pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
-Pop-Location
+pnpm --filter @neatech/veslo-e2e run build:desktop:e2e
 
 $env:E2E_TAURI_PILOT_BIN = "C:\Users\jajse\.cargo\bin\tauri-pilot.exe"
 pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario runtime-cold-start-session-handoff
 ```
+
+`build:desktop:e2e` always builds `veslo-server`, force-prepares desktop
+sidecars, and then builds the debug Tauri binary with
+`src-tauri/tauri.e2e.conf.json` and the `e2e` feature. Use it instead of
+copying only one of those steps.
 
 The runner launches `packages/desktop/src-tauri/target/debug/veslo.exe`, sets
 `TAURI_PILOT_SOCKET`, waits for Pilot readiness, runs the TOML scenario, and
@@ -137,10 +134,7 @@ Rebuild sidecars when server/orchestrator/router/runtime binaries changed or
 when a pilot run could be using stale sidecars:
 
 ```powershell
-pnpm --filter veslo-server build:bin
-$env:VESLO_SIDECAR_FORCE_BUILD = "1"
-pnpm --filter @neatech/veslo run prepare:sidecar
-Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
+pnpm --filter @neatech/veslo-e2e run build:desktop:e2e
 ```
 
 Rebuild the E2E debug Tauri binary when any of these changed:
@@ -160,15 +154,7 @@ Use this build path when validating the actual desktop binary that Pilot will
 drive:
 
 ```powershell
-pnpm --filter veslo-server build:bin
-
-$env:VESLO_SIDECAR_FORCE_BUILD = "1"
-pnpm --filter @neatech/veslo run prepare:sidecar
-Remove-Item Env:\VESLO_SIDECAR_FORCE_BUILD
-
-Push-Location packages\desktop
-pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
-Pop-Location
+pnpm --filter @neatech/veslo-e2e run build:desktop:e2e
 ```
 
 After the build, these invariants should hold:
@@ -187,10 +173,9 @@ After the build, these invariants should hold:
   `tauri-plugin-pilot/press`.
 - `tauri-pilot --version` reports `tauri-pilot 0.7.2`, matching
   `tauri-plugin-pilot = "0.7.2"`.
-- The package runner still seeds WebView Den auth from
-  `VESLO_E2E_DEN_AUTH_JSON`, `VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE`, or the
-  production desktop `VESLO_DEN_AUTH_SNAPSHOT_PATH` fallback before a TOML
-  scenario runs.
+- The package runner prepares a desktop auth snapshot before launch. It does
+  not write WebView auth through Pilot or reload the app after boot; live
+  scenarios verify that desktop snapshot hydration produced a signed-in state.
 - Managed-AI/inference scenarios still reject
   `E2E_MANAGED_AI_GATEWAY_FIXTURE=1` and do not auto-enable that fixture.
 
@@ -213,7 +198,12 @@ pnpm --filter @neatech/veslo-e2e test:pilot -- --scenario smoke
 ```
 
 For managed-AI/inference acceptance, add the live seed and keep the fixture
-disabled:
+disabled. `test:pilot:live-inference` is the canonical production-path suite:
+it runs the visible message-send flow only, requires `codex_oauth`, and caps
+the scenario at 180 seconds (with five seconds of runner grace to collect a
+failure result). This is an observation budget for a cold real-provider
+response, not a product latency target; the independent desktop boot cap stays
+at 95 seconds.
 
 ```powershell
 $env:VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE = "C:\Users\jajse\.veslo\den-auth.json"
@@ -225,6 +215,14 @@ From the workspace root, the same gate is available as:
 
 ```powershell
 pnpm test:e2e:ui:live-inference
+```
+
+The longer cold-start handoff check remains available as explicitly separate
+lifecycle coverage; it is not acceptance evidence for the canonical
+live-inference gate:
+
+```powershell
+pnpm --filter @neatech/veslo-e2e test:pilot:live-inference:lifecycle
 ```
 
 ## Scenario Authoring Boundaries
@@ -252,36 +250,92 @@ production.
 - For managed-AI/inference scenarios, read Den auth from WebView storage first
   and then from `den_auth_snapshot_read`; never use a hardcoded
   `veslo-e2e-*` token.
+- Pilot's current `type` bridge is value-element oriented. For a
+  `contenteditable` composer, use the canonical narrow adapter: focus the
+  visible target and use the WebView's own `document.execCommand("insertText")`
+  editing path. Do not write Solid state or `textContent`, dispatch a synthetic
+  `InputEvent`, or invoke the send button directly; retain a native Pilot
+  `click` for submission. Raw OS-level `press` remains useful for keyboard
+  accelerator checks, but it is not the canonical text-entry mechanism on
+  Windows because foreground key delivery can be intermittent.
+- Keep lifecycle/recovery checks outside `test:pilot:live-inference` unless
+  their TOML `global_timeout_ms` and step `timeout_ms` values are at most
+  180000.
 
-## Automatic Failure Diagnostics
+## Per-run Artifacts And Diagnostics
 
-The package runner captures a diagnostic bundle whenever `tauri-pilot run`
-fails. Look under:
+Every package-runner invocation creates one ignored, self-contained run under
+`packages/e2e/.pilot-runs/<run-id>/` before the desktop app starts:
 
 ```text
-packages/e2e/tauri-pilot-failures/diagnostics-<timestamp>-<scenario>/
+<run-id>/
+  run.json
+  runner.ndjson
+  app/
+    launch-01.stdout.log
+    launch-01.stderr.log
+  traces/
+    send-workflow-trace.ui.ndjson
+    send-workflow-trace.server.ndjson
+    runtime-trace.<run-id>.jsonl
+  scenarios/<scenario>/
+    result.json
+    pilot.stdout.log
+    pilot.stderr.log
+    pilot.junit.xml
+    failure/ or success/
 ```
 
-Start with these files:
+`run.json` is the authoritative lifecycle record. It starts as `running` and
+records the owner hostname, PID, start time, and heartbeat; it finishes as
+`passed` or `failed`. `runner.ndjson` is the timestamped runner timeline. Read
+the relevant `scenarios/<scenario>/result.json` first, then the matching Pilot
+stdout/stderr and app launch logs. A failed scenario adds its targeted browser,
+network, IPC, storage-summary, and screenshot probes under `failure/`; a
+successful live-inference or render scenario adds its compact evidence under
+`success/`.
 
-- `failure.txt`: original runner error with the tauri-pilot step output tail.
-- `summary.json`: command list, exit codes, and artifact names.
-- `snapshot.txt`: accessibility tree around the failed state.
-- `logs.json`: recent browser console logs.
-- `network.json` and `network-failed.json`: recent requests and failed
-  requests.
-- `veslo-server-info.json` and `workspace-bootstrap.json`: app-side Tauri IPC
-  state.
-- `storage-local.json` and `storage-session.json`: WebView storage, including
-  whether Den auth was seeded.
-- `webview.png`: full-page WebView screenshot when screenshot capture succeeds.
+The final artifacts have a redaction boundary: command arguments, Pilot
+stdout/stderr, JUnit, app stdout/stderr, failure summaries, and runner reasons
+are redacted before they are written or echoed. The Pilot CLI writes JUnit to a
+temporary system directory first; only the redacted final XML is copied into
+the run directory. Do not put raw auth JSON, bearer values, or prompts that
+contain credentials into an E2E scenario.
 
-Use these artifacts before rerunning a scenario. They usually answer whether
-the failure was UI targeting, missing auth seed, local server startup,
-workspace bootstrap, runtime recovery, or remote gateway/network behavior.
+Retention keeps the ten newest terminal runs (`passed`, `failed`, or
+`abandoned`). Before pruning, the runner can mark a `running` run `abandoned`
+only when its heartbeat is older than two minutes, the owner hostname is local,
+and its owner PID is proven dead. Active, fresh, foreign-host, live-PID, and
+invalid-manifest directories are retained and produce a warning instead of
+being deleted. This protects a concurrent or interrupted run from accidental
+cleanup.
+
+The older `tauri-pilot-failures/` and `tauri-pilot-artifacts/` roots remain
+readable for historical evidence, but the runner never bulk-cleans them. Clean
+them only with an explicit operator decision; normal bounded retention applies
+only to `.pilot-runs/`.
+
+Use the current run artifacts before rerunning a scenario. They normally tell
+whether the first cause was UI targeting, auth hydration, local server startup,
+workspace bootstrap, runtime recovery, or gateway/network behavior.
 
 Set `E2E_PILOT_FAILURE_DIAGNOSTICS=0` only for narrow runner debugging where
 the diagnostic probes themselves would obscure the original process failure.
+
+## Selection Plan Contract
+
+Before a desktop process is launched, the runner compiles all selected TOML
+files into one `SelectionPlan`: profile mode, auth mode, fixture topology,
+environment mutations, preconditions, timeout class, relaunch behavior, and
+success artifact hooks. It compares that plan with the existing legacy policy
+adapter at runtime and in the checked-in characterization matrix. This makes a
+conflicting multi-scenario selection fail before it can silently start a wrong
+fixture or use the wrong profile.
+
+When adding a scenario, keep the default isolated topology unless it genuinely
+needs an exception. Add its suite membership and any explicit exception to the
+selection plan, then deliberately update the characterization matrix; do not
+infer profile, auth, or fixture behavior from the filename alone.
 
 ## E2E Profile And Auth Knobs
 
@@ -295,6 +349,19 @@ The E2E runner does not behave like `pnpm dev`.
   is set.
 - `E2E_USE_EXISTING_PROFILE=1` is only for scenarios that explicitly need the
   current desktop profile.
+- Canonical live inference rejects `E2E_USE_EXISTING_PROFILE` and
+  `E2E_OPENCODE_HOME`; it always uses the harness-owned isolated profile and
+  copied Den snapshot. The child desktop environment also removes
+  `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_API_BASE` so a host API-key
+  configuration cannot turn the gate into a direct OpenAI fallback.
+- On Windows, every isolated live managed-AI scenario additionally mirrors the
+  dev profile's `runtime-preferences.json` when it exists at
+  `%APPDATA%\com.neatech.veslo.dev\runtime-preferences.json`. It copies only
+  `sharedUnsandboxedEngine` and `supportDiagnostics` into the isolated app
+  config; unknown fields, auth/access-proof files, workspaces, and WebView
+  storage are never copied. Set
+  `E2E_LIVE_PARITY_RUNTIME_PREFERENCES_SOURCE` to select another explicit
+  `runtime-preferences.json` source.
 
 For live Den auth in the E2E runner, use the same production desktop snapshot
 path accepted by the app:
@@ -306,8 +373,9 @@ $env:VESLO_DEN_AUTH_SNAPSHOT_PATH = "C:\Users\jajse\.veslo\den-auth.json"
 `VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE` remains available when a test needs a
 separate E2E-only input. In both cases the runner copies that snapshot into the
 isolated profile, launches the app with `VESLO_DEN_AUTH_SNAPSHOT_PATH` pointing
-at the copied file, and seeds the WebView Den localStorage from the same
-snapshot before the TOML scenario runs.
+at the copied file, and lets the desktop startup hydration restore the WebView
+state before onboarding. The runner never copies raw auth JSON into a Pilot
+command or reloads the app after boot.
 
 Managed-AI/inference pilot scenarios must use the live Den auth seed. They
 fail fast when the seed is missing, when it uses an `@example.test` user,
@@ -499,13 +567,16 @@ C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main network --failed --json
 C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main network --filter "/ai-gateway" --last 50
 ```
 
-Use storage and forms when the problem may be auth/profile/UI-state related:
+Use forms when the problem may be auth/profile/UI-state related:
 
 ```powershell
-C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main storage list --json
-C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main storage get veslo.den.auth --json
 C:\Users\jajse\.cargo\bin\tauri-pilot.exe --window main forms --json
 ```
+
+Do not collect raw `storage list` or `storage get veslo.den.auth` output in a
+failure bundle, terminal transcript, or uploaded artifact: it can contain a
+live bearer token. The package runner records only the redacted storage
+summaries described above.
 
 Use `ipc` only when the diagnosis needs a Tauri command result. Prefer the
 normal UI path first.

@@ -2,9 +2,13 @@
   "name": "@neatech/ai-gateway",
   "private": true,
   "type": "module",
+  "exports": {
+    "./test-support": "./src/test-support.ts"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",
     "test:node22-smoke": "node test/node22-openai-compatible-smoke.mjs",
@@ -14,7 +18,7 @@
     "ops:codex-credential-probe": "node dist/ops/probe-codex-credentials.js"
   },
   "dependencies": {
-    "@openai/codex": "0.144.1",
+    "@openai/codex": "0.144.5",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.45.1",
     "express": "^4.19.2",

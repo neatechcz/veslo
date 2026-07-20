@@ -449,25 +449,18 @@ const collectFlatRows = (
   );
 
 export type RowHierarchyLookup = {
-  rowBySessionId: Map<string, FlatSessionRow>;
   rowByRowKey: Map<string, FlatSessionRow>;
-  parentBySessionId: Map<string, string>;
   parentByRowKey: Map<string, string>;
-  childrenByParentId: Map<string, string[]>;
   childrenByParentRowKey: Map<string, string[]>;
 };
 
 export const buildRowHierarchyLookup = (rows: FlatSessionRow[]): RowHierarchyLookup => {
-  const rowBySessionId = new Map<string, FlatSessionRow>();
   const rowByRowKey = new Map<string, FlatSessionRow>();
-  const parentBySessionId = new Map<string, string>();
   const parentByRowKey = new Map<string, string>();
-  const childrenByParentId = new Map<string, string[]>();
   const childrenByParentRowKey = new Map<string, string[]>();
   const { rowByKey, rowKeysBySessionId } = buildRowKeyIndexes(rows);
 
   for (const row of rows) {
-    rowBySessionId.set(row.session.id, row);
     rowByRowKey.set(rowIdentity(row), row);
   }
 
@@ -475,14 +468,7 @@ export const buildRowHierarchyLookup = (rows: FlatSessionRow[]): RowHierarchyLoo
     const parentId = row.parentSessionId;
     const parentRowKey = row.parentRowKey ?? resolveParentRowKey(row, rowByKey, rowKeysBySessionId);
     if (!parentId || !parentRowKey || !rowByRowKey.has(parentRowKey)) continue;
-    parentBySessionId.set(row.session.id, parentId);
     parentByRowKey.set(rowIdentity(row), parentRowKey);
-    const existing = childrenByParentId.get(parentId);
-    if (existing) {
-      existing.push(row.session.id);
-    } else {
-      childrenByParentId.set(parentId, [row.session.id]);
-    }
     const existingByRowKey = childrenByParentRowKey.get(parentRowKey);
     if (existingByRowKey) {
       existingByRowKey.push(rowIdentity(row));
@@ -492,11 +478,8 @@ export const buildRowHierarchyLookup = (rows: FlatSessionRow[]): RowHierarchyLoo
   }
 
   return {
-    rowBySessionId,
     rowByRowKey,
-    parentBySessionId,
     parentByRowKey,
-    childrenByParentId,
     childrenByParentRowKey,
   };
 };

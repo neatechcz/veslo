@@ -26,6 +26,14 @@ test("app shell marks unread from assistant responses and clears the selected se
 });
 
 test("app shell passes unread state to both sidebar surfaces", () => {
-  const matches = appViewPropsSource.match(/unreadSessionIds:\s*unreadSessionIds\(\)/g) ?? [];
-  assert.ok(matches.length >= 2, "session and dashboard sidebar props should both receive unreadSessionIds");
+  assert.match(
+    appViewPropsSource,
+    /unreadSessionIds:\s*unreadSessionIds\(\)/,
+    "dashboard sidebar props should receive unreadSessionIds",
+  );
+  assert.match(
+    appViewPropsSource,
+    /get unreadSessionIds\(\) \{\s*return unreadSessionIds\(\);\s*\}/s,
+    "session sidebar props should receive unreadSessionIds through the stable getter object",
+  );
 });

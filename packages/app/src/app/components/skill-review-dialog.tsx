@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createMemo, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createMemo, createSignal, untrack } from "solid-js";
 import { AlertTriangle, Check, Save, Send, ShieldCheck, X } from "lucide-solid";
 
 import Button from "./button";
@@ -138,7 +138,7 @@ function submittedFileLabel(path: string) {
 }
 
 export default function SkillReviewDialog(props: SkillReviewDialogProps) {
-  const [localReason, setLocalReason] = createSignal(props.reason ?? "");
+  const [localReason, setLocalReason] = createSignal(untrack(() => props.reason ?? ""));
   const translate = (key: string) => t(key, currentLocale());
   const reason = createMemo(() => props.reason ?? localReason());
   const metadataDiff = createMemo(() => props.metadataDiff ?? []);
@@ -314,7 +314,7 @@ export default function SkillReviewDialog(props: SkillReviewDialogProps) {
               type="button"
               class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-dls-border bg-gray-2 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
               aria-label={translate("skills.review_close")}
-              onClick={props.onClose}
+              onClick={() => props.onClose()}
             >
               <X size={18} />
             </button>

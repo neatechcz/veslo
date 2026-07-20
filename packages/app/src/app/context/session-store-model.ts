@@ -43,6 +43,52 @@ export function readSessionErrorTurnsForScope(
 export const sortById = <T extends { id: string }>(list: T[]) =>
   list.slice().sort((a, b) => a.id.localeCompare(b.id));
 
+const structurallyEqual = (
+  left: unknown,
+  right: unknown,
+  seen = new WeakMap<object, object>(),
+): boolean => {
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") {
+    return false;
+  }
+
+  const pairedRight = seen.get(left);
+  if (pairedRight) return pairedRight === right;
+  seen.set(left, right);
+
+  if (left instanceof Date || right instanceof Date) {
+    return left instanceof Date && right instanceof Date && left.getTime() === right.getTime();
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((item, index) => structurallyEqual(item, right[index], seen));
+  }
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return leftKeys.length === rightKeys.length &&
+    leftKeys.every((key) =>
+      Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+      structurallyEqual(leftRecord[key], rightRecord[key], seen),
+    );
+};
+
+/**
+ * Store input is received from SSE and transcript snapshots as fresh objects.
+ * Compare its data rather than object identity so a replay does not invalidate
+ * every downstream transcript projection.
+ */
+export const sameStoredValue = (left: unknown, right: unknown) =>
+  structurallyEqual(left, right);
+
+export const sameStoredList = <T,>(left: readonly T[], right: readonly T[]) =>
+  left === right || (left.length === right.length && left.every((item, index) => sameStoredValue(item, right[index])));
+
 const messageActivity = (message: { id: string; time?: { created?: number; updated?: number } }) =>
   Number.isFinite(message.time?.created ?? NaN)
     ? message.time!.created!
@@ -98,6 +144,7 @@ export const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessag
 export const upsertSession = (list: Session[], next: Session) => {
   const index = list.findIndex((session) => session.id === next.id);
   if (index === -1) return sortSessionsByActivity([...list, next]);
+  if (sameStoredValue(list[index], next)) return list;
   const copy = list.slice();
   copy[index] = next;
   return sortSessionsByActivity(copy);
@@ -109,6 +156,7 @@ export const removeSession = (list: Session[], sessionID: string) =>
 export const upsertMessageInfo = (list: MessageInfo[], next: MessageInfo) => {
   const index = list.findIndex((message) => message.id === next.id);
   if (index === -1) return sortMessagesByActivity([...list, next]);
+  if (sameStoredValue(list[index], next)) return list;
   const copy = list.slice();
   copy[index] = next;
   return sortMessagesByActivity(copy);
@@ -120,6 +168,7 @@ export const removeMessageInfo = (list: MessageInfo[], messageID: string) =>
 export const upsertPartInfo = (list: Part[], next: Part) => {
   const index = list.findIndex((part) => part.id === next.id);
   if (index === -1) return sortById([...list, next]);
+  if (sameStoredValue(list[index], next)) return list;
   const copy = list.slice();
   copy[index] = next;
   return copy;
@@ -164,6 +213,59 @@ export function applyCommandDisplayAlias(
   return { info, parts: [aliasPart, ...parts] };
 }
 
+const EMPTY_MESSAGE_PARTS: Part[] = [];
+
+type MessageProjectionEntry = {
+  info: MessageInfo;
+  parts: Part[];
+  alias: string | null | undefined;
+  message: MessageWithParts;
+};
+
+export type MessageProjectionCache = {
+  sessionID: string;
+  messages: MessageWithParts[];
+  entries: Map<string, MessageProjectionEntry>;
+};
+
+/**
+ * Turns the normalized store into renderable messages without allocating a new
+ * wrapper for every message on unrelated session-store updates.  Command
+ * aliases remain part of the entry key because they intentionally change the
+ * rendered user text.
+ */
+export function reconcileMessageProjection(input: {
+  previous: MessageProjectionCache | null;
+  sessionID: string;
+  infos: MessageInfo[];
+  partsByMessageID: Record<string, Part[] | undefined>;
+  commandDisplayByMessageID: Record<string, string | undefined>;
+}): MessageProjectionCache {
+  const previous = input.previous?.sessionID === input.sessionID ? input.previous : null;
+  let unchanged = Boolean(previous && previous.messages.length === input.infos.length);
+  const entries = new Map<string, MessageProjectionEntry>();
+  const messages: MessageWithParts[] = [];
+
+  for (const info of input.infos) {
+    const parts = input.partsByMessageID[info.id] ?? EMPTY_MESSAGE_PARTS;
+    const alias = input.commandDisplayByMessageID[info.id];
+    const existing = previous?.entries.get(info.id);
+    const canReuse = Boolean(existing && existing.info === info && existing.parts === parts && existing.alias === alias);
+    const message = canReuse
+      ? existing!.message
+      : applyCommandDisplayAlias(info, parts, alias);
+    entries.set(info.id, { info, parts, alias, message });
+    messages.push(message);
+    if (!canReuse || previous?.messages[messages.length - 1] !== message) unchanged = false;
+  }
+
+  return {
+    sessionID: input.sessionID,
+    messages: unchanged && previous ? previous.messages : messages,
+    entries,
+  };
+}
+
 export function appendSessionErrorTurnModel(input: {
   current: SessionErrorTurn[] | undefined;
   sessionID: string;
@@ -180,9 +282,9 @@ export function appendSessionErrorTurnModel(input: {
   if (durableRunId && existing.some((turn) => turn.durableRunId === durableRunId)) {
     return existing;
   }
-  const lastMessage = input.messages.length > 0 ? input.messages[input.messages.length - 1] : null;
+  const lastMessage = input.messages.at(-1) ?? null;
   const afterMessageID = lastMessage?.id ?? null;
-  const previous = existing[existing.length - 1];
+  const previous = existing.at(-1);
   if (previous && previous.text === text && previous.afterMessageID === afterMessageID) {
     return existing;
   }

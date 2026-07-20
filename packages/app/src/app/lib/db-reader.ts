@@ -92,10 +92,10 @@ export function dbTranscriptToSnapshot(
       }
 
       const key = row.messageId;
-      if (!partsByMessageId[key]) {
+      if (!Object.hasOwn(partsByMessageId, key)) {
         partsByMessageId[key] = [];
       }
-      partsByMessageId[key].push({
+      partsByMessageId[key]!.push({
         ...parsed,
         id: typeof parsed.id === "string" && parsed.id.trim() ? parsed.id : row.id,
         messageID:

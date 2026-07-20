@@ -38,25 +38,33 @@ test("assignment-origin migration is safe for a table already repaired by reconc
 test("organization audit migration splits conditional column and index DDL into executable statements", async () => {
   const statements = await readMigrationStatements("0004_organization_audit_scope");
 
-  assert.equal(statements.length, 10);
+  assert.equal(statements.length, 13);
   assert.match(statements[0]!, /^CREATE TABLE IF NOT EXISTS `ai_gateway_audit_event`/);
   assert.match(statements[0]!, /(?:KEY|INDEX) `audit_event_entity` \(`entity_type`, ?`entity_id`\)/);
   assert.match(statements[0]!, /(?:KEY|INDEX) `audit_event_actor` \(`actor_user_id`\)/);
   assert.match(statements[0]!, /(?:KEY|INDEX) `audit_event_action` \(`action`\)/);
-  assert.match(statements[1]!, /^INSERT IGNORE INTO `ai_gateway_audit_event`/);
-  assert.match(statements[1]!, /SELECT[^]*FROM `audit_event`/);
-  assert.match(statements[2]!, /^SET @add_audit_organization_column_sql/);
-  assert.match(statements[2]!, /INFORMATION_SCHEMA\.COLUMNS/);
-  assert.match(statements[2]!, /ALTER TABLE `ai_gateway_audit_event` ADD COLUMN `organization_id` varchar\(64\) NULL/);
-  assert.match(statements[3]!, /^PREPARE add_audit_organization_column/);
-  assert.match(statements[4]!, /^EXECUTE add_audit_organization_column/);
-  assert.match(statements[5]!, /^DEALLOCATE PREPARE add_audit_organization_column/);
-  assert.match(statements[6]!, /^SET @create_audit_organization_index_sql/);
-  assert.match(statements[6]!, /INFORMATION_SCHEMA\.STATISTICS/);
-  assert.match(statements[6]!, /CREATE INDEX `audit_event_organization_created`/);
-  assert.match(statements[7]!, /^PREPARE create_audit_organization_index/);
-  assert.match(statements[8]!, /^EXECUTE create_audit_organization_index/);
-  assert.match(statements[9]!, /^DEALLOCATE PREPARE create_audit_organization_index/);
+  assert.match(statements[1]!, /^SET @backfill_legacy_audit_events_sql/);
+  assert.match(statements[1]!, /INFORMATION_SCHEMA\.COLUMNS/);
+  assert.match(statements[1]!, /COLUMN_NAME IN/);
+  assert.match(statements[1]!, /'entity_type'/);
+  assert.match(statements[1]!, /'result'/);
+  assert.match(statements[1]!, /INSERT IGNORE INTO `ai_gateway_audit_event`/);
+  assert.match(statements[1]!, /FROM `audit_event`/);
+  assert.match(statements[2]!, /^PREPARE backfill_legacy_audit_events/);
+  assert.match(statements[3]!, /^EXECUTE backfill_legacy_audit_events/);
+  assert.match(statements[4]!, /^DEALLOCATE PREPARE backfill_legacy_audit_events/);
+  assert.match(statements[5]!, /^SET @add_audit_organization_column_sql/);
+  assert.match(statements[5]!, /INFORMATION_SCHEMA\.COLUMNS/);
+  assert.match(statements[5]!, /ALTER TABLE `ai_gateway_audit_event` ADD COLUMN `organization_id` varchar\(64\) NULL/);
+  assert.match(statements[6]!, /^PREPARE add_audit_organization_column/);
+  assert.match(statements[7]!, /^EXECUTE add_audit_organization_column/);
+  assert.match(statements[8]!, /^DEALLOCATE PREPARE add_audit_organization_column/);
+  assert.match(statements[9]!, /^SET @create_audit_organization_index_sql/);
+  assert.match(statements[9]!, /INFORMATION_SCHEMA\.STATISTICS/);
+  assert.match(statements[9]!, /CREATE INDEX `audit_event_organization_created`/);
+  assert.match(statements[10]!, /^PREPARE create_audit_organization_index/);
+  assert.match(statements[11]!, /^EXECUTE create_audit_organization_index/);
+  assert.match(statements[12]!, /^DEALLOCATE PREPARE create_audit_organization_index/);
 });
 
 test("fresh migration order creates the current audit table before altering or indexing it", async () => {

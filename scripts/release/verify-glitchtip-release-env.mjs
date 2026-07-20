@@ -4,9 +4,13 @@ const required = [
   "VESLO_GLITCHTIP_ENVIRONMENT",
   "VITE_VESLO_GLITCHTIP_ENVIRONMENT",
 ];
+const sourceMapUploadRequired = ["SENTRY_URL", "SENTRY_AUTH_TOKEN", "SENTRY_ORG", "SENTRY_PROJECT"];
 
 const read = (key) => (process.env[key] ?? "").trim();
 const strict = /^(1|true|yes)$/i.test(read("VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV"));
+const strictSourceMapUpload = /^(1|true|yes)$/i.test(
+  read("VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD"),
+);
 
 const fail = (message) => {
   console.error(message);
@@ -20,6 +24,16 @@ if (missing.length > 0) {
     fail(`${message} Set all required values or remove VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV.`);
   } else {
     console.warn(`${message} Continuing because VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV is not enabled.`);
+  }
+}
+
+const missingSourceMapUpload = sourceMapUploadRequired.filter((key) => !read(key));
+if (missingSourceMapUpload.length > 0) {
+  const message = `Missing GlitchTip source-map upload env: ${missingSourceMapUpload.join(", ")}.`;
+  if (strictSourceMapUpload) {
+    fail(`${message} Set all required values before publishing a source-map-enabled release.`);
+  } else if (read("VESLO_GLITCHTIP_SOURCE_MAPS")) {
+    console.warn(`${message} Continuing because source-map upload is not required.`);
   }
 }
 
@@ -40,6 +54,7 @@ const validateDsn = (key, value) => {
 
 validateDsn("VESLO_GLITCHTIP_DSN", nativeDsn);
 validateDsn("VITE_VESLO_GLITCHTIP_DSN", frontendDsn);
+validateDsn("SENTRY_URL", read("SENTRY_URL"));
 
 if (nativeDsn && frontendDsn && nativeDsn !== frontendDsn) {
   fail("VESLO_GLITCHTIP_DSN and VITE_VESLO_GLITCHTIP_DSN must match.");

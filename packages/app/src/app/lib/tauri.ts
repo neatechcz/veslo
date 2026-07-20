@@ -935,6 +935,32 @@ export type DesktopRuntimePreferences = {
   supportDiagnostics: boolean;
 };
 
+export type UserDiagnosticCaptureStatus = {
+  available: boolean;
+  canStart: boolean;
+  captureId: string | null;
+  state: string;
+  startedAt: number | null;
+  endsAt: number | null;
+  capturedEvents: number;
+  capturedBytes: number;
+  pendingEvents: number;
+  acceptedEvents: number;
+  droppedRetention: number;
+  droppedBudget: number;
+  droppedDelivery: number;
+  droppedIdentity: number;
+  terminalReason: string | null;
+};
+
+export async function userDiagnosticCaptureStatus(): Promise<UserDiagnosticCaptureStatus> {
+  return invoke<UserDiagnosticCaptureStatus>("user_diagnostic_capture_status");
+}
+
+export async function startUserDiagnosticCapture(): Promise<UserDiagnosticCaptureStatus> {
+  return invoke<UserDiagnosticCaptureStatus>("start_user_diagnostic_capture");
+}
+
 export async function engineInstall(): Promise<ExecResult> {
   return invoke<ExecResult>("engine_install");
 }

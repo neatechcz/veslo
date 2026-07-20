@@ -10,9 +10,11 @@ import { normalizeDirectoryPath } from "../utils";
 import type { MessageInfo, MessageWithParts } from "../types";
 import type { WorkspaceRouting } from "./workspace-routing";
 import {
+  sameStoredList,
   sortById,
   sortMessagesByActivity,
 } from "./session-store-model";
+import { recordTranscriptStoreWrite } from "./session-transcript-write-diagnostics";
 
 export type TranscriptFreshness = {
   fetchedAt: number | null;
@@ -56,17 +58,50 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
     Record<string, TranscriptFreshness>
   >({});
 
-  function setMessagesForSession(sessionID: string, list: MessageWithParts[]) {
+  function setMessagesForSession(
+    sessionID: string,
+    list: MessageWithParts[],
+    writeOwner: "transcript.snapshot-hydrate" | "transcript.set-messages" = "transcript.set-messages",
+  ) {
     const infos = list
       .map((msg) => msg.info)
       .filter((info) => !!info?.id)
       .map((info) => info as MessageInfo);
 
+    let snapshotCollectionRecorded = false;
+    const recordSnapshotCollection = () => {
+      if (snapshotCollectionRecorded) return;
+      snapshotCollectionRecorded = true;
+      recordTranscriptStoreWrite(writeOwner, "collection", sessionID, "");
+    };
+
     batch(() => {
-      deps.setStore("messages", sessionID, sortMessagesByActivity(infos));
+      const nextInfos = sortMessagesByActivity(infos);
+      const currentInfos = deps.store.messages[sessionID] ?? [];
+      if (!sameStoredList(currentInfos, nextInfos)) {
+        if (writeOwner === "transcript.snapshot-hydrate") {
+          recordSnapshotCollection();
+        } else {
+          for (const info of nextInfos) {
+            recordTranscriptStoreWrite(writeOwner, "message-info", sessionID, info.id);
+          }
+        }
+        deps.setStore("messages", sessionID, nextInfos);
+      }
       for (const message of list) {
-        const parts = message.parts.filter((part) => !!part?.id);
-        deps.setStore("parts", message.info.id, sortById(parts));
+        const nextParts = sortById(message.parts.filter((part) => !!part?.id));
+        const currentParts = deps.store.parts[message.info.id] ?? [];
+        if (!sameStoredList(currentParts, nextParts)) {
+          if (writeOwner === "transcript.snapshot-hydrate") {
+            recordSnapshotCollection();
+          } else {
+            recordTranscriptStoreWrite(writeOwner, "parts", sessionID, message.info.id);
+            for (const part of nextParts) {
+              recordTranscriptStoreWrite(writeOwner, "part", sessionID, message.info.id, part.id);
+            }
+          }
+          deps.setStore("parts", message.info.id, nextParts);
+        }
       }
     });
   }
@@ -137,7 +172,7 @@ export function createSessionTranscriptController(deps: SessionTranscriptControl
         });
       }
 
-      setMessagesForSession(sessionID, nextMessages);
+      setMessagesForSession(sessionID, nextMessages, "transcript.snapshot-hydrate");
 
       const requestedLimit = Math.max(snapshot.limit || 0, nextMessages.length);
       const currentLimit = messageLimitBySession()[sessionID] ?? 0;

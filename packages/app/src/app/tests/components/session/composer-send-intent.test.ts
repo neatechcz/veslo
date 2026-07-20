@@ -63,16 +63,39 @@ test("composer routes transfer and result clears through one revision guard", ()
   assert.equal((composerSource.match(/const clearSubmittedDraft =/g) ?? []).length, 1);
 });
 
+test("composer recognizes a storage-key handoff as an authorized prompt sync", () => {
+  assert.match(
+    composerSource,
+    /storageKeyTransitionAuthorizesPromptSync = true;[\s\S]*authorizedStorageKeyTransition: storageKeyTransitionAuthorizesPromptSync,[\s\S]*parentConditionalClearAuthorizesPromptSync,[\s\S]*document\.activeElement === editorRef[\s\S]*!storageKeyTransitionAuthorizesPromptSync[\s\S]*!parentConditionalClearAuthorizesPromptSync/s,
+  );
+});
+
+test("composer does not report an exact parent conditional clear as focused draft loss", () => {
+  assert.match(
+    composerSource,
+    /const parentConditionalClearAuthorizesPromptSync = Boolean\([\s\S]*props\.draftStorageKey === pendingParentConditionalClear\.storageKey[\s\S]*props\.draftRevision === pendingParentConditionalClear\.nextRevision,[\s\S]*!parentConditionalClearAuthorizesPromptSync[\s\S]*pendingParentConditionalClear = parentClear;/s,
+    "an applied parent revision clear should be recorded as authorized rather than as an external focused-editor incident",
+  );
+});
+
+test("debounced draft writes retain the storage key captured at edit time", () => {
+  assert.match(
+    composerSource,
+    /let scheduledDraftStorageKey: string \| null = null;[\s\S]*scheduledDraftStorageKey = props\.draftStorageKey;[\s\S]*const storageKey = scheduledDraftStorageKey \?\? props\.draftStorageKey;[\s\S]*scheduledDraftStorageKey = null;[\s\S]*props\.onDraftChange\(storageKey,/s,
+    "a delayed write must use the key captured before a target/session remap",
+  );
+});
+
 test("draft transfer clears exactly once and delayed outcomes cannot clear a newer revision", () => {
   const controller = createComposerDraftHandoffController();
   const submission = controller.beginSubmission();
   let clearCount = 0;
 
-  assert.equal(controller.acknowledgeTransfer(submission, () => { clearCount += 1; }), true);
-  assert.equal(controller.acknowledgeTransfer(submission, () => { clearCount += 1; }), false);
+  assert.equal(controller.acknowledgeTransfer(submission, () => { clearCount += 1; return true; }), true);
+  assert.equal(controller.acknowledgeTransfer(submission, () => { clearCount += 1; return true; }), false);
   controller.markDraftChanged();
-  assert.equal(controller.applyResult(submission, "clear", () => { clearCount += 1; }), false);
-  assert.equal(controller.applyResult(submission, "mark-failed", () => { clearCount += 1; }), false);
+  assert.equal(controller.applyResult(submission, "clear", () => { clearCount += 1; return true; }), false);
+  assert.equal(controller.applyResult(submission, "mark-failed", () => { clearCount += 1; return true; }), false);
   assert.equal(clearCount, 1);
 });
 
@@ -80,15 +103,15 @@ test("non-transferred clear results apply only to the submitted revision", () =>
   const controller = createComposerDraftHandoffController();
   const blockedSubmission = controller.beginSubmission();
   let clearCount = 0;
-  assert.equal(controller.applyResult(blockedSubmission, "keep", () => { clearCount += 1; }), false);
+  assert.equal(controller.applyResult(blockedSubmission, "keep", () => { clearCount += 1; return true; }), false);
 
   const staleSubmission = controller.beginSubmission();
   controller.markDraftChanged();
 
-  assert.equal(controller.applyResult(staleSubmission, "clear", () => { clearCount += 1; }), false);
+  assert.equal(controller.applyResult(staleSubmission, "clear", () => { clearCount += 1; return true; }), false);
   const currentSubmission = controller.beginSubmission();
-  assert.equal(controller.applyResult(currentSubmission, "clear", () => { clearCount += 1; }), true);
-  assert.equal(controller.applyResult(currentSubmission, "clear", () => { clearCount += 1; }), false);
+  assert.equal(controller.applyResult(currentSubmission, "clear", () => { clearCount += 1; return true; }), true);
+  assert.equal(controller.applyResult(currentSubmission, "clear", () => { clearCount += 1; return true; }), false);
   assert.equal(clearCount, 1);
 });
 
@@ -122,6 +145,12 @@ test("composer distinguishes queued Enter sends from immediate Ctrl+Enter sends"
 test("composer exposes button intents for queue and streaming send-now", () => {
   assert.match(
     composerSource,
+    /data-testid="session-composer-input"[\s\S]*contentEditable=\{!submitLocked\(\)\}/,
+    "the editable composer should expose a stable automation selector",
+  );
+
+  assert.match(
+    composerSource,
     /void sendDraft\(\{ sendNow: false, source: "button" \}\);/,
     "normal send button should queue by default and identify the button source",
   );
@@ -131,11 +160,16 @@ test("composer exposes button intents for queue and streaming send-now", () => {
     /translate\("session\.queue_message_label"\)/,
     "normal send button should use the localized queue label",
   );
+  assert.match(
+    composerSource,
+    /data-testid="session-composer-send-button"[\s\S]*void sendDraft\(\{ sendNow: false, source: "button" \}\);/,
+    "the normal send button should expose a stable automation selector",
+  );
 
   assert.match(
     composerSource,
-    /when=\{props\.isStreaming\}[\s\S]*onClick=\{\(\) => props\.onStop\(\)\}[\s\S]*translate\("session\.stop_label"\)/s,
-    "streaming UI should keep a localized Stop affordance",
+    /when=\{props\.isStreaming\}[\s\S]*data-testid="session-composer-stop-button"[\s\S]*onClick=\{\(\) => props\.onStop\(\)\}[\s\S]*translate\("session\.stop_label"\)/s,
+    "streaming UI should expose a stable localized Stop affordance",
   );
   assert.match(
     composerSource,

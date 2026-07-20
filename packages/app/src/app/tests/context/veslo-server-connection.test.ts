@@ -6,6 +6,7 @@ import { createRoot } from "solid-js";
 import {
   createVesloServerConnection,
   mergeVesloServerDescriptorEvent,
+  resolveManagedAiConfigAuthority,
   resolveVesloRuntimeReadiness,
   resolveVesloServerAuth,
   resolveVesloServerBaseUrl,
@@ -39,6 +40,57 @@ const runningHostInfo = (): VesloServerInfo => ({
   pid: null,
   lastStdout: null,
   lastStderr: null,
+});
+
+test("managed AI config authority waits for a readable and writable server config owner", () => {
+  const writableCapabilities = capabilities();
+  const readOnlyCapabilities = {
+    ...capabilities(),
+    config: { read: true, write: false },
+  };
+
+  assert.deepEqual(resolveManagedAiConfigAuthority({
+    serverCheckedAt: null,
+    projectFallbackConfirmed: false,
+    status: "disconnected",
+    capabilities: null,
+    workspaceConfigId: null,
+  }), { kind: "pending" });
+  assert.deepEqual(resolveManagedAiConfigAuthority({
+    serverCheckedAt: 1,
+    projectFallbackConfirmed: true,
+    status: "disconnected",
+    capabilities: null,
+    workspaceConfigId: null,
+  }), { kind: "project-fallback", reason: "serverless" });
+  assert.deepEqual(resolveManagedAiConfigAuthority({
+    serverCheckedAt: 1,
+    projectFallbackConfirmed: false,
+    status: "disconnected",
+    capabilities: null,
+    workspaceConfigId: null,
+  }), { kind: "pending" });
+  assert.deepEqual(resolveManagedAiConfigAuthority({
+    serverCheckedAt: 1,
+    projectFallbackConfirmed: false,
+    status: "connected",
+    capabilities: readOnlyCapabilities,
+    workspaceConfigId: "ws-active",
+  }), { kind: "project-fallback", reason: "unwritable" });
+  assert.deepEqual(resolveManagedAiConfigAuthority({
+    serverCheckedAt: 1,
+    projectFallbackConfirmed: false,
+    status: "connected",
+    capabilities: writableCapabilities,
+    workspaceConfigId: null,
+  }), { kind: "pending" });
+  assert.deepEqual(resolveManagedAiConfigAuthority({
+    serverCheckedAt: 1,
+    projectFallbackConfirmed: false,
+    status: "connected",
+    capabilities: writableCapabilities,
+    workspaceConfigId: "ws-active",
+  }), { kind: "server", workspaceConfigId: "ws-active" });
 });
 
 test("server connection resolves local and server endpoints without derived local fallback", () => {
@@ -901,6 +953,40 @@ test("local ensure respawns the owned server once on auth desync", async () => {
       assert.equal(ok, true);
       assert.equal(restartCalls, 1);
       assert.equal(connection.vesloServerStatus(), "connected");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("a failed owned local ensure confirms managed AI project fallback", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => "local",
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => false,
+        isTauriRuntime: () => true,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+        },
+        vesloServerInfo: async () => null,
+        vesloServerRestart: async () => null,
+      });
+
+      assert.deepEqual(connection.managedAiConfigAuthority(), { kind: "pending" });
+      assert.equal(await connection.ensureLocalVesloServerRunning(), false);
+      assert.equal(connection.vesloServerStatus(), "disconnected");
+      assert.deepEqual(connection.managedAiConfigAuthority(), {
+        kind: "project-fallback",
+        reason: "serverless",
+      });
     } finally {
       dispose();
     }

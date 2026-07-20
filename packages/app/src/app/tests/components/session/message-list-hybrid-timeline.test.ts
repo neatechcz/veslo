@@ -62,8 +62,15 @@ test("turn-scoped assistant activity grouping is delegated to the progress model
   assert.doesNotMatch(source, /previousBlock\?\.kind === "steps-cluster"/);
 });
 
+test("message-block diagnostics stay in the bounded UI-effect buffer", () => {
+  assert.match(source, /uiEffectTrace\.record\("ui-model:derived"/);
+  assert.match(source, /uiEffectTrace\.reportIncident\("message-block-memo-churn"/);
+  assert.doesNotMatch(source, /onMessageBlocksRecomputed/);
+  assert.doesNotMatch(source, /recordSend(?:Workflow)?Trace/);
+});
+
 test("mixed message blocks render a single inline timeline for all step groups", () => {
-  assert.match(source, /const inlineStepGroups = \(\) =>\s*messageBlock\(\)\.groups[\s\S]*group\.kind === "steps"/);
+  assert.match(source, /const inlineStepGroups = \(\) =>\s*messageBlock\(\)\s*\.groups[\s\S]*group\.kind === "steps"/);
   assert.match(source, /stepGroups=\{inlineStepGroups\(\)\}/);
 });
 
@@ -110,8 +117,8 @@ test("outer transcript rows reconcile through stable primitive keys and live blo
   assert.match(source, /const messageBlockByKey = createMemo\(\(\) => new Map\(messageBlockEntries\(\)\.map\(\(entry\) => \[entry\.key, entry\.block\]\)\)\);/);
   assert.match(
     source,
-    /<For each=\{messageBlockKeys\(\)\}>[\s\S]*renderBlock\(\(\) => messageBlockByKey\(\)\.get\(key\)!\, blockIndex\)/s,
-    "both regular-list fallbacks should retain semantic primitive keys while resolving the latest block through an accessor",
+    /<For each=\{messageBlockKeys\(\)\}>[\s\S]*<RenderedMessageBlock blockKey=\{key\} blockIndex=\{blockIndex\} \/>/s,
+    "both regular-list fallbacks should retain semantic primitive keys while resolving the latest block through the tracked child component",
   );
   assert.match(
     source,

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use sha1::{Digest, Sha1};
 use tauri::Manager;
@@ -33,7 +33,7 @@ pub fn veslo_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), S
     Ok((data_dir, file_path))
 }
 
-pub fn private_workspace_root_from_data_dir(data_dir: &PathBuf) -> PathBuf {
+pub fn private_workspace_root_from_data_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("private-workspaces")
 }
 
@@ -44,7 +44,7 @@ fn read_workspace_state_file(path: &PathBuf) -> Result<WorkspaceState, String> {
         .map_err(|e| format!("Failed to parse {}: {e}", path.display()))
 }
 
-fn legacy_state_candidates(data_dir: &PathBuf, current_state_path: &PathBuf) -> Vec<PathBuf> {
+fn legacy_state_candidates(data_dir: &Path, current_state_path: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
 
@@ -76,8 +76,8 @@ fn legacy_state_candidates(data_dir: &PathBuf, current_state_path: &PathBuf) -> 
 }
 
 fn try_load_legacy_workspace_state(
-    data_dir: &PathBuf,
-    current_state_path: &PathBuf,
+    data_dir: &Path,
+    current_state_path: &Path,
 ) -> Option<WorkspaceState> {
     for candidate in legacy_state_candidates(data_dir, current_state_path) {
         if !candidate.exists() {
@@ -303,11 +303,10 @@ fn merge_workspace_states(base: &mut WorkspaceState, imported: Vec<WorkspaceStat
                 .workspaces
                 .iter()
                 .any(|workspace| workspace.id == imported_active_id)
+            && base.active_id != imported_active_id
         {
-            if base.active_id != imported_active_id {
-                base.active_id = imported_active_id;
-                changed = true;
-            }
+            base.active_id = imported_active_id;
+            changed = true;
         }
     }
 
@@ -315,8 +314,8 @@ fn merge_workspace_states(base: &mut WorkspaceState, imported: Vec<WorkspaceStat
 }
 
 fn load_imported_workspace_states(
-    data_dir: &PathBuf,
-    current_state_path: &PathBuf,
+    data_dir: &Path,
+    current_state_path: &Path,
 ) -> Vec<WorkspaceState> {
     legacy_state_candidates(data_dir, current_state_path)
         .into_iter()

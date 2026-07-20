@@ -7,11 +7,11 @@ export type ComposerSubmittedRevision = {
 };
 
 export type ComposerDraftHandoffController = {
-  acknowledgeTransfer: (submission: ComposerSubmittedRevision, clear: () => void) => boolean;
+  acknowledgeTransfer: (submission: ComposerSubmittedRevision, clear: () => boolean) => boolean;
   applyResult: (
     submission: ComposerSubmittedRevision,
     disposition: SessionSubmitResult["draftDisposition"],
-    clear: () => void,
+    clear: () => boolean,
   ) => boolean;
   beginSubmission: () => ComposerSubmittedRevision;
   currentRevision: () => number;
@@ -26,10 +26,10 @@ export type ComposerDraftHandoffController = {
 export const createComposerDraftHandoffController = (): ComposerDraftHandoffController => {
   let revision = 0;
 
-  const tryClear = (submission: ComposerSubmittedRevision, clear: () => void) => {
+  const tryClear = (submission: ComposerSubmittedRevision, clear: () => boolean) => {
     if (submission.clearApplied || submission.revision !== revision) return false;
+    if (!clear()) return false;
     submission.clearApplied = true;
-    clear();
     revision += 1;
     return true;
   };

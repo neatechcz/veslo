@@ -75,10 +75,14 @@ function isSearchableTextFile(file: SearchTextFile): boolean {
   return /\.(?:md|mdx|txt|ts|tsx|js|jsx|json|yaml|yml|py|sh)$/i.test(file.path)
 }
 
-export function buildSkillSearchDocument(input: SkillSearchIndexInput): SkillSearchDocument {
-  const fileValues = (input.files ?? [])
+export function skillSearchDocumentFileValues(files: readonly SearchTextFile[]): string[] {
+  return files
     .filter(isSearchableTextFile)
     .flatMap((file) => [file.path, file.text ?? ""])
+}
+
+export function buildSkillSearchDocument(input: SkillSearchIndexInput): SkillSearchDocument {
+  const fileValues = skillSearchDocumentFileValues(input.files ?? [])
   const values = [
     input.name,
     input.description,

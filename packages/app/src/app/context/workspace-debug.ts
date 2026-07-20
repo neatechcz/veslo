@@ -40,7 +40,6 @@ export function recordWorkspaceBusyTrace(
     if (payload?.next && typeof payload.next === "object") {
       root.__vesloWorkspaceBusySnapshot = payload.next as WorkspaceBusyMap;
     }
-    console.log("[workspace:busy]", event, payload ?? {});
   } catch {
     // ignore
   }
@@ -50,7 +49,6 @@ export function wsLog(msg: string, data?: unknown) {
   const line = `[${new Date().toISOString()}] ${msg}${
     data !== undefined ? " " + (typeof data === "string" ? data : JSON.stringify(data)) : ""
   }`;
-  console.log(line);
   try {
     const root = window as WorkspaceBusyTraceRoot;
     root.__wsActivateLog = `${root.__wsActivateLog ?? ""}${line}\n`;
@@ -97,11 +95,6 @@ export function createWorkspaceDebugEvents(enabled: () => boolean) {
   const wsDebug = (label: string, payload?: unknown) => {
     if (!enabled()) return;
     try {
-      if (payload === undefined) {
-        console.log(`[WSDBG] ${label}`);
-      } else {
-        console.log(`[WSDBG] ${label}`, payload);
-      }
       pushWorkspaceDebugEvent(label, payload);
     } catch {
       // ignore

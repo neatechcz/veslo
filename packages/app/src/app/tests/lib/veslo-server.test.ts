@@ -4269,7 +4269,13 @@ test("conversations domain facade exposes conversation, transcript and archive e
     await client.conversations.list("ws 1", "src", { sync: true });
     await client.conversations.create("ws 1", { directory: "src", title: "Task" }, { sendTraceId: "trace-123" });
     await client.conversations.run("ws 1", "conv/1", { kind: "command", command: "test" }, { sendTraceId: "trace-456" });
-    await client.conversations.getTranscript("ws 1", "session/1", { directory: "src", limit: 20 });
+    await client.conversations.getTranscript("ws 1", "session/1", {
+      directory: "src",
+      limit: 20,
+      includeLatestRunArtifacts: true,
+      caller: "passive-selection",
+      sendTraceId: "trace-789",
+    });
     await client.conversations.listArchives();
     await client.conversations.deleteArchive("session/1", { workspaceId: "ws 1" });
 
@@ -4279,13 +4285,14 @@ test("conversations domain facade exposes conversation, transcript and archive e
         { url: "https://veslo.example/workspace/ws%201/conversations?directory=src&sync=true", method: "GET" },
         { url: "https://veslo.example/workspace/ws%201/conversations", method: "POST" },
         { url: "https://veslo.example/workspace/ws%201/conversations/conv%2F1/runs", method: "POST" },
-        { url: "https://veslo.example/workspace/ws%201/sessions/session%2F1/transcript?limit=20&directory=src", method: "GET" },
+        { url: "https://veslo.example/workspace/ws%201/sessions/session%2F1/transcript?limit=20&directory=src&include=latest-run-artifacts&caller=passive-selection", method: "GET" },
         { url: "https://veslo.example/session-archives", method: "GET" },
         { url: "https://veslo.example/session-archives/session%2F1?workspaceId=ws+1", method: "DELETE" },
       ],
     );
     assert.equal(calls[1]?.headers.get("x-veslo-send-trace-id"), "trace-123");
     assert.equal(calls[2]?.headers.get("x-veslo-send-trace-id"), "trace-456");
+    assert.equal(calls[3]?.headers.get("x-veslo-send-trace-id"), "trace-789");
     assert.equal(calls[4]?.headers.get("x-veslo-account-id"), "account-123");
   } finally {
     globalThis.fetch = previousFetch;

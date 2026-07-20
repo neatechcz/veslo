@@ -83,6 +83,8 @@ export function createSessionQueueDrainController(
             }
           },
         ),
+        undefined,
+        { name: "session.queue-drain.selected-session" },
       );
 
       createEffect(
@@ -92,6 +94,8 @@ export function createSessionQueueDrainController(
             options.handleActiveSessionStatusChanged(status, previousStatus);
           },
         ),
+        undefined,
+        { name: "session.queue-drain.active-status" },
       );
 
       createEffect(
@@ -101,6 +105,8 @@ export function createSessionQueueDrainController(
             options.handleSessionStatusMapChanged(statuses, previousStatuses);
           },
         ),
+        undefined,
+        { name: "session.queue-drain.status-map" },
       );
     },
   };

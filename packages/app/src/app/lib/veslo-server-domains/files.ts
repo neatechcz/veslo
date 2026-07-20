@@ -70,7 +70,6 @@ export function createFilesClient(context: FilesClientContext) {
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
       const id = workspaceId.trim();
       if (!id) throw new Error("workspaceId is required");
-      if (!file) throw new Error("file is required");
       const form = new FormData();
       form.append("file", file);
       if (options?.path?.trim()) {

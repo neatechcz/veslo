@@ -99,6 +99,20 @@ class TestDbSkillRegistryDatabase {
     }
   }
 
+  clearVersionPackageMetadata(versionId: string) {
+    const versions = this.rows.get("skill_versions") ?? []
+    const version = versions.find((row) => row.id === versionId)
+    if (!version) throw new Error(`missing skill version ${versionId}`)
+    version.package_metadata_json = null
+  }
+
+  replaceManifestSearchDocumentBody(versionId: string, body: string) {
+    const documents = this.rows.get("skill_search_documents") ?? []
+    const document = documents.find((row) => row.version_id === versionId && row.locale === "__manifest__")
+    if (!document) throw new Error(`missing manifest search document for ${versionId}`)
+    document.body = body
+  }
+
   private rowsFor(table: unknown) {
     const name = tableName(table)
     const rows = this.rows.get(name) ?? []
@@ -342,6 +356,100 @@ const rolloutPolicyStoreCases = [
   { label: "in-memory", createStore: () => new InMemorySkillRegistryStore() },
   { label: "DB-backed", createStore: dbBackedSkillRegistryStore },
 ] as const
+
+test("DB-backed registry preserves canonical package metadata when serving a version", async () => {
+  const server = await startServer(dbBackedSkillRegistryStore())
+  try {
+    const owner = { userId: "owner_1" }
+    const { body: createdSkill } = await jsonRequest(server.baseUrl, "/skills", {
+      method: "POST",
+      body: JSON.stringify({ scope: "user", name: "metadata-round-trip" }),
+      session: owner,
+    })
+    const archive = await packageArchive("metadata-round-trip", "# Metadata round trip\n")
+    const { body: createdVersion } = await jsonRequest(server.baseUrl, `/skills/${createdSkill.skill.id}/versions`, {
+      method: "POST",
+      body: JSON.stringify({ package: archive }),
+      session: owner,
+    })
+
+    const { response, body } = await jsonRequest(
+      server.baseUrl,
+      `/skill-versions/${createdVersion.version.id}/package`,
+      { session: owner },
+    )
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(body.package.metadata, archive.metadata)
+    assert.equal(body.package.packageSha256, archive.packageSha256)
+  } finally {
+    await server.close()
+  }
+})
+
+test("DB-backed registry reconstructs and verifies legacy package metadata before serving it", async () => {
+  const database = new TestDbSkillRegistryDatabase()
+  const server = await startServer(createDbSkillRegistryStore(database as never))
+  try {
+    const owner = { userId: "owner_legacy" }
+    const { body: createdSkill } = await jsonRequest(server.baseUrl, "/skills", {
+      method: "POST",
+      body: JSON.stringify({ scope: "user", name: "legacy-metadata" }),
+      session: owner,
+    })
+    const archive = await packageArchive("legacy-metadata", "# Legacy metadata\n")
+    const { body: createdVersion } = await jsonRequest(server.baseUrl, `/skills/${createdSkill.skill.id}/versions`, {
+      method: "POST",
+      body: JSON.stringify({ package: archive }),
+      session: owner,
+    })
+    database.clearVersionPackageMetadata(createdVersion.version.id)
+
+    const { response, body } = await jsonRequest(
+      server.baseUrl,
+      `/skill-versions/${createdVersion.version.id}/package`,
+      { session: owner },
+    )
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(body.package.metadata, archive.metadata)
+    assert.equal(body.package.packageSha256, archive.packageSha256)
+  } finally {
+    await server.close()
+  }
+})
+
+test("DB-backed registry rejects a legacy metadata candidate whose package hash does not match", async () => {
+  const database = new TestDbSkillRegistryDatabase()
+  const server = await startServer(createDbSkillRegistryStore(database as never))
+  try {
+    const owner = { userId: "owner_tampered_legacy" }
+    const { body: createdSkill } = await jsonRequest(server.baseUrl, "/skills", {
+      method: "POST",
+      body: JSON.stringify({ scope: "user", name: "tampered-legacy-metadata" }),
+      session: owner,
+    })
+    const archive = await packageArchive("tampered-legacy-metadata", "# Tampered legacy metadata\n")
+    const { body: createdVersion } = await jsonRequest(server.baseUrl, `/skills/${createdSkill.skill.id}/versions`, {
+      method: "POST",
+      body: JSON.stringify({ package: archive }),
+      session: owner,
+    })
+    database.clearVersionPackageMetadata(createdVersion.version.id)
+    database.replaceManifestSearchDocumentBody(createdVersion.version.id, "tampered-legacy-metadata\nuntrusted metadata")
+
+    const { response, body } = await jsonRequest(
+      server.baseUrl,
+      `/skill-versions/${createdVersion.version.id}/package`,
+      { session: owner },
+    )
+
+    assert.equal(response.status, 500)
+    assert.equal(body.error, "skill_package_metadata_missing")
+  } finally {
+    await server.close()
+  }
+})
 
 test("rollout policy installs org skill as user-global for one user", async () => {
   const server = await startServer()

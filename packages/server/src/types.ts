@@ -574,6 +574,10 @@ export interface SessionLatestRunArtifactsResponse {
   conversationId?: string;
   opencodeSessionId?: string;
   workspaceId: string;
-  runId: string | null;
+  /**
+   * Transcript message that anchors the latest artifact slice. This is not a
+   * lifecycle run id: OpenCode transcripts do not persist Veslo lifecycle ids.
+   */
+  anchorMessageId: string | null;
   items: SessionArtifactItem[];
 }

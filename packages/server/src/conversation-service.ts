@@ -14,6 +14,7 @@ import type {
   ConversationTranscriptStore,
   TranscriptMessageInput,
 } from "./conversation-transcript-store.js";
+import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
 
 type LogFn = (message: string, details?: Record<string, unknown>) => void;
 
@@ -23,6 +24,7 @@ type OpenCodeSessionCreateInput = {
   title?: string | null;
   requestedOpenCodeSessionId?: string | null;
   sendTraceId?: string | null;
+  orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
 };
 
 export type OpenCodeSessionCreate = (
@@ -121,6 +123,7 @@ export type ConversationService = {
     title?: string | null;
     requestedOpenCodeSessionId?: string | null;
     sendTraceId?: string | null;
+    orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   }): Promise<ConversationCreateResult>;
 
   importOpenCodeSessions(input: {
@@ -746,6 +749,7 @@ export function createConversationService(options: {
         title: input.title,
         requestedOpenCodeSessionId: input.requestedOpenCodeSessionId ?? null,
         sendTraceId: input.sendTraceId ?? null,
+        orchestratorRegistrationScope: input.orchestratorRegistrationScope ?? null,
       });
       const record = isRecord(created) ? created : {};
       const engineSessionId = normalizeText(typeof record.id === "string" ? record.id : "");

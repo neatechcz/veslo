@@ -192,3 +192,28 @@ export function pendingSubmittedDraftToMessage(
     parts,
   };
 }
+
+/**
+ * Keeps the local-echo message referentially stable while its pending draft has
+ * not changed. The transcript viewport appends this object to canonical
+ * messages; recreating it on unrelated reactive reads turns one streamed token
+ * into a new array and a full projection pass.
+ */
+export function createPendingSubmittedMessageProjection() {
+  let previous:
+    | {
+        pending: PendingSubmittedDraft;
+        workspaceRoot: string;
+        message: MessageWithParts;
+      }
+    | null = null;
+
+  return (pending: PendingSubmittedDraft, workspaceRoot: string): MessageWithParts => {
+    if (previous?.pending === pending && previous.workspaceRoot === workspaceRoot) {
+      return previous.message;
+    }
+    const message = pendingSubmittedDraftToMessage(pending, workspaceRoot);
+    previous = { pending, workspaceRoot, message };
+    return message;
+  };
+}

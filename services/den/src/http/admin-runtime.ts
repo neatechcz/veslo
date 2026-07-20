@@ -2758,6 +2758,7 @@ function readDebugLogFilters(req: express.Request): DebugLogSearchFilters {
     workspaceId: readQueryString(req.query.workspaceId),
     sessionId: readQueryString(req.query.sessionId),
     runId: readQueryString(req.query.runId),
+    captureId: readQueryString(req.query.captureId),
     source: readQueryString(req.query.source),
     stream: readQueryString(req.query.stream),
     level: readDebugLogLevel(req.query.level),

@@ -147,6 +147,49 @@ for service in den ai-gateway web worker-manager proxy backup den-db ai-gateway-
 done
 ```
 
+## Windows Installed-MSI Evidence
+
+An installed-MSI verification run writes a JSON summary at the exact path
+passed as `-SummaryPath`. Keep that file with its matching verbose Windows
+Installer logs:
+
+- `<summary>.msiexec-install.log` for the candidate install in every
+  non-updater scenario;
+- `<summary>.baseline-msiexec-install.log` for the baseline half of an upgrade;
+- `C:\ProgramData\veslo-updater-msi.log` only after a real in-app updater
+  transaction. Capture an ISO-8601 UTC timestamp before triggering that update
+  and pass it as `-UpdaterLogNotBeforeUtc`; the verifier rejects an older log.
+
+The verifier records the MSI hash, release tag/commit, Windows build, WebView2
+and WSL state, and a redacted view of the installed runtime. It does not write
+the client or host token from the persisted runtime state into the summary.
+Before any candidate `/i`, it also rejects WSL/`VesloSandbox` setup files in
+the extracted candidate payload and WSL/`VesloSandbox` custom actions in the
+candidate MSI table. The historical baseline of an upgrade is compared for
+installed-payload parity but is not held to the current candidate packaging
+policy.
+Treat the state files as credentials and do not attach their raw contents to a
+ticket:
+
+- `%LOCALAPPDATA%\com.neatech.veslo\veslo-server-runtime.json`
+- `%LOCALAPPDATA%\com.neatech.veslo\veslo-server-state.json`
+
+For startup evidence, the desktop writes a durable, redacted per-launch
+`desktop-bootstrap-ready.json` marker after it reaches authenticated runtime
+readiness. The installed-MSI verifier reads this marker after it has observed
+the Program Files main window and authenticated server status; it uses the
+spool only as a compatibility fallback, because successfully forwarded spool
+files are removed.
+
+- `%LOCALAPPDATA%\com.neatech.veslo\desktop-debug-log-spool\desktop-bootstrap-ready.json`
+- `%LOCALAPPDATA%\com.neatech.veslo\desktop-debug-log-spool\pending.jsonl`
+- `%LOCALAPPDATA%\com.neatech.veslo\desktop-debug-log-spool\flushing-*.jsonl`
+
+The server-owned debug-log spool, when local forwarding is available, is under
+`%LOCALAPPDATA%\com.neatech.veslo\veslo-server\debug-log-spool\events`. A
+successful `msiexec` return code is not startup evidence by itself: preserve
+the summary, verbose log, and redacted ready event together.
+
 ## Den Debug-Log Ingest
 
 Den accepts uploaded debug-log batches at `POST /v1/internal/debug-logs` for server-to-server `veslo-server` shipping and at `POST /v1/desktop-diagnostics` for signed-in desktop fallback diagnostics when the local server is unavailable or not a trusted carrier. Both routes write to the application-queryable debug-log store: metadata is queryable, while payload content is encrypted and returned only through admin read paths.
@@ -323,17 +366,9 @@ In updater investigations on Windows, also collect `C:\ProgramData\veslo-updater
 
 For clean-install MSI failures, collect the newest `%TEMP%\MSI*.LOG` file from the affected Windows user. Veslo MSI packages set `MsiLogging=voicewarmupx!`, so a double-clicked install should create this verbose Windows Installer log even when the failure happens before Veslo's PowerShell runtime scripts start. The log can also include the final log path in the `MsiLogFileLocation` property.
 
-If Veslo's WSL helper logs end with `WSL prerequisite helper finished with exit code 0` but Windows Installer still reports a generic failure, inspect the MSI log for WebView2 custom actions. Current validation MSI builds must use `webviewInstallMode.type = "skip"` and must not contain `DownloadAndInvokeBootstrapper`, `InvokeBootstrapper`, or `InvokeStandalone`; those generated actions run a nested WebView2 installer and can fail the MSI after Veslo's WSL setup has already succeeded.
+Current Windows MSI builds use `webviewInstallMode.type = "embedBootstrapper"`, so their verbose MSI log can contain Tauri's generated WebView2 bootstrapper activity. The current installer deliberately contains no WSL provisioner, WSL helper, WiX/NSIS WSL hook, Active Setup continuation, or onboarding/Settings repair path. A public release remains blocked until the same MSI hash passes disposable-VM runs with WebView2 both present and absent. `skip` is not a supported fresh-install mode.
 
-For clean-install WSL runtime setup issues, also collect `%ProgramData%\Veslo\logs\wsl2-client-installer.log`, `%ProgramData%\Veslo\logs\wsl2-prerequisite-installer.log`, `%ProgramData%\Veslo\logs\wsl2-runtime-setup-status.txt`, `%ProgramData%\Veslo\runtime-setup-restart-required.marker`, `%LOCALAPPDATA%\Veslo\logs\wsl2-client-installer.log`, and `%LOCALAPPDATA%\Veslo\logs\wsl2-sandbox-installer.log` when those files exist. MSI clean installs run the machine prerequisite phase as `NT AUTHORITY\SYSTEM`; if Windows reports `3010`, the MSI must surface the native Windows Installer restart requirement instead of masking it or launching Veslo. The machine phase also registers a non-interactive Active Setup startup continuation so the target user context can import/provision `VesloSandbox` after reboot. That continuation may re-register an HKCU RunOnce retry if WSL is still settling or sandbox provisioning fails. NSIS clean installs also print these paths in the installer detail log and stop on non-restart runtime setup failures.
-
-If one of these logs ends after `wsl.exe --status`, check whether the next lines report `Native command timed out after 45 seconds` and exit code `1460`. That means the Windows WSL command hung rather than returning a normal status. MSI installs should then complete the package install and leave first-run onboarding/Settings repair to retry with user-visible guidance.
-
-Newer WSL installer helpers print a `Script revision:` line near the start of their logs. If that line is missing after installing a validation MSI that should contain it, the affected machine is still running an old installed helper. Current MSI packages remove the old WSL helper `.ps1` files from `INSTALLDIR` during install before copying the new files.
-
-When the client runtime installer logs `wsl.exe --status failed` because WSL is not installed, the next expected step is `WSL status already failed; skipping redundant prerequisite check and launching elevated WSL prerequisite install from the installer flow.` A log that stops at a local `wsl2-prerequisite-installer.ps1 -CheckOnly` invocation is from an older validation helper.
-
-If `wsl2-prerequisite-installer.ps1 -Install` returns `1` or `2`, inspect the same prerequisite log for the current script revision. Current MSI machine setup does not call `wsl.exe` or nested `msiexec` under LocalSystem. It checks Windows optional feature state, enables `Microsoft-Windows-Subsystem-Linux` and `VirtualMachinePlatform`, and stages the modern WSL MSIX bundle with `Add-AppxProvisionedPackage` when needed. The client installer and Settings/onboarding repair output should include a `Latest WSL prerequisite helper transcript` section after prerequisite repair attempts.
+Do not treat WSL helper logs, `VesloSandbox`, Active Setup, or HKCU RunOnce records as normal evidence for a current MSI. If they appear after installation, preserve the MSI path and verbose log: they indicate an older or non-standard package, not a supported remediation path. Do not run a bundled WSL repair script as a workaround for a current installer failure.
 
 ## Veslo Server Debug-Log Pipeline
 
@@ -355,6 +390,8 @@ Veslo also has Sentry-compatible error monitoring through the internal Neatech G
 - Retention: GlitchTip event retention is configured on the GlitchTip service, currently 30 days in the running container
 
 Monitoring is opt-in for local development and release-owned for GitHub desktop builds. Release builds configure the public `VESLO_GLITCHTIP_DSN` GitHub Actions variable once, pass it to `VITE_VESLO_GLITCHTIP_DSN`, and embed it into the native shell for installed macOS and Windows apps. The DSN is public and not user-configurable; the application must not expose a setting to change it. Publish workflows enable strict verification with `VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV=1`; manual validation workflows can keep warning mode for missing values. The detailed variable list and privacy rules live in `docs/dev/state-and-config-reference.md`.
+
+Publish builds use one frontend artifact sequence: hidden Vite maps, debug-ID injection, map upload for the matching `veslo@<version>` release and environment, map deletion, then Tauri packaging. The final app/installer therefore contains the injected JavaScript but no `.map` file or `sourceMappingURL` reference. The CI evidence artifact records only release, environment, commit, timestamp, artifact names, and debug IDs; do not attach raw maps or full monitoring events to a ticket. A manual staging workflow run with `monitoring_canary=true` builds one compile-time renderer canary, fails closed for source-map upload, and intentionally shows the recovery UI on launch. The authorized external event inspection and alert-delivery drill remain separate; they are not simulated by the local build.
 
 When investigating production errors, start with GlitchTip for grouped exceptions and stack traces. Use this runbook's Docker and Den sections when you need raw process output, encrypted debug-log metadata, sidecar forwarding behavior, or application-queryable log history.
 

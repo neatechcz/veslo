@@ -259,9 +259,11 @@ pub fn reset_veslo_state(
 #[tauri::command]
 pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Option<String>) {
     let is_send_workflow_trace = scope == "send-workflow-trace";
-    if is_send_workflow_trace
-        && !crate::runtime_preferences::runtime_diagnostics_enabled(&app).unwrap_or(false)
-    {
+    if !should_emit_send_workflow_trace(
+        is_send_workflow_trace,
+        crate::runtime_preferences::pilot_runtime_diagnostics_enabled(),
+        crate::runtime_preferences::runtime_diagnostics_enabled(&app).unwrap_or(false),
+    ) {
         return;
     }
     if is_send_workflow_trace {
@@ -281,6 +283,14 @@ pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Opt
             &line,
         );
     }
+}
+
+fn should_emit_send_workflow_trace(
+    is_send_workflow_trace: bool,
+    pilot_diagnostics_enabled: bool,
+    runtime_diagnostics_enabled: bool,
+) -> bool {
+    !is_send_workflow_trace || pilot_diagnostics_enabled || runtime_diagnostics_enabled
 }
 
 fn truthy_env(name: &str) -> bool {
@@ -365,9 +375,95 @@ fn append_send_workflow_trace_line(path: &Path, line: &str) {
     }
 }
 
+fn is_private_send_workflow_trace_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("password")
+        || lower.contains("authorization")
+        || lower.contains("credential")
+        || lower.contains("api_key")
+        || lower.contains("apikey")
+        || matches!(
+            lower.as_str(),
+            "message"
+                | "error"
+                | "failure"
+                | "stack"
+                | "body"
+                | "text"
+                | "label"
+                | "title"
+                | "content"
+                | "prompt"
+                | "transcript"
+                | "workspacepath"
+                | "workspace_path"
+                | "workspaceroot"
+                | "workspace_root"
+                | "directory"
+                | "projectdir"
+                | "project_dir"
+                | "dbpath"
+                | "db_path"
+                | "path"
+                | "filepath"
+                | "file_path"
+                | "email"
+                | "subject"
+                | "laststdout"
+                | "laststderr"
+        )
+}
+
+fn send_workflow_trace_string_contains_absolute_path(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains(":\\")
+        || lower.contains(":/users/")
+        || lower.starts_with("/users/")
+        || lower.starts_with("/home/")
+        || lower.starts_with("/workspace/")
+}
+
+fn redact_send_workflow_trace_value(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                redact_send_workflow_trace_value(item);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if is_private_send_workflow_trace_key(key) {
+                    *child = serde_json::Value::String("[redacted]".to_string());
+                } else {
+                    redact_send_workflow_trace_value(child);
+                }
+            }
+        }
+        serde_json::Value::String(text)
+            if send_workflow_trace_string_contains_absolute_path(text) =>
+        {
+            *value = serde_json::Value::String("[redacted-path]".to_string());
+        }
+        _ => {}
+    }
+}
+
+fn redact_send_workflow_trace_payload(raw: &str) -> String {
+    let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return r#"{"schema":"send-workflow/v1","source":"ui","event":"unstructured-trace","payload":"[redacted]"}"#.to_string();
+    };
+    redact_send_workflow_trace_value(&mut payload);
+    serde_json::to_string(&payload).unwrap_or_else(|_| {
+        r#"{"schema":"send-workflow/v1","source":"ui","event":"trace-redaction-failed"}"#
+            .to_string()
+    })
+}
+
 fn append_send_workflow_trace_event(app: &AppHandle, message: &str, payload: Option<&str>) {
     let line = match payload {
-        Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+        Some(raw) if !raw.trim().is_empty() => redact_send_workflow_trace_payload(raw.trim()),
         _ => format!(
             "{{\"schema\":\"send-workflow/v1\",\"source\":\"ui\",\"event\":{}}}",
             serde_json::to_string(message).unwrap_or_else(|_| "\"ui-event\"".to_string())
@@ -419,7 +515,7 @@ pub fn obsidian_is_available() -> bool {
         if let Some(home) = home_dir() {
             candidates.push(home.join("Applications").join("Obsidian.app"));
         }
-        return candidates.into_iter().any(|path| path.exists());
+        candidates.into_iter().any(|path| path.exists())
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -461,9 +557,9 @@ pub fn open_in_obsidian(app: AppHandle, file_path: String) -> Result<(), String>
             "[misc][obsidian] launch failed path={} status={status}",
             path.display()
         );
-        return Err(format!(
+        Err(format!(
             "Failed to launch Obsidian (exit status: {status})."
-        ));
+        ))
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -664,13 +760,47 @@ pub fn read_obsidian_mirror_file(
 mod tests {
     use super::{
         append_send_workflow_trace_line, normalize_obsidian_mirror_relative_path,
-        sanitize_obsidian_workspace_id, update_session_directory_in_db,
+        redact_send_workflow_trace_payload, sanitize_obsidian_workspace_id,
+        should_emit_send_workflow_trace, update_session_directory_in_db,
     };
     use rusqlite::Connection;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    #[test]
+    fn send_workflow_trace_allows_an_explicit_pilot_diagnostic_run() {
+        assert!(should_emit_send_workflow_trace(false, false, false));
+        assert!(!should_emit_send_workflow_trace(true, false, false));
+        assert!(should_emit_send_workflow_trace(true, true, false));
+        assert!(should_emit_send_workflow_trace(true, false, true));
+    }
+
+    #[test]
+    fn send_workflow_trace_redacts_private_payload_fields_before_persisting() {
+        let raw = r#"{
+          "event":"server:conversation-run:lifecycle-register",
+          "workspacePath":"C:\\Users\\pilot-user\\workspace",
+          "message":"Reply with exactly sensitive-prompt",
+          "token":"secret-token",
+          "detail":"workspace=C:\\Users\\pilot-user\\workspace",
+          "nested":{"directory":"C:\\Users\\pilot-user\\workspace\\nested"}
+        }"#;
+
+        let redacted = redact_send_workflow_trace_payload(raw);
+        assert!(!redacted.contains("pilot-user"));
+        assert!(!redacted.contains("sensitive-prompt"));
+        assert!(!redacted.contains("secret-token"));
+        let parsed: serde_json::Value = serde_json::from_str(&redacted).expect("redacted JSON");
+        assert_eq!(
+            parsed["event"],
+            "server:conversation-run:lifecycle-register"
+        );
+        assert_eq!(parsed["workspacePath"], "[redacted]");
+        assert_eq!(parsed["detail"], "[redacted-path]");
+        assert_eq!(parsed["nested"]["directory"], "[redacted]");
+    }
 
     #[test]
     fn sanitize_workspace_id_collapses_separators() {

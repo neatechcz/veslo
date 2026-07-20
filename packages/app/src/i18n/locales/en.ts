@@ -172,6 +172,12 @@ export default {
   "session.media_evidence_image_analyzed_one": "{count} image analyzed",
   "session.media_evidence_image_analyzed_other": "{count} images analyzed",
   "session.model": "Model",
+  "session.managed_model_selector_label": "Model for this send",
+  "session.managed_model_default": "Managed default",
+  "session.managed_model_image_capable": "Images supported",
+  "session.managed_model_image_unsupported": "Images unavailable",
+  "session.managed_model_image_unknown": "Image support unknown",
+  "session.managed_model_selection_unavailable": "The selected model is no longer available. Using the managed default.",
   "session.ready": "Ready",
   "session.connect_provider": "Connect a provider to customize this.",
   "session.running": "Running",
@@ -832,6 +838,8 @@ export default {
   "settings.archived_sessions_archived_at": "Archived",
   "settings.model": "Model",
   "settings.model_description": "Global model + thinking controls for all runs.",
+  "settings.session_model_selector": "Session model selector",
+  "settings.session_model_selector_description": "Choose an eligible managed model for a send. It appears after the gateway publishes two or more models and lists the full available roster.",
   "settings.change": "Change",
   "settings.engine_path": "PATH",
   "settings.engine_sidecar": "Sidecar",
@@ -1017,6 +1025,9 @@ export default {
   "reload.banner_commands_description": "Command changes require an engine reload before they become available.",
   "reload.banner_config_description": "Veslo detected configuration changes. Reload the engine to apply them.",
   "reload.banner_mcp_description": "MCP changes require an engine reload before the connection becomes active.",
+
+  "managed_ai.runtime_config_pending_reload": "AI settings will be applied automatically after the active response finishes.",
+  "managed_ai.runtime_config_reloading": "Applying AI settings for the next response...",
 
   // ==================== Onboarding ====================
   "onboarding.starting_host": "Starting Veslo server...",

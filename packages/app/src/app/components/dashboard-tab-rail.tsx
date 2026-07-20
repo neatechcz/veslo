@@ -2,6 +2,7 @@ import { createMemo, For } from "solid-js";
 
 import type { DashboardTab, SettingsTab } from "../types";
 import { resolveSettingsTabLabel } from "../lib/settings-tab-label";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import { currentLocale, t } from "../../i18n";
 
 export type DashboardTabRailDashboardTab = Extract<DashboardTab, "soul" | "skills" | "mcp" | "plugins">;
@@ -66,6 +67,14 @@ export default function DashboardTabRail(props: DashboardTabRailProps) {
     if (item.kind === "settings") {
       props.onOpenSettingsTab(item.tab);
       return;
+    }
+    if (item.tab === "skills") {
+      recordSendWorkflowTrace("skills-navigation", "skills-navigation:click", {
+        origin: props.activeDashboardTab === "settings" ? "settings-tab-rail" : "dashboard-tab-rail",
+        activeDashboardTab: props.activeDashboardTab,
+        activeSettingsTab: props.activeSettingsTab,
+        destination: "skills",
+      });
     }
     props.onOpenDashboardTab(item.tab);
   };

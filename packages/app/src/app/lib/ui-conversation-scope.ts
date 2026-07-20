@@ -87,7 +87,7 @@ export function parseUiConversationKey(value: string | null | undefined): UiConv
   if (parts[0] !== KEY_PREFIX && parts[0] !== SCOPED_KEY_PREFIX) return null;
   if (parts[0] === KEY_PREFIX && parts.length !== 4) return null;
   if (parts[0] === SCOPED_KEY_PREFIX && parts.length !== 8) return null;
-  const kind = parts[2] as UiConversationKeyKind;
+  const kind = parts[2] ?? "";
   if (
     kind !== "session" &&
     kind !== "pending-session" &&
@@ -98,7 +98,7 @@ export function parseUiConversationKey(value: string | null | undefined): UiConv
   }
   return {
     workspaceId: decodeKeyPart(parts[1] ?? ""),
-    kind,
+    kind: kind as UiConversationKeyKind,
     id: decodeKeyPart(parts[3] ?? ""),
     ...(parts[0] === SCOPED_KEY_PREFIX
       ? {

@@ -19,27 +19,14 @@ const errorSelector = '[data-testid="session-run-truthfulness-error"]';
 document.querySelector(completeSelector)?.remove();
 document.querySelector(errorSelector)?.remove();
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const normalize = (value) => String(value ?? '').trim().replace(/\s+/g, ' ');
-const assert = (condition, message) => { if (!condition) throw new Error(message); };
-const waitUntil = async (predicate, options = {}) => {
-  const timeout = options.timeout ?? 30000;
-  const interval = options.interval ?? 150;
-  const deadline = Date.now() + timeout;
-  let latest = null;
-  while (Date.now() < deadline) {
-    latest = await predicate();
-    if (latest) return latest;
-    await sleep(interval);
-  }
-  throw new Error(options.message ?? `condition was not met; latest=${JSON.stringify(latest)}`);
-};
-const invoke = async (command, payload = {}) => {
-  const bridge = window.__TAURI_INTERNALS__?.invoke;
-  assert(typeof bridge === 'function', 'Tauri invoke bridge is unavailable.');
-  return await bridge(command, payload);
-};
-const visible = (element) => element instanceof HTMLElement && Boolean(element.offsetParent) && element.getBoundingClientRect().width > 0;
+const pilotE2E = window.__vesloPilotE2E;
+if (!pilotE2E) throw new Error('Pilot browser prelude is unavailable.');
+const { normalize, assert, invoke, visible, insertContenteditableThroughBrowser } = pilotE2E;
+const waitUntil = (predicate, options = {}) => pilotE2E.waitUntil(predicate, {
+  timeout: options.timeout ?? 30000,
+  interval: options.interval ?? 150,
+  message: options.message ?? 'condition was not met',
+});
 const appendFailure = (error) => {
   if (document.querySelector(errorSelector) || document.querySelector(completeSelector)) return;
   const marker = document.createElement('pre');
@@ -99,6 +86,18 @@ try {
     assert(response.ok, `The lifecycle fixture transition failed (${response.status}).`);
     return await response.json();
   };
+  const recoverFixtureTranscript = async (label, expectedRunId = null) => {
+    const recovered = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript/recover`, {
+      method: 'POST',
+      body: JSON.stringify({
+        directory: workspacePath,
+        ...(expectedRunId ? { expectedRunId } : {}),
+      }),
+    });
+    assert(recovered.ok, `The host could not recover the ${label} transcript (${recovered.status}).`);
+    assert(['persisted', 'unchanged'].includes(normalize(recovered.body?.state)), `The host did not persist the ${label} transcript (${normalize(recovered.body?.state) || 'missing state'}).`);
+    return recovered.body;
+  };
   const openFixtureWorkspace = async () => {
     const oldUrl = window.location.href;
     window.location.hash = '/session';
@@ -129,12 +128,8 @@ try {
   assert(imported.ok, `The host conversation import failed (${imported.status}).`);
   const conversationId = normalize(imported.body?.items?.[0]?.conversationId);
   assert(conversationId, 'The imported conversation did not receive a durable conversation id.');
-  const emptyTranscript = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`, {
-    method: 'POST',
-    body: JSON.stringify({ directory: workspacePath, messages: [], partsByMessageId: {} }),
-  });
-  assert(emptyTranscript.ok, `The host could not seed the imported session transcript marker (${emptyTranscript.status}).`);
   await fixturePost('/__session_queue_fixture/append-session-transcript', { sessionId, messages: [], partsByMessageId: {} });
+  await recoverFixtureTranscript('imported session marker');
   const oldUrl = window.location.href;
   window.location.hash = '/session';
   window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: oldUrl, newURL: window.location.href }));
@@ -175,9 +170,7 @@ try {
 
   const submitText = async (text) => {
     const editor = await resolveEditor();
-    editor.focus();
-    editor.replaceChildren(document.createTextNode(text));
-    editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+    insertContenteditableThroughBrowser(editor, text);
     await waitUntil(() => normalize(editor.textContent) === text, { message: 'The composer did not accept the deterministic draft.' });
     await submitVisibleComposer();
   };
@@ -189,19 +182,14 @@ try {
   }, { timeout: 45000, interval: 200, message: 'The accepted composer submission did not register a durable fixture run.' });
   const runIndicator = () => document.querySelector('[data-testid="session-run-indicator"]');
   const stopButton = () => Array.from(document.querySelectorAll('button')).find((button) => visible(button) && normalize(button.getAttribute('aria-label')) === 'Stop') || null;
-  const appendCanonicalText = async (id, text, createdAt) => {
+  const appendCanonicalText = async (run, text, createdAt) => {
+    const id = normalize(run?.runId);
+    assert(id, 'The durable fixture run did not provide an id for canonical transcript correlation.');
     const messages = [{ id, sessionID: sessionId, role: 'user', time: { created: createdAt } }];
     const partsByMessageId = { [id]: [{ id: `${id}-part`, messageID: id, sessionID: sessionId, type: 'text', text }] };
-    const result = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`, {
-      method: 'POST',
-      body: JSON.stringify({
-        directory: workspacePath,
-        messages,
-        partsByMessageId,
-      }),
-    });
-    assert(result.ok, `The canonical text transcript append failed (${result.status}).`);
     await fixturePost('/__session_queue_fixture/append-session-transcript', { sessionId, messages, partsByMessageId });
+    await recoverFixtureTranscript('canonical text', id);
+    return id;
   };
 
   let knownRunCount = 0;
@@ -234,30 +222,56 @@ try {
   await fixturePost('/__session_queue_fixture/emit-session-error', { sessionId, message: 'Repeat terminal reconciliation signal.' });
   await waitUntil(() => document.querySelectorAll('[role="alert"]').length === 1, { message: 'Repeated terminal reconciliation duplicated the failure turn.' });
   assert(!runIndicator(), 'The failed durable run remained visually active after terminal reconciliation.');
-  await appendCanonicalText('msg-truthfulness-failed-user', 'truthfulness-running', 6000);
+  const failedMessageId = await appendCanonicalText(failedRun, 'truthfulness-running', 6000);
   await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
-  await waitUntil(() => document.querySelectorAll('[data-message-id="msg-truthfulness-failed-user"]').length === 1, { message: 'The failed-run canonical user transcript row did not hydrate.' });
+  await waitUntil(() => document.querySelectorAll(`[data-message-id="${failedMessageId}"]`).length === 1, { message: 'The failed-run canonical user transcript row did not hydrate.' });
 
   stage = 'completed-run-submit';
   await submitText('truthfulness-completed');
   const completedRun = await nextRun(knownRunCount);
   knownRunCount += 1;
   await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(completedRun.runId)}/completed`);
-  await appendCanonicalText('msg-truthfulness-completed-user', 'truthfulness-completed', 7000);
+  const completedMessageId = await appendCanonicalText(completedRun, 'truthfulness-completed', 7000);
   await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
   await waitUntil(() => !runIndicator(), { timeout: 45000, message: 'Completed durable run did not settle idle.' });
-  await waitUntil(() => document.querySelectorAll('[data-message-id="msg-truthfulness-completed-user"]').length === 1, { message: 'The completed-run canonical user transcript row did not hydrate.' });
+  await waitUntil(() => document.querySelectorAll(`[data-message-id="${completedMessageId}"]`).length === 1, { message: 'The completed-run canonical user transcript row did not hydrate.' });
   assert(document.querySelectorAll('[role="alert"]').length === 1, 'Completed durable run received failed-run treatment.');
+
+  stage = 'terminal-assistant-text-order';
+  await submitText('terminal-assistant-order');
+  const terminalOrderRun = await nextRun(knownRunCount);
+  knownRunCount += 1;
+  await waitUntil(() => runIndicator(), { message: 'Terminal-order fixture run did not become visibly active.' });
+  const terminalAssistantText = 'terminal-assistant-text-after-idle';
+  const beforeTerminalAssistantEvent = await fixtureState();
+  await fixturePost('/__session_queue_fixture/emit-assistant-text-part', {
+    sessionId,
+    messageId: `${terminalOrderRun.runId}-assistant`,
+    partId: `${terminalOrderRun.runId}-assistant-part`,
+    text: terminalAssistantText,
+  });
+  await waitUntil(async () => (await fixtureState()).emittedEventCount >= beforeTerminalAssistantEvent.emittedEventCount + 2, {
+    message: 'Terminal assistant SSE events were not emitted.',
+  });
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert(!document.body.innerText.includes(terminalAssistantText), 'Final assistant text rendered before durable terminality hid the run indicator.');
+  await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(terminalOrderRun.runId)}/completed`);
+  await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
+  await waitUntil(() => !runIndicator(), { timeout: 45000, message: 'Terminal-order run did not hide its active indicator.' });
+  await waitUntil(() => document.body.innerText.includes(terminalAssistantText), {
+    timeout: 45000,
+    message: 'Final assistant text did not render after terminal indicator removal.',
+  });
 
   stage = 'aborted-run-submit';
   await submitText('truthfulness-aborted');
   const abortedRun = await nextRun(knownRunCount);
   knownRunCount += 1;
   await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(abortedRun.runId)}/aborted`);
-  await appendCanonicalText('msg-truthfulness-aborted-user', 'truthfulness-aborted', 8000);
+  const abortedMessageId = await appendCanonicalText(abortedRun, 'truthfulness-aborted', 8000);
   await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
   await waitUntil(() => !runIndicator(), { timeout: 45000, message: 'Aborted durable run did not settle idle.' });
-  await waitUntil(() => document.querySelectorAll('[data-message-id="msg-truthfulness-aborted-user"]').length === 1, { message: 'The aborted-run canonical user transcript row did not hydrate.' });
+  await waitUntil(() => document.querySelectorAll(`[data-message-id="${abortedMessageId}"]`).length === 1, { message: 'The aborted-run canonical user transcript row did not hydrate.' });
   assert(document.querySelectorAll('[role="alert"]').length === 1, 'Aborted durable run received failed-run treatment.');
 
   const input = document.querySelector('[data-testid="session-composer"] input[type="file"]');
@@ -274,36 +288,35 @@ try {
   await submitVisibleComposer();
   const attachmentRun = await nextRun(attachmentRunBefore);
   knownRunCount += 1;
-  await waitUntil(() => document.querySelector('[data-testid="pending-submit-sending"]'), { message: 'The attachment-only submit did not remain visibly optimistic before canonical adoption.' });
-  const appended = await serverJson(`/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript`, {
-    method: 'POST',
-    body: JSON.stringify({
-      directory: workspacePath,
-      messages: [{ id: 'msg-truthfulness-attachment', sessionID: sessionId, role: 'user', time: { created: 9000 } }],
-      partsByMessageId: {
-        'msg-truthfulness-attachment': [{ id: 'part-truthfulness-attachment', messageID: 'msg-truthfulness-attachment', sessionID: sessionId, type: 'file', filename: 'adoption-only.txt', mime: 'text/plain', url: 'data:text/plain;base64,Zml4dHVyZQ==' }],
-      },
-    }),
-  });
-  assert(appended.ok, `The canonical attachment transcript append failed (${appended.status}).`);
+  const attachmentPendingMessageId = normalize(attachmentRun.clientMessageId);
+  assert(attachmentPendingMessageId, 'The attachment fixture run did not retain the optimistic client message id.');
+  await waitUntil(() => {
+    const candidate = document.querySelector(`[data-message-id="${attachmentPendingMessageId}"]`);
+    return visible(candidate) && candidate?.getAttribute('data-message-role') === 'user' && normalize(candidate.textContent).includes('adoption-only.txt')
+      ? candidate
+      : false;
+  }, { message: 'The attachment-only submit did not remain visibly optimistic before canonical adoption.' });
+  const attachmentMessageId = normalize(attachmentRun.runId);
+  assert(attachmentMessageId, 'The attachment fixture run did not provide an id for canonical transcript correlation.');
   await fixturePost('/__session_queue_fixture/append-session-transcript', {
     sessionId,
-    messages: [{ id: 'msg-truthfulness-attachment', sessionID: sessionId, role: 'user', time: { created: 9000 } }],
+    messages: [{ id: attachmentMessageId, sessionID: sessionId, role: 'user', time: { created: 9000 } }],
     partsByMessageId: {
-      'msg-truthfulness-attachment': [{ id: 'part-truthfulness-attachment', messageID: 'msg-truthfulness-attachment', sessionID: sessionId, type: 'file', filename: 'adoption-only.txt', mime: 'text/plain', url: 'data:text/plain;base64,Zml4dHVyZQ==' }],
+      [attachmentMessageId]: [{ id: `${attachmentMessageId}-part`, messageID: attachmentMessageId, sessionID: sessionId, type: 'file', filename: 'adoption-only.txt', mime: 'text/plain', url: 'data:text/plain;base64,Zml4dHVyZQ==' }],
     },
   });
+  await recoverFixtureTranscript('canonical attachment', attachmentMessageId);
   await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(attachmentRun.runId)}/completed`);
   await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
-  await waitUntil(() => document.querySelectorAll('[data-message-id="msg-truthfulness-attachment"]').length === 1, {
+  await waitUntil(() => document.querySelectorAll(`[data-message-id="${attachmentMessageId}"]`).length === 1, {
     timeout: 45000,
     message: 'The canonical attachment-only transcript row did not hydrate.',
   });
-  await waitUntil(() => !document.querySelector('[data-testid="pending-submit-sending"]'), {
+  await waitUntil(() => !document.querySelector(`[data-message-id="${attachmentPendingMessageId}"]`), {
     timeout: 45000,
     message: 'The attachment-only optimistic row was not uniquely adopted by the canonical transcript.',
   });
-  assert(document.querySelectorAll('[data-message-role="user"]').length === 4, 'Attachment-only adoption left a duplicate user row.');
+  assert(document.querySelectorAll('[data-message-role="user"]').length === 5, 'Attachment-only adoption left a duplicate user row.');
 
   stage = 'operational-run-submit';
   await submitText('truthfulness-operational-error');
@@ -314,11 +327,12 @@ try {
   await waitUntil(() => document.querySelector('[data-testid="session-operational-error"]'), { message: 'The unrelated operational error did not reach its neutral boundary.' });
   assert(runIndicator()?.getAttribute('data-run-phase') !== 'error', 'An unrelated operational error changed the scoped running phase to error.');
   assert(Boolean(stopButton()), 'An unrelated operational error removed Stop from a distinct active run.');
+  await appendCanonicalText(operationalRun, 'truthfulness-operational-error', 10000);
   await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(operationalRun.runId)}/aborted`);
   await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
   await waitUntil(() => !runIndicator(), { timeout: 45000, message: 'Final fixture cleanup run did not settle idle.' });
 
-  window.localStorage.setItem('veslo.e2e.sessionRunTruthfulness', JSON.stringify({ title, sessionId, canonicalMessageId: 'msg-truthfulness-attachment' }));
+  window.localStorage.setItem('veslo.e2e.sessionRunTruthfulness', JSON.stringify({ title, sessionId, canonicalMessageId: attachmentMessageId }));
   const complete = document.createElement('div');
   complete.dataset.testid = 'session-run-truthfulness-ready-to-reload';
   complete.textContent = JSON.stringify({ workspaceId, conversationId, sessionId, failedRunId: failedRun.runId });
@@ -365,6 +379,18 @@ target = "#root"
 timeout_ms = 45000
 
 [[step]]
+name = "restore Pilot browser prelude after webview reload"
+action = "eval"
+script = '''
+(() => {
+  if (window.__vesloPilotE2E) return true;
+  const source = window.sessionStorage?.getItem('veslo.tauriPilot.browserPrelude.v1');
+  if (!source) throw new Error('Pilot browser prelude source did not survive the WebView reload.');
+  return new Function(`return (${source});`)();
+})()
+'''
+
+[[step]]
 name = "canonical terminal state remains stable after reload"
 action = "eval"
 timeout_ms = 60000
@@ -372,17 +398,14 @@ script = '''
 const raw = window.localStorage.getItem('veslo.e2e.sessionRunTruthfulness');
 if (!raw) throw new Error('The run-truthfulness reload fixture metadata is missing.');
 const fixture = JSON.parse(raw);
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitUntil = async (predicate, timeout = 45000) => {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const value = await predicate();
-    if (value) return value;
-    await sleep(150);
-  }
-  throw new Error('Reload did not restore the canonical fixture transcript.');
-};
-const visible = (element) => element instanceof HTMLElement && Boolean(element.offsetParent);
+const pilotE2E = window.__vesloPilotE2E;
+if (!pilotE2E) throw new Error('Pilot browser prelude was not restored after the WebView reload.');
+const { visible } = pilotE2E;
+const waitUntil = (predicate, timeout = 45000) => pilotE2E.waitUntil(predicate, {
+  timeout,
+  interval: 150,
+  message: 'Reload did not restore the canonical fixture transcript.',
+});
 const existing = document.querySelector(`[data-message-id="${fixture.canonicalMessageId}"]`);
 if (!existing) {
   const button = await waitUntil(() => Array.from(document.querySelectorAll('button')).find((candidate) => visible(candidate) && String(candidate.textContent || '').includes(fixture.title)) || null);

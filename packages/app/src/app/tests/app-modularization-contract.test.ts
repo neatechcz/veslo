@@ -87,6 +87,7 @@ const appSourceContractInventory: AppSourceContractInventoryEntry[] = [
   { path: "context/workspace-session-snapshots.test.ts", classification: "wiring", retargetBy: "AM09/AM17" },
   { path: "context/workspace-switch-overlay-state.test.ts", classification: "wiring", retargetBy: "AM23" },
   { path: "lib/session-route-selection-guard.test.ts", classification: "wiring", retargetBy: "AM16" },
+  { path: "lib/session-capabilities.test.ts", classification: "wiring", retargetBy: "AM19" },
   { path: "pages/dashboard-menu-navigation.test.ts", classification: "wiring", retargetBy: "AM24" },
   { path: "pages/plugins-policy-layout.test.ts", classification: "wiring", retargetBy: "AM20/AM24" },
   { path: "pages/session-folder-access-consent.test.ts", classification: "behavior", retargetBy: "AM13/AM24" },

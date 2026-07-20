@@ -10,6 +10,11 @@ import {
 } from "../../lib/pending-session-drafts.js";
 import type { PendingSessionDraftPutInput, PendingSessionDraftSummary } from "../../lib/tauri.js";
 import type { ComposerDraft } from "../../types.js";
+import {
+  deleteSessionComposerDraft,
+  setSessionComposerDraft,
+  type ComposerDraftStateByStorageKey,
+} from "../../pages/session-composer-drafts.js";
 
 const draft = (text: string): ComposerDraft => ({
   mode: "prompt",
@@ -49,7 +54,7 @@ test("composer target controller builds workspace options and moves current draf
         workspaceId: "workspace-1",
         directory: "C:/work/project",
       });
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
       const persisted: { current: PendingSessionDraftSummary | null } = { current: null };
       const activatedWorkspaces: string[] = [];
       const views: string[] = [];
@@ -105,8 +110,13 @@ test("composer target controller builds workspace options and moves current draf
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+          },
+          deleteDraft: (storageKey) => {
+            composerDrafts = deleteSessionComposerDraft(composerDrafts, { storageKey });
+          },
         },
         setView: (view) => {
           views.push(view);
@@ -131,7 +141,7 @@ test("composer target controller builds workspace options and moves current draf
       assert.equal(persisted.current.directory, "C:/work/project");
       assert.equal(activePendingDraftKey(), targetKey);
       assert.equal(activePendingDraftMeta()?.id, persisted.current.id);
-      assert.equal(composerDrafts[globalComposerStorageKey]?.text, "ship this");
+      assert.equal(composerDrafts[globalComposerStorageKey]?.draft.text, "ship this");
       assert.equal(composerDrafts[targetKey], undefined);
       assert.deepEqual(activatedWorkspaces, []);
       assert.deepEqual(views, ["session"]);
@@ -174,7 +184,7 @@ test("composer target switch cleans previous scratch workspace after global draf
       const persisted: { current: PendingSessionDraftSummary | null } = { current: previousSummary };
       const events: string[] = [];
       const forgottenWorkspaces: Array<{ workspaceId: string; deleteLocalData?: boolean }> = [];
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
 
       const controller = createComposerTargetController({
         isTauriRuntime: () => true,
@@ -232,8 +242,13 @@ test("composer target switch cleans previous scratch workspace after global draf
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+          },
+          deleteDraft: (storageKey) => {
+            composerDrafts = deleteSessionComposerDraft(composerDrafts, { storageKey });
+          },
         },
         setView: () => undefined,
         setError: () => undefined,
@@ -255,7 +270,7 @@ test("composer target switch cleans previous scratch workspace after global draf
       assert.equal(persisted.current?.directory, "C:/work/project");
       assert.equal(activePendingDraftKey(), targetKey);
       assert.equal(activePendingDraftMeta()?.kind, "directory");
-      assert.equal(composerDrafts[globalComposerStorageKey]?.text, "move me");
+      assert.equal(composerDrafts[globalComposerStorageKey]?.draft.text, "move me");
       assert.deepEqual(forgottenWorkspaces, [{ workspaceId: "scratch-old", deleteLocalData: true }]);
       assert.deepEqual(events, ["put:directory", "forget:scratch-old"]);
     } finally {
@@ -309,7 +324,7 @@ test("composer target switch ignores obsolete pending summaries before loading o
         },
       };
       const persisted: { current: PendingSessionDraftSummary | null } = { current: null };
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
 
       const controller = createComposerTargetController({
         isTauriRuntime: () => true,
@@ -364,8 +379,13 @@ test("composer target switch ignores obsolete pending summaries before loading o
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+          },
+          deleteDraft: (storageKey) => {
+            composerDrafts = deleteSessionComposerDraft(composerDrafts, { storageKey });
+          },
         },
         setView: () => undefined,
         setError: () => undefined,
@@ -388,7 +408,7 @@ test("composer target switch ignores obsolete pending summaries before loading o
       assert.equal(persisted.current?.workspaceId, "workspace-1");
       assert.equal(persisted.current?.directory, "C:/work/project");
       assert.equal(activePendingDraftKey(), targetKey);
-      assert.equal(composerDrafts[globalComposerStorageKey]?.text, "current draft");
+      assert.equal(composerDrafts[globalComposerStorageKey]?.draft.text, "current draft");
     } finally {
       dispose();
     }
@@ -427,7 +447,7 @@ test("composer target switch writes the global draft id for private chat targets
       const globalComposerStorageKey = resolveComposerStorageKey({ pendingDraftKey: chatKey });
       const persisted: { current: PendingSessionDraftSummary | null } = { current: null };
       const activatedWorkspaces: string[] = [];
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
 
       const controller = createComposerTargetController({
         isTauriRuntime: () => true,
@@ -486,8 +506,13 @@ test("composer target switch writes the global draft id for private chat targets
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+          },
+          deleteDraft: (storageKey) => {
+            composerDrafts = deleteSessionComposerDraft(composerDrafts, { storageKey });
+          },
         },
         setView: () => undefined,
         setError: () => undefined,
@@ -512,7 +537,7 @@ test("composer target switch writes the global draft id for private chat targets
       assert.equal(persisted.current?.directory, null);
       assert.equal(activePendingDraftKey(), chatKey);
       assert.equal(activePendingDraftMeta()?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
-      assert.equal(composerDrafts[globalComposerStorageKey]?.text, "private draft");
+      assert.equal(composerDrafts[globalComposerStorageKey]?.draft.text, "private draft");
       assert.deepEqual(activatedWorkspaces, ["scratch-global"]);
     } finally {
       dispose();
@@ -550,7 +575,7 @@ test("composer target switch refreshes stale pending draft summaries before movi
       };
       let persistedSummaries: PendingSessionDraftSummary[] = [];
       const persistedInputs: PendingSessionDraftPutInput[] = [];
-      let composerDrafts: Record<string, ComposerDraft> = {};
+      let composerDrafts: ComposerDraftStateByStorageKey = {};
 
       const controller = createComposerTargetController({
         isTauriRuntime: () => true,
@@ -603,8 +628,13 @@ test("composer target switch refreshes stale pending draft summaries before movi
           ensureWorkspaceForFolder: async () => null,
         },
         publishRegisteredWorkspaceToSidebar: () => undefined,
-        setComposerDraftBySessionId: (updater) => {
-          composerDrafts = updater(composerDrafts);
+        composerDraftCommands: {
+          writeDraft: (storageKey, value) => {
+            composerDrafts = setSessionComposerDraft(composerDrafts, { storageKey }, value);
+          },
+          deleteDraft: (storageKey) => {
+            composerDrafts = deleteSessionComposerDraft(composerDrafts, { storageKey });
+          },
         },
         setView: () => undefined,
         setError: () => undefined,
@@ -629,7 +659,7 @@ test("composer target switch refreshes stale pending draft summaries before movi
       assert.equal(activePendingDraftKey(), targetKey);
       assert.equal(activePendingDraftMeta()?.id, GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID);
       assert.equal(activePendingDraftMeta()?.composer.text, "current draft");
-      assert.equal(composerDrafts[globalComposerStorageKey]?.text, "current draft");
+      assert.equal(composerDrafts[globalComposerStorageKey]?.draft.text, "current draft");
       assert.equal(composerDrafts[targetKey], undefined);
     } finally {
       dispose();

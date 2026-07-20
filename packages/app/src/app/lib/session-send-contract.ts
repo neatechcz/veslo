@@ -14,6 +14,8 @@ export type SessionSendCorrelation = {
 
 export type SessionSendOptionsBase = SessionSendCorrelation & {
   sendTraceId?: string | null;
+  /** Captured per-send without changing the workspace default model. */
+  modelOverride?: ModelRef | null;
 };
 
 type SessionSubmitDraftDisposition = "clear" | "restore" | "keep" | "mark-failed";
@@ -265,3 +267,4 @@ export function sessionSubmitNeedsImplicitSkillConfirmation(
     result.code === "implicit_skill_confirmation_required" &&
     result.confirmation?.type === "implicit_skill_command";
 }
+import type { ModelRef } from "../types";

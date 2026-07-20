@@ -32,6 +32,17 @@ export type ConversationSubmitSkillCommandResolver = (
   input: ConversationSubmitSkillCommandResolverInput,
 ) => string | null | undefined | Promise<string | null | undefined>;
 
+export type ConversationSubmitModelCapabilityDescriptor = {
+  providerID: string;
+  modelID: string;
+  attachment?: boolean;
+  modalities?: { input?: string[] };
+};
+
+export type ConversationSubmitModelDescriptorResolver = (
+  model: unknown,
+) => ConversationSubmitModelCapabilityDescriptor | null | Promise<ConversationSubmitModelCapabilityDescriptor | null>;
+
 export type ConversationSubmitDraftResolution =
   | { status: "ok"; resolvedRunInput: ConversationSubmitResolvedRunInput }
   | { status: "blocked"; result: ConversationSubmitBlockedResult };
@@ -229,6 +240,10 @@ function isImageAttachment(attachment: ConversationSubmitAttachment): boolean {
   return kind === "image" || mimeType.startsWith("image/");
 }
 
+function attachmentsContainImage(attachments?: ConversationSubmitAttachment[]): boolean {
+  return attachments?.some(isImageAttachment) ?? false;
+}
+
 function pathWithinRoot(root: string, path: string): boolean {
   const rel = relative(root, path);
   return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
@@ -308,6 +323,7 @@ function resolveAttachmentRunParts(input: {
   request: ConversationSubmitRequest;
   workspace?: WorkspaceInfo | null;
   validatePromptImageCapabilities: boolean;
+  modelForCapabilityValidation?: unknown;
 }): AttachmentRunPartsResolution {
   const attachments = input.request.draft.attachments ?? [];
   const inlineFileParts: FilePartInput[] = [];
@@ -316,7 +332,7 @@ function resolveAttachmentRunParts(input: {
   const promptImages = attachments.filter(isImageAttachment);
 
   if (promptImages.length && input.validatePromptImageCapabilities) {
-    const capability = modelImageCapability(input.request.options?.model);
+    const capability = modelImageCapability(input.modelForCapabilityValidation);
     if (capability === "unknown") {
       return blockedResult({
         code: "model_capabilities_unavailable",
@@ -364,6 +380,7 @@ async function resolveRunInput(input: {
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
   recordDebugTrace?: (entry: ConversationSubmitDebugTraceEntry) => void;
+  resolveManagedAiModelDescriptor?: ConversationSubmitModelDescriptorResolver;
   workspace?: WorkspaceInfo | null;
   includeGlobal?: boolean;
 }): Promise<ConversationSubmitRunInputResolution> {
@@ -371,10 +388,20 @@ async function resolveRunInput(input: {
   const hasExistingTarget = Boolean(
     request.target?.conversationId?.trim() || request.target?.opencodeSessionId?.trim(),
   );
+  let modelForCapabilityValidation: unknown = request.options?.model;
+  if (attachmentsContainImage(request.draft.attachments) && (hasExistingTarget || Boolean(request.options?.model))) {
+    modelForCapabilityValidation = null;
+    try {
+      modelForCapabilityValidation = await input.resolveManagedAiModelDescriptor?.(request.options?.model) ?? null;
+    } catch {
+      modelForCapabilityValidation = null;
+    }
+  }
   const attachmentResolution = resolveAttachmentRunParts({
     request,
     ...(input.workspace !== undefined ? { workspace: input.workspace } : {}),
     validatePromptImageCapabilities: hasExistingTarget || Boolean(request.options?.model),
+    modelForCapabilityValidation,
   });
   if (attachmentResolution.status === "blocked") return attachmentResolution;
   const attachmentParts = attachmentResolution.parts;
@@ -488,6 +515,7 @@ export async function resolveConversationSubmitDraft(input: {
   request: ConversationSubmitRequest;
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
   resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
+  resolveManagedAiModelDescriptor?: ConversationSubmitModelDescriptorResolver;
   recordDebugTrace?: (entry: ConversationSubmitDebugTraceEntry) => void;
   workspace?: WorkspaceInfo | null;
   includeGlobal?: boolean;

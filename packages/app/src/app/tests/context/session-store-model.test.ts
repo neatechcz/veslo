@@ -8,10 +8,12 @@ import {
   appendSessionErrorTurnModel,
   createPlaceholderMessage,
   formatSlashCommandDisplay,
+  reconcileMessageProjection,
   readSessionErrorTurnsForScope,
   removeMessageInfo,
   removePartInfo,
   removeSession,
+  sameStoredValue,
   scopedSessionAliasKeys,
   sessionErrorTurnScopeKey,
   sortMessagesByActivity,
@@ -101,6 +103,7 @@ test("session and message upserts preserve deterministic activity ordering", () 
   const withUpdated = upsertSession(sessions, makeSession("old", 1, 5));
   assert.deepEqual(withUpdated.map((session) => session.id), ["old", "newer"]);
   assert.deepEqual(removeSession(withUpdated, "newer").map((session) => session.id), ["old"]);
+  assert.equal(upsertSession(withUpdated, { ...withUpdated[0] }), withUpdated);
 
   const messages = [makeMessage("later", 2), makeMessage("earlier", 1)];
   assert.deepEqual(sortMessagesByActivity(messages).map((message) => message.id), ["earlier", "later"]);
@@ -120,6 +123,68 @@ test("part upserts preserve deterministic id ordering", () => {
   assert.equal((withUpdated[1] as Part & { text?: string }).text, "updated");
 
   assert.deepEqual(removePartInfo(withUpdated, "part-a").map((part) => part.id), ["part-b", "part-d"]);
+});
+
+test("equal SSE message and part replays retain the existing list identity", () => {
+  const message = makeMessage("msg-a", 1);
+  const messages = [message];
+  assert.equal(upsertMessageInfo(messages, { ...message }), messages);
+
+  const text = makeTextPart("part-a", "msg-a", "same text");
+  const parts = [text];
+  assert.equal(upsertPartInfo(parts, { ...text }), parts);
+
+  const changed = upsertPartInfo(parts, makeTextPart("part-a", "msg-a", "changed text"));
+  assert.notEqual(changed, parts);
+  assert.equal((changed[0] as Part & { text?: string }).text, "changed text");
+});
+
+test("stored-value equality cannot collapse distinct delimiter-containing payloads", () => {
+  assert.equal(
+    sameStoredValue({ a: "x,b:string:y" }, { a: "x", b: "y" }),
+    false,
+  );
+  assert.equal(
+    sameStoredValue({ nested: ["a,b", { value: "c:d" }] }, { nested: ["a,b", { value: "c:d" }] }),
+    true,
+  );
+});
+
+test("message projection retains wrappers and its outer array for unchanged store inputs", () => {
+  const user = makeUserMessage("user-1", 1);
+  const assistant = makeMessage("assistant-1", 2);
+  const assistantText = makeTextPart("assistant-text", "assistant-1", "hello");
+  const partsByMessageID = { "assistant-1": [assistantText] };
+
+  const first = reconcileMessageProjection({
+    previous: null,
+    sessionID: "session-1",
+    infos: [user, assistant],
+    partsByMessageID,
+    commandDisplayByMessageID: {},
+  });
+  const replay = reconcileMessageProjection({
+    previous: first,
+    sessionID: "session-1",
+    infos: [user, assistant],
+    partsByMessageID,
+    commandDisplayByMessageID: {},
+  });
+
+  assert.equal(replay.messages, first.messages);
+  assert.equal(replay.messages[0], first.messages[0]);
+  assert.equal(replay.messages[1], first.messages[1]);
+
+  const changed = reconcileMessageProjection({
+    previous: replay,
+    sessionID: "session-1",
+    infos: [user, assistant],
+    partsByMessageID: { "assistant-1": [makeTextPart("assistant-text", "assistant-1", "hello again")] },
+    commandDisplayByMessageID: {},
+  });
+  assert.notEqual(changed.messages, replay.messages);
+  assert.equal(changed.messages[0], replay.messages[0]);
+  assert.notEqual(changed.messages[1], replay.messages[1]);
 });
 
 test("command display alias replaces only the first user text part and preserves non-text parts", () => {
@@ -152,6 +217,15 @@ test("placeholder messages and session error turns are modeled without store sid
   assert.equal(placeholder.id, "msg-a");
   assert.equal(placeholder.sessionID, "sess-a");
   assert.equal(placeholder.role, "assistant");
+
+  const withoutMessages = appendSessionErrorTurnModel({
+    current: [],
+    sessionID: "sess-a",
+    message: "boom",
+    messages: [],
+    now: 50,
+  });
+  assert.equal(withoutMessages[0]?.afterMessageID, null);
 
   const messages = [makeMessage("msg-a", 1)];
   const first = appendSessionErrorTurnModel({

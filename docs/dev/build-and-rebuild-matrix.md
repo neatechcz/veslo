@@ -10,7 +10,9 @@ Use this matrix to decide what must be rebuilt after a code change.
 | `packages/app/src` with desktop-only behavior assumptions | Run through Tauri desktop runtime | Browser-only checks are not authoritative |
 | `packages/server/src` | `pnpm --filter veslo-server build:bin` | Orchestrator uses the built server binary, not TS sources |
 | `packages/desktop/src-tauri` | Rebuild desktop runtime | Native commands and shell behavior live in Tauri |
+| Local host child lifecycle/recovery | `pnpm check:desktop-recovery` after desktop preflight | Rebuilds the focused E2E binary and proves VSLO-235 child exit/restart with a fresh profile |
 | `packages/e2e` | Re-run targeted `tauri-pilot` scenario | Runtime expectations changed |
+| Windows MSI payload or startup contract | Run extracted-MSI verification, then the disposable-VM installed-MSI gate | An administrative extraction cannot prove Program Files startup, profile isolation, or second-start behavior |
 | `packages/orchestrator/src` | Re-run orchestrator tests and relevant host flows | Sidecar orchestration is CLI-owned |
 | shared docs only | No binary rebuild required | Documentation-only change |
 
@@ -41,6 +43,18 @@ pnpm dev
 cd packages/desktop
 pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e
 ```
+
+### Focused desktop recovery quality gate
+
+After the Desktop Test Runtime Preflight, run:
+
+```bash
+pnpm check:desktop-recovery
+```
+
+This is the same Windows CI command behind `Quality / Desktop recovery`. It builds the
+server binary and E2E Tauri app, prepares sidecars, then runs only
+`vslo-235-local-host-child-exit`; it does not substitute the broader Pilot suite.
 
 ### tauri-pilot
 
@@ -80,6 +94,35 @@ that would make macOS builds require nonexistent Apple target binaries.
 Generated CI config extensions must stay minimal and override only the intended
 setting; copying the base config into a later `--config` layer would replace the
 Windows-specific `externalBin` array.
+
+### Windows final MSI
+
+Validate a final Windows asset in two distinct steps. The first is an exact
+artifact check and may run on a build machine with Node available:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/release/verify-windows-msi-runtime.ps1 -MsiPath <exact-signed-msi> -SummaryPath <evidence-dir>\payload.json
+```
+
+It performs an administrative extraction and verifies the sidecar payload,
+manifest, bundled document-runtime provider, and Chrome DevTools MCP runtime.
+It does not install the MSI and therefore cannot prove customer startup.
+Production, prerelease, manual, and staging Windows workflows run this exact
+gate and Authenticode verification before their first MSI artifact upload.
+
+The second step runs only on an elevated, disposable Windows VM with the exact
+same MSI:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/release/verify-windows-msi-installed.ps1 -Scenario clean -MsiPath <exact-signed-msi> -ReleaseTag <tag> -Commit <commit> -SummaryPath <evidence-dir>\clean.json
+```
+
+The installed-MSI verifier deliberately does not use Tauri Pilot. It observes
+the Program Files process, main window, authenticated local server status,
+document-runtime status, and redacted durable `desktop-bootstrap-ready.json`
+marker. Run its clean, no-WSL, upgrade, normal-second-start, forced-runtime,
+foreign-listener, and updater scenarios before promoting the public Windows
+release.
 
 ## When in Doubt
 

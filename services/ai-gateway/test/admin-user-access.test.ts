@@ -23,6 +23,8 @@ const AI_ACCESS_PAYLOAD = {
   enabled: true,
   provider: "openai",
   credentialId: "cred_openai_123",
+  defaultModel: "gpt-5.5",
+  allowedModels: ["gpt-5.5"],
   updatedAt: "2026-04-08T10:00:00.000Z",
 };
 
@@ -205,12 +207,12 @@ function createCredential(
   };
 }
 
-function createCodexModelPolicyRepository() {
+function createCodexModelPolicyRepository(enabledModels = ["gpt-5.5"]) {
   return {
     async getPolicy() {
       return {
         id: "platform" as const,
-        enabledModels: [{ provider: "codex_oauth" as const, model: "gpt-5.5" }],
+        enabledModels: enabledModels.map((model) => ({ provider: "codex_oauth" as const, model })),
         activeModel: { provider: "codex_oauth" as const, model: "gpt-5.5" },
         createdAt: new Date("2026-07-12T08:00:00.000Z"),
         updatedAt: new Date("2026-07-12T08:00:00.000Z"),
@@ -334,10 +336,11 @@ function createAdminUserAccessApp(options: { upsertError?: Error; members?: unkn
         adminUserAccessOrganizationId = organizationId;
         adminUserAccessActorUserId = actorUserId;
         currentAiAccess = {
-          id: currentAiAccess.id,
-          updatedAt: currentAiAccess.updatedAt,
+          ...currentAiAccess,
           userId,
           ...input,
+          defaultModel: input.enabled === false ? null : currentAiAccess.defaultModel,
+          allowedModels: input.enabled === false ? [] : currentAiAccess.allowedModels,
         };
         return {
           aiAccess: {
@@ -821,13 +824,15 @@ test("qualified AI-access PUT uses one scoped membership lookup without listing 
           enabled: true,
           provider: "codex_oauth",
           credentialId: "cred_codex_123",
+          defaultModel: "gpt-5.5",
+          allowedModels: ["gpt-5.5"],
           assignmentOrigin: "admin_assigned",
           createdAt: new Date("2026-07-12T12:00:00.000Z"),
           updatedAt: new Date("2026-07-12T12:00:00.000Z"),
         };
       },
     },
-    modelPolicyRepository: createCodexModelPolicyRepository(),
+    modelPolicyRepository: createCodexModelPolicyRepository(["gpt-5.5", "gpt-5.6-sol"]),
     modelCapabilities: createSupportedModelCapabilities(),
     credentialReadRepository: {
       async listAdminCredentials() {
@@ -878,6 +883,8 @@ test("qualified AI-access PUT uses one scoped membership lookup without listing 
     enabled: true,
     provider: "codex_oauth",
     credentialId: "cred_codex_123",
+    defaultModel: "gpt-5.5",
+    allowedModels: ["gpt-5.5", "gpt-5.6-sol"],
     assignmentOrigin: "admin_assigned",
   }]);
 });
@@ -1663,6 +1670,12 @@ test("GET /api/me/ai-access returns the signed-in user's effective ai access pol
       aiAccess: {
         ...AI_ACCESS_PAYLOAD,
         effectiveModel: { provider: "openai", model: "gpt-5.5" },
+        selectableModels: [{
+          provider: "openai",
+          model: "gpt-5.5",
+          registryVersion: "unregistered",
+          capabilityStatus: "unknown",
+        }],
       },
     });
   } finally {
@@ -1705,7 +1718,10 @@ test("admin ai access updates flow through to the signed-in user's effective pol
         enabled: false,
         provider: "anthropic",
         credentialId: "cred_openai_123",
-        effectiveModel: { provider: "openai", model: "gpt-5.5" },
+        defaultModel: null,
+        allowedModels: [],
+        effectiveModel: null,
+        selectableModels: [],
       },
     });
   } finally {

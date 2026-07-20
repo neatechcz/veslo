@@ -166,38 +166,38 @@ test("artifact family workspace root follows scoped selected session", () => {
   );
 });
 
-test("latest-run artifacts resolve workspace from scoped selected session", () => {
+test("artifact families project latest-run artifacts from the selected transcript", () => {
   assert.match(
     source,
-    /const latestRunArtifactScope = createMemo\(\(\) => \{[\s\S]*const scope = resolveSelectedSessionBrowseScope\(sessionId\);[\s\S]*const workspaceId = scope\?\.workspaceId\?\.trim\(\) \|\| workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*const directory = scope\?\.directory\?\.trim\(\) \|\| sessionDirectoryOverrideById\(\)\[sessionId\]\?\.trim\(\) \|\| workspaceRoot;/,
-    "latest-run artifact target should be derived from the displayed scoped session",
-  );
-  assert.match(
-    source,
-    /ensureConversationReadWorkspaceRegistered\(\s*client,\s*scope\.workspaceId,\s*scope\.directory,\s*\);[\s\S]*client\.getSessionLatestRunArtifacts\(serverWorkspaceId, scope\.sessionId, scope\.directory\)/,
-    "latest-run artifact refresh should resolve the server workspace for the scoped session before reading artifacts",
+    /const projection = transcriptProjectionStore\.currentTranscriptProjection\(\);[\s\S]*resolveArtifactFamilies\(\{[\s\S]*serverArtifacts: projection\?\.items,[\s\S]*preferServerArtifacts: Boolean\(projection\),[\s\S]*legacyArtifacts: projection \? \[\] : artifacts\(\),[\s\S]*workingFiles: projection \? \[\] : workingFiles\(\),/s,
+    "artifact rendering should use the guarded latest-run projection from the selected transcript",
   );
   assert.doesNotMatch(
     source,
-    /const workspaceId = vesloServerWorkspaceId\(\);[\s\S]*getSessionLatestRunArtifacts\(workspaceId, sessionId\)/,
-    "latest-run artifact refresh must not use the active Veslo workspace for every selected session",
+    /getSessionLatestRunArtifacts/,
+    "artifact rendering must not issue an uncorrelated latest-run request after a transcript projection is reserved",
   );
 });
 
 test("conversation read workspace registration dedupes per Veslo client", () => {
   assert.match(
     conversationServiceSource,
-    /const conversationWorkspaceRegistrationCacheByClient = new WeakMap<[\s\S]*Map<string, Promise<\{ id: string; cacheable: boolean \}>>[\s\S]*>\(\);/,
+    /const conversationWorkspaceRegistrationCacheByClient = new WeakMap<[\s\S]*Map<string, ConversationWorkspaceRegistrationFlight>[\s\S]*>\(\);/,
     "conversation workspace registration should keep a cache scoped to the current Veslo client object",
   );
   assert.match(
     conversationServiceSource,
-    /const cachedRegistration = registrationCache\.get\(registrationCacheKey\);[\s\S]*return \(await cachedRegistration\)\.id;/,
-    "repeated local conversation reads should join the same workspace registration lookup",
+    /if \(!requireLiveOpencodeBaseUrl\) \{[\s\S]*const liveRegistration = registrationCache\.get\(liveRegistrationCacheKey\);[\s\S]*const result = await liveRegistration\.promise;[\s\S]*if \(result\.cacheable && result\.id\) return result\.id;/,
+    "a read started during a live registration should join that in-flight registration before doing its own lookup",
   );
   assert.match(
     conversationServiceSource,
-    /if \(!result\.cacheable && registrationCache\.get\(registrationCacheKey\) === registrationPromise\) \{[\s\S]*registrationCache\.delete\(registrationCacheKey\);[\s\S]*\}/,
+    /const cachedRegistration = registrationCache\.get\(registrationCacheKey\);[\s\S]*return \(await cachedRegistration\.promise\)\.id;/,
+    "repeated registrations with the same policy should join the same in-flight lookup",
+  );
+  assert.match(
+    conversationServiceSource,
+    /if \(!result\.cacheable && registrationCache\.get\(registrationCacheKey\) === registrationFlight\) \{[\s\S]*registrationCache\.delete\(registrationCacheKey\);[\s\S]*\}/,
     "failed fallback-only registration attempts should not be cached forever",
   );
 });
@@ -504,7 +504,7 @@ test("pending permission interval skips active sends and single-client mode cove
   );
   assert.match(
     composerSource,
-    /setActiveSendTraceId\(options\.sendTraceId \?\? null\);[\s\S]*sendPromise = props\.onSend\(submittedDraft, options\);[\s\S]*finally \{[\s\S]*setActiveSendTraceId\(null\);/,
+    /setActiveSendTraceId\(options\.sendTraceId \?\? null\);\s*sendPromise = props\.onSend\(submittedDraft, sendOptions\);[\s\S]*?sendResult = await sendPromise;[\s\S]*?finally \{[\s\S]*?finishSending\(\);\s*setActiveSendTraceId\(null\);/,
     "composer should keep the active send trace id set while onSend is pending",
   );
   assert.match(

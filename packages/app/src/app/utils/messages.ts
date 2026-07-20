@@ -15,6 +15,8 @@ export function normalizeEvent(raw: unknown): OpencodeEvent | null {
   }
 
   const record = raw as Record<string, unknown>;
+  const eventIdReset = record.eventIdReset === true || record.eventId === "";
+  const eventId = typeof record.eventId === "string" && record.eventId.trim() ? record.eventId : undefined;
 
   if (record.type === "sync") {
     const syncEvent = record.syncEvent;
@@ -26,6 +28,8 @@ export function normalizeEvent(raw: unknown): OpencodeEvent | null {
     return {
       type: stripTrailingNumericSchemaSuffix(syncRecord.type),
       properties: syncRecord.data,
+      ...(eventId ? { eventId } : {}),
+      ...(eventIdReset ? { eventIdReset: true } : {}),
     };
   }
 
@@ -33,11 +37,19 @@ export function normalizeEvent(raw: unknown): OpencodeEvent | null {
     return {
       type: record.type,
       properties: record.properties,
+      ...(eventId ? { eventId } : {}),
+      ...(eventIdReset ? { eventIdReset: true } : {}),
     };
   }
 
   if (record.payload && typeof record.payload === "object") {
-    return normalizeEvent(record.payload);
+    const nested = normalizeEvent(record.payload);
+    if (!nested) return null;
+    if (eventIdReset) {
+      const { eventId: _eventId, ...withoutEventId } = nested;
+      return { ...withoutEventId, eventIdReset: true };
+    }
+    return eventId && !nested.eventId ? { ...nested, eventId } : nested;
   }
 
   return null;
@@ -156,7 +168,7 @@ export function extractSessionId(value: unknown): string | null {
   return null;
 }
 
-export function modelFromUserMessage(info: MessageInfo): ModelRef | null {
+export function modelFromUserMessage(info: unknown): ModelRef | null {
   if (!info || typeof info !== "object") return null;
   if ((info as { role?: unknown }).role !== "user") return null;
 

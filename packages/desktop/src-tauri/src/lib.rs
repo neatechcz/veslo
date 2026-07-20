@@ -19,6 +19,7 @@ mod single_window_config_tests;
 mod supervised_process;
 mod types;
 mod updater;
+mod user_diagnostic_capture;
 mod utils;
 mod veslo_server;
 mod workspace;
@@ -27,7 +28,8 @@ pub use types::*;
 
 use bootstrap_diagnostics::{
     clear_bootstrap_diagnostics_cloud_context, record_bootstrap_diagnostic,
-    set_bootstrap_diagnostics_cloud_context,
+    set_bootstrap_diagnostics_cloud_context, start_user_diagnostic_capture,
+    user_diagnostic_capture_status,
 };
 use commands::access_proofs::{access_proof_ai_clear, access_proof_ai_read, access_proof_ai_write};
 use commands::clipboard::clipboard_file_paths;
@@ -117,6 +119,7 @@ fn register_debug_logs_forwarder(app_handle: &tauri::AppHandle) {
         Duration::from_secs(5),
     );
     tauri::Manager::manage(app_handle, forwarder);
+    eprintln!("[debug-logs-forwarder] initialized");
 }
 
 pub(crate) fn stop_managed_services(app_handle: &tauri::AppHandle) -> Vec<u32> {
@@ -385,6 +388,8 @@ pub fn run() {
             record_bootstrap_diagnostic,
             set_bootstrap_diagnostics_cloud_context,
             clear_bootstrap_diagnostics_cloud_context,
+            start_user_diagnostic_capture,
+            user_diagnostic_capture_status,
             obsidian_is_available,
             open_in_obsidian,
             write_obsidian_mirror_file,
@@ -432,16 +437,16 @@ pub fn run() {
     // orchestrator/veslo-code/veslo-server processes and stale ports.
     app.run(|app_handle, event| match event {
         tauri::RunEvent::ExitRequested { .. } => {
-            stop_managed_services_for_exit(&app_handle, "exit_requested");
+            stop_managed_services_for_exit(app_handle, "exit_requested");
         }
         tauri::RunEvent::Exit => {
-            stop_managed_services_for_exit(&app_handle, "exit");
+            stop_managed_services_for_exit(app_handle, "exit");
         }
         tauri::RunEvent::WindowEvent {
             event: tauri::WindowEvent::CloseRequested { .. },
             ..
         } => {
-            stop_managed_services_for_exit(&app_handle, "window_close_requested");
+            stop_managed_services_for_exit(app_handle, "window_close_requested");
         }
         _ => {}
     });

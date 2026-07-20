@@ -112,7 +112,7 @@ export function trySetPendingSubmittedDraftForKey(
 ): PendingSubmittedDraftSlotWriteResult {
   const key = sessionKey.trim();
   if (!key) return { kind: "invalid-session-key", draftsBySessionKey: current };
-  const existing = current[key];
+  const existing = Object.hasOwn(current, key) ? current[key] : null;
   if (existing && existing.id !== draft.id) {
     return { kind: "occupied", draftsBySessionKey: current, pending: existing };
   }
@@ -139,7 +139,9 @@ export function removePendingSubmittedDraftForKey(
 ): PendingSubmittedDraftBySessionKey {
   const key = sessionKey.trim();
   const id = submittedDraftId.trim();
-  if (!key || !id || current[key]?.id !== id) return current;
+  if (!key || !id) return current;
+  const existing = Object.hasOwn(current, key) ? current[key] : null;
+  if (!existing || existing.id !== id) return current;
   const { [key]: _removed, ...rest } = current;
   return rest;
 }
@@ -159,9 +161,9 @@ export function materializePendingSessionInstance(
     return current;
   }
 
-  const pending = current[pendingKey];
+  const pending = Object.hasOwn(current, pendingKey) ? current[pendingKey] : null;
   if (!pending) return current;
-  const existing = current[realKey];
+  const existing = Object.hasOwn(current, realKey) ? current[realKey] : null;
   if (existing && existing.id !== pending.id) return current;
 
   const { [pendingKey]: _removed, ...rest } = current;

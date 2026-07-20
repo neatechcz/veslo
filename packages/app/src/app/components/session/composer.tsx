@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
 import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
@@ -13,6 +13,9 @@ import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
 import { createComposerDraftHandoffController } from "./composer-draft-handoff";
 import { findMentionTrigger } from "./composer-mention-trigger";
+import { uiEffectTrace } from "../../lib/ui-effect-trace";
+
+let composerEditorInstanceSequence = 0;
 
 
 type MentionOption = {
@@ -46,6 +49,8 @@ type ComposerSendTraceRoot = typeof window & {
 type ComposerProps = {
   initialDraft: ComposerDraft;
   prompt: string;
+  draftStorageKey: string;
+  draftRevision: number;
   developerMode: boolean;
   busy: boolean;
   isStreaming: boolean;
@@ -56,7 +61,9 @@ type ComposerProps = {
   entryPlacement?: "footer" | "center";
   onSend: (draft: ComposerDraft, options?: ComposerSendOptions) => Promise<ComposerSendResult>;
   onStop: () => void;
-  onDraftChange: (draft: ComposerDraft) => void;
+  onDraftChange: (storageKey: string, draft: ComposerDraft) => void;
+  captureDraftRevision: (storageKey: string) => number;
+  clearDraftIfRevision: (storageKey: string, revision: number) => boolean;
   selectedAgent: string | null;
   onSelectAgent: (agent: string | null) => void;
   showNotionBanner: boolean;
@@ -395,7 +402,7 @@ const restoreSelectionOffsets = (root: HTMLElement, offsets: { start: number; en
       startNode = node;
       startOffset = offsets.start - current;
     }
-    if (!endNode && current + length >= offsets.end) {
+    if (current + length >= offsets.end) {
       endNode = node;
       endOffset = offsets.end - current;
       break;
@@ -430,7 +437,7 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
       startNode = node;
       startOffset = start - current;
     }
-    if (!endNode && current + length >= end) {
+    if (current + length >= end) {
       endNode = node;
       endOffset = end - current;
       break;
@@ -458,13 +465,20 @@ export default function Composer(props: ComposerProps) {
       : `sticky bottom-0 z-20 bg-gradient-to-t from-gray-1 via-gray-1 to-transparent px-8 ${props.compactTopSpacing ? "pt-0" : "pt-12"} pb-3`,
   );
   let editorRef: HTMLDivElement | undefined;
+  const editorInstanceId = `composer_${(composerEditorInstanceSequence += 1)}`;
   let fileInputRef: HTMLInputElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
+  let observedDraftStorageKey = untrack(() => props.draftStorageKey);
+  let storageKeyTransitionAuthorizesPromptSync = false;
+  let pendingParentConditionalClear: { storageKey: string; nextRevision: number } | null = null;
+  let scheduledDraftStorageKey: string | null = null;
+  const submittedStorageKeys = new Set<{ storageKey: string }>();
   let pasteCounter = 0;
   let draftScheduledAt = 0;
   let lastInputAt = 0;
   let fileDragDepth = 0;
+  let authorizedFocusChange: "pointer" | "keyboard" | "window-blur" | null = null;
   const pasteTextById = new Map<string, string>();
   // Track IME composition state so we can combine it with keyCode === 229 to
   // reliably suppress Enter during CJK input across Chrome, Safari, and WebKit.
@@ -473,12 +487,14 @@ export default function Composer(props: ComposerProps) {
   const [mentionQuery, setMentionQuery] = createSignal("");
   const [mentionOpen, setMentionOpen] = createSignal(false);
   const [searchResults, setSearchResults] = createSignal<string[]>([]);
+  const initialDraft = untrack(() => props.initialDraft);
+  const initialPrompt = untrack(() => props.prompt);
   const [attachments, setAttachments] = createSignal<ComposerAttachment[]>(
-    (props.initialDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
+    (initialDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
   );
   const draftHandoffController = createComposerDraftHandoffController();
-  const [draftText, setDraftText] = createSignal(normalizeText(props.initialDraft.text ?? props.prompt));
-  const [mode, setMode] = createSignal<PromptMode>(props.initialDraft.mode ?? "prompt");
+  const [draftText, setDraftText] = createSignal(normalizeText(initialDraft.text ?? initialPrompt));
+  const [mode, setMode] = createSignal<PromptMode>(initialDraft.mode ?? "prompt");
   const [historySnapshot, setHistorySnapshot] = createSignal<ComposerDraft | null>(null);
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
@@ -509,7 +525,11 @@ export default function Composer(props: ComposerProps) {
   const [slashLoading, setSlashLoading] = createSignal(false);
 
   onMount(() => {
-    queueMicrotask(() => focusEditorEnd());
+    uiEffectTrace.record("ui-composer:mount", {
+      editorInstanceId,
+      entryPlacement: props.entryPlacement ?? "footer",
+    });
+    queueMicrotask(() => focusEditorEnd("mount"));
 
     // Bind composition events directly via addEventListener because SolidJS
     // does not delegate compositionstart/compositionend — the camelCase JSX
@@ -523,7 +543,41 @@ export default function Composer(props: ComposerProps) {
           imeComposing = false;
         });
       });
+      editorRef.addEventListener("focusin", () => {
+        uiEffectTrace.record("ui-focus:changed", { editorInstanceId, focused: true });
+      });
+      editorRef.addEventListener("focusout", (event) => {
+        const related = event.relatedTarget;
+        const reason = authorizedFocusChange;
+        authorizedFocusChange = null;
+        uiEffectTrace.record("ui-focus:changed", {
+          editorInstanceId,
+          focused: false,
+          authorized: reason !== null,
+          authorizationReason: reason,
+          relatedTargetRole: related instanceof Element ? related.getAttribute("role") ?? related.tagName.toLowerCase() : null,
+        });
+      });
     }
+
+    const authorizeFocusChange = (reason: NonNullable<typeof authorizedFocusChange>) => {
+      authorizedFocusChange = reason;
+      queueMicrotask(() => {
+        if (authorizedFocusChange === reason) authorizedFocusChange = null;
+      });
+    };
+    const authorizePointerFocusChange = () => {
+      authorizeFocusChange("pointer");
+    };
+    const authorizeKeyboardFocusChange = (event: KeyboardEvent) => {
+      if (event.key === "Tab" || event.metaKey || event.ctrlKey) authorizeFocusChange("keyboard");
+    };
+    const authorizeWindowBlur = () => {
+      authorizeFocusChange("window-blur");
+    };
+    window.addEventListener("pointerdown", authorizePointerFocusChange, true);
+    window.addEventListener("keydown", authorizeKeyboardFocusChange, true);
+    window.addEventListener("blur", authorizeWindowBlur);
 
     const clearDragState = () => {
       clearFileDragState();
@@ -533,6 +587,9 @@ export default function Composer(props: ComposerProps) {
     onCleanup(() => {
       window.removeEventListener("dragend", clearDragState);
       window.removeEventListener("drop", clearDragState);
+      window.removeEventListener("pointerdown", authorizePointerFocusChange, true);
+      window.removeEventListener("keydown", authorizeKeyboardFocusChange, true);
+      window.removeEventListener("blur", authorizeWindowBlur);
     });
   });
 
@@ -624,11 +681,53 @@ export default function Composer(props: ComposerProps) {
     rememberRecentEmit(value);
   };
 
+  // A pending-to-real handoff deliberately changes the ownership key. The
+  // outgoing Composer can observe its old bucket becoming empty for one Solid
+  // turn while the replacement Composer receives the moved value. That is an
+  // authorized transition, not a focused draft-loss incident.
+  createEffect(() => {
+    const nextStorageKey = props.draftStorageKey;
+    if (nextStorageKey === observedDraftStorageKey) return;
+    const previousStorageKey = observedDraftStorageKey;
+    observedDraftStorageKey = nextStorageKey;
+    // A debounced edit or an accepted first submit may outlive the synchronous
+    // no-session -> real-session handoff. Follow that one ownership transfer;
+    // do not retarget later ordinary session switches.
+    const followsPendingOwnership = previousStorageKey === "__no-session__"
+      || previousStorageKey === "__unpublished-composer-draft__:global";
+    if (followsPendingOwnership && scheduledDraftStorageKey === previousStorageKey) {
+      scheduledDraftStorageKey = nextStorageKey;
+    }
+    if (followsPendingOwnership) {
+      for (const submission of submittedStorageKeys) {
+        if (submission.storageKey === previousStorageKey) submission.storageKey = nextStorageKey;
+      }
+    }
+    storageKeyTransitionAuthorizesPromptSync = true;
+    queueMicrotask(() => {
+      storageKeyTransitionAuthorizesPromptSync = false;
+    });
+  });
+
   // Sync from props: ignore echoes of what we just sent
   createEffect(() => {
     if (!editorRef) return;
     const value = props.prompt;
     const current = readEditorText(editorRef);
+    const parentConditionalClearAuthorizesPromptSync = Boolean(
+      pendingParentConditionalClear
+      && !value
+      && props.draftStorageKey === pendingParentConditionalClear.storageKey
+      && props.draftRevision === pendingParentConditionalClear.nextRevision,
+    );
+    uiEffectTrace.record("ui-effect:run", {
+      owner: "composer.prompt-sync",
+      editorInstanceId,
+      promptLength: value.length,
+      currentLength: current.length,
+      equal: value === current,
+      parentConditionalClearAuthorizesPromptSync,
+    });
 
     // Robust Echo Cancellation:
     // If the incoming value matches ANY recently emitted text, it's a stale echo or confirmation.
@@ -665,6 +764,22 @@ export default function Composer(props: ComposerProps) {
     }
 
     // External update confirmed
+    uiEffectTrace.record("ui-draft:mutation", {
+      editorInstanceId,
+      reason: "external-sync",
+      previousLength: current.length,
+      nextLength: value.length,
+      focused: document.activeElement === editorRef,
+      authorizedStorageKeyTransition: storageKeyTransitionAuthorizesPromptSync,
+      parentConditionalClearAuthorizesPromptSync,
+    });
+    if (
+      document.activeElement === editorRef
+      && !storageKeyTransitionAuthorizesPromptSync
+      && !parentConditionalClearAuthorizesPromptSync
+    ) {
+      uiEffectTrace.reportIncident("draft-external-sync-while-focused", { editorInstanceId });
+    }
     if (value.startsWith("!") && mode() === "prompt") {
       setMode("shell");
       setEditorText(value.slice(1).trimStart());
@@ -690,10 +805,13 @@ export default function Composer(props: ComposerProps) {
   });
 
   let emitTimer: number | null = null;
+  // A debounce may outlive a target remap. Keep the key from the edit event so
+  // an outgoing Composer instance can never write into the newly active target.
   const emitDraftChange = () => {
     if (!editorRef) return;
     draftHandoffController.markDraftChanged();
     draftScheduledAt = perfNow();
+    scheduledDraftStorageKey = props.draftStorageKey;
 
     if (emitTimer) window.clearTimeout(emitTimer);
     emitTimer = window.setTimeout(() => {
@@ -722,7 +840,9 @@ export default function Composer(props: ComposerProps) {
 
     suppressPromptSync = true;
     const draftChangeStartedAt = perfNow();
-    props.onDraftChange({
+    const storageKey = scheduledDraftStorageKey ?? props.draftStorageKey;
+    scheduledDraftStorageKey = null;
+    props.onDraftChange(storageKey, {
       mode: mode(),
       parts,
       attachments: attachments(),
@@ -756,6 +876,11 @@ export default function Composer(props: ComposerProps) {
     if (submitLocked()) return;
     const startedAt = perfNow();
     const currentText = readEditorText(editorRef);
+    uiEffectTrace.record("ui-draft:mutation", {
+      editorInstanceId,
+      reason: "user-input",
+      nextLength: currentText.length,
+    });
     const mentionStartedAt = perfNow();
     if (mentionOpen() || currentText.includes("@")) {
       updateMentionQuery(currentText);
@@ -788,8 +913,9 @@ export default function Composer(props: ComposerProps) {
     }
   };
 
-  const focusEditorEnd = () => {
+  const focusEditorEnd = (reason = "automatic") => {
     if (!editorRef) return;
+    uiEffectTrace.record("ui-focus:intent", { editorInstanceId, reason });
     const selection = window.getSelection();
     if (!selection) return;
     const range = document.createRange();
@@ -927,7 +1053,7 @@ export default function Composer(props: ComposerProps) {
     editorRef.appendChild(chip);
     editorRef.appendChild(document.createTextNode(" "));
     suppressPromptSync = true;
-    props.onDraftChange({
+    props.onDraftChange(props.draftStorageKey, {
       mode: mode(),
       parts: [{ type: "text", text }],
       attachments: attachments(),
@@ -1001,7 +1127,7 @@ export default function Composer(props: ComposerProps) {
     renderParts(draft.parts, false);
     setDraftText(draft.text);
     setAttachments(draft.attachments ?? []);
-    props.onDraftChange(draft);
+    props.onDraftChange(props.draftStorageKey, draft);
   };
 
   const navigateHistory = (direction: "up" | "down") => {
@@ -1029,22 +1155,30 @@ export default function Composer(props: ComposerProps) {
     applyHistoryDraft(target);
   };
 
-  const clearSubmittedDraft = (submittedMode: ComposerDraft["mode"]) => {
+  const clearSubmittedDraft = (
+    submittedMode: ComposerDraft["mode"],
+    submittedStorageKey: string,
+    submittedStorageRevision: number,
+  ) => {
+    const parentClear = {
+      storageKey: submittedStorageKey,
+      nextRevision: submittedStorageRevision + 1,
+    };
+    pendingParentConditionalClear = parentClear;
+    if (!props.clearDraftIfRevision(submittedStorageKey, submittedStorageRevision)) {
+      if (pendingParentConditionalClear === parentClear) pendingParentConditionalClear = null;
+      return false;
+    }
     setAttachments([]);
     setEditorText("");
     pasteTextById.clear();
     resetRecentEmits("");
     suppressPromptSync = true;
-    props.onDraftChange({
-      mode: submittedMode,
-      parts: [],
-      attachments: [],
-      text: "",
-      resolvedText: "",
-    });
     queueMicrotask(() => {
       suppressPromptSync = false;
+      if (pendingParentConditionalClear === parentClear) pendingParentConditionalClear = null;
     });
+    return true;
   };
 
   const [sendingCount, setSendingCount] = createSignal(0);
@@ -1095,6 +1229,19 @@ export default function Composer(props: ComposerProps) {
     recordHistory(draft);
     const submittedDraft = draft;
     const submittedRevision = draftHandoffController.beginSubmission();
+    const submittedStorageKey = props.draftStorageKey;
+    const submittedStorage = { storageKey: submittedStorageKey };
+    submittedStorageKeys.add(submittedStorage);
+    const submittedStorageRevision = props.captureDraftRevision(submittedStorageKey);
+    uiEffectTrace.record("composer-draft:revision-captured", {
+      owner: "composer-submit",
+      storageKeyKind: submittedStorageKey === "__unpublished-composer-draft__:global"
+        ? "unpublished"
+        : submittedStorageKey === "__no-session__"
+          ? "no-session"
+          : "session",
+      revision: submittedStorageRevision,
+    });
     beginSending();
     if (options.sendNow) setSendNowPending(true);
     setMentionOpen(false);
@@ -1114,9 +1261,14 @@ export default function Composer(props: ComposerProps) {
     const sendOptions: ComposerSendOptions = {
       ...options,
       onDraftTransferred: () => {
-        draftHandoffController.acknowledgeTransfer(submittedRevision, () => {
-          clearSubmittedDraft(submittedDraft.mode);
-        });
+        draftHandoffController.acknowledgeTransfer(
+          submittedRevision,
+          () => untrack(() => clearSubmittedDraft(
+            submittedDraft.mode,
+            submittedStorage.storageKey,
+            submittedStorageRevision,
+          )),
+        );
       },
     };
     try {
@@ -1140,7 +1292,11 @@ export default function Composer(props: ComposerProps) {
       draftHandoffController.applyResult(
         submittedRevision,
         sendResult.draftDisposition,
-        () => clearSubmittedDraft(submittedDraft.mode),
+        () => untrack(() => clearSubmittedDraft(
+          submittedDraft.mode,
+          submittedStorage.storageKey,
+          submittedStorageRevision,
+        )),
       );
     } catch (error) {
       recordSendTrace("sendDraft:onSend:error", {
@@ -1150,6 +1306,7 @@ export default function Composer(props: ComposerProps) {
         source: options.source,
       });
     } finally {
+      submittedStorageKeys.delete(submittedStorage);
       finishSending();
       setActiveSendTraceId(null);
       if (options.sendNow) setSendNowPending(false);
@@ -1558,7 +1715,7 @@ export default function Composer(props: ComposerProps) {
       const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
       if (event.key === "Enter" && !imeActive) {
         event.preventDefault();
-        const active = options[mentionIndex()] ?? options[0];
+        const active = options.at(mentionIndex()) ?? options.at(0);
         if (active) insertMention(active);
         return;
       }
@@ -1582,7 +1739,7 @@ export default function Composer(props: ComposerProps) {
       }
       if (event.key === "Tab") {
         event.preventDefault();
-        const active = options[mentionIndex()] ?? options[0];
+        const active = options.at(mentionIndex()) ?? options.at(0);
         if (active) insertMention(active);
         return;
       }
@@ -1594,7 +1751,7 @@ export default function Composer(props: ComposerProps) {
       const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
       if (event.key === "Enter" && !imeActive) {
         event.preventDefault();
-        const active = options[slashIndex()] ?? options[0];
+        const active = options.at(slashIndex()) ?? options.at(0);
         if (active) handleSlashSelect(active);
         return;
       }
@@ -1618,7 +1775,7 @@ export default function Composer(props: ComposerProps) {
       }
       if (event.key === "Tab") {
         event.preventDefault();
-        const active = options[slashIndex()] ?? options[0];
+        const active = options.at(slashIndex()) ?? options.at(0);
         if (active) handleSlashSelect(active);
         return;
       }
@@ -1707,7 +1864,7 @@ export default function Composer(props: ComposerProps) {
       return;
     }
     const runId = (mentionSearchRun += 1);
-    const timeout = window.setTimeout(() => {
+    const timeout = setTimeout(() => {
       props
         .searchFiles(query)
         .then((results) => {
@@ -1743,6 +1900,9 @@ export default function Composer(props: ComposerProps) {
   });
 
   onCleanup(() => {
+    const focused = document.activeElement === editorRef;
+    uiEffectTrace.record("ui-composer:dispose", { editorInstanceId, focused });
+    if (focused) uiEffectTrace.reportIncident("composer-disposed-while-focused", { editorInstanceId });
     if (emitTimer !== null) {
       window.clearTimeout(emitTimer);
       emitTimer = null;
@@ -1883,7 +2043,7 @@ export default function Composer(props: ComposerProps) {
               <button
                 type="button"
                 class="w-full mb-2 flex items-center justify-between gap-3 rounded-xl border border-green-7/20 bg-green-7/10 px-3 py-2 text-left text-sm text-green-12 transition-colors hover:bg-green-7/15"
-                onClick={props.onNotionBannerClick}
+                onClick={() => props.onNotionBannerClick()}
               >
                 <span>{translate("session.try_notion_prompt")}</span>
                 <span class="text-xs text-green-12 font-medium">{translate("session.insert_prompt")}</span>
@@ -1946,6 +2106,8 @@ export default function Composer(props: ComposerProps) {
                     </Show>
                     <div
                       ref={editorRef}
+                      data-testid="session-composer-input"
+                      data-composer-editor-instance={editorInstanceId}
                       contentEditable={!submitLocked()}
                       role="textbox"
                       aria-disabled={submitLocked() ? "true" : "false"}
@@ -2033,6 +2195,7 @@ export default function Composer(props: ComposerProps) {
                           fallback={
                             <button
                               type="button"
+                              data-testid="session-composer-send-button"
                               disabled={sendDisabled()}
                               onClick={() => {
                                 recordSendTrace("sendButton:click", {
@@ -2072,6 +2235,7 @@ export default function Composer(props: ComposerProps) {
                         >
                           <button
                             type="button"
+                            data-testid="session-composer-stop-button"
                             onClick={() => props.onStop()}
                             class="inline-flex h-8 w-10 shrink-0 items-center justify-center rounded-md border border-[var(--dls-accent-border)] bg-transparent text-dls-accent transition-colors hover:bg-[var(--dls-accent-tint)]"
                             title={

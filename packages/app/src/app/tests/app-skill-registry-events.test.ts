@@ -7,6 +7,7 @@ const orchestratorSource = readFileSync(
   new URL("../context/skill-registry-orchestrator.ts", import.meta.url),
   "utf8",
 );
+const appViewPropsSource = readFileSync(new URL("../app-view-props.ts", import.meta.url), "utf8");
 
 function extractArrowObjectPropertyBody(text: string, propertyName: string): string {
   const propertyIndex = text.indexOf(`${propertyName}:`);
@@ -50,8 +51,28 @@ test("app composes the skill registry event orchestrator after extension store s
 
   assert.match(
     appSource,
-    /createSkillRegistryOrchestrator\(\{[\s\S]*vesloServerClient,[\s\S]*vesloServerStatus,[\s\S]*activeWorkspaceId:\s*\(\)\s*=>\s*workspaceStore\.activeWorkspaceId\(\),[\s\S]*workspaceBusy:\s*\(\)\s*=>\s*workspaceStore\.workspaceBusy\(\),[\s\S]*denAuthRevision,[\s\S]*readDenAuth,[\s\S]*invalidateSkillRegistryInventory:\s*\(\)\s*=>\s*extensionsStore\.invalidateSkillRegistryInventory\(\),[\s\S]*markReloadRequired/s,
+    /createSkillRegistryOrchestrator\(\{[\s\S]*vesloServerClient,[\s\S]*vesloServerStatus,[\s\S]*activeWorkspaceId:\s*\(\)\s*=>\s*workspaceStore\.activeWorkspaceId\(\),[\s\S]*workspaceBusy:\s*workspaceBusyForSkillRegistry,[\s\S]*denAuthRevision,[\s\S]*readDenAuth,[\s\S]*invalidateSkillRegistryInventory:\s*\(\)\s*=>\s*extensionsStore\.invalidateSkillRegistryInventory\(\),[\s\S]*markReloadRequired/s,
     "App should pass server connection, workspace, inventory, reload, and Den auth dependencies",
+  );
+  assert.match(
+    appSource,
+    /const workspaceBusyForSkillRegistry[\s\S]*sessionStatusById\(\)[\s\S]*conversationRunDiagnosticsBySessionKey\(\)[\s\S]*key\.indexOf\("\\0"\)[\s\S]*status\.trim\(\) === "idle"[\s\S]*"blocked"/,
+    "Skill registry events should treat non-idle session state and blocked lifecycle diagnostics as active workspace runs",
+  );
+  assert.match(
+    appSource,
+    /const activeReloadBlockingSessions[\s\S]*conversationRunDiagnosticsBySessionKey\(\)[\s\S]*diagnostic\.status !== "blocked"/,
+    "Blocked backend lifecycle diagnostics should appear in the reload-blocking session set",
+  );
+  assert.match(
+    appViewPropsSource,
+    /export function shouldShowSessionReloadBanner\([\s\S]*return input\.reloadRequired &&\s*\(input\.reloadTrigger\?\.type === "skill" \|\| input\.activeReloadBlockingSessionCount > 0\);/,
+    "Active runs should block an already required reload, not create a reload banner on their own",
+  );
+  assert.match(
+    appViewPropsSource,
+    /get showSkillReloadBanner\(\) \{\s*return shouldShowSessionReloadBanner\(\{[\s\S]*reloadRequired: reloadRequired\(\),[\s\S]*reloadTrigger: reloadTrigger\(\),[\s\S]*activeReloadBlockingSessionCount: activeReloadBlockingSessions\(\)\.length,[\s\S]*\}\);\s*\}/s,
+    "Session props should derive the reload banner through the shared decision helper",
   );
 });
 

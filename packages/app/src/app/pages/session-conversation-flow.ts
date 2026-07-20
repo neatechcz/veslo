@@ -27,7 +27,7 @@ import {
   type QueuedDraft,
   type QueuedDraftEnvelope,
 } from "../components/session/session-queue-model.js";
-import type { ComposerDraft, PendingSidebarSessionMetadata } from "../types";
+import type { ComposerDraft, ModelRef, PendingSidebarSessionMetadata } from "../types";
 import type {
   MaterializedSessionHandoff,
   MaterializedSessionScope,
@@ -41,7 +41,7 @@ import {
   sessionSubmitQueuedResult,
   sessionSubmitWasAccepted,
 } from "../lib/session-send-contract";
-import { isAiAccessLoadingMessage } from "../lib/ai-access";
+import { resolveActionableAiAccessBlockedReason } from "../lib/ai-access";
 import {
   createUiConversationKey,
   parseUiConversationKey,
@@ -533,6 +533,7 @@ export type SendPromptImmediateOptions = {
   sendTraceId?: string | null;
   source?: string | null;
   implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
+  modelOverride?: ModelRef | null;
   onDraftTransferred?: () => void;
 };
 
@@ -588,6 +589,7 @@ export type HandleSendPromptOptions = {
   sendTraceId?: string | null;
   source?: string | null;
   implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
+  modelOverride?: ModelRef | null;
   onDraftTransferred?: () => void;
 };
 
@@ -664,6 +666,10 @@ export type SessionConversationFlowControllerDeps = {
   composer: {
     clearComposerDraftForSession: (sessionId: string | null | undefined) => void;
     currentDraftMode: () => ComposerDraft["mode"];
+    remapPendingDraftToSession?: (
+      pendingDraftKey: string | null | undefined,
+      sessionId: string | null | undefined,
+    ) => void;
     setComposerDraft: (draft: ComposerDraft) => void;
   };
   transcriptEdit: {
@@ -929,8 +935,11 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         !isPendingSessionInstanceKey(selectedSessionId) &&
         queueKeysShareWorkspace(deps.sessionKeys.workspaceIdForQueueKey, pendingKey, sessionKey)
       ) {
-        deps.pendingHandoff.remapPendingQueueToSession(pendingKey, selectedSessionId);
-        deps.pendingHandoff.clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+        deps.effects.batch(() => {
+          deps.composer.remapPendingDraftToSession?.(deps.runtime.activePendingDraftKey(), selectedSessionId);
+          deps.pendingHandoff.remapPendingQueueToSession(pendingKey, selectedSessionId);
+          deps.pendingHandoff.clearPendingQueueKeyAwaitingSessionIdForBaseKey(pendingBaseKey, pendingKey);
+        });
       } else if (pendingKey && !isPendingSessionInstanceKey(selectedSessionId)) {
         // Pending sends are workspace-scoped; route switches must not materialize them elsewhere.
         deps.trace.recordSendTrace("run-state:remap-pending-to-session:blocked-workspace-mismatch", {
@@ -1123,6 +1132,9 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
         sessionKey,
         pendingSessionKeyBeforeHandoff,
       } = handoffScope;
+      const pendingComposerDraftKeyBeforeHandoff = pendingSessionKeyBeforeHandoff
+        ? deps.runtime.activePendingDraftKey()
+        : null;
       if (pendingSessionBaseKeyBeforeHandoff && pendingSessionKeyBeforeHandoff) {
         deps.pendingHandoff.setPendingQueueKeyAwaitingSessionIdForBaseKey(
           pendingSessionBaseKeyBeforeHandoff,
@@ -1245,6 +1257,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           return null;
         }
         deps.effects.batch(() => {
+          deps.composer.remapPendingDraftToSession?.(
+            pendingComposerDraftKeyBeforeHandoff,
+            materializedSessionId,
+          );
           deps.pendingHandoff.setPendingQueueKeyAwaitingSessionIdForBaseKey(
             pendingSessionBaseKey,
             materializedSessionKey,
@@ -1373,20 +1389,19 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               : deps.sessionKeys.selectedSessionId()),
           draft,
         });
-        let pendingStored = false;
-        let pendingSlotOccupied = false;
+        const optimisticSlot = { stored: false, occupied: false };
         deps.pendingSubmitted.updatePendingSubmittedDrafts((current) => {
           const result = trySetPendingSubmittedDraftForKey(
             current,
             sessionKey,
             pendingSubmittedDraft,
           );
-          pendingStored = result.kind === "stored";
-          pendingSlotOccupied = result.kind === "occupied";
+          optimisticSlot.stored = result.kind === "stored";
+          optimisticSlot.occupied = result.kind === "occupied";
           return result.draftsBySessionKey;
         });
-        if (!pendingStored) {
-          const message = pendingSlotOccupied
+        if (!optimisticSlot.stored) {
+          const message = optimisticSlot.occupied
             ? "A previous message is still synchronizing. Keep this draft and try again after it resolves."
             : "This message could not be prepared for sending. Keep the draft and try again.";
           deps.trace.recordSendTrace("sendPromptImmediate:optimistic-slot-unavailable", {
@@ -1394,11 +1409,11 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             clientMessageId,
             origin,
             sessionKey,
-            reason: pendingSlotOccupied ? "occupied" : "invalid",
+            reason: optimisticSlot.occupied ? "occupied" : "invalid",
           });
           deps.feedback.setToastMessage(message);
           return sessionSubmitBlockedResult({
-            code: pendingSlotOccupied ? "pending_submit_slot_occupied" : "pending_submit_slot_invalid",
+            code: optimisticSlot.occupied ? "pending_submit_slot_occupied" : "pending_submit_slot_invalid",
             message,
             draftDisposition: "restore",
           });
@@ -1410,10 +1425,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       }
 
       const aiAccessBlockedReason = deps.runtime.aiAccessBlockedReason();
-      // Loading copy is localized; classify by key before deciding submit policy.
-      const aiAccessSubmitBlockedReason = isAiAccessLoadingMessage(aiAccessBlockedReason, deps.feedback.tr)
-        ? null
-        : aiAccessBlockedReason;
+      const aiAccessSubmitBlockedReason = resolveActionableAiAccessBlockedReason(
+        aiAccessBlockedReason,
+        deps.feedback.tr,
+      );
       if (aiAccessSubmitBlockedReason) {
         deps.trace.recordSendTrace("sendPromptImmediate:blocked-ai-access", {
           clientMessageId,
@@ -1537,6 +1552,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           source,
           ...(transportTargetSessionId ? { targetSessionId: transportTargetSessionId } : {}),
           ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
+          ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
           ...(options.implicitSkillCommandPolicy
             ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
             : {}),
@@ -1553,6 +1569,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           source,
           ...(targetSessionId ? { targetSessionId } : {}),
           ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
+          ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
         };
         const submitResult = await (options.replaceMessageId
           ? deps.transport.replaceUserMessageAsync(options.replaceMessageId, draft, replaceOptions)
@@ -1733,6 +1750,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               updateQueuedDraft(queue, editingId, draft, deps.identity.now(), {
                 clientMessageId,
                 ...(implicitSkillCommandPolicy ? { implicitSkillCommandPolicy } : {}),
+                modelOverride: options.modelOverride ?? null,
               }),
               editingId,
             ),
@@ -1758,6 +1776,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
               updateQueuedDraft(queue, editingId, draft, deps.identity.now(), {
                 clientMessageId,
                 ...(implicitSkillCommandPolicy ? { implicitSkillCommandPolicy } : {}),
+                modelOverride: options.modelOverride ?? null,
               }),
               editingId,
             ),
@@ -1774,6 +1793,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             sendTraceId: options.sendTraceId,
             source: options.source,
             implicitSkillCommandPolicy,
+            modelOverride: options.modelOverride,
             onDraftTransferred: acknowledgeDraftTransfer,
           });
           const resultSessionKey = deps.queue.resolveQueueKeyForQueuedDraft(sessionKey, editingId);
@@ -1804,6 +1824,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             sendTraceId: options.sendTraceId,
             source: options.source,
             implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+            modelOverride: options.modelOverride,
             onDraftTransferred: acknowledgeDraftTransfer,
           });
           return submitResult;
@@ -1816,6 +1837,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             ...(options.implicitSkillCommandPolicy
               ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
               : {}),
+            ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
           });
           acknowledgeDraftTransfer();
           deps.queue.setQueuePausedForSessionKey(sessionKey, false);
@@ -1830,6 +1852,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             ...(options.implicitSkillCommandPolicy
               ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
               : {}),
+            ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
           });
           acknowledgeDraftTransfer();
           if (!deps.runState.showRunIndicator() && !deps.queue.queuePausedForSessionKey(sessionKey)) {
@@ -1846,6 +1869,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             sendTraceId: options.sendTraceId,
             source: options.source,
             implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+            modelOverride: options.modelOverride,
           });
         }
 
@@ -1858,6 +1882,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             sendTraceId: options.sendTraceId,
             source: options.source,
             implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+            modelOverride: options.modelOverride,
             onDraftTransferred: acknowledgeDraftTransfer,
           });
           if (sessionSubmitWasAccepted(submitResult) && wasPaused) {
@@ -1872,6 +1897,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             sendTraceId: options.sendTraceId,
             source: options.source,
             implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
+            modelOverride: options.modelOverride,
             onDraftTransferred: acknowledgeDraftTransfer,
           });
       }
@@ -1916,6 +1942,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           expectedSessionKey: drainSessionKey,
           clientMessageId: start.item.clientMessageId,
           implicitSkillCommandPolicy: start.item.implicitSkillCommandPolicy,
+          modelOverride: start.item.modelOverride,
         });
         const result = resolveQueueDrainCompletionAction({
           accepted: sessionSubmitWasAccepted(submitResult),
@@ -2031,8 +2058,8 @@ export const remapPendingRunStateToSession = (
   const pending = pendingKey.trim();
   const real = sessionKey.trim();
   if (!pending || !real || pending === real) return current;
-  const pendingRun = current[pending];
-  if (!pendingRun) return current;
+  if (!Object.hasOwn(current, pending)) return current;
+  const pendingRun = current[pending]!;
   const { [pending]: _removedPendingRunState, ...rest } = current;
   return {
     ...rest,

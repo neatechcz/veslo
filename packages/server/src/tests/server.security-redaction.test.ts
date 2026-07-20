@@ -38,6 +38,30 @@ describe("redactSensitiveConfig", () => {
     expect(input.opencode.apiKey).toBe("top-secret-key");
     expect(input.oauth.access_token).toBe("access-token");
   });
+
+  test("keeps the managed OpenCode credential environment reference without exposing real credentials", () => {
+    const template = "{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}";
+    const input = {
+      provider: {
+        codex_oauth: {
+          options: { apiKey: template },
+          models: {
+            "gpt-5.6-sol": {
+              headers: { Authorization: `Bearer ${template}` },
+            },
+          },
+        },
+      },
+      legacy: { apiKey: "real-secret" },
+    };
+
+    const result = redactSensitiveConfig(input) as typeof input;
+
+    expect(result.provider.codex_oauth.options.apiKey).toBe(template);
+    expect(result.provider.codex_oauth.models["gpt-5.6-sol"].headers.Authorization)
+      .toBe(`Bearer ${template}`);
+    expect(result.legacy.apiKey).toBe(REDACTED_SECRET_VALUE);
+  });
 });
 
 describe("serializeWorkspace", () => {

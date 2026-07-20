@@ -8,6 +8,7 @@ export interface DebugLogEvent {
   workerId?: string | null;
   sessionId?: string | null;
   runId?: string | null;
+  captureId?: string | null;
   source: string;
   stream: string;
   level?: DebugLogLevel | null;
@@ -86,6 +87,9 @@ export function validateDebugLogEvent(value: unknown, path = "event"): DebugLogV
   if (!isOptionalString(e.workerId)) issues.push({ path: `${path}.workerId`, message: "must be string|null|undefined" });
   if (!isOptionalString(e.sessionId)) issues.push({ path: `${path}.sessionId`, message: "must be string|null|undefined" });
   if (!isOptionalString(e.runId)) issues.push({ path: `${path}.runId`, message: "must be string|null|undefined" });
+  if (!isOptionalString(e.captureId, 36) || (typeof e.captureId === "string" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(e.captureId))) {
+    issues.push({ path: `${path}.captureId`, message: "must be UUID|null|undefined" });
+  }
   if (!isNonEmptyString(e.source, 64)) issues.push({ path: `${path}.source`, message: "must be non-empty string ≤ 64 chars" });
   if (!isNonEmptyString(e.stream, 32)) issues.push({ path: `${path}.stream`, message: "must be non-empty string ≤ 32 chars" });
   if (e.level !== undefined && e.level !== null && (typeof e.level !== "string" || !VALID_LEVELS.has(e.level))) {

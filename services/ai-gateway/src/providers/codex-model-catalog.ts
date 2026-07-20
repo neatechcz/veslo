@@ -1,17 +1,9 @@
+import { listGatewayModelCapabilityDescriptors } from "./model-capability-registry.js";
+
 export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
 
-const CODEX_MODEL_CATALOG = [
-  "gpt-5.6-sol",
-  "gpt-5.5",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-spark",
-  "gpt-5.2",
-] as const;
-
 export function listCodexModelCatalog(): string[] {
-  return [...CODEX_MODEL_CATALOG];
+  return listGatewayModelCapabilityDescriptors("codex_oauth").map((entry) => entry.model);
 }
 
 export function resolveCodexModelPolicy(input: {

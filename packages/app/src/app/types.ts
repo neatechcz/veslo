@@ -352,6 +352,10 @@ export type ArtifactItem = {
 export type OpencodeEvent = {
   type: string;
   properties?: unknown;
+  /** Optional reconnect-stable upstream transport identity (for example SSE `id:`). */
+  eventId?: string;
+  /** An empty upstream SSE `id:` explicitly cleared the replay cursor. */
+  eventIdReset?: boolean;
 };
 
 export type View = "onboarding" | "dashboard" | "session" | "proto";
@@ -749,7 +753,7 @@ export type McpStatus =
   | { status: "needs_auth" }
   | { status: "needs_client_registration"; error: string };
 
-export type McpStatusMap = Record<string, McpStatus>;
+export type McpStatusMap = Partial<Record<string, McpStatus>>;
 
 export type ReloadReason = "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
 

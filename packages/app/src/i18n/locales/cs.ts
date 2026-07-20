@@ -172,6 +172,12 @@ export default {
   "session.media_evidence_image_analyzed_one": "{count} analyzovaný obrázek",
   "session.media_evidence_image_analyzed_other": "{count} analyzovaných obrázků",
   "session.model": "Model",
+  "session.managed_model_selector_label": "Model pro toto odeslání",
+  "session.managed_model_default": "Spravovaný výchozí model",
+  "session.managed_model_image_capable": "Podporuje obrázky",
+  "session.managed_model_image_unsupported": "Obrázky nejsou dostupné",
+  "session.managed_model_image_unknown": "Podpora obrázků není známá",
+  "session.managed_model_selection_unavailable": "Vybraný model už není dostupný. Použije se spravovaný výchozí model.",
   "session.ready": "Připraveno",
   "session.connect_provider": "Připojte poskytovatele a přizpůsobte si to.",
   "session.running": "Běží",
@@ -829,6 +835,8 @@ export default {
   "settings.archived_sessions_archived_at": "Archivováno",
   "settings.model": "Model",
   "settings.model_description": "Globální model a nastavení přemýšlení pro všechny běhy.",
+  "settings.session_model_selector": "Výběr modelu relace",
+  "settings.session_model_selector_description": "Vyberte povolený spravovaný model pro odeslání. V relaci se zobrazí, až gateway zveřejní dva nebo více modelů, a nabídne celý dostupný seznam.",
   "settings.change": "Změnit",
   "settings.engine_path": "PATH",
   "settings.engine_sidecar": "Sidecar",
@@ -1013,6 +1021,9 @@ export default {
   "reload.banner_commands_description": "Změny v Commands se projeví až po znovunačtení enginu.",
   "reload.banner_config_description": "Veslo zjistilo změny konfigurace. Znovu načtěte engine, aby se projevily.",
   "reload.banner_mcp_description": "Změny MCP se projeví až po znovunačtení enginu.",
+
+  "managed_ai.runtime_config_pending_reload": "Nastavení AI se automaticky použije po dokončení aktivní odpovědi.",
+  "managed_ai.runtime_config_reloading": "Aktualizuji nastavení AI pro další odpověď…",
 
   // ==================== Onboarding ====================
   "onboarding.starting_host": "Spouštím server Veslo...",

@@ -49,6 +49,38 @@ test("engine SSE forwards connection key to desktop subscribe command", async ()
   assert.equal((invocations[1].args as any)?.subscriptionId, subscription.subscriptionId);
 });
 
+test("engine SSE forwards a real upstream cursor without generating one", async () => {
+  let emitPayload = (_payload: any): void => {
+    throw new Error("engine SSE listener was not registered");
+  };
+  const invocations: Array<{ cmd: string; args?: Record<string, unknown> }> = [];
+  const subscribe = createEngineSseSubscribeForTests({
+    isTauriRuntime: () => true,
+    listen: async (_event, nextHandler) => {
+      emitPayload = (payload: any) => nextHandler({ payload });
+      return () => {};
+    },
+    invoke: async (cmd, args) => {
+      invocations.push({ cmd, args });
+      if (cmd === "engine_sse_subscribe") {
+        const options = (args as any)?.options ?? {};
+        emitPayload({ kind: "open", subscriptionId: options.subscriptionId, workspaceId: options.workspaceId });
+        return { subscriptionId: options.subscriptionId } as any;
+      }
+      return true as any;
+    },
+  });
+
+  const subscription = await subscribe({
+    workspaceId: "ws-a",
+    baseUrl: "http://127.0.0.1:1234/workspace/ws-a/opencode",
+    lastEventId: "evt-41",
+  });
+
+  assert.equal((invocations[0].args as any)?.options?.lastEventId, "evt-41");
+  await subscription.close();
+});
+
 test("engine SSE rejects a pending iterator read on post-open stream error close", async () => {
   let emitPayload = (_payload: any): void => {
     throw new Error("engine SSE listener was not registered");
@@ -94,4 +126,84 @@ test("engine SSE rejects a pending iterator read on post-open stream error close
   });
 
   await assert.rejects(pending, /socket connection was closed unexpectedly/);
+});
+
+test("engine SSE retains an upstream SSE id on the normalized transport envelope", async () => {
+  let emitPayload = (_payload: any): void => {
+    throw new Error("engine SSE listener was not registered");
+  };
+  const subscribe = createEngineSseSubscribeForTests({
+    isTauriRuntime: () => true,
+    listen: async (_event, nextHandler) => {
+      emitPayload = (payload: any) => nextHandler({ payload });
+      return () => {};
+    },
+    invoke: async (cmd, args) => {
+      if (cmd === "engine_sse_subscribe") {
+        const options = (args as any)?.options ?? {};
+        emitPayload({ kind: "open", subscriptionId: options.subscriptionId, workspaceId: options.workspaceId });
+        return { subscriptionId: options.subscriptionId } as any;
+      }
+      return undefined as any;
+    },
+  });
+
+  const subscription = await subscribe({ workspaceId: "ws-a", baseUrl: "http://127.0.0.1:1234" });
+  const next = subscription.stream[Symbol.asyncIterator]().next();
+  emitPayload({
+    kind: "message",
+    subscriptionId: subscription.subscriptionId,
+    workspaceId: "ws-a",
+    eventId: "evt-42",
+    data: '{"type":"message.updated","properties":{"id":"m1"}}',
+  });
+
+  assert.deepEqual(await next, {
+    done: false,
+    value: {
+      eventId: "evt-42",
+      payload: { type: "message.updated", properties: { id: "m1" } },
+    },
+  });
+  await subscription.close();
+});
+
+test("engine SSE represents an empty upstream SSE id as a cursor reset", async () => {
+  let emitPayload = (_payload: any): void => {
+    throw new Error("engine SSE listener was not registered");
+  };
+  const subscribe = createEngineSseSubscribeForTests({
+    isTauriRuntime: () => true,
+    listen: async (_event, nextHandler) => {
+      emitPayload = (payload: any) => nextHandler({ payload });
+      return () => {};
+    },
+    invoke: async (cmd, args) => {
+      if (cmd === "engine_sse_subscribe") {
+        const options = (args as any)?.options ?? {};
+        emitPayload({ kind: "open", subscriptionId: options.subscriptionId, workspaceId: options.workspaceId });
+        return { subscriptionId: options.subscriptionId } as any;
+      }
+      return undefined as any;
+    },
+  });
+
+  const subscription = await subscribe({ workspaceId: "ws-a", baseUrl: "http://127.0.0.1:1234" });
+  const next = subscription.stream[Symbol.asyncIterator]().next();
+  emitPayload({
+    kind: "message",
+    subscriptionId: subscription.subscriptionId,
+    workspaceId: "ws-a",
+    eventId: "",
+    data: '{"type":"message.updated","properties":{"id":"m1"}}',
+  });
+
+  assert.deepEqual(await next, {
+    done: false,
+    value: {
+      eventIdReset: true,
+      payload: { type: "message.updated", properties: { id: "m1" } },
+    },
+  });
+  await subscription.close();
 });

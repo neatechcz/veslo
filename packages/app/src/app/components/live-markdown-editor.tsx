@@ -1,4 +1,4 @@
-import { createEffect, onCleanup, onMount } from "solid-js";
+import { createEffect, onCleanup, onMount, untrack } from "solid-js";
 
 import { EditorState, StateField, type Range } from "@codemirror/state";
 import {
@@ -301,7 +301,7 @@ export default function LiveMarkdownEditor(props: Props) {
         obsidianishLivePreview(),
         EditorView.updateListener.of((update) => {
           if (!update.docChanged) return;
-          props.onChange(update.state.doc.toString());
+          untrack(() => props.onChange(update.state.doc.toString()));
         }),
       ],
     });

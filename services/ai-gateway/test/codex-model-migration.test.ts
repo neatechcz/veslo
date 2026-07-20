@@ -27,17 +27,24 @@ class InMemoryCodexPolicyMigrationStore implements CodexPolicyMigrationStore {
   applyCalls = 0;
   writeCount = 0;
 
-  constructor(readonly rows: StoredPolicy[]) {}
+  constructor(
+    readonly rows: StoredPolicy[],
+    private readonly allowedModels = [TARGET_MODEL],
+  ) {}
+
+  async resolveAllowedModels(): Promise<string[]> {
+    return this.allowedModels;
+  }
 
   async preview(): Promise<CodexPolicySnapshot[]> {
     this.previewCalls += 1;
     return this.rows.map(toSnapshot);
   }
 
-  async apply(input: { model: string; now: Date }): Promise<CodexPolicySnapshot[]> {
+  async apply(input: { model: string; allowedModels?: string[]; now: Date }): Promise<CodexPolicySnapshot[]> {
     this.applyCalls += 1;
     const snapshots = this.rows.map(toSnapshot);
-    const allowedModelsJson = JSON.stringify([input.model]);
+    const allowedModelsJson = JSON.stringify(input.allowedModels ?? [input.model]);
     const changedIds = new Set(
       snapshots
         .filter((row) => row.defaultModel !== input.model || row.allowedModelsJson !== allowedModelsJson)
@@ -141,6 +148,22 @@ test("apply migrates enabled and disabled policies while preserving their assign
   ]);
   assert.deepEqual(store.rows.map((row) => row.updatedAt), [now, now]);
   assert.equal(store.writeCount, 1);
+});
+
+test("apply backfills the complete platform-derived Codex roster", async () => {
+  const store = new InMemoryCodexPolicyMigrationStore([
+    policy({ defaultModel: "gpt-5.5", allowedModelsJson: JSON.stringify(["gpt-5.5"]) }),
+  ], [TARGET_MODEL, "gpt-5.4"]);
+
+  await runCodexModelMigration({
+    store,
+    model: TARGET_MODEL,
+    apply: true,
+    now: new Date("2026-07-10T10:00:00.000Z"),
+  });
+
+  assert.equal(store.rows[0]?.defaultModel, TARGET_MODEL);
+  assert.equal(store.rows[0]?.allowedModelsJson, JSON.stringify([TARGET_MODEL, "gpt-5.4"]));
 });
 
 test("a second apply reports no changes and does not write or update timestamps", async () => {
@@ -309,7 +332,11 @@ test("MySQL apply locks every matching policy and provider-guards changed-ID upd
   ]);
   const store = new MySqlCodexPolicyMigrationStore(database.db as AiGatewayDb);
 
-  const snapshots = await store.apply({ model: TARGET_MODEL, now });
+  const snapshots = await store.apply({
+    model: TARGET_MODEL,
+    allowedModels: [TARGET_MODEL, "gpt-5.4"],
+    now,
+  });
 
   assert.deepEqual(database.events, ["begin", "select", "lock:update", "update", "commit"]);
   assert.deepEqual(snapshots.map((row) => row.enabled), [true, false]);
@@ -317,7 +344,7 @@ test("MySQL apply locks every matching policy and provider-guards changed-ID upd
   assert.equal(database.updateCalls, 1);
   assert.deepEqual(database.updateValues, {
     default_model: TARGET_MODEL,
-    allowed_models_json: JSON.stringify([TARGET_MODEL]),
+    allowed_models_json: JSON.stringify([TARGET_MODEL, "gpt-5.4"]),
     updated_at: now,
   });
 
@@ -330,6 +357,42 @@ test("MySQL apply locks every matching policy and provider-guards changed-ID upd
   assert.deepEqual(updatePredicate.params, ["policy_enabled", "policy_disabled", "codex_oauth"]);
   assert.match(updatePredicate.sql, /`user_ai_access_policy`\.`id` in \(\?, \?\)/);
   assert.match(updatePredicate.sql, /`user_ai_access_policy`\.`provider` = \?/);
+});
+
+test("MySQL target resolution uses the active platform Codex roster", async () => {
+  const row = {
+    enabledModelsJson: JSON.stringify([
+      { provider: "codex_oauth", model: TARGET_MODEL },
+      { provider: "codex_oauth", model: "gpt-5.4" },
+      { provider: "openai", model: "gpt-5.5" },
+    ]),
+    activeProvider: "codex_oauth",
+    activeModel: TARGET_MODEL,
+  };
+  const db = {
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              return {
+                limit() {
+                  return Promise.resolve([row]);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+  const store = new MySqlCodexPolicyMigrationStore(db as AiGatewayDb);
+
+  assert.deepEqual(await store.resolveAllowedModels(TARGET_MODEL), [TARGET_MODEL, "gpt-5.4"]);
+  await assert.rejects(
+    store.resolveAllowedModels("gpt-5.5"),
+    /must match the active platform model/,
+  );
 });
 
 test("MySQL apply retains the lock but performs no update when every policy already matches", async () => {

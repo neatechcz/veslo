@@ -45,17 +45,19 @@ export async function fetchWithTimeout(
     signal && !init?.signal ? { ...(init ?? {}), signal } : init;
 
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let rejectTimeout!: (reason?: unknown) => void;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      try {
-        controller?.abort();
-      } catch {
-        // ignore
-      }
-      console.warn("[http] timeout", { method, url: target, timeoutMs });
-      reject(new Error(timeoutMessage));
-    }, timeoutMs);
+    rejectTimeout = reject;
   });
+  timeoutId = setTimeout(() => {
+    try {
+      controller?.abort();
+    } catch {
+      // ignore
+    }
+    console.warn("[http] timeout", { method, url: target, timeoutMs });
+    rejectTimeout(new Error(timeoutMessage));
+  }, timeoutMs);
 
   try {
     return await Promise.race([
@@ -74,7 +76,7 @@ export async function fetchWithTimeout(
     }
     throw error;
   } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
   }
 }
 

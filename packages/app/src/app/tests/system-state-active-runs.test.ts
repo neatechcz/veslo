@@ -91,3 +91,53 @@ test("system active-run guard treats any non-idle visible status as active", () 
     dispose();
   });
 });
+
+test("system reload state emits safe diagnostics without trigger names or paths", () => {
+  createRoot((dispose) => {
+    const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const systemState = createSystemState({
+      client: () => null,
+      sessions: () => [],
+      sessionStatusById: () => ({}),
+      refreshPlugins: async () => undefined,
+      refreshSkills: async () => undefined,
+      setProviders: () => undefined,
+      setProviderDefaults: () => undefined,
+      setProviderConnectedIds: () => undefined,
+      setError: () => undefined,
+      recordReloadTrace: (event, payload) => traces.push({ event, payload }),
+    });
+
+    systemState.markReloadRequired("config", {
+      type: "config",
+      name: "opencode.json",
+      path: "C:/private/opencode.json",
+      action: "updated",
+    });
+    systemState.clearReloadRequired();
+
+    assert.deepEqual(traces, [
+      {
+        event: "reload-state:marked",
+        payload: {
+          reason: "config",
+          alreadyRequired: false,
+          previousReasons: [],
+          reasons: ["config"],
+          triggerType: "config",
+          triggerAction: "updated",
+        },
+      },
+      {
+        event: "reload-state:cleared",
+        payload: {
+          wasRequired: true,
+          previousReasons: ["config"],
+          triggerType: "config",
+          triggerAction: "updated",
+        },
+      },
+    ]);
+    dispose();
+  });
+});

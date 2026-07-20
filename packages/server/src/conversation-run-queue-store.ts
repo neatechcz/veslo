@@ -46,6 +46,15 @@ export type ConversationRunQueueItem = {
   error: string | null;
 };
 
+export type ConversationWorkspaceRunReservation = {
+  workspaceId: string;
+  conversationId: string;
+  runId: string;
+  state: "starting" | "active";
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type ConversationRunQueueStore = {
   enqueue(input: {
     workspaceId: string;
@@ -83,6 +92,15 @@ export type ConversationRunQueueStore = {
   ): ConversationRunQueueItem | null;
   recoverStarting(): Array<{ workspaceId: string; conversationId: string }>;
   pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }>;
+  reserveWorkspaceRun(input: {
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    state?: ConversationWorkspaceRunReservation["state"];
+  }): ConversationWorkspaceRunReservation;
+  activateWorkspaceRun(workspaceId: string, runId: string): ConversationWorkspaceRunReservation | null;
+  releaseWorkspaceRun(workspaceId: string, runId: string): boolean;
+  listWorkspaceRunReservations(): ConversationWorkspaceRunReservation[];
 };
 
 type QueueRow = {
@@ -106,6 +124,15 @@ type QueueRow = {
   submitted_at: number | null;
   completed_at: number | null;
   error: string | null;
+};
+
+type WorkspaceRunReservationRow = {
+  workspace_id: string;
+  conversation_id: string;
+  run_id: string;
+  state: string;
+  created_at: number;
+  updated_at: number;
 };
 
 const normalizeText = (value: string | null | undefined) => value?.trim() ?? "";
@@ -169,6 +196,17 @@ function createDatabase(dbPath: string): Database {
     CREATE UNIQUE INDEX IF NOT EXISTS conversation_run_queue_client_message_uidx
       ON conversation_run_queue (workspace_id, conversation_id, client_message_id)
       WHERE client_message_id IS NOT NULL AND client_message_id <> '';
+    CREATE TABLE IF NOT EXISTS conversation_workspace_run_reservation (
+      workspace_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (workspace_id, run_id)
+    );
+    CREATE INDEX IF NOT EXISTS conversation_workspace_run_reservation_workspace_idx
+      ON conversation_workspace_run_reservation (workspace_id, state, updated_at);
   `);
   ensureQueueSchema(db);
   return db;
@@ -227,6 +265,17 @@ function getSync(db: Database, queueItemId: string): ConversationRunQueueItem | 
     `SELECT * FROM conversation_run_queue WHERE queue_item_id = ?1 LIMIT 1`,
   ).get(queueItemId);
   return row ? rowToItem(row) : null;
+}
+
+function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWorkspaceRunReservation {
+  return {
+    workspaceId: row.workspace_id,
+    conversationId: row.conversation_id,
+    runId: row.run_id,
+    state: row.state === "active" ? "active" : "starting",
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
+  };
 }
 
 function queueRequestHash(input: {
@@ -570,6 +619,65 @@ export function createConversationRunQueueStore(options?: {
           conversationId: row.conversation_id,
         })),
       );
+    },
+
+    reserveWorkspaceRun(input) {
+      return withDb((db) => {
+        const workspaceId = normalizeText(input.workspaceId);
+        const conversationId = normalizeText(input.conversationId);
+        const runId = normalizeText(input.runId);
+        if (!workspaceId || !conversationId || !runId) {
+          throw new Error("workspaceId, conversationId, and runId are required");
+        }
+        const timestamp = now();
+        const state = input.state === "active" ? "active" : "starting";
+        db.query(
+          `INSERT INTO conversation_workspace_run_reservation (
+            workspace_id, conversation_id, run_id, state, created_at, updated_at
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+          ON CONFLICT(workspace_id, run_id) DO UPDATE SET
+            conversation_id = excluded.conversation_id,
+            state = excluded.state,
+            updated_at = excluded.updated_at`,
+        ).run(workspaceId, conversationId, runId, state, timestamp);
+        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
+          `SELECT * FROM conversation_workspace_run_reservation
+           WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
+        ).get(workspaceId, runId);
+        if (!row) throw new Error("failed to reserve workspace conversation run");
+        return reservationRowToItem(row);
+      });
+    },
+
+    activateWorkspaceRun(workspaceId, runId) {
+      return withDb((db) => {
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_workspace_run_reservation
+           SET state = 'active', updated_at = ?3
+           WHERE workspace_id = ?1 AND run_id = ?2`,
+        ).run(normalizeText(workspaceId), normalizeText(runId), timestamp);
+        if (result.changes !== 1) return null;
+        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
+          `SELECT * FROM conversation_workspace_run_reservation
+           WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
+        ).get(normalizeText(workspaceId), normalizeText(runId));
+        return row ? reservationRowToItem(row) : null;
+      });
+    },
+
+    releaseWorkspaceRun(workspaceId, runId) {
+      return withDb((db) => db.query(
+        `DELETE FROM conversation_workspace_run_reservation
+         WHERE workspace_id = ?1 AND run_id = ?2`,
+      ).run(normalizeText(workspaceId), normalizeText(runId)).changes > 0);
+    },
+
+    listWorkspaceRunReservations() {
+      return withDb((db) => db.query<WorkspaceRunReservationRow, []>(
+        `SELECT * FROM conversation_workspace_run_reservation
+         ORDER BY workspace_id ASC, created_at ASC, run_id ASC`,
+      ).all().map(reservationRowToItem));
     },
   };
 }

@@ -11,6 +11,7 @@ const ALLOWED_BOOTSTRAP_EVENT_PREFIXES = [
   "veslo-server-launch:",
   "debug-log-delivery:",
 ] as const
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 type DesktopDiagnosticsAuthorize = (
   req: express.Request,
@@ -37,6 +38,11 @@ function isDesktopDiagnosticsEvent(event: unknown): boolean {
   if (!isRecord(event)) return false
   const source = typeof event.source === "string" ? event.source.trim() : ""
   const stream = typeof event.stream === "string" ? event.stream.trim() : ""
+  const captureId = typeof event.captureId === "string" ? event.captureId.trim() : ""
+  if (captureId && UUID_PATTERN.test(captureId)) {
+    return (source === "Veslo user capture" && stream === "diagnostic")
+      || (matchesCaptureSource(source) && (stream === "stdout" || stream === "stderr"))
+  }
   if (source === "veslo-server-shell" && (stream === "stdout" || stream === "stderr")) {
     return true
   }
@@ -46,6 +52,14 @@ function isDesktopDiagnosticsEvent(event: unknown): boolean {
   const payload = isRecord(event.payload) ? event.payload : null
   const eventType = typeof payload?.eventType === "string" ? payload.eventType.trim() : ""
   return ALLOWED_BOOTSTRAP_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix))
+}
+
+function matchesCaptureSource(source: string) {
+  return source === "veslo-server-shell"
+    || source === "engine"
+    || source === "orchestrator"
+    || source === "opencode-router"
+    || source === "Veslo UI"
 }
 
 function validationIssues(error: z.ZodError) {

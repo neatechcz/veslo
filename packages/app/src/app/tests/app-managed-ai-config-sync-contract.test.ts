@@ -9,11 +9,10 @@ const runtimeConfigSource = readFileSync(
 );
 
 function managedAiRuntimeConfigSource(): string {
-  const marker = runtimeConfigSource.indexOf("const syncPreflight = resolveManagedAiConfigSyncPreflight");
-  const start = runtimeConfigSource.lastIndexOf("const syncWorkspaceManagedAiConfig = async", marker);
-  const end = runtimeConfigSource.indexOf("function managedConfigContentsMatch", marker);
+  const start = runtimeConfigSource.indexOf("const performWorkspaceManagedAiConfigSync = async");
+  const end = runtimeConfigSource.indexOf("function managedConfigContentsMatch", start);
   assert.ok(
-    marker >= 0 && start >= 0 && end > start,
+    start >= 0 && end > start,
     "managed AI runtime config sync source should be present",
   );
   return runtimeConfigSource.slice(start, end);
@@ -47,8 +46,8 @@ test("managed AI runtime config sync executes controller decisions", () => {
   );
   assert.match(
     syncSource,
-    /const workspaceId = workspace\.id\?\.trim\(\) \|\| targetWorkspaceId \|\| activeWorkspaceId;[\s\S]*let vesloWorkspaceId = deps\.resolveConversationServerWorkspaceId\(workspaceId\);/,
-    "sync should derive the initial Veslo workspace id from the current app workspace, not stale server active status",
+    /const workspaceId = workspace\.id\?\.trim\(\) \|\| targetWorkspaceId \|\| activeWorkspaceId;[\s\S]*const configAuthority = isActiveWorkspaceTarget[\s\S]*deps\.managedAiConfigAuthority\(\)[\s\S]*let vesloWorkspaceId = explicitServerWorkspaceId \|\| \(configAuthority\?\.kind === "server"[\s\S]*configAuthority\.workspaceConfigId[\s\S]*deps\.resolveConversationServerWorkspaceId\(workspaceId\)\);/,
+    "sync should derive the initial Veslo workspace id from explicit or acknowledged workspace authority, not stale server active status",
   );
   assert.match(
     syncSource,
@@ -82,22 +81,27 @@ test("managed AI config sync ignores stale async runs before writing config", ()
 
   assert.match(
     runtimeConfigSource,
-    /let managedAiConfigSyncGeneration = 0;/,
-    "sync should track async generations across effect reruns",
+    /const latestManagedAiConfigSyncFingerprintByScope = new Map<string, string>\(\);/,
+    "sync should track the latest desired fingerprint independently for each workspace scope",
+  );
+  assert.match(
+    runtimeConfigSource,
+    /latestManagedAiConfigSyncFingerprintByScope\.set\(intent\.scopeKey, intent\.fingerprint\);[\s\S]*isCancelled: \(\) =>[\s\S]*latestManagedAiConfigSyncFingerprintByScope\.get\(intent\.scopeKey\) !== intent\.fingerprint/,
+    "a newer desired fingerprint should invalidate only the stale flight for its workspace scope",
   );
   assert.match(
     syncSource,
-    /const syncGeneration = \+\+managedAiConfigSyncGeneration;[\s\S]*const isCurrentManagedAiConfigSync = \(\) =>[\s\S]*!\(options\?\.isCancelled\?\.\(\) \?\? false\) && syncGeneration === managedAiConfigSyncGeneration;/,
-    "each sync run should be invalidated when a newer reactive run starts",
+    /const isCurrentManagedAiConfigSync = \(\) => !\(options\?\.isCancelled\?\.\(\) \?\? false\);/,
+    "the config writer should honor the wrapper's scoped staleness decision",
   );
   assert.match(
     syncSource,
-    /const config = await input\.vesloClient\.getConfig\(input\.vesloWorkspaceId\);\s*if \(!input\.isCurrentManagedAiConfigSync\(\)\) return;/,
+    /const config = await input\.vesloClient\.getConfig\(input\.vesloWorkspaceId\);\s*if \(!input\.isCurrentManagedAiConfigSync\(\)\) return false;/,
     "server config reads must not continue into writes after the run is stale",
   );
   assert.match(
     syncSource,
-    /if \(!input\.isCurrentManagedAiConfigSync\(\)\) return;\s*await input\.vesloClient\.patchConfig/s,
+    /if \(!input\.isCurrentManagedAiConfigSync\(\)\) return false;\s*await input\.vesloClient\.patchConfig/s,
     "server config writes should be guarded by the current sync generation",
   );
   assert.match(

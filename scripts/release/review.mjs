@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,18 +26,45 @@ const orchestratorPkg = readJson(resolve(root, "packages", "orchestrator", "pack
 const serverPkg = readJson(resolve(root, "packages", "server", "package.json"));
 const opencodeRouterPkg = readJson(resolve(root, "packages", "opencode-router", "package.json"));
 const tauriConfig = readJson(resolve(root, "packages", "desktop", "src-tauri", "tauri.conf.json"));
+const tauriWindowsReleaseConfig = readJson(
+  resolve(root, "packages", "desktop", "src-tauri", "tauri.windows.release.conf.json"),
+);
+const tauriWindowsConfig = readJson(
+  resolve(root, "packages", "desktop", "src-tauri", "tauri.windows.conf.json"),
+);
+const tauriStagingConfig = readJson(
+  resolve(root, "packages", "desktop", "src-tauri", "tauri.staging.conf.json"),
+);
+const tauriWindowsStagingConfig = readJson(
+  resolve(root, "packages", "desktop", "src-tauri", "tauri.windows.staging.conf.json"),
+);
 const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-tauri", "Cargo.toml"));
 const tauriBundleResources = tauriConfig.bundle?.resources ?? {};
-const tauriWindowsWix = tauriConfig.bundle?.windows?.wix ?? {};
+const tauriWindowsReleaseBundleResources = tauriWindowsReleaseConfig.bundle?.resources ?? {};
 const tauriWindowsNsis = tauriConfig.bundle?.windows?.nsis ?? {};
+const windowsInstallerConfigs = [
+  tauriConfig,
+  tauriWindowsConfig,
+  tauriWindowsReleaseConfig,
+  tauriStagingConfig,
+  tauriWindowsStagingConfig,
+];
 const tauriWindowsWebviewInstallMode = tauriConfig.bundle?.windows?.webviewInstallMode ?? {};
 const releaseWorkflow = readText(resolve(root, ".github", "workflows", "release-macos-aarch64.yml"));
 const prereleaseWorkflow = readText(resolve(root, ".github", "workflows", "prerelease.yml"));
 const buildDesktopWorkflow = readText(resolve(root, ".github", "workflows", "build-desktop.yml"));
 const buildWindowsMsiWorkflow = readText(resolve(root, ".github", "workflows", "build-windows-msi.yml"));
+const buildStagingWorkflow = readText(resolve(root, ".github", "workflows", "build-staging-app.yml"));
+const viteConfig = readText(resolve(root, "packages", "app", "vite.config.ts"));
+const desktopUiBuildHelper = readText(resolve(root, "scripts", "release", "build-desktop-ui.mjs"));
 const releaseDoc = readText(resolve(root, "RELEASE.md"));
 const stateConfigDoc = readText(resolve(root, "docs", "dev", "state-and-config-reference.md"));
 const applicationLogsDoc = readText(resolve(root, "docs", "dev", "veslo-application-logs.md"));
+const workflowRoot = resolve(root, ".github", "workflows");
+const activeWorkflows = readdirSync(workflowRoot)
+  .filter((name) => /\.ya?ml$/.test(name))
+  .sort()
+  .map((name) => ({ name, text: readText(resolve(workflowRoot, name)) }));
 
 const versions = {
   app: appPkg.version ?? null,
@@ -105,6 +132,7 @@ const releaseVerifyJob = extractWorkflowJob(releaseWorkflow, "verify-release");
 const prereleaseTauriJob = extractWorkflowJob(prereleaseWorkflow, "publish-tauri");
 const buildDesktopWindowsMsiJob = extractWorkflowJob(buildDesktopWorkflow, "build-windows-msi");
 const buildWindowsMsiJob = extractWorkflowJob(buildWindowsMsiWorkflow, "build-windows-msi");
+const buildStagingJob = extractWorkflowJob(buildStagingWorkflow, "build");
 
 const hasGlitchTipReleaseEnv = (text, options = {}) => {
   const requireStrict = Boolean(options.requireStrict);
@@ -125,6 +153,34 @@ const hasGlitchTipReleaseEnv = (text, options = {}) => {
   );
 };
 
+const hasGlitchTipSourceMapUpload = (text) =>
+  /VESLO_GLITCHTIP_SOURCE_MAPS:\s*\$\{\{/.test(text) &&
+  /vars\.VESLO_GLITCHTIP_URL\s*!=\s*''/.test(text) &&
+  /vars\.VESLO_GLITCHTIP_ORG\s*!=\s*''/.test(text) &&
+  /vars\.VESLO_GLITCHTIP_PROJECT\s*!=\s*''/.test(text) &&
+  /secrets\.VESLO_GLITCHTIP_AUTH_TOKEN\s*!=\s*''/.test(text) &&
+  /VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD:\s*["']?0["']?/.test(text) &&
+  /SENTRY_URL:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_URL\s*\}\}/.test(text) &&
+  /SENTRY_AUTH_TOKEN:\s*\$\{\{\s*secrets\.VESLO_GLITCHTIP_AUTH_TOKEN\s*\}\}/.test(text) &&
+  /SENTRY_ORG:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_ORG\s*\}\}/.test(text) &&
+  /SENTRY_PROJECT:\s*\$\{\{\s*vars\.VESLO_GLITCHTIP_PROJECT\s*\}\}/.test(text) &&
+  /Install GlitchTip source-map CLI\s*\n\s*if: env\.VESLO_GLITCHTIP_SOURCE_MAPS == '1'\s*\n\s*continue-on-error: true/.test(text) &&
+  /cargo install glitchtip-cli --version 1\.0\.0 --locked/.test(text);
+
+const hasStagingRendererCanary = () => [
+  "monitoring_canary:",
+  "VESLO_STAGING_RENDERER_CANARY: ${{ inputs.monitoring_canary && '1' || '0' }}",
+  "VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV: ${{ inputs.monitoring_canary && '1' || '0' }}",
+  "VESLO_GLITCHTIP_SOURCE_MAPS: ${{ inputs.monitoring_canary && '1' || '0' }}",
+  "VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: ${{ inputs.monitoring_canary && '1' || '0' }}",
+  "Verify GlitchTip staging canary env",
+  "Upload GlitchTip staging-canary source-map evidence",
+].every(fragment => buildStagingWorkflow.includes(fragment)) &&
+  /__VESLO_STAGING_RENDERER_CANARY__/.test(viteConfig) &&
+  /assertStagingRendererCanaryBuildPolicy/.test(desktopUiBuildHelper) &&
+  /assertStagingRendererCanaryOutput/.test(desktopUiBuildHelper) &&
+  /VESLO_STAGING_RENDERER_CANARY/.test(releaseDocsText);
+
 const hasOrderedFragments = (text, fragments) => {
   let cursor = 0;
   for (const fragment of fragments) {
@@ -137,12 +193,83 @@ const hasOrderedFragments = (text, fragments) => {
 
 const hasForcedSidecarBuild = (text) => /VESLO_SIDECAR_FORCE_BUILD:\s*["']?1["']?/.test(text);
 
+const findDeprecatedActionRefs = (actionRef, maxMajor = 4) => {
+  const escaped = actionRef.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`uses:\\s*${escaped}@v([0-${maxMajor}])\\b`, "g");
+  const refs = [];
+  for (const workflow of activeWorkflows) {
+    for (const match of workflow.text.matchAll(pattern)) {
+      refs.push(`${workflow.name}: ${actionRef}@v${match[1]}`);
+    }
+  }
+  return refs;
+};
+
+const setupNodeImplicitCacheGaps = () => {
+  const gaps = [];
+  for (const workflow of activeWorkflows) {
+    const lines = workflow.text.split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (!/uses:\s*actions\/setup-node@v[5-9]\b/.test(line)) continue;
+      const setupIndent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
+      const stepIndent = line.trimStart().startsWith("- uses:") ? setupIndent : Math.max(0, setupIndent - 2);
+      const nextStepPattern = new RegExp(`^ {${stepIndent}}-\\s+`);
+      let end = lines.length;
+      for (let next = index + 1; next < lines.length; next += 1) {
+        if (nextStepPattern.test(lines[next])) {
+          end = next;
+          break;
+        }
+      }
+      const block = lines.slice(index, end).join("\n");
+      if (!/^\s*node-version\s*:/m.test(block)) continue;
+      if (/^\s*cache\s*:/m.test(block)) continue;
+      if (/^\s*package-manager-cache\s*:\s*false\s*$/m.test(block)) continue;
+      gaps.push(workflow.name);
+    }
+  }
+  return gaps;
+};
+
 const hasWindowsBundledSidecarHashGate = (text, buildFragment = "Build Windows bundle") =>
   hasOrderedFragments(text, [
     buildFragment,
     "node scripts/release/verify-bundled-versions.mjs",
     "Verify Windows signatures",
   ]);
+
+const hasWindowsMsiRuntimeGate = (text, buildFragment, publishFragment) =>
+  hasOrderedFragments(text, [
+    buildFragment,
+    "node scripts/release/verify-bundled-versions.mjs",
+    "Verify extracted MSI payload runtime",
+    "verify-windows-msi-runtime.ps1",
+    "Upload extracted Windows MSI payload verification",
+    "Verify Windows signatures",
+    publishFragment,
+  ]) &&
+  /if:\s*always\(\)/.test(text) &&
+  /veslo-windows-msi-runtime-summary\.json/.test(text);
+
+const hasWindowsStagingMsiRuntimeGate = (text) =>
+  hasOrderedFragments(text, [
+    "Build Windows staging MSI",
+    "Verify bundled Windows staging sidecars",
+    "verify-bundled-versions.mjs",
+    "Verify extracted Windows staging MSI payload runtime",
+    "verify-windows-msi-runtime.ps1",
+    "Upload extracted Windows staging MSI payload verification",
+    "Verify Windows staging signatures",
+    "Upload staging app artifact",
+  ]) &&
+  /if:\s*always\(\)/.test(text) &&
+  /veslo-windows-staging-msi-runtime-summary\.json/.test(text);
+
+const hasPrereleaseMsiRuntimeMatrixPath = (text) =>
+  /TARGET_TRIPLE:\s*\$\{\{\s*matrix\.target\s*\}\}/.test(text) &&
+  /target\\\$env:TARGET_TRIPLE\\release\\bundle\\msi/.test(text) &&
+  !/\$\{gha\}/.test(text);
 
 const hasDocumentRuntimeMetadataGate = (text) =>
   /Verify document runtime package metadata/.test(text) &&
@@ -162,14 +289,10 @@ const hasMacosDocumentRuntimeBundleGate = (text) =>
     ]),
   );
 
-const hasWindowsDocumentRuntimeBundleGate = (text) =>
-  hasOrderedFragments(text, [
-    "Assemble Windows document runtime",
-    "node scripts/document-runtime/assemble-windows.mjs",
-    "Verify Windows document runtime bundle",
-    "node scripts/release/verify-document-runtime-windows.mjs --profile local-docs-required --json",
-    "Build Windows bundle",
-  ]);
+const hasWindowsDocumentRuntimePackageOnlyGate = (text) =>
+  /Build Windows bundle/.test(text) &&
+  !/node scripts\/document-runtime\/assemble-windows\.mjs/.test(text) &&
+  !/node scripts\/release\/verify-document-runtime-windows\.mjs --profile local-docs-required --json/.test(text);
 
 const releaseDocsText = [releaseDoc, stateConfigDoc, applicationLogsDoc].join("\n");
 const releaseDocsDescribeGlitchTipDsn =
@@ -178,6 +301,21 @@ const releaseDocsDescribeGlitchTipDsn =
   /public/.test(releaseDocsText) &&
   /release-owned/.test(releaseDocsText) &&
   /not user-configurable/.test(releaseDocsText);
+const releaseDocsDescribeNoWslInstallerContract =
+  /Current Windows installers must not install, enable, repair, or import WSL\/VesloSandbox\./.test(
+    stateConfigDoc,
+  ) &&
+  /The MSI contains no WSL payload, WiX\/NSIS setup hook, Active Setup continuation, or RunOnce repair path;/.test(
+    stateConfigDoc,
+  ) &&
+  /The current installer deliberately contains no WSL provisioner, WSL helper, WiX\/NSIS WSL hook, Active Setup continuation, or onboarding\/Settings repair path\./.test(
+    applicationLogsDoc,
+  ) &&
+  !/MSI package installs run the machine prerequisite phase as `SYSTEM`/.test(releaseDocsText) &&
+  !/After reboot, Veslo registers a non-interactive user-context startup continuation through Active Setup\./.test(
+    releaseDocsText,
+  ) &&
+  !/For clean-install WSL runtime setup issues/.test(releaseDocsText);
 
 const readHostSidecarVersion = (path) => {
   try {
@@ -265,209 +403,45 @@ addCheck(
   versions.windowsMsiUpgradeCode ?? "?",
 );
 addCheck(
-  "Windows MSI skips generated WebView2 installer custom action",
-  tauriWindowsWebviewInstallMode.type === "skip",
+  "Windows MSI embeds WebView2 bootstrapper for fresh installs",
+  tauriWindowsWebviewInstallMode.type === "embedBootstrapper",
   `${tauriWindowsWebviewInstallMode.type ?? "?"}`,
 );
+const hasBundledWslSandboxPayload = windowsInstallerConfigs.some((config) =>
+  Object.entries(config.bundle?.resources ?? {}).some(([source, destination]) =>
+    /(?:wsl2-|windows-wsl2-|veslosandbox)/i.test(`${source}\n${destination}`),
+  ),
+);
+
+const hasBundledWslSandboxWix = windowsInstallerConfigs
+  .flatMap((config) => {
+    const wix = config.bundle?.windows?.wix ?? {};
+    return [...(wix.fragmentPaths ?? []), ...(wix.componentGroupRefs ?? [])];
+  })
+  .some((entry) => /(?:wsl|sandbox)/i.test(entry));
+
+const hasBundledWslSandboxNsisHook = windowsInstallerConfigs
+  .map((config) => config.bundle?.windows?.nsis?.installerHooks)
+  .some((hook) => /(?:wsl|sandbox)/i.test(hook ?? ""));
+
 addCheck(
-  "Windows MSI bundles desktop package manifest for WSL provisioning version pin",
+  "Windows MSI bundles desktop package manifest",
   tauriBundleResources["../package.json"] === "package.json" &&
+    tauriWindowsReleaseBundleResources["../package.json"] === "package.json" &&
     existsSync(resolve(root, "packages", "desktop", "package.json")),
   tauriBundleResources["../package.json"] ?? "?",
 );
 addCheck(
-  "Windows MSI bundles WSL sandbox provisioner",
-  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ===
-    "windows-wsl2-sandbox-provision.ps1" &&
-    existsSync(resolve(root, "packages", "orchestrator", "scripts", "windows-wsl2-sandbox-provision.ps1")),
-  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ?? "?",
+  "Windows installers exclude WSL sandbox payload and setup hooks",
+  !hasBundledWslSandboxPayload &&
+    !hasBundledWslSandboxWix &&
+    !hasBundledWslSandboxNsisHook,
+  "no WSL resources, WiX fragments/component groups, or NSIS hooks",
 );
-const wslPrerequisiteInstallerPath = resolve(
-  root,
-  "packages",
-  "desktop",
-  "src-tauri",
-  "windows",
-  "wsl2-prerequisite-installer.ps1",
-);
-const wslPrerequisiteInstaller = existsSync(wslPrerequisiteInstallerPath)
-  ? readText(wslPrerequisiteInstallerPath)
-  : "";
-const hiddenProcessStartInfoPattern =
-  /New-Object\s+System\.Diagnostics\.ProcessStartInfo[\s\S]*?\$startInfo\.UseShellExecute\s*=\s*\$false[\s\S]*?\$startInfo\.CreateNoWindow\s*=\s*\$true/;
-const nativeCommandTimeoutPattern =
-  /\$NativeCommandTimeoutExitCode\s*=\s*1460[\s\S]*?function\s+Stop-HiddenNativeProcessTree\b[\s\S]*?WaitForExit\(\$timeoutMilliseconds\)/;
-const hasIsolatedWslCommandGuard = (text) =>
-  /(?:(?:native-timeout-isolation|skip-redundant-prereq-check|wsl-install-dism-fallback|optional-feature-fallback|expanded-prereq-log-tail|optional-feature-first|runonce-elevated-exit-guard|msi-restart-prompt|restart-command-logging|tls-opencode-version-guard)-20260623|(?:features-msix-no-localsystem-wsl|startup-continuation)-20260624)/.test(text) &&
-  /Script revision:/.test(text) &&
-  /function\s+Invoke-IsolatedNativeCommand\b/.test(text) &&
-  /Start-Job\s+-ScriptBlock/.test(text) &&
-  /Wait-Job\s+-Job\s+\$job\s+-Timeout\s+\$TimeoutSeconds/.test(text);
-const wslStatusTimeoutPattern = /@\(("--status"|'--status')\)\s+-TimeoutSeconds\s+45/;
 addCheck(
-  "Windows MSI bundles WSL prerequisite installer for first-run repair",
-  tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ===
-    "wsl2-prerequisite-installer.ps1" &&
-    /features-msix-no-localsystem-wsl-20260624/.test(wslPrerequisiteInstaller) &&
-    /SecurityProtocol[\s\S]*?Tls12/.test(wslPrerequisiteInstaller) &&
-    /function\s+Install-WslAppPackage\b/.test(wslPrerequisiteInstaller) &&
-    /Add-AppxProvisionedPackage\s+-Online\s+-PackagePath/.test(wslPrerequisiteInstaller) &&
-    /function\s+Resolve-WslExecutable\b/.test(wslPrerequisiteInstaller) &&
-    /function\s+Resolve-DismExecutable\b/.test(wslPrerequisiteInstaller) &&
-    /Sysnative/.test(wslPrerequisiteInstaller) &&
-    /System32/.test(wslPrerequisiteInstaller) &&
-    /Microsoft-Windows-Subsystem-Linux/.test(wslPrerequisiteInstaller) &&
-    /VirtualMachinePlatform/.test(wslPrerequisiteInstaller) &&
-    /function\s+Test-WslFeaturesEnabled\b/.test(wslPrerequisiteInstaller) &&
-    /Get-WindowsOptionalFeature/.test(wslPrerequisiteInstaller) &&
-    /Get-AppxProvisionedPackage/.test(wslPrerequisiteInstaller) &&
-    !/wsl_update_x64\.msi/.test(wslPrerequisiteInstaller) &&
-    !/msiexec\.exe/i.test(wslPrerequisiteInstaller) &&
-    !/Invoke-NativeCommand[^\n]*--install/.test(wslPrerequisiteInstaller) &&
-    !/Invoke-NativeCommand[^\n]*--update/.test(wslPrerequisiteInstaller) &&
-    /function\s+Enable-WslFeaturesWithPowerShell\b/.test(wslPrerequisiteInstaller) &&
-    /function\s+Enable-WslFeaturesWithPowerShellThenDism\b/.test(wslPrerequisiteInstaller) &&
-    /Enable-WindowsOptionalFeature/.test(wslPrerequisiteInstaller) &&
-    /PowerShell optional feature enablement failed[\s\S]*?falling back to DISM feature enablement/.test(
-      wslPrerequisiteInstaller,
-    ) &&
-    hiddenProcessStartInfoPattern.test(wslPrerequisiteInstaller) &&
-    nativeCommandTimeoutPattern.test(wslPrerequisiteInstaller) &&
-    hasIsolatedWslCommandGuard(wslPrerequisiteInstaller) &&
-    /Native command timed out after/.test(wslPrerequisiteInstaller) &&
-    wslStatusTimeoutPattern.test(wslPrerequisiteInstaller) &&
-    !/&\s+\$FilePath\b/.test(wslPrerequisiteInstaller),
-  tauriBundleResources["windows/wsl2-prerequisite-installer.ps1"] ?? "?",
-);
-const wslClientInstallerPath = resolve(
-  root,
-  "packages",
-  "desktop",
-  "src-tauri",
-  "windows",
-  "wsl2-client-installer.ps1",
-);
-const wslClientInstaller = existsSync(wslClientInstallerPath) ? readText(wslClientInstallerPath) : "";
-addCheck(
-  "Windows installers bundle client WSL runtime setup",
-  tauriBundleResources["windows/wsl2-client-installer.ps1"] === "wsl2-client-installer.ps1" &&
-    /AllowRestartContinuationSuccess/.test(wslClientInstaller) &&
-    /AllowDeferredRuntimeRepairSuccess/.test(wslClientInstaller) &&
-    /\[switch\]\$StartupContinuation/.test(wslClientInstaller) &&
-    /function\s+Register-MachineStartupContinuation\b[\s\S]*?-StartupContinuation[\s\S]*?-SkipPrerequisiteInstall[\s\S]*?Active Setup/.test(
-      wslClientInstaller,
-    ) &&
-    /function\s+Invoke-StartupContinuation\b[\s\S]*?Wait-WslUsable[\s\S]*?Invoke-LocalPowerShellScript\s+-ScriptPath\s+\$SandboxInstallerScript/s.test(
-      wslClientInstaller,
-    ) &&
-    /function\s+Register-CurrentUserStartupRetry\b[\s\S]*?-StartupContinuation[\s\S]*?-SkipPrerequisiteInstall[\s\S]*?RunOnce/.test(
-      wslClientInstaller,
-    ) &&
-    /Resolve-RestartRequiredMarkerPath/.test(wslClientInstaller) &&
-    /runtime-setup-restart-required\.marker/.test(wslClientInstaller) &&
-    !/Show-RestartPromptIfRequired/.test(wslClientInstaller) &&
-    !/WScript\.Shell/.test(wslClientInstaller) &&
-    !/shutdown\.exe/.test(wslClientInstaller) &&
-    /VESLO_RUNTIME_SETUP_RESULT=restart_required[\s\S]*?Set-Content\s+-LiteralPath\s+\$markerPath/s.test(
-      wslClientInstaller,
-    ) &&
-    /function\s+Write-RecentPrerequisiteLogTail\b/.test(wslClientInstaller) &&
-    /Latest WSL prerequisite helper transcript/.test(wslClientInstaller) &&
-    /Start-Sleep\s+-Milliseconds\s+500/.test(wslClientInstaller) &&
-    /Windows PowerShell transcript start/.test(wslClientInstaller) &&
-    /Get-Content\s+-LiteralPath\s+\$prereqLogPath\s+-ErrorAction\s+Stop/.test(wslClientInstaller) &&
-    /-not\s+\$restartContinuation[\s\S]*?first-run onboarding\/Settings repair will retry[\s\S]*?\$installerExitCode\s*=\s*0/.test(
-      wslClientInstaller,
-    ) &&
-    /VESLO_RUNTIME_SETUP_RESULT=ready/.test(wslClientInstaller) &&
-    /VESLO_RUNTIME_SETUP_RESULT=restart_required/.test(wslClientInstaller) &&
-    /VESLO_RUNTIME_SETUP_RESULT=failed/.test(wslClientInstaller) &&
-    /wsl2-prerequisite-installer\.ps1/.test(wslClientInstaller) &&
-    /wsl2-sandbox-installer\.ps1/.test(wslClientInstaller) &&
-    /function\s+Resolve-WslExecutable\b/.test(wslClientInstaller) &&
-    /function\s+Resolve-PowerShellExecutable\b/.test(wslClientInstaller) &&
-    /Sysnative/.test(wslClientInstaller) &&
-    /System32/.test(wslClientInstaller) &&
-    /Cannot prepare Veslo WSL runtime under SYSTEM[\s\S]*?Finish-ClientInstaller 5/.test(
-      wslClientInstaller,
-    ) &&
-    /Invoke-ElevatedPowerShellScript[\s\S]*?-ScriptPath\s+\$[Pp]rerequisiteScript[\s\S]*?-ScriptArguments\s+@\("-Install"\)[\s\S]*?-TimeoutSeconds\s+3600/.test(
-      wslClientInstaller,
-    ) &&
-    /WSL status already failed; skipping redundant prerequisite check/.test(wslClientInstaller) &&
-    !/Invoke-LocalPowerShellScript\s+-ScriptPath\s+\$prerequisiteScript\s+-ScriptArguments\s+@\("-CheckOnly"\)/.test(wslClientInstaller) &&
-    /-Verb\s+RunAs/.test(wslClientInstaller) &&
-    /RunOnce/.test(wslClientInstaller) &&
-    /\$ClientInstallerScriptPath/.test(wslClientInstaller) &&
-    !/function\s+Register-ClientInstallerRunOnce[\s\S]*?\$MyInvocation\.MyCommand\.Path[\s\S]*?\n}/.test(
-      wslClientInstaller,
-    ) &&
-    /Elevated prerequisite installer exited without an ExitCode[\s\S]*?ExitCode\s*=\s*\$exitCode/.test(
-      wslClientInstaller,
-    ) &&
-    hiddenProcessStartInfoPattern.test(wslClientInstaller) &&
-    nativeCommandTimeoutPattern.test(wslClientInstaller) &&
-    hasIsolatedWslCommandGuard(wslClientInstaller) &&
-    /Native command timed out after/.test(wslClientInstaller) &&
-    /Native command finished with exit code \$exitCode\./.test(wslClientInstaller) &&
-    wslStatusTimeoutPattern.test(wslClientInstaller) &&
-    !/&\s+(?:wsl|powershell)\.exe\b/i.test(wslClientInstaller),
-  tauriBundleResources["windows/wsl2-client-installer.ps1"] ?? "?",
-);
-const wslSandboxInstallerPath = resolve(
-  root,
-  "packages",
-  "desktop",
-  "src-tauri",
-  "windows",
-  "wsl2-sandbox-installer.ps1",
-);
-const wslSandboxInstaller = existsSync(wslSandboxInstallerPath) ? readText(wslSandboxInstallerPath) : "";
-addCheck(
-  "Windows MSI bundles WSL sandbox installer wrapper",
-  tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] === "wsl2-sandbox-installer.ps1" &&
-    !/best-effort/.test(wslSandboxInstaller) &&
-    /Cannot provision Veslo WSL runtime under SYSTEM[\s\S]*?Finish-Installer 5/.test(
-      wslSandboxInstaller,
-    ) &&
-    hiddenProcessStartInfoPattern.test(wslSandboxInstaller) &&
-    nativeCommandTimeoutPattern.test(wslSandboxInstaller) &&
-    hasIsolatedWslCommandGuard(wslSandboxInstaller) &&
-    /Native command timed out after/.test(wslSandboxInstaller) &&
-    wslStatusTimeoutPattern.test(wslSandboxInstaller) &&
-    !/&\s+(?:wsl|powershell)\.exe\b/i.test(wslSandboxInstaller),
-  tauriBundleResources["windows/wsl2-sandbox-installer.ps1"] ?? "?",
-);
-const wslSandboxProvisionerPath = resolve(
-  root,
-  "packages",
-  "orchestrator",
-  "scripts",
-  "windows-wsl2-sandbox-provision.ps1",
-);
-const wslSandboxProvisioner = existsSync(wslSandboxProvisionerPath) ? readText(wslSandboxProvisionerPath) : "";
-addCheck(
-  "Windows MSI bundles hidden WSL sandbox provisioner",
-    tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ===
-    "windows-wsl2-sandbox-provision.ps1" &&
-    hiddenProcessStartInfoPattern.test(wslSandboxProvisioner) &&
-    nativeCommandTimeoutPattern.test(wslSandboxProvisioner) &&
-    hasIsolatedWslCommandGuard(wslSandboxProvisioner) &&
-    /Timed out after \$TimeoutSeconds seconds/.test(wslSandboxProvisioner) &&
-    /SecurityProtocol[\s\S]*?Tls12/.test(wslSandboxProvisioner) &&
-    /function\s+Invoke-ProvisionWebRequest\b/.test(wslSandboxProvisioner) &&
-    /Invoke-WebRequest[\s\S]*?-TimeoutSec\s+\$TimeoutSeconds/.test(wslSandboxProvisioner) &&
-    /Join-Path\s+\$PSScriptRoot\s+"package\.json"/.test(wslSandboxProvisioner) &&
-    /Join-Path\s+\$PSScriptRoot\s+"\.\.\\package\.json"/.test(wslSandboxProvisioner) &&
-    /test "\$actual" = "__EXPECTED_OPENCODE_VERSION__"/.test(wslSandboxProvisioner) &&
-    !/opencode --version \| grep -F/.test(wslSandboxProvisioner) &&
-    /catch\s*\{[\s\S]*?Unhandled provisioning error/.test(wslSandboxProvisioner) &&
-    /Invoke-Wsl\s+-WslArgs\s+@\(("--status"|'--status')\)\s+-TimeoutSeconds\s+45/.test(
-      wslSandboxProvisioner,
-    ) &&
-    /Invoke-HiddenNativeCommand\s+-FilePath\s+"wsl\.exe"\s+-Arguments\s+\$WslArgs/.test(wslSandboxProvisioner) &&
-    !/&\s+wsl\.exe\b/i.test(wslSandboxProvisioner),
-  tauriBundleResources["../../orchestrator/scripts/windows-wsl2-sandbox-provision.ps1"] ?? "?",
+  "Release docs describe the current non-WSL Windows installer contract",
+  releaseDocsDescribeNoWslInstallerContract,
+  "RELEASE.md + docs/dev",
 );
 addCheck(
   "macOS release builds embed GlitchTip DSN for frontend and native monitoring",
@@ -495,6 +469,86 @@ addCheck(
   "RELEASE.md + docs/dev",
 );
 addCheck(
+  "Publish workflows keep GlitchTip source-map upload optional",
+  hasGlitchTipSourceMapUpload(releaseMacosTauriJob) &&
+    hasGlitchTipSourceMapUpload(releaseWindowsTauriJob) &&
+    hasGlitchTipSourceMapUpload(prereleaseTauriJob),
+  "release-macos-aarch64.yml + prerelease.yml",
+);
+addCheck(
+  "Tauri bundles the injected hidden-source-map frontend build",
+  tauriConfig.build?.beforeBuildCommand?.includes("build:desktop-ui") &&
+    /sourcemap:\s*releaseSourceMaps\s*\?\s*"hidden"\s*:\s*false/.test(viteConfig) &&
+    hasOrderedFragments(desktopUiBuildHelper, [
+      'buildUi({ ...env, VESLO_GLITCHTIP_SOURCE_MAPS: "1" });',
+      '["sourcemaps", "inject", "--ext", "js", distDirectory]',
+      '"upload",',
+      "removeSourceMapReferences();",
+      "removeSourceMaps();",
+      "assertNoSourceMapsRemain();",
+    ]),
+  "one Vite build -> inject -> upload -> strip maps -> Tauri bundle",
+);
+addCheck(
+  "Staging renderer canary is opt-in and absent from regular desktop builds",
+  hasStagingRendererCanary(),
+  "manual Build Staging App input only; build output is checked for the canary marker",
+);
+
+const deprecatedCheckoutRefs = findDeprecatedActionRefs("actions/checkout");
+addCheck(
+  "Active workflows use Node 24 checkout action runtime",
+  deprecatedCheckoutRefs.length === 0,
+  deprecatedCheckoutRefs.length ? deprecatedCheckoutRefs.join(", ") : "no actions/checkout@v0-v4 refs",
+);
+
+const deprecatedSetupNodeRefs = findDeprecatedActionRefs("actions/setup-node");
+addCheck(
+  "Active workflows use Node 24 setup-node action runtime",
+  deprecatedSetupNodeRefs.length === 0,
+  deprecatedSetupNodeRefs.length ? deprecatedSetupNodeRefs.join(", ") : "no actions/setup-node@v0-v4 refs",
+);
+
+const deprecatedCacheRefs = findDeprecatedActionRefs("actions/cache");
+addCheck(
+  "Active workflows use Node 24 cache action runtime",
+  deprecatedCacheRefs.length === 0,
+  deprecatedCacheRefs.length ? deprecatedCacheRefs.join(", ") : "no actions/cache@v0-v4 refs",
+);
+
+const deprecatedUploadArtifactRefs = findDeprecatedActionRefs("actions/upload-artifact");
+addCheck(
+  "Active workflows use Node 24 upload-artifact action runtime",
+  deprecatedUploadArtifactRefs.length === 0,
+  deprecatedUploadArtifactRefs.length
+    ? deprecatedUploadArtifactRefs.join(", ")
+    : "no actions/upload-artifact@v0-v4 refs",
+);
+
+const deprecatedPnpmActionSetupRefs = findDeprecatedActionRefs("pnpm/action-setup");
+addCheck(
+  "Active workflows use Node 24 pnpm setup action runtime",
+  deprecatedPnpmActionSetupRefs.length === 0,
+  deprecatedPnpmActionSetupRefs.length
+    ? deprecatedPnpmActionSetupRefs.join(", ")
+    : "no pnpm/action-setup@v0-v4 refs",
+);
+
+const deprecatedSetupBunRefs = findDeprecatedActionRefs("oven-sh/setup-bun", 1);
+addCheck(
+  "Active workflows use Node 24 Bun setup action runtime",
+  deprecatedSetupBunRefs.length === 0,
+  deprecatedSetupBunRefs.length ? deprecatedSetupBunRefs.join(", ") : "no oven-sh/setup-bun@v0-v1 refs",
+);
+
+const setupNodeCacheGaps = setupNodeImplicitCacheGaps();
+addCheck(
+  "Setup Node implicit package-manager cache is disabled",
+  setupNodeCacheGaps.length === 0,
+  setupNodeCacheGaps.length ? setupNodeCacheGaps.join(", ") : "package-manager-cache=false or explicit cache",
+);
+
+addCheck(
   "Release workflow validates document runtime metadata before build",
   hasDocumentRuntimeMetadataGate(releaseVerifyJob),
   ".github/workflows/release-macos-aarch64.yml#verify-release",
@@ -505,8 +559,8 @@ addCheck(
   ".github/workflows/release-macos-aarch64.yml#publish-tauri",
 );
 addCheck(
-  "Release workflow verifies Windows document runtime after assembly",
-  hasWindowsDocumentRuntimeBundleGate(releaseWindowsTauriJob),
+  "Release workflow keeps Windows document runtime outside the MSI",
+  hasWindowsDocumentRuntimePackageOnlyGate(releaseWindowsTauriJob),
   ".github/workflows/release-macos-aarch64.yml#publish-tauri-windows",
 );
 addCheck(
@@ -538,7 +592,7 @@ addCheck(
   "Prerelease Windows workflow verifies bundled sidecar hashes after build",
   hasWindowsBundledSidecarHashGate(
     prereleaseTauriJob,
-    "- name: Build + upload\n        if: matrix.os_type == 'windows'",
+    "Build Windows MSI",
   ),
   ".github/workflows/prerelease.yml#publish-tauri",
 );
@@ -548,76 +602,48 @@ addCheck(
     hasWindowsBundledSidecarHashGate(buildWindowsMsiJob, "Build Windows MSI"),
   ".github/workflows/build-desktop.yml + .github/workflows/build-windows-msi.yml",
 );
-const wslInstallerFragmentPath = resolve(
+addCheck(
+  "Release Windows workflow validates the final MSI before publish",
+  hasWindowsMsiRuntimeGate(releaseWindowsTauriJob, "Build Windows bundle", "Upload Windows release assets"),
+  ".github/workflows/release-macos-aarch64.yml#publish-tauri-windows",
+);
+addCheck(
+  "Prerelease Windows workflow validates the final MSI before publish",
+  hasWindowsMsiRuntimeGate(
+    prereleaseTauriJob,
+    "Build Windows MSI",
+    "Upload Windows prerelease assets",
+  ),
+  ".github/workflows/prerelease.yml#publish-tauri",
+);
+addCheck(
+  "Prerelease MSI runtime gate resolves the matrix target",
+  hasPrereleaseMsiRuntimeMatrixPath(prereleaseTauriJob),
+  ".github/workflows/prerelease.yml#publish-tauri",
+);
+addCheck(
+  "Manual Windows MSI workflows validate the final MSI before artifact upload",
+  hasWindowsMsiRuntimeGate(buildDesktopWindowsMsiJob, "Build Windows MSI", "Upload MSI artifact") &&
+    hasWindowsMsiRuntimeGate(buildWindowsMsiJob, "Build Windows MSI", "Upload MSI artifact"),
+  ".github/workflows/build-desktop.yml + .github/workflows/build-windows-msi.yml",
+);
+addCheck(
+  "Staging Windows workflow validates the final MSI before artifact upload",
+  hasWindowsStagingMsiRuntimeGate(buildStagingJob),
+  ".github/workflows/build-staging-app.yml#build",
+);
+const nsisCzechLanguagePath = resolve(
   root,
   "packages",
   "desktop",
   "src-tauri",
   "windows",
-  "wsl2-sandbox-installer.wxs",
+  "locales",
+  "Czech.nsh",
 );
-const wslInstallerFragment = existsSync(wslInstallerFragmentPath) ? readText(wslInstallerFragmentPath) : "";
-addCheck(
-  "Windows MSI keeps WSL sandbox provisioning action dormant by default",
-  Array.isArray(tauriWindowsWix.fragmentPaths) &&
-    tauriWindowsWix.fragmentPaths.includes("windows/wsl2-sandbox-installer.wxs") &&
-    Array.isArray(tauriWindowsWix.componentGroupRefs) &&
-    tauriWindowsWix.componentGroupRefs.includes("VesloWslProvisioningInstallerComponents") &&
-    /<Property\s+Id="MsiLogging"\s+Value="voicewarmupx!"\s*\/>/.test(wslInstallerFragment) &&
-    /Property\s+Id="VESLO_ENABLE_WSL_INSTALLER"\s+Value="0"/.test(wslInstallerFragment) &&
-    /RemoveOldVesloWslClientInstaller/.test(wslInstallerFragment) &&
-    /RemoveOldVesloWslPrerequisiteInstaller/.test(wslInstallerFragment) &&
-    /RemoveOldVesloWslSandboxInstaller/.test(wslInstallerFragment) &&
-    /RemoveOldVesloWslSandboxProvisioner/.test(wslInstallerFragment) &&
-    /Name="wsl2-client-installer\.ps1"\s+On="install"/.test(wslInstallerFragment) &&
-    /ComponentGroup\s+Id="VesloWslProvisioningInstallerComponents"/.test(wslInstallerFragment) &&
-    /Id="VesloProvisionWslSandbox"/.test(wslInstallerFragment) &&
-    /After="InstallFiles"/.test(wslInstallerFragment) &&
-    /Custom Action="VesloProvisionWslSandbox"\s+After="InstallFiles"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT REMOVE~="ALL"\]\]><\/Custom>/.test(
-      wslInstallerFragment,
-    ) &&
-    /Return="check"/.test(wslInstallerFragment) &&
-    /\[System64Folder\]WindowsPowerShell\\v1\.0\\powershell\.exe/.test(wslInstallerFragment) &&
-    !/\[SystemFolder\]WindowsPowerShell\\v1\.0\\powershell\.exe/.test(wslInstallerFragment) &&
-    /-NoProfile\s+-NonInteractive\s+-WindowStyle\s+Hidden\s+-ExecutionPolicy\s+Bypass/.test(wslInstallerFragment) &&
-    /\[INSTALLDIR\]wsl2-client-installer\.ps1/.test(wslInstallerFragment) &&
-    !/-AllowRestartContinuationSuccess/.test(wslInstallerFragment) &&
-    /-AllowDeferredRuntimeRepairSuccess/.test(wslInstallerFragment) &&
-    !/Id="VesloPromptWslRuntimeRestart"/.test(wslInstallerFragment) &&
-    !/-PromptForRestartIfRequired/.test(wslInstallerFragment) &&
-    /Id="VesloDisableExitDialogLaunchCheckbox"[\s\S]*?Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX"[\s\S]*?Value="0"/.test(
-      wslInstallerFragment,
-    ) &&
-    /Id="VesloClearExitDialogLaunchCheckboxText"[\s\S]*?Property="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"[\s\S]*?Value=""/.test(
-      wslInstallerFragment,
-    ) &&
-    /Custom Action="VesloDisableExitDialogLaunchCheckbox"\s+Before="ExecuteAction"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND NOT Installed\]\]><\/Custom>/.test(
-      wslInstallerFragment,
-    ) &&
-    /Custom Action="VesloDisableAutoLaunchApp"\s+Before="LaunchApplication"><!\[CDATA\[VESLO_ENABLE_WSL_INSTALLER="1" AND AUTOLAUNCHAPP AND NOT Installed\]\]><\/Custom>/.test(
-      wslInstallerFragment,
-    ) &&
-    /function\s+Resolve-WslExecutable\b/.test(wslSandboxInstaller) &&
-    /function\s+Resolve-PowerShellExecutable\b/.test(wslSandboxInstaller) &&
-    /Sysnative/.test(wslSandboxInstaller) &&
-    /System32/.test(wslSandboxInstaller) &&
-    /Write-InstallerLog "wsl\.exe was not found[\s\S]*?Finish-Installer 127/.test(
-      wslSandboxInstaller,
-    ) &&
-    /Write-InstallerLog "powershell\.exe was not found[\s\S]*?Finish-Installer 127/.test(
-      wslSandboxInstaller,
-    ) &&
-    /package\.json/.test(wslSandboxInstaller),
-  Array.isArray(tauriWindowsWix.fragmentPaths)
-    ? tauriWindowsWix.fragmentPaths.join(", ")
-    : "?",
-);
-const nsisHookPath = resolve(root, "packages", "desktop", "src-tauri", "windows", "nsis-hooks.nsh");
-const nsisHook = existsSync(nsisHookPath) ? readText(nsisHookPath) : "";
-const nsisCzechLanguagePath = resolve(root, "packages", "desktop", "src-tauri", "windows", "locales", "Czech.nsh");
 const nsisCzechLanguage = existsSync(nsisCzechLanguagePath) ? readText(nsisCzechLanguagePath) : "";
 addCheck(
-  "Windows NSIS client installer is current-user with dormant WSL runtime hook",
+  "Windows NSIS installer is current-user without WSL setup hook",
   tauriWindowsNsis.installMode === "currentUser" &&
     Array.isArray(tauriWindowsNsis.languages) &&
     tauriWindowsNsis.languages[0] === "Czech" &&
@@ -626,45 +652,20 @@ addCheck(
     /LangString\s+alreadyInstalled\s+\$\{LANG_CZECH\}/.test(nsisCzechLanguage) &&
     /LangString\s+webview2InstallSuccess\s+\$\{LANG_CZECH\}/.test(nsisCzechLanguage) &&
     /LangString\s+deleteAppData\s+\$\{LANG_CZECH\}/.test(nsisCzechLanguage) &&
-    tauriWindowsNsis.installerHooks === "windows/nsis-hooks.nsh" &&
-    /NSIS_HOOK_POSTINSTALL/.test(nsisHook) &&
-    /!ifdef VESLO_ENABLE_WSL_INSTALLER/.test(nsisHook) &&
-    /Skipping Veslo WSL runtime preparation; shared non-sandbox runtime is enabled by default\./.test(nsisHook) &&
-    /nsExec::ExecToLog/.test(nsisHook) &&
-    !/\bExecWait\b/.test(nsisHook) &&
-    /wsl2-client-installer\.ps1/.test(nsisHook) &&
-    /-NoProfile\s+-NonInteractive\s+-WindowStyle\s+Hidden\s+-ExecutionPolicy\s+Bypass/.test(nsisHook) &&
-    /SetRebootFlag\s+true/.test(nsisHook) &&
-    /MessageBox\s+MB_ICONINFORMATION/.test(nsisHook) &&
-    /MessageBox\s+MB_ICONEXCLAMATION/.test(nsisHook) &&
-    /Abort\s+"Veslo Windows runtime preparation failed/.test(nsisHook) &&
-    /wsl2-client-installer\.log/.test(nsisHook) &&
-    /\$COMMONAPPDATA\\Veslo\\logs\\wsl2-prerequisite-installer\.log/.test(nsisHook) &&
-    !/\$PROGRAMDATA/.test(nsisHook) &&
-    /wsl2-prerequisite-installer\.log/.test(nsisHook) &&
-    /wsl2-sandbox-installer\.log/.test(nsisHook) &&
-    !/-Verb\s+RunAs/.test(nsisHook),
-  `${tauriWindowsNsis.installMode ?? "?"}; ${tauriWindowsNsis.installerHooks ?? "?"}`,
+    !tauriWindowsNsis.installerHooks,
+  `${tauriWindowsNsis.installMode ?? "?"}; ${tauriWindowsNsis.installerHooks ?? "none"}`,
 );
 const supervisedProcessPath = resolve(root, "packages", "desktop", "src-tauri", "src", "supervised_process.rs");
 const supervisedProcess = existsSync(supervisedProcessPath) ? readText(supervisedProcessPath) : "";
 const windowsPlatformPath = resolve(root, "packages", "desktop", "src-tauri", "src", "platform", "windows.rs");
 const windowsPlatform = existsSync(windowsPlatformPath) ? readText(windowsPlatformPath) : "";
-const wslSandboxCommandPath = resolve(root, "packages", "desktop", "src-tauri", "src", "commands", "wsl_sandbox.rs");
-const wslSandboxCommand = existsSync(wslSandboxCommandPath) ? readText(wslSandboxCommandPath) : "";
-const vesloServerDesktopPath = resolve(root, "packages", "desktop", "src-tauri", "src", "veslo_server", "mod.rs");
-const vesloServerDesktop = existsSync(vesloServerDesktopPath) ? readText(vesloServerDesktopPath) : "";
 addCheck(
-  "Windows runtime sidecars and repair helpers launch without console windows",
+  "Windows runtime sidecars launch without console windows",
   /const\s+CREATE_NO_WINDOW:\s*u32\s*=\s*0x0800_0000/.test(supervisedProcess) &&
     /command\.creation_flags\(CREATE_NO_WINDOW\)/.test(supervisedProcess) &&
     /pub fn spawn\(self\)[\s\S]*?spawn_hidden_command/.test(supervisedProcess) &&
-    /pub fn configure_hidden[\s\S]*?command\.creation_flags\(CREATE_NO_WINDOW\)/.test(windowsPlatform) &&
-    /Command::new\("powershell\.exe"\)[\s\S]*?configure_hidden\(&mut command\)/.test(wslSandboxCommand) &&
-    /Start-Process[\s\S]*?-WindowStyle Hidden[\s\S]*?-Verb RunAs/.test(wslSandboxCommand) &&
-    /Command::new\("powershell"\)[\s\S]*?configure_hidden\(&mut command\)/.test(vesloServerDesktop) &&
-    /Command::new\("wsl\.exe"\)[\s\S]*?configure_hidden\(&mut command\)/.test(vesloServerDesktop),
-  "CREATE_NO_WINDOW + hidden PowerShell paths",
+    /pub fn configure_hidden[\s\S]*?command\.creation_flags\(CREATE_NO_WINDOW\)/.test(windowsPlatform),
+  "CREATE_NO_WINDOW",
 );
 addCheck(
   "OpenCodeRouter version pinned in desktop",

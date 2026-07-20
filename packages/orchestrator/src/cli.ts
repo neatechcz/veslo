@@ -2904,7 +2904,8 @@ async function startOpencode(options: {
       },
       "opencode",
     );
-    child = spawnProcess(options.bin, args, {
+    const resolved = resolveBinCommand(options.bin);
+    child = spawnProcess(resolved.command, [...resolved.prefixArgs, ...args], {
       cwd: options.workspace,
       stdio: ["ignore", "pipe", "pipe"],
       env,

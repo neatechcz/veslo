@@ -119,7 +119,7 @@ function useThrottledValue<T>(value: () => T, delayMs: number | (() => number) =
       setState(() => next);
       return;
     }
-    if (timer) clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
     timer = setTimeout(() => {
       setState(() => next);
       timer = undefined;
@@ -127,7 +127,7 @@ function useThrottledValue<T>(value: () => T, delayMs: number | (() => number) =
   });
 
   onCleanup(() => {
-    if (timer) clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
   });
 
   return state;
@@ -306,7 +306,7 @@ export default function PartView(props: Props) {
     if (collapsedLongText()) return "";
     return rawText();
   });
-  const throttledMarkdownSource = useThrottledValue(markdownSource, markdownThrottleMs);
+  const throttledMarkdownSource = useThrottledValue(() => markdownSource(), markdownThrottleMs);
   const renderedMarkdown = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return null;
     if (collapsedLongText()) return null;

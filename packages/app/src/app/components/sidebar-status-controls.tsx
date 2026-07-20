@@ -125,8 +125,8 @@ export default function SidebarStatusControls(props: SidebarStatusControlsProps)
       <div class="flex items-center gap-1.5">
         <button
           type="button"
+          onClick={() => props.onOpenSettings()}
           class="h-7 w-7 inline-flex items-center justify-center rounded-md border-0 bg-transparent text-gray-a8 transition-colors hover:bg-cyan-a3 hover:text-dls-accent"
-          onClick={props.onOpenSettings}
           title={__vesloT("dashboard.settings", __vesloCurrentLocale())}
           aria-label={__vesloT("dashboard.settings", __vesloCurrentLocale())}
         >

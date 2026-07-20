@@ -42,10 +42,10 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
   let timer: ReturnType<typeof setTimeout> | null = null;
   let pollingScope: ServerQueuedRunProjectionScope | null = null;
   let pollingAttempt = 0;
-  let disposed = false;
+  const disposal = new Set<true>();
 
   const stopPolling = () => {
-    if (timer) clearTimer(timer);
+    if (timer !== null) clearTimer(timer);
     timer = null;
     pollingScope = null;
     pollingAttempt = 0;
@@ -59,7 +59,7 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
   const refresh = async (
     requestedScope = options.getScope(),
   ): Promise<ServerQueueProjectionRefreshResult> => {
-    if (disposed || !requestedScope) return { kind: "unavailable" };
+    if (disposal.has(true) || !requestedScope) return { kind: "unavailable" };
 
     let items: VesloConversationQueueItem[] | null;
     try {
@@ -70,18 +70,18 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
     }
 
     if (!items) return { kind: "unavailable" };
-    if (disposed || !scopesMatch(requestedScope, options.getScope())) return { kind: "stale" };
+    if (disposal.has(true) || !scopesMatch(requestedScope, options.getScope())) return { kind: "stale" };
 
     options.replaceScope(requestedScope, items);
     return { kind: "updated", itemCount: items.length, hasPollingRows: hasPollingRows(items) };
   };
 
   const schedulePolling = (scope: ServerQueuedRunProjectionScope) => {
-    if (disposed || !scopesMatch(scope, options.getScope())) {
+    if (disposal.has(true) || !scopesMatch(scope, options.getScope())) {
       stopPollingFor(scope);
       return;
     }
-    if (timer && scopesMatch(scope, pollingScope)) return;
+    if (timer !== null && scopesMatch(scope, pollingScope)) return;
     if (!scopesMatch(scope, pollingScope)) {
       stopPolling();
       pollingScope = scope;
@@ -96,7 +96,7 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
   };
 
   const poll = async (scope: ServerQueuedRunProjectionScope) => {
-    if (disposed || !scopesMatch(scope, options.getScope())) {
+    if (disposal.has(true) || !scopesMatch(scope, options.getScope())) {
       stopPollingFor(scope);
       return;
     }
@@ -129,7 +129,7 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
     refreshAndPoll,
     stopPolling,
     dispose: () => {
-      disposed = true;
+      disposal.add(true);
       stopPolling();
     },
   };

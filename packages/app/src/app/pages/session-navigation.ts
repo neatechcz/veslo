@@ -218,7 +218,7 @@ export async function createSessionWithWorkspaceActivation(
     if (token !== createSessionNavigationToken) return false;
     const created = await Promise.resolve(input.createSession());
     if (typeof created === "string") return created.trim().length > 0;
-    return created !== undefined && created !== null;
+    return false;
   };
 
   const task = createSessionNavigationQueue.then(run, run);
@@ -250,7 +250,7 @@ export async function openPendingDraftWithWorkspaceActivation(
     if (token !== openPendingDraftNavigationToken) return false;
     const opened = await Promise.resolve(input.openPendingDraft());
     if (typeof opened === "string") return opened.trim().length > 0;
-    return opened !== undefined && opened !== null && opened !== false;
+    return opened !== undefined && opened !== false;
   };
 
   const task = openPendingDraftNavigationQueue.then(run, run);

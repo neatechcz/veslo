@@ -1,7 +1,21 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Bot, Check, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import {
+  Bot,
+  Check,
+  ChevronRight,
+  CircleAlert,
+  Copy,
+  Eye,
+  File,
+  FileEdit,
+  FolderSearch,
+  Pencil,
+  Search,
+  Sparkles,
+  Terminal,
+} from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
 import {
@@ -14,13 +28,15 @@ import {
 import { compactHumanStepText, containsPathLikeText, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
-import {
-  toolInputFromPart,
-  toolNameFromPart,
-} from "../../lib/opencode-part-access";
+import { toolInputFromPart, toolNameFromPart } from "../../lib/opencode-part-access";
 import { getTaskPartSubagentInfo, isVesloInternalSubagentType } from "../../lib/internal-subagents";
 import { currentLocale, t } from "../../../i18n";
-import { buildTimelineDetailModel, type TimelineRowModel, type TimelineRowType, type TimelineSectionKind } from "./timeline-detail-model.js";
+import {
+  buildTimelineDetailModel,
+  type TimelineRowModel,
+  type TimelineRowType,
+  type TimelineSectionKind,
+} from "./timeline-detail-model.js";
 import MediaEvidenceStrip from "./media-evidence-strip.js";
 import {
   createTimelineSectionStateId,
@@ -31,6 +47,8 @@ import {
 import type { EditableUserMessageDraft } from "./message-editability";
 import {
   buildProgressRenderBlocks,
+  progressGroupingInputFingerprint,
+  progressRenderBlockShapeFingerprint,
   progressRenderBlockEntries,
   type ProgressCommentItem,
   type ProgressGroupItem,
@@ -39,6 +57,14 @@ import {
   type ProgressStepItem,
 } from "./progress-grouping-model.js";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../../i18n";
+import {
+  describeTranscriptCollectionCause,
+  describeTranscriptSurfaceIdentities,
+  isMessageBlockMemoNoOp,
+  transcriptWriteRevision,
+  type TranscriptSurfaceIdentity,
+} from "../../context/session-transcript-write-diagnostics";
+import { uiEffectTrace } from "../../lib/ui-effect-trace";
 
 export type PendingMessageState =
   | {
@@ -49,19 +75,6 @@ export type PendingMessageState =
       state: "sync-warning";
       reason: "ambiguous-legacy" | "delivery-unconfirmed";
     };
-
-export type MessageBlocksRecomputedTrace = {
-  revision: number;
-  messageCount: number;
-  blockCount: number;
-  changedMessageCount: number;
-  addedMessageCount: number;
-  removedMessageCount: number;
-  toolPartCount: number;
-  stepGroupCount: number;
-  unstableBlockKeyCount: number;
-  streaming: boolean;
-};
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -85,7 +98,8 @@ export type MessageListProps = {
   editableUserMessage?: EditableUserMessageDraft | null;
   onEditUserMessage?: (editable: EditableUserMessageDraft) => void;
   pendingMessageStateById?: Record<string, PendingMessageState>;
-  onMessageBlocksRecomputed?: (trace: MessageBlocksRecomputedTrace) => void;
+  /** Read only while writing an entry to the bounded dev diagnostic buffer. */
+  transcriptSurfaceContext?: () => Record<string, unknown>;
   footer?: JSX.Element;
 };
 
@@ -99,12 +113,55 @@ type MessageBlockItem = ProgressRenderBlock;
 
 const VIRTUALIZATION_THRESHOLD = 500;
 const VIRTUAL_OVERSCAN = 4;
+const CHURN_WINDOW_MS = 30_000;
+const CHURN_NO_OP_THRESHOLD = 20;
+
+type MessageBlocksStreamBenchmark = {
+  startedAt: number;
+  recomputes: number;
+  memoNoOps: number;
+  nestedRecomputes: number;
+  displayChanges: number;
+  messageArrayIdentityChanges: number;
+  transcriptWriteTransitions: number;
+  totalSelfTimeMs: number;
+  maxSelfTimeMs: number;
+  noOpTimestamps: number[];
+  maxNoOpsInWindow: number;
+};
 
 function messageInfoString(message: MessageWithParts, key: string): string {
   const record = message.info as unknown as Record<string, unknown>;
   const value = record[key];
   return value === undefined || value === null ? "" : String(value);
 }
+
+const rowReferenceFingerprint = (identities: readonly TranscriptSurfaceIdentity[]) =>
+  identities
+    .map((message) =>
+      [
+        message.messageId,
+        message.messageIdentity,
+        message.infoIdentity,
+        message.partsIdentity,
+        ...message.partIdentities.map((part) => `${part.partId}:${part.identity}`),
+      ].join("\u0000"),
+    )
+    .join("\u0001");
+
+const projectionBoundaryFingerprint = (context: Record<string, unknown>) => {
+  const boundaries = context.transcriptProjectionBoundaries;
+  if (!boundaries || typeof boundaries !== "object") return "";
+  return Object.values(boundaries as Record<string, unknown>)
+    .map((boundary) => {
+      if (!boundary || typeof boundary !== "object") return "";
+      const record = boundary as Record<string, unknown>;
+      return [record.stage, record.sessionId, record.revision, record.arrayIdentity, record.messageCount]
+        .map((value) => String(value ?? ""))
+        .join("\u0000");
+    })
+    .join("\u0001");
+};
 
 function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   if (left.size !== right.size) return false;
@@ -117,39 +174,42 @@ function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): b
 /** Icon for a given tool category */
 function ToolIcon(props: { category: string; size?: number }) {
   const s = () => props.size ?? 12;
-  switch (props.category) {
-    case "plan":
-      return <Sparkles size={s()} />;
-    case "explore":
-    case "read":
-      return <Eye size={s()} />;
-    case "list":
-      return <FolderSearch size={s()} />;
-    case "action":
-    case "edit":
-      return <Pencil size={s()} />;
-    case "write":
-      return <FileEdit size={s()} />;
-    case "verify":
-      return <Check size={s()} />;
-    case "issues":
-    case "issue":
-      return <CircleAlert size={s()} />;
-    case "search":
-      return <Search size={s()} />;
-    case "command":
-    case "terminal":
-      return <Terminal size={s()} />;
-    case "task":
-      return <Bot size={s()} />;
-    case "skill":
-      return <Sparkles size={s()} />;
-    case "note":
-      return <Sparkles size={s()} />;
-    case "tool":
-    default:
-      return <File size={s()} />;
-  }
+  const icon = createMemo(() => {
+    switch (props.category) {
+      case "plan":
+        return <Sparkles size={s()} />;
+      case "explore":
+      case "read":
+        return <Eye size={s()} />;
+      case "list":
+        return <FolderSearch size={s()} />;
+      case "action":
+      case "edit":
+        return <Pencil size={s()} />;
+      case "write":
+        return <FileEdit size={s()} />;
+      case "verify":
+        return <Check size={s()} />;
+      case "issues":
+      case "issue":
+        return <CircleAlert size={s()} />;
+      case "search":
+        return <Search size={s()} />;
+      case "command":
+      case "terminal":
+        return <Terminal size={s()} />;
+      case "task":
+        return <Bot size={s()} />;
+      case "skill":
+        return <Sparkles size={s()} />;
+      case "note":
+        return <Sparkles size={s()} />;
+      case "tool":
+      default:
+        return <File size={s()} />;
+    }
+  });
+  return <>{icon()}</>;
 }
 
 function statusChipClass(status?: string): string {
@@ -277,12 +337,22 @@ function getTaskStepInfo(part: Part): TaskStepInfo {
   const info = getTaskPartSubagentInfo(part);
   if (!info.isTask) return { isTask: false, isInternal: false };
   const agentType = info.subagentType && !info.internal ? formatAgentType(info.subagentType) : undefined;
-  return { isTask: true, agentType, sessionId: info.sessionId, isInternal: info.internal };
+  return {
+    isTask: true,
+    agentType,
+    sessionId: info.sessionId,
+    isInternal: info.internal,
+  };
 }
 
 function partExpansionKey(part: Part | undefined, fallback: string): string {
   if (!part) return fallback;
-  const record = part as { id?: unknown; messageID?: unknown; tool?: unknown; type?: unknown };
+  const record = part as {
+    id?: unknown;
+    messageID?: unknown;
+    tool?: unknown;
+    type?: unknown;
+  };
   const partId = typeof record.id === "string" && record.id.trim() ? record.id.trim() : "";
   if (partId) return partId;
 
@@ -331,11 +401,12 @@ export default function MessageList(props: MessageListProps) {
 
   const pendingSubmitSyncWarningLabel = (
     reason: Extract<PendingMessageState, { state: "sync-warning" }>["reason"] | undefined,
-  ) => reason === "ambiguous-legacy"
-    ? tr("session.pending_submit_sync_ambiguous")
-    : reason === "delivery-unconfirmed"
-      ? tr("session.pending_submit_delivery_unconfirmed")
-      : "";
+  ) =>
+    reason === "ambiguous-legacy"
+      ? tr("session.pending_submit_sync_ambiguous")
+      : reason === "delivery-unconfirmed"
+        ? tr("session.pending_submit_delivery_unconfirmed")
+        : "";
 
   const timelineStatusLabel = (status?: TimelineRowModel["status"]) => {
     switch (status) {
@@ -442,7 +513,9 @@ export default function MessageList(props: MessageListProps) {
         items.push(
           plans === 1
             ? tr("session.timeline_summary_plan_ready")
-            : tr("session.timeline_summary_plan_steps", { count: String(plans) }),
+            : tr("session.timeline_summary_plan_steps", {
+                count: String(plans),
+              }),
         );
         return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
@@ -452,7 +525,8 @@ export default function MessageList(props: MessageListProps) {
         const searchCount = countSectionRows(section.rows, ["search"]);
         const listCount = countSectionRows(section.rows, ["list"]);
         if (fileCount > 0) items.push(plural(fileCount, "session.timeline_file_one", "session.timeline_file_other"));
-        if (searchCount > 0) items.push(plural(searchCount, "session.timeline_search_one", "session.timeline_search_other"));
+        if (searchCount > 0)
+          items.push(plural(searchCount, "session.timeline_search_one", "session.timeline_search_other"));
         if (listCount > 0) items.push(plural(listCount, "session.timeline_list_one", "session.timeline_list_other"));
         if (items.length === 0) items.push(tr("session.timeline_context_activity"));
         return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
@@ -461,9 +535,14 @@ export default function MessageList(props: MessageListProps) {
         const items: string[] = [];
         const actions = countSectionRows(section.rows, ["edit", "write", "task", "skill", "command", "tool"]);
         const thoughts = countSectionRows(section.rows, ["note"]);
-        if (actions > 0) items.push(plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
-        if (thoughts > 0) items.push(plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"));
-        if (items.length === 0) items.push(plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
+        if (actions > 0)
+          items.push(plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
+        if (thoughts > 0)
+          items.push(
+            plural(thoughts, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"),
+          );
+        if (items.length === 0)
+          items.push(plural(actions, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
         return appendSectionMediaEvidenceSummaries(items, section.rows).join(" · ");
       }
       case "verify": {
@@ -501,19 +580,30 @@ export default function MessageList(props: MessageListProps) {
       items.push(
         planCount === 1
           ? tr("session.timeline_summary_plan_ready")
-          : tr("session.timeline_summary_plan_steps", { count: String(planCount) }),
+          : tr("session.timeline_summary_plan_steps", {
+              count: String(planCount),
+            }),
       );
     }
     if (fileCount > 0) items.push(plural(fileCount, "session.timeline_file_one", "session.timeline_file_other"));
-    if (searchCount > 0) items.push(plural(searchCount, "session.timeline_search_one", "session.timeline_search_other"));
+    if (searchCount > 0)
+      items.push(plural(searchCount, "session.timeline_search_one", "session.timeline_search_other"));
     if (listCount > 0) items.push(plural(listCount, "session.timeline_list_one", "session.timeline_list_other"));
-    if (actionCount > 0) items.push(plural(actionCount, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
-    if (thoughtCount > 0) items.push(plural(thoughtCount, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"));
+    if (actionCount > 0)
+      items.push(plural(actionCount, "session.timeline_summary_action_one", "session.timeline_summary_action_other"));
+    if (thoughtCount > 0)
+      items.push(
+        plural(thoughtCount, "session.timeline_summary_thinking_one", "session.timeline_summary_thinking_other"),
+      );
     if (createdImageCount > 0) items.push(mediaEvidenceSummary(createdImageCount, "created"));
     if (analyzedImageCount > 0) items.push(mediaEvidenceSummary(analyzedImageCount, "analyzed"));
     if (verifySections.length > 0) {
-      const hasVerifyError = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "error"));
-      const hasVerifyRunning = verifySections.some((section) => section.rows.some((entry) => entry.row.status === "running"));
+      const hasVerifyError = verifySections.some((section) =>
+        section.rows.some((entry) => entry.row.status === "error"),
+      );
+      const hasVerifyRunning = verifySections.some((section) =>
+        section.rows.some((entry) => entry.row.status === "running"),
+      );
       items.push(
         hasVerifyError
           ? tr("session.timeline_summary_verify_failed")
@@ -522,7 +612,8 @@ export default function MessageList(props: MessageListProps) {
             : tr("session.timeline_summary_verify_ok"),
       );
     }
-    if (issueCount > 0) items.push(plural(issueCount, "session.timeline_summary_issue_one", "session.timeline_summary_issue_other"));
+    if (issueCount > 0)
+      items.push(plural(issueCount, "session.timeline_summary_issue_one", "session.timeline_summary_issue_other"));
     return items.join(" · ");
   };
 
@@ -538,7 +629,11 @@ export default function MessageList(props: MessageListProps) {
     message.parts
       .filter(isAttachmentPart)
       .map((part) => {
-        const record = part as { url?: string; filename?: string; mime?: string };
+        const record = part as {
+          url?: string;
+          filename?: string;
+          mime?: string;
+        };
         return {
           url: record.url ?? "",
           filename: record.filename ?? "attachment",
@@ -597,7 +692,11 @@ export default function MessageList(props: MessageListProps) {
       return name ? `@${name}` : "@agent";
     }
     if (part.type === "file") {
-      const record = part as { label?: string; path?: string; filename?: string };
+      const record = part as {
+        label?: string;
+        path?: string;
+        filename?: string;
+      };
       const label = record.label ?? record.path ?? record.filename ?? "";
       return label ? `@${label}` : "@file";
     }
@@ -633,17 +732,40 @@ export default function MessageList(props: MessageListProps) {
   };
 
   const isStepsExpanded = (id: string, relatedIds: string[] = []) =>
-    props.expandedStepIds.has(id) ||
-    relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
+    props.expandedStepIds.has(id) || relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
 
   let messageBlocksRevision = 0;
+  let displayRevision = 0;
+  let streamPartRevision = 0;
+  let messageArrayIdentityRevision = 0;
+  let previousMessages: MessageWithParts[] | null = null;
+  let previousStreaming: boolean | null = null;
+  let previousShowThinking: boolean | null = null;
+  let previousDeveloperMode: boolean | null = null;
+  let previousMessageDisplayDigest: string | null = null;
+  let previousWriteRevision = 0;
+  let previousBlockShapeFingerprint: string | null = null;
+  let previousRowReferenceFingerprint: string | null = null;
+  let previousProjectionBoundaryFingerprint: string | null = null;
+  const recentMemoNoOps: number[] = [];
+  let lastMemoNoOpIncidentAt = 0;
+  let streamBenchmark: MessageBlocksStreamBenchmark | null = null;
   const messageBlockEntries = createMemo<ProgressRenderBlockEntry[]>(() => {
     const startedAt = perfNow();
+    const messages = props.messages;
+    const streaming = Boolean(props.isStreaming);
+    const messageArrayIdentityChanged = messages !== previousMessages;
+    const streamingInputChanged = previousStreaming !== null && streaming !== previousStreaming;
+    const streamingStarted = streaming && previousStreaming !== true;
+    const streamingEnded = !streaming && previousStreaming === true;
+    const showThinkingInputChanged = previousShowThinking !== null && props.showThinking !== previousShowThinking;
+    const developerModeInputChanged = previousDeveloperMode !== null && props.developerMode !== previousDeveloperMode;
+    if (messageArrayIdentityChanged) messageArrayIdentityRevision += 1;
     const nextMessagePartCountById = new Map<string, number>();
     let changedMessageCount = 0;
     let addedMessageCount = 0;
 
-    props.messages.forEach((message, index) => {
+    messages.forEach((message, index) => {
       const messageId = messageInfoString(message, "id");
       const idKey = messageId || `idx:${index}`;
       const totalParts = message.parts.length;
@@ -657,17 +779,41 @@ export default function MessageList(props: MessageListProps) {
     });
 
     const blocks = buildProgressRenderBlocks({
-      messages: props.messages,
-      isStreaming: Boolean(props.isStreaming),
+      messages,
+      isStreaming: streaming,
       developerMode: props.developerMode,
       showThinking: props.showThinking,
     });
+
+    const diagnosticDetailEnabled = uiEffectTrace.isEnabled();
+    const nextDisplayDigest = diagnosticDetailEnabled ? progressGroupingInputFingerprint(messages) : null;
+    const priorMessageDisplayDigest = previousMessageDisplayDigest;
+    const displayChanged = nextDisplayDigest !== priorMessageDisplayDigest;
+    if (displayChanged) {
+      displayRevision += 1;
+      if (previousMessageDisplayDigest !== null && streaming) streamPartRevision += 1;
+      previousMessageDisplayDigest = nextDisplayDigest;
+    }
+    const nestedReactiveDependencyChanged =
+      previousMessages !== null &&
+      !messageArrayIdentityChanged &&
+      !streamingInputChanged &&
+      !showThinkingInputChanged &&
+      !developerModeInputChanged &&
+      !displayChanged;
 
     const toolPartCount = blocks.reduce((count, block) => {
       if (block.kind === "message") {
         return count + block.renderableParts.filter((part) => part.type === "tool").length;
       }
-      return count + block.items.reduce((itemCount, item) => itemCount + (item.kind === "steps" ? item.parts.filter((part) => part.type === "tool").length : 0), 0);
+      return (
+        count +
+        block.items.reduce(
+          (itemCount, item) =>
+            itemCount + (item.kind === "steps" ? item.parts.filter((part) => part.type === "tool").length : 0),
+          0,
+        )
+      );
     }, 0);
     const stepGroupCount = blocks.reduce((count, block) => {
       if (block.kind === "message") {
@@ -683,44 +829,169 @@ export default function MessageList(props: MessageListProps) {
       }
     });
     previousMessagePartCountById = nextMessagePartCountById;
+    previousMessages = messages;
+    previousStreaming = streaming;
+    previousShowThinking = props.showThinking;
+    previousDeveloperMode = props.developerMode;
 
     const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
     if (
       props.developerMode &&
-      (
-        elapsedMs >= 6 ||
-        (Boolean(props.isStreaming) && props.messages.length >= 16 && changedMessageCount <= 2 && addedMessageCount <= 1 && removedMessageCount === 0) ||
-        (Boolean(props.isStreaming) && toolPartCount >= 10)
-      )
+      (elapsedMs >= 6 ||
+        (Boolean(props.isStreaming) &&
+          props.messages.length >= 16 &&
+          changedMessageCount <= 2 &&
+          addedMessageCount <= 1 &&
+          removedMessageCount === 0) ||
+        (Boolean(props.isStreaming) && toolPartCount >= 10))
     ) {
       recordPerfLog(true, "session.render", "message-blocks", {
-        messageCount: props.messages.length,
+        messageCount: messages.length,
         blockCount: blocks.length,
         changedMessageCount,
         addedMessageCount,
         removedMessageCount,
         toolPartCount,
         stepGroupCount,
-        streaming: Boolean(props.isStreaming),
+        streaming,
         ms: elapsedMs,
       });
     }
 
     const entries = progressRenderBlockEntries(blocks);
-    untrack(() => {
-      props.onMessageBlocksRecomputed?.({
-        revision: (messageBlocksRevision += 1),
-        messageCount: props.messages.length,
-        blockCount: entries.length,
-        changedMessageCount,
-        addedMessageCount,
-        removedMessageCount,
-        toolPartCount,
-        stepGroupCount,
-        unstableBlockKeyCount: entries.filter((entry) => entry.unstable).length,
-        streaming: Boolean(props.isStreaming),
+    if (diagnosticDetailEnabled)
+      untrack(() => {
+        const now = Date.now();
+        const groupingInputFingerprint = nextDisplayDigest;
+        const nextBlockShapeFingerprint = progressRenderBlockShapeFingerprint(blocks);
+        const writeRevisionEnd = transcriptWriteRevision();
+        const transcriptSurfaceIdentities = describeTranscriptSurfaceIdentities(messages);
+        const nextRowReferenceFingerprint = rowReferenceFingerprint(transcriptSurfaceIdentities);
+        const transcriptSurfaceContext = props.transcriptSurfaceContext?.() ?? {};
+        const nextProjectionBoundaryFingerprint = projectionBoundaryFingerprint(transcriptSurfaceContext);
+        const memoNoOp = isMessageBlockMemoNoOp({
+          groupingInputFingerprint,
+          previousGroupingInputFingerprint: priorMessageDisplayDigest,
+          blockShapeFingerprint: nextBlockShapeFingerprint,
+          previousBlockShapeFingerprint,
+          rowReferenceFingerprint: nextRowReferenceFingerprint,
+          previousRowReferenceFingerprint,
+          projectionBoundaryFingerprint: nextProjectionBoundaryFingerprint,
+          previousProjectionBoundaryFingerprint,
+          writeRevisionStart: previousWriteRevision,
+          writeRevisionEnd,
+        });
+        const revision = messageBlocksRevision + 1;
+        uiEffectTrace.record("ui-model:derived", {
+          owner: "session.message-blocks",
+          revision,
+          displayRevision,
+          streamPartRevision,
+          messageArrayIdentityRevision,
+          messageArrayIdentityChanged,
+          streamingInputChanged,
+          showThinkingInputChanged,
+          developerModeInputChanged,
+          nestedReactiveDependencyChanged,
+          messageCount: messages.length,
+          blockCount: entries.length,
+          changedMessageCount,
+          addedMessageCount,
+          removedMessageCount,
+          toolPartCount,
+          stepGroupCount,
+          unstableBlockKeyCount: entries.filter((entry) => entry.unstable).length,
+          streaming,
+          groupingInputFingerprint,
+          blockShapeFingerprint: nextBlockShapeFingerprint,
+          rowReferenceFingerprint: nextRowReferenceFingerprint,
+          writeRevisionStart: previousWriteRevision,
+          writeRevisionEnd,
+          projectionBoundaryFingerprint: nextProjectionBoundaryFingerprint,
+          memoNoOp,
+          elapsedMs,
+          transcriptSurfaceIdentities,
+          transcriptCollectionCause: describeTranscriptCollectionCause(messages),
+          ...transcriptSurfaceContext,
+        });
+        if (streamingStarted) {
+          streamBenchmark = {
+            startedAt: now,
+            recomputes: 0,
+            memoNoOps: 0,
+            nestedRecomputes: 0,
+            displayChanges: 0,
+            messageArrayIdentityChanges: 0,
+            transcriptWriteTransitions: 0,
+            totalSelfTimeMs: 0,
+            maxSelfTimeMs: 0,
+            noOpTimestamps: [],
+            maxNoOpsInWindow: 0,
+          };
+        }
+        if (streamBenchmark) {
+          streamBenchmark.recomputes += 1;
+          if (memoNoOp) streamBenchmark.memoNoOps += 1;
+          if (nestedReactiveDependencyChanged) streamBenchmark.nestedRecomputes += 1;
+          if (displayChanged) streamBenchmark.displayChanges += 1;
+          if (messageArrayIdentityChanged) streamBenchmark.messageArrayIdentityChanges += 1;
+          if (writeRevisionEnd !== previousWriteRevision) streamBenchmark.transcriptWriteTransitions += 1;
+          streamBenchmark.totalSelfTimeMs += elapsedMs;
+          streamBenchmark.maxSelfTimeMs = Math.max(streamBenchmark.maxSelfTimeMs, elapsedMs);
+          if (memoNoOp) {
+            streamBenchmark.noOpTimestamps.push(now);
+            while (
+              streamBenchmark.noOpTimestamps.at(0) !== undefined &&
+              now - streamBenchmark.noOpTimestamps.at(0)! > CHURN_WINDOW_MS
+            ) {
+              streamBenchmark.noOpTimestamps.shift();
+            }
+            streamBenchmark.maxNoOpsInWindow = Math.max(
+              streamBenchmark.maxNoOpsInWindow,
+              streamBenchmark.noOpTimestamps.length,
+            );
+          }
+          if (streamingEnded) {
+            uiEffectTrace.publishBenchmark("message-blocks-stream", {
+              scope: "isStreaming-true-to-false",
+              durationMs: now - streamBenchmark.startedAt,
+              recomputes: streamBenchmark.recomputes,
+              memoNoOps: streamBenchmark.memoNoOps,
+              nestedRecomputes: streamBenchmark.nestedRecomputes,
+              displayChanges: streamBenchmark.displayChanges,
+              messageArrayIdentityChanges: streamBenchmark.messageArrayIdentityChanges,
+              transcriptWriteTransitions: streamBenchmark.transcriptWriteTransitions,
+              maxNoOpsIn30s: streamBenchmark.maxNoOpsInWindow,
+              totalSelfTimeMs: Math.round(streamBenchmark.totalSelfTimeMs * 100) / 100,
+              maxSelfTimeMs: Math.round(streamBenchmark.maxSelfTimeMs * 100) / 100,
+              messageCount: messages.length,
+              blockCount: entries.length,
+              ...transcriptSurfaceContext,
+            });
+            streamBenchmark = null;
+          }
+        }
+        if (memoNoOp) {
+          recentMemoNoOps.push(now);
+          while (recentMemoNoOps.at(0) !== undefined && now - recentMemoNoOps.at(0)! > CHURN_WINDOW_MS) {
+            recentMemoNoOps.shift();
+          }
+          if (recentMemoNoOps.length >= CHURN_NO_OP_THRESHOLD && now - lastMemoNoOpIncidentAt >= CHURN_WINDOW_MS) {
+            lastMemoNoOpIncidentAt = now;
+            uiEffectTrace.reportIncident("message-block-memo-churn", {
+              windowMs: CHURN_WINDOW_MS,
+              memoNoOpRecomputes: recentMemoNoOps.length,
+              displayRevision,
+              streamPartRevision,
+            });
+          }
+        }
+        messageBlocksRevision = revision;
+        previousBlockShapeFingerprint = nextBlockShapeFingerprint;
+        previousRowReferenceFingerprint = nextRowReferenceFingerprint;
+        previousProjectionBoundaryFingerprint = nextProjectionBoundaryFingerprint;
+        previousWriteRevision = writeRevisionEnd;
       });
-    });
     return entries;
   });
 
@@ -809,6 +1080,7 @@ export default function MessageList(props: MessageListProps) {
 
   createEffect(() => {
     const setScrollToMessageById = props.setScrollToMessageById;
+    const scrollElement = props.scrollElement;
     if (!setScrollToMessageById) return;
     const indexById = blockIndexByMessageId();
     const useVirtualization = shouldVirtualize();
@@ -822,7 +1094,7 @@ export default function MessageList(props: MessageListProps) {
         return true;
       }
 
-      const container = props.scrollElement?.();
+      const container = scrollElement?.();
       if (!container) return false;
       const escapedId = messageId.replace(/"/g, '\\"');
       const target = container.querySelector(`[data-message-id="${escapedId}"]`) as HTMLElement | null;
@@ -850,7 +1122,10 @@ export default function MessageList(props: MessageListProps) {
     const commentCopyId = () => `progress-comment:${commentProps.item.id}`;
     const copyLabel = () => __vesloT("common.copy", __vesloCurrentLocale());
     return (
-      <div data-testid="session-progress-comment" class="group/progress-comment relative font-reading type-reading-md text-gray-12 antialiased">
+      <div
+        data-testid="session-progress-comment"
+        class="group/progress-comment relative font-reading type-reading-md text-gray-12 antialiased"
+      >
         <div data-testid="session-progress-comment-value" class="select-text">
           <PartView
             part={commentProps.item.part}
@@ -871,7 +1146,7 @@ export default function MessageList(props: MessageListProps) {
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            handleCopy(partToText(commentProps.item.part), commentCopyId());
+            void handleCopy(partToText(commentProps.item.part), commentCopyId());
           }}
         >
           <Show when={copyingId() === commentCopyId()} fallback={<Copy size={12} />}>
@@ -886,7 +1161,13 @@ export default function MessageList(props: MessageListProps) {
     <div data-testid="session-progress-step-group">
       <StepsContainer
         id={stepProps.item.id}
-        stepGroups={[{ id: stepProps.item.id, parts: stepProps.item.parts, mode: stepProps.item.mode }]}
+        stepGroups={[
+          {
+            id: stepProps.item.id,
+            parts: stepProps.item.parts,
+            mode: stepProps.item.mode,
+          },
+        ]}
         isUser={false}
         isInline={true}
         isProgressChild={true}
@@ -905,9 +1186,11 @@ export default function MessageList(props: MessageListProps) {
     isProgressChild?: boolean;
   }) => {
     const relatedIds = () =>
-      containerProps.relatedIds ?? containerProps.stepGroups.map((group) => group.id).filter((id) => id !== containerProps.id);
+      containerProps.relatedIds ??
+      containerProps.stepGroups.map((group) => group.id).filter((id) => id !== containerProps.id);
     const progressItems = () => containerProps.progressItems ?? null;
-    const expanded = () => progressItems() ? props.expandedStepIds.has(containerProps.id) : isStepsExpanded(containerProps.id, relatedIds());
+    const expanded = () =>
+      progressItems() ? props.expandedStepIds.has(containerProps.id) : isStepsExpanded(containerProps.id, relatedIds());
     const toggleContainer = () => {
       const items = progressItems();
       if (items) {
@@ -920,9 +1203,7 @@ export default function MessageList(props: MessageListProps) {
     const allStepParts = () => containerProps.stepGroups.flatMap((group) => group.parts);
 
     const compactPathToken = (value: string) => {
-      const token = value
-        .trim()
-        .replace(/^[`'"([{]+|[`'"\])},.;:]+$/g, "");
+      const token = value.trim().replace(/^[`'"([{]+|[`'"\])},.;:]+$/g, "");
       const segments = token.split(/[\\/]/).filter(Boolean);
       return segments.length > 0 ? segments[segments.length - 1] : token;
     };
@@ -962,32 +1243,44 @@ export default function MessageList(props: MessageListProps) {
         const description = pick("description");
         if (description) return compactHumanStepText(description, 42);
         const command = pick("command", "cmd");
-        return command ? compactText(t("tools.run_target", currentLocale()).replace("{target}", command), 48) : t("tools.run_command", currentLocale());
+        return command
+          ? compactText(t("tools.run_target", currentLocale()).replace("{target}", command), 48)
+          : t("tools.run_command", currentLocale());
       }
 
       if (tool === "read") {
         const file = target("filePath", "path", "file");
-        return file ? t("tools.read_target", currentLocale()).replace("{target}", file) : t("tools.read_file", currentLocale());
+        return file
+          ? t("tools.read_target", currentLocale()).replace("{target}", file)
+          : t("tools.read_file", currentLocale());
       }
 
       if (tool === "edit") {
         const file = target("filePath", "path", "file");
-        return file ? t("tools.edit_target", currentLocale()).replace("{target}", file) : t("tools.edit_file", currentLocale());
+        return file
+          ? t("tools.edit_target", currentLocale()).replace("{target}", file)
+          : t("tools.edit_file", currentLocale());
       }
 
       if (tool === "write" || tool === "apply_patch") {
         const file = target("filePath", "path", "file");
-        return file ? t("tools.write_target", currentLocale()).replace("{target}", file) : t("tools.write_file", currentLocale());
+        return file
+          ? t("tools.write_target", currentLocale()).replace("{target}", file)
+          : t("tools.write_file", currentLocale());
       }
 
       if (tool === "grep" || tool === "glob" || tool === "search") {
         const pattern = pick("pattern", "query");
-        return pattern ? t("tools.search_target", currentLocale()).replace("{target}", compactText(pattern, 36)) : t("tools.search_code", currentLocale());
+        return pattern
+          ? t("tools.search_target", currentLocale()).replace("{target}", compactText(pattern, 36))
+          : t("tools.search_code", currentLocale());
       }
 
       if (tool === "list" || tool === "list_files") {
         const path = target("path");
-        return path ? t("tools.list_target", currentLocale()).replace("{target}", path) : t("tools.list_files", currentLocale());
+        return path
+          ? t("tools.list_target", currentLocale()).replace("{target}", path)
+          : t("tools.list_files", currentLocale());
       }
 
       if (tool === "task") {
@@ -995,17 +1288,23 @@ export default function MessageList(props: MessageListProps) {
         if (isVesloInternalSubagentType(agent)) return t("tools.internal_processing", currentLocale());
         const description = pick("description");
         if (description) return compactHumanStepText(description, 42);
-        return agent ? t("tools.delegate_target", currentLocale()).replace("{target}", agent) : t("tools.delegate_task", currentLocale());
+        return agent
+          ? t("tools.delegate_target", currentLocale()).replace("{target}", agent)
+          : t("tools.delegate_task", currentLocale());
       }
 
       if (tool === "webfetch") {
         const url = pick("url");
-        return url ? t("tools.fetch_target", currentLocale()).replace("{target}", compactText(url, 36)) : t("tools.fetch_web_page", currentLocale());
+        return url
+          ? t("tools.fetch_target", currentLocale()).replace("{target}", compactText(url, 36))
+          : t("tools.fetch_web_page", currentLocale());
       }
 
       if (tool === "skill") {
         const name = pick("name");
-        return name ? t("tools.load_skill_named", currentLocale()).replace("{name}", name) : t("tools.load_skill", currentLocale());
+        return name
+          ? t("tools.load_skill_named", currentLocale()).replace("{name}", name)
+          : t("tools.load_skill", currentLocale());
       }
 
       return "";
@@ -1028,7 +1327,9 @@ export default function MessageList(props: MessageListProps) {
 
       const summary = summarizeStep(step);
       const title = compactText(summary.title, 42, { preservePaths: true });
-      const detail = compactText(summary.detail ?? "", 42, { preservePaths: true });
+      const detail = compactText(summary.detail ?? "", 42, {
+        preservePaths: true,
+      });
       const generic = /^(application|tool|step|working|done|completed|success)$/i.test(title);
 
       if (title && !generic) return title;
@@ -1049,7 +1350,7 @@ export default function MessageList(props: MessageListProps) {
       let cursor = 0;
       const baseSections = timelineModel().sections.map((section, sectionIndex) => {
         const rows = section.rows.map((row, rowIndex) => {
-          const part = parts[cursor + rowIndex];
+          const part = parts.at(cursor + rowIndex);
           return {
             id: `${containerProps.id}:section:${sectionIndex}:row:${rowIndex}`,
             row,
@@ -1086,21 +1387,25 @@ export default function MessageList(props: MessageListProps) {
 
         const splitGroups = splitActionSectionRows(section.rows);
         if (splitGroups.length <= 1) {
-          sections.push(withStableSectionId({
-            ...section,
-            labelKind: splitGroups[0]?.labelKind ?? "action",
-          }));
+          sections.push(
+            withStableSectionId({
+              ...section,
+              labelKind: splitGroups[0]?.labelKind ?? "action",
+            }),
+          );
           continue;
         }
 
         splitGroups.forEach((group) => {
-          sections.push(withStableSectionId({
-            kind: "action",
-            labelKind: group.labelKind,
-            summary: section.summary,
-            status: sectionStatusFromRows(group.rows),
-            rows: group.rows,
-          }));
+          sections.push(
+            withStableSectionId({
+              kind: "action",
+              labelKind: group.labelKind,
+              summary: section.summary,
+              status: sectionStatusFromRows(group.rows),
+              rows: group.rows,
+            }),
+          );
         });
       }
 
@@ -1111,7 +1416,11 @@ export default function MessageList(props: MessageListProps) {
       openSectionIds: props.expandedTimelineSectionIds,
     });
     const setTimelineDetailState = (updater: (current: TimelineDetailState) => TimelineDetailState) => {
-      props.setExpandedTimelineSectionIds((current) => updater({ expanded: false, openSectionIds: current }).openSectionIds);
+      untrack(() => {
+        props.setExpandedTimelineSectionIds(
+          (current) => updater({ expanded: false, openSectionIds: current }).openSectionIds,
+        );
+      });
     };
     createEffect(() => {
       const sections = timelineSections().map((section) => ({
@@ -1119,12 +1428,15 @@ export default function MessageList(props: MessageListProps) {
         kind: section.kind,
         status: section.status,
       }));
-      props.setExpandedTimelineSectionIds((current) => {
+      const reconcileOpenSectionIds = (current: Set<string>) => {
         const next = reconcileTimelineOpenSectionIds(current, {
           containerId: containerProps.id,
           sections,
         });
         return sameStringSet(current, next) ? current : next;
+      };
+      untrack(() => {
+        props.setExpandedTimelineSectionIds(reconcileOpenSectionIds);
       });
     });
 
@@ -1132,19 +1444,29 @@ export default function MessageList(props: MessageListProps) {
     const commentCount = () => progressItems()?.filter((item) => item.kind === "comment").length ?? 0;
     const commentSummary = () => {
       const count = commentCount();
-      return count > 0 ? plural(count, "session.timeline_summary_comment_one", "session.timeline_summary_comment_other") : "";
+      return count > 0
+        ? plural(count, "session.timeline_summary_comment_one", "session.timeline_summary_comment_other")
+        : "";
     };
     const collapsedSummary = () => {
       const timelineSummary = localizedTimelineSummary(timelineSections());
       if (containerProps.isProgressChild) {
         return latestStepLabel() || timelineSummary || tr("session.timeline_execution");
       }
-      return [commentSummary(), timelineSummary].filter(Boolean).join(" · ") ||
+      return (
+        [commentSummary(), timelineSummary].filter(Boolean).join(" · ") ||
         latestStepLabel() ||
-        tr("session.timeline_execution");
+        tr("session.timeline_execution")
+      );
     };
     const collapsedMeta = () => {
-      const labels = Array.from(new Set(timelineSections().map((section) => localizedSectionTitle(section)).filter(Boolean)));
+      const labels = Array.from(
+        new Set(
+          timelineSections()
+            .map((section) => localizedSectionTitle(section))
+            .filter(Boolean),
+        ),
+      );
       const duration = formatTimelineDuration(allStepParts());
       return [...labels, duration].filter(Boolean).join(" · ") || tr("session.timeline_execution");
     };
@@ -1242,7 +1564,9 @@ export default function MessageList(props: MessageListProps) {
             <div class="flex items-center gap-2">
               <span class="font-medium leading-5 text-[13px] text-gray-12">{collapsedSummary()}</span>
               <Show when={hasRunning()}>
-                <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass("running")}`}>
+                <span
+                  class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass("running")}`}
+                >
                   {timelineStatusLabel("running")}
                 </span>
               </Show>
@@ -1256,7 +1580,9 @@ export default function MessageList(props: MessageListProps) {
             {(items) => (
               <div class="mt-2 space-y-2">
                 <For each={items()}>
-                  {(item) => item.kind === "comment" ? <ProgressComment item={item} /> : <ProgressStepGroup item={item} />}
+                  {(item) =>
+                    item.kind === "comment" ? <ProgressComment item={item} /> : <ProgressStepGroup item={item} />
+                  }
                 </For>
               </div>
             )}
@@ -1268,25 +1594,31 @@ export default function MessageList(props: MessageListProps) {
                   <section class="rounded-[18px] border border-gray-6/60 bg-gray-2/35">
                     <Show
                       when={!singleSectionMode()}
-                      fallback={(
+                      fallback={
                         <div class="flex items-center gap-2 px-3 py-2">
-                          <div class={`shrink-0 rounded-full p-1.5 ${iconAccentClass(sectionDisplayCategory(section))}`}>
+                          <div
+                            class={`shrink-0 rounded-full p-1.5 ${iconAccentClass(sectionDisplayCategory(section))}`}
+                          >
                             <ToolIcon category={sectionDisplayCategory(section)} size={13} />
                           </div>
                           <div class="min-w-0 flex-1">
                             <div class="flex items-center gap-2">
-                              <span class="truncate text-[13px] font-medium text-gray-12">{localizedSectionTitle(section)}</span>
+                              <span class="truncate text-[13px] font-medium text-gray-12">
+                                {localizedSectionTitle(section)}
+                              </span>
                             </div>
                           </div>
                           <Show when={section.status}>
                             {(status) => (
-                              <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
+                              <span
+                                class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}
+                              >
                                 {timelineStatusLabel(status())}
                               </span>
                             )}
                           </Show>
                         </div>
-                      )}
+                      }
                     >
                       <button
                         type="button"
@@ -1306,13 +1638,17 @@ export default function MessageList(props: MessageListProps) {
                         </div>
                         <div class="min-w-0 flex-1">
                           <div class="flex items-center gap-2">
-                            <span class="truncate text-[13px] font-medium text-gray-12">{localizedSectionTitle(section)}</span>
+                            <span class="truncate text-[13px] font-medium text-gray-12">
+                              {localizedSectionTitle(section)}
+                            </span>
                             <span class="truncate text-[11px] text-gray-9">{localizedSectionSummary(section)}</span>
                           </div>
                         </div>
                         <Show when={section.status}>
                           {(status) => (
-                            <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
+                            <span
+                              class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}
+                            >
                               {timelineStatusLabel(status())}
                             </span>
                           )}
@@ -1364,7 +1700,9 @@ export default function MessageList(props: MessageListProps) {
                                         </div>
                                         <Show when={row.status}>
                                           {(status) => (
-                                            <span class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}>
+                                            <span
+                                              class={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusChipClass(status())}`}
+                                            >
                                               {timelineStatusLabel(status())}
                                             </span>
                                           )}
@@ -1383,12 +1721,23 @@ export default function MessageList(props: MessageListProps) {
                                           </span>
                                         </Show>
                                         <Show when={entry.task.agentType}>
-                                          {(agentType) => <span class="text-[11px] text-gray-9">{agentType()} {__vesloT("ui.literal.agent_m65q5i", __vesloCurrentLocale())}</span>}
+                                          {(agentType) => (
+                                            <span class="text-[11px] text-gray-9">
+                                              {agentType()}{" "}
+                                              {__vesloT("ui.literal.agent_m65q5i", __vesloCurrentLocale())}
+                                            </span>
+                                          )}
                                         </Show>
                                         <Show when={entry.task.isInternal}>
-                                          <span class="text-[11px] text-gray-9">{tr("session.timeline_internal_processing")}</span>
+                                          <span class="text-[11px] text-gray-9">
+                                            {tr("session.timeline_internal_processing")}
+                                          </span>
                                         </Show>
-                                        <Show when={Boolean(entry.task.sessionId && props.openSessionById && !entry.task.isInternal)}>
+                                        <Show
+                                          when={Boolean(
+                                            entry.task.sessionId && props.openSessionById && !entry.task.isInternal,
+                                          )}
+                                        >
                                           <button
                                             type="button"
                                             class="text-[11px] text-blue-11 hover:text-blue-10 underline underline-offset-2"
@@ -1449,10 +1798,13 @@ export default function MessageList(props: MessageListProps) {
                                                     onClick={(event) => {
                                                       event.preventDefault();
                                                       event.stopPropagation();
-                                                      handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
+                                                      void handleCopy(String(row.technicalDetail ?? ""), detailCopyId);
                                                     }}
                                                   >
-                                                    <Show when={copyingId() === detailCopyId} fallback={<Copy size={12} />}>
+                                                    <Show
+                                                      when={copyingId() === detailCopyId}
+                                                      fallback={<Copy size={12} />}
+                                                    >
                                                       <Check size={12} class="text-green-10" />
                                                     </Show>
                                                   </button>
@@ -1501,8 +1853,8 @@ export default function MessageList(props: MessageListProps) {
     if (block().kind === "progress-group") {
       const progressBlock = () => block() as Extract<MessageBlockItem, { kind: "progress-group" }>;
       const stepGroups = () =>
-        progressBlock().items
-          .filter((item): item is Extract<ProgressGroupItem, { kind: "steps" }> => item.kind === "steps")
+        progressBlock()
+          .items.filter((item): item is Extract<ProgressGroupItem, { kind: "steps" }> => item.kind === "steps")
           .map((item) => ({ id: item.id, parts: item.parts, mode: item.mode }));
       return (
         <div
@@ -1517,7 +1869,9 @@ export default function MessageList(props: MessageListProps) {
           >
             <StepsContainer
               id={progressBlock().id}
-              relatedIds={stepGroups().map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== progressBlock().id)}
+              relatedIds={stepGroups()
+                .map((stepGroup) => stepGroup.id)
+                .filter((stepId) => stepId !== progressBlock().id)}
               stepGroups={stepGroups()}
               progressItems={progressBlock().items}
               isUser={false}
@@ -1528,16 +1882,22 @@ export default function MessageList(props: MessageListProps) {
     }
 
     const messageBlock = () => block() as Extract<MessageBlockItem, { kind: "message" }>;
-    const groupSpacing = () => messageBlock().isUser ? "mb-3" : "mb-4";
+    const groupSpacing = () => (messageBlock().isUser ? "mb-3" : "mb-4");
     const isSyntheticSessionError =
       !messageBlock().isUser && messageBlock().messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
     const textGroups = () =>
       messageBlock().groups.filter(
-        (group): group is { kind: "text"; part: Part; segment: "intent" | "result" } => group.kind === "text",
+        (
+          group,
+        ): group is {
+          kind: "text";
+          part: Part;
+          segment: "intent" | "result";
+        } => group.kind === "text",
       );
     const inlineStepGroups = () =>
-      messageBlock().groups
-        .filter((group) => group.kind === "steps")
+      messageBlock()
+        .groups.filter((group) => group.kind === "steps")
         .map((group) => {
           const stepGroup = group as {
             kind: "steps";
@@ -1546,7 +1906,11 @@ export default function MessageList(props: MessageListProps) {
             segment: "execution";
             mode: StepGroupMode;
           };
-          return { id: stepGroup.id, parts: stepGroup.parts, mode: stepGroup.mode };
+          return {
+            id: stepGroup.id,
+            parts: stepGroup.parts,
+            mode: stepGroup.mode,
+          };
         });
     const editableMessage = () =>
       props.editableUserMessage?.messageId === messageBlock().messageId ? props.editableUserMessage : null;
@@ -1562,8 +1926,8 @@ export default function MessageList(props: MessageListProps) {
 
     if (isSyntheticSessionError) {
       const messageText = () =>
-        messageBlock().renderableParts
-          .map((part) => partToText(part))
+        messageBlock()
+          .renderableParts.map((part) => partToText(part))
           .join(" ")
           .replace(/\s*\n+\s*/g, " ")
           .replace(/\s{2,}/g, " ")
@@ -1609,16 +1973,9 @@ export default function MessageList(props: MessageListProps) {
               <For each={attachmentsForMessage(messageBlock().message)}>
                 {(attachment) => (
                   <div class="font-product type-ui-sm flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-1/70 px-3 py-2 text-gray-11">
-                    <Show
-                      when={isImageAttachment(attachment.mime)}
-                      fallback={<File size={14} class="text-gray-9" />}
-                    >
+                    <Show when={isImageAttachment(attachment.mime)} fallback={<File size={14} class="text-gray-9" />}>
                       <div class="h-12 w-12 rounded-xl bg-gray-2 overflow-hidden border border-gray-6">
-                        <img
-                          src={attachment.url}
-                          alt={attachment.filename}
-                          class="h-full w-full object-cover"
-                        />
+                        <img src={attachment.url} alt={attachment.filename} class="h-full w-full object-cover" />
                       </div>
                     </Show>
                     <div class="max-w-[180px]">
@@ -1635,7 +1992,9 @@ export default function MessageList(props: MessageListProps) {
               <div class={idx() === textGroups().length - 1 ? "" : groupSpacing()}>
                 {(() => {
                   const isStreamingLatestAssistant =
-                    !messageBlock().isUser && props.isStreaming && messageBlock().messageId === latestAssistantMessageId();
+                    !messageBlock().isUser &&
+                    props.isStreaming &&
+                    messageBlock().messageId === latestAssistantMessageId();
                   const markdownThrottleMs = isStreamingLatestAssistant ? 550 : 100;
                   return (
                     <PartView
@@ -1656,7 +2015,9 @@ export default function MessageList(props: MessageListProps) {
           <Show when={inlineStepGroups().length > 0}>
             <StepsContainer
               id={inlineStepGroups()[0]!.id}
-              relatedIds={inlineStepGroups().map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== inlineStepGroups()[0]!.id)}
+              relatedIds={inlineStepGroups()
+                .map((stepGroup) => stepGroup.id)
+                .filter((stepId) => stepId !== inlineStepGroups()[0]!.id)}
               stepGroups={inlineStepGroups()}
               isUser={messageBlock().isUser}
               isInline={true}
@@ -1673,10 +2034,7 @@ export default function MessageList(props: MessageListProps) {
             </div>
           </Show>
           <Show when={messageBlock().isUser && pendingMessageSyncWarning()}>
-            <div
-              class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-amber-11"
-              role="status"
-            >
+            <div class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-amber-11" role="status">
               <CircleAlert size={12} />
               <span>{pendingSubmitSyncWarningLabel(pendingMessageSyncWarning()?.reason)}</span>
             </div>
@@ -1700,7 +2058,7 @@ export default function MessageList(props: MessageListProps) {
               onClick={() => {
                 const current = messageBlock();
                 const text = current.renderableParts.map((part) => partToText(part)).join("\n");
-                handleCopy(text, current.messageId);
+                void handleCopy(text, current.messageId);
               }}
             >
               <Show when={copyingId() === messageBlock().messageId} fallback={<Copy size={12} />}>
@@ -1713,27 +2071,32 @@ export default function MessageList(props: MessageListProps) {
     );
   };
 
+  const RenderedMessageBlock = (blockProps: { blockKey: string; blockIndex: Accessor<number> }) => {
+    const block = createMemo(() => messageBlockByKey().get(blockProps.blockKey)!);
+    return <>{renderBlock(block, blockProps.blockIndex)}</>;
+  };
+
   return (
     <div class="pb-24" style={{ contain: "layout paint style" }}>
       <Show
         when={shouldVirtualize()}
-        fallback={(
+        fallback={
           <div class="space-y-4">
             <For each={messageBlockKeys()}>
-              {(key, blockIndex) => renderBlock(() => messageBlockByKey().get(key)!, blockIndex)}
+              {(key, blockIndex) => <RenderedMessageBlock blockKey={key} blockIndex={blockIndex} />}
             </For>
           </div>
-        )}
+        }
       >
         <Show
           when={virtualRows().length > 0}
-          fallback={(
+          fallback={
             <div class="space-y-4">
               <For each={messageBlockKeys()}>
-                {(key, blockIndex) => renderBlock(() => messageBlockByKey().get(key)!, blockIndex)}
+                {(key, blockIndex) => <RenderedMessageBlock blockKey={key} blockIndex={blockIndex} />}
               </For>
             </div>
-          )}
+          }
         >
           <div
             class="relative"

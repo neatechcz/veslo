@@ -110,13 +110,13 @@ pub fn update_workspace_watch(
         };
 
         match event.kind {
-            EventKind::Create(_) | EventKind::Remove(_) => {}
-            EventKind::Modify(mod_kind) => match mod_kind {
+            EventKind::Create(_)
+            | EventKind::Remove(_)
+            | EventKind::Modify(
                 notify::event::ModifyKind::Data(_)
                 | notify::event::ModifyKind::Name(_)
-                | notify::event::ModifyKind::Any => {}
-                _ => return,
-            },
+                | notify::event::ModifyKind::Any,
+            ) => {}
             _ => return,
         }
 

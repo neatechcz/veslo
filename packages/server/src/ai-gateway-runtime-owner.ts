@@ -72,6 +72,18 @@ export type AiGatewayRuntimeAuthorizationEntry = {
   source: "ai-access-token" | "caller-authorization";
 };
 
+export type ManagedAiModelCapabilityDescriptor = {
+  providerID: string;
+  modelID: string;
+  attachment?: boolean;
+  modalities?: { input?: string[] };
+};
+
+type CachedManagedAiModelCapabilityDescriptor = {
+  expiresAt: number;
+  descriptor: ManagedAiModelCapabilityDescriptor;
+};
+
 export type AiGatewayRuntimeOwnerOptions = {
   activeRunTtlMs?: number;
   sessionHitTtlMs?: number;
@@ -158,6 +170,63 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
   const activeProxyRequests = new Map<string, ActiveAiGatewayProxyRequest>();
   const runtimeAuthorizationByActorToken = new Map<string, Map<string, AiGatewayRuntimeAuthorizationEntry>>();
   const runtimeAuthorizationOrgByActorWorkspace = new Map<string, Map<string, string>>();
+  const managedAiModelCapabilityDescriptors = new Map<string, CachedManagedAiModelCapabilityDescriptor>();
+
+  const cloneManagedAiModelCapabilityDescriptor = (
+    descriptor: ManagedAiModelCapabilityDescriptor,
+  ): ManagedAiModelCapabilityDescriptor => ({
+    ...descriptor,
+    ...(descriptor.modalities?.input
+      ? { modalities: { input: [...descriptor.modalities.input] } }
+      : {}),
+  });
+
+  function getManagedAiModelCapabilityDescriptor(
+    cacheKey: string,
+  ): ManagedAiModelCapabilityDescriptor | null {
+    const cached = managedAiModelCapabilityDescriptors.get(cacheKey);
+    if (!cached) return null;
+    if (cached.expiresAt <= now()) {
+      managedAiModelCapabilityDescriptors.delete(cacheKey);
+      return null;
+    }
+    return cloneManagedAiModelCapabilityDescriptor(cached.descriptor);
+  }
+
+  function cacheManagedAiModelCapabilityDescriptor(input: {
+    cacheKey: string;
+    descriptor: ManagedAiModelCapabilityDescriptor;
+    ttlMs: number;
+  }): void {
+    managedAiModelCapabilityDescriptors.set(input.cacheKey, {
+      descriptor: cloneManagedAiModelCapabilityDescriptor(input.descriptor),
+      expiresAt: now() + Math.max(1, input.ttlMs),
+    });
+  }
+
+  function clearManagedAiModelCapabilityDescriptors(): void {
+    managedAiModelCapabilityDescriptors.clear();
+  }
+
+  function runtimeAuthorizationRemainingMs(input: {
+    actorTokenHash?: string | null;
+    orgId?: string | null;
+  }): number | null {
+    const actorTokenHash = input.actorTokenHash?.trim() ?? "";
+    if (!actorTokenHash) return null;
+    const orgId = input.orgId?.trim() ?? "";
+    const entry = runtimeAuthorizationByActorToken.get(actorTokenHash)?.get(orgId);
+    if (!entry?.authorization.trim()) return null;
+    const remainingMs = runtimeAuthorizationMaxAgeMs - Math.max(0, now() - entry.at);
+    if (remainingMs < 0) {
+      const entries = runtimeAuthorizationByActorToken.get(actorTokenHash);
+      entries?.delete(entry.orgId ?? "");
+      if (entries?.size === 0) runtimeAuthorizationByActorToken.delete(actorTokenHash);
+      clearManagedAiModelCapabilityDescriptors();
+      return null;
+    }
+    return remainingMs;
+  }
 
   const summarizeRunContext = (
     context: ActiveAiGatewayRunContext,
@@ -245,11 +314,26 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     prune(activeRunsByWorkspace);
   }
 
-  function latestRunBySession(sessionId?: string | null): ActiveAiGatewayRunContext | null {
+  function latestRunBySession(sessionId?: string | null, workspaceId?: string | null): ActiveAiGatewayRunContext | null {
     const normalizedSessionId = normalizeAiGatewaySessionId(sessionId);
     if (!normalizedSessionId) return null;
     const bySession = activeRunsBySession.get(normalizedSessionId) ?? [];
-    return bySession[bySession.length - 1] ?? null;
+    const normalizedWorkspaceId = workspaceId?.trim() ?? "";
+    if (!normalizedWorkspaceId) {
+      return new Set(bySession.map((context) => context.workspaceId)).size <= 1
+        ? bySession[bySession.length - 1] ?? null
+        : null;
+    }
+
+    const inWorkspace = bySession.filter((context) => context.workspaceId === normalizedWorkspaceId);
+    if (inWorkspace.length) return inWorkspace[inWorkspace.length - 1] ?? null;
+
+    // Preserve the server-owned binding for a normal globally unique OpenCode
+    // session even if a caller lies about its workspace header. If a malformed
+    // upstream ever reuses the ID across workspaces, however, do not guess.
+    return new Set(bySession.map((context) => context.workspaceId)).size <= 1
+      ? bySession[bySession.length - 1] ?? null
+      : null;
   }
 
   function latestRunByWorkspace(workspaceId?: string | null): ActiveAiGatewayRunContext | null {
@@ -278,7 +362,8 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     const normalizedIncomingSessionId = normalizeAiGatewaySessionId(input.incomingSessionId);
     const workspaceId = input.workspaceId?.trim() ?? "";
     const sessionCandidates = normalizedIncomingSessionId
-      ? activeRunsBySession.get(normalizedIncomingSessionId) ?? []
+      ? (activeRunsBySession.get(normalizedIncomingSessionId) ?? [])
+        .filter((context) => !workspaceId || context.workspaceId === workspaceId)
       : [];
     const workspaceCandidates = workspaceId
       ? activeRunsByWorkspace.get(workspaceId) ?? []
@@ -306,6 +391,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     workspaceId?: string | null;
     source: AiGatewayRuntimeAuthorizationEntry["source"];
   }): void {
+    clearManagedAiModelCapabilityDescriptors();
     const key = actorRuntimeTokenKey(input.actor);
     const authorization = input.authorization.trim();
     if (!key || !authorization) return;
@@ -328,6 +414,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
   }
 
   function clearRuntimeAuthorization(actor?: Actor): void {
+    clearManagedAiModelCapabilityDescriptors();
     const key = actorRuntimeTokenKey(actor);
     if (!key) return;
     runtimeAuthorizationByActorToken.delete(key);
@@ -357,6 +444,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
         bindings.set(workspaceId, orgId);
         runtimeAuthorizationOrgByActorWorkspace.set(key, bindings);
       }
+      clearManagedAiModelCapabilityDescriptors();
       return;
     }
 
@@ -470,6 +558,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
         const entries = runtimeAuthorizationByActorToken.get(runtimeCandidate.key);
         entries?.delete(resolvedRuntime.orgId ?? "");
         if (entries?.size === 0) runtimeAuthorizationByActorToken.delete(runtimeCandidate.key);
+        clearManagedAiModelCapabilityDescriptors();
         recordTrace("server:ai-gateway-runtime-authorization:expired", {
           ageMs: roundDiagnosticMs(ageMs),
           maxAgeMs: runtimeAuthorizationMaxAgeMs,
@@ -584,7 +673,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     const workspaceId = input.workspaceId?.trim() ?? "";
 
     if (incomingSessionId) {
-      const activeRunContext = latestRunBySession(incomingSessionId);
+      const activeRunContext = latestRunBySession(incomingSessionId, workspaceId);
       return {
         sessionId: incomingSessionId,
         activeRunContext,
@@ -594,7 +683,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     }
 
     if (openCodeSessionId) {
-      const activeRunContext = latestRunBySession(openCodeSessionId);
+      const activeRunContext = latestRunBySession(openCodeSessionId, workspaceId);
       return {
         sessionId: openCodeSessionId,
         activeRunContext,
@@ -817,12 +906,15 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     activeProxyRequests.clear();
     runtimeAuthorizationByActorToken.clear();
     runtimeAuthorizationOrgByActorWorkspace.clear();
+    clearManagedAiModelCapabilityDescriptors();
   }
 
   return {
     abortActiveProxyRequests,
     buildResolutionDiagnostics,
+    cacheManagedAiModelCapabilityDescriptor,
     clearRuntimeAuthorization,
+    getManagedAiModelCapabilityDescriptor,
     hasProviderHitAfter,
     listActiveRunContexts,
     recordSessionHit,
@@ -831,6 +923,7 @@ export function createAiGatewayRuntimeOwner(options: AiGatewayRuntimeOwnerOption
     registerRuntimeAuthorization,
     resetForTests,
     resolveRuntimeAuthorizationBindingForRun,
+    runtimeAuthorizationRemainingMs,
     resolveProviderAuthorization,
     resolveSession,
     syncRuntimeAuthorizationFromAccessBundle,

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createPendingSubmittedDraft,
+  createPendingSubmittedMessageProjection,
   markPendingSubmittedAccepted,
   markPendingSubmittedFailed,
   pendingSubmittedDraftToEditable,
@@ -52,6 +53,26 @@ test("pending submit creates a user message before a real session id exists", ()
   assert.equal(message.info.role, "user");
   assert.equal(message.info.sessionID, "");
   assert.equal(message.parts[0]?.type, "text");
+});
+
+test("pending local-echo projection keeps its message identity for the same pending draft", () => {
+  const pending = createPendingSubmittedDraft({
+    id: "pending-submit-1",
+    clientMessageId: "pending-submit-1",
+    sessionKey: "pending-draft:abc",
+    sessionId: null,
+    createdAt: 10,
+    draft: draft("hello"),
+  });
+  const project = createPendingSubmittedMessageProjection();
+
+  const first = project(pending, "/tmp/workspace");
+  assert.strictEqual(project(pending, "/tmp/workspace"), first);
+  assert.notStrictEqual(
+    project({ ...pending, sessionId: "session-123" }, "/tmp/workspace"),
+    first,
+    "a changed pending draft must produce a fresh projection",
+  );
 });
 
 test("pending submit failure preserves the message as editable state", () => {

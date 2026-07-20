@@ -140,7 +140,7 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
 
 function stringifyUnknown(value: unknown): string {
   try {
-    const stringified = JSON.stringify(value);
+    const stringified = JSON.stringify(value) as string | undefined;
     return stringified === undefined ? String(value) : stringified;
   } catch {
     return String(value);
@@ -256,22 +256,21 @@ export async function withLocalRuntimeHealthTimeout<T>(
   timeoutMs = 3_000,
   onTimeout?: () => void,
 ): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let rejectTimeout!: (reason?: unknown) => void;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(
-      () => {
-        onTimeout?.();
-        reject(new Error(localRuntimeHealthTimeoutMessage));
-      },
-      timeoutMs,
-    );
+    rejectTimeout = reject;
   });
+  const timeoutId = setTimeout(
+    () => {
+      onTimeout?.();
+      rejectTimeout(new Error(localRuntimeHealthTimeoutMessage));
+    },
+    timeoutMs,
+  );
   try {
     return await Promise.race([promise, timeoutPromise]);
   } finally {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
+    clearTimeout(timeoutId);
   }
 }
 
@@ -301,7 +300,6 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         (await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace));
       if (
         hasManagedProfile &&
-        !canUseCurrentManagedConfig &&
         !deps.managedAiBootstrapBusy() &&
         !deps.reloadBusy() &&
         deps.syncManagedAiRuntimeConfigForSend
@@ -309,6 +307,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         deps.recordSendTrace("managed-ai-bootstrap-config-sync:start", {
           traceId,
           targetWorkspaceId: targetWorkspaceId || null,
+          freshnessRevalidation: true,
         });
         await deps.syncManagedAiRuntimeConfigForSend(targetWorkspace);
         canUseCurrentManagedConfig = await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace);
@@ -316,6 +315,7 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           traceId,
           targetWorkspaceId: targetWorkspaceId || null,
           canUseCurrentManagedConfig,
+          freshnessRevalidation: true,
         });
       }
       if (canUseCurrentManagedConfig && deps.ensureManagedAiRuntimeAuthorizationForSend) {

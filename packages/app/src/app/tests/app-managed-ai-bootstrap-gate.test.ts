@@ -124,7 +124,7 @@ test("managed AI access refresh keeps the proxied gateway access token when usin
 test("managed AI bootstrap skips veslo-server config patches when the computed managed config is unchanged", () => {
   assert.match(
     runtimeConfigSource,
-    /const currentOpencodeContent = JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\);[\s\S]*?const content = formatManagedAiAccessConfig\([\s\S]*?const desiredSnapshot = getConfigSnapshot\(content\);[\s\S]*?const cachedSnapshotMatches = lastKnownConfigSnapshotByWs\.get\(wsKey\) === desiredSnapshot;[\s\S]*?const redactedServerConfigMatches =[\s\S]*?cachedSnapshotMatches[\s\S]*?\? true[\s\S]*?: managedConfigContentsMatch\([\s\S]*?const managedDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*?managedConfigAlreadyCurrent: cachedSnapshotMatches \|\| redactedServerConfigMatches,[\s\S]*?\}\);[\s\S]*?if \(managedDecision\.type === "skip"\) \{\s*if \(!cachedSnapshotMatches && redactedServerConfigMatches\) \{\s*lastKnownConfigSnapshotByWs\.set\(wsKey, desiredSnapshot\);\s*\}\s*return;\s*\}[\s\S]*?await input\.vesloClient\.patchConfig/s,
+    /const currentOpencodeContent = JSON\.stringify\(config\.opencode \?\? \{\}, null, 2\);[\s\S]*?const content = formatManagedAiAccessConfig\([\s\S]*?const desiredSnapshot = getConfigSnapshot\(content\);[\s\S]*?const cachedSnapshotMatches = lastKnownConfigSnapshotByWs\.get\(wsKey\) === desiredSnapshot;[\s\S]*?const redactedServerConfigMatches =[\s\S]*?cachedSnapshotMatches[\s\S]*?\? true[\s\S]*?: managedConfigContentsMatch\([\s\S]*?const managedDecision = resolveManagedAiConfigWriteDecision\(\{[\s\S]*?managedConfigAlreadyCurrent: cachedSnapshotMatches \|\| redactedServerConfigMatches,[\s\S]*?\}\);[\s\S]*?if \(managedDecision\.type === "skip"\) \{\s*if \(!cachedSnapshotMatches && redactedServerConfigMatches\) \{\s*lastKnownConfigSnapshotByWs\.set\(wsKey, desiredSnapshot\);\s*\}\s*return false;\s*\}[\s\S]*?await input\.vesloClient\.patchConfig/s,
     "managed AI config writes through veslo-server should no-op when the generated config only differs by server-redacted secrets, while still tracking the real secret-bearing snapshot",
   );
 });
@@ -223,21 +223,21 @@ test("managed AI access cache has a bounded TTL and hydrates before background r
   );
 });
 
-test("managed AI access refresh uses single-flight per cache key", () => {
+test("managed AI access refresh uses a context-keyed single-flight", () => {
   assert.match(
     storeSource,
-    /let managedAiAccessRefreshInFlight:/,
-    "managed AI refresh should keep an in-flight request slot",
+    /const managedAiAccessRefreshInFlight = new Map<string, ManagedAiAccessRefreshFlight>\(\);/,
+    "managed AI refresh should keep distinct in-flight requests by stable context key",
   );
   assert.match(
     storeSource,
-    /managedAiAccessRefreshInFlight\?\.cacheKey === cacheKey[\s\S]*return managedAiAccessRefreshInFlight\.promise;/,
-    "managed AI refresh should reuse the in-flight promise for the same cache key",
+    /const existing = managedAiAccessRefreshInFlight\.get\(normalizedCacheKey\);[\s\S]*return existing\.promise;/,
+    "managed AI refresh should reuse the in-flight promise for the same request context",
   );
   assert.match(
     storeSource,
-    /const loadManagedAiAccess = loadManagedAiAccessSingleFlight\([\s\S]*runtime-workspace:\$\{runtimeWorkspaceId\}[\s\S]*managedAiCacheKey,/,
-    "managed AI refresh effect should run through the single-flight helper",
+    /const managedAiAccessRequestKey = buildManagedAiAccessRequestKey\(\{[\s\S]*cacheKey: managedAiCacheKey,[\s\S]*managedAiGatewayBaseUrl: managedAiBaseUrl,[\s\S]*runtimeWorkspaceId,[\s\S]*\}\);[\s\S]*const loadManagedAiAccess = loadManagedAiAccessSingleFlight\(\s*managedAiAccessRequestKey,/,
+    "managed AI refresh effect should distinguish gateway and workspace-routed requests before joining a flight",
   );
 });
 

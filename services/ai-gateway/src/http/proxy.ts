@@ -4,6 +4,7 @@ import type { UserAiAccessPolicyRecord } from "../access/repository.js";
 import { readBearerToken } from "../auth/user-session.js";
 import type { GatewaySession } from "../auth/gateway-session.js";
 import { ManagedAiEntitlementLookupError } from "../billing/den-managed-ai-entitlement-resolver.js";
+import { VESLO_DEN_ORG_ID_HEADER, VESLO_ORG_ID_HEADER } from "../headers.js";
 import { createAnthropicProxyRouter } from "./providers/anthropic.js";
 import { createCodexOAuthProxyRouter } from "./providers/codex-oauth.js";
 import { createOpenAiCompatibleProxyRouter } from "./providers/openai-compatible.js";
@@ -72,22 +73,17 @@ export function createProxyRouter(deps: ProxyDependencies) {
     }
 
     try {
-      const modelPolicy = await deps.modelPolicy.getPolicy();
-      if (!modelPolicy) {
-        res.status(503).json({ error: "platform_model_policy_not_configured" });
-        return;
-      }
-      const aiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined;
-      if (aiAccess && aiAccess.provider !== modelPolicy.activeModel.provider) {
-        res.status(403).json({ error: "provider_not_assigned" });
-        return;
-      }
-      res.locals.gatewayActiveModel = modelPolicy.activeModel;
+      res.locals.gatewayPlatformModelPolicy = await deps.modelPolicy.getPolicy();
     } catch (error) {
-      console.error("platform_model_policy_lookup_failed", error);
-      res.status(502).json({ error: "platform_model_policy_lookup_failed" });
+      console.error("gateway_platform_model_policy_lookup_failed", error);
+      res.status(502).json({ error: "gateway_platform_model_policy_lookup_failed" });
       return;
     }
+    if (!res.locals.gatewayPlatformModelPolicy) {
+      res.status(503).json({ error: "gateway_platform_model_policy_unavailable" });
+      return;
+    }
+
     next();
   }));
 
@@ -101,8 +97,8 @@ export function createProxyRouter(deps: ProxyDependencies) {
 }
 
 function readRequestedOrganizationId(req: Request): string | null {
-  return req.header("x-veslo-org-id")?.trim()
-    || req.header("x-veslo-den-org-id")?.trim()
+  return req.header(VESLO_ORG_ID_HEADER)?.trim()
+    || req.header(VESLO_DEN_ORG_ID_HEADER)?.trim()
     || null;
 }
 

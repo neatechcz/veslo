@@ -246,7 +246,7 @@ test("failed first-send run reset uses the handoff-aware key in every failure br
 test("pending session materialization remaps only that pending run UI state", () => {
   assert.match(
     conversationFlowSource,
-    /export const remapPendingRunStateToSession = \([\s\S]*const pendingRun = current\[pending\];[\s\S]*const \{ \[pending\]: _removedPendingRunState, \.\.\.rest \} = current;[\s\S]*return \{[\s\S]*\.\.\.rest,[\s\S]*\[real\]: pendingRun,[\s\S]*\};[\s\S]*\};/,
+    /export const remapPendingRunStateToSession = \([\s\S]*const pendingRun = current\[pending\]!;[\s\S]*const \{ \[pending\]: _removedPendingRunState, \.\.\.rest \} = current;[\s\S]*return \{[\s\S]*\.\.\.rest,[\s\S]*\[real\]: pendingRun,[\s\S]*\};[\s\S]*\};/,
     "materializing a pending session should move only its run UI state to the real session key",
   );
   assert.match(
@@ -331,8 +331,8 @@ test("implicit skill confirmation keeps an immutable snapshot scoped to its orig
   );
   assert.match(
     sessionSource,
-    /onCancel=\{\(\) => void sendImplicitSkillAsPrompt\(\)\}[\s\S]*onClose=\{\(\) => undefined\}/,
-    "closing the confirmation must keep its snapshot owner until the user explicitly chooses a send path",
+    /onCancel=\{\(\) => void sendImplicitSkillAsPrompt\(\)\}[\s\S]*onClose=\{\(\) => \{[\s\S]*const pending = implicitSkillConfirmation\(\);[\s\S]*if \(pending\) removeImplicitSkillConfirmation\(pending\);/,
+    "closing the confirmation must discard only its scoped snapshot instead of leaving a stale prompt open",
   );
 });
 

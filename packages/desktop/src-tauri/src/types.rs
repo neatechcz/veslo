@@ -61,18 +61,13 @@ impl WorkspaceVesloConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EngineRuntime {
+    #[default]
     Direct,
     #[serde(rename = "veslo-orchestrator")]
     Orchestrator,
-}
-
-impl Default for EngineRuntime {
-    fn default() -> Self {
-        EngineRuntime::Direct
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -105,9 +100,10 @@ pub struct EngineInfo {
     pub last_stderr: Option<String>,
 }
 
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum VesloServerLifecycleStatus {
+    #[default]
     Stopped,
     Starting,
     WaitingReady,
@@ -116,15 +112,10 @@ pub enum VesloServerLifecycleStatus {
     Blocked,
 }
 
-impl Default for VesloServerLifecycleStatus {
-    fn default() -> Self {
-        Self::Stopped
-    }
-}
-
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum VesloServerLifecycleReason {
+    #[default]
     None,
     SpawnPending,
     PortUnavailable,
@@ -133,12 +124,6 @@ pub enum VesloServerLifecycleReason {
     HealthUnreachable,
     TokenMissing,
     IdentityMismatch,
-}
-
-impl Default for VesloServerLifecycleReason {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -396,31 +381,21 @@ pub struct ScheduledJob {
     pub last_run_status: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum WorkspaceType {
+    #[default]
     Local,
     Remote,
 }
 
-impl Default for WorkspaceType {
-    fn default() -> Self {
-        WorkspaceType::Local
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RemoteType {
+    #[default]
     Opencode,
     #[serde(alias = "openwork")]
     Veslo,
-}
-
-impl Default for RemoteType {
-    fn default() -> Self {
-        RemoteType::Opencode
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

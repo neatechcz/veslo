@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   createDocumentRuntimeProviderDependencies,
   createDocumentRuntimeStatusPayload,
   createDocumentRuntimeStatusPayloadFromDoctor,
   createDocumentRuntimeStatusPayloadFromRepair,
+  loadDefaultDocumentRuntimeProvider,
   registerDocumentRuntimeRoutes,
   type DocumentRuntimeStatusPayload,
 } from "../routes/document-runtime.js";
@@ -39,6 +44,7 @@ describe("Document runtime routes", () => {
     expect(payload.status).toBe("missing");
     expect(payload.ready).toBe(false);
     expect(payload.updatedAt).toBe("2026-07-02T12:00:00.000Z");
+    expect(payload.providerMode).toBe("bundled");
     expect(payload.package.remoteOnly).toBe(false);
     expect(payload.policy.windowsWslRuntime).toBe("disabled_by_product_policy");
     expect(payload.skills.map((skill) => [skill.id, skill.ready, skill.reason])).toEqual([
@@ -59,8 +65,19 @@ describe("Document runtime routes", () => {
     expect(payload.status).toBe("remote_only");
     expect(payload.ready).toBe(false);
     expect(payload.package.remoteOnly).toBe(true);
+    expect(payload.providerMode).toBe("bundled");
     expect(payload.policy.windowsWslRuntime).toBe("not_applicable");
     expect(payload.skills.every((skill) => !skill.ready && skill.reason === "remote_only")).toBe(true);
+  });
+
+  test("reports an explicit provider override without exposing its module path", () => {
+    const payload = createDocumentRuntimeStatusPayload({
+      env: { VESLO_DOCUMENT_RUNTIME_MODULE: "file:///C:/Users/alice/private-provider.mjs" },
+      now: () => new Date("2026-07-02T12:00:00.000Z"),
+    });
+
+    expect(payload.providerMode).toBe("module_override");
+    expect(JSON.stringify(payload)).not.toContain("private-provider.mjs");
   });
 
   test("status and repair handlers can be backed by injected runtime providers", async () => {
@@ -209,5 +226,141 @@ describe("Document runtime routes", () => {
     expect(status.status).toBe("ready");
     expect(repair.status).toBe("missing");
     expect(repair.repair.lastAttemptAt).toBe("2026-07-02T12:04:00.000Z");
+  });
+
+  test("default provider comes from the bundled workspace dependency and supports an explicit override", async () => {
+    const root = await mkdtemp(join(tmpdir(), "veslo-document-runtime-provider-"));
+    try {
+      const bundled = await loadDefaultDocumentRuntimeProvider("");
+      const bundledDoctor = await bundled.doctor({
+        env: { VESLO_DOCUMENT_RUNTIME_ROOT: root },
+      });
+
+      expect(bundledDoctor.status).toBe("missing");
+      expect(typeof bundled.installPackageFromFeed).toBe("function");
+
+      const overridePath = join(root, "provider.mjs");
+      await writeFile(overridePath, [
+        'export async function doctor() { return { ok: true, status: "ready" }; }',
+        'export async function repairHeadless() { return { ok: true, status: "ready", repaired: false }; }',
+      ].join("\n"), "utf8");
+
+      const override = await loadDefaultDocumentRuntimeProvider(pathToFileURL(overridePath).href);
+      expect((await override.doctor()).status).toBe("ready");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("provider dependencies start feed package install without blocking repair responses", async () => {
+    const calls: string[] = [];
+    let installed = false;
+    let finishInstall: (() => void) | null = null;
+    const deps = createDocumentRuntimeProviderDependencies(async () => ({
+      doctor: () => {
+        calls.push("doctor");
+        return installed
+          ? {
+              ok: true,
+              status: "ready",
+              packageVersion: "2026.7.0",
+              activePath: "/runtime/active",
+            }
+          : {
+              ok: false,
+              status: "missing",
+              checks: [{ ok: false, error: "active pointer missing" }],
+            };
+      },
+      repairHeadless: () => {
+        calls.push("repair");
+        return { ok: false, status: "missing", repaired: false };
+      },
+      installPackageFromFeed: (options) => {
+        calls.push("install");
+        options?.onProgress?.({
+          phase: "downloading",
+          artifactName: "veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+          downloadedBytes: 25,
+          totalBytes: 100,
+          percent: 25,
+          message: "Downloading office document package.",
+        });
+        return new Promise((resolve) => {
+          finishInstall = () => {
+            installed = true;
+            resolve({
+              ok: true,
+              status: "ready",
+              repaired: true,
+              doctor: {
+                ok: true,
+                status: "ready",
+                packageVersion: "2026.7.0",
+                activePath: "/runtime/active",
+              },
+            });
+          };
+        });
+      },
+    }), {
+      now: () => new Date("2026-07-02T12:05:00.000Z"),
+      platform: "win32",
+    });
+
+    const missing = await deps.readStatus!({} as RequestContext);
+    const repair = await deps.repair!({} as RequestContext);
+    const installing = await deps.readStatus!({} as RequestContext);
+
+    expect(missing.status).toBe("missing");
+    expect(missing.repair.available).toBe(true);
+    expect(repair.status).toBe("package_installing");
+    expect(repair.repair.inProgress).toBe(true);
+    expect(installing.status).toBe("package_installing");
+    expect(installing.package.progress?.phase).toBe("downloading");
+    expect(installing.package.progress?.percent).toBe(25);
+    expect(calls).toEqual(["doctor", "install"]);
+
+    const resolveInstall = finishInstall ?? (() => {
+      throw new Error("Expected document runtime package install to start.");
+    });
+    resolveInstall();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const ready = await deps.readStatus!({} as RequestContext);
+
+    expect(ready.status).toBe("ready");
+    expect(ready.ready).toBe(true);
+    expect(calls).toEqual(["doctor", "install", "doctor"]);
+  });
+
+  test("provider dependencies do not offer package install in remote-only mode", async () => {
+    const calls: string[] = [];
+    const deps = createDocumentRuntimeProviderDependencies(async () => ({
+      doctor: () => {
+        calls.push("doctor");
+        return { ok: false, status: "missing" };
+      },
+      repairHeadless: () => {
+        calls.push("repair");
+        return { ok: false, status: "missing", repaired: false };
+      },
+      installPackageFromFeed: () => {
+        calls.push("install");
+        return { ok: true, status: "ready", repaired: true };
+      },
+    }), {
+      env: { VESLO_DOCUMENT_RUNTIME_MODE: "remote-docs-only" },
+      now: () => new Date("2026-07-02T12:06:00.000Z"),
+      platform: "win32",
+    });
+
+    const status = await deps.readStatus!({} as RequestContext);
+    const repair = await deps.repair!({} as RequestContext);
+
+    expect(status.status).toBe("remote_only");
+    expect(status.repair.available).toBe(false);
+    expect(repair.status).toBe("remote_only");
+    expect(repair.repair.available).toBe(false);
+    expect(calls).toEqual([]);
   });
 });

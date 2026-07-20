@@ -44,7 +44,7 @@ test("skills page receives app-wide skill inventory props", () => {
   assert.match(source, /skillInventory:\s*SkillInventoryItem\[\]/);
   assert.match(source, /refreshSkillInventory:\s*\(options\?: \{ force\?: boolean \}\) => void/);
   assert.match(dashboardSource, /skillInventory:\s*SkillInventoryItem\[\]/);
-  assert.match(dashboardSource, /refreshSkillInventory:\s*\(options\?: \{ force\?: boolean \}\) => void/);
+  assert.match(dashboardSource, /refreshSkillInventory:\s*\(options\?: \{ force\?: boolean \}\) => Promise<void>/);
   assert.match(appSource, /\bskillInventory,\s*[\s\S]*\bskillInventoryStatus,\s*[\s\S]*\brefreshSkillInventory,/);
   assert.match(dashboardSource, /skillInventory=\{props\.skillInventory\}/);
   assert.match(dashboardSource, /refreshSkillInventory=\{props\.refreshSkillInventory\}/);

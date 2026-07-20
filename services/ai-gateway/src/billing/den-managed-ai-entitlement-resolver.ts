@@ -1,4 +1,5 @@
 import { digestBearerTokenForCache } from "../auth/token-cache-key.js"
+import { VESLO_ORG_ID_HEADER } from "../headers.js"
 
 export type ManagedAiEntitlementDecision = {
   orgId: string
@@ -113,7 +114,7 @@ export class DenManagedAiEntitlementResolver implements ManagedAiEntitlementReso
         headers: {
           accept: "application/json",
           authorization: `Bearer ${input.token}`,
-          ...(input.requestedOrgId ? { "x-veslo-org-id": input.requestedOrgId } : {}),
+          ...(input.requestedOrgId ? { [VESLO_ORG_ID_HEADER]: input.requestedOrgId } : {}),
         },
       })
 

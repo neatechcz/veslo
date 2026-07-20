@@ -340,6 +340,10 @@ fn configured_veslo_port() -> Result<ConfiguredVesloPort, String> {
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The sidecar argument builder keeps each security-sensitive launch input explicit."
+)]
 pub fn build_veslo_args(
     host: &str,
     port: u16,
@@ -662,6 +666,10 @@ fn server_cwd_for_workspace_paths(app: &AppHandle, workspace_paths: &[String]) -
     server_cwd_from_app_data_dir(app.path().app_data_dir().ok(), workspace_paths)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The sidecar owner keeps launch inputs explicit rather than relying on hidden global state."
+)]
 pub fn spawn_veslo_server(
     app: &AppHandle,
     host: &str,
@@ -907,12 +915,9 @@ mod tests {
         let _guard = EnvGuard::unset(VESLO_DESKTOP_SERVER_PORT_ENV);
         let fixed_port_guard = TcpListener::bind((host.as_str(), DEFAULT_VESLO_PORT)).ok();
 
-        let conflict = bind_veslo_port(
-            &host,
-            DEFAULT_VESLO_PORT,
-            VesloPortFallbackPolicy::Disabled,
-        )
-            .expect_err("reserved fixed port should report structured conflict");
+        let conflict =
+            bind_veslo_port(&host, DEFAULT_VESLO_PORT, VesloPortFallbackPolicy::Disabled)
+                .expect_err("reserved fixed port should report structured conflict");
 
         drop(fixed_port_guard);
 

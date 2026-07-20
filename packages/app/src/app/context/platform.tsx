@@ -1,4 +1,4 @@
-import { createContext, useContext, type ParentProps } from "solid-js";
+import { createContext, untrack, useContext, type ParentProps } from "solid-js";
 
 export type SyncStorage = {
   getItem(key: string): string | null;
@@ -30,8 +30,9 @@ export type Platform = {
 const PlatformContext = createContext<Platform | undefined>(undefined);
 
 export function PlatformProvider(props: ParentProps & { value: Platform }) {
+  const value = untrack(() => props.value);
   return (
-    <PlatformContext.Provider value={props.value}>
+    <PlatformContext.Provider value={value}>
       {props.children}
     </PlatformContext.Provider>
   );

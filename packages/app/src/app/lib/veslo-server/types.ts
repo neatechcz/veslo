@@ -1309,10 +1309,12 @@ export type VesloSessionArtifactItem = {
 
 export type VesloSessionLatestRunArtifacts = {
   sessionId: string;
+  directory?: string;
   conversationId?: string;
   opencodeSessionId?: string;
   workspaceId: string;
-  runId: string | null;
+  /** Transcript message that anchors the artifact slice, not a lifecycle run id. */
+  anchorMessageId: string | null;
   items: VesloSessionArtifactItem[];
 };
 
@@ -1345,6 +1347,15 @@ export type VesloSessionTranscriptSnapshot = {
   staleAt?: number;
   source?: "sqlite" | "unavailable";
   diagnostic?: VesloConversationReadDiagnostic;
+  latestRunArtifacts?: VesloSessionLatestRunArtifacts;
+};
+
+export type VesloSessionTranscriptReadOptions = {
+  includeLatestRunArtifacts?: boolean;
+  caller?: "passive-selection" | "terminal-recovery";
+  sendTraceId?: string | null;
+  // Client-side ownership metadata; never serialized into the transcript route.
+  appWorkspaceId?: string | null;
 };
 
 export type VesloSessionTranscriptPrefetchInput = {
@@ -1359,6 +1370,12 @@ export type VesloSessionTranscriptPrefetchInput = {
   directory?: string | null;
   sessionDirectoriesById?: Record<string, string | null | undefined>;
   limit?: number;
+};
+
+// Kept out of the HTTP payload: this describes the app workspace that owns a
+// prefetch request after its server workspace id has been resolved.
+export type VesloSessionTranscriptPrefetchClientOptions = {
+  appWorkspaceId?: string | null;
 };
 
 export type VesloSessionTranscriptPrefetchResult = {
@@ -1940,6 +1957,15 @@ export type VesloReloadEvent = {
 
 export type VesloGatewayProvider = "openai" | "anthropic" | "codex_oauth" | "openai_compatible";
 
+export type VesloGatewayModelCapability = {
+  provider: VesloGatewayProvider;
+  model: string;
+  registryVersion?: string;
+  capabilityStatus?: "known" | "unknown";
+  attachment?: boolean;
+  modalities?: { input?: string[] };
+};
+
 export type VesloUserAiAccess = {
   id: string;
   userId: string;
@@ -1949,9 +1975,10 @@ export type VesloUserAiAccess = {
     provider: VesloGatewayProvider;
     model: string;
   } | null;
-  /** Legacy response fields are accepted structurally but never used as model authority. */
+  /** Legacy gateway responses may omit effectiveModel; UI resolves defaultModel as a compatibility fallback. */
   defaultModel?: string | null;
   allowedModels?: string[];
+  selectableModels?: VesloGatewayModelCapability[];
   updatedAt: string | null;
 };
 

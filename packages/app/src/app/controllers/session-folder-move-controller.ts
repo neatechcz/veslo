@@ -131,7 +131,7 @@ export function createSessionFolderMoveController(deps: SessionFolderMoveControl
     }
     const { sourceRoot, sourceWorkspaceId } = source;
 
-    while (true) {
+    for (;;) {
       const selectedDirectory = await deps.workspace.pickWorkspaceFolder();
       if (!selectedDirectory) return false;
 
@@ -174,17 +174,15 @@ export function createSessionFolderMoveController(deps: SessionFolderMoveControl
       // replace it with the actual target directory before the engine starts.
       try {
         const copiedConfig = await workspaceVesloRead({ workspacePath: selectedDirectory });
-        if (copiedConfig) {
-          const oldRoots = Array.isArray(copiedConfig.authorizedRoots) ? copiedConfig.authorizedRoots : [];
-          const fixedRoots = oldRoots
-            .map((r) => (r === sourceRoot ? selectedDirectory : r))
-            .filter((r, i, arr) => arr.indexOf(r) === i);
-          if (!fixedRoots.includes(selectedDirectory)) fixedRoots.push(selectedDirectory);
-          await workspaceVesloWrite({
-            workspacePath: selectedDirectory,
-            config: { ...copiedConfig, authorizedRoots: fixedRoots },
-          });
-        }
+        const oldRoots = Array.isArray(copiedConfig.authorizedRoots) ? copiedConfig.authorizedRoots : [];
+        const fixedRoots = oldRoots
+          .map((r) => (r === sourceRoot ? selectedDirectory : r))
+          .filter((r, i, arr) => arr.indexOf(r) === i);
+        if (!fixedRoots.includes(selectedDirectory)) fixedRoots.push(selectedDirectory);
+        await workspaceVesloWrite({
+          workspacePath: selectedDirectory,
+          config: { ...copiedConfig, authorizedRoots: fixedRoots },
+        });
       } catch {
         // veslo.json may not exist yet — ensureWorkspaceForFolder will create it
       }

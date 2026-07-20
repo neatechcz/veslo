@@ -159,7 +159,7 @@ test("titlebar menu toggles let session context replace the left-side brand", ()
 
   assert.match(
     source,
-    /<div class=\{layout\.leftOffsetClass\}>[\s\S]*<LeftSidebarToggleIcon size=\{18\} \/>[\s\S]*props\.leftContent[\s\S]*props\.showBrand !== false[\s\S]*ui\.literal\.veslo_by_neatech_86m8cx/,
+    /<div class=\{layout\(\)\.leftOffsetClass\}>[\s\S]*<LeftSidebarToggleIcon size=\{18\} \/>[\s\S]*props\.leftContent[\s\S]*props\.showBrand !== false[\s\S]*ui\.literal\.veslo_by_neatech_86m8cx/,
     "titlebar should render provided left-side content in the same cluster as the left toggle and only show the brand fallback when that behavior is explicitly enabled",
   );
 });
@@ -209,14 +209,14 @@ test("titlebar menu toggles expose a dedicated right-side content slot", () => {
   const rightRail = findJsxElementInTree(
     component!.body!,
     "div",
-    (openingElement) => /layout\.rightOffsetClass/.test(getJsxAttributeText(openingElement, "class")),
+    (openingElement) => /layout\(\)\.rightOffsetClass/.test(getJsxAttributeText(openingElement, "class")),
   );
   assert.ok(rightRail, "titlebar should render a shared right rail");
 
   const rightRailClass = getJsxAttributeText(getOpeningElement(rightRail!), "class");
   assert.match(
     rightRailClass,
-    /layout\.rightOffsetClass[\s\S]*flex[\s\S]*shrink-0[\s\S]*flex-nowrap[\s\S]*items-center[\s\S]*gap-1/,
+    /layout\(\)\.rightOffsetClass[\s\S]*flex[\s\S]*shrink-0[\s\S]*flex-nowrap[\s\S]*items-center[\s\S]*gap-1/,
     "titlebar right rail should stay on a single row so feedback and the right toggle do not wrap onto a second line",
   );
 

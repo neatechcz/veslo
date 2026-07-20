@@ -47,7 +47,6 @@ export const deriveSidebarRowsFromSessionStore = (
       const existingIndex = findSidebarSessionItemMergeIndex(input.existingRows, item);
       if (existingIndex === -1) return item;
       const existing = input.existingRows[existingIndex];
-      if (!existing) return item;
       consumedExistingIndexes.add(existingIndex);
       return mergeSidebarSessionStoreRow(existing, item);
     });

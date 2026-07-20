@@ -130,12 +130,12 @@ export function parseMcpServersFromContent(content: string): McpServerEntry[] {
       return [];
     }
 
-    const config = value as McpServerConfig;
+    const config = value as { type?: unknown };
     if (config.type !== "remote" && config.type !== "local") {
       return [];
     }
 
-    return [{ name, config }];
+    return [{ name, config: config as McpServerConfig }];
   });
 }
 
@@ -151,7 +151,7 @@ function parseDisabledMcpOverrideNamesFromContent(content: string): Set<string> 
   for (const [name, value] of Object.entries(mcp)) {
     if (name === "servers") continue;
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const config = value as McpServerConfig;
+    const config = value as { type?: unknown; enabled?: unknown };
     if ((config.type === "remote" || config.type === "local") || config.enabled !== false) continue;
     disabled.add(name);
   }

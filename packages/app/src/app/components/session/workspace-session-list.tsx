@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import type { Accessor, JSX } from "solid-js";
 import { useOutsideClick } from "./use-outside-click";
 import {
@@ -315,19 +315,19 @@ const prefersReducedMotion = () =>
 const AnimatedCollapse = (props: AnimatedCollapseProps) => {
   const closedTransform = () => sidebarCollapseClosedTransformForRegion(props.region);
   const transition = () => sidebarCollapseTransitionForRegion(props.region);
-  const [rendered, setRendered] = createSignal(props.open);
+  const [rendered, setRendered] = createSignal(untrack(() => props.open));
   const [style, setStyle] = createSignal<JSX.CSSProperties>({
-    height: props.open ? "auto" : "0px",
-    opacity: props.open ? 1 : 0,
+    height: untrack(() => props.open) ? "auto" : "0px",
+    opacity: untrack(() => props.open) ? 1 : 0,
     overflow: "hidden",
-    transform: props.open ? "translateY(0)" : closedTransform(),
+    transform: untrack(() => props.open) ? "translateY(0)" : closedTransform(),
     transition: transition(),
   });
   let outerRef: HTMLDivElement | undefined;
   let innerRef: HTMLDivElement | undefined;
   let frame = 0;
   let transitionSafetyTimer = 0;
-  let previousOpen = props.open;
+  let previousOpen = untrack(() => props.open);
   let hasMounted = false;
   let closeCompletionPending = false;
 
@@ -370,7 +370,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
 
   const scheduleTransitionSafetyTimer = (open: boolean) => {
     if (typeof window === "undefined") return;
-    transitionSafetyTimer = window.setTimeout(() => {
+    transitionSafetyTimer = window.setTimeout(() => untrack(() => {
       transitionSafetyTimer = 0;
       if (props.open !== open) return;
       if (open) {
@@ -378,7 +378,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
         return;
       }
       finishClosed();
-    }, sidebarCollapseDurationForRegion(props.region) + 40);
+    }), sidebarCollapseDurationForRegion(props.region) + 40);
   };
 
   createEffect(() => {
@@ -431,7 +431,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
         transform: closedTransform(),
         transition: transition(),
       }));
-      frame = window.requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
         frame = 0;
         const height = measuredHeight();
         if (height <= 0) {
@@ -465,7 +465,7 @@ const AnimatedCollapse = (props: AnimatedCollapseProps) => {
       transform: "translateY(0)",
       transition: transition(),
     }));
-    frame = window.requestAnimationFrame(() => {
+    frame = requestAnimationFrame(() => {
       frame = 0;
       setStyle((current) => ({
         ...current,
@@ -896,8 +896,8 @@ export default function WorkspaceSessionList(props: Props) {
     let nextWorkspaceId: string | null = null;
 
     for (const workspaceId of projectWorkspaceIds(group)) {
-      const entry = paging[workspaceId];
-      if (!entry) continue;
+      if (!Object.hasOwn(paging, workspaceId)) continue;
+      const entry = paging[workspaceId]!;
       hasMore = hasMore || entry.hasMore;
       loadingMore = loadingMore || entry.loadingMore;
       if (entry.hasMore && !entry.loadingMore && !nextWorkspaceId) {
@@ -1918,8 +1918,8 @@ export default function WorkspaceSessionList(props: Props) {
       return buildBackgroundMenuItems({
         addDirectoryDisabled: addDirectorySessionDisabled(),
         onAddDirectory: () => props.onAddDirectorySession?.(),
-        onSearchSessions: props.onOpenSessionSearch ? () => props.onOpenSessionSearch?.() : undefined,
-        onArchivedItems: props.onOpenArchivedSessions ? () => props.onOpenArchivedSessions?.() : undefined,
+        onSearchSessions: props.onOpenSessionSearch ? () => untrack(() => props.onOpenSessionSearch?.()) : undefined,
+        onArchivedItems: props.onOpenArchivedSessions ? () => untrack(() => props.onOpenArchivedSessions?.()) : undefined,
       });
     }
 
@@ -1950,13 +1950,14 @@ export default function WorkspaceSessionList(props: Props) {
 
     if (!sessionId) return [];
 
+    const onDeleteSession = untrack(() => props.onDeleteSession);
     const baseSessionActions = {
       archived: isSessionArchived(workspaceId, sessionId, sessionTarget),
       selectedText: state.selectedText,
       onCopyText: (text: string) => void copyText(text),
       onRename: () => props.onRenameSession?.(workspaceId, sessionId, sessionTarget),
       onArchiveToggle: () => toggleSessionArchiveFromMenu(workspaceId, sessionId, sessionTarget),
-      onDelete: props.onDeleteSession ? () => props.onDeleteSession?.(workspaceId, sessionId, sessionTarget) : undefined,
+      onDelete: onDeleteSession ? () => onDeleteSession(workspaceId, sessionId, sessionTarget) : undefined,
     };
 
     if (state.targetKind === "chat") {
@@ -2281,8 +2282,8 @@ export default function WorkspaceSessionList(props: Props) {
   );
 
   const SessionTreeRows = (props: SessionTreeRowsProps) => {
-    const hasChildren = props.hasChildren;
-    const options = props.options;
+    const hasChildren = (rowKey: string) => props.hasChildren(rowKey);
+    const options = untrack(() => props.options);
     const branchRows = createMemo(() =>
       props.parentRowKey
         ? directChildRowsForParent(props.rows(), props.parentRowKey)
@@ -2310,7 +2311,9 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   const AnimatedSessionBranch = (props: AnimatedSessionBranchProps) => {
-    const [renderedRows, setRenderedRows] = createSignal<FlatSessionRow[]>(props.open ? props.rows() : []);
+    const [renderedRows, setRenderedRows] = createSignal<FlatSessionRow[]>(
+      untrack(() => (props.open ? props.rows() : [])),
+    );
 
     createEffect(() => {
       const rows = props.rows();

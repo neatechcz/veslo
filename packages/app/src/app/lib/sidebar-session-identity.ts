@@ -67,19 +67,19 @@ export const findSidebarSessionItemMergeIndex = (
   let bestScore = -1;
   let tied = false;
 
-  items.forEach((item, index) => {
+  for (const [index, item] of items.entries()) {
     const score = sidebarSessionMergeScore(item, incoming);
-    if (score < 0) return;
+    if (score < 0) continue;
     if (score > bestScore) {
       bestIndex = index;
       bestScore = score;
       tied = false;
-      return;
+      continue;
     }
     if (score === bestScore) {
       tied = true;
     }
-  });
+  }
 
   return tied ? -1 : bestIndex;
 };

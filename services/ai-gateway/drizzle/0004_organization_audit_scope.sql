@@ -13,26 +13,34 @@ CREATE TABLE IF NOT EXISTS `ai_gateway_audit_event` (
   KEY `audit_event_action` (`action`)
 );
 --> statement-breakpoint
-INSERT IGNORE INTO `ai_gateway_audit_event` (
-  `id`,
-  `actor_user_id`,
-  `entity_type`,
-  `entity_id`,
-  `action`,
-  `result`,
-  `summary`,
-  `created_at`
-)
-SELECT
-  `id`,
-  `actor_user_id`,
-  `entity_type`,
-  `entity_id`,
-  `action`,
-  `result`,
-  `summary`,
-  `created_at`
-FROM `audit_event`;
+SET @backfill_legacy_audit_events_sql = (
+  SELECT IF(
+    (
+      SELECT COUNT(DISTINCT COLUMN_NAME)
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'audit_event'
+        AND COLUMN_NAME IN (
+          'id',
+          'actor_user_id',
+          'entity_type',
+          'entity_id',
+          'action',
+          'result',
+          'summary',
+          'created_at'
+        )
+    ) = 8,
+    'INSERT IGNORE INTO `ai_gateway_audit_event` (`id`, `actor_user_id`, `entity_type`, `entity_id`, `action`, `result`, `summary`, `created_at`) SELECT `id`, `actor_user_id`, `entity_type`, `entity_id`, `action`, `result`, `summary`, `created_at` FROM `audit_event`',
+    'SELECT 1'
+  )
+);
+--> statement-breakpoint
+PREPARE backfill_legacy_audit_events FROM @backfill_legacy_audit_events_sql;
+--> statement-breakpoint
+EXECUTE backfill_legacy_audit_events;
+--> statement-breakpoint
+DEALLOCATE PREPARE backfill_legacy_audit_events;
 --> statement-breakpoint
 SET @add_audit_organization_column_sql = (
   SELECT IF(

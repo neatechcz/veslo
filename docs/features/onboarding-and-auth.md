@@ -74,7 +74,7 @@ When local mode is available, onboarding can:
 - create a managed local worker
 - import an existing workspace config archive
 - configure allowed roots for local access
-- on Windows, prepare or repair the managed WSL2 `VesloSandbox` runtime before the first local run
+- on Windows, start the bundled shared non-sandbox local runtime; current installers do not ship WSL2 sandbox setup
 
 Important surfaces:
 
@@ -99,7 +99,7 @@ Onboarding also surfaces environment recovery when local mode is active:
 - engine doctor status
 - install hints
 - OpenCode DB migration repair
-- Windows WSL2 sandbox readiness and repair; local runtime startup can continue unsandboxed while repair is pending
+- no WSL2 sandbox provisioning or repair flow in the current Windows installer/onboarding path
 
 If you change onboarding behavior that depends on local engine readiness, verify whether the environment branch is local-only, cloud-only, or shared.
 

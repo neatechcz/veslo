@@ -33,8 +33,8 @@ const bytesToBase64 = (bytes: number[]) => {
   let output = "";
   for (let index = 0; index < bytes.length; index += 3) {
     const first = bytes[index] ?? 0;
-    const second = bytes[index + 1];
-    const third = bytes[index + 2];
+    const second = bytes.at(index + 1);
+    const third = bytes.at(index + 2);
     const chunk = (first << 16) | ((second ?? 0) << 8) | (third ?? 0);
 
     output += BASE64_ALPHABET[(chunk >> 18) & 63];

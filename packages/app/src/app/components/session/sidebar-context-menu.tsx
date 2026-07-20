@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 
 import type {
@@ -76,12 +76,12 @@ export default function SidebarContextMenu(props: SidebarContextMenuProps) {
     }
 
     props.entries.length;
-    queueMicrotask(() => {
+    queueMicrotask(() => untrack(() => {
       if (!menuRef || !visiblePlacement() || typeof window === "undefined") return;
       const rect = menuRef.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       setMenuSize({ width: rect.width, height: rect.height });
-    });
+    }));
   });
 
   createEffect(() => {
@@ -121,7 +121,7 @@ export default function SidebarContextMenu(props: SidebarContextMenuProps) {
       }
 
       if (event.key !== "Enter" && event.key !== " ") return;
-      const activeButton = buttons[currentIndex];
+      const activeButton = buttons.at(currentIndex);
       if (!activeButton) return;
       event.preventDefault();
       activeButton.click();
@@ -146,7 +146,7 @@ export default function SidebarContextMenu(props: SidebarContextMenuProps) {
     <Show when={visiblePlacement()}>
       <div
         class="fixed inset-0 z-[100]"
-        onClick={props.onClose}
+        onClick={() => props.onClose()}
         onContextMenu={(event) => {
           event.preventDefault();
           props.onClose();

@@ -203,7 +203,7 @@ export function createScheduledAutomationStore(deps: ScheduledAutomationStoreDep
       const workspaceMap = await resolveAutomationWorkspaceMap(client);
       const nextWorkspaces = [...workspaceMap];
       const readyWorkspaces = nextWorkspaces.filter((workspace) => workspace.status === "ready" && workspace.serverWorkspaceId);
-      let partialFailure = false;
+      const failedWorkspaceIds = new Set<string>();
 
       const itemGroups = await Promise.all(
         readyWorkspaces.map(async (workspace) => {
@@ -229,7 +229,7 @@ export function createScheduledAutomationStore(deps: ScheduledAutomationStoreDep
               runs: runsByAutomationId[automation.id] ?? [],
             }));
           } catch (error) {
-            partialFailure = true;
+            failedWorkspaceIds.add(workspace.appWorkspaceId);
             const message = error instanceof Error ? error.message : String(error);
             const index = nextWorkspaces.findIndex((item) => item.appWorkspaceId === workspace.appWorkspaceId);
             if (index >= 0) {
@@ -244,7 +244,7 @@ export function createScheduledAutomationStore(deps: ScheduledAutomationStoreDep
       setAutomationWorkspaces(nextWorkspaces);
       setAutomationItems(itemGroups.flat());
       setScheduledJobsUpdatedAt(now());
-      setScheduledJobsStatus(partialFailure ? "Some workspaces could not load automations." : null);
+      setScheduledJobsStatus(failedWorkspaceIds.size > 0 ? "Some workspaces could not load automations." : null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setScheduledJobs([]);

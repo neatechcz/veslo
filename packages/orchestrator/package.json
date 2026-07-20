@@ -1,6 +1,6 @@
 {
   "name": "veslo-orchestrator",
-  "version": "2026.7.9",
+  "version": "2026.7.12",
   "opencodeVersion": "1.17.13",
   "description": "Veslo host orchestrator for opencode + Veslo server + veslo-code-router",
   "private": true,
@@ -13,6 +13,7 @@
     "build:bin:bundled": "node scripts/clean-dist.mjs && node ../desktop/scripts/prepare-sidecar.mjs --outdir dist && bun --config=./script/bunfig.build.toml ./script/build.ts --outdir dist --filename veslo && bun scripts/build-bin.ts",
     "build:sidecars": "node scripts/build-sidecars.mjs",
     "typecheck": "tsc -p tsconfig.typecheck.json",
+    "test:sandbox-policy": "bun test src/tests/sandbox-resolution.test.ts",
     "test:router": "pnpm build && node scripts/router.mjs",
     "test:files": "pnpm build && node scripts/files-session.mjs",
     "prepublishOnly": "node -e \"console.error('veslo-orchestrator is published via packages/orchestrator/scripts/publish-npm.mjs (meta + platform packages)'); process.exit(1);\""
@@ -59,8 +60,8 @@
     "eventsource-parser": "3.1.0",
     "json-schema": "0.4.0",
     "solid-js": "1.9.12",
-    "veslo-code-router": "2026.7.9",
-    "veslo-server": "2026.7.9",
+    "veslo-code-router": "2026.7.12",
+    "veslo-server": "2026.7.12",
     "zod": "4.1.8"
   },
   "devDependencies": {

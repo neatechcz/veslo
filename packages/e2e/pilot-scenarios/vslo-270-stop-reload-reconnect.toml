@@ -16,9 +16,15 @@ script = '''
 const completeSelector = '[data-testid="vslo-270-stop-reload-reconnect-complete"]';
 const errorSelector = '[data-testid="vslo-270-stop-reload-reconnect-error"]';
 const progressSelector = '[data-testid="vslo-270-stop-reload-reconnect-progress"]';
+const readySelector = '[data-testid="vslo-270-stop-reload-reconnect-ready"]';
+const stopReadySelector = '[data-testid="vslo-270-stop-reload-reconnect-stop-ready"]';
+const pilotE2E = window.__vesloPilotE2E;
+if (!pilotE2E) throw new Error("Pilot browser prelude is unavailable.");
 document.querySelector(completeSelector)?.remove();
 document.querySelector(errorSelector)?.remove();
 document.querySelector(progressSelector)?.remove();
+document.querySelector(readySelector)?.remove();
+document.querySelector(stopReadySelector)?.remove();
 
 const progressMarker = document.createElement("pre");
 progressMarker.dataset.testid = "vslo-270-stop-reload-reconnect-progress";
@@ -45,43 +51,34 @@ const appendFailureMarker = (payload) => {
 
 if (!window.__veslo270StopReloadReconnectStarted) {
   window.__veslo270StopReloadReconnectStarted = true;
+  window.__veslo270StopReloadReconnectNativeSendClick = null;
+  window.__veslo270StopReloadReconnectNativeStopClick = null;
   window.__veslo270StopReloadReconnectPromise = (async () => {
     const overallTimeout = setTimeout(() => {
       appendFailureMarker({
         message: "Timed out before the VSLO-270 stop/reload/reconnect task produced a result marker.",
         progress: window.__veslo270StopReloadReconnect ?? null,
-        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-80) : [],
+        trace: pilotE2E.recentTraceSummary(),
         body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
       });
     }, 280000);
 
     try {
-      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      const trimText = (value) => String(value ?? "").trim();
-      const normalize = (value) => trimText(value).replace(/\s+/g, " ");
+      const {
+        normalize,
+        assert,
+        waitUntil: waitFor,
+        invoke: tauriInvoke,
+        visible,
+      } = pilotE2E;
       const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
       const sendTrace = () => Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-160) : [];
       const bodyText = () => document.body.innerText.replace(/\s+/g, " ").trim();
-      const assert = (condition, message) => {
-        if (!condition) throw new Error(message);
-      };
-      const waitUntil = async (predicate, options = {}) => {
-        const timeout = options.timeout ?? 10000;
-        const interval = options.interval ?? 250;
-        const deadline = Date.now() + timeout;
-        let latest;
-        while (Date.now() < deadline) {
-          latest = await predicate();
-          if (latest) return latest;
-          await sleep(interval);
-        }
-        throw new Error(`${options.message ?? "Condition was not met"}. Latest=${JSON.stringify(latest)}`);
-      };
-      const tauriInvoke = async (command, payload = {}) => {
-        const invoke = window.__TAURI_INTERNALS__?.invoke;
-        assert(typeof invoke === "function", "Tauri invoke bridge is unavailable.");
-        return await invoke(command, payload);
-      };
+      const waitUntil = (predicate, options = {}) => waitFor(predicate, {
+        timeout: options.timeout ?? 10000,
+        interval: options.interval ?? 250,
+        message: options.message ?? "Condition was not met",
+      });
       const serverJson = async (baseUrl, token, path, init = {}) => {
         const response = await fetch(`${baseUrl}${path}`, {
           ...init,
@@ -101,79 +98,36 @@ if (!window.__veslo270StopReloadReconnectStarted) {
         return { ok: response.ok, status: response.status, body };
       };
       const buttonDetails = () => Array.from(document.querySelectorAll("button")).map((button) => {
-        const rect = button.getBoundingClientRect();
         return {
           text: normalize(button.textContent),
           title: normalize(button.title),
           label: normalize(button.getAttribute("aria-label")),
           disabled: button.disabled,
-          visible: Boolean(button.offsetParent) && rect.width > 0 && rect.height > 0,
+          visible: visible(button),
         };
       });
-      const buttonMatchesLabel = (button, labels) => {
-        if (button.disabled) return false;
-        const rect = button.getBoundingClientRect();
-        if (!button.offsetParent || rect.width <= 0 || rect.height <= 0) return false;
-        const values = [
-          normalize(button.textContent),
-          normalize(button.title),
-          normalize(button.getAttribute("aria-label")),
-        ];
-        return labels.some((label) => values.some((value) => value === label || value.includes(label)));
-      };
-      const findButton = (labels) =>
-        Array.from(document.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
       const reloadBannerDetails = () => {
         const banner = document.querySelector('[data-testid="session-reload-banner"]');
         if (!(banner instanceof HTMLElement)) return null;
         const action = banner.querySelector('[data-testid="session-reload-action"]');
-        const rect = banner.getBoundingClientRect();
         return {
           text: normalize(banner.textContent),
           blocked: banner.getAttribute("data-reload-blocked"),
-          visible: Boolean(banner.offsetParent) && rect.width > 0 && rect.height > 0,
+          visible: visible(banner),
           actionDisabled: action instanceof HTMLButtonElement ? action.disabled : null,
         };
       };
       const findBlockedReloadAction = () => {
         const action = document.querySelector('[data-testid="session-reload-banner"][data-reload-blocked="true"] [data-testid="session-reload-action"]');
         if (!(action instanceof HTMLButtonElement)) return null;
-        const rect = action.getBoundingClientRect();
-        if (action.disabled || !action.offsetParent || rect.width <= 0 || rect.height <= 0) return null;
+        if (action.disabled || !visible(action)) return null;
         return action;
-      };
-      const findStopButton = () => findButton([
-        "Stop",
-        "Zastavit",
-        "Press Esc again to stop",
-        "Dalsim Esc zastavite beh",
-      ]);
-      const findComposerSendButton = (textbox) => {
-        const labels = [
-          "Send now",
-          "Steer agent now",
-          "Queue message",
-          "Send",
-          "Poslat hned",
-          "Odeslat",
-        ];
-        let current = textbox;
-        const containers = [];
-        for (let depth = 0; depth < 10 && current instanceof HTMLElement; depth += 1) {
-          containers.push(current);
-          current = current.parentElement;
-        }
-        for (const container of containers) {
-          const match = Array.from(container.querySelectorAll("button")).find((button) => buttonMatchesLabel(button, labels));
-          if (match) return match;
-        }
-        return findButton(labels);
       };
       const waitForComposer = async () => {
         setProgress("waiting-composer");
         return await waitUntil(() => {
           const candidate = document.querySelector('div[contenteditable="true"][role="textbox"][aria-multiline="true"], [role="textbox"]');
-          return candidate instanceof HTMLElement && candidate.offsetParent ? candidate : false;
+          return candidate instanceof HTMLElement && visible(candidate) ? candidate : false;
         }, {
           timeout: 30000,
           interval: 250,
@@ -268,33 +222,25 @@ if (!window.__veslo270StopReloadReconnectStarted) {
         });
         window.dispatchEvent(new Event("focus"));
         document.dispatchEvent(new Event("visibilitychange"));
-        await sleep(1000);
       };
       const waitForWorkspaceEngineReady = async (workspace) => {
         const workspacePath = normalize(workspace?.path || workspace?.directory);
         assert(workspacePath, `Workspace path is missing from bootstrap payload: ${JSON.stringify(workspace)}`);
         setProgress("starting-workspace-engine", { workspacePath });
-        await tauriInvoke("engine_start", {
+        const prepared = await tauriInvoke("runtime_prepare_workspace", {
           projectDir: workspacePath,
+          workspaceId: normalize(workspace?.id) || null,
+          workspaceName: normalize(workspace?.displayName || workspace?.name) || null,
+          reason: "vslo-270-stop-reload-reconnect",
+          forceFreshRuntime: false,
           preferSidecar: true,
           opencodeBinPath: null,
           runtime: "veslo-orchestrator",
           workspacePaths: [workspacePath],
         });
-        const activation = await tauriInvoke("orchestrator_workspace_activate", {
-          workspacePath,
-          name: normalize(workspace?.displayName || workspace?.name) || null,
-        });
-        await sleep(1000);
-        return activation ?? { ok: true };
-      };
-      const navigateToHash = (path) => {
-        const oldUrl = window.location.href;
-        window.location.hash = path.startsWith("/") ? path : `/${path}`;
-        window.dispatchEvent(new HashChangeEvent("hashchange", {
-          oldURL: oldUrl,
-          newURL: window.location.href,
-        }));
+        assert(prepared?.ok === true,
+          `Workspace runtime preparation failed: ${JSON.stringify(prepared)}`);
+        return prepared;
       };
       const visibleRunIndicator = () => {
         const indicator = document.querySelector('[data-testid="session-run-indicator"]');
@@ -328,7 +274,36 @@ if (!window.__veslo270StopReloadReconnectStarted) {
         }
         return null;
       };
+      const captureNativePilotClick = (event) => {
+        const target = event.target instanceof Element ? event.target.closest("button") : null;
+        if (!(target instanceof HTMLButtonElement)) return;
+        const targetTestId = normalize(target.dataset.testid);
+        if (
+          targetTestId === "session-composer-send-button" &&
+          !window.__veslo270StopReloadReconnectNativeSendClick
+        ) {
+          window.__veslo270StopReloadReconnectNativeSendClick = {
+            targetTestId,
+            disabled: target.disabled,
+            traceLength: sendTrace().length,
+            at: new Date().toISOString(),
+          };
+          return;
+        }
+        if (
+          targetTestId === "session-composer-stop-button" &&
+          !window.__veslo270StopReloadReconnectNativeStopClick
+        ) {
+          window.__veslo270StopReloadReconnectNativeStopClick = {
+            targetTestId,
+            disabled: target.disabled,
+            traceLength: sendTrace().length,
+            at: new Date().toISOString(),
+          };
+        }
+      };
 
+      document.addEventListener("click", captureNativePilotClick, true);
       await waitUntil(() => document.querySelector("#root")?.children.length > 0, {
         timeout: 15000,
         message: "Veslo root did not render child UI",
@@ -351,45 +326,39 @@ if (!window.__veslo270StopReloadReconnectStarted) {
       await waitForAiAccessReady(localServer);
       await waitForWorkspaceEngineReady(activeWorkspace);
 
-      setProgress("navigating-session-route");
-      navigateToHash("/session");
+      setProgress("ready-for-native-pilot-navigation");
+      const readyMarker = document.createElement("div");
+      readyMarker.dataset.testid = "vslo-270-stop-reload-reconnect-ready";
+      readyMarker.style.display = "none";
+      document.body.append(readyMarker);
+
+      setProgress("waiting-native-pilot-navigation");
       await waitUntil(() => window.location.hash.includes("/session"), {
-        timeout: 10000,
-        message: "Session route did not become active",
+        timeout: 30000,
+        message: "Pilot navigation did not activate the session route",
       });
 
       const textbox = await waitForComposer();
-      const token = `vslo-270-stop-reload-${Date.now()}`;
-      const prompt = `Reply with exactly ${token}. No other words.`;
+      assert(textbox instanceof HTMLElement, "Pilot navigation did not expose a visible composer.");
+      setProgress("waiting-native-pilot-send");
+      const nativeSendClick = await waitUntil(
+        () => window.__veslo270StopReloadReconnectNativeSendClick || false,
+        {
+          timeout: 30000,
+          interval: 150,
+          message: "Pilot did not click the enabled composer send button",
+        },
+      );
+      assert(
+        nativeSendClick.targetTestId === "session-composer-send-button" && !nativeSendClick.disabled,
+        `Invalid native send click: ${JSON.stringify(nativeSendClick)}`,
+      );
 
-      setProgress("filling-composer", { token });
-      textbox.focus();
-      textbox.replaceChildren(document.createTextNode(prompt));
-      textbox.dispatchEvent(new InputEvent("input", {
-        bubbles: true,
-        data: prompt,
-        inputType: "insertText",
-      }));
-
-      await waitUntil(() => textbox.textContent === prompt, {
+      setProgress("waiting-send-handler", { clickedAt: nativeSendClick.at });
+      await waitUntil(() => sendTrace().length > nativeSendClick.traceLength, {
         timeout: 10000,
-        message: "Composer text was not reflected in the editable node",
-      });
-
-      const sendButton = await waitUntil(() => findComposerSendButton(textbox), {
-        timeout: 15000,
         interval: 250,
-        message: `Send button did not become enabled. Buttons=${JSON.stringify(buttonDetails())}. Body=${bodyText().slice(0, 2000)}`,
-      });
-      const traceBeforeClick = sendTrace().length;
-      setProgress("clicking-send-button", { token });
-      sendButton.click();
-
-      setProgress("waiting-send-handler", { token });
-      await waitUntil(() => sendTrace().length > traceBeforeClick, {
-        timeout: 5000,
-        interval: 250,
-        message: `Send click did not reach composer handler. Buttons=${JSON.stringify(buttonDetails())}. Body=${bodyText().slice(0, 2000)}`,
+        message: `Pilot send click did not reach composer handler. Buttons=${JSON.stringify(buttonDetails())}. Body=${bodyText().slice(0, 2000)}`,
       });
 
       setProgress("waiting-visible-model-retry");
@@ -432,24 +401,33 @@ if (!window.__veslo270StopReloadReconnectStarted) {
         interval: 250,
         message: `Blocked reload action was not visible for blocked backend run. Banner=${JSON.stringify(reloadBannerDetails())}. Buttons=${JSON.stringify(buttonDetails())}. Indicator=${JSON.stringify(visibleRunIndicator())}`,
       });
-      const stopButton = await waitUntil(() => findStopButton(), {
-        timeout: 30000,
-        interval: 250,
-        message: `Stop button was not visible for blocked backend run. Banner=${JSON.stringify(reloadBannerDetails())}. Buttons=${JSON.stringify(buttonDetails())}. Indicator=${JSON.stringify(visibleRunIndicator())}`,
-      });
-      const traceBeforeStop = sendTrace().length;
-      setProgress("clicking-stop-button", { lifecycleScope, banner: reloadBannerDetails() });
-      stopButton.click();
+      setProgress("ready-for-native-pilot-stop", { lifecycleScope, banner: reloadBannerDetails() });
+      const stopReadyMarker = document.createElement("div");
+      stopReadyMarker.dataset.testid = "vslo-270-stop-reload-reconnect-stop-ready";
+      stopReadyMarker.style.display = "none";
+      document.body.append(stopReadyMarker);
+      const nativeStopClick = await waitUntil(
+        () => window.__veslo270StopReloadReconnectNativeStopClick || false,
+        {
+          timeout: 30000,
+          interval: 150,
+          message: "Pilot did not click the active composer Stop button",
+        },
+      );
+      assert(
+        nativeStopClick.targetTestId === "session-composer-stop-button" && !nativeStopClick.disabled,
+        `Invalid native Stop click: ${JSON.stringify(nativeStopClick)}`,
+      );
 
       const abortSuccess = await waitUntil(() => {
         return sendTrace()
-          .slice(traceBeforeStop)
+          .slice(nativeStopClick.traceLength)
           .reverse()
           .find((entry) => entry?.event === "abortSession:conversation-abort-success") || false;
       }, {
         timeout: 30000,
         interval: 250,
-        message: `Stop button did not reach Veslo conversation abort. Trace=${JSON.stringify(sendTrace())}`,
+        message: `Pilot Stop click did not reach Veslo conversation abort. Trace=${JSON.stringify(sendTrace())}`,
       });
       assert(normalize(abortSuccess.runId), `Abort success trace did not include runId: ${JSON.stringify(abortSuccess)}`);
 
@@ -488,7 +466,7 @@ if (!window.__veslo270StopReloadReconnectStarted) {
         message: error?.message || String(error),
         stack: error?.stack || null,
         progress: window.__veslo270StopReloadReconnect ?? null,
-        sendTrace: Array.isArray(window.__vesloSendTrace) ? window.__vesloSendTrace.slice(-100) : [],
+        trace: pilotE2E.recentTraceSummary(),
         indicator: (() => {
           const node = document.querySelector('[data-testid="session-run-indicator"]');
           return node instanceof HTMLElement
@@ -510,12 +488,132 @@ if (!window.__veslo270StopReloadReconnectStarted) {
         }),
         body: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 3000),
       });
+    } finally {
+      document.removeEventListener("click", captureNativePilotClick, true);
     }
   })();
 }
 
 true;
 '''
+
+[[step]]
+name = "production preflight is ready"
+action = "wait"
+target = "[data-testid=\"vslo-270-stop-reload-reconnect-ready\"], [data-testid=\"vslo-270-stop-reload-reconnect-error\"]"
+timeout_ms = 120000
+
+[[step]]
+name = "production preflight succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="vslo-270-stop-reload-reconnect-error"]');
+if (error) throw new Error(`VSLO-270 preflight failed: ${(error.textContent || "unknown error").slice(0, 4000)}`);
+true;
+'''
+
+[[step]]
+name = "open session through Pilot navigation"
+action = "navigate"
+url = "http://tauri.localhost/#/session"
+timeout_ms = 15000
+
+[[step]]
+name = "real session composer is visible"
+action = "wait"
+target = "[data-testid=\"session-composer-input\"]"
+timeout_ms = 30000
+
+[[step]]
+name = "install shared Pilot contenteditable type adapter"
+action = "eval"
+script = '''
+const pilotE2E = window.__vesloPilotE2E;
+if (!pilotE2E) throw new Error("Pilot browser prelude is unavailable.");
+pilotE2E.installContenteditableTypeAdapter();
+true;
+'''
+
+[[step]]
+name = "capture composer input events"
+action = "eval"
+script = '''
+const input = document.querySelector('[data-testid="session-composer-input"]');
+if (!(input instanceof HTMLElement)) throw new Error("Composer input is missing before Pilot type.");
+window.__veslo270StopReloadReconnectComposerInputEvents = [];
+input.addEventListener("input", (event) => {
+  window.__veslo270StopReloadReconnectComposerInputEvents.push({
+    type: event.type,
+    inputType: event instanceof InputEvent ? event.inputType : null,
+  });
+}, { capture: true });
+true;
+'''
+
+[[step]]
+name = "focus live composer through Pilot"
+action = "click"
+target = "[data-testid=\"session-composer-input\"]"
+timeout_ms = 15000
+
+[[step]]
+name = "type blocked-retry prompt through Pilot"
+action = "type"
+target = "[data-testid=\"session-composer-input\"]"
+text = "Reply with exactly vslo-270-stop-reload. No other words."
+timeout_ms = 15000
+
+[[step]]
+name = "Pilot browser edit populated composer"
+action = "eval"
+script = '''
+const input = document.querySelector('[data-testid="session-composer-input"]');
+const expected = "Reply with exactly vslo-270-stop-reload. No other words.";
+const events = window.__veslo270StopReloadReconnectComposerInputEvents ?? [];
+if (!(input instanceof HTMLElement) || input.textContent !== expected || !events.some((event) => event.type === "input")) {
+  throw new Error(`Pilot type did not populate the composer through its input path: ${JSON.stringify({ text: input?.textContent ?? null, events })}`);
+}
+true;
+'''
+
+[[step]]
+name = "queue button becomes enabled"
+action = "wait"
+target = "[data-testid=\"session-composer-send-button\"]:not([disabled])"
+timeout_ms = 15000
+
+[[step]]
+name = "click queue button through Pilot"
+action = "click"
+target = "[data-testid=\"session-composer-send-button\"]"
+timeout_ms = 15000
+
+[[step]]
+name = "blocked retry is ready for native Pilot Stop"
+action = "wait"
+target = "[data-testid=\"vslo-270-stop-reload-reconnect-stop-ready\"], [data-testid=\"vslo-270-stop-reload-reconnect-error\"]"
+timeout_ms = 120000
+
+[[step]]
+name = "blocked retry preparation succeeded"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="vslo-270-stop-reload-reconnect-error"]');
+if (error) throw new Error(`VSLO-270 blocked retry failed: ${(error.textContent || "unknown error").slice(0, 4000)}`);
+true;
+'''
+
+[[step]]
+name = "active Stop button is visible"
+action = "wait"
+target = "[data-testid=\"session-composer-stop-button\"]:not([disabled])"
+timeout_ms = 15000
+
+[[step]]
+name = "click Stop through Pilot"
+action = "click"
+target = "[data-testid=\"session-composer-stop-button\"]"
+timeout_ms = 15000
 
 [[step]]
 name = "VSLO-270 task finished"

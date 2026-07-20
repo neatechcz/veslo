@@ -19,9 +19,12 @@ test("canonical docs preserve the managed-AI ownership and runtime order contrac
   const canonicalManagedAiDocs = [admin, session, billing, deployments, state, appMap].join("\n")
 
   assert.match(admin, /session.*billing entitlement.*user enablement.*global model.*credential/is)
-  assert.match(admin, /no per-user or per-organization Managed-AI model overrides/i)
+  assert.match(admin, /no custom per-user or per-organization Managed-AI model policies/i)
   assert.match(admin, /Credential selection and rotation are separate from model selection/i)
-  assert.match(admin, /Standalone AI Gateway is authoritative for inference, AI-access assignments, the global model, credentials, and usage/i)
+  assert.match(
+    admin,
+    /Standalone AI Gateway is authoritative for inference, AI-access assignments,\s*the live authorized model roster and active fallback, credentials, and usage/i,
+  )
   assert.doesNotMatch(admin, /DEN admin and standalone AI Gateway admin `Credentials` pages/i)
 
   assert.match(session, /DEN provider inference defaults to the code-level dependency/i)

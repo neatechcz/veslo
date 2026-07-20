@@ -1,9 +1,7 @@
 import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 
-import { createApp } from '../../../services/ai-gateway/src/index.js';
-import type { PlatformModelCapabilityVerifier } from '../../../services/ai-gateway/src/model-policy/capability-verifier.js';
-import { listCodexModelCatalog } from '../../../services/ai-gateway/src/providers/codex-model-catalog.js';
+import { createAiGatewayTestApp } from '@neatech/ai-gateway/test-support';
 
 export const E2E_MANAGED_AI_USER_ID = 'user_veslo_e2e_managed_ai';
 export const E2E_MANAGED_AI_SECOND_USER_ID = 'user_veslo_e2e_managed_ai_second';
@@ -19,6 +17,37 @@ const ENABLED_MODELS = [
 ];
 const CREDENTIAL_ID = 'cred_veslo_e2e_codex';
 const BINDING_ID = 'binding_veslo_e2e_codex';
+const FIXTURE_SUPPORTED_CODEX_MODELS = new Set([
+  'gpt-5.3-codex',
+  'gpt-5.4',
+  'gpt-5.5',
+  'gpt-5.6-sol',
+]);
+
+type FixtureModelRef = {
+  provider: 'openai' | 'anthropic' | 'codex_oauth' | 'openai_compatible';
+  model: string;
+};
+
+type FixtureModelCapabilityVerifier = {
+  checkHealthyCredentialForModel(model: FixtureModelRef): Promise<
+    | { status: 'supported'; credentialId: string }
+    | { status: 'unsupported' }
+    | { status: 'transient'; reason: string }
+  >;
+  checkHealthyCredentialsForModels(models: FixtureModelRef[]): Promise<Array<
+    | { model: FixtureModelRef; status: 'supported'; credentialId: string }
+    | { model: FixtureModelRef; status: 'unsupported'; reason: 'no_healthy_credential' | 'model_unsupported' }
+    | { model: FixtureModelRef; status: 'transient'; reason: string }
+  >>;
+  checkCredentialForModel(credentialId: string, model: FixtureModelRef): Promise<
+    | { status: 'supported'; credentialId: string }
+    | { status: 'unsupported' }
+    | { status: 'transient'; reason: string }
+  >;
+  hasHealthyCredentialForModel(model: FixtureModelRef): Promise<boolean>;
+  invalidateCredential(credentialId?: string): void;
+};
 
 export type ManagedAiGatewayFixtureRequest = {
   at: string;
@@ -36,7 +65,7 @@ export type ManagedAiGatewayFixtureRequest = {
 
 export type ManagedAiGatewayFixture = {
   baseUrl: string;
-  modelCapabilities: PlatformModelCapabilityVerifier;
+  modelCapabilities: FixtureModelCapabilityVerifier;
   requests: ManagedAiGatewayFixtureRequest[];
   server: Server;
 };
@@ -185,6 +214,8 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
         enabled: true,
         provider: 'codex_oauth' as const,
         credentialId: CREDENTIAL_ID,
+        defaultModel: ACTIVE_MODEL.model,
+        allowedModels: ENABLED_MODELS.map((entry) => entry.model),
         assignmentOrigin: 'admin_assigned' as const,
         createdAt: now,
         updatedAt: now,
@@ -223,7 +254,7 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
     createdAt: now,
     updatedAt: now,
   };
-  const modelCapabilities: PlatformModelCapabilityVerifier = {
+  const modelCapabilities: FixtureModelCapabilityVerifier = {
     async checkHealthyCredentialForModel() {
       return { status: 'supported', credentialId: CREDENTIAL_ID };
     },
@@ -232,7 +263,7 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
         if (model.provider !== 'codex_oauth') {
           return { model, status: 'unsupported', reason: 'no_healthy_credential' };
         }
-        if (!listCodexModelCatalog().includes(model.model)) {
+        if (!FIXTURE_SUPPORTED_CODEX_MODELS.has(model.model)) {
           return { model, status: 'unsupported', reason: 'model_unsupported' };
         }
         return { model, status: 'supported', credentialId: CREDENTIAL_ID };
@@ -342,7 +373,7 @@ export async function startManagedAiGatewayFixture(): Promise<ManagedAiGatewayFi
     anthropicTransport: { async messages() { throw new Error('unused'); } },
     openAiCompatibleTransport: { async chatCompletions() { throw new Error('unused'); } },
   };
-  const app = createApp({
+  const app = createAiGatewayTestApp({
     runtime: {} as never,
     admin: {} as never,
     readiness: {

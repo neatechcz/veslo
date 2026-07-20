@@ -58,9 +58,13 @@ Treat these as UI state, not product contract, unless a feature depends on them 
 Legacy `veslo.defaultModel`, `veslo.sessionModels`, and per-workspace
 `veslo.sessionModels.*` values are cleanup-only keys. Desktop startup does not
 hydrate or recreate them, and prompt submission never serializes them as model
-authority. Managed AI gets its read-only effective model from the gateway.
+authority. `veslo.sessionModelSelectorEnabled` is a separate default-off local
+UI preference: it gates the transient composer selector but is not an
+authorization or model-selection record. Managed AI gets its Gateway-owned
+`effectiveModel` fallback and live authorized `selectableModels` roster from
+the gateway.
 
-Developer-only UI surfaces are not enabled by default. The app derives developer mode from the current URL search string, and only a `debug` parameter with no value or a truthy value (`1`, `true`, `yes`, `on`) exposes debug-only panels, badges, and diagnostics. The separate `veslo:workspace-debug` local storage flag keeps workspace tracing available without showing developer-only UI.
+Developer-only UI surfaces are not enabled by default. The app derives developer mode from the current URL search string, and only a `debug` parameter with no value or a truthy value (`1`, `true`, `yes`, `on`) exposes debug-only panels, badges, and diagnostics. In Vite development builds the same explicit mode also attaches the Solid Devtools overlay; its autoname transform and overlay are excluded from production builds. The separate `veslo:workspace-debug` local storage flag keeps workspace tracing available without showing developer-only UI.
 
 Session archive records are loaded through the Veslo server archive API. When a cloud account is available, archive requests use that account id as the owner key. In local desktop mode without cloud auth, loopback Veslo server archive requests use the local desktop owner key `local:desktop`; remote archive requests still require a cloud account id.
 
@@ -123,6 +127,8 @@ Veslo can send application errors to a Sentry-compatible service such as the int
 
 Release desktop builds get their GlitchTip DSN from the public, release-owned `VESLO_GLITCHTIP_DSN` GitHub Actions variable. The same value is passed to `VITE_VESLO_GLITCHTIP_DSN` for the frontend build and embedded into the native Tauri shell at compile time for installed macOS and Windows apps. This DSN is not a secret, but it is not user-configurable and the application must not expose a setting to change it. Release and prerelease publish jobs set `VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV=1` so missing monitoring values fail closed; ad-hoc validation builds can run the same verifier in warning mode.
 
+Publish jobs also run a release-only frontend source-map pipeline. It builds hidden Vite maps once, injects GlitchTip debug IDs, uploads the matching maps under the same `veslo@<version>` release used by the browser SDK, removes maps and source-map references, and then starts the Tauri bundle. The upload token is CI-only and never reaches Vite, the Tauri binary, or installer payloads. Manual validation builds do not enable this pipeline unless explicitly requested and can remain warning-only when upload credentials are unavailable.
+
 Frontend environment variables:
 
 - `VITE_VESLO_GLITCHTIP_DSN` - Sentry-compatible project DSN for browser/Solid errors. Required to enable frontend monitoring.
@@ -138,6 +144,12 @@ Desktop shell environment variables:
 - `VESLO_GLITCHTIP_ENVIRONMENT` - optional environment name. Defaults to `production` in release builds and `development` in debug builds.
 - `VESLO_GLITCHTIP_TRACES_SAMPLE_RATE` - optional trace sample rate, clamped to `0..1`. Defaults to `0`.
 - `VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV` - release verifier strict-mode flag. Use `1` in publishing workflows that must fail when release monitoring values are missing.
+- `VESLO_GLITCHTIP_SOURCE_MAPS` - CI-only switch that asks the desktop frontend build helper to generate hidden maps for upload. Do not set it in user runtime configuration.
+- `VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD` - CI-only strict-mode flag. Standard publish workflows set `0`, so a missing source-map credential, unavailable upload CLI, or failed upload only warns; use `1` for an explicitly authorized monitoring drill that must prove upload coverage.
+- `VESLO_STAGING_RENDERER_CANARY` - CI-only compile-time flag used only by the manual staging workflow's `monitoring_canary` input. When set, Vite includes one renderer component that deliberately throws during rendering so the existing ErrorBoundary sends the controlled event. The build helper rejects it outside the `staging` monitoring environment and verifies that regular frontend output contains no canary marker. It is not a `VITE_*` user setting and cannot be enabled after packaging.
+- `SENTRY_URL` - CI-only GlitchTip instance URL used by the source-map uploader. It comes from the release-owned `VESLO_GLITCHTIP_URL` GitHub Actions variable and must use HTTPS.
+- `SENTRY_AUTH_TOKEN` - CI-only GlitchTip upload token from the `VESLO_GLITCHTIP_AUTH_TOKEN` GitHub secret. It must not be placed in an app environment file, binary, installer, or ticket evidence.
+- `SENTRY_ORG` and `SENTRY_PROJECT` - CI-only uploader coordinates from the release-owned `VESLO_GLITCHTIP_ORG` and `VESLO_GLITCHTIP_PROJECT` variables.
 - `VESLO_SEND_WORKFLOW_TRACE` - enables native send workflow trace file writes when UI events are forwarded through Tauri.
 - `VESLO_SEND_WORKFLOW_TRACE_FILE` - primary send workflow trace NDJSON path. `pnpm dev` writes this under the timestamped `dev-specific/tauri-pilot/...` runtime directory.
 - `VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE` - optional mirror NDJSON path for quick local inspection. `pnpm dev` defaults this to `.tmp/send-workflow-trace.ndjson`, which is gitignored. App-forwarded events, server events, and orchestrator events write to the same mirror when they inherit this environment variable.
@@ -177,11 +189,11 @@ Release desktop builds must use bundled sidecars for `veslo-server`, `veslo-orch
 
 When the Windows WSL2/bwrap sandbox is active, OpenCode runs inside the managed WSL runtime. Host workspace paths such as `C:\Users\...\repo`, WSL mount paths such as `/mnt/c/Users/.../repo`, and the sandbox alias `/workspace` can all describe the same active workspace. Session list filters, sidebar scoping, and conversation binding lookups must treat these forms as equivalent for engines that actually launched through WSL. This equivalence does not solve OpenCode data-home location by itself: a DB stored in WSL guest home still needs an explicit host-readable path or a server-side content tunnel.
 
-The packaged desktop runtime defaults to the shared non-sandbox OpenCode engine on Windows and macOS. When Windows sandbox mode is explicitly enabled, it targets the managed `VesloSandbox` distro. Personal WSL2 distros are not selected automatically when the managed distro is missing. `VESLO_WSL_DISTRO` can point at an explicitly provisioned alternative, and `VESLO_WSL_ALLOW_PERSONAL_DISTRO_FALLBACK=1` re-enables fallback selection for diagnostics only.
+The packaged desktop runtime defaults to the shared non-sandbox OpenCode engine on Windows and macOS. Current Windows installers deliberately do not bundle or provision the WSL sandbox runtime, so WSL/VesloSandbox is not a customer-install dependency. The remaining WSL selection settings are development/manual-provisioning support only until a future packaging decision explicitly re-enables the feature.
 
 The local server reports the active path mode through `/capabilities.sandbox`. Desktop-launched `veslo-server` processes must receive `VESLO_SANDBOX_BACKEND` from the Tauri shell so the app can choose sandbox path aliases before host paths when WSL2 is active. Orchestrator proxy path rewriting must use the actual engine child kind: `windows-wsl2` path aliases apply only to engines launched through WSL, while direct fallback engines keep host paths. `VESLO_DISABLE_SANDBOX=1` remains the hard opt-out and forces `backend=none`.
 
-Windows sandbox-enabled local workspace start must not hard-block on WSL prerequisites, the managed `VesloSandbox` runtime, or workspace path mountability. Both explicit local host startup and lazy first-prompt runtime startup pass through the local runtime readiness hook, then let the orchestrator attempt the configured sandbox launch. If `windows-wsl2` launch setup fails because WSL, `VesloSandbox`, bwrap, or workspace mountability is unavailable, the orchestrator must log the sandbox failure, emit the unsandboxed warning, and start a direct engine so local conversations remain usable while repair is pending.
+For a manually provisioned development WSL sandbox, local workspace start must not hard-block on WSL prerequisites, the managed `VesloSandbox` runtime, or workspace path mountability. Both explicit local host startup and lazy first-prompt runtime startup pass through the local runtime readiness hook, then let the orchestrator attempt the configured sandbox launch. If `windows-wsl2` launch setup fails because WSL, `VesloSandbox`, bwrap, or workspace mountability is unavailable, the orchestrator must log the sandbox failure, emit the unsandboxed warning, and start a direct engine so local conversations remain usable.
 
 Developer debug surfaces expose both configured and effective sandbox state.
 Settings devtools and the exported runtime debug report include configured
@@ -189,11 +201,11 @@ backend/enabled, effective backend, engine child kind/source, directory query
 mode, engine-bridge requirement, and `sandboxFallback`. Use these fields instead
 of `/capabilities.sandbox` alone when debugging Windows WSL fallback behavior.
 
-Windows installer/onboarding prerequisite repair must install or update the WSL package without creating a personal default distro, then import the managed `VesloSandbox` distro. Real WSL/VesloSandbox setup failures must be logged as failed runtime setup instead of reported as prepared runtime. MSI package installs run the machine prerequisite phase as `SYSTEM`: that phase may enable Windows WSL features, stage the modern WSL app package, write ProgramData status/marker files, disable installer-time app launch, and return `3010` so Windows Installer can require a restart. It must not mask `3010` to success, show a custom shutdown popup, or import a per-user distro under `SYSTEM`.
+Current Windows installers must not install, enable, repair, or import WSL/VesloSandbox. The MSI contains no WSL payload, WiX/NSIS setup hook, Active Setup continuation, or RunOnce repair path; onboarding and Settings expose no WSL repair entry point. A fresh install starts the bundled shared non-sandbox runtime instead.
 
-Windows validation MSI packages must not run a generated WebView2 installer custom action. Tauri's `downloadBootstrapper`, `embedBootstrapper`, and `offlineInstaller` modes all add a nested WebView2 installer action with `Return=check`; download failures, WebView2 installer return codes, or restart-required outcomes can surface as a generic MSI failure after Veslo's own WSL setup has already succeeded. Validation MSI builds therefore use `webviewInstallMode.type = "skip"` and rely on the system WebView2 runtime while the WSL/reboot/Active Setup flow is under test.
+Windows MSI packages use Tauri `webviewInstallMode.type = "embedBootstrapper"`. This embeds the small WebView2 bootstrapper, so a fresh machine without WebView2 can obtain the runtime when network access is available; it does not claim offline support. The bootstrapper is part of the MSI transaction, so its failures, return codes, and restart outcomes must be diagnosed separately from normal sidecar startup in the verbose MSI log. `skip` is not a supported fresh-install contract. Before promotion, the exact signed MSI must pass disposable-VM evidence with WebView2 both present and absent.
 
-After reboot, Veslo registers a non-interactive user-context startup continuation through Active Setup. That continuation waits briefly for WSL to become usable, imports/repairs `VesloSandbox` without elevation, and re-registers an HKCU RunOnce retry if WSL is still settling or sandbox provisioning fails. First-run onboarding and Settings repair remain the visible sandbox repair path; lazy first-prompt startup must continue through orchestrator direct fallback instead of blocking solely because the Windows WSL2 sandbox is not ready.
+Current Windows MSI packages register no WSL-related post-reboot continuation. A WSL helper log, Active Setup entry, or HKCU RunOnce repair left by an installation is evidence of an older or non-standard package, not the supported current release path.
 
 ## Desktop Debug Log Forwarder
 
@@ -207,6 +219,7 @@ Spool location:
 
 - `${VESLO_APP_LOCAL_DATA_DIR or app_local_data_dir()}/desktop-debug-log-spool/`
 - `install-id.txt` — stable desktop install identifier used to correlate retries and app restarts.
+- `desktop-bootstrap-ready.json` — durable redacted marker for the current boot after the desktop observes connected server status and ready runtime readiness; it is not removed by log forwarding.
 - `pending.jsonl` — append-only file growing as sidecars emit lines and bootstrap diagnostics.
 - `flushing-{uuid}.jsonl` — appears briefly during a flush; deleted on success, kept on failure for retry.
 
@@ -250,6 +263,8 @@ Pipeline behavior:
 Den accepts uploaded debug-log batches from `veslo-server` at `POST /v1/internal/debug-logs`. The route uses a dedicated server-to-server bearer token (`DEN_LOG_INGEST_TOKEN`) and stores each event payload encrypted with `DEN_LOG_MASTER_KEY` plus operator-managed `DEN_LOG_MASTER_KEY_VERSION`.
 
 Den also accepts the desktop fallback stream at `POST /v1/desktop-diagnostics`. That route uses the signed-in user's Better Auth bearer token and verifies org membership before ingesting into the same encrypted debug-log store. It accepts only desktop-owned diagnostics lanes (`Veslo bootstrap` diagnostic events and `veslo-server-shell` stdout/stderr), and it rejects arbitrary debug-log sources.
+
+Production installers and debug Tauri runtimes expose a user-started **Send a diagnostic capture** control in Settings. It creates a native-owned, redacted capture for at most 120 seconds and 2 MiB of fully serialized log events. Capture events use a UUID `captureId`, are queued separately from the normal desktop spool, bypass local `/debug-logs`, and use a stable direct-to-Den idempotency key. Queue reads, writes and rewrites are serialized; corrupt or missing capture queues become terminal `undeliverable` states rather than being silently discarded. The journal binds the queue to the user/org that started it and reports `uploaded` only after all queued capture events (including the final summary) have been accepted. Client failures use persisted backoff, while a server validation rejection is terminal. If the account changes, the process restarts, the byte cap is hit, or the 24-hour queue retention expires, the terminal journal state records the reason instead of retrying under a different identity. Debug builds are available for team-assisted diagnosis; release builds are compile-time gated by `VESLO_USER_DIAGNOSTIC_CAPTURE` **and** an exact `VESLO_DEPLOYMENT_DOMAIN=veslo.work`, with either missing or mismatched input failing closed. Every capture still requires a signed-in user and `https://api.veslo.work`.
 
 Environment variables:
 
@@ -351,7 +366,7 @@ Optional:
 
 Secrets belong in deployment/runtime env or ignored local env files only. `services/den/.env.example` documents the keys with blank secret values and must not contain test or live Stripe secrets.
 
-Managed-AI access assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`, but user rows own only enablement, provider, credential assignment, and `assignment_origin`. The global AI Gateway platform model policy owns the enabled backend models and exactly one active model. The desktop reads that model as `effectiveModel` and writes local OpenCode routing for the assigned provider; users cannot choose or switch the model. `assignment_origin` is `auto_assigned` for DEN sign-up access defaults and `admin_assigned` for explicit admin edits or legacy rows.
+Managed-AI access assignments may use `openai`, `anthropic`, `codex_oauth`, or `openai_compatible`, but user rows own only enablement, provider, credential assignment, and `assignment_origin`. The global AI Gateway platform model policy owns the enabled backend models and exactly one active fallback model. The desktop reads that fallback as `effectiveModel`, receives the live authorized same-provider roster as `selectableModels`, and writes local OpenCode routing for every selectable model. With the default-off local Session model selector preference enabled, a composer may choose one published model for a send; the Gateway still authorizes every request and rejects arbitrary model, provider, and credential changes. `assignment_origin` is `auto_assigned` for DEN sign-up access defaults and `admin_assigned` for explicit admin edits or legacy rows.
 
 The committed default DEN signup bootstrap leaves `getActiveModelProvider` unwired, so it skips auto-assignment without failing account creation. An integration may explicitly inject a read-only Gateway policy resolver; a missing, unavailable, or non-Codex projection still skips assignment. DEN provider inference defaults to `denInferenceMode: "retired"` and returns `den_managed_ai_inference_retired`. Historical per-user model columns become authoritative only when code explicitly constructs the proxy dependency with `denInferenceMode: "legacy_rollback"`; there is currently no operator environment switch for this rollback. Compatibility reads are mutation-free.
 

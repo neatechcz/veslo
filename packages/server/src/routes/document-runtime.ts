@@ -1,5 +1,6 @@
 import { jsonResponse } from "../route-helpers.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
+import * as bundledDocumentRuntimeProvider from "veslo-document-runtime";
 
 export const DOCUMENT_RUNTIME_ID = "veslo-document-runtime";
 
@@ -26,12 +27,31 @@ export type DocumentRuntimeSkillReadiness = {
   reason: DocumentRuntimeStatus;
 };
 
+export type DocumentRuntimePackageInstallProgress = {
+  phase: "feed" | "selected" | "downloading" | "cached" | "verifying" | "installing" | "ready" | "failed";
+  artifactName: string | null;
+  downloadedBytes: number | null;
+  totalBytes: number | null;
+  percent: number | null;
+  message: string | null;
+};
+
+export type DocumentRuntimePackageInstallProgressInput = {
+  phase: DocumentRuntimePackageInstallProgress["phase"];
+  artifactName?: string | null;
+  downloadedBytes?: number | null;
+  totalBytes?: number | null;
+  percent?: number | null;
+  message?: string | null;
+};
+
 export type DocumentRuntimeStatusPayload = {
   runtimeId: typeof DOCUMENT_RUNTIME_ID;
   status: DocumentRuntimeStatus;
   ready: boolean;
   updatedAt: string;
   source: "server" | "desktop" | "updater";
+  providerMode: "bundled" | "module_override";
   skills: DocumentRuntimeSkillReadiness[];
   package: {
     installedVersion: string | null;
@@ -40,6 +60,7 @@ export type DocumentRuntimeStatusPayload = {
     installing: boolean;
     rollback: boolean;
     remoteOnly: boolean;
+    progress: DocumentRuntimePackageInstallProgress | null;
   };
   repair: {
     available: boolean;
@@ -81,6 +102,10 @@ export type DocumentRuntimeRepairResult = {
 export type DocumentRuntimeProvider = {
   doctor: (options?: { env?: NodeJS.ProcessEnv }) => Promise<DocumentRuntimeDoctorResult> | DocumentRuntimeDoctorResult;
   repairHeadless: (options?: { env?: NodeJS.ProcessEnv }) => Promise<DocumentRuntimeRepairResult> | DocumentRuntimeRepairResult;
+  installPackageFromFeed?: (options?: {
+    env?: NodeJS.ProcessEnv;
+    onProgress?: (progress: DocumentRuntimePackageInstallProgressInput) => void;
+  }) => Promise<DocumentRuntimeRepairResult> | DocumentRuntimeRepairResult;
 };
 
 const DOCUMENT_RUNTIME_SKILLS: Array<Omit<DocumentRuntimeSkillReadiness, "ready" | "reason">> = [
@@ -96,6 +121,10 @@ function isRemoteOnlyMode(env: NodeJS.ProcessEnv): boolean {
     .toLowerCase()
     .replace(/_/g, "-");
   return mode === "remote-only" || mode === "remote-docs-only";
+}
+
+function documentRuntimeProviderMode(env: NodeJS.ProcessEnv): "bundled" | "module_override" {
+  return env.VESLO_DOCUMENT_RUNTIME_MODULE?.trim() ? "module_override" : "bundled";
 }
 
 function normalizeDocumentRuntimeStatus(value: string | null | undefined): DocumentRuntimeStatus {
@@ -114,6 +143,7 @@ export function createDocumentRuntimeStatusPayload(
     status?: DocumentRuntimeStatus;
     installedVersion?: string | null;
     activePackage?: string | null;
+    packageProgress?: DocumentRuntimePackageInstallProgress | null;
     repairBlockedReason?: string | null;
     repairLastError?: string | null;
   } = {},
@@ -130,6 +160,7 @@ export function createDocumentRuntimeStatusPayload(
     ready,
     updatedAt: now.toISOString(),
     source: "server",
+    providerMode: documentRuntimeProviderMode(env),
     skills: DOCUMENT_RUNTIME_SKILLS.map((skill) => ({
       ...skill,
       ready,
@@ -142,10 +173,11 @@ export function createDocumentRuntimeStatusPayload(
       installing: status === "package_installing",
       rollback: status === "package_rollback",
       remoteOnly,
+      progress: options.packageProgress ?? null,
     },
     repair: {
       available: false,
-      inProgress: status === "repairing",
+      inProgress: status === "repairing" || status === "package_installing",
       blockedReason: options.repairBlockedReason ?? "document_runtime_package_repair_not_configured",
       lastAttemptAt: null,
       lastError: options.repairLastError ?? null,
@@ -215,37 +247,157 @@ function providerUnavailablePayload(error: unknown, dependencies: Partial<Docume
   });
 }
 
-async function loadDefaultDocumentRuntimeProvider(): Promise<DocumentRuntimeProvider> {
-  const moduleOverride = process.env.VESLO_DOCUMENT_RUNTIME_MODULE?.trim();
-  const moduleUrl = moduleOverride || new URL("../../../document-runtime/src/index.mjs", import.meta.url).href;
-  const loaded = await import(moduleUrl) as Partial<DocumentRuntimeProvider>;
+function documentRuntimeProviderFromModule(loaded: Partial<DocumentRuntimeProvider>): DocumentRuntimeProvider {
   if (typeof loaded.doctor !== "function" || typeof loaded.repairHeadless !== "function") {
     throw new Error("Document runtime provider does not export doctor() and repairHeadless().");
   }
   return {
     doctor: loaded.doctor,
     repairHeadless: loaded.repairHeadless,
+    ...(typeof loaded.installPackageFromFeed === "function" ? { installPackageFromFeed: loaded.installPackageFromFeed } : {}),
   };
+}
+
+export async function loadDefaultDocumentRuntimeProvider(
+  moduleOverride = process.env.VESLO_DOCUMENT_RUNTIME_MODULE?.trim(),
+): Promise<DocumentRuntimeProvider> {
+  const loaded = moduleOverride
+    ? await import(moduleOverride) as Partial<DocumentRuntimeProvider>
+    : bundledDocumentRuntimeProvider;
+  return documentRuntimeProviderFromModule(loaded);
 }
 
 export function createDocumentRuntimeProviderDependencies(
   providerLoader: () => Promise<DocumentRuntimeProvider> = loadDefaultDocumentRuntimeProvider,
   dependencies: Partial<DocumentRuntimeRouteDependencies> = {},
 ): DocumentRuntimeRouteDependencies {
+  let installInFlight: Promise<void> | null = null;
+  let installStartedAt: string | null = null;
+  let lastInstallError: string | null = null;
+  let installProgress: DocumentRuntimePackageInstallProgress | null = null;
+
+  const setInstallProgress = (progress: DocumentRuntimePackageInstallProgressInput): void => {
+    installProgress = {
+      phase: progress.phase,
+      artifactName: progress.artifactName ?? null,
+      downloadedBytes: typeof progress.downloadedBytes === "number" ? progress.downloadedBytes : null,
+      totalBytes: typeof progress.totalBytes === "number" ? progress.totalBytes : null,
+      percent: typeof progress.percent === "number"
+        ? Math.max(0, Math.min(100, Math.floor(progress.percent)))
+        : null,
+      message: progress.message ?? null,
+    };
+  };
+
+  const installingPayload = (): DocumentRuntimeStatusPayload => {
+    const payload = createDocumentRuntimeStatusPayload({
+      ...dependencies,
+      status: "package_installing",
+      packageProgress: installProgress,
+    });
+    return {
+      ...payload,
+      repair: {
+        available: false,
+        inProgress: true,
+        blockedReason: null,
+        lastAttemptAt: installStartedAt,
+        lastError: lastInstallError,
+      },
+    };
+  };
+
+  const withInstallAvailability = (
+    result: DocumentRuntimeDoctorResult,
+    provider: DocumentRuntimeProvider,
+  ): DocumentRuntimeDoctorResult => {
+    const status = normalizeDocumentRuntimeStatus(result.status ?? (result.ok ? "ready" : "failed"));
+    if (!provider.installPackageFromFeed || status === "ready" || status === "remote_only" || status === "disabled_by_product_policy") {
+      return result;
+    }
+    return {
+      ...result,
+      repairAvailable: true,
+    };
+  };
+
+  const withLastInstallError = (payload: DocumentRuntimeStatusPayload): DocumentRuntimeStatusPayload => {
+    if (payload.ready || !lastInstallError) return payload;
+    return {
+      ...payload,
+      repair: {
+        ...payload.repair,
+        lastAttemptAt: payload.repair.lastAttemptAt ?? installStartedAt,
+        lastError: payload.repair.lastError ?? lastInstallError,
+      },
+    };
+  };
+
+  const remoteOnlyPayload = (): DocumentRuntimeStatusPayload => createDocumentRuntimeStatusPayload({
+    ...dependencies,
+    env: dependencies.env ?? process.env,
+    status: "remote_only",
+    repairBlockedReason: "document_runtime_package_remote_only",
+  });
+
   return {
     ...dependencies,
     readStatus: async () => {
+      if (isRemoteOnlyMode(dependencies.env ?? process.env)) return remoteOnlyPayload();
+      if (installInFlight) return installingPayload();
       try {
         const provider = await providerLoader();
         const result = await provider.doctor({ env: dependencies.env ?? process.env });
-        return createDocumentRuntimeStatusPayloadFromDoctor(result, dependencies);
+        return withLastInstallError(
+          createDocumentRuntimeStatusPayloadFromDoctor(withInstallAvailability(result, provider), dependencies),
+        );
       } catch (error) {
         return providerUnavailablePayload(error, dependencies);
       }
     },
     repair: async () => {
+      if (isRemoteOnlyMode(dependencies.env ?? process.env)) return remoteOnlyPayload();
+      if (installInFlight) return installingPayload();
       try {
         const provider = await providerLoader();
+        if (provider.installPackageFromFeed) {
+          installStartedAt = (dependencies.now ?? (() => new Date()))().toISOString();
+          lastInstallError = null;
+          setInstallProgress({
+            phase: "feed",
+            artifactName: null,
+            downloadedBytes: null,
+            totalBytes: null,
+            percent: null,
+            message: "Loading office document package feed.",
+          });
+          installInFlight = Promise.resolve()
+            .then(async () => {
+              const result = await provider.installPackageFromFeed!({
+                env: dependencies.env ?? process.env,
+                onProgress: setInstallProgress,
+              });
+              const payload = createDocumentRuntimeStatusPayloadFromRepair(result, dependencies);
+              if (!payload.ready) {
+                lastInstallError = payload.repair.lastError ?? payload.repair.blockedReason;
+              }
+            })
+            .catch((error) => {
+              lastInstallError = error instanceof Error ? error.message : String(error);
+              setInstallProgress({
+                phase: "failed",
+                artifactName: installProgress?.artifactName ?? null,
+                downloadedBytes: installProgress?.downloadedBytes ?? null,
+                totalBytes: installProgress?.totalBytes ?? null,
+                percent: null,
+                message: lastInstallError,
+              });
+            })
+            .finally(() => {
+              installInFlight = null;
+            });
+          return installingPayload();
+        }
         const result = await provider.repairHeadless({ env: dependencies.env ?? process.env });
         return createDocumentRuntimeStatusPayloadFromRepair(result, dependencies);
       } catch (error) {

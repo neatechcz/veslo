@@ -1,8 +1,7 @@
-import { createEffect, createMemo, createSignal, type Accessor } from "solid-js";
+import { createEffect, createMemo, createSignal, untrack, type Accessor } from "solid-js";
 
 import {
-  deleteSessionComposerDraft,
-  setSessionComposerDraft,
+  type ComposerDraftStateCommands,
 } from "../pages/session-composer-drafts";
 import {
   GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,
@@ -24,10 +23,6 @@ import type {
 } from "../types";
 import { normalizeDirectoryPath } from "../utils/paths";
 import type { WorkspaceActivationOptions } from "./workspace-types";
-
-type SetComposerDraftBySessionId = (
-  updater: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>,
-) => void;
 
 type ComposerTargetWorkspace = {
   id: string;
@@ -84,7 +79,7 @@ export type ComposerTargetControllerDeps = {
   clearConsumedPendingDraftId: (draftId: string | null | undefined) => void;
   workspace: ComposerTargetWorkspaceStore;
   publishRegisteredWorkspaceToSidebar: (workspaceId: string) => Promise<void> | void;
-  setComposerDraftBySessionId: SetComposerDraftBySessionId;
+  composerDraftCommands: Pick<ComposerDraftStateCommands, "writeDraft" | "deleteDraft">;
   setView: (view: View) => void;
   setError: (message: string | null) => void;
   reportError: (error: unknown, scope: string) => void;
@@ -333,9 +328,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     const previousComposerStorageKey = resolveMovedComposerStorageKey(previousStorageKey);
     const nextComposerStorageKey = resolveMovedComposerStorageKey(nextStorageKey);
     if (previousComposerStorageKey && nextComposerStorageKey && previousComposerStorageKey !== nextComposerStorageKey) {
-      deps.setComposerDraftBySessionId((current) =>
-        deleteSessionComposerDraft(current, { storageKey: previousStorageKey }),
-      );
+      deps.composerDraftCommands.deleteDraft(previousComposerStorageKey);
     }
 
     const previousDraftId = input.previousSummary?.id.trim() ?? "";
@@ -450,9 +443,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
     if (!activated) return { status: "blocked", message: deps.labels.targetUnavailable() };
     const summary = await putPendingDraftForTarget(target, currentDraft, summaries);
     if (!summary) return { status: "blocked", message: deps.labels.targetUnavailable() };
-    deps.setComposerDraftBySessionId((current) =>
-      setSessionComposerDraft(current, { storageKey: target.id }, currentDraft),
-    );
+    deps.composerDraftCommands.writeDraft(resolveMovedComposerStorageKey(target.id), currentDraft);
     deps.setActivePendingDraftKey(target.id);
     deps.setActivePendingDraftMeta(summary);
     deps.setView("session");
@@ -469,7 +460,7 @@ export function createComposerTargetController(deps: ComposerTargetControllerDep
   const switchComposerTarget = async (targetId: string): Promise<ComposerTargetSwitchResult> => {
     const queuedSwitch = composerTargetSwitchQueue
       .catch(() => undefined)
-      .then(() => switchComposerTargetNow(targetId));
+      .then(() => untrack(() => switchComposerTargetNow(targetId)));
     composerTargetSwitchQueue = queuedSwitch.then(() => undefined, () => undefined);
     return await queuedSwitch;
   };

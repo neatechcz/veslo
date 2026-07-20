@@ -244,21 +244,26 @@ describe("session transcript prefetch core", () => {
     expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })?.sessionId).toBe("sess-a");
   });
 
-  test("caches loaded snapshots under the requested workspace and session", async () => {
+  test("caches a source snapshot under the canonical OpenCode session", async () => {
     const store = createSessionTranscriptPrefetchStore({
       loadTranscript: async () => ({
         workspaceId: "ws_wrong",
         sessionId: "sess-wrong",
+        opencodeSessionId: "sess-canonical",
         messages: [{ id: "m1" }],
         partsByMessageId: {},
       }),
     });
 
-    const snapshot = await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140 });
+    const snapshot = await store.getOrLoad({
+      workspaceId: "ws_local",
+      sessionId: "sess-canonical",
+      limit: 140,
+    });
 
     expect(snapshot.workspaceId).toBe("ws_local");
-    expect(snapshot.sessionId).toBe("sess-a");
-    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a" })?.messages).toEqual([
+    expect(snapshot.sessionId).toBe("sess-canonical");
+    expect(store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-canonical" })?.messages).toEqual([
       { id: "m1" },
     ]);
     expect(store.getWarmSnapshot({ workspaceId: "ws_wrong", sessionId: "sess-wrong" })).toBeNull();
@@ -397,7 +402,7 @@ describe("session transcript prefetch core", () => {
     expect(store.debugCacheSessionIds("ws_local")).toEqual(["sess-b"]);
   });
 
-  test("does not let a lower-limit in-flight load satisfy a higher-limit caller", async () => {
+  test("joins lower and higher display requests on one source load", async () => {
     let calls = 0;
     let releaseFirst: () => void = () => {};
     const firstGate = new Promise<void>((resolve) => {
@@ -424,14 +429,16 @@ describe("session transcript prefetch core", () => {
     const high = store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 200 });
 
     releaseFirst();
-    const [, highSnapshot] = await Promise.all([low, high]);
+    const [lowSnapshot, highSnapshot] = await Promise.all([low, high]);
 
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
+    expect(lowSnapshot.limit).toBe(20);
+    expect(lowSnapshot.messages.length).toBe(20);
     expect(highSnapshot.limit).toBe(200);
     expect(highSnapshot.messages.length).toBe(200);
   });
 
-  test("treats undersized warm snapshots as cold after desired limit increases", async () => {
+  test("serves a larger display view from the same warm source snapshot", async () => {
     let calls = 0;
 
     const store = createSessionTranscriptPrefetchStore({
@@ -458,16 +465,47 @@ describe("session transcript prefetch core", () => {
       limit: 200,
     });
 
-    expect(interest.items).toEqual([]);
-    expect(interest.queuedSessionIds).toEqual(["sess-a"]);
-    expect(store.listWarmSnapshots({ workspaceId: "ws_local", sessionIds: ["sess-a"] })).toEqual([]);
+    expect(interest.items).toHaveLength(1);
+    expect(interest.items[0]?.limit).toBe(200);
+    expect(interest.items[0]?.messages).toHaveLength(200);
+    expect(interest.queuedSessionIds).toEqual([]);
+    expect(store.listWarmSnapshots({ workspaceId: "ws_local", sessionIds: ["sess-a"] })[0]?.limit).toBe(200);
 
     await store.prefetchWorkspace("ws_local");
 
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
     expect(
       store.getWarmSnapshot({ workspaceId: "ws_local", sessionId: "sess-a", limit: 200 })?.messages.length,
     ).toBe(200);
+  });
+
+  test("slices display messages and parts without reloading the 200-message source", async () => {
+    let calls = 0;
+    const store = createSessionTranscriptPrefetchStore({
+      loadTranscript: async ({ workspaceId, sessionId, limit }) => {
+        calls += 1;
+        const messages = Array.from({ length: limit }, (_, index) => ({ id: `m-${index + 1}` }));
+        return {
+          workspaceId,
+          sessionId,
+          messages,
+          partsByMessageId: Object.fromEntries(messages.map((message) => [message.id, [{ id: `p-${message.id}` }]])),
+        };
+      },
+    });
+
+    const first = await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 140 });
+    const later = await store.getOrLoad({ workspaceId: "ws_local", sessionId: "sess-a", limit: 160 });
+
+    expect(calls).toBe(1);
+    expect(first.limit).toBe(140);
+    expect(first.messages).toHaveLength(140);
+    expect(Object.keys(first.partsByMessageId)).toHaveLength(140);
+    expect(first.messages[0]).toEqual({ id: "m-61" });
+    expect(later.limit).toBe(160);
+    expect(later.messages).toHaveLength(160);
+    expect(Object.keys(later.partsByMessageId)).toHaveLength(160);
+    expect(later.messages[0]).toEqual({ id: "m-41" });
   });
 
   test("invalidates warm snapshots after a live host transcript append", async () => {

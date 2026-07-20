@@ -18,6 +18,7 @@ import {
   HIDE_TITLEBAR_PREF_KEY,
   IDLE_SUSPEND_MS_PREF_KEY,
   MAX_ENGINES_PREF_KEY,
+  SESSION_MODEL_SELECTOR_PREF_KEY,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
 } from "../constants";
@@ -115,6 +116,8 @@ export type AppStartupHydrationDeps = {
   setLegacyDefaultModel: Setter<ModelRef>;
   showThinking: Accessor<boolean>;
   setShowThinking: Setter<boolean>;
+  sessionModelSelectorEnabled: Accessor<boolean>;
+  setSessionModelSelectorEnabled: Setter<boolean>;
   maxEngines: Accessor<number>;
   setMaxEngines: Setter<number>;
   idleSuspendMs: Accessor<number>;
@@ -357,6 +360,16 @@ function hydrateLocalStoragePreferences(deps: AppStartupHydrationDeps) {
       }
     }
 
+    const storedSessionModelSelector = window.localStorage.getItem(SESSION_MODEL_SELECTOR_PREF_KEY);
+    if (storedSessionModelSelector != null) {
+      try {
+        const parsed = JSON.parse(storedSessionModelSelector);
+        if (typeof parsed === "boolean") deps.setSessionModelSelectorEnabled(parsed);
+      } catch {
+        // ignore malformed local preference
+      }
+    }
+
     const storedMax = window.localStorage.getItem(MAX_ENGINES_PREF_KEY);
     if (storedMax != null) {
       try {
@@ -542,17 +555,15 @@ async function hydrateDesktopAuthSnapshot(deps: AppStartupHydrationDeps) {
 
   try {
     const hydrationPromise = hydrateDenAuthFromDesktopSnapshot().catch(() => false);
-    let hydrationTimedOut = false;
-    await Promise.race([
-      hydrationPromise,
-      new Promise<void>((resolve) => {
+    const hydrationResult = await Promise.race([
+      hydrationPromise.then(() => "hydrated" as const),
+      new Promise<"timed-out">((resolve) => {
         window.setTimeout(() => {
-          hydrationTimedOut = true;
-          resolve();
+          resolve("timed-out");
         }, 1500);
       }),
     ]);
-    if (hydrationTimedOut) {
+    if (hydrationResult === "timed-out") {
       void hydrationPromise.then((imported) => {
         if (!imported || deps.onboardingStep() !== "auth") {
           return;
@@ -690,6 +701,18 @@ function createPersistentPreferenceEffects(deps: AppStartupHydrationDeps) {
       window.localStorage.setItem(
         THINKING_PREF_KEY,
         JSON.stringify(deps.showThinking()),
+      );
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        SESSION_MODEL_SELECTOR_PREF_KEY,
+        JSON.stringify(deps.sessionModelSelectorEnabled()),
       );
     } catch {
       // ignore

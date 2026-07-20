@@ -15,7 +15,7 @@ const wait = (ms) => new Promise((resolvePromise) => {
   setTimeout(resolvePromise, ms);
 });
 
-async function withFakeViteServer(handler) {
+async function withFakeViteServer({ identity = null } = {}, handler) {
   const server = createServer((req, res) => {
     if (req.url === "/@vite/client") {
       res.writeHead(200, { "content-type": "application/javascript" });
@@ -23,8 +23,15 @@ async function withFakeViteServer(handler) {
       return;
     }
 
+    if (req.url === "/__veslo-dev-server") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ identity }));
+      return;
+    }
+
+    const marker = identity === null ? "" : '<meta name="veslo-dev-server" content="1" />';
     res.writeHead(200, { "content-type": "text/html" });
-    res.end("<!doctype html><html><head><title>Fake Vite</title></head><body><div id=\"root\">fake</div></body></html>");
+    res.end(`<!doctype html><html><head><title>Fake Vite</title>${marker}</head><body><div id="root">fake</div></body></html>`);
   });
 
   await new Promise((resolvePromise) => {
@@ -73,7 +80,7 @@ function waitForExit(child) {
 }
 
 test("tauri-before-dev rejects unrelated Vite-like servers that do not serve Veslo", async () => {
-  await withFakeViteServer(async (port) => {
+  await withFakeViteServer({}, async (port) => {
     const child = spawn(process.execPath, [scriptPath], {
       cwd: desktopRoot,
       env: {
@@ -109,7 +116,40 @@ test("tauri-before-dev rejects unrelated Vite-like servers that do not serve Ves
         new RegExp(`\\[veslo\\] Port ${port} is in use, but it does not look like a Vite dev server\\.`),
       );
       const [exitCode] = await waitForExit(child);
-      assert.equal(exitCode, 1, "Expected tauri-before-dev to fail fast instead of reusing a foreign Vite server");
+      assert.notEqual(exitCode, 0, "Expected tauri-before-dev to fail fast instead of reusing a foreign Vite server");
+    } finally {
+      await stopProcess(child);
+    }
+  });
+});
+
+test("tauri-before-dev rejects a marked Veslo server from another checkout", async () => {
+  await withFakeViteServer({ identity: "another-checkout" }, async (port) => {
+    const child = spawn(process.execPath, [scriptPath], {
+      cwd: desktopRoot,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        VESLO_SIDECAR_FORCE_BUILD: "0",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let output = "";
+    const append = (chunk) => {
+      output += chunk.toString();
+    };
+    child.stdout.on("data", append);
+    child.stderr.on("data", append);
+
+    try {
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline && !output.includes("another checkout")) {
+        await wait(100);
+      }
+      assert.match(output, new RegExp(`\\[veslo\\] Port ${port} is serving a Veslo dev server from another checkout`));
+      const [exitCode] = await waitForExit(child);
+      assert.notEqual(exitCode, 0, "Expected tauri-before-dev to reject a marked server from another checkout");
     } finally {
       await stopProcess(child);
     }

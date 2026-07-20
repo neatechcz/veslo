@@ -273,7 +273,7 @@ function nextFreeColor(parent: ParentAllocationState, palette: readonly string[]
 
   // Palette exhausted for this parent: generate deterministic HSL fallbacks.
   let extraIndex = parent.usedColors.size + 1;
-  while (true) {
+  for (;;) {
     const candidate = `hsl(${(extraIndex * 47) % 360} 72% 46%)`;
     if (!parent.usedColors.has(candidate)) {
       parent.usedColors.add(candidate);

@@ -30,9 +30,18 @@ const SSE_LINE_BUFFER_CAP: usize = 1 << 20; // 1 MiB hard cap per single event
 #[derive(Debug, PartialEq, Eq)]
 enum SseParseStep {
     None,
-    Emit(String),
+    Emit {
+        data: String,
+        event_id: Option<String>,
+    },
     Overflow,
     InvalidUtf8,
+}
+
+#[derive(Default)]
+struct SseFrameAccumulator {
+    data: String,
+    event_id: Option<String>,
 }
 
 #[derive(Default, Clone)]
@@ -157,6 +166,10 @@ pub enum EngineSseEvent {
         // value per event so we keep it as a string and let JS parse — avoids
         // double-parsing and preserves engine wire format exactly.
         data: String,
+        /// The optional upstream SSE `id:` for this frame. This is transport
+        /// metadata, not a generated sequence: callers may use it for
+        /// reconnect-safe deduplication only when the upstream actually sent it.
+        event_id: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Error {
@@ -189,6 +202,10 @@ pub struct EngineSseSubscribeOptions {
     /// Stable owner key. A new subscription with the same key replaces the
     /// previous live stream before it can accumulate another upstream listener.
     pub connection_key: Option<String>,
+    /// The last upstream SSE `id:` observed by the app. The bridge forwards it
+    /// as `Last-Event-ID` on a reconnect, but does not assume every upstream
+    /// honours the header or provides a cursor fence.
+    pub last_event_id: Option<String>,
     /// Optional Basic auth (engine + orchestrator daemon both expect
     /// `Authorization: Basic <b64>`).
     pub username: Option<String>,
@@ -235,6 +252,12 @@ pub async fn engine_sse_subscribe(
     let workspace_id = options.workspace_id.clone();
     let base_url = options.base_url.clone();
     let directory = options.directory.clone();
+    let last_event_id = options
+        .last_event_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
     let auth_header = match options
         .bearer_token
         .as_deref()
@@ -256,6 +279,7 @@ pub async fn engine_sse_subscribe(
             base_url,
             directory,
             auth_header,
+            last_event_id,
             connect_timeout,
             cancel_rx,
         )
@@ -341,12 +365,13 @@ fn urlencoding_encode(input: &str) -> String {
 fn ingest_sse_byte(
     byte: u8,
     line_buffer: &mut Vec<u8>,
-    data_accumulator: &mut String,
+    frame: &mut SseFrameAccumulator,
 ) -> SseParseStep {
     line_buffer.push(byte);
     if line_buffer.len() > SSE_LINE_BUFFER_CAP {
         line_buffer.clear();
-        data_accumulator.clear();
+        frame.data.clear();
+        frame.event_id = None;
         return SseParseStep::Overflow;
     }
 
@@ -363,25 +388,36 @@ fn ingest_sse_byte(
     }
 
     let step = if line.is_empty() {
-        if data_accumulator.is_empty() {
+        if frame.data.is_empty() {
             SseParseStep::None
         } else {
-            SseParseStep::Emit(std::mem::take(data_accumulator))
+            SseParseStep::Emit {
+                data: std::mem::take(&mut frame.data),
+                event_id: frame.event_id.take(),
+            }
         }
     } else {
         let trimmed = match std::str::from_utf8(line) {
             Ok(value) => value,
             Err(_) => {
-                data_accumulator.clear();
+                frame.data.clear();
+                frame.event_id = None;
                 line_buffer.clear();
                 return SseParseStep::InvalidUtf8;
             }
         };
         if let Some(payload) = trimmed.strip_prefix("data:") {
-            if !data_accumulator.is_empty() {
-                data_accumulator.push('\n');
+            if !frame.data.is_empty() {
+                frame.data.push('\n');
             }
-            data_accumulator.push_str(payload.trim_start_matches(' '));
+            frame.data.push_str(payload.trim_start_matches(' '));
+        } else if let Some(event_id) = trimmed.strip_prefix("id:") {
+            // SSE ids containing NUL are invalid per the EventSource parsing
+            // model. Do not invent a replacement ID in that case.
+            let event_id = event_id.trim_start_matches(' ');
+            if !event_id.contains('\0') {
+                frame.event_id = Some(event_id.to_owned());
+            }
         }
         SseParseStep::None
     };
@@ -399,6 +435,7 @@ async fn run_subscription(
     base_url: String,
     directory: Option<String>,
     auth_header: Option<String>,
+    last_event_id: Option<String>,
     connect_timeout: std::time::Duration,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
@@ -433,6 +470,9 @@ async fn run_subscription(
     let mut req = client.get(&url).header("Accept", "text/event-stream");
     if let Some(header) = auth_header.as_deref() {
         req = req.header("Authorization", header);
+    }
+    if let Some(event_id) = last_event_id.as_deref() {
+        req = req.header("Last-Event-ID", event_id);
     }
 
     let response = match req.send().await {
@@ -475,7 +515,7 @@ async fn run_subscription(
 
     let mut byte_stream = response.bytes_stream();
     let mut line_buffer: Vec<u8> = Vec::new();
-    let mut data_accumulator = String::new();
+    let mut frame = SseFrameAccumulator::default();
     let mut cancel_rx = cancel_rx;
 
     let close_reason: &'static str = loop {
@@ -499,13 +539,14 @@ async fn run_subscription(
                         // bytes and decode a full line as UTF-8. Decoding each
                         // byte as `char` corrupts multibyte text (`ř` -> `Å`).
                         for byte in bytes.iter() {
-                            match ingest_sse_byte(*byte, &mut line_buffer, &mut data_accumulator) {
+                            match ingest_sse_byte(*byte, &mut line_buffer, &mut frame) {
                                 SseParseStep::None => {}
-                                SseParseStep::Emit(data) => {
+                                SseParseStep::Emit { data, event_id } => {
                                     emit(EngineSseEvent::Message {
                                         subscription_id: subscription_id.clone(),
                                         workspace_id: workspace_id.clone(),
                                         data,
+                                        event_id,
                                     });
                                 }
                                 SseParseStep::Overflow => {
@@ -651,12 +692,12 @@ mod tests {
     fn sse_parser_preserves_utf8_payload() {
         let input = "data: {\"text\":\"Příliš žluťoučký kůň\"}\n\n";
         let mut line_buffer = Vec::new();
-        let mut data_accumulator = String::new();
+        let mut frame = SseFrameAccumulator::default();
         let mut emitted = None;
 
         for byte in input.as_bytes() {
-            if let SseParseStep::Emit(data) =
-                ingest_sse_byte(*byte, &mut line_buffer, &mut data_accumulator)
+            if let SseParseStep::Emit { data, .. } =
+                ingest_sse_byte(*byte, &mut line_buffer, &mut frame)
             {
                 emitted = Some(data);
             }
@@ -672,17 +713,59 @@ mod tests {
     fn sse_parser_joins_multiple_data_lines() {
         let input = "data: {\"a\":1,\ndata: \"b\":2}\n\n";
         let mut line_buffer = Vec::new();
-        let mut data_accumulator = String::new();
+        let mut frame = SseFrameAccumulator::default();
         let mut emitted = None;
 
         for byte in input.as_bytes() {
-            if let SseParseStep::Emit(data) =
-                ingest_sse_byte(*byte, &mut line_buffer, &mut data_accumulator)
+            if let SseParseStep::Emit { data, .. } =
+                ingest_sse_byte(*byte, &mut line_buffer, &mut frame)
             {
                 emitted = Some(data);
             }
         }
 
         assert_eq!(emitted.as_deref(), Some("{\"a\":1,\n\"b\":2}"));
+    }
+
+    #[test]
+    fn sse_parser_preserves_frame_event_id() {
+        let input = "id: event-42\ndata: {\"ok\":true}\n\n";
+        let mut line_buffer = Vec::new();
+        let mut frame = SseFrameAccumulator::default();
+        let mut emitted = None;
+
+        for byte in input.as_bytes() {
+            if let SseParseStep::Emit { data, event_id } =
+                ingest_sse_byte(*byte, &mut line_buffer, &mut frame)
+            {
+                emitted = Some((data, event_id));
+            }
+        }
+
+        assert_eq!(
+            emitted,
+            Some(("{\"ok\":true}".to_owned(), Some("event-42".to_owned())))
+        );
+    }
+
+    #[test]
+    fn sse_parser_preserves_an_empty_event_id_as_a_cursor_reset() {
+        let input = "id:\ndata: {\"ok\":true}\n\n";
+        let mut line_buffer = Vec::new();
+        let mut frame = SseFrameAccumulator::default();
+        let mut emitted = None;
+
+        for byte in input.as_bytes() {
+            if let SseParseStep::Emit { data, event_id } =
+                ingest_sse_byte(*byte, &mut line_buffer, &mut frame)
+            {
+                emitted = Some((data, event_id));
+            }
+        }
+
+        assert_eq!(
+            emitted,
+            Some(("{\"ok\":true}".to_owned(), Some("".to_owned())))
+        );
     }
 }

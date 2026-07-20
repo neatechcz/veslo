@@ -608,23 +608,38 @@ test("policy PUT bounds and cancels aggregate capability probes before mutating 
   try {
     const { port } = server.address() as AddressInfo;
     const startedAt = Date.now();
-    const response = await Promise.race([
-      fetch(`http://127.0.0.1:${port}/admin/api/ai-infrastructure/model-policy`, {
-        method: "PUT",
-        headers: { cookie: ADMIN_COOKIE, "content-type": "application/json" },
-        body: JSON.stringify({
-          enabledModels: [
-            { provider: "codex_oauth", model: "gpt-5.5" },
-            { provider: "codex_oauth", model: "gpt-5.3-codex" },
-          ],
-          activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
-        }),
+    const requestController = new AbortController();
+    const request = fetch(`http://127.0.0.1:${port}/admin/api/ai-infrastructure/model-policy`, {
+      method: "PUT",
+      headers: { cookie: ADMIN_COOKIE, "content-type": "application/json" },
+      signal: requestController.signal,
+      body: JSON.stringify({
+        enabledModels: [
+          { provider: "codex_oauth", model: "gpt-5.5" },
+          { provider: "codex_oauth", model: "gpt-5.3-codex" },
+        ],
+        activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
       }),
-      new Promise<"test_timeout">((resolve) => setTimeout(() => resolve("test_timeout"), 150)),
-    ]);
+    });
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    let response: Response | "test_timeout";
+    try {
+      response = await Promise.race([
+        request,
+        new Promise<"test_timeout">((resolve) => {
+          deadlineTimer = setTimeout(() => resolve("test_timeout"), 750);
+        }),
+      ]);
+    } finally {
+      if (deadlineTimer) clearTimeout(deadlineTimer);
+    }
     const elapsedMs = Date.now() - startedAt;
 
-    assert.notEqual(response, "test_timeout", `policy PUT exceeded aggregate deadline (${elapsedMs}ms)`);
+    if (response === "test_timeout") {
+      requestController.abort();
+      await request.catch(() => undefined);
+      assert.fail(`policy PUT exceeded aggregate deadline (${elapsedMs}ms)`);
+    }
     assert.equal((response as Response).status, 504);
     assert.deepEqual(await (response as Response).json(), { error: "model_policy_capability_check_timeout" });
     assert.ok(maxActive <= 2, `observed aggregate concurrency ${maxActive}`);

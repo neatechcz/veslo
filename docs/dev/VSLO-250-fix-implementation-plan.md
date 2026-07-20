@@ -2,6 +2,10 @@
 
 Last audit date: 2026-06-25
 
+> Current installer override (2026-07-15): this plan records the historical
+> WSL sandbox path. Current Windows MSI packages do not bundle, provision, or
+> repair WSL/`VesloSandbox`; it is not a release acceptance path.
+
 Status: Phases 1-4 implemented and unit-tested (fail-closed routing, WSL bridge
 listener + probed engineUrl publication, config wiring + stale-config rewrite +
 idempotency, precise fail-closed send UX). Core mechanism verified end-to-end

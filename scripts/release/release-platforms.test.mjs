@@ -38,6 +38,56 @@ test("prerelease workflow only builds macOS and Windows desktop targets", () => 
   assert.doesNotMatch(workflow, /Install Linux build dependencies/);
 });
 
+test("desktop release workflows install the pinned Rust toolchain before cross-target builds", () => {
+  for (const workflowPath of [
+    ".github/workflows/release-macos-aarch64.yml",
+    ".github/workflows/prerelease.yml",
+    ".github/workflows/build-staging-app.yml",
+  ]) {
+    const workflow = readRepoFile(workflowPath);
+    assert.match(
+      workflow,
+      /uses: dtolnay\/rust-toolchain@stable\s+with:\s+toolchain: "1\.96\.0"\s+targets:/,
+      `${workflowPath} must install the toolchain pinned by rust-toolchain.toml before adding targets`,
+    );
+  }
+});
+
+test("production Windows build keeps Tauri output below GitHub Actions log limits", () => {
+  const workflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
+
+  assert.match(
+    workflow,
+    /pnpm exec tauri build --config \$env:TAURI_WINDOWS_RELEASE_CONFIG --target \$env:TARGET_TRIPLE --bundles msi/,
+  );
+  assert.doesNotMatch(workflow, /pnpm exec tauri -vvv build --config \$env:TAURI_WINDOWS_RELEASE_CONFIG/);
+});
+
+test("production Windows release selects the single configured WiX locale artifact", () => {
+  const workflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
+  const tauriConfig = JSON.parse(readRepoFile("packages/desktop/src-tauri/tauri.conf.json"));
+
+  assert.deepEqual(Object.keys(tauriConfig.bundle.windows.wix.language), ["cs-CZ"]);
+  assert.match(workflow, /\$wixLanguageNames = @\(\$tauriConfig\.bundle\.windows\.wix\.language\.psobject\.Properties\.Name\)/);
+  assert.match(workflow, /\$releaseVersion = \$tauriConfig\.version/);
+  assert.match(workflow, /-Filter "\*_\$releaseVersion`_x64_\$wixLanguage\.msi"/);
+  assert.match(workflow, /-Filter "\*_\$releaseVersion`_x64_\$wixLanguage\.msi\.sig"/);
+  assert.doesNotMatch(workflow, /\$msiFiles = @\(Get-ChildItem -Path \$bundleDir -Filter '\*\.msi' -File\)/);
+});
+
+test("production Windows runtime validation uses the workflow revision, not the release tag checkout", () => {
+  const workflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
+
+  assert.match(
+    workflow,
+    /name: Checkout release validation scripts\s+uses: actions\/checkout@v7\s+with:\s+ref: \$\{\{ github\.sha \}\}\s+path: \.release-validation\s+sparse-checkout: scripts\/release/,
+  );
+  assert.match(
+    workflow,
+    /\.\/\.release-validation\/scripts\/release\/verify-windows-msi-runtime\.ps1 -MsiPath \$env:VESLO_WINDOWS_MSI_PATH/,
+  );
+});
+
 test("desktop build workflow no longer runs Linux app builds", () => {
   const workflow = readRepoFile(".github/workflows/build-desktop.yml");
   const windowsWorkflow = readRepoFile(".github/workflows/build-windows-msi.yml");
@@ -64,7 +114,7 @@ test("manual Windows CI config overrides only updater artifacts", () => {
   }
 });
 
-test("Windows document runtime resource is scoped to Windows release config", () => {
+test("Windows release config keeps document runtime package outside the MSI", () => {
   const baseTauriConfig = JSON.parse(readRepoFile("packages/desktop/src-tauri/tauri.conf.json"));
   const windowsReleaseConfig = JSON.parse(readRepoFile("packages/desktop/src-tauri/tauri.windows.release.conf.json"));
 
@@ -74,7 +124,7 @@ test("Windows document runtime resource is scoped to Windows release config", ()
   );
   assert.equal(
     windowsReleaseConfig.bundle?.resources?.["resources/document-runtime/windows-native-x64"],
-    "document-runtime",
+    undefined,
   );
 });
 

@@ -5,6 +5,7 @@ import {
   documentRuntimeSettingsRow,
   documentRuntimeSkillReady,
   documentRuntimeTaskBlockReason,
+  redactDocumentRuntimeStatus,
   type DocumentRuntimeStatus,
   type DocumentRuntimeStatusPayload,
 } from "../../lib/document-runtime.js";
@@ -30,6 +31,7 @@ function payload(status: DocumentRuntimeStatus, overrides: Partial<DocumentRunti
       installing: status === "package_installing",
       rollback: status === "package_rollback",
       remoteOnly: status === "remote_only",
+      progress: null,
     },
     repair: {
       available: false,
@@ -61,7 +63,7 @@ test("document runtime skill readiness follows per-format skill state", () => {
   assert.match(documentRuntimeTaskBlockReason(status, "xlsx") ?? "", /not ready for this file type/);
 });
 
-test("missing runtime blocks local document tasks and offers repair when available", () => {
+test("missing runtime blocks local document tasks and offers office package install when available", () => {
   const status = payload("missing", {
     repair: {
       available: true,
@@ -77,9 +79,34 @@ test("missing runtime blocks local document tasks and offers repair when availab
     status: "missing",
     tone: "danger",
     title: "Document runtime",
-    detail: "Runtime package is not available.",
-    action: "repair",
+    detail: "Office document package is not installed.",
+    action: "install",
+    progressPercent: null,
   });
+});
+
+test("installing runtime exposes office package download progress", () => {
+  const row = documentRuntimeSettingsRow(payload("package_installing", {
+    package: {
+      installedVersion: null,
+      activePackage: null,
+      updateAvailable: false,
+      installing: true,
+      rollback: false,
+      remoteOnly: false,
+      progress: {
+        phase: "downloading",
+        artifactName: "veslo-document-runtime-windows-native-x64-2026.7.0.veslopkg",
+        downloadedBytes: 50 * 1024 * 1024,
+        totalBytes: 100 * 1024 * 1024,
+        percent: 50,
+        message: "Downloading office document package.",
+      },
+    },
+  }));
+
+  assert.match(row.detail, /Downloading office package 50%/);
+  assert.equal(row.progressPercent, 50);
 });
 
 test("remote-only mode stays distinct from ready local runtime", () => {
@@ -97,4 +124,62 @@ test("maintenance and update states map to wait or update actions", () => {
   assert.equal(documentRuntimeSettingsRow(payload("package_rollback")).action, "wait");
   assert.equal(documentRuntimeSettingsRow(payload("outdated")).action, "update");
   assert.equal(documentRuntimeSettingsRow(payload("package_update_available")).action, "update");
+});
+
+test("provider failures preserve a useful redacted error while keeping unsupported repair disabled", () => {
+  const status = payload("blocked", {
+    providerMode: "module_override",
+    package: {
+      installedVersion: null,
+      activePackage: "C:\\Users\\alice\\veslo\\document-runtime\\active.json",
+      updateAvailable: false,
+      installing: false,
+      rollback: false,
+      remoteOnly: false,
+      progress: null,
+    },
+    repair: {
+      available: false,
+      inProgress: false,
+      blockedReason: "document_runtime_provider_unavailable",
+      lastAttemptAt: null,
+      lastError: "Cannot find module C:\\Users\\alice\\private-provider.mjs; Authorization: Bearer secret-provider-token",
+    },
+  });
+
+  const row = documentRuntimeSettingsRow(status);
+  const taskBlockReason = documentRuntimeTaskBlockReason(status, "docx") ?? "";
+  const redactedStatus = redactDocumentRuntimeStatus(status);
+
+  assert.equal(row.action, "none");
+  assert.match(row.detail, /Cannot find module/);
+  assert.match(taskBlockReason, /Cannot find module/);
+  assert.doesNotMatch(row.detail, /alice|secret-provider-token/);
+  assert.doesNotMatch(taskBlockReason, /alice|secret-provider-token/);
+  assert.equal(redactedStatus?.providerMode, "module_override");
+  assert.doesNotMatch(JSON.stringify(redactedStatus), /alice|secret-provider-token/);
+});
+
+test("repair affordances follow the server-provided availability", () => {
+  const install = documentRuntimeSettingsRow(payload("missing", {
+    repair: {
+      available: true,
+      inProgress: false,
+      blockedReason: null,
+      lastAttemptAt: null,
+      lastError: null,
+    },
+  }));
+  const repair = documentRuntimeSettingsRow(payload("failed", {
+    repair: {
+      available: true,
+      inProgress: false,
+      blockedReason: null,
+      lastAttemptAt: null,
+      lastError: "Package verification failed.",
+    },
+  }));
+
+  assert.equal(install.action, "install");
+  assert.equal(repair.action, "repair");
 });

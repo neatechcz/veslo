@@ -900,13 +900,14 @@ test("session row click behavior after restart keeps first click for selection a
     },
   ]);
   const hierarchy = buildRowHierarchyLookup(rows);
-  const hasChildren = (sessionId: string) =>
-    (hierarchy.childrenByParentId.get(sessionId)?.length ?? 0) > 0;
+  const rootRowKey = rows.find((row) => row.session.id === "root-parent")?.rowKey ?? "";
+  const hasChildren = (rowKey: string) =>
+    (hierarchy.childrenByParentRowKey.get(rowKey)?.length ?? 0) > 0;
 
   const firstClick = resolveSessionRowClickAction({
     selectedSessionId: null,
     clickedSessionId: "root-parent",
-    hasChildren: hasChildren("root-parent"),
+    hasChildren: hasChildren(rootRowKey),
     allowSelectedParentExpansion: true,
   });
   assert.deepEqual(firstClick, {
@@ -917,7 +918,7 @@ test("session row click behavior after restart keeps first click for selection a
   const secondClick = resolveSessionRowClickAction({
     selectedSessionId: "root-parent",
     clickedSessionId: "root-parent",
-    hasChildren: hasChildren("root-parent"),
+    hasChildren: hasChildren(rootRowKey),
     allowSelectedParentExpansion: true,
   });
   assert.deepEqual(secondClick, {

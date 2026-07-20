@@ -31,6 +31,7 @@ import {
   SESSION_MESSAGE_LOAD_CHUNK,
 } from "./session-transcript-controller";
 import { createSelectSessionGuard } from "./select-session-guard";
+import type { TranscriptProjectionScope } from "./transcript-projection-store";
 
 type SelectionStoreState = {
   sessions: Session[];
@@ -66,9 +67,20 @@ export type SessionHistoryLoadScope = {
   opencodeSessionId?: string | null;
 };
 
+type SessionHistoryLoadedResult =
+  | {
+      status: "loaded";
+      snapshot: VesloSessionTranscriptSnapshot;
+      projectionScope?: TranscriptProjectionScope;
+    }
+  | {
+      status: "empty";
+      snapshot: VesloSessionTranscriptSnapshot;
+      projectionScope?: TranscriptProjectionScope;
+    };
+
 export type SessionHistoryLoadResult =
-  | { status: "loaded"; snapshot: VesloSessionTranscriptSnapshot }
-  | { status: "empty"; snapshot: VesloSessionTranscriptSnapshot }
+  | SessionHistoryLoadedResult
   | { status: "unavailable"; scope: SessionHistoryLoadScope; reason?: string | null };
 
 export type SelectedSessionHistoryUnavailable = SessionHistoryLoadScope & {
@@ -80,6 +92,11 @@ export type SessionOfflineTranscriptLoadResult =
   | VesloSessionTranscriptSnapshot
   | null
   | undefined;
+
+export type SessionOfflineTranscriptLoadContext = {
+  purpose: "selection" | "load-earlier";
+  selectionVersion?: number;
+};
 
 export type OfflineTranscriptFallbackKind =
   | "client-unavailable"
@@ -104,7 +121,16 @@ export type SessionSelectionControllerDeps = {
   selectSessionScopeKey?: (sessionID: string) => string;
   directoryQueryPathMode?: () => DirectoryQueryPathMode;
   conversationReader?: () => ConversationReader | null;
-  loadOfflineTranscript?: (sessionID: string, limit: number) => Promise<SessionOfflineTranscriptLoadResult>;
+  onSelectionStart?: (sessionID: string, selectionVersion: number) => void;
+  loadOfflineTranscript?: (
+    sessionID: string,
+    limit: number,
+    context: SessionOfflineTranscriptLoadContext,
+  ) => Promise<SessionOfflineTranscriptLoadResult>;
+  publishTranscriptProjection?: (
+    scope: TranscriptProjectionScope,
+    snapshot: VesloSessionTranscriptSnapshot,
+  ) => void;
   shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
   developerMode: () => boolean;
   setError: (message: string | null) => void;
@@ -200,7 +226,7 @@ function normalizeHistoryLoadResult(
       };
     }
     const status = input.snapshot.messages.length === 0 ? "empty" : input.status;
-    return { status, snapshot: input.snapshot };
+    return { ...input, status, snapshot: input.snapshot };
   }
   if (input.source === "unavailable") {
     return {
@@ -437,14 +463,14 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
     deps.setStore("sessions", (current: Session[]) => upsertSession(current, next));
   }
 
-  async function selectSession(sessionID: string) {
+  async function selectSession(sessionID: string, options: { skipTranscriptRead?: boolean } = {}) {
     const perfEnabled = deps.developerMode();
-    deps.setSelectedSessionId(sessionID);
-    deps.setError(null);
     const selectionKey = deps.selectSessionScopeKey?.(sessionID)?.trim() || sessionID;
 
     const existing = selectGuard.tryDedup(selectionKey);
     if (existing) {
+      deps.setSelectedSessionId(sessionID);
+      deps.setError(null);
       recordPerfLog(perfEnabled, "session.select", "dedupe join", {
         sessionID,
         selectionKey,
@@ -454,6 +480,9 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
 
     const runId = ++selectRunCounter;
     const version = selectGuard.nextVersion();
+    deps.onSelectionStart?.(sessionID, version);
+    deps.setSelectedSessionId(sessionID);
+    deps.setError(null);
     const startedAt = perfNow();
     const mark = (event: string, payload?: Record<string, unknown>) => {
       const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
@@ -483,6 +512,15 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       mark(`aborting: ${reason}`);
       return true;
     };
+
+    if (options.skipTranscriptRead) {
+      mark("transcript read deferred");
+      traceSelect("transcript-read-deferred", {
+        reason: "submitted-run-admitted-before-select",
+      });
+      deps.onSessionLoadComplete?.();
+      return;
+    }
 
     const run = (async () => {
       mark("start");
@@ -540,7 +578,10 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         let history: SessionHistoryLoadResult;
         try {
           history = normalizeHistoryLoadResult(
-            await deps.loadOfflineTranscript?.(sessionID, requestLimit),
+            await deps.loadOfflineTranscript?.(sessionID, requestLimit, {
+              purpose: "selection",
+              selectionVersion: version,
+            }),
             {
               sessionId: sessionID,
               workspaceId: readPolicy.sessionWorkspaceId || readPolicy.activeWorkspaceId || null,
@@ -590,10 +631,13 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             });
             return { status: "stale" as const };
           }
+          if (history.projectionScope) {
+            deps.publishTranscriptProjection?.(history.projectionScope, history.snapshot);
+          }
           const snapshot = retargetSnapshotForUiSession(history.snapshot, sessionID);
           deps.hydrateTranscriptSnapshot(snapshot);
           deps.setStore("todos", sessionID, []);
-          markSessionHistoryLoaded(sessionID, snapshot.messages.length, requestLimit);
+          markSessionHistoryLoaded(sessionID, snapshot.messages.length, snapshot.limit);
           mark("offline transcript fallback done", {
             count: snapshot.messages.length,
             limit: requestLimit,
@@ -769,13 +813,11 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
             clearMessageLoadBusy();
             return;
           }
-          if (recovered.status === "unavailable") {
-            if (!abortIfStale("selection changed before unavailable history applied")) {
-              markSessionHistoryUnavailable(sessionID, recovered.history);
-            }
-            clearMessageLoadBusy();
-            return;
+          if (!abortIfStale("selection changed before unavailable history applied")) {
+            markSessionHistoryUnavailable(sessionID, recovered.history);
           }
+          clearMessageLoadBusy();
+          return;
         }
         if (!abortIfStale("selection changed before transcript read failure applied")) {
           markSessionHistoryUnavailable(sessionID, unavailableHistory("live-transcript-read-failed"));
@@ -864,7 +906,7 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       const loadOfflineTranscriptFallback = async () => {
         const observationVersionAtStart = deps.transcriptObservationVersion?.(sessionID) ?? null;
         const history = normalizeHistoryLoadResult(
-          await deps.loadOfflineTranscript?.(sessionID, nextLimit),
+          await deps.loadOfflineTranscript?.(sessionID, nextLimit, { purpose: "load-earlier" }),
           {
             sessionId: sessionID,
             workspaceId: readPolicy.sessionWorkspaceId || readPolicy.activeWorkspaceId || null,
@@ -882,8 +924,9 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
         ) {
           return { status: "stale" as const };
         }
-        deps.hydrateTranscriptSnapshot(retargetSnapshotForUiSession(history.snapshot, sessionID));
-        markSessionHistoryLoaded(sessionID, history.snapshot.messages.length, nextLimit);
+        const snapshot = retargetSnapshotForUiSession(history.snapshot, sessionID);
+        deps.hydrateTranscriptSnapshot(snapshot);
+        markSessionHistoryLoaded(sessionID, snapshot.messages.length, snapshot.limit);
         return { status: "applied" as const, history };
       };
       const recoverUnavailableHistoryFromLive = async (
@@ -954,5 +997,6 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
     renameSession,
     selectSession,
     loadEarlierMessages,
+    currentSelectionVersion: () => selectGuard.currentVersion(),
   };
 }

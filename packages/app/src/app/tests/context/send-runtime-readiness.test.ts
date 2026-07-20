@@ -242,6 +242,30 @@ test("managed AI bootstrap syncs the snapshotted workspace config before blockin
   ));
 });
 
+test("managed AI send preflight revalidates a config that is already usable", async () => {
+  const syncTargets: Array<SendRuntimePreflightContext["targetWorkspace"]> = [];
+  const { readiness, errors, events } = createHarness({
+    managedAiAccess: () => ({ providerId: "codex_oauth" }),
+    hasUsableManagedAiRuntimeConfigForSend: async () => true,
+    syncManagedAiRuntimeConfigForSend: async (targetWorkspace) => {
+      syncTargets.push(targetWorkspace);
+    },
+  });
+  const preflight: SendRuntimePreflightContext = {
+    traceId: "trace-managed-freshness",
+    targetWorkspace: { workspaceId: "target", workspaceRoot: "/repo/target", directory: "/repo/target" },
+  };
+
+  assert.equal(await readiness.ensureManagedAiBootstrapReady(preflight), true);
+
+  assert.deepEqual(syncTargets, [preflight.targetWorkspace]);
+  assert.deepEqual(errors, []);
+  assert.ok(events.some((entry) =>
+    entry.event === "managed-ai-bootstrap-config-sync:start" &&
+    entry.payload?.freshnessRevalidation === true,
+  ));
+});
+
 test("managed AI bootstrap readiness validates the snapshotted target workspace config", async () => {
   const targets: Array<{ workspaceId?: string | null; workspaceRoot?: string | null; directory?: string | null } | null | undefined> = [];
   const waits: Array<{ hasClient: boolean }> = [];

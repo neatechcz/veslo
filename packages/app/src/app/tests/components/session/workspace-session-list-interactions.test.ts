@@ -589,7 +589,7 @@ test("session rows use archive action and open shared sidebar context menu on ri
 
   assert.match(
     source,
-    /onRename: \(\) => props\.onRenameSession\?\.\(workspaceId, sessionId, sessionTarget\),[\s\S]*onArchiveToggle: \(\) => toggleSessionArchiveFromMenu\(workspaceId, sessionId, sessionTarget\),[\s\S]*onDelete: props\.onDeleteSession \? \(\) => props\.onDeleteSession\?\.\(workspaceId, sessionId, sessionTarget\) : undefined,/,
+    /onRename: \(\) => props\.onRenameSession\?\.\(workspaceId, sessionId, sessionTarget\),[\s\S]*onArchiveToggle: \(\) => toggleSessionArchiveFromMenu\(workspaceId, sessionId, sessionTarget\),[\s\S]*onDelete: onDeleteSession \? \(\) => onDeleteSession\(workspaceId, sessionId, sessionTarget\) : undefined,/,
     "session-row menu entries should delegate rename, archive, and delete to scoped row callbacks",
   );
 

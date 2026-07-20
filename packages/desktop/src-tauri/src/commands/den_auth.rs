@@ -152,7 +152,7 @@ fn parse_keep_signed_in(raw: &str) -> Option<bool> {
 #[cfg(any(target_os = "macos", test))]
 fn decode_hex(input: &str) -> Option<Vec<u8>> {
     let trimmed = input.trim();
-    if trimmed.is_empty() || trimmed.len() % 2 != 0 {
+    if trimmed.is_empty() || !trimmed.len().is_multiple_of(2) {
         return None;
     }
 
@@ -456,7 +456,11 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
-    fn create_legacy_webkit_db(temp_home: &PathBuf, bucket: &str, auth_json: &str) -> PathBuf {
+    fn create_legacy_webkit_db(
+        temp_home: &std::path::Path,
+        bucket: &str,
+        auth_json: &str,
+    ) -> PathBuf {
         let legacy_db = temp_home
             .join("Library")
             .join("WebKit")

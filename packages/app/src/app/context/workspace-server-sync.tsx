@@ -1,4 +1,4 @@
-import { createEffect } from "solid-js";
+import { createEffect, untrack } from "solid-js";
 
 import { engineInfo } from "../lib/tauri";
 import { isTauriRuntime } from "../utils";
@@ -56,7 +56,7 @@ export function WorkspaceServerSync(props: {
 
     inFlightWorkspaceServerSyncKey = syncKey;
     void engineInfo(workspaceId, workspacePath || undefined)
-      .then((info) => {
+      .then((info) => untrack(() => {
         if (latestWorkspaceServerSyncKey !== syncKey) return;
         const nextUrl = info.baseUrl?.trim();
         if (!nextUrl) return;
@@ -65,7 +65,7 @@ export function WorkspaceServerSync(props: {
         if (nextUrl === server.url) return;
         server.setActive(nextUrl);
         void props.workspaceStore.refreshActiveClient(nextUrl);
-      })
+      }))
       .catch(() => {
         // Engine not yet known to orchestrator (lazy spawn happens on first
         // proxy request). SDK will retry on the next workspace switch.

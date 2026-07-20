@@ -32,6 +32,8 @@ const appendQueuedDraft = (
 ) => appendQueuedDraftModel(queue, nextDraft, { clientMessageId: `client-${id}` }, now, id);
 
 test("queue model appends and returns the first drain-eligible item", () => {
+  assert.equal(firstQueuedDraft([]), null);
+
   const queue = appendQueuedDraft([], draft("one"), 100);
   const next = appendQueuedDraft(queue, draft("two"), 200);
 
@@ -108,6 +110,27 @@ test("queue model rotates identity only when edited content is saved and preserv
   assert.equal(edited[0]!.implicitSkillCommandPolicy, "disable");
   assert.equal(retry[0]!.clientMessageId, "msg-edited");
   assert.equal(retry[0]!.implicitSkillCommandPolicy, "disable");
+});
+
+test("queue model captures a model override and allows an edit to clear it", () => {
+  const selectedModel = { providerID: "codex_oauth", modelID: "gpt-5.6-sol" };
+  const queued = appendQueuedDraftModel(
+    [],
+    draft("model snapshot"),
+    { clientMessageId: "msg-model", modelOverride: selectedModel },
+    100,
+    "row-model",
+  );
+  const cleared = updateQueuedDraft(
+    queued,
+    "row-model",
+    draft("use workspace default"),
+    200,
+    { clientMessageId: "msg-model-edited", modelOverride: null },
+  );
+
+  assert.deepEqual(queued[0]!.modelOverride, selectedModel);
+  assert.equal(cleared[0]!.modelOverride, undefined);
 });
 
 test("queue model resolves a queued draft after session-key remap", () => {

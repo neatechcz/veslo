@@ -30,6 +30,8 @@ jobs:
       VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE: ${{ vars.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE || '0' }}
       VESLO_RUNTIME_DIAGNOSTICS: "0"
       VITE_VESLO_RUNTIME_DIAGNOSTICS: "0"
+      VESLO_USER_DIAGNOSTIC_CAPTURE: "1"
+      VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_DEPLOYMENT_DOMAIN }}
 
     steps:
       - name: Enable git long paths
@@ -37,20 +39,21 @@ jobs:
         run: git config --global core.longpaths true
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
+          package-manager-cache: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.27.0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.11
 
@@ -78,25 +81,6 @@ jobs:
         run: pnpm -C packages/desktop prepare:sidecar
         env:
           GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Cache document runtime downloads
-        uses: actions/cache@v4
-        continue-on-error: true
-        with:
-          path: |
-            packages/document-runtime/.cache/windows-native-x64
-            packages/document-runtime/manifests/sources/windows-native-x64.lock.json
-          key: windows-document-runtime-${{ hashFiles('packages/document-runtime/manifests/sources/windows-native-x64.json') }}
-          restore-keys: |
-            windows-document-runtime-
-
-      - name: Assemble Windows document runtime
-        shell: pwsh
-        run: node scripts/document-runtime/assemble-windows.mjs
-
-      - name: Verify Windows document runtime bundle
-        shell: pwsh
-        run: node scripts/release/verify-document-runtime-windows.mjs --profile local-docs-required --json
 
       - name: Resolve Windows signing
         id: signing
@@ -177,18 +161,34 @@ jobs:
             throw "Windows bundle directory not found: $bundleDir"
           }
 
-          $msi = Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter '*.msi' -File)
           $appExe = Join-Path $env:GITHUB_WORKSPACE "packages\desktop\src-tauri\target\$env:TARGET_TRIPLE\release\veslo.exe"
 
-          if (-not $msi) {
-            throw "No MSI bundle found in $bundleDir"
+          if ($msiFiles.Count -ne 1) {
+            throw "Expected exactly one MSI bundle in $bundleDir; found $($msiFiles.Count)"
           }
           if (-not (Test-Path $appExe)) {
             throw "Signed Windows app executable not found at $appExe"
           }
 
-          "VESLO_WINDOWS_MSI_PATH=$($msi.FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_MSI_PATH=$($msiFiles[0].FullName)" >> $env:GITHUB_ENV
           "VESLO_WINDOWS_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
+
+      - name: Verify extracted MSI payload runtime
+        shell: pwsh
+        run: |
+          $summaryPath = Join-Path $env:RUNNER_TEMP 'veslo-windows-msi-runtime-summary.json'
+          ./scripts/release/verify-windows-msi-runtime.ps1 -MsiPath $env:VESLO_WINDOWS_MSI_PATH -SummaryPath $summaryPath
+
+      - name: Upload extracted Windows MSI payload verification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: veslo-windows-msi-runtime-verification
+          path: |
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json.msi-extract.log
+          if-no-files-found: warn
 
       - name: Verify Windows signatures
         shell: pwsh
@@ -210,7 +210,7 @@ jobs:
           }
 
       - name: Upload MSI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: veslo-windows-msi-x86_64-pc-windows-msvc
           path: ${{ env.VESLO_WINDOWS_MSI_PATH }}

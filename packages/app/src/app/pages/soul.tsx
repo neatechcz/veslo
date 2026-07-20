@@ -234,25 +234,24 @@ export default function SoulView(props: SoulViewProps) {
       return next;
     });
   };
-  let soulRuntimeReloadInFlight = false;
-  let soulRuntimeReloadQueued = false;
+  const soulRuntimeReload = { inFlight: false, queued: new Set<true>() };
 
   const requestSoulRuntimeReload = () => {
-    if (soulRuntimeReloadInFlight) {
-      soulRuntimeReloadQueued = true;
+    if (soulRuntimeReload.inFlight) {
+      soulRuntimeReload.queued.add(true);
       return;
     }
-    soulRuntimeReloadInFlight = true;
+    soulRuntimeReload.inFlight = true;
     void (async () => {
       try {
         do {
-          soulRuntimeReloadQueued = false;
+          soulRuntimeReload.queued.clear();
           await props.reloadWorkspaceEngine();
-        } while (soulRuntimeReloadQueued);
+        } while (soulRuntimeReload.queued.size > 0);
       } catch (error) {
         console.warn("Failed to reload workspace engine after Soul materialization", error);
       } finally {
-        soulRuntimeReloadInFlight = false;
+        soulRuntimeReload.inFlight = false;
       }
     })();
   };
@@ -303,7 +302,7 @@ export default function SoulView(props: SoulViewProps) {
     client: () => props.client,
     serverConnected: () => props.serverConnected,
     authContext: () => props.authContext,
-    refresh: props.refresh,
+    refresh: () => props.refresh(),
     activeWorkspaceIds: soulActiveWorkspaceIds,
     activeRun: soulActiveRun,
     onMaterializationResult: handleSoulMaterializationResult,

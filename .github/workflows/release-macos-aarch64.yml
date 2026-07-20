@@ -67,7 +67,7 @@ jobs:
       publish_npm: ${{ steps.resolve.outputs.publish_npm }}
     steps:
       - name: Checkout release metadata
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -206,15 +206,16 @@ jobs:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
+          package-manager-cache: false
 
       - name: Verify tag matches app versions
         run: node scripts/release/verify-tag.mjs --tag "$RELEASE_TAG"
@@ -251,7 +252,15 @@ jobs:
       VITE_VESLO_GLITCHTIP_TRACES_SAMPLE_RATE: ${{ vars.VESLO_GLITCHTIP_TRACES_SAMPLE_RATE || '0' }}
       VESLO_RUNTIME_DIAGNOSTICS: "0"
       VITE_VESLO_RUNTIME_DIAGNOSTICS: "0"
+      VESLO_USER_DIAGNOSTIC_CAPTURE: "1"
+      VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_DEPLOYMENT_DOMAIN }}
       VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV: "1"
+      VESLO_GLITCHTIP_SOURCE_MAPS: ${{ vars.VESLO_GLITCHTIP_URL != '' && vars.VESLO_GLITCHTIP_ORG != '' && vars.VESLO_GLITCHTIP_PROJECT != '' && secrets.VESLO_GLITCHTIP_AUTH_TOKEN != '' && '1' || '0' }}
+      VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: "0"
+      SENTRY_URL: ${{ vars.VESLO_GLITCHTIP_URL }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.VESLO_GLITCHTIP_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ vars.VESLO_GLITCHTIP_ORG }}
+      SENTRY_PROJECT: ${{ vars.VESLO_GLITCHTIP_PROJECT }}
 
     strategy:
       fail-fast: false
@@ -272,23 +281,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
+          package-manager-cache: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.27.0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
 
@@ -298,7 +308,7 @@ jobs:
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
@@ -307,7 +317,7 @@ jobs:
             ${{ runner.os }}-pnpm-
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         continue-on-error: true
         with:
           path: |
@@ -364,7 +374,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.96.0"
           targets: ${{ matrix.target }}
+
+      - name: Install GlitchTip source-map CLI
+        if: env.VESLO_GLITCHTIP_SOURCE_MAPS == '1'
+        continue-on-error: true
+        run: cargo install glitchtip-cli --version 1.0.0 --locked
 
       - name: Resolve OpenCode version
         id: opencode-version
@@ -590,6 +606,14 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID || secrets.APPLE_TEAM_ID }}
         run: scripts/release/notarize-macos-assets.sh
 
+      - name: Upload GlitchTip source-map evidence
+        if: always() && matrix.os_type == 'macos'
+        uses: actions/upload-artifact@v7
+        with:
+          name: glitchtip-source-map-evidence-${{ matrix.target }}
+          path: ${{ runner.temp }}/veslo-glitchtip-source-map-evidence.json
+          if-no-files-found: warn
+
       - name: Upload notarized macOS release assets
         if: matrix.os_type == 'macos' && steps.signing.outputs.shouldNotarizeMacos == 'true'
         shell: bash
@@ -755,29 +779,36 @@ jobs:
       VESLO_RUNTIME_DIAGNOSTICS: "0"
       VITE_VESLO_RUNTIME_DIAGNOSTICS: "0"
       VESLO_REQUIRE_GLITCHTIP_RELEASE_ENV: "1"
+      VESLO_GLITCHTIP_SOURCE_MAPS: ${{ vars.VESLO_GLITCHTIP_URL != '' && vars.VESLO_GLITCHTIP_ORG != '' && vars.VESLO_GLITCHTIP_PROJECT != '' && secrets.VESLO_GLITCHTIP_AUTH_TOKEN != '' && '1' || '0' }}
+      VESLO_REQUIRE_GLITCHTIP_SOURCE_MAP_UPLOAD: "0"
+      SENTRY_URL: ${{ vars.VESLO_GLITCHTIP_URL }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.VESLO_GLITCHTIP_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ vars.VESLO_GLITCHTIP_ORG }}
+      SENTRY_PROJECT: ${{ vars.VESLO_GLITCHTIP_PROJECT }}
     steps:
       - name: Enable git long paths (Windows)
         shell: pwsh
         run: git config --global core.longpaths true
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
+          package-manager-cache: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.27.0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
 
@@ -787,7 +818,7 @@ jobs:
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
@@ -796,7 +827,7 @@ jobs:
             ${{ runner.os }}-pnpm-
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         continue-on-error: true
         with:
           path: |
@@ -817,7 +848,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: "1.96.0"
           targets: ${{ env.TARGET_TRIPLE }}
+
+      - name: Install GlitchTip source-map CLI
+        if: env.VESLO_GLITCHTIP_SOURCE_MAPS == '1'
+        continue-on-error: true
+        run: cargo install glitchtip-cli --version 1.0.0 --locked
 
       - name: Resolve OpenCode version
         id: opencode-version
@@ -929,25 +966,6 @@ jobs:
           cp "$bin_path" "packages/desktop/src-tauri/sidecars/opencode-${TARGET_TRIPLE}.exe"
           chmod 755 "packages/desktop/src-tauri/sidecars/opencode-${TARGET_TRIPLE}.exe"
 
-      - name: Cache document runtime downloads
-        uses: actions/cache@v4
-        continue-on-error: true
-        with:
-          path: |
-            packages/document-runtime/.cache/windows-native-x64
-            packages/document-runtime/manifests/sources/windows-native-x64.lock.json
-          key: windows-document-runtime-${{ hashFiles('packages/document-runtime/manifests/sources/windows-native-x64.json') }}
-          restore-keys: |
-            windows-document-runtime-
-
-      - name: Assemble Windows document runtime
-        shell: pwsh
-        run: node scripts/document-runtime/assemble-windows.mjs
-
-      - name: Verify Windows document runtime bundle
-        shell: pwsh
-        run: node scripts/release/verify-document-runtime-windows.mjs --profile local-docs-required --json
-
       - name: Resolve release signing
         id: signing
         shell: bash
@@ -1023,8 +1041,16 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           Push-Location packages/desktop
-          pnpm exec tauri -vvv build --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
+          pnpm exec tauri build --config $env:TAURI_WINDOWS_RELEASE_CONFIG --target $env:TARGET_TRIPLE --bundles msi
           Pop-Location
+
+      - name: Upload GlitchTip source-map evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: glitchtip-source-map-evidence-windows-x86_64
+          path: ${{ runner.temp }}/veslo-glitchtip-source-map-evidence.json
+          if-no-files-found: warn
 
       - name: Verify bundled sidecars
         shell: pwsh
@@ -1038,23 +1064,57 @@ jobs:
             throw "Windows bundle directory not found: $bundleDir"
           }
 
-          $msi = Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          $msiSig = Get-ChildItem -Path $bundleDir -Filter '*.msi.sig' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          $tauriConfigPath = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\tauri.conf.json'
+          $tauriConfig = Get-Content -LiteralPath $tauriConfigPath -Raw | ConvertFrom-Json
+          $wixLanguageNames = @($tauriConfig.bundle.windows.wix.language.psobject.Properties.Name)
+          if ($wixLanguageNames.Count -ne 1) {
+            throw "Expected exactly one configured WiX release language; found $($wixLanguageNames.Count): $($wixLanguageNames -join ', ')"
+          }
+
+          $wixLanguage = $wixLanguageNames[0]
+          $releaseVersion = $tauriConfig.version
+          $msiFiles = @(Get-ChildItem -Path $bundleDir -Filter "*_$releaseVersion`_x64_$wixLanguage.msi" -File)
+          $msiSigFiles = @(Get-ChildItem -Path $bundleDir -Filter "*_$releaseVersion`_x64_$wixLanguage.msi.sig" -File)
           $appExe = Join-Path $env:GITHUB_WORKSPACE 'packages\desktop\src-tauri\target\x86_64-pc-windows-msvc\release\veslo.exe'
 
-          if (-not $msi) {
-            throw "No MSI bundle found in $bundleDir"
+          if ($msiFiles.Count -ne 1) {
+            $availableMsiNames = @(Get-ChildItem -Path $bundleDir -Filter '*.msi' -File | ForEach-Object Name)
+            throw "Expected exactly one $releaseVersion x64 $wixLanguage MSI bundle in $bundleDir; found $($msiFiles.Count). Available MSI files: $($availableMsiNames -join ', ')"
           }
-          if (-not $msiSig) {
-            throw "No MSI updater signature found in $bundleDir"
+          if ($msiSigFiles.Count -ne 1) {
+            $availableMsiSignatureNames = @(Get-ChildItem -Path $bundleDir -Filter '*.msi.sig' -File | ForEach-Object Name)
+            throw "Expected exactly one $releaseVersion x64 $wixLanguage MSI updater signature in $bundleDir; found $($msiSigFiles.Count). Available MSI signatures: $($availableMsiSignatureNames -join ', ')"
           }
           if (-not (Test-Path $appExe)) {
             throw "Signed Windows app executable not found at $appExe"
           }
 
-          "VESLO_WINDOWS_MSI_PATH=$($msi.FullName)" >> $env:GITHUB_ENV
-          "VESLO_WINDOWS_MSI_SIG_PATH=$($msiSig.FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_MSI_PATH=$($msiFiles[0].FullName)" >> $env:GITHUB_ENV
+          "VESLO_WINDOWS_MSI_SIG_PATH=$($msiSigFiles[0].FullName)" >> $env:GITHUB_ENV
           "VESLO_WINDOWS_APP_EXE_PATH=$appExe" >> $env:GITHUB_ENV
+
+      - name: Checkout release validation scripts
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: .release-validation
+          sparse-checkout: scripts/release
+
+      - name: Verify extracted MSI payload runtime
+        shell: pwsh
+        run: |
+          $summaryPath = Join-Path $env:RUNNER_TEMP 'veslo-windows-msi-runtime-summary.json'
+          ./.release-validation/scripts/release/verify-windows-msi-runtime.ps1 -MsiPath $env:VESLO_WINDOWS_MSI_PATH -SummaryPath $summaryPath
+
+      - name: Upload extracted Windows MSI payload verification
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: veslo-windows-msi-runtime-verification
+          path: |
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json
+            ${{ runner.temp }}/veslo-windows-msi-runtime-summary.json.msi-extract.log
+          if-no-files-found: warn
 
       - name: Verify Windows signatures
         shell: pwsh
@@ -1128,7 +1188,7 @@ jobs:
       PUBLIC_RELEASE_REPO: ${{ vars.RELEASE_UPDATES_REPO || vars.VESLO_UPDATES_REPO || 'neatechcz/veslo-updates' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
@@ -1163,7 +1223,7 @@ jobs:
       PUBLIC_RELEASE_REPO: ${{ vars.RELEASE_UPDATES_REPO || vars.VESLO_UPDATES_REPO || 'neatechcz/veslo-updates' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
@@ -1230,23 +1290,24 @@ jobs:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
+          package-manager-cache: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.27.0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
 
@@ -1256,7 +1317,7 @@ jobs:
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
@@ -1339,23 +1400,24 @@ jobs:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
+          package-manager-cache: false
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.27.0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
 
@@ -1365,7 +1427,7 @@ jobs:
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}

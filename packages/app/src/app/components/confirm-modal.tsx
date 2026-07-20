@@ -13,6 +13,8 @@ export type ConfirmModalProps = {
   message: string | JSX.Element;
   confirmLabel: string;
   cancelLabel: string;
+  confirmTestId?: string;
+  cancelTestId?: string;
   variant?: "danger" | "warning";
   onConfirm: () => void;
   onCancel: () => void;
@@ -45,11 +47,16 @@ export default function ConfirmModal(props: ConfirmModalProps) {
         />
 
         <ModalFooter>
-          <Button variant="outline" onClick={props.onCancel}>
+          <Button
+            variant="outline"
+            data-testid={props.cancelTestId}
+            onClick={props.onCancel}
+          >
             {props.cancelLabel}
           </Button>
           <Button
             variant={variant() === "danger" ? "danger" : "primary"}
+            data-testid={props.confirmTestId}
             onClick={props.onConfirm}
           >
             {props.confirmLabel}

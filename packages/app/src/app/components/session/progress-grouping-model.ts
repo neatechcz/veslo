@@ -45,6 +45,58 @@ export type ProgressRenderBlockEntry = {
   unstable: boolean;
 };
 
+const contentFreeFingerprint = (value: unknown) => {
+  let source = "";
+  try {
+    source = JSON.stringify(value) ?? "";
+  } catch {
+    source = String(value ?? "");
+  }
+  let hash = 5381;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) + hash) ^ source.charCodeAt(index);
+  }
+  return `${source.length}:${hash >>> 0}`;
+};
+
+/**
+ * Content-free fingerprint of exactly the transcript data consumed by the
+ * current progress grouping model. It is diagnostic only, never cache truth.
+ */
+export const progressGroupingInputFingerprint = (messages: readonly MessageWithParts[]) =>
+  messages
+    .map((message, index) => {
+      const info = message.info as unknown as Record<string, unknown>;
+      const messageId = typeof info.id === "string" && info.id ? info.id : `idx:${index}`;
+      const parts = message.parts.map((part) => {
+        const record = part as unknown as Record<string, unknown>;
+        return `${String(record.id ?? "")}\u0000${String(record.type ?? "")}\u0000${contentFreeFingerprint(part)}`;
+      });
+      return `${messageId}\u0000${String(info.role ?? "")}\u0000${parts.join("\u0001")}`;
+    })
+    .join("\u0002");
+
+/** A separate content-free representation of the produced block model. */
+export const progressRenderBlockShapeFingerprint = (blocks: readonly ProgressRenderBlock[]) =>
+  blocks.map((block) => {
+    if (block.kind === "progress-group") {
+      return [
+        "progress",
+        block.id,
+        ...block.items.map((item) => item.kind === "steps"
+          ? `steps:${item.id}:${item.parts.map((part) => contentFreeFingerprint(part)).join(",")}`
+          : `comment:${item.id}:${contentFreeFingerprint(item.part)}`),
+      ].join("\u0000");
+    }
+    return [
+      "message",
+      block.messageId,
+      ...block.groups.map((group) => group.kind === "steps"
+        ? `steps:${group.id}:${group.parts.map((part) => contentFreeFingerprint(part)).join(",")}`
+        : `text:${group.segment}:${contentFreeFingerprint(group.part)}`),
+    ].join("\u0000");
+  }).join("\u0001");
+
 export type BuildProgressRenderBlocksInput = {
   messages: MessageWithParts[];
   isStreaming?: boolean;
