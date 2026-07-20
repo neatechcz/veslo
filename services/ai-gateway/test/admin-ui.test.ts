@@ -872,7 +872,7 @@ test("GET /admin serves one fail-closed loading and error surface without realis
     }
 
     for (const controlId of [
-      "organization-save-button", "organization-name", "organization-slug", "organization-seat-limit",
+      "organization-save-button", "organization-name", "organization-seat-limit",
       "organization-domain-add-button", "organization-invite-send-button", "organization-billing-interval",
       "organization-billing-basic", "organization-billing-extended", "organization-billing-checkout",
       "organization-billing-plan-save", "organization-billing-portal", "organization-billing-cancel",
@@ -1862,6 +1862,42 @@ test("GET /admin/app.js supports platform-admin searchable organization selectio
   }
 })
 
+test("organization slug remains a backend compatibility field and is absent from the admin UI contract", async () => {
+  const [html, script, adminSource] = await Promise.all([
+    readFile(new URL("../public-admin/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public-admin/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/http/admin.ts", import.meta.url), "utf8"),
+  ])
+
+  assert.doesNotMatch(html, /id="organization-slug"/)
+  assert.doesNotMatch(html, /<span>\s*Slug\s*<\/span>/i)
+  assert.doesNotMatch(
+    script,
+    /organizationSlug:\s*document\.getElementById\("organization-slug"\)/,
+  )
+
+  for (const functionName of [
+    "organizationSelectorLabel",
+    "findOrganizationFromSelectorValue",
+    "renderOrganizationsDirectory",
+    "hasOrganizationPendingChanges",
+    "renderOrganization",
+    "saveOrganization",
+  ]) {
+    assert.doesNotMatch(
+      topLevelFunctionSource(script, functionName),
+      /\bslug\b|organizationSlug/i,
+      `${functionName} must not render, read, compare, or submit organization slug`,
+    )
+  }
+
+  assert.match(
+    topLevelFunctionSource(adminSource, "readOrganizationUpdateInput"),
+    /hasOwn\(body,\s*"slug"\)/,
+    "the backend must continue accepting slug for compatibility with existing API clients",
+  )
+})
+
 test("organization pending changes only consult the Overview form on the Overview route", async () => {
   const script = await readFile(new URL("../public-admin/app.js", import.meta.url), "utf8")
   const functionSource = script.match(/^function hasOrganizationPendingChanges\(\) \{[\s\S]*?^\}/m)?.[0]
@@ -1880,7 +1916,6 @@ test("organization pending changes only consult the Overview form on the Overvie
   }
   const els = {
     organizationName: clearedOverviewControl,
-    organizationSlug: clearedOverviewControl,
     organizationSeatLimit: clearedOverviewControl,
   }
   const currentOrganization = () => ({
@@ -1982,6 +2017,19 @@ test("fallback admin shell exposes only canonical routes for the current admin s
   assert.doesNotMatch(organizationHtml, /data-nav-group="platform"/)
   assert.match(organizationHtml, /href="\/admin\/organizations\/org_1\/overview"/)
   assert.doesNotMatch(organizationHtml, /href="\/admin\/audit"/)
+
+  const slugMarker = "PRIVATE-ORGANIZATION-SLUG-MUST-NOT-RENDER"
+  const namelessSession = adminSession()
+  namelessSession.organizations = [{
+    id: "org_nameless",
+    name: "",
+    slug: slugMarker,
+    ownerUserId: "user_admin",
+    role: "organization_admin",
+  }]
+  const namelessOrganizationHtml = adminFallbackShellHtml(namelessSession)
+  assert.doesNotMatch(namelessOrganizationHtml, new RegExp(slugMarker))
+  assert.match(namelessOrganizationHtml, />org_nameless</)
 })
 
 test("GET /admin/app.js gates organization-admin navigation and platform-only loads by DEN capabilities", async () => {

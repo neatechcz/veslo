@@ -12,7 +12,8 @@ const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SPEC_DIR, '../../..');
 const ADMIN_PUBLIC_ROOT = join(REPO_ROOT, 'services/ai-gateway/public-admin');
 
-const ORG_A = organization('org-a', 'ORGANIZATION-A-NAME', 'organization-a', 11_001);
+const ORG_A_SLUG_MARKER = 'ORGANIZATION-A-PRIVATE-SLUG-MARKER';
+const ORG_A = organization('org-a', 'ORGANIZATION-A-NAME', ORG_A_SLUG_MARKER, 11_001);
 const ORG_B = organization('org-b', 'ORGANIZATION-B-NAME', 'organization-b', 22_002);
 const GLOBAL_USERS = [
   globalUser('global-alice', 'GLOBAL-ALICE', 'global-alice@example.test', ORG_A, true),
@@ -238,6 +239,102 @@ test.describe('AI Gateway admin data isolation', () => {
     await expect(page.locator('#page-title')).toHaveText('Organizations');
     await expect(page.locator('#user-list')).toBeEmpty();
     await expect(page.locator('[data-user-id="global-alice"]')).toHaveCount(0);
+  });
+
+  test('platform admin organization slug stays server-side across overview save and directory rendering', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/overview`);
+
+    const selector = page.locator('#organization-selector-input');
+    await expect.soft(page.locator('#organization-slug')).toHaveCount(0);
+    await expect.soft(selector).toHaveValue(`${ORG_A.name} - ${ORG_A.id}`);
+    expect.soft(await selector.inputValue()).not.toContain(ORG_A_SLUG_MARKER);
+
+    const savedName = 'ORGANIZATION-A-RENAMED-BY-PLATFORM';
+    const savedSeatLimit = ORG_A.seatLimit + 7;
+    await page.locator('#organization-name').fill(savedName);
+    await page.locator('#organization-seat-limit').fill(String(savedSeatLimit));
+
+    const patchPath = `/admin/api/organizations/${ORG_A.id}`;
+    const patch = harness.delayNext('PATCH', patchPath);
+    await page.locator('#organization-save-button').click();
+    const patchRecord = await patch.arrived;
+    expect.soft(patchRecord.body).toEqual({ name: savedName, seatLimit: savedSeatLimit });
+    expect.soft(Object.prototype.hasOwnProperty.call(patchRecord.body, 'slug')).toBe(false);
+
+    const savedOrganization = {
+      ...ORG_A,
+      name: savedName,
+      seatLimit: savedSeatLimit,
+      slug: ORG_A_SLUG_MARKER,
+    };
+    harness.state.organizations = harness.state.organizations.map((organization) => (
+      organization.id === ORG_A.id ? savedOrganization : organization
+    ));
+    patch.release(json(200, { organization: savedOrganization }));
+
+    await expect(page.locator('#organization-save-status')).toHaveText('Organization saved.');
+    await expect(page.locator('#organization-name')).toHaveValue(savedName);
+    await expect.soft(selector).toHaveValue(`${savedName} - ${ORG_A.id}`);
+    expect.soft(await page.locator('body').innerText()).not.toContain(ORG_A_SLUG_MARKER);
+
+    await page.locator('[data-platform-route="organizations"]').click();
+    await waitForPageReady(page);
+    const directory = page.locator('#organization-directory-list');
+    await expect(directory).toContainText(savedName);
+    await expect(directory).toContainText(ORG_A.id);
+    await expect.soft(directory).not.toContainText(ORG_A_SLUG_MARKER);
+  });
+
+  test('organization admin organization slug stays server-side and PATCH submits only the editable name', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    harness.state.session = {
+      user: {
+        id: 'organization-admin',
+        email: 'organization-admin@example.test',
+        emailVerified: true,
+        name: 'ORGANIZATION-ADMIN',
+      },
+      platformAdmin: false,
+      activeOrgId: ORG_A.id,
+      organizations: [{
+        id: ORG_A.id,
+        name: ORG_A.name,
+        slug: ORG_A.slug,
+        role: 'organization_admin',
+      }],
+      capabilities: ['organization', 'users'],
+      allowedPages: ['organization', 'users'],
+    };
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/overview`);
+
+    const selector = page.locator('#organization-selector-input');
+    await expect.soft(page.locator('#organization-slug')).toHaveCount(0);
+    await expect.soft(selector).toHaveValue(`${ORG_A.name} - ${ORG_A.id}`);
+    expect.soft(await selector.inputValue()).not.toContain(ORG_A_SLUG_MARKER);
+
+    const savedName = 'ORGANIZATION-A-RENAMED-BY-ORG-ADMIN';
+    await page.locator('#organization-name').fill(savedName);
+    const patchPath = `/admin/api/organizations/${ORG_A.id}`;
+    const patch = harness.delayNext('PATCH', patchPath);
+    await page.locator('#organization-save-button').click();
+    const patchRecord = await patch.arrived;
+    expect.soft(patchRecord.body).toEqual({ name: savedName });
+    expect.soft(Object.prototype.hasOwnProperty.call(patchRecord.body, 'slug')).toBe(false);
+
+    patch.release(json(200, {
+      organization: {
+        ...ORG_A,
+        name: savedName,
+        slug: ORG_A_SLUG_MARKER,
+      },
+    }));
+
+    await expect(page.locator('#organization-save-status')).toHaveText('Organization saved.');
+    await expect(page.locator('#organization-name')).toHaveValue(savedName);
+    await expect.soft(selector).toHaveValue(`${savedName} - ${ORG_A.id}`);
+    expect.soft(await page.locator('body').innerText()).not.toContain(ORG_A_SLUG_MARKER);
   });
 
   test('AI Access uses encoded organization-qualified GET and exact PUT, and delayed success cannot mutate a new organization', async ({ page }) => {
@@ -1027,7 +1124,7 @@ async function expectPageError(page: Page, message: string, retryable: boolean) 
 }
 
 async function switchOrganization(page: Page, organization: TestOrganization) {
-  const value = [organization.name, organization.slug, organization.id].join(' - ');
+  const value = [organization.name, organization.id].join(' - ');
   await page.locator('#organization-selector-input').evaluate((input, nextValue) => {
     const selector = input as HTMLInputElement;
     selector.value = nextValue;
