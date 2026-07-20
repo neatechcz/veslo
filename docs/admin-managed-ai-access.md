@@ -57,6 +57,7 @@ The retained `default_model` and `allowed_models_json` values are rollback-only 
 
 ## Admin behavior
 
+- Every canonical admin dialog is constrained to the available window width and must not introduce horizontal scrolling. Wider editors reflow their fields when the window narrows; DEN `/admin` redirects to this AI Gateway-owned surface rather than maintaining a second modal implementation.
 - The organization-scoped AI Gateway admin `AI Access` workspace includes the assignment editor. Platform Users remains global and does not perform organization-scoped AI-access mutations.
 - Platform pages (`/admin/overview`, `/admin/organizations`, `/admin/ai-infrastructure`, `/admin/platform-users`, and global audit) never retain organization context. Organization context exists only inside `/admin/organizations/:orgId/...`; its selector preserves the current organization subpage, and organization admins see only authorized organizations.
 - Platform admins can enable/disable user access and pick the assigned provider and credential only inside the explicit Organization AI Access workspace, and manage the global enabled/active model policy under AI Infrastructure. User assignments contain no model fields.

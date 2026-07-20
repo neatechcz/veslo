@@ -941,7 +941,7 @@ test("GET /admin shell uses modal detail editors instead of split list-detail pa
     const html = await response.text()
     assert.match(html, /<dialog id="credential-detail-modal" class="modal-shell"/)
     assert.match(html, /<dialog id="alert-detail-modal" class="modal-shell"/)
-    assert.match(html, /<dialog id="user-editor-modal" class="modal-shell"/)
+    assert.match(html, /<dialog id="user-editor-modal" class="modal-shell modal-shell-wide"/)
     assert.match(html, /<dialog id="audit-detail-modal" class="modal-shell"/)
     assert.match(html, /id="user-modal-close"/)
     assert.match(html, /id="credential-detail-modal-close"/)
@@ -951,6 +951,7 @@ test("GET /admin shell uses modal detail editors instead of split list-detail pa
     assert.doesNotMatch(html, /<aside class="detail-rail"/)
     assert.doesNotMatch(html, /<aside id="alert-detail"/)
     assert.doesNotMatch(html, /<aside id="audit-detail"/)
+    assert.doesNotMatch(html, /modal-card-wide/)
     assert.doesNotMatch(html, /Export CSV/)
     assert.doesNotMatch(html, /Trace request/)
   } finally {
