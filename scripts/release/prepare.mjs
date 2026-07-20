@@ -100,6 +100,10 @@ heading("Building sidecar release manifest");
 run("pnpm --filter veslo-orchestrator build:sidecars", { stdio: "inherit" });
 success("Sidecar release manifest updated");
 
+heading("Refreshing desktop sidecar metadata");
+run("pnpm --filter @neatech/veslo prepare:sidecar", { stdio: "inherit" });
+success("Desktop sidecars refreshed");
+
 heading("Running release review");
 const reviewOutput = run("node scripts/release/review.mjs --strict", { readOnly: true, allowFail: false });
 log(reviewOutput);
