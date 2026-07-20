@@ -1,0 +1,97 @@
+prikaz;rust_soubor;kategorie;http_ekvivalent_dnes;poznamka
+engine_start;commands/engine.rs;C2-lifecycle;castecne (orchestrator daemon lazy-spawn, POST /workspace/:id/engine/reload);spawn OpenCode sidecar binarky; v BE/FE splitu presouva do backendu, FE ho nevola
+engine_stop;commands/engine.rs;C2-lifecycle;castecne (orchestrator daemon);spawn/kill procesu
+engine_info;commands/engine.rs;C2-lifecycle;castecne (GET /status, daemon snapshoty);cte stav lokalniho manageru; ve splitu nahrazeno HTTP statusem
+engine_doctor;commands/engine.rs;B-prenositelne;ne;diagnostika binarek (opencode --version apod.); cista proces logika
+engine_install;commands/engine.rs;B-prenositelne;ne;instalace engine binarky; server-side exec
+engine_restart;commands/engine.rs;C2-lifecycle;castecne (POST /workspace/:id/engine/reload);spawn procesu
+runtime_prepare_workspace;commands/engine.rs;A-ma-ekvivalent;POST /workspace/:id/system/provision;dualni provisioning: internal_provision.rs zrcadli internal-system.ts (dokumentovana duplicita)
+access_proof_ai_read;commands/access_proofs.rs;B-prenositelne;ne;JSON cache soubor v app-data; trivialni port (nebo localStorage)
+access_proof_ai_write;commands/access_proofs.rs;B-prenositelne;ne;JSON cache soubor
+access_proof_ai_clear;commands/access_proofs.rs;B-prenositelne;ne;JSON cache soubor
+engine_sse_subscribe;commands/engine_sse.rs;C3-zanika;GET /workspace/:id/events (SSE);Rust most SSE->Tauri event; web FE pouzije EventSource primo, most zanika
+engine_sse_unsubscribe;commands/engine_sse.rs;C3-zanika;GET /workspace/:id/events (SSE);dtto
+orchestrator_status;commands/orchestrator.rs;C2-lifecycle;castecne (daemon HTTP status);cte stav lokalniho manageru spawnu
+orchestrator_engines_list;commands/orchestrator.rs;A-ma-ekvivalent;orchestrator daemon HTTP (snapshoty enginu);IPC jen preposila data daemonu
+orchestrator_workspace_activate;commands/orchestrator.rs;A-ma-ekvivalent;orchestrator daemon HTTP POST activate;Rust prikaz je sam HTTP klient (orchestrator.rs:698 OUT POST activate); FE muze volat primo
+orchestrator_instance_dispose;commands/orchestrator.rs;A-ma-ekvivalent;orchestrator daemon HTTP;HTTP proxy na daemon
+orchestrator_start_detached;commands/orchestrator.rs;C2-lifecycle;ne;spawn veslo sidecar procesu (orchestrator.rs:893); ve splitu backend uz bezi
+veslo_orchestrator_e2e_kill_daemon;commands/orchestrator.rs;E-e2e;ne;jen debug_assertions + feature e2e
+shared_engine_e2e_kill_child;commands/orchestrator.rs;E-e2e;ne;jen e2e build
+shared_engine_e2e_fail_next_proxy;commands/orchestrator.rs;E-e2e;ne;jen e2e build
+veslo_server_info;commands/veslo_server.rs;C2-lifecycle;castecne (GET /health, /status);info o portu/PIDu sidecar serveru; ve splitu FE zna URL serveru primo
+veslo_server_restart;commands/veslo_server.rs;C2-lifecycle;ne;restart sidecar procesu; ve splitu se server spravuje sam
+veslo_server_e2e_kill_child;commands/veslo_server.rs;E-e2e;ne;jen e2e build
+opencodeRouter_info;commands/opencode_router.rs;C2-lifecycle;castecne (proxy /opencode-router, GET /workspace/:id/opencode-router/*);stav sidecar routeru
+opencodeRouter_start;commands/opencode_router.rs;C2-lifecycle;ne;spawn sidecar procesu
+opencodeRouter_stop;commands/opencode_router.rs;C2-lifecycle;ne;kill sidecar procesu
+opencodeRouter_status;commands/opencode_router.rs;C2-lifecycle;castecne (proxy /opencode-router);
+opencodeRouter_config_set;commands/opencode_router.rs;C2-lifecycle (MRTVY);POST /workspace/:id/opencode-router/telegram-token aj.;registrovan v generate_handler, ale nikde v TS se nevola - mrtvy prikaz
+workspace_bootstrap;commands/workspace.rs;A-ma-ekvivalent;GET /workspaces;registry workspacu (workspace-management.ts:103)
+workspace_set_active;commands/workspace.rs;A-ma-ekvivalent;POST /workspaces/:id/activate;workspace-management.ts:226
+workspace_copy_into_folder;commands/workspace.rs;B-prenositelne;ne;FS kopie slozky; server-side FS operace
+workspace_create;commands/workspace.rs;A-ma-ekvivalent;POST /workspaces/local;workspace-management.ts:109
+workspace_private_root;commands/workspace.rs;B-prenositelne;ne;vraci cestu app-data; server zna vlastni data dir
+workspace_create_remote;commands/workspace.rs;B-prenositelne;ne;zapis do registry (remote workspace); chybi routa, logika portovatelna
+workspace_update_display_name;commands/workspace.rs;A-ma-ekvivalent;PATCH /workspaces/:id;workspace-management.ts:203
+workspace_update_remote;commands/workspace.rs;A-ma-ekvivalent;PATCH /workspaces/:id;
+workspace_forget;commands/workspace.rs;A-ma-ekvivalent;DELETE /workspaces/:id;workspace-management.ts:281
+workspace_add_authorized_root;commands/workspace.rs;B-prenositelne;ne;desktop trust model (authorized roots); vyzaduje redesign duvery na serveru
+workspace_grant_folder_access;commands/workspace.rs;C1-nativni;ne;vazane na nativni vyber slozky / pristupova prava OS
+workspace_export_config;commands/workspace.rs;A-ma-ekvivalent;GET /workspace/:id/export;workspace-management.ts:481
+workspace_import_config;commands/workspace.rs;A-ma-ekvivalent;POST /workspace/:id/import;workspace-management.ts:487
+opencode_command_list;commands/command_files.rs;A-ma-ekvivalent;GET /workspace/:id/commands;routes/commands.ts
+opencode_command_write;commands/command_files.rs;A-ma-ekvivalent;POST /workspace/:id/commands;routes/commands.ts
+opencode_command_delete;commands/command_files.rs;A-ma-ekvivalent;DELETE /workspace/:id/commands/:name;routes/commands.ts
+workspace_veslo_read;commands/workspace.rs;A-ma-ekvivalent;GET /workspace/:id/config;veslo.json v workspacu
+workspace_veslo_write;commands/workspace.rs;A-ma-ekvivalent;PATCH /workspace/:id/config;
+opkg_install;commands/opkg.rs;B-prenositelne;castecne (POST /workspace/:id/skills/hub/:name, /mcp/hub/:name);exec opkg v workspacu; hub-instalace uz na serveru je
+import_skill;commands/opkg.rs;A-ma-ekvivalent;POST /skills/import-candidates/import, POST /workspace/:id/skills;FS kopie do .opencode/skills
+install_skill_template;commands/skills.rs;A-ma-ekvivalent;POST /workspace/:id/skills;
+install_global_skill_template;commands/skills.rs;A-ma-ekvivalent;POST /skills/user-global-store;
+list_local_skills;commands/skills.rs;A-ma-ekvivalent;GET /workspace/:id/skills;
+list_local_skills_scoped;commands/skills.rs;A-ma-ekvivalent;GET /workspace/:id/skills + GET /skills/user-global-store;
+read_local_skill;commands/skills.rs;A-ma-ekvivalent;GET /workspace/:id/skills/:name;
+read_local_skill_at_path;commands/skills.rs;A-ma-ekvivalent;GET /skills/user-global/:name;
+read_local_skill_files_at_path;commands/skills.rs;A-ma-ekvivalent;GET /workspace/:id/skills/:name/files, /skills/user-global/:name/files;
+uninstall_skill;commands/skills.rs;A-ma-ekvivalent;DELETE /workspace/:id/skills/:name;
+uninstall_skill_at_path;commands/skills.rs;A-ma-ekvivalent;DELETE /skills/user-global/:name;
+write_local_skill;commands/skills.rs;A-ma-ekvivalent;POST /workspace/:id/skills;
+write_local_skill_at_path;commands/skills.rs;A-ma-ekvivalent;POST /skills/user-global-store;
+read_opencode_config;commands/config.rs;B-prenositelne;castecne (GET /workspace/:id/config pro workspace scope);globalni scope (~/.config/opencode) routu nema
+write_opencode_config;commands/config.rs;B-prenositelne;castecne (PATCH /workspace/:id/config);dtto
+updater_environment;commands/updater.rs;C1-nativni;ne;Tauri updater; ve web FE zanika
+updater_prepare_install;commands/updater.rs;C1-nativni;ne;nativni updater
+updater_relaunch_after_install;commands/updater.rs;C1-nativni;ne;nativni relaunch aplikace
+desktop_runtime_preferences_read;runtime_preferences.rs;B-prenositelne;ne;JSON v app-data; snadno na server nebo localStorage
+desktop_runtime_preferences_write;runtime_preferences.rs;B-prenositelne;ne;dtto
+app_build_info;commands/misc.rs;B-prenositelne;castecne (GET /status, /capabilities);verze/build metadata
+desktop_sandbox_environment;commands/misc.rs;C1-nativni;ne;detekce desktop prostredi; ve web FE zanika
+log_ui_event;commands/misc.rs;A-ma-ekvivalent;POST /debug-logs (server.ts:877);logovani UI udalosti
+record_bootstrap_diagnostic;bootstrap_diagnostics.rs;B-prenositelne;ne;lokalni diagnosticke soubory
+set_bootstrap_diagnostics_cloud_context;bootstrap_diagnostics.rs;B-prenositelne;ne;
+clear_bootstrap_diagnostics_cloud_context;bootstrap_diagnostics.rs;B-prenositelne;ne;
+obsidian_is_available;commands/misc.rs;C1-nativni;ne;detekce lokalni instalace Obsidianu
+open_in_obsidian;commands/misc.rs;C1-nativni;ne;otevre obsidian:// URL pres OS shell
+write_obsidian_mirror_file;commands/misc.rs;B-prenositelne;ne;FS zapis do vaultu; cesta mimo workspace = otazka trust modelu
+read_obsidian_mirror_file;commands/misc.rs;B-prenositelne;ne;FS cteni z vaultu
+den_auth_snapshot_read;commands/den_auth.rs;B-prenositelne;ne;JSON soubor + macOS legacy-WebKit migrace; ve web splitu nahradi server session/cookie
+den_auth_snapshot_write;commands/den_auth.rs;B-prenositelne;ne;JSON soubor
+reset_veslo_state;commands/misc.rs;B-prenositelne;ne;mazani app-data adresaru; admin operace serveru
+reset_opencode_cache;commands/misc.rs;B-prenositelne;ne;mazani cache adresaru
+opencode_db_migrate;commands/misc.rs;B-prenositelne;ne;SQLite migrace OpenCode DB; server ma k DB pristup
+opencode_mcp_auth;commands/misc.rs;B-prenositelne;castecne (DELETE /workspace/:id/mcp/:name/auth, POST .../runtime-token/refresh);spousti `opencode mcp auth` CLI (misc.rs:961); interaktivni OAuth krok
+opencode_db_update_session_directory;commands/misc.rs;B-prenositelne;ne;SQLite UPDATE + prepis path.cwd v JSON blobech
+opencode_db_read_sessions;commands/session_reader.rs;A-ma-ekvivalent (castecne);GET /workspace/:id/conversations;primy SQLite read; server ma vlastni conversation store
+opencode_db_read_transcript;commands/session_reader.rs;A-ma-ekvivalent (castecne);GET /workspace/:id/sessions/:sessionId/transcript, /conversations/:id/transcript;
+scheduler_list_jobs;commands/scheduler.rs;A-ma-ekvivalent;GET /workspace/:id/scheduler/jobs;routes/scheduler.ts
+scheduler_delete_job;commands/scheduler.rs;A-ma-ekvivalent;DELETE /workspace/:id/scheduler/jobs/:name;routes/scheduler.ts
+wsl_prerequisites_repair;commands/wsl_sandbox.rs;C1-nativni;ne;Windows/WSL oprava; nutne nativni
+wsl_sandbox_repair;commands/wsl_sandbox.rs;C1-nativni;ne;dtto
+pending_session_drafts_list;commands/pending_session_drafts.rs;B-prenositelne;ne;file-backed drafty + prilohy; port na server store nebo IndexedDB
+pending_session_drafts_get;commands/pending_session_drafts.rs;B-prenositelne;ne;
+pending_session_drafts_put;commands/pending_session_drafts.rs;B-prenositelne;ne;
+pending_session_drafts_delete;commands/pending_session_drafts.rs;B-prenositelne;ne;
+clipboard_file_paths;commands/clipboard.rs;C1-nativni;ne;cteni file-paths z nativniho clipboardu; web API to neumi
+e2e_position_main_window;commands/window.rs;E-e2e;ne;jen e2e build; nativni okno
+set_window_decorations;commands/window.rs;C1-nativni;ne;nativni dekorace okna
