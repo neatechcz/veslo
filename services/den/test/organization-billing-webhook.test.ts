@@ -51,6 +51,7 @@ function createBillingAccount(input: Partial<OrganizationBillingAccountRecord> =
     managedAiExtendedQuantity: 0,
     localModelsQuantity: 0,
     manualAccessEnabled: false,
+    manualAccessUnlimited: false,
     manualAccessExpiresAt: null,
     localModelsUnitAmount: null,
     localModelsCurrency: null,
