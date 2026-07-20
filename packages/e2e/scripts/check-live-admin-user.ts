@@ -1,25 +1,18 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  type AdminUserRecord,
   createAdminUser,
   exchangeAdminBrowserSession,
   findAdminUserByEmail,
   getAdminSession,
   listAdminCredentials,
   listAdminUsers,
+  resolveAdminUserActiveOrganizationId,
   startAdminBrowserSession,
   upsertAdminUserAiAccess,
 } from '../helpers/live-admin-client.js';
 import { waitForAdminBrowserCallback } from '../helpers/live-admin-check.js';
-
-type AdminUserRecord = {
-  id?: string;
-  email?: string;
-  name?: string;
-  role?: string;
-  status?: string;
-  isPlatformAdmin?: boolean;
-};
 
 function parseArgs(argv: string[]) {
   const result = {
@@ -33,6 +26,7 @@ function parseArgs(argv: string[]) {
     provider: process.env.VESLO_ADMIN_CHECK_PROVIDER?.trim() || '',
     credentialId: process.env.VESLO_ADMIN_CHECK_CREDENTIAL_ID?.trim() || '',
     disableAiAccess: process.env.VESLO_ADMIN_CHECK_DISABLE_AI_ACCESS === '1',
+    organizationId: process.env.VESLO_ADMIN_CHECK_ORGANIZATION_ID?.trim() || '',
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -85,6 +79,11 @@ function parseArgs(argv: string[]) {
     }
     if (arg === '--disable-ai-access') {
       result.disableAiAccess = true;
+      continue;
+    }
+    if (arg === '--organization-id' && argv[index + 1]) {
+      result.organizationId = argv[index + 1].trim();
+      index += 1;
     }
   }
 
@@ -132,6 +131,7 @@ async function main() {
     provider,
     credentialId,
     disableAiAccess,
+    organizationId,
   } = parseArgs(process.argv.slice(2));
   const state = randomBase64Url(32);
   const codeVerifier = randomBase64Url(32);
@@ -184,6 +184,7 @@ async function main() {
   let createdUser: AdminUserRecord | null = null;
   if (attemptCreate && createTargetEmail && !match) {
     const orgId =
+      organizationId ||
       (typeof sessionPayload?.activeOrgId === 'string' && sessionPayload.activeOrgId.trim()) ||
       (typeof organizations[0]?.id === 'string' ? organizations[0].id : '') ||
       null;
@@ -198,8 +199,11 @@ async function main() {
 
   const targetUser = match ?? createdUser;
   const shouldUpsertAiAccess = disableAiAccess || provider;
+  const aiAccessOrganizationId = shouldUpsertAiAccess && targetUser?.id
+    ? await resolveAdminUserActiveOrganizationId(fetch, gatewayBase, token, targetUser, organizationId)
+    : null;
   const aiAccess = shouldUpsertAiAccess && targetUser?.id
-    ? await upsertAdminUserAiAccess(fetch, gatewayBase, token, targetUser.id, {
+    ? await upsertAdminUserAiAccess(fetch, gatewayBase, token, aiAccessOrganizationId!, targetUser.id, {
         enabled: !disableAiAccess,
         provider: disableAiAccess ? null : provider || null,
         credentialId: disableAiAccess ? null : credentialId || null,
@@ -221,6 +225,7 @@ async function main() {
         credentialCount: credentials.length,
         credentials,
         aiAccessApplied: Boolean(aiAccess),
+        aiAccessOrganizationId,
         aiAccess,
         targetUser,
       },

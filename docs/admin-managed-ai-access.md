@@ -58,11 +58,13 @@ The retained `default_model` and `allowed_models_json` values are rollback-only 
 ## Admin behavior
 
 - Every canonical admin dialog is constrained to the available window width and must not introduce horizontal scrolling. Wider editors reflow their fields when the window narrows; DEN `/admin` redirects to this AI Gateway-owned surface rather than maintaining a second modal implementation.
+- The admin portal's fail-closed loading and request-ownership rules are canonicalized in [Admin Data Loading and Scope Isolation](features/admin-data-loading-and-scope-isolation.md). Route-owned data is cleared before destination requests begin; blurred loading treatment applies only to neutral skeletons, never to previously loaded records.
 - The organization-scoped AI Gateway admin `AI Access` workspace includes the assignment editor. Platform Users remains global and does not perform organization-scoped AI-access mutations.
-- Platform pages (`/admin/overview`, `/admin/organizations`, `/admin/ai-infrastructure`, `/admin/platform-users`, and global audit) never retain organization context. Organization context exists only inside `/admin/organizations/:orgId/...`; its selector preserves the current organization subpage, and organization admins see only authorized organizations.
+- Platform pages (`/admin`, `/admin/organizations`, `/admin/ai-infrastructure`, `/admin/ai-infrastructure/usage`, `/admin/ai-infrastructure/alerts`, `/admin/platform-users`, and `/admin/audit`) never retain organization context. Organization context exists only inside `/admin/organizations/:orgId/...`; its selector preserves the current organization subpage, and organization admins see only authorized organizations.
 - Platform admins can enable/disable user access and pick the assigned provider and credential only inside the explicit Organization AI Access workspace, and manage the global enabled/active model policy under AI Infrastructure. User assignments contain no model fields.
 - Global model-policy loads are generation-scoped and abortable. A response from an older request, a previous admin route, or a load that began before the draft became dirty cannot replace the current editor draft or publish a stale error.
-- Admin AI-access writes require the canonical Organization AI Access route and an authorized organization context that matches one of the target user's DEN memberships. All fallible response preparation completes before the Gateway transaction; the transaction then persists the assignment and its success audit together. The audit uses the authenticated admin user id and validated organization id; if the audit insert fails, the policy write rolls back and the request fails.
+- The UI invokes admin AI-access reads and writes only from the canonical Organization AI Access workspace and uses the organization-qualified `GET` and `PUT` routes under `/admin/api/organizations/:organizationId/members/:userId/ai-access`. Server authorization does not trust or require the browser route or referrer: it independently requires managed-AI admin capability, access to the organization named in the API path, and exactly one active target-user membership returned by the scoped organization-member API. Missing, inactive, duplicate, or malformed membership evidence fails closed. The former unqualified `/admin/api/users/:userId/ai-access` routes are removed.
+- For writes, all fallible response preparation completes before the Gateway transaction; the transaction then persists the assignment and its success audit together. The audit uses the authenticated admin user id and validated organization id; if the audit insert fails, the policy write rolls back and the request fails.
 - Organization Audit is a fail-closed facade over DEN-owned organization events and Gateway-owned AI-access events. The Gateway fetches both sources, labels each row with its source, assigns a stable source-qualified id, merges newest-first, and applies one final hard limit. It never returns a partial history when either source is unavailable. Mutations owned by DEN are audited only in DEN and are not duplicated as synthetic Gateway rows.
 - The committed default DEN signup bootstrap has no active-provider resolver and therefore skips automatic AI-access assignment without failing account creation. An integration may explicitly inject a read-only Gateway policy projection; only a `codex_oauth` active provider plus an eligible Codex OAuth inference credential creates an `auto_assigned` row. A non-Codex, missing, or unavailable projection skips assignment. The active platform model applies to assigned users like every other managed-AI user.
 - Admin edits are marked `admin_assigned`. Non-Codex admin assignments remain explicit credential choices.
@@ -130,24 +132,29 @@ Use these commands when verifying the admin-managed flow locally or against the 
   cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara@neatech.cz
   ```
 
+  This check may use the global Platform Users directory for lookup. Any
+  AI-access update resolves and validates an active organization membership;
+  pass `--organization-id <organization-id>` when the intended organization is
+  known instead of relying on automatic active-membership resolution.
+
 - Assign a live user to OpenAI before a live OpenAI desktop roundtrip:
 
   ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --organization-id <organization-id> --provider openai
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=gpt-4o-mini pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 
 - Assign a live user to Anthropic before a live Anthropic desktop roundtrip:
 
   ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider anthropic
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --organization-id <organization-id> --provider anthropic
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=anthropic VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=claude-3-7-sonnet-latest pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 
 - Assign a live user to an OpenAI-compatible credential before a live custom-provider desktop roundtrip:
 
   ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --provider openai_compatible --credential-id <credential-id>
+  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --organization-id <organization-id> --provider openai_compatible --credential-id <credential-id>
   VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai_compatible VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=<custom-model> pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
   ```
 
@@ -185,8 +192,9 @@ Use these commands when verifying the admin-managed flow locally or against the 
 
 - Admin read/update:
   - `GET /admin/api/credentials/:credentialId/models`
-  - `GET /admin/api/users/:userId/ai-access`
-  - `PUT /admin/api/users/:userId/ai-access`
+  - `GET /admin/api/organizations/:organizationId/members`
+  - `GET /admin/api/organizations/:organizationId/members/:userId/ai-access`
+  - `PUT /admin/api/organizations/:organizationId/members/:userId/ai-access`
 - User self-read:
   - `GET /api/me/ai-access`
 - Veslo app local compatibility proxy:

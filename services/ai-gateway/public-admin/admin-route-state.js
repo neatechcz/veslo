@@ -81,13 +81,6 @@ export function organizationIdForRoute(route) {
     : null;
 }
 
-export function resolveAiAccessOrganizationId(route, user, selectedOrganizationId = "") {
-  const routedOrganizationId = organizationIdForRoute(route);
-  return route?.area === "organization" && route.page === "ai-access"
-    ? routedOrganizationId
-    : null;
-}
-
 export function toAdminDateTimeLocalValue(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
@@ -249,19 +242,34 @@ export function createAdminMutationState() {
   return { generations: Object.create(null) };
 }
 
-export function beginAdminRouteMutation(state, key, route) {
-  if (!state || typeof key !== "string" || !key || !formatAdminRoute(route)) return null;
+export function beginAdminRouteMutation(state, key, route, pageLoad) {
+  if (
+    !state
+    || typeof key !== "string"
+    || !key
+    || !formatAdminRoute(route)
+    || typeof pageLoad?.key !== "string"
+    || !pageLoad.key
+    || !Number.isInteger(pageLoad.generation)
+  ) return null;
   const generation = (state.generations[key] || 0) + 1;
   state.generations[key] = generation;
-  return { key, generation, route: { ...route } };
+  return {
+    key,
+    generation,
+    route: { ...route },
+    page: { key: pageLoad.key, generation: pageLoad.generation },
+  };
 }
 
-export function isAdminRouteMutationCurrent(state, mutation, route) {
+export function isAdminRouteMutationCurrent(state, mutation, route, pageLoad) {
   return Boolean(
     state
     && mutation
     && state.generations[mutation.key] === mutation.generation
-    && routeDescriptorsEqual(mutation.route, route),
+    && routeDescriptorsEqual(mutation.route, route)
+    && mutation.page?.key === pageLoad?.key
+    && mutation.page?.generation === pageLoad?.generation,
   );
 }
 

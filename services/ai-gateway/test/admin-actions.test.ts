@@ -1873,7 +1873,7 @@ test("createDefaultAdminService skips ai access when no eligible codex credentia
   assert.deepEqual(upsertCalls, []);
 });
 
-test("default admin service rejects enabled codex_oauth access without credentialId", async () => {
+test("PUT qualified AI access preserves provider credential validation", async () => {
   let upsertCalled = false;
   const service = createDefaultAdminService("http://den.example.test", {
     denClient: {
@@ -1888,6 +1888,19 @@ test("default admin service rejects enabled codex_oauth access without credentia
       },
       async listUsers() {
         return [];
+      },
+      async listOrganizationMembers() {
+        return {
+          members: [{
+            membershipId: "membership_123",
+            userId: "user_123",
+            name: "Target User",
+            email: "target@example.test",
+            role: "member",
+            status: "active",
+            createdAt: "2026-07-12T08:00:00.000Z",
+          }],
+        };
       },
       async createUser() {
         throw new Error("unused");
@@ -1933,7 +1946,7 @@ test("default admin service rejects enabled codex_oauth access without credentia
 
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
       method: "PUT",
       headers: {
         "content-type": "application/json",
@@ -1942,7 +1955,6 @@ test("default admin service rejects enabled codex_oauth access without credentia
       body: JSON.stringify({
         enabled: true,
         provider: "codex_oauth",
-        organizationId: "org_1",
       }),
     });
 

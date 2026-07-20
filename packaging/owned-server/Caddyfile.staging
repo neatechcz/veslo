@@ -1,0 +1,35 @@
+{
+  email {$ACME_EMAIL}
+  on_demand_tls {
+    ask http://worker-manager:8790/tls/ask
+  }
+}
+
+api.staging.veslo.work {
+  encode zstd gzip
+  reverse_proxy den:8788
+}
+
+ai.staging.veslo.work {
+  encode zstd gzip
+  reverse_proxy ai-gateway:4034
+}
+
+admin.staging.veslo.work {
+  encode zstd gzip
+  redir / /admin 308
+  reverse_proxy ai-gateway:4034
+}
+
+app.staging.veslo.work {
+  encode zstd gzip
+  reverse_proxy web:3005
+}
+
+https://*.workers.staging.veslo.work {
+  encode zstd gzip
+  tls {
+    on_demand
+  }
+  reverse_proxy worker-manager:8790
+}

@@ -48,7 +48,7 @@ test('managed AI fixture resolves distinct users to the same active model', asyn
   }
 });
 
-test('managed AI fixture rejects an explicit non-active model override', async () => {
+test('managed AI fixture accepts an explicit model from the authorized roster', async () => {
   const fixture = await startManagedAiGatewayFixture();
   try {
     const response = await fetch(`${fixture.baseUrl}/providers/codex_oauth/v1/chat/completions`, {
@@ -64,8 +64,9 @@ test('managed AI fixture rejects an explicit non-active model override', async (
       }),
     });
 
-    assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), { error: 'model_override_not_allowed' });
+    assert.equal(response.status, 200);
+    const body = await response.json() as { model?: unknown };
+    assert.equal(body.model, 'gpt-5.3-codex');
   } finally {
     await stopManagedAiGatewayFixture(fixture);
   }

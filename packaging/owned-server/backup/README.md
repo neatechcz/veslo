@@ -35,11 +35,11 @@ DOCKER_COMPOSE="sudo docker compose" \
   packaging/owned-server/backup/backup-mysql.sh den-db den /srv/veslo/backups/den-$(date -u +%Y%m%dT%H%M%SZ).sql
 ```
 
-For staging rehearsals, keep volumes isolated with a separate Compose project:
+For restore rehearsals, keep volumes isolated with a separate Compose project:
 
 ```bash
-ENV_FILE=/srv/veslo/env/staging.env
-DOCKER_COMPOSE="sudo docker compose -p veslo-owned-server-staging"
+ENV_FILE=/srv/veslo/env/rehearsal.env
+DOCKER_COMPOSE="sudo docker compose -p veslo-owned-server-rehearsal"
 ```
 
 The full owned-server rehearsal procedure lives in `packaging/owned-server/rehearsal/README.md`.

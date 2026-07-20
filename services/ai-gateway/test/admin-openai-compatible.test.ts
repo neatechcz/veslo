@@ -36,6 +36,19 @@ function createDenClient() {
     async listUsers() {
       return [];
     },
+    async listOrganizationMembers() {
+      return {
+        members: [{
+          membershipId: "membership_123",
+          userId: "user_123",
+          name: "Target User",
+          email: "target@example.test",
+          role: "member",
+          status: "active",
+          createdAt: "2026-07-12T08:00:00.000Z",
+        }],
+      };
+    },
     async createUser() {
       throw new Error("unused");
     },
@@ -160,7 +173,7 @@ test("POST /admin/api/credentials creates an openai-compatible platform credenti
   }
 });
 
-test("GET /admin/api/users/:userId/ai-access returns assignable openai-compatible credentials", async () => {
+test("GET qualified AI access returns assignable openai-compatible credentials", async () => {
   const app = createApp({
     admin: createDefaultAdminService("http://den.example.test", {
       denClient: createDenClient() as never,
@@ -222,7 +235,7 @@ test("GET /admin/api/users/:userId/ai-access returns assignable openai-compatibl
 
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
       headers: ADMIN_AUTHORIZATION,
     });
 

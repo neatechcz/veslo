@@ -40,7 +40,17 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
     next();
   });
 
-  const getMyAiAccess = asyncHandler(async (_req: Request, res: Response) => {
+  const requireMatchingRouteUser = (req: Request, res: Response, next: NextFunction) => {
+    const session = res.locals.userSession as UserSession;
+    const requestedUserId = typeof req.params.userId === "string" ? req.params.userId.trim() : "";
+    if (!requestedUserId || requestedUserId !== session.user.id) {
+      res.status(403).json({ error: "user_identity_mismatch" });
+      return;
+    }
+    next();
+  };
+
+  const getUserAiAccess = asyncHandler(async (_req: Request, res: Response) => {
     const session = res.locals.userSession as UserSession;
     let aiAccess = await deps.aiAccess?.getUserAiAccess(session.user.id);
     if (!aiAccess) {
@@ -70,8 +80,15 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
   });
 
   router.use("/api", requireUserSession);
-  router.get("/api/me/ai-access", getMyAiAccess);
-  router.get("/ai-gateway/me/ai-access", requireUserSession, getMyAiAccess);
+  router.get("/api/me/ai-access", getUserAiAccess);
+  router.get("/api/users/:userId/ai-access", requireMatchingRouteUser, getUserAiAccess);
+  router.get("/ai-gateway/me/ai-access", requireUserSession, getUserAiAccess);
+  router.get(
+    "/ai-gateway/users/:userId/ai-access",
+    requireUserSession,
+    requireMatchingRouteUser,
+    getUserAiAccess,
+  );
   router.use(jsonErrorHandler("user_credentials_request_failed"));
 
   return router;
