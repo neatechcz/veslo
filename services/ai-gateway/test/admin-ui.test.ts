@@ -1011,8 +1011,9 @@ test("GET /admin/app.js keeps organization workspace data and member actions pat
       assert.match(memberAdapter, new RegExp(`\\b${field}\\b`), field)
     }
     assert.match(memberAdapter, /orgId:\s*organization\.id/)
-    assert.match(memberAdapter, /orgName:\s*organization\.name/)
-    assert.match(memberAdapter, /orgSlug:\s*organization\.slug/)
+    assert.match(memberAdapter, /orgName:\s*organization\.name\s*\|\|\s*organization\.id/)
+    assert.doesNotMatch(memberAdapter, /organization\.slug/)
+    assert.doesNotMatch(memberAdapter, /\borgSlug\s*:/)
     assert.match(memberAdapter, /platformAdmin:\s*false/)
 
     assert.match(finishRoute, /Array\.isArray\(result\.organizationMembers\)[\s\S]*result\.selectedUserId = result\.organizationMembers\[0\]\?\.userId \|\| null/)
@@ -1880,9 +1881,12 @@ test("organization slug remains a backend compatibility field and is absent from
     "organizationSelectorLabel",
     "findOrganizationFromSelectorValue",
     "renderOrganizationsDirectory",
+    "renderOrganizationSelector",
     "hasOrganizationPendingChanges",
     "renderOrganization",
+    "renderRoute",
     "saveOrganization",
+    "organizationMemberToRouteSubject",
   ]) {
     assert.doesNotMatch(
       topLevelFunctionSource(script, functionName),
@@ -1890,6 +1894,12 @@ test("organization slug remains a backend compatibility field and is absent from
       `${functionName} must not render, read, compare, or submit organization slug`,
     )
   }
+
+  assert.match(
+    topLevelFunctionSource(script, "renderOrganizationSelector"),
+    /Search by organization name (?:or|and) id\./i,
+    "organization selector help must advertise only name and ID lookup",
+  )
 
   assert.match(
     topLevelFunctionSource(adminSource, "readOrganizationUpdateInput"),

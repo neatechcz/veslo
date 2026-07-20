@@ -286,6 +286,80 @@ test.describe('AI Gateway admin data isolation', () => {
     await expect.soft(directory).not.toContainText(ORG_A_SLUG_MARKER);
   });
 
+  test('platform SPA keeps a nameless organization slug private in directory, overview, selector, and attributes', async ({ page }) => {
+    test.setTimeout(75_000);
+    const harness = await installAdminHarness(page);
+    const privateSlugMarker = 'NAMELESS-ORGANIZATION-PRIVATE-SLUG-MARKER';
+    const namelessOrganization = organization(
+      'org-nameless-spa',
+      '',
+      privateSlugMarker,
+      33_003,
+    );
+    harness.state.organizations.push(namelessOrganization);
+    harness.state.session.organizations.push({
+      id: namelessOrganization.id,
+      name: namelessOrganization.name,
+      slug: namelessOrganization.slug,
+      role: 'organization_admin',
+    });
+
+    await openAdmin(page, '/admin/organizations');
+    const openButton = page.locator(
+      `[data-enter-organization-id="${namelessOrganization.id}"]`,
+    );
+    const directoryCard = openButton.locator('..');
+    await expect(directoryCard).toContainText(namelessOrganization.id);
+    await expect.soft(directoryCard).not.toContainText(privateSlugMarker);
+    await expect.soft(openButton).toHaveAttribute(
+      'aria-label',
+      `Open ${namelessOrganization.id} organization workspace`,
+    );
+    expect.soft(await openButton.getAttribute('aria-label')).not.toContain(privateSlugMarker);
+
+    await openButton.click();
+    await waitForPageReady(page);
+    await expect(page).toHaveURL(
+      new RegExp(`/admin/organizations/${namelessOrganization.id}/overview$`),
+    );
+    await expect.soft(page.locator('#operating-organization-label')).toHaveText(
+      `Operating organization: ${namelessOrganization.id}`,
+    );
+    await expect.soft(page.locator('#organization-editor-title')).toHaveText(
+      namelessOrganization.id,
+    );
+
+    const selector = page.locator('#organization-selector-input');
+    await expect.soft(selector).toHaveValue(namelessOrganization.id);
+    await expect.soft(selector).toHaveAttribute(
+      'title',
+      /Search by organization name (?:or|and) id\./i,
+    );
+    const selectorTitle = await selector.getAttribute('title');
+    expect.soft(selectorTitle).not.toContain(privateSlugMarker);
+    expect.soft(selectorTitle?.toLowerCase()).not.toContain('slug');
+
+    const namelessOption = page.locator(
+      `#organization-selector-options option[value*="${namelessOrganization.id}"]`,
+    );
+    await expect(namelessOption).toHaveCount(1);
+    const optionAttributes = await namelessOption.evaluate((option) => Object.fromEntries(
+      Array.from(option.attributes, (attribute) => [attribute.name, attribute.value]),
+    ));
+    expect.soft(optionAttributes.value).toBe(namelessOrganization.id);
+    expect.soft(optionAttributes.label).toBe(namelessOrganization.id);
+    for (const [attributeName, attributeValue] of Object.entries(optionAttributes)) {
+      expect.soft(
+        attributeValue,
+        `datalist option ${attributeName} must not expose the private organization slug`,
+      ).not.toContain(privateSlugMarker);
+    }
+
+    expect.soft(await page.locator('#operating-organization-label').innerText()).not.toContain(privateSlugMarker);
+    expect.soft(await page.locator('#organization-editor-title').innerText()).not.toContain(privateSlugMarker);
+    expect.soft(await selector.inputValue()).not.toContain(privateSlugMarker);
+  });
+
   test('organization admin organization slug stays server-side and PATCH submits only the editable name', async ({ page }) => {
     const harness = await installAdminHarness(page);
     harness.state.session = {
