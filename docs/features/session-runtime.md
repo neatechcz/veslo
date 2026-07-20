@@ -303,6 +303,8 @@ DEN provider inference defaults to the code-level dependency `denInferenceMode: 
 
 Standalone AI Gateway platform administration configures the global enabled-backend-model set and its single active model. Credential-specific model listing is infrastructure evidence for validating that policy and populating its catalog, not a model choice attached to a user assignment. OpenAI-compatible credentials use live upstream `/models` discovery, while Codex OAuth credentials use the gateway-owned Codex model catalog without relying on experimental Codex model-discovery internals. `/api/me/ai-access` and its alias compose the current active model as read-only `effectiveModel`; users cannot choose or switch it.
 
+For direct cloud compatibility, `/api/users/:userId/ai-access` and `/ai-gateway/users/:userId/ai-access` return the same response as `/me` only when the path user id exactly matches the bearer-token user. A mismatch fails before access or model-policy lookup. The desktop and local Veslo server continue to use `/me`; the explicit route neither restores trusted identity headers nor makes historical per-user model fields authoritative.
+
 The desktop displays that `effectiveModel` as read-only status. It does not send
 a model value with prompts, retries, replacements, shell/command compatibility
 runs, or newly created scheduled automations. Scheduled-automation edits send
