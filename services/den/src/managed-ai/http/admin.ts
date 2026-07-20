@@ -110,7 +110,7 @@ type AdminUsageFilters = {
   orgId: string | null
 }
 
-const CODEX_AUTH_UPLOAD_SESSION_TTL_MS = 10 * 60 * 1000
+const CODEX_AUTH_UPLOAD_SESSION_TTL_MS = 20 * 60 * 1000
 
 export function createManagedAiAdminRouteDeps(
   deps: ManagedAiAdminRouteOptions,

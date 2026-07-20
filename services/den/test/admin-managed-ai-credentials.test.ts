@@ -1023,7 +1023,7 @@ test("Codex auth upload session returns a local helper command for the selected 
     assert.match(payload.upload.token, /^[a-f0-9]{48}$/)
     assert.equal(payload.upload.credentialId, "cred_platform_codex_1")
     assert.equal(payload.upload.credentialName, "Václav Codex")
-    assert.equal(payload.upload.expiresAt, "2026-06-17T08:10:00.000Z")
+    assert.equal(payload.upload.expiresAt, "2026-06-17T08:20:00.000Z")
     assert.equal(
       payload.upload.uploadUrl,
       `http://127.0.0.1:${port}/admin/api/credentials/codex-auth-upload/${payload.upload.token}`,
@@ -1040,6 +1040,7 @@ test("Codex auth upload session returns a local helper command for the selected 
 
 test("Codex auth upload replaces the selected credential secret and rejects token reuse", async () => {
   const session = createSession()
+  let currentTime = new Date("2026-06-17T08:00:00.000Z")
   const codexAuthJson = JSON.stringify({
     auth_mode: "chatgpt",
     tokens: {
@@ -1110,7 +1111,7 @@ test("Codex auth upload replaces the selected credential secret and rejects toke
           },
         } as any,
         usage: {} as any,
-        now: () => new Date("2026-06-17T08:00:00.000Z"),
+        now: () => currentTime,
       }),
     }),
   )
@@ -1131,7 +1132,21 @@ test("Codex auth upload replaces the selected credential secret and rejects toke
     )
     assert.equal(sessionResponse.status, 200)
     const sessionPayload = await sessionResponse.json()
+    const expiringSessionResponse = await fetch(
+      `http://127.0.0.1:${port}/admin/api/credentials/cred_platform_codex_1/codex-auth-upload-session`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+      },
+    )
+    assert.equal(expiringSessionResponse.status, 200)
+    const expiringSessionPayload = await expiringSessionResponse.json()
+    assert.equal(sessionPayload.upload.expiresAt, "2026-06-17T08:20:00.000Z")
+    assert.equal(expiringSessionPayload.upload.expiresAt, "2026-06-17T08:20:00.000Z")
 
+    currentTime = new Date("2026-06-17T08:19:59.000Z")
     const uploadResponse = await fetch(sessionPayload.upload.uploadUrl, {
       method: "POST",
       headers: {
@@ -1176,6 +1191,14 @@ test("Codex auth upload replaces the selected credential secret and rejects toke
       },
       {
         actorUserId: "admin@example.test",
+        action: "credential.codex_auth_upload_session.create",
+        entityType: "credential",
+        entityId: "cred_platform_codex_1",
+        result: "ok",
+        summary: "Created Codex auth upload session for credential cred_platform_codex_1.",
+      },
+      {
+        actorUserId: "admin@example.test",
         action: "credential.codex_auth_upload",
         entityType: "credential",
         entityId: "cred_platform_codex_1",
@@ -1183,6 +1206,20 @@ test("Codex auth upload replaces the selected credential secret and rejects toke
         summary: "Uploaded Codex auth for credential cred_platform_codex_1.",
       },
     ])
+
+    currentTime = new Date("2026-06-17T08:20:00.000Z")
+    const expiredResponse = await fetch(expiringSessionPayload.upload.uploadUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        authJson: codexAuthJson,
+      }),
+    })
+
+    assert.equal(expiredResponse.status, 404)
+    assert.deepEqual(await expiredResponse.json(), { error: "codex_auth_upload_session_not_found" })
 
     const reusedResponse = await fetch(sessionPayload.upload.uploadUrl, {
       method: "POST",

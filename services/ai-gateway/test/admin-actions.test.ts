@@ -776,6 +776,7 @@ test("createDefaultAdminService uploads Codex auth through a one-time local help
   const secretReplacements: unknown[] = [];
   const reconnectCalls: string[] = [];
   const auditCalls: Array<{ action: string; entityId: string; result: string }> = [];
+  let currentTime = new Date("2026-06-17T08:00:00.000Z");
   const refreshedCredential = {
     ...createCredential("cred_codex_1", "healthy", { provider: "codex_oauth", activeLeases: 0 }),
     name: "Václav Codex",
@@ -849,7 +850,7 @@ test("createDefaultAdminService uploads Codex auth through a one-time local help
         return [];
       },
     },
-    now: () => new Date("2026-06-17T08:00:00.000Z"),
+    now: () => currentTime,
   } as any);
   const freshAuthJson = createCodexAuthJson("fresh-refresh-token");
 
@@ -859,13 +860,21 @@ test("createDefaultAdminService uploads Codex auth through a one-time local help
     { origin: "https://ai.veslo.work" },
     "admin@example.test",
   );
+  const expiringSessionPayload = await (service as any).createCodexAuthUploadSession(
+    "admin-token",
+    "cred_codex_1",
+    { origin: "https://ai.veslo.work" },
+    "admin@example.test",
+  );
 
   assert.match(sessionPayload.upload.token, /^[a-f0-9]{48}$/);
   assert.equal(sessionPayload.upload.credentialName, "Václav Codex");
   assert.equal(sessionPayload.upload.uploadUrl, `https://ai.veslo.work/admin/api/credentials/codex-auth-upload/${sessionPayload.upload.token}`);
-  assert.equal(sessionPayload.upload.expiresAt, "2026-06-17T08:10:00.000Z");
+  assert.equal(sessionPayload.upload.expiresAt, "2026-06-17T08:20:00.000Z");
+  assert.equal(expiringSessionPayload.upload.expiresAt, "2026-06-17T08:20:00.000Z");
   assert.match(sessionPayload.command, /node scripts\/admin\/codex-auth-upload\.mjs/);
 
+  currentTime = new Date("2026-06-17T08:19:59.000Z");
   const result = await (service as any).uploadCodexAuth(sessionPayload.upload.token, {
     authJson: freshAuthJson,
   });
@@ -893,11 +902,23 @@ test("createDefaultAdminService uploads Codex auth through a one-time local help
       result: "ok",
     },
     {
+      action: "credential.codex_auth_upload_session.create",
+      entityId: "cred_codex_1",
+      result: "ok",
+    },
+    {
       action: "credential.codex_auth_upload",
       entityId: "cred_codex_1",
       result: "ok",
     },
   ]);
+  currentTime = new Date("2026-06-17T08:20:00.000Z");
+  await assert.rejects(
+    () => (service as any).uploadCodexAuth(expiringSessionPayload.upload.token, {
+      authJson: freshAuthJson,
+    }),
+    /codex_auth_upload_session_not_found/,
+  );
   await assert.rejects(
     () => (service as any).uploadCodexAuth(sessionPayload.upload.token, {
       authJson: freshAuthJson,
