@@ -24,6 +24,10 @@ const profile: ManagedAiAccessProfile = {
   userId: "user-1",
   providerId: "codex_oauth",
   effectiveModel: model,
+  selectableModels: [{
+    model,
+    capabilityStatus: "known",
+  }],
   updatedAt: "2026-07-01T10:00:00.000Z",
 };
 
@@ -488,6 +492,53 @@ test("runtime config sync changes semantic flight keys and retries a failed read
   );
 });
 
+test("a proof-cache profile cannot patch managed runtime config before its live roster arrives", async () => {
+  const client = createVesloClient();
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const proofProfile: ManagedAiAccessProfile = {
+    userId: profile.userId,
+    providerId: profile.providerId,
+    effectiveModel: profile.effectiveModel,
+    updatedAt: profile.updatedAt,
+  };
+  let currentProfile = proofProfile;
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    managedAiAccess: () => currentProfile,
+    recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+  }));
+
+  const proofOutcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-proof-profile",
+  });
+
+  assert.deepEqual(proofOutcome, { kind: "skipped-pending" });
+  assert.deepEqual(client.getConfigCalls, []);
+  assert.equal(client.patched.length, 0);
+  assert.ok(traces.some((entry) =>
+    entry.event === "managed-ai-config-sync:skip" &&
+    entry.payload.reason === "managed-access-profile-incomplete",
+  ));
+
+  currentProfile = profile;
+  const liveOutcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-live-profile",
+  });
+
+  assert.deepEqual(liveOutcome, { kind: "verified" });
+  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
+  assert.equal(client.patched.length, 1);
+  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-active", ifIdle: true }]);
+});
+
 test("a stale config sync cannot patch after a newer fingerprint completes", async () => {
   const client = createVesloClient();
   const firstRead = createDeferred<{ opencode?: Record<string, unknown> | null }>();
@@ -797,7 +848,7 @@ test("send preflight sync writes managed config for the snapshotted target works
   );
 });
 
-test("server-owned send freshness defers a reload after a patch", async () => {
+test("server-owned send freshness reloads after a patch before it verifies", async () => {
   const client = createVesloClient();
   const sync = createManagedAiRuntimeConfigSync(createOptions({
     vesloServerClient: () => client,
@@ -816,14 +867,11 @@ test("server-owned send freshness defers a reload after a patch", async () => {
   assert.deepEqual(outcome, { kind: "verified" });
   assert.deepEqual(client.getConfigCalls, ["server-resolved-exact"]);
   assert.equal(client.patched[0]?.workspaceId, "server-resolved-exact");
-  assert.deepEqual(client.reloadEngineCalls, []);
-  assert.deepEqual(sync.managedAiServerReloadPresentation(), {
-    kind: "pending",
-    workspaceId: "server-resolved-exact",
-  });
+  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "server-resolved-exact", ifIdle: true }]);
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
 });
 
-test("server send does not await a pending background reload when the config is already current", async () => {
+test("server send joins a pending background reload when the config is already current", async () => {
   const client = createVesloClient();
   let activeRun = true;
   const sync = createManagedAiRuntimeConfigSync(createOptions({
@@ -848,64 +896,95 @@ test("server send does not await a pending background reload when the config is 
   });
 
   assert.deepEqual(outcome, { kind: "verified" });
-  assert.deepEqual(client.reloadEngineCalls, []);
-  assert.deepEqual(sync.managedAiServerReloadPresentation(), {
-    kind: "pending",
-    workspaceId: "ws-active",
-  });
+  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-active", ifIdle: true }]);
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
 });
 
-test("a newer server config patch is reloaded after an older reload finishes", async () => {
+test("a managed profile change does not discard a pending server reload", async () => {
   const client = createVesloClient();
-  const firstReloadStarted = createDeferred<void>();
-  const firstReloadRelease = createDeferred<void>();
-  const secondPatchDone = createDeferred<void>();
-  let reloadCount = 0;
+  const effects: Array<() => void> = [];
+  const reloadStarted = createDeferred<void>();
+  const reloadRelease = createDeferred<void>();
   let currentProfile = profile;
   client.reloadEngine = async (workspaceId, options) => {
     client.reloadEngineCalls.push({ workspaceId, ifIdle: options?.ifIdle === true });
-    reloadCount += 1;
-    if (reloadCount === 1) {
-      firstReloadStarted.resolve();
-      await firstReloadRelease.promise;
-    }
+    reloadStarted.resolve();
+    await reloadRelease.promise;
     return { ok: true };
   };
-  const patchConfig = client.patchConfig;
-  client.patchConfig = async (workspaceId, payload) => {
-    const result = await patchConfig(workspaceId, payload);
-    if (client.patched.length === 2) secondPatchDone.resolve();
-    return result;
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    effect: (fn) => effects.push(fn),
+    vesloServerClient: () => client,
+    managedAiAccess: () => currentProfile,
+  }));
+  const trackingEffect = effects[0];
+  assert.ok(trackingEffect, "config tracking effect should be registered");
+  trackingEffect();
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  await reloadStarted.promise;
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), {
+    kind: "reloading",
+    workspaceId: "ws-active",
+  });
+
+  currentProfile = {
+    ...profile,
+    effectiveModel: { providerID: "codex_oauth", modelID: "gpt-5.1" },
+    selectableModels: [{
+      model: { providerID: "codex_oauth", modelID: "gpt-5.1" },
+      capabilityStatus: "known",
+    }],
+  };
+  trackingEffect();
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), {
+    kind: "reloading",
+    workspaceId: "ws-active",
+  });
+
+  reloadRelease.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
+});
+
+test("a newer server config patch receives its own reload acknowledgement", async () => {
+  const client = createVesloClient();
+  let currentProfile = profile;
+  client.reloadEngine = async (workspaceId, options) => {
+    client.reloadEngineCalls.push({ workspaceId, ifIdle: options?.ifIdle === true });
+    return { ok: true };
   };
   const sync = createManagedAiRuntimeConfigSync(createOptions({
     vesloServerClient: () => client,
     managedAiAccess: () => currentProfile,
   }));
-  const first = sync.prepareManagedAiRuntimeConfigForServerSend({
+  const first = await sync.prepareManagedAiRuntimeConfigForServerSend({
     workspaceId: "ws-active",
     workspaceRoot: "/repo",
     directory: "/repo",
     serverWorkspaceId: "ws-active",
     traceId: "send-trace-first-reload",
   });
-  await firstReloadStarted.promise;
 
   currentProfile = {
     ...profile,
     effectiveModel: { providerID: "codex_oauth", modelID: "gpt-5.1" },
+    selectableModels: [{
+      model: { providerID: "codex_oauth", modelID: "gpt-5.1" },
+      capabilityStatus: "known",
+    }],
   };
-  const second = sync.prepareManagedAiRuntimeConfigForServerSend({
+  const second = await sync.prepareManagedAiRuntimeConfigForServerSend({
     workspaceId: "ws-active",
     workspaceRoot: "/repo",
     directory: "/repo",
     serverWorkspaceId: "ws-active",
     traceId: "send-trace-second-reload",
   });
-  await secondPatchDone.promise;
-  firstReloadRelease.resolve();
 
-  assert.deepEqual(await first, { kind: "verified" });
-  assert.deepEqual(await second, { kind: "verified" });
+  assert.deepEqual(first, { kind: "verified" });
+  assert.deepEqual(second, { kind: "verified" });
   assert.equal(client.patched.length, 2);
   assert.deepEqual(client.reloadEngineCalls, [
     { workspaceId: "ws-active", ifIdle: true },
@@ -947,11 +1026,17 @@ test("background completed-intent skip cannot cancel an in-flight server send fr
   assert.deepEqual(await send, { kind: "verified" });
 });
 
-test("server-owned send freshness leaves guarded reload conflicts for the background retry", async () => {
+test("server-owned send freshness retries a pending reload even when config is unchanged", async () => {
   const client = createVesloClient();
   const genericReloads: string[] = [];
-  client.reloadEngine = async () => {
-    throw new VesloServerError(409, "reload_blocked_active_runs", "Another run is active");
+  let reloadAttempts = 0;
+  client.reloadEngine = async (workspaceId, options) => {
+    client.reloadEngineCalls.push({ workspaceId, ifIdle: options?.ifIdle === true });
+    reloadAttempts += 1;
+    if (reloadAttempts === 1) {
+      throw new VesloServerError(409, "reload_blocked_active_runs", "Another run is active");
+    }
+    return { ok: true };
   };
   const sync = createManagedAiRuntimeConfigSync(createOptions({
     vesloServerClient: () => client,
@@ -959,7 +1044,7 @@ test("server-owned send freshness leaves guarded reload conflicts for the backgr
     markReloadRequired: (_scope, change) => genericReloads.push(change.action),
   }));
 
-  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+  const first = await sync.prepareManagedAiRuntimeConfigForServerSend({
     workspaceId: "ws-active",
     workspaceRoot: "/repo",
     directory: "/repo",
@@ -967,12 +1052,71 @@ test("server-owned send freshness leaves guarded reload conflicts for the backgr
     traceId: "send-trace-reload-blocked",
   });
 
-  assert.deepEqual(outcome, { kind: "verified" });
+  assert.deepEqual(first, { kind: "verified-reload-required" });
+  const second = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "server-resolved-exact",
+    traceId: "send-trace-reload-retry",
+  });
+
+  assert.deepEqual(second, { kind: "verified" });
   assert.deepEqual(genericReloads, []);
-  assert.deepEqual(client.reloadEngineCalls, []);
-  assert.deepEqual(sync.managedAiServerReloadPresentation(), {
-    kind: "pending",
-    workspaceId: "server-resolved-exact",
+  assert.equal(client.patched.length, 1);
+  assert.deepEqual(client.reloadEngineCalls, [
+    { workspaceId: "server-resolved-exact", ifIdle: true },
+    { workspaceId: "server-resolved-exact", ifIdle: true },
+  ]);
+  assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
+});
+
+test("reload failure traces retain safe server error classification", async () => {
+  const client = createVesloClient();
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  client.reloadEngine = async (workspaceId, options) => {
+    client.reloadEngineCalls.push({ workspaceId, ifIdle: options?.ifIdle === true });
+    throw new VesloServerError(502, "opencode_reload_failed", "OpenCode reload failed", {
+      status: 404,
+      requestId: "reload-request-123",
+    });
+  };
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+  }));
+
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-trace-reload-error",
+  });
+
+  assert.deepEqual(outcome, { kind: "failed", error: "OpenCode reload failed" });
+  const reloadError = traces.find(({ event, payload }) =>
+    event === "managed-ai-config-sync:engine-reload" && payload.phase === "error",
+  );
+  const reloadErrorDetails = reloadError?.payload;
+  assert.deepEqual({
+    traceId: reloadErrorDetails?.traceId,
+    ifIdle: reloadErrorDetails?.ifIdle,
+    source: reloadErrorDetails?.source,
+    phase: reloadErrorDetails?.phase,
+    serverStatus: reloadErrorDetails?.serverStatus,
+    serverCode: reloadErrorDetails?.serverCode,
+    upstreamStatus: reloadErrorDetails?.upstreamStatus,
+    serverRequestId: reloadErrorDetails?.serverRequestId,
+  }, {
+    traceId: "send-trace-reload-error",
+    ifIdle: true,
+    source: "send-preflight",
+    phase: "error",
+    serverStatus: 502,
+    serverCode: "opencode_reload_failed",
+    upstreamStatus: 404,
+    serverRequestId: "reload-request-123",
   });
 });
 

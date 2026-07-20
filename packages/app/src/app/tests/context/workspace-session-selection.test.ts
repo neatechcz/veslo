@@ -20,6 +20,38 @@ const memoryStorage = (initial?: Record<string, string>) => {
   };
 };
 
+test("terminal run release removes only its own abort and lifecycle aliases", () => {
+  createRoot((dispose) => {
+    try {
+      const selection = createWorkspaceSessionSelection({
+        activeWorkspaceId: () => "ws-a",
+        workspaces: () => [],
+      });
+      const scope = {
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        opencodeSessionId: "ses-a",
+        uiSessionId: "ui-a",
+      };
+
+      selection.rememberLatestConversationRunId({ ...scope, runId: "run-old" });
+      selection.rememberLatestConversationLifecycleRunId({ ...scope, runId: "run-old" });
+      selection.rememberLatestConversationRunId({ ...scope, runId: "run-new" });
+      selection.rememberLatestConversationLifecycleRunId({ ...scope, runId: "run-new" });
+      selection.clearLatestConversationRunIds({ ...scope, runId: "run-old" });
+
+      assert.equal(selection.resolveLatestConversationRunId(scope), "run-new");
+      assert.equal(selection.resolveLatestConversationLifecycleRunId(scope), "run-new");
+
+      selection.clearLatestConversationRunIds({ ...scope, runId: "run-new" });
+      assert.equal(selection.resolveLatestConversationRunId(scope), "");
+      assert.equal(selection.resolveLatestConversationLifecycleRunId(scope), "");
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("browse-only scoped session does not replace the active workspace last session", () => {
   createRoot((dispose) => {
     try {

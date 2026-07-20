@@ -87,6 +87,8 @@ describe("workspace-config-owner", () => {
   test("builds reload URL and auth header without leaking credentials into URL", () => {
     expect(buildOpencodeReloadUrl("http://127.0.0.1:4096/root", "C:/repo"))
       .toBe("http://127.0.0.1:4096/instance/dispose?directory=C%3A%2Frepo");
+    expect(buildOpencodeReloadUrl("http://127.0.0.1:4096/workspace/ws-local/opencode", "C:/repo"))
+      .toBe("http://127.0.0.1:4096/workspace/ws-local/opencode/instance/dispose?directory=C%3A%2Frepo");
     expect(() => buildOpencodeReloadUrl("not a url")).toThrow(ApiError);
 
     expect(buildOpencodeAuthHeader({

@@ -86,17 +86,19 @@ function managedAiRuntimeAuthPrimeDiagnostic(
   };
 }
 
-function managedAiRuntimeAuthPrimeRequestFailureDetails(error: unknown): Record<string, unknown> {
+function vesloServerErrorTraceDetails(error: unknown): Record<string, unknown> {
   if (!(error instanceof VesloServerError)) return {};
 
   const details = error.details && typeof error.details === "object"
     ? error.details as Record<string, unknown>
     : {};
   const requestId = typeof details.requestId === "string" ? details.requestId.trim() : "";
+  const upstreamStatus = typeof details.status === "number" ? details.status : null;
 
   return {
     serverStatus: error.status,
     serverCode: error.code,
+    ...(upstreamStatus !== null ? { upstreamStatus } : {}),
     ...(requestId ? { serverRequestId: requestId } : {}),
   };
 }
@@ -252,6 +254,10 @@ export type ManagedAiRuntimeConfigSync = {
 };
 
 type ManagedAiConfigSyncReason = "active-workspace" | "runtime-start" | "send-preflight";
+
+type VesloServerConfigSyncResult =
+  | { kind: "unchanged" }
+  | { kind: "patched" };
 
 export type ManagedAiConfigSyncOutcome =
   | { kind: "verified" }
@@ -441,6 +447,7 @@ export function createManagedAiRuntimeConfigSync(
   let managedAiConfigSyncFlightSequence = 0;
   let inactiveWorkspaceBaseUrlHealGeneration = 0;
   let lastManagedAiConfigTrackingResetKey = "";
+  let lastServerReloadOwnerKey = "";
   let lastManagedAiAuthPrimeResetKey = "";
   const [
     lastManagedAiConfigAppliedForServerToken,
@@ -469,6 +476,9 @@ export function createManagedAiRuntimeConfigSync(
     setLastManagedAiConfigAppliedForServerToken("");
     lastKnownConfigSnapshotByWs.clear();
     inactiveWorkspaceBaseUrlHealedFor.clear();
+  };
+
+  const clearPendingServerReloadTracking = () => {
     pendingServerReloads.clear();
     if (serverReloadRetryTimer !== null && typeof window !== "undefined") {
       window.clearTimeout(serverReloadRetryTimer);
@@ -949,7 +959,7 @@ export function createManagedAiRuntimeConfigSync(
         const diagnostic = rememberRuntimeAuthorizationPrimeDiagnostic(
           managedAiRuntimeAuthPrimeDiagnostic("request-failed", {
             message: error instanceof Error ? error.message : deps.safeStringify(error),
-            ...managedAiRuntimeAuthPrimeRequestFailureDetails(error),
+            ...vesloServerErrorTraceDetails(error),
           }),
         );
         deps.recordManagedAiWorkflowTrace("managed-ai-runtime-auth-prime:error", {
@@ -1145,6 +1155,18 @@ export function createManagedAiRuntimeConfigSync(
     const root = syncPreflight.workspaceRoot;
     const nextModel = deps.defaultModel();
     const managedProfile = deps.managedAiAccess();
+    if (managedProfile && !Array.isArray(managedProfile.selectableModels)) {
+      // Desktop proof cache deliberately stores only non-sensitive model
+      // metadata. It can inform the UI, but it is not complete enough to own
+      // the managed provider roster written into OpenCode config.
+      deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:skip", {
+        workspaceId: workspace.id || null,
+        targetWorkspaceId: targetWorkspaceId || null,
+        syncReason: options?.reason ?? null,
+        reason: "managed-access-profile-incomplete",
+      });
+      return { kind: "skipped-pending" };
+    }
     const managedAccessBusy = managedProfile ? false : deps.managedAiAccessBusy();
     const managedAccessError = managedProfile ? null : deps.managedAiAccessError();
     const vesloClient = deps.vesloServerClient();
@@ -1263,7 +1285,7 @@ export function createManagedAiRuntimeConfigSync(
       }
 
       if (canUseVesloServerBase && vesloWorkspaceId) {
-        const configPatched = await syncVesloServerConfig({
+        const configSyncResult = await syncVesloServerConfig({
           vesloClient: vesloClient!,
           vesloWorkspaceId,
           managedProfile,
@@ -1277,7 +1299,8 @@ export function createManagedAiRuntimeConfigSync(
           configSyncTracePayload,
           isCurrentManagedAiConfigSync,
         });
-        if (serverSendTarget && configPatched && !pendingServerReloads.has(vesloWorkspaceId)) {
+        if (!isCurrentManagedAiConfigSync()) return { kind: "cancelled" };
+        if (serverSendTarget && configSyncResult.kind === "patched" && !pendingServerReloads.has(vesloWorkspaceId)) {
           // A submit needs an acknowledgement even when the local engine snapshot
           // still says stopped: the resolved server workspace may be about to run.
           pendingServerReloads.set(vesloWorkspaceId, {
@@ -1286,15 +1309,14 @@ export function createManagedAiRuntimeConfigSync(
           });
         }
         if (serverSendTarget && pendingServerReloads.has(vesloWorkspaceId)) {
-          // A reload is operationally useful, but it must not turn a local
-          // configuration acknowledgement into a failed user submit. The
-          // pending entry is retried after the active send/run settles.
-          deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:engine-reload", {
-            ...configSyncTracePayload,
-            ifIdle: true,
+          const reloaded = await reloadPendingServerConfig({
+            workspaceId: vesloWorkspaceId,
+            client: vesloClient!,
+            traceContext: configSyncTracePayload,
             source: "send-preflight",
-            phase: "deferred",
           });
+          if (!isCurrentManagedAiConfigSync()) return { kind: "cancelled" };
+          if (!reloaded) return { kind: "verified-reload-required" };
         }
         return isCurrentManagedAiConfigSync() ? { kind: "verified" } : { kind: "cancelled" };
       }
@@ -1319,6 +1341,7 @@ export function createManagedAiRuntimeConfigSync(
       const message = error instanceof Error ? error.message : deps.safeStringify(error);
       deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:error", {
         ...configSyncTracePayload,
+        ...vesloServerErrorTraceDetails(error),
         message,
       });
       deps.setError(deps.addOpencodeCacheHint(message));
@@ -1572,6 +1595,7 @@ export function createManagedAiRuntimeConfigSync(
           setServerReloadPresentation({ kind: "pending", workspaceId: input.workspaceId });
           deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:engine-reload", {
             ...traceContext,
+            ...vesloServerErrorTraceDetails(error),
             ifIdle: true,
             source: input.source,
             phase: "blocked",
@@ -1582,6 +1606,7 @@ export function createManagedAiRuntimeConfigSync(
         setServerReloadPresentation({ kind: "pending", workspaceId: input.workspaceId });
         deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:engine-reload", {
           ...traceContext,
+          ...vesloServerErrorTraceDetails(error),
           ifIdle: true,
           source: input.source,
           phase: "error",
@@ -1696,9 +1721,9 @@ export function createManagedAiRuntimeConfigSync(
     providerRoutingReloadKey: string;
     configSyncTracePayload: Record<string, unknown>;
     isCurrentManagedAiConfigSync: () => boolean;
-  }): Promise<boolean> {
+  }): Promise<VesloServerConfigSyncResult> {
     const config = await input.vesloClient.getConfig(input.vesloWorkspaceId);
-    if (!input.isCurrentManagedAiConfigSync()) return false;
+    if (!input.isCurrentManagedAiConfigSync()) return { kind: "unchanged" };
     const readTimestamp = new Date(now()).toISOString();
     const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
     deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current", {
@@ -1765,13 +1790,13 @@ export function createManagedAiRuntimeConfigSync(
         if (!cachedSnapshotMatches && redactedServerConfigMatches) {
           lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
         }
-        return false;
+        return { kind: "unchanged" };
       }
       if (managedDecision.type !== "write-managed-config") {
         lastKnownConfigSnapshotByWs.set(wsKey, desiredSnapshot);
-        return false;
+        return { kind: "unchanged" };
       }
-      if (!input.isCurrentManagedAiConfigSync()) return false;
+      if (!input.isCurrentManagedAiConfigSync()) return { kind: "unchanged" };
       await input.vesloClient.patchConfig(input.vesloWorkspaceId, {
         opencode: JSON.parse(content) as Record<string, unknown>,
       });
@@ -1787,7 +1812,7 @@ export function createManagedAiRuntimeConfigSync(
         traceContext: input.configSyncTracePayload,
       });
       maybeMarkManagedConfigApplied(input.providerRoutingReloadKey, true);
-      return true;
+      return { kind: "patched" };
     }
 
     const preserveManagedConfig = shouldPreserveManagedAiConfig({
@@ -1808,8 +1833,8 @@ export function createManagedAiRuntimeConfigSync(
       shouldPreserveManagedConfig: preserveManagedConfig,
       defaultModelAlreadyCurrent,
     });
-    if (defaultModelDecision.type !== "write-default-model") return false;
-    if (!input.isCurrentManagedAiConfigSync()) return false;
+    if (defaultModelDecision.type !== "write-default-model") return { kind: "unchanged" };
+    if (!input.isCurrentManagedAiConfigSync()) return { kind: "unchanged" };
     await input.vesloClient.patchConfig(input.vesloWorkspaceId, {
       opencode: { model: formatModelRef(input.nextModel) },
     });
@@ -1818,7 +1843,7 @@ export function createManagedAiRuntimeConfigSync(
       vesloClient: input.vesloClient,
       traceContext: input.configSyncTracePayload,
     });
-    return true;
+    return { kind: "patched" };
   }
 
   async function syncProjectConfig(input: {
@@ -2073,11 +2098,18 @@ export function createManagedAiRuntimeConfigSync(
   effect(() => {
     const profile = deps.managedAiAccess();
     const vesloClient = deps.vesloServerClient();
-    const nextConfigKey = JSON.stringify({
-      managedAccess: managedAiAccessConfigFingerprint(profile),
+    const nextServerReloadOwnerKey = JSON.stringify({
       serverStatus: deps.vesloServerStatus(),
       serverBaseUrl: normalizeManagedAiRouteFingerprintUrl(vesloClient?.baseUrl),
       serverTokenHash: hashRuntimeAuthorizationCachePart(vesloClient?.token),
+    });
+    if (nextServerReloadOwnerKey !== lastServerReloadOwnerKey) {
+      lastServerReloadOwnerKey = nextServerReloadOwnerKey;
+      clearPendingServerReloadTracking();
+    }
+    const nextConfigKey = JSON.stringify({
+      managedAccess: managedAiAccessConfigFingerprint(profile),
+      serverReloadOwnerKey: nextServerReloadOwnerKey,
     });
     if (nextConfigKey !== lastManagedAiConfigTrackingResetKey) {
       lastManagedAiConfigTrackingResetKey = nextConfigKey;

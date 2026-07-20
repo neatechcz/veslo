@@ -36,6 +36,26 @@ test("release prepare pins SOURCE_DATE_EPOCH before release review", () => {
   assert.match(script, /node scripts\/release\/review\.mjs --strict/);
 });
 
+test("release prepare refreshes desktop sidecar metadata before release review", () => {
+  const scriptPath = resolve(import.meta.dirname, "./prepare.mjs");
+  const script = readFileSync(scriptPath, "utf8");
+
+  const refresh = script.indexOf('pnpm --filter @neatech/veslo prepare:sidecar');
+  const review = script.indexOf('node scripts/release/review.mjs --strict');
+
+  assert.ok(refresh >= 0, "release prepare must refresh desktop sidecar metadata");
+  assert.ok(refresh < review, "desktop sidecar metadata must be refreshed before release review");
+});
+
+test("production workflow promotes a dispatched non-draft source release after all assets", () => {
+  const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml");
+  const workflow = readFileSync(workflowPath, "utf8");
+  const publishRelease = workflow.slice(workflow.indexOf("  publish-release:"));
+
+  assert.match(publishRelease, /github\.event_name == 'workflow_dispatch'/);
+  assert.match(publishRelease, /needs\.resolve-release\.outputs\.draft == 'false'/);
+});
+
 test("release workflow does not publish Linux AUR packages", () => {
   const workflowPath = resolve(import.meta.dirname, "../../.github/workflows/release-macos-aarch64.yml");
   const workflow = readFileSync(workflowPath, "utf8");

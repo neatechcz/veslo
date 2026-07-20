@@ -32,7 +32,11 @@ import { EnginePool, type EngineProcess } from "./engine-pool.js";
 import { SharedOpenCodeEngine } from "./shared-opencode-engine.js";
 import { resolveOpencodeProxyTarget } from "./opencode-proxy-target.js";
 import { deploymentServiceUrl } from "./deployment-endpoints.js";
-import { probeOpenCodeProjectApi } from "./opencode-project-api.js";
+import {
+  createOpenCodeMcpRuntimePrimeFlights,
+  observeOpenCodeMcpRuntimePrime,
+  probeOpenCodeProjectApi,
+} from "./opencode-project-api.js";
 import { proxyToEngine } from "./router-proxy.js";
 import { classifySharedProxyUpstreamError } from "./proxy-upstream-health-policy.js";
 import { createRunStore, type RunEngineOwner, type RunKind, type RunRecord } from "./run-store.js";
@@ -4621,6 +4625,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           },
         })
       : null;
+  const sharedMcpRuntimePrimeFlights = createOpenCodeMcpRuntimePrimeFlights();
   const sharedEngineLivenessTimer = sharedOpenCodeEngine
     ? setInterval(() => {
         void sharedOpenCodeEngine.checkHealth("liveness-timer").catch((error) => {
@@ -5048,6 +5053,40 @@ async function runRouterDaemon(args: ParsedArgs) {
         state.activeId = workspace.id;
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
+        let sharedMcpPrime: { workspaceId: string; workspacePath: string } | null = null;
+        if (
+          workspace.workspaceType === "local" &&
+          workspace.path &&
+          engineTopology.mode === "shared-unsandboxed"
+        ) {
+          const configSyncStartedAt = Date.now();
+          try {
+            // A shared engine starts with its own scratch directory. Mirror the
+            // active workspace before it receives the first prompt, otherwise
+            // OpenCode discovers and starts local MCP commands on that prompt's
+            // critical path.
+            await syncWorkspaceOpencodeConfigToConfigDir(
+              workspace.path,
+              join(dataDir, "opencode-config", "shared-unsandboxed"),
+            );
+            sharedMcpPrime = { workspaceId: workspace.id, workspacePath: workspace.path };
+            traceRuntime("orchestrator:activate-shared-config-sync:done", {
+              workspaceId: workspace.id,
+              workspacePath: workspace.path,
+              durationMs: Date.now() - configSyncStartedAt,
+            });
+          } catch (error) {
+            // Activation must retain its existing behavior if this optional
+            // latency warm-up cannot mirror a user-owned config. The prompt
+            // proxy remains the correctness fallback and will sync it itself.
+            traceRuntime("orchestrator:activate-shared-config-sync:error", {
+              workspaceId: workspace.id,
+              workspacePath: workspace.path,
+              durationMs: Date.now() - configSyncStartedAt,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
         if (workspace.workspaceType === "local" && workspace.path) {
           const ensureStartedAt = Date.now();
           traceRuntime("orchestrator:activate-ensure:start", {
@@ -5070,6 +5109,26 @@ async function runRouterDaemon(args: ParsedArgs) {
               childKind: ensured.childKind ?? "direct",
               durationMs: Date.now() - ensureStartedAt,
             });
+            if (sharedMcpPrime && engineTopology.mode === "shared-unsandboxed") {
+              const prime = sharedMcpPrime;
+              const flight = sharedMcpRuntimePrimeFlights.start({
+                workspaceId: prime.workspaceId,
+                baseUrl: ensured.baseUrl,
+                directory: prime.workspacePath,
+                headers: authHeaders,
+              });
+              if (flight.owner) {
+                void flight.promise.then((result) => {
+                  traceRuntime("orchestrator:activate-mcp-prime:done", {
+                    workspaceId: prime.workspaceId,
+                    workspacePath: prime.workspacePath,
+                    status: result.status ?? null,
+                    ok: result.ok,
+                    error: result.error ?? null,
+                  });
+                });
+              }
+            }
             persistEnginesSnapshot();
           } catch (err) {
             const detail = err instanceof Error ? err.message : String(err);
@@ -5413,6 +5472,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
         const engine = proxyTarget.engine;
+        const restPath = "/" + parts.slice(3).join("/");
         if (conversationRunId && proxyMethod !== "GET" && proxyMethod !== "HEAD") {
           const ownerId = engineTopology.mode === "shared-unsandboxed" ? "shared-unsandboxed" : ws.id;
           const owner = runEngineOwnerFromEngine(ownerId, engine);
@@ -5483,7 +5543,38 @@ async function runRouterDaemon(args: ParsedArgs) {
           });
         }
 
-        const restPath = "/" + parts.slice(3).join("/");
+        if (
+          engineTopology.mode === "shared-unsandboxed" &&
+          proxyMethod === "POST" &&
+          /\/prompt_async\/?$/.test(restPath)
+        ) {
+          const prime = sharedMcpRuntimePrimeFlights.join(ws.id);
+          if (prime) {
+            const primeStartedAt = Date.now();
+            traceRuntime("orchestrator:proxy-mcp-prime-background:start", {
+              traceId: sendTraceId || null,
+              workspaceId: ws.id,
+              workspacePath: ws.path,
+            });
+            // MCP warm-up is an optional latency optimization. Awaiting it here
+            // turns a background GET /mcp into an artificial prompt admission
+            // gate, so the request must proceed independently.
+            observeOpenCodeMcpRuntimePrime(prime, (result) => {
+              const payload = {
+                traceId: sendTraceId || null,
+                workspaceId: ws.id,
+                workspacePath: ws.path,
+                status: result.status ?? null,
+                ok: result.ok,
+                error: result.error ?? null,
+                durationMs: Date.now() - primeStartedAt,
+              };
+              traceRuntime("orchestrator:proxy-mcp-prime-background:done", payload);
+              writeSendWorkflowTrace("orchestrator:proxy-mcp-prime-background:done", payload);
+            });
+          }
+        }
+
         const pathMapping: EnginePathMapping = {
           backend: resolveEnginePathMappingBackend({
             configuredBackend: configuredSandboxBackend,

@@ -1523,6 +1523,27 @@ test("managed server submit blocks before auth prime when guarded config reload 
   assert.ok(!calls.some((call) => call.startsWith("submitConversation:")));
 });
 
+test("managed server submit preserves the draft path while the live model roster is pending", async () => {
+  const { service, calls } = createService({
+    managedAiAccess: { providerId: "codex_oauth", defaultModel: { modelID: "gpt-5.5" } },
+    managedAiConfigFreshnessOutcome: "skipped-pending",
+  });
+
+  await assert.rejects(
+    service.submitConversationFromVesloWriteApi("app-ws", "/repo", {
+      clientMessageId: "msg-roster-pending",
+      origin: "session:normal",
+      target: { conversationId: "conv-a", opencodeSessionId: "open-a" },
+      draft: { mode: "prompt", text: "keep my draft", parts: [{ type: "text", text: "keep my draft" }] },
+    }),
+    /configuration freshness is not ready/,
+  );
+
+  assert.ok(calls.includes("prepareManagedAiRuntimeConfigForServerSend"));
+  assert.ok(!calls.some((call) => call.startsWith("ensureManagedAiRuntimeAuthorizationForSend:")));
+  assert.ok(!calls.some((call) => call.startsWith("submitConversation:")));
+});
+
 test("conversation submit boundary injects directory and preserves composer send intent", async () => {
   const { service, submitConversationCalls, runtimeAuthorizationCalls } = createService();
 

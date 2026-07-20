@@ -210,6 +210,10 @@ export function createSessionStore(options: {
     connectionSnapshot?: Record<string, string | null | undefined> | null;
   };
   onConversationRunBecameActive?: (scope: SessionLifecycleRecoveryScope) => void;
+  onConversationRunTerminal?: (
+    scope: SessionLifecycleRecoveryScope,
+    status: SessionLifecycleRecoveryStatus,
+  ) => void;
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
@@ -915,6 +919,7 @@ export function createSessionStore(options: {
           },
           onConversationRunTerminal: (scope, status) => {
             const key = terminalDeliveryKeyForScope(scope);
+            options.onConversationRunTerminal?.(scope, status);
             conversationRunOwnership.beginTerminal(scope);
             terminalDeliveryCoordinator.confirmTerminal(key, () => {
               untrack(() => {

@@ -1542,7 +1542,8 @@ jobs:
       - publish-npm
     if: |
       always() &&
-      needs.resolve-release.outputs.draft == 'true' &&
+      github.event_name == 'workflow_dispatch' &&
+      needs.resolve-release.outputs.draft == 'false' &&
       needs.resolve-release.result == 'success' &&
       needs.verify-release.result == 'success' &&
       (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&

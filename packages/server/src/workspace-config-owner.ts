@@ -156,7 +156,14 @@ export async function resolveConversationReadDirectory(
 export function buildOpencodeReloadUrl(baseUrl: string, directory?: string | null): string {
   try {
     const url = new URL(baseUrl);
-    url.pathname = "/instance/dispose";
+    // Desktop workspaces use the orchestrator's per-workspace OpenCode mount.
+    // Reload must travel through that mount too; replacing the pathname with a
+    // root-level endpoint would target the orchestrator itself rather than the
+    // workspace engine.
+    const normalizedPathname = url.pathname.replace(/\/+$/, "");
+    url.pathname = /^\/workspace\/[^/]+\/opencode$/i.test(normalizedPathname)
+      ? `${normalizedPathname}/instance/dispose`
+      : "/instance/dispose";
     url.search = "";
     if (directory) {
       url.searchParams.set("directory", directory);
