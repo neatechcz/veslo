@@ -852,6 +852,7 @@ export default function App() {
     resolveLatestConversationRunId,
     rememberLatestConversationLifecycleRunId,
     resolveLatestConversationLifecycleRunId,
+    clearLatestConversationRunIds,
     setSessionBrowseScope,
     resolveWorkspaceRootForConversationScope,
     rememberConversationScopesFromSessions,
@@ -1115,6 +1116,15 @@ export default function App() {
       };
       rememberLatestConversationRunId(input);
       rememberLatestConversationLifecycleRunId(input);
+    },
+    onConversationRunTerminal: (scope) => {
+      clearLatestConversationRunIds({
+        workspaceId: scope.workspaceId,
+        conversationId: scope.conversationId,
+        opencodeSessionId: scope.opencodeSessionId,
+        uiSessionId: scope.sessionId,
+        runId: scope.runId,
+      });
     },
     selectedSessionId,
     setSelectedSessionId,

@@ -316,6 +316,17 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     return "";
   };
 
+  const clearConversationRunId = (store: Map<string, string>, input: ConversationRunIdInput) => {
+    const runId = input.runId?.trim();
+    if (!runId) return;
+    for (const id of [input.conversationId, input.opencodeSessionId, input.uiSessionId]) {
+      const key = id ? conversationRunScopeKey(input.workspaceId, id) : "";
+      // A later run may already have claimed one of these aliases. Only release
+      // the terminal run that originally owned it.
+      if (key && store.get(key) === runId) store.delete(key);
+    }
+  };
+
   const rememberLatestConversationRunId = (input: ConversationRunIdInput) => {
     rememberConversationRunId(latestConversationRunIdByScope, input);
   };
@@ -329,6 +340,11 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
 
   const resolveLatestConversationLifecycleRunId = (input: ConversationRunIdScopeInput) =>
     resolveConversationRunId(latestConversationLifecycleRunIdByScope, input);
+
+  const clearLatestConversationRunIds = (input: ConversationRunIdInput) => {
+    clearConversationRunId(latestConversationRunIdByScope, input);
+    clearConversationRunId(latestConversationLifecycleRunIdByScope, input);
+  };
 
   const setSessionBrowseScope = (scope: SessionBrowseScope) => {
     const sessionId = scope.sessionId.trim();
@@ -602,6 +618,7 @@ export function createWorkspaceSessionSelection(options: WorkspaceSessionSelecti
     resolveLatestConversationRunId,
     rememberLatestConversationLifecycleRunId,
     resolveLatestConversationLifecycleRunId,
+    clearLatestConversationRunIds,
     setSessionBrowseScope,
     resolveWorkspaceRootForConversationScope,
     rememberConversationScopesFromSessions,
