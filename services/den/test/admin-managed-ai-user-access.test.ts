@@ -308,7 +308,7 @@ test("GET /admin/api/users/:userId/ai-access does not mutate Codex assignments d
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access returns available codex credentials for the editor", async () => {
+test("PUT /admin/api/users/:userId/ai-access rejects legacy editor routing fields", async () => {
   const session = createSession()
   const app = express()
   app.use(express.json())
@@ -413,7 +413,7 @@ test("PUT /admin/api/users/:userId/ai-access returns available codex credentials
       }),
     })
     assert.equal(legacyResponse.status, 400)
-    assert.deepEqual(await legacyResponse.json(), { error: "user_model_policy_not_supported" })
+    assert.deepEqual(await legacyResponse.json(), { error: "user_ai_access_routing_not_supported" })
 
     const response = await fetch(`http://127.0.0.1:${port}/admin/api/users/user_123/ai-access`, {
       method: "PUT",
@@ -427,16 +427,8 @@ test("PUT /admin/api/users/:userId/ai-access returns available codex credentials
       }),
     })
 
-    assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), {
-      aiAccess: {
-        ...createAiAccess(),
-        userId: "user_123",
-        provider: "codex_oauth",
-        credentialId: "cred_codex_123",
-      },
-      availableCredentials: [{ id: "cred_codex_123", name: "Shared Codex A", provider: "codex_oauth" }],
-    })
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: "user_ai_access_routing_not_supported" })
   } finally {
     server.close()
     await once(server, "close")
@@ -648,7 +640,7 @@ test("GET /admin/api/users/:userId/ai-access hides Codex credentials when no sta
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy", async () => {
+test("PUT /admin/api/users/:userId/ai-access rejects client-supplied Anthropic routing", async () => {
   const session = createSession()
   const auditCalls: Array<{
     actorUserId?: string | null
@@ -733,32 +725,16 @@ test("PUT /admin/api/users/:userId/ai-access persists the admin managed policy",
         }),
       })
 
-    assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), {
-      aiAccess: {
-        ...createAiAccess(),
-        userId: "user_123",
-        provider: "anthropic",
-        credentialId: "cred_anthropic_123",
-      },
-    })
-    assert.deepEqual(auditCalls, [
-      {
-        actorUserId: "admin@example.test",
-        action: "user.ai_access.update",
-        entityType: "user",
-        entityId: "user_123",
-        result: "ok",
-        summary: "Updated AI access for user user_123.",
-      },
-    ])
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: "user_ai_access_routing_not_supported" })
+    assert.deepEqual(auditCalls, [])
   } finally {
     server.close()
     await once(server, "close")
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", async () => {
+test("PUT /admin/api/users/:userId/ai-access rejects client-supplied Codex routing", async () => {
   const session = createSession()
   const app = express()
   app.use(express.json())
@@ -854,23 +830,15 @@ test("PUT /admin/api/users/:userId/ai-access accepts codex_oauth provider", asyn
       }),
     })
 
-    assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), {
-      aiAccess: {
-        ...createAiAccess(),
-        userId: "user_123",
-        provider: "codex_oauth",
-        credentialId: "cred_codex_123",
-      },
-      availableCredentials: [{ id: "cred_codex_123", name: "Shared Codex A", provider: "codex_oauth" }],
-    })
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: "user_ai_access_routing_not_supported" })
   } finally {
     server.close()
     await once(server, "close")
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access requires an OpenAI-compatible credential", async () => {
+test("PUT /admin/api/users/:userId/ai-access rejects client-supplied OpenAI-compatible provider", async () => {
   const session = createSession()
   const app = express()
   app.use(express.json())
@@ -936,7 +904,7 @@ test("PUT /admin/api/users/:userId/ai-access requires an OpenAI-compatible crede
 
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), {
-      error: "invalid_ai_access_credential_id",
+      error: "user_ai_access_routing_not_supported",
     })
   } finally {
     server.close()
@@ -944,7 +912,7 @@ test("PUT /admin/api/users/:userId/ai-access requires an OpenAI-compatible crede
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access accepts a healthy OpenAI-compatible credential", async () => {
+test("PUT /admin/api/users/:userId/ai-access rejects even healthy client-supplied credentials", async () => {
   const session = createSession()
   const app = express()
   app.use(express.json())
@@ -1026,20 +994,15 @@ test("PUT /admin/api/users/:userId/ai-access accepts a healthy OpenAI-compatible
       }),
     })
 
-    assert.equal(response.status, 200)
-    assert.deepEqual((await response.json()).aiAccess, {
-      ...createAiAccess(),
-      userId: "user_123",
-      provider: "openai_compatible",
-      credentialId: "cred_custom_1",
-    })
+    assert.equal(response.status, 400)
+    assert.deepEqual(await response.json(), { error: "user_ai_access_routing_not_supported" })
   } finally {
     server.close()
     await once(server, "close")
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access rejects credentials from the wrong provider", async () => {
+test("PUT /admin/api/users/:userId/ai-access rejects routing before provider credential validation", async () => {
   const session = createSession()
   const app = express()
   app.use(express.json())
@@ -1120,7 +1083,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects credentials from the wrong 
 
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), {
-      error: "invalid_ai_access_credential_id",
+      error: "user_ai_access_routing_not_supported",
     })
   } finally {
     server.close()
@@ -1128,7 +1091,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects credentials from the wrong 
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access rejects unhealthy OpenAI-compatible credentials", async () => {
+test("PUT /admin/api/users/:userId/ai-access rejects routing before credential health validation", async () => {
   const session = createSession()
   const app = express()
   app.use(express.json())
@@ -1203,7 +1166,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects unhealthy OpenAI-compatible
 
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), {
-      error: "invalid_ai_access_credential_id",
+      error: "user_ai_access_routing_not_supported",
     })
   } finally {
     server.close()
@@ -1211,7 +1174,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects unhealthy OpenAI-compatible
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access rejects exhausted codex_oauth credentials", async () => {
+test("PUT /admin/api/users/:userId/ai-access rejects routing before Codex capacity validation", async () => {
   const session = createSession()
   const app = express()
   app.use(express.json())
@@ -1314,7 +1277,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects exhausted codex_oauth crede
 
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), {
-      error: "ineligible_ai_access_credential_id",
+      error: "user_ai_access_routing_not_supported",
     })
   } finally {
     server.close()
@@ -1322,7 +1285,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects exhausted codex_oauth crede
   }
 })
 
-test("PUT /admin/api/users/:userId/ai-access rejects enabled codex_oauth without credentialId", async () => {
+test("PUT /admin/api/users/:userId/ai-access rejects provider fields regardless of credential presence", async () => {
   const session = createSession()
   const app = express()
   app.use(express.json())
@@ -1383,7 +1346,7 @@ test("PUT /admin/api/users/:userId/ai-access rejects enabled codex_oauth without
 
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), {
-      error: "invalid_ai_access_credential_id",
+      error: "user_ai_access_routing_not_supported",
     })
   } finally {
     server.close()
