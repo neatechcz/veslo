@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import test from "node:test"
+import { OrgMembershipTable, OrgTable, OrganizationDomainTable } from "../src/db/schema.js"
 import { OrganizationAdminRepositoryError } from "../src/org-admin/repository.js"
 
 Object.assign(process.env, {
@@ -11,6 +12,7 @@ Object.assign(process.env, {
 
 const {
   createEnsureSignupOrganization,
+  createSignupOrganizationPersistence,
   SignupOrganizationDomainConflictError,
 } = await import("../src/orgs.js")
 
@@ -109,6 +111,56 @@ test("signup organization bootstrap preserves a concurrent domain claim conflict
   )
 })
 
+test("signup organization persistence maps MySQL duplicate domain claims and rejects its transaction", async () => {
+  const inserts: string[] = []
+  let transactionRejected = false
+  const tx = {
+    insert(table: unknown) {
+      return {
+        async values() {
+          if (table === OrgTable) inserts.push("organization")
+          if (table === OrgMembershipTable) inserts.push("membership")
+          if (table === OrganizationDomainTable) {
+            inserts.push("domain")
+            throw { code: "ER_DUP_ENTRY" }
+          }
+        },
+      }
+    },
+  }
+  const database = {
+    async transaction<T>(callback: (activeTx: typeof tx) => Promise<T>) {
+      try {
+        return await callback(tx)
+      } catch (error) {
+        transactionRejected = true
+        throw error
+      }
+    },
+  }
+  const persist = createSignupOrganizationPersistence(database)
+
+  await assert.rejects(
+    persist({
+      orgId: "org_loser",
+      membershipId: "membership_loser",
+      domainId: "domain_loser",
+      userId: "user_loser",
+      name: "User Loser",
+      slug: "personal-org_lose",
+      domain: "team.example.com",
+    }),
+    (error) => {
+      assert.ok(error instanceof SignupOrganizationDomainConflictError)
+      assert.equal(error.domain, "team.example.com")
+      return true
+    },
+  )
+
+  assert.equal(transactionRejected, true)
+  assert.deepEqual(inserts, ["organization", "membership", "domain"])
+})
+
 test("production bootstrap wires organization, membership, domain, and trial through one transaction", async () => {
   const source = await readFile(new URL("../src/orgs.ts", import.meta.url), "utf8")
   const signupBootstrapStart = source.indexOf("export const ensureSignupOrganization")
@@ -116,7 +168,8 @@ test("production bootstrap wires organization, membership, domain, and trial thr
 
   const signupBootstrapSource = source.slice(signupBootstrapStart)
   assert.match(signupBootstrapSource, /createOrganizationMembershipDomainAndTrial/)
-  assert.match(signupBootstrapSource, /db\.transaction/)
+  assert.match(signupBootstrapSource, /createSignupOrganizationPersistence\(db\)/)
+  assert.match(signupBootstrapSource, /database\.transaction/)
   assert.match(signupBootstrapSource, /OrganizationDomainTable/)
   assert.match(signupBootstrapSource, /self_signup_enabled: true/)
   assert.match(signupBootstrapSource, /createDrizzleAutomaticOrganizationTrialStore\(tx\)/)

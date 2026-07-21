@@ -45,18 +45,20 @@ export function createEnsureDefaultOrg(deps: EnsureDefaultOrgDependencies) {
 
 export { SignupOrganizationDomainConflictError } from "./auth/signup-organization.js"
 
+type SignupOrganizationBootstrapInput = {
+  orgId: string
+  membershipId: string
+  domainId: string
+  userId: string
+  name: string
+  slug: string
+  domain: string
+}
+
 type EnsureSignupOrganizationDependencies = {
   createId(): string
   findExistingOrganizationId(userId: string): Promise<string | null>
-  createOrganizationMembershipDomainAndTrial(input: {
-    orgId: string
-    membershipId: string
-    domainId: string
-    userId: string
-    name: string
-    slug: string
-    domain: string
-  }): Promise<void>
+  createOrganizationMembershipDomainAndTrial(input: SignupOrganizationBootstrapInput): Promise<void>
 }
 
 export function createEnsureSignupOrganization(deps: EnsureSignupOrganizationDependencies) {
@@ -125,8 +127,12 @@ export const ensureDefaultOrg = createEnsureDefaultOrg({
 export const ensureSignupOrganization = createEnsureSignupOrganization({
   createId: randomUUID,
   findExistingOrganizationId,
-  async createOrganizationMembershipDomainAndTrial(input) {
-    await db.transaction(async (tx) => {
+  createOrganizationMembershipDomainAndTrial: createSignupOrganizationPersistence(db),
+})
+
+export function createSignupOrganizationPersistence(database: any) {
+  return async (input: SignupOrganizationBootstrapInput) => {
+    await database.transaction(async (tx: any) => {
       await tx.insert(OrgTable).values({
         id: input.orgId,
         name: input.name,
@@ -158,8 +164,8 @@ export const ensureSignupOrganization = createEnsureSignupOrganization({
         store: createDrizzleAutomaticOrganizationTrialStore(tx),
       }).ensureTrial(input.orgId)
     })
-  },
-})
+  }
+}
 
 function isDuplicateKeyError(error: unknown): boolean {
   if (!error || typeof error !== "object") {
