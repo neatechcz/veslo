@@ -1,5 +1,11 @@
 import type { Response } from "express"
-import type { SessionContext } from "./session.js"
+
+type EmailVerificationSessionContext = {
+  user: {
+    email: string | null
+    emailVerified: boolean
+  }
+}
 
 type SessionPolicy = {
   disabled: boolean
@@ -30,7 +36,7 @@ export class SessionPolicyRejectionError extends Error {
 }
 
 export function evaluateSessionPolicy(
-  session: SessionContext,
+  session: EmailVerificationSessionContext,
   policy: SessionPolicy,
 ): SessionPolicyRejection | null {
   if (policy.disabled) {
@@ -54,7 +60,7 @@ export function evaluateSessionPolicy(
   return null
 }
 
-export function requireVerifiedEmail(res: Response, session: SessionContext): boolean {
+export function requireVerifiedEmail(res: Response, session: EmailVerificationSessionContext): boolean {
   const rejection = evaluateSessionPolicy(session, {
     disabled: false,
     requireEmailVerification: true,
@@ -69,7 +75,7 @@ export function requireVerifiedEmail(res: Response, session: SessionContext): bo
 
 export function enforceSessionPolicy(
   res: Response,
-  session: SessionContext,
+  session: EmailVerificationSessionContext,
   policy: SessionPolicy,
 ): boolean {
   const rejection = evaluateSessionPolicy(session, policy)
