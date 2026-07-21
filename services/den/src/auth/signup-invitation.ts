@@ -4,6 +4,8 @@ export function buildOrganizationInvitationUrl(publicAppBaseUrl: string, inviteT
   }
 
   const invitationUrl = new URL("/", publicAppBaseUrl)
-  invitationUrl.searchParams.set("inviteToken", inviteToken)
+  const fragment = new URLSearchParams()
+  fragment.set("inviteToken", inviteToken)
+  invitationUrl.hash = fragment.toString()
   return invitationUrl.toString()
 }
