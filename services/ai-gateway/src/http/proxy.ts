@@ -57,12 +57,20 @@ export function createProxyRouter(deps: ProxyDependencies) {
       return;
     }
 
+    let accessResolvedPlatformPolicy = false;
     if (deps.automaticUserAiAccess || deps.aiAccess) {
       let aiAccess: UserAiAccessPolicyRecord | null;
       try {
-        aiAccess = deps.automaticUserAiAccess
-          ? await deps.automaticUserAiAccess.getOrCreateUserAiAccess(session.user.id)
-          : await deps.aiAccess!.getUserAiAccess(session.user.id);
+        if (deps.automaticUserAiAccess) {
+          const resolved = await deps.automaticUserAiAccess.resolveUserAiAccess(session.user.id);
+          aiAccess = resolved.aiAccess;
+          if (resolved.platformPolicy) {
+            res.locals.gatewayPlatformModelPolicy = resolved.platformPolicy;
+            accessResolvedPlatformPolicy = true;
+          }
+        } else {
+          aiAccess = await deps.aiAccess!.getUserAiAccess(session.user.id);
+        }
       } catch (error) {
         if (error instanceof AutomaticUserAiAccessInfrastructureError) {
           res.status(error.status).json({ error: error.code });
@@ -79,12 +87,14 @@ export function createProxyRouter(deps: ProxyDependencies) {
       res.locals.gatewayAiAccess = aiAccess;
     }
 
-    try {
-      res.locals.gatewayPlatformModelPolicy = await deps.modelPolicy.getPolicy();
-    } catch (error) {
-      console.error("gateway_platform_model_policy_lookup_failed", error);
-      res.status(502).json({ error: "gateway_platform_model_policy_lookup_failed" });
-      return;
+    if (!accessResolvedPlatformPolicy) {
+      try {
+        res.locals.gatewayPlatformModelPolicy = await deps.modelPolicy.getPolicy();
+      } catch (error) {
+        console.error("gateway_platform_model_policy_lookup_failed", error);
+        res.status(502).json({ error: "gateway_platform_model_policy_lookup_failed" });
+        return;
+      }
     }
     if (!res.locals.gatewayPlatformModelPolicy) {
       res.status(503).json({ error: "gateway_platform_model_policy_unavailable" });

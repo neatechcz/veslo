@@ -141,6 +141,14 @@ function createUserAiAccessApp(overrides: {
       },
       automaticUserAiAccess: overrides.getOrCreateAiAccess
         ? {
+            async resolveUserAiAccess(userId: string) {
+              return {
+                aiAccess: await overrides.getOrCreateAiAccess!(userId),
+                platformPolicy: overrides.getModelPolicy
+                  ? await overrides.getModelPolicy() as never
+                  : null,
+              };
+            },
             getOrCreateUserAiAccess: overrides.getOrCreateAiAccess,
             async buildEnabledUpdate() { throw new Error("unused"); },
           }
@@ -406,6 +414,44 @@ test("GET /api/me/ai-access publishes an empty roster without platform policy", 
     assert.deepEqual(body.aiAccess.allowedModels, []);
     assert.deepEqual(body.aiAccess.selectableModels, []);
     assert.deepEqual(body.aiAccess.effectiveModel, { provider: "openai", model: "gpt-4.1" });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("GET /api/me/ai-access exposes only the global active model and no selectable alternatives", async () => {
+  const runtime = createUserAiAccessApp({
+    aiAccess: createAiAccessRecord({
+      provider: "openai",
+      defaultModel: "historical-user-model",
+      allowedModels: ["historical-user-model", "global-active", "global-alternative"],
+    }),
+    getModelPolicy: async () => ({
+      id: "platform",
+      activeModel: { provider: "openai", model: "global-active" },
+      enabledModels: [
+        { provider: "openai", model: "global-active" },
+        { provider: "openai", model: "global-alternative" },
+      ],
+      createdAt: new Date("2026-07-21T08:00:00.000Z"),
+      updatedAt: new Date("2026-07-21T09:00:00.000Z"),
+    }),
+  });
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, { headers: runtime.authHeader });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.aiAccess.provider, "openai");
+    assert.equal(body.aiAccess.defaultModel, "global-active");
+    assert.deepEqual(body.aiAccess.allowedModels, ["global-active"]);
+    assert.deepEqual(body.aiAccess.selectableModels, []);
+    assert.deepEqual(body.aiAccess.effectiveModel, { provider: "openai", model: "global-active" });
   } finally {
     server.close();
     await once(server, "close");

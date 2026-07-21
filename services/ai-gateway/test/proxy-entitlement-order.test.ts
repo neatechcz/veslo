@@ -28,10 +28,10 @@ function createOrderedProxyApp(input: {
         },
       },
       automaticUserAiAccess: {
-        async getOrCreateUserAiAccess() {
+        async resolveUserAiAccess() {
           input.events.push("access")
           if (input.accessError) throw input.accessError
-          return {
+          const aiAccess = {
             id: "access_1",
             userId: "user_1",
             enabled: true,
@@ -43,6 +43,20 @@ function createOrderedProxyApp(input: {
             createdAt: new Date(),
             updatedAt: new Date(),
           }
+          input.events.push("policy")
+          return {
+            aiAccess,
+            platformPolicy: {
+              id: "platform" as const,
+              enabledModels: [{ provider: "openai" as const, model: "gpt-5.4" }],
+              activeModel: { provider: "openai" as const, model: "gpt-5.4" },
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          }
+        },
+        async getOrCreateUserAiAccess() {
+          throw new Error("proxy must use the atomic access and policy resolver")
         },
         async buildEnabledUpdate() {
           throw new Error("unused")
@@ -50,7 +64,7 @@ function createOrderedProxyApp(input: {
       },
       modelPolicy: {
         async getPolicy() {
-          input.events.push("policy")
+          input.events.push("policy-refetch")
           return {
             id: "platform" as const,
             enabledModels: [{ provider: "openai" as const, model: "gpt-5.4" }],

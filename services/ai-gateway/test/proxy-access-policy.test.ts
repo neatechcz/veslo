@@ -3,7 +3,11 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
-import type { UserAiAccessPolicyRecord } from "../src/access/repository.js";
+import {
+  createAutomaticUserAiAccessService,
+  type AutomaticUserAiAccessService,
+} from "../src/access/automatic-user-access.js";
+import type { AiAccessRepository, UserAiAccessPolicyRecord } from "../src/access/repository.js";
 import { getPlatformCredentialOwnerUserId } from "../src/credentials/platform-owner.js";
 import type { CredentialRecord } from "../src/credentials/repository.js";
 import type { UpstreamAuth } from "../src/credentials/token-broker.js";
@@ -73,6 +77,7 @@ function createCredentialRecord(bindingId: string, provider: "openai" | "anthrop
 function createPolicyBoundaryApp(input: {
   getPolicy: () => Promise<PlatformModelPolicyRecord | null>;
   aiAccessByUser?: Record<string, UserAiAccessPolicyRecord>;
+  automaticUserAiAccess?: AutomaticUserAiAccessService;
   modelCalls?: Array<{ userId: string; body: Record<string, unknown> }>;
   leaseCalls?: string[];
 }) {
@@ -101,6 +106,7 @@ function createPolicyBoundaryApp(input: {
           throw new Error("unused");
         },
       },
+      automaticUserAiAccess: input.automaticUserAiAccess,
       modelPolicy: {
         getPolicy: input.getPolicy,
         async replacePolicy() {
@@ -271,7 +277,9 @@ test("provider proxy rejects prompt requests when no ai access policy is assigne
   }
 });
 
-test("provider proxy rejects prompt requests when the assigned provider does not match the route", async () => {
+test("provider proxy ignores a historical user provider after the global provider switches", async () => {
+  let leaseCalls = 0;
+  let transportCalls = 0;
   const app = createApp({
     proxy: {
       managedAiEntitlement: allowManagedAiEntitlement,
@@ -310,7 +318,14 @@ test("provider proxy rejects prompt requests when the assigned provider does not
       },
       leaseBroker: {
         async getOrCreateActiveLease() {
-          assert.fail("lease broker should not run for provider mismatch");
+          leaseCalls += 1;
+          return {
+            id: "lease_provider_switch",
+            ownerUserId: "user_gateway",
+            provider: "openai",
+            sessionId: "session_policy_2",
+            activeBindingId: "binding_provider_switch",
+          };
         },
         async handleUpstreamFailure() {
           assert.fail("failure handler should not run for provider mismatch");
@@ -318,12 +333,13 @@ test("provider proxy rejects prompt requests when the assigned provider does not
       } as never,
       tokenBroker: {
         async getUpstreamAuth() {
-          assert.fail("token broker should not run for provider mismatch");
+          return { kind: "oauth", value: "oauth_provider_switch" };
         },
       },
       openAiTransport: {
-        async chatCompletions() {
-          assert.fail("transport should not run for provider mismatch");
+        async chatCompletions(input) {
+          transportCalls += 1;
+          return { status: 200, body: { id: "provider-switch", model: input.body.model } };
         },
       },
       anthropicTransport: {
@@ -347,20 +363,21 @@ test("provider proxy rejects prompt requests when the assigned provider does not
         "x-veslo-session-id": "session_policy_2",
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
         messages: [{ role: "user", content: "Hello" }],
       }),
     });
 
-    assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), { error: "provider_not_assigned" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { id: "provider-switch", model: "gpt-5.4" });
+    assert.equal(leaseCalls, 1);
+    assert.equal(transportCalls, 1);
   } finally {
     server.close();
     await once(server, "close");
   }
 });
 
-test("provider proxy rejects a requested model that is not allowed by user access", async () => {
+test("provider proxy rejects every client model override that differs from the global active model", async () => {
   const app = createApp({
     proxy: {
       managedAiEntitlement: allowManagedAiEntitlement,
@@ -442,7 +459,7 @@ test("provider proxy rejects a requested model that is not allowed by user acces
     });
 
     assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), { error: "model_not_allowed" });
+    assert.deepEqual(await response.json(), { error: "model_override_not_allowed" });
   } finally {
     server.close();
     await once(server, "close");
@@ -720,7 +737,7 @@ test("provider proxy rejects runtime calls when platform model policy lookup fai
   assert.deepEqual(modelCalls, []);
 });
 
-test("every provider route and desktop alias rejects a route that does not match assigned user provider", async () => {
+test("every provider route and desktop alias rejects a route that does not match the global active provider", async () => {
   const leaseCalls: string[] = [];
   const app = createPolicyBoundaryApp({
     getPolicy: createModelPolicy("openai", "gpt-5.4").getPolicy,
@@ -737,12 +754,12 @@ test("every provider route and desktop alias rejects a route that does not match
   ]) {
     const response = await requestOpenAi(app, { path });
     assert.equal(response.status, 403, path);
-    assert.deepEqual(response.body, { error: "provider_not_assigned" }, path);
+    assert.deepEqual(response.body, { error: "active_model_provider_mismatch" }, path);
   }
   assert.deepEqual(leaseCalls, []);
 });
 
-test("two enabled users receive their assigned user access model fields", async () => {
+test("two enabled users receive the same global active model despite historical user model fields", async () => {
   const modelCalls: Array<{ userId: string; body: Record<string, unknown> }> = [];
   const app = createPolicyBoundaryApp({
     async getPolicy() {
@@ -781,6 +798,69 @@ test("two enabled users receive their assigned user access model fields", async 
   assert.equal(second.status, 200);
   assert.deepEqual(modelCalls, [
     { userId: "user_one", body: { messages: [], model: "historical-model-one" } },
-    { userId: "user_two", body: { messages: [], model: "historical-model-two" } },
+    { userId: "user_two", body: { messages: [], model: "historical-model-one" } },
+  ]);
+});
+
+test("provider proxy uses one automatic access policy snapshot after an active model switch", async () => {
+  const staleAccess = createAiAccess({
+    userId: "user_one",
+    provider: "openai",
+    defaultModel: "gpt-old",
+    allowedModels: ["gpt-old"],
+  });
+  const aiAccess: AiAccessRepository = {
+    async getUserAiAccess() {
+      return staleAccess;
+    },
+    async upsertUserAiAccess() {
+      assert.fail("existing enabled runtime access must not be rewritten");
+    },
+  };
+  let policyReads = 0;
+  const currentPolicy = {
+    id: "platform" as const,
+    enabledModels: [{ provider: "openai" as const, model: "gpt-current" }],
+    activeModel: { provider: "openai" as const, model: "gpt-current" },
+    createdAt: new Date("2026-07-21T08:00:00.000Z"),
+    updatedAt: new Date("2026-07-21T09:00:00.000Z"),
+  };
+  const modelPolicy = {
+    async getPolicy() {
+      policyReads += 1;
+      return policyReads === 1
+        ? currentPolicy
+        : {
+            ...currentPolicy,
+            enabledModels: [{ provider: "openai" as const, model: "gpt-racing-snapshot" }],
+            activeModel: { provider: "openai" as const, model: "gpt-racing-snapshot" },
+          };
+    },
+    async replacePolicy() {
+      throw new Error("unused");
+    },
+  };
+  const automaticUserAiAccess = createAutomaticUserAiAccessService({
+    aiAccess,
+    modelPolicy,
+    modelCapabilities: {
+      async checkHealthyCredentialForModel() {
+        assert.fail("pooled OpenAI routing must not pin a credential");
+      },
+    },
+  });
+  const modelCalls: Array<{ userId: string; body: Record<string, unknown> }> = [];
+  const app = createPolicyBoundaryApp({
+    getPolicy: modelPolicy.getPolicy,
+    automaticUserAiAccess,
+    modelCalls,
+  });
+
+  const response = await requestOpenAi(app, {});
+
+  assert.equal(response.status, 200);
+  assert.equal(policyReads, 1);
+  assert.deepEqual(modelCalls, [
+    { userId: "user_one", body: { messages: [], model: "gpt-current" } },
   ]);
 });

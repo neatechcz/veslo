@@ -1046,12 +1046,7 @@ test("GET /api/me/ai-access returns the signed-in user's effective ai access pol
       aiAccess: {
         ...AI_ACCESS_PAYLOAD,
         effectiveModel: { provider: "openai", model: "gpt-5.5" },
-        selectableModels: [{
-          provider: "openai",
-          model: "gpt-5.5",
-          registryVersion: "unregistered",
-          capabilityStatus: "unknown",
-        }],
+        selectableModels: [],
       },
     });
   } finally {

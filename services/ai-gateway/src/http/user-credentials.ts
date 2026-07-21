@@ -5,10 +5,12 @@ import {
   AutomaticUserAiAccessInfrastructureError,
   type AutomaticUserAiAccessService,
 } from "../access/automatic-user-access.js";
-import { resolveAuthorizedModelRoster } from "../access/authorized-model-roster.js";
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js";
-import type { PlatformModelPolicyRepository, PlatformModelRef } from "../model-policy/repository.js";
-import { resolveGatewayModelCapabilityDescriptor } from "../providers/model-capability-registry.js";
+import type {
+  PlatformModelPolicyRecord,
+  PlatformModelPolicyRepository,
+  PlatformModelRef,
+} from "../model-policy/repository.js";
 import { asyncHandler, jsonErrorHandler } from "./async-handler.js";
 
 export type UserCredentialDependencies = {
@@ -58,10 +60,16 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
   const getUserAiAccess = asyncHandler(async (_req: Request, res: Response) => {
     const session = res.locals.userSession as UserSession;
     let aiAccess: UserAiAccessPolicyRecord | null | undefined;
+    let platformPolicy: PlatformModelPolicyRecord | null | undefined;
     try {
-      aiAccess = deps.automaticUserAiAccess
-        ? await deps.automaticUserAiAccess.getOrCreateUserAiAccess(session.user.id)
-        : await deps.aiAccess?.getUserAiAccess(session.user.id);
+      if (deps.automaticUserAiAccess) {
+        const resolved = await deps.automaticUserAiAccess.resolveUserAiAccess(session.user.id);
+        aiAccess = resolved.aiAccess;
+        platformPolicy = resolved.platformPolicy;
+      } else {
+        aiAccess = await deps.aiAccess?.getUserAiAccess(session.user.id);
+        platformPolicy = await deps.modelPolicy?.getPolicy();
+      }
     } catch (error) {
       if (error instanceof AutomaticUserAiAccessInfrastructureError) {
         res.status(error.status).json({ error: error.code });
@@ -73,9 +81,11 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
       res.json({ aiAccess: null });
       return;
     }
-    const platformPolicy = await deps.modelPolicy?.getPolicy();
-    const allowedModels = resolveAuthorizedModelRoster({ aiAccess, platformPolicy });
-    const effectiveModel = toEffectiveModel(aiAccess.provider, aiAccess.defaultModel);
+    const activeModel = aiAccess.enabled ? platformPolicy?.activeModel : null;
+    const effectiveProvider = activeModel?.provider ?? aiAccess.provider;
+    const effectiveDefaultModel = activeModel?.model ?? aiAccess.defaultModel;
+    const allowedModels = activeModel?.model ? [activeModel.model] : [];
+    const effectiveModel = toEffectiveModel(effectiveProvider, effectiveDefaultModel);
 
     res.json({
       aiAccess: aiAccess
@@ -83,11 +93,11 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
             id: aiAccess.id,
             userId: aiAccess.userId,
             enabled: aiAccess.enabled,
-            provider: aiAccess.provider,
+            provider: effectiveProvider,
             credentialId: aiAccess.credentialId,
-            defaultModel: aiAccess.defaultModel,
+            defaultModel: effectiveDefaultModel,
             allowedModels,
-            selectableModels: selectableModelsForAccess(aiAccess.provider, allowedModels),
+            selectableModels: [],
             effectiveModel,
             updatedAt: toIsoString(aiAccess.updatedAt),
           }
@@ -108,14 +118,6 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
   router.use(jsonErrorHandler("user_credentials_request_failed"));
 
   return router;
-}
-
-function selectableModelsForAccess(
-  provider: UserAiAccessPolicyRecord["provider"],
-  allowedModels: string[],
-) {
-  if (!provider) return [];
-  return allowedModels.map((model) => resolveGatewayModelCapabilityDescriptor({ provider, model }));
 }
 
 function toIsoString(value: Date | string) {

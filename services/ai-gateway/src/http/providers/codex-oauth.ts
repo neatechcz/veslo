@@ -15,7 +15,7 @@ import type { PlatformModelPolicyRecord } from "../../model-policy/repository.js
 import type { ProviderTransportResponse } from "../../providers/transport.js"
 import { ProviderTransportError } from "../../providers/transport.js"
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js"
-import { applyAiAccessPolicy } from "./access-policy.js"
+import { applyPlatformModelPolicy } from "./access-policy.js"
 import {
   recordProviderCredentialFailureAlert,
   recordProviderProxyFailureAlert,
@@ -55,21 +55,23 @@ export function createCodexOAuthProxyRouter(
     const sessionId = normalizeGatewaySessionId(rawSessionId, gatewaySession.user.id, "codex_oauth")
 
     let gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined
-    const policyResult = gatewayAiAccess
-      ? applyAiAccessPolicy({
+    const platformPolicy = res.locals.gatewayPlatformModelPolicy as PlatformModelPolicyRecord | null | undefined
+    const policyResult = gatewayAiAccess && platformPolicy
+      ? applyPlatformModelPolicy({
           routeProvider: "codex_oauth",
-          aiAccess: gatewayAiAccess,
-          platformPolicy: res.locals.gatewayPlatformModelPolicy as PlatformModelPolicyRecord | null | undefined,
+          activeModel: platformPolicy.activeModel,
           body: req.body,
         })
+      : gatewayAiAccess
+        ? { ok: false as const, status: 503, error: "gateway_platform_model_policy_unavailable" }
       : { ok: true as const, body: req.body as Record<string, unknown>, model: "" }
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error })
       return
     }
 
-    const activeModel = policyResult.model
-      ? { provider: "codex_oauth" as const, model: policyResult.model }
+    const activeModel = platformPolicy?.activeModel.provider === "codex_oauth"
+      ? platformPolicy.activeModel
       : null
     if (gatewayAiAccess && activeModel && deps.autoAssignedCodexCredentialRotation) {
       try {

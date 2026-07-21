@@ -19,6 +19,10 @@ type AutomaticUserAiAccessModelCapabilities = {
 };
 
 export type AutomaticUserAiAccessService = {
+  resolveUserAiAccess(userId: string): Promise<{
+    aiAccess: UserAiAccessPolicyRecord;
+    platformPolicy: PlatformModelPolicyRecord | null;
+  }>;
   getOrCreateUserAiAccess(userId: string): Promise<UserAiAccessPolicyRecord>;
   buildEnabledUpdate(
     userId: string,
@@ -40,7 +44,10 @@ export function createAutomaticUserAiAccessService(deps: {
   modelPolicy: PlatformModelPolicyRepository;
   modelCapabilities: AutomaticUserAiAccessModelCapabilities;
 }): AutomaticUserAiAccessService {
-  const initializations = new Map<string, Promise<UserAiAccessPolicyRecord>>();
+  const resolutions = new Map<string, Promise<{
+    aiAccess: UserAiAccessPolicyRecord;
+    platformPolicy: PlatformModelPolicyRecord;
+  }>>();
 
   async function buildEnabledUpdate(
     userId: string,
@@ -51,48 +58,82 @@ export function createAutomaticUserAiAccessService(deps: {
       throw new Error("automatic_user_ai_access_user_id_required");
     }
 
-    const policy = await deps.modelPolicy.getPolicy();
-    if (!policy) {
+    return (await buildEnabledResolution(normalizedUserId, assignmentOrigin)).update;
+  }
+
+  async function buildEnabledResolution(
+    userId: string,
+    assignmentOrigin: AiAccessAssignmentOrigin,
+  ) {
+    const platformPolicy = await deps.modelPolicy.getPolicy();
+    if (!platformPolicy) {
       throw new AutomaticUserAiAccessInfrastructureError("gateway_platform_model_policy_unavailable");
     }
-
-    return {
-      userId: normalizedUserId,
+    const activeModel = {
+      provider: platformPolicy.activeModel.provider,
+      model: platformPolicy.activeModel.model.trim(),
+    };
+    const update: UpsertUserAiAccessPolicyInput = {
+      userId,
       enabled: true,
-      provider: policy.activeModel.provider,
-      credentialId: await resolvePinnedCredential(policy.activeModel),
-      defaultModel: policy.activeModel.model,
-      allowedModels: enabledSameProviderModels(policy),
+      provider: activeModel.provider,
+      credentialId: await resolvePinnedCredential(activeModel),
+      defaultModel: activeModel.model,
+      allowedModels: [activeModel.model],
       assignmentOrigin,
     };
+    return { update, platformPolicy };
   }
 
-  async function initializeMissingUser(userId: string) {
-    const update = await buildEnabledUpdate(userId, "auto_assigned");
-    return deps.aiAccess.upsertUserAiAccess(update);
+  async function resolveEnabledUser(
+    userId: string,
+    existing: UserAiAccessPolicyRecord | null,
+  ) {
+    const { update, platformPolicy } = await buildEnabledResolution(
+      userId,
+      existing?.assignmentOrigin ?? "auto_assigned",
+    );
+    const aiAccess = existing
+      ? {
+          ...existing,
+          enabled: true,
+          provider: update.provider,
+          credentialId: update.credentialId,
+          defaultModel: update.defaultModel ?? null,
+          allowedModels: update.allowedModels ?? [],
+        }
+      : await deps.aiAccess.upsertUserAiAccess(update);
+    return { aiAccess, platformPolicy };
   }
 
-  async function getOrCreateUserAiAccess(userId: string) {
-    const existing = await deps.aiAccess.getUserAiAccess(userId);
-    if (existing) {
-      return existing;
+  async function resolveUserAiAccess(userId: string) {
+    const normalizedUserId = userId.trim();
+    if (!normalizedUserId) {
+      throw new Error("automatic_user_ai_access_user_id_required");
+    }
+    const existing = await deps.aiAccess.getUserAiAccess(normalizedUserId);
+    if (existing?.enabled === false) {
+      return { aiAccess: existing, platformPolicy: null };
     }
 
-    const normalizedUserId = userId.trim();
-    const inFlight = initializations.get(normalizedUserId);
+    const inFlight = resolutions.get(normalizedUserId);
     if (inFlight) {
       return inFlight;
     }
 
-    const initialization = initializeMissingUser(normalizedUserId);
-    initializations.set(normalizedUserId, initialization);
+    const resolution = resolveEnabledUser(normalizedUserId, existing);
+    resolutions.set(normalizedUserId, resolution);
     try {
-      return await initialization;
+      return await resolution;
     } finally {
-      if (initializations.get(normalizedUserId) === initialization) {
-        initializations.delete(normalizedUserId);
+      if (resolutions.get(normalizedUserId) === resolution) {
+        resolutions.delete(normalizedUserId);
       }
     }
+  }
+
+  async function getOrCreateUserAiAccess(userId: string) {
+    return (await resolveUserAiAccess(userId)).aiAccess;
   }
 
   async function resolvePinnedCredential(activeModel: PlatformModelRef) {
@@ -104,27 +145,8 @@ export function createAutomaticUserAiAccessService(deps: {
   }
 
   return {
+    resolveUserAiAccess,
     getOrCreateUserAiAccess,
     buildEnabledUpdate,
   };
-}
-
-function enabledSameProviderModels(policy: PlatformModelPolicyRecord) {
-  const provider = policy.activeModel.provider;
-  const activeModel = policy.activeModel.model.trim();
-  const seen = new Set<string>();
-  const models: string[] = [];
-
-  for (const entry of [policy.activeModel, ...policy.enabledModels]) {
-    const model = entry.model.trim();
-    if (entry.provider !== provider || !model || seen.has(model)) {
-      continue;
-    }
-    seen.add(model);
-    models.push(model);
-  }
-
-  return activeModel && models.includes(activeModel)
-    ? [activeModel, ...models.filter((model) => model !== activeModel)]
-    : models;
 }
