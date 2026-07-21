@@ -2,9 +2,9 @@
 
 **Goal:** Close the end-to-end gaps found by holistic review so organization invitation links authorize both email/password and GitHub signup, and social rejection returns actionable company-email guidance.
 
-**Architecture:** DEN sends a one-time registration link when an organization invitation is created or resent. Hosted clients capture the raw token from the canonical `inviteToken` query parameter, store it only in session storage, and immediately scrub it from browser history. Email signup sends the token in the existing request field. GitHub signup carries it in Better Auth's signed OAuth `additionalData`; DEN retrieves the request-local OAuth state inside its user-create hooks. GitHub callback errors use a marked error callback URL and are mapped by the existing safe auth-error formatter.
+**Architecture:** DEN sends a one-time registration link when an organization invitation is created or resent. New links carry the raw token in the canonical `#inviteToken` fragment so it is not sent in the HTTP request URL. Hosted clients synchronously capture and scrub the fragment before telemetry, store the token only in session storage, and accept the former `inviteToken` query form only as a legacy input. Email signup sends the token in the existing request field. GitHub signup carries it in Better Auth's encrypted OAuth `additionalData` state; DEN retrieves the request-local OAuth state inside its user-create hooks. GitHub callbacks use separate success, new-user, and error markers plus a correlated one-time auth attempt.
 
-**Security:** Invitation tokens remain hashed at rest, are matched to the normalized invited email, remain single-use and expiry-bound, and are never logged or persisted in durable browser storage. Query tokens are scrubbed before analytics or subsequent navigation. OAuth transport relies on Better Auth's signed, expiring state rather than a new unsigned cookie.
+**Security:** Invitation tokens remain hashed at rest, are matched to the normalized invited email, remain single-use and expiry-bound, and are never logged or persisted in durable browser storage. Fragment tokens and legacy query tokens are scrubbed before analytics or subsequent navigation. OAuth transport uses Better Auth's encrypted cookie-backed state. GitHub completion requires the exact cryptographically random attempt identifier within a ten-minute TTL, consumes pending context once, and fails closed when storage or correlation cannot be verified.
 
 ---
 
@@ -21,7 +21,7 @@
 **Requirements:**
 
 - Expose the deployment-derived public app base URL from DEN environment parsing.
-- Add a pure invitation-link builder that emits the canonical `inviteToken` query parameter on the public app origin.
+- Add a pure invitation-link builder that emits the canonical `#inviteToken` fragment on the public app origin, keeping the token out of the initial HTTP request URL.
 - Add a branded organization-invitation auth email and send it in the background after both create and resend succeed.
 - Preserve the existing one-time raw-token response and hashed-at-rest repository behavior.
 - Make auth-context invitation-token reading asynchronous and recover `vesloSignupInviteToken` from Better Auth request-local OAuth state, while preserving email-body and header behavior.
@@ -41,17 +41,17 @@
 
 **Requirements:**
 
-- Capture `inviteToken` from the URL, save it in session storage, and remove it from browser history immediately.
+- Capture `#inviteToken` synchronously before telemetry, save it in session storage, and remove it from browser history immediately. Accept the legacy `inviteToken` query form only for compatibility and scrub it through the same path.
 - Include the token in email signup requests only.
-- Include the token as `additionalData.vesloSignupInviteToken` for GitHub OAuth signup so the signed state reaches DEN.
-- Clear the stored token after successful signup; retain it after a recoverable failure.
-- Give GitHub a dedicated marked error callback URL. On callback, map exact `domain_not_allowed` through the shared formatter, clear the pending GitHub analytics marker, and scrub callback error parameters.
+- Include the token as `additionalData.vesloSignupInviteToken` for GitHub OAuth signup so the encrypted state reaches DEN.
+- Clear the stored token after successful email signup or a correlated GitHub new-user callback; retain it after a recoverable failure and after existing-user or error callbacks.
+- Give GitHub dedicated marked success, new-user, and error callback URLs. Correlate each callback to the exact random pending attempt within a ten-minute TTL, consume that context once, and fail closed on storage or correlation failure. Map exact `domain_not_allowed` through the shared formatter and scrub callback parameters.
 - Capture the submitted auth mode before asynchronous public-web requests so endpoint, analytics, and follow-up behavior cannot race with UI toggling.
 - Preserve sign-in, verification, reset, desktop handoff, ordinary OAuth errors, and company-domain bootstrap behavior.
 - Add behavioral tests for token parsing/scrubbing and source/request contracts for both hosted clients and the GitHub callback path.
 
 ## Task 8: Update durable docs and re-run complete verification
 
-- Document invitation-link delivery, query scrubbing, and email/social transport without exposing raw tokens.
+- Document invitation-link delivery, canonical fragment capture and scrubbing, legacy query compatibility, and email/social transport without exposing raw tokens.
 - Run focused DEN, web, AI Gateway, and auth tests; both relevant typechecks; stale-policy searches; `git diff --check`; and `pnpm check`.
 - Re-run holistic review after all fixes.

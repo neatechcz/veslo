@@ -45,19 +45,31 @@ Password reset also stays in the browser handoff flow. The reset page keeps the 
 
 The hosted desktop onboarding page also caches the current desktop auth transaction context in browser session storage. If a later auth or verification return lands back on the onboarding page without the original transaction query, the hosted page restores that context before attempting the desktop handoff. This keeps the original desktop auth transaction alive across browser-managed redirects.
 
-DEN signup runs authorization before Better Auth creates the user, including email/password and social provider signups. The durable signup paths are:
+## Signup Domain Policy and Organization Invitations
+
+DEN authorizes signup before Better Auth creates the user, including email/password and social-provider signup. The durable signup paths are:
 
 - An enabled organization domain with self-signup enabled can auto-activate a member only while the organization has an available seat.
 - An unclaimed exact domain that is not a known personal-email provider can bootstrap a new organization. The first signup becomes its organization admin; later users join as members through the resulting domain rule, subject to seat capacity.
-- A valid organization invitation is the only exception that permits signup with a known personal-email address. DEN validates the invitation token hash, normalized email match, expiry, single-use state, and target organization's seat capacity before creating the user.
+- A valid pending organization invitation is the only exception that permits signup with a known personal-email address. DEN validates the invitation token hash, normalized email match, expiry, single-use state, and target organization's seat capacity before creating the user. Accepting the invitation creates membership in the target organization and never bootstraps a separate organization or domain.
 
-Known personal-provider signup without a valid invitation is rejected before account or organization creation with the stable `domain_not_allowed` code. Both the DEN-hosted desktop onboarding registration flow and the public web signup surface translate that code into actionable guidance to use a company email or open the registration link from an organization invitation. There is no admin approval queue or notification path for rejected signup attempts.
+Known personal-provider signup without a valid invitation is rejected before account or organization creation with the stable `domain_not_allowed` code. Unknown or non-personal domains are not treated as personal providers and continue through normal domain matching or organization bootstrap. Both the DEN-hosted desktop onboarding registration flow and the public web signup surface render this stable guidance:
+
+> Use your company email to register. Personal email addresses are not supported. If your organization invited you, open the registration link from that invitation.
+
+There is no admin approval queue or notification path for rejected signup attempts.
 
 Domain-joined and invite-joined signups receive active organization membership without a personal default organization.
 
 When signup is authorized to bootstrap a previously unclaimed company domain, DEN atomically creates the organization, the first user's organization-admin membership, an enabled self-signup domain rule, and the automatic organization trial. Domain matching uses the normalized exact value after `@`: `team.example.com` does not claim `example.com`. Later users with the same exact domain join the organization as members, subject to its seat limit.
 
 The domain's unique index serializes concurrent first signups. The winning transaction creates the organization; a losing signup rolls back its provisional organization and joins the winning domain owner. Signup never re-enables a disabled or invite-only domain. A valid organization invitation remains an independent path and does not create another organization or domain.
+
+Organization-admin create and resend actions deliver a signup invitation email. Each newly generated registration link carries its one-time token in the URL fragment as `#inviteToken=...`; the token is not part of the HTTP request URL. Hosted clients capture and remove the fragment synchronously, before public-web telemetry initializes, and retain the token only in browser session storage. An `inviteToken` query parameter is accepted only for compatibility with legacy links and is scrubbed immediately by the same capture path.
+
+Email/password auth sends the stored invitation token only with signup requests and clears it after signup succeeds. Sign-in never sends it, and a recoverable signup failure keeps it available for retry.
+
+GitHub signup transports the invitation token through Better Auth's encrypted OAuth state. The browser correlates callback completion with the exact cryptographically random auth-attempt identifier stored for at most ten minutes. That pending context is consumed once and the flow fails closed when storage, expiry, or correlation cannot be verified. Only a correlated new-user signup callback clears the invitation and records signup completion; existing-user and error callbacks retain the invitation for a later valid signup attempt.
 
 Key persistent settings:
 
