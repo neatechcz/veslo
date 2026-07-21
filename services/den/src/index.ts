@@ -76,6 +76,7 @@ import { createMicrosoftRouter } from "./http/microsoft.js"
 import { workersRouter } from "./http/workers.js"
 import { createYouTrackRestIssueClient } from "./integrations/youtrack-rest.js"
 import { readRequestedOrganizationId, resolveMembershipOrganizations } from "./http/org-auth.js"
+import { automaticOrganizationTrialService } from "./orgs.js"
 
 const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
@@ -1169,6 +1170,10 @@ async function ensureTables() {
 
 async function bootstrap() {
   await ensureTables()
+  const automaticTrialReconciliation = await automaticOrganizationTrialService.reconcile()
+  console.log(
+    `[den] automatic organization trial reconciliation scanned=${automaticTrialReconciliation.scanned} granted=${automaticTrialReconciliation.granted}`,
+  )
   await ensureCorePlatformSkills(skillRegistryStore)
   startFeedbackProjectorDueRetryLoop(feedbackProjector)
   startDebugLogRetentionLoop(debugLogService)
