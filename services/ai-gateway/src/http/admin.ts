@@ -216,8 +216,6 @@ export type EligibleCodexCredential = {
 
 export type UpdateUserAiAccessInput = {
   enabled: boolean;
-  provider: AiAccessProvider | null;
-  credentialId: string | null;
 };
 
 export type AuthPayload = {
@@ -1413,6 +1411,12 @@ export function createDefaultAdminService(
     requireAdminDependency(deps.aiAccessRepository, "ai_access_repository");
   const getAiAccessMutation = () =>
     requireAdminDependency(deps.aiAccessMutation, "ai_access_mutation");
+  const getAutomaticUserAiAccess = () => {
+    if (!deps.automaticUserAiAccess) {
+      throw new HttpError("user_ai_access_automatic_resolution_unavailable", 503);
+    }
+    return deps.automaticUserAiAccess;
+  };
   const getAlertRepository = () =>
     requireAdminDependency(deps.alertRepository, "alert_repository");
   const getUsageRepository = () =>
@@ -2121,37 +2125,31 @@ export function createDefaultAdminService(
       return requireDenOrganizationProxy("revokeOrganizationInvite")(token, orgId, inviteId);
     },
     async getUserAiAccess(_token, userId) {
-      const modelPolicy = await getModelPolicyRepository().getPolicy();
-      if (!modelPolicy) throw new HttpError("platform_model_policy_not_configured", 503);
-      const availableCredentials = await listAvailableAssignmentCredentials(modelPolicy.activeModel);
-      const aiAccess = await repairCodexAccessForRead(
-        await getAiAccessRepository().getUserAiAccess(userId),
-        availableCredentials,
-        modelPolicy.activeModel,
-      );
+      const aiAccess = await getAutomaticUserAiAccess().getOrCreateUserAiAccess(userId);
 
       return {
         aiAccess: toAdminUserAiAccessRecord(aiAccess),
-        availableCredentials,
+        availableCredentials: [],
       };
     },
     async upsertUserAiAccess(_token, userId, input, organizationId, actorUserId) {
-      const modelPolicy = await getModelPolicyRepository().getPolicy();
-      if (!modelPolicy) throw new HttpError("platform_model_policy_not_configured", 503);
-      const validated = validateUserAiAccessInput({
-        ...input,
-        userId,
-      }, modelPolicy);
-      if (validated.enabled) {
-        await assertAssignableCredential(validated.provider, validated.credentialId, modelPolicy.activeModel);
-      }
       if (!actorUserId) {
         throw new HttpError("admin_actor_required", 401);
       }
       if (!organizationId) {
         throw new HttpError("organization_context_required", 400);
       }
-      const availableCredentials = await listAvailableAssignmentCredentials(modelPolicy.activeModel);
+      const validated: UpsertUserAiAccessPolicyInput = input.enabled
+        ? await getAutomaticUserAiAccess().buildEnabledUpdate(userId, "admin_assigned")
+        : {
+            userId,
+            enabled: false,
+            provider: null,
+            credentialId: null,
+            defaultModel: null,
+            allowedModels: [],
+            assignmentOrigin: "admin_assigned",
+          };
       const saved = await getAiAccessMutation().upsertUserAiAccessWithAudit({
         ...validated,
         actorUserId,
@@ -2159,7 +2157,7 @@ export function createDefaultAdminService(
       });
       return {
         aiAccess: toAdminUserAiAccessRecord(saved)!,
-        availableCredentials,
+        availableCredentials: [],
       };
     },
     disableUser(token, userId) {
@@ -2826,61 +2824,6 @@ function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
 
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
   return parsed.toString().replace(/\/+$/, "");
-}
-
-function validateUserAiAccessInput(
-  input: UpdateUserAiAccessInput & { userId: string },
-  modelPolicy: PlatformModelPolicyRecord,
-): UpsertUserAiAccessPolicyInput {
-  const activeModel = modelPolicy.activeModel;
-  const enabled = input.enabled === true;
-  const provider = parseAiAccessProvider(input.provider);
-  const credentialId =
-    typeof input.credentialId === "string" && input.credentialId.trim()
-      ? input.credentialId.trim()
-      : null;
-  if (enabled && !provider) {
-    throw new HttpError("invalid_ai_access_provider", 400);
-  }
-
-  if (enabled && provider !== activeModel.provider) {
-    throw new HttpError("ai_access_provider_mismatch", 400);
-  }
-
-  if (enabled && (provider === "codex_oauth" || provider === "openai_compatible") && !credentialId) {
-    throw new HttpError("invalid_ai_access_credential_id", 400);
-  }
-
-  return {
-    userId: input.userId,
-    enabled,
-    provider,
-    credentialId,
-    defaultModel: enabled ? activeModel.model : null,
-    allowedModels: enabled ? assignedPlatformModelRoster(modelPolicy) : [],
-    assignmentOrigin: "admin_assigned",
-  };
-}
-
-function assignedPlatformModelRoster(modelPolicy: PlatformModelPolicyRecord): string[] {
-  const provider = modelPolicy.activeModel.provider;
-  const activeModel = modelPolicy.activeModel.model;
-  const seen = new Set<string>();
-  const models: string[] = [];
-  for (const entry of modelPolicy.enabledModels) {
-    if (entry.provider !== provider) continue;
-    const model = entry.model.trim();
-    if (!model || seen.has(model)) continue;
-    seen.add(model);
-    models.push(model);
-  }
-  return models.includes(activeModel)
-    ? [activeModel, ...models.filter((model) => model !== activeModel)]
-    : [activeModel];
-}
-
-function parseAiAccessProvider(value: unknown): AiAccessProvider | null {
-  return isAiGatewayProvider(value) ? value : null;
 }
 
 function mapOpenAiCompatibleModelDiscoveryError(error: unknown): HttpError {
@@ -4489,19 +4432,20 @@ export function createAdminRouter(adminService: AdminService) {
     ) return;
 
     try {
-      if (
-        req.body && typeof req.body === "object"
-        && (Object.hasOwn(req.body, "defaultModel") || Object.hasOwn(req.body, "allowedModels"))
-      ) {
-        throw new HttpError("user_model_policy_not_supported", 400);
+      const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+        ? req.body as Record<string, unknown>
+        : {};
+      if (Object.keys(body).some((key) => key !== "enabled")) {
+        throw new HttpError("user_ai_access_routing_not_supported", 400);
+      }
+      if (typeof body.enabled !== "boolean") {
+        throw new HttpError("user_ai_access_enabled_required", 400);
       }
       if (!await confirmOrganizationAiAccessMember(res, req.params.orgId, req.params.userId)) {
         return;
       }
       const payload = await adminService.upsertUserAiAccess(res.locals.adminToken as string, req.params.userId, {
-        enabled: req.body?.enabled === true,
-        provider: parseAiAccessProvider(req.body?.provider),
-        credentialId: typeof req.body?.credentialId === "string" ? req.body.credentialId : null,
+        enabled: body.enabled,
       }, req.params.orgId, (res.locals.adminSession as AdminSessionSnapshot).user.id);
       res.json(payload);
     } catch (error) {

@@ -1852,7 +1852,7 @@ test("createDefaultAdminService skips ai access when no eligible codex credentia
   assert.deepEqual(upsertCalls, []);
 });
 
-test("PUT qualified AI access preserves provider credential validation", async () => {
+test("PUT qualified AI access rejects client-supplied provider routing", async () => {
   let upsertCalled = false;
   const service = createDefaultAdminService("http://den.example.test", {
     denClient: {
@@ -1939,7 +1939,7 @@ test("PUT qualified AI access preserves provider credential validation", async (
 
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), {
-      error: "invalid_ai_access_credential_id",
+      error: "user_ai_access_routing_not_supported",
     });
     assert.equal(upsertCalled, false);
   } finally {
