@@ -1,5 +1,7 @@
 # Corporate Email Signup Gate Implementation Plan
 
+> Superseded by `2026-07-21-personal-email-domain-gate.md` after the approved organization-domain bootstrap was merged. Kept as historical context only.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Reject signup before account creation unless the email belongs to an enabled self-signup organization domain or carries a valid organization invitation, and show rejected users clear company-email guidance.
