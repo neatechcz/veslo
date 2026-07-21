@@ -35,9 +35,10 @@ cp .env.development .env
 - `WORKER_TOKEN_ENCRYPTION_KEY` optional key material for encrypting worker host/client tokens at rest (falls back to `BETTER_AUTH_SECRET` when unset)
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
-- `LETTR_API_KEY` optional Lettr API key used to send Better Auth verification and password reset emails. Blank or unset values disable email verification and password reset delivery.
-- `AUTH_EMAIL_ADDRESS` optional sender address for auth emails, for example `noreply@mail.veslo.work`. Blank or unset values disable email verification and password reset delivery.
+- `LETTR_API_KEY` optional Lettr API key used to send Better Auth verification and password reset emails. It is required when `DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true`.
+- `AUTH_EMAIL_ADDRESS` optional sender address for auth emails, for example `noreply@mail.veslo.work`. It is required when `DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true`.
 - `AUTH_EMAIL_FROM_NAME` optional sender display name for auth emails, for example `Veslo`.
+- `DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` requires verified email for sign-in, bearer-session use, organization provisioning, and Managed AI access when set to `true`. DEN fails startup if this is enabled without both Lettr credentials above.
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). Hosted environments can leave it blank to derive the app and AI Gateway origins from `VESLO_DEPLOYMENT_DOMAIN`. In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
 - `PROVISIONER_MODE` `stub`, `render`, or `owned-server`
@@ -103,7 +104,7 @@ access tokens, or refresh tokens.
 
 ## Auth setup (Better Auth)
 
-Set `LETTR_API_KEY` and `AUTH_EMAIL_ADDRESS` to enable email verification and password reset delivery through Lettr. `AUTH_EMAIL_FROM_NAME` is optional. Blank or unset values disable email verification and password reset delivery.
+Set `DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true`, `LETTR_API_KEY`, and `AUTH_EMAIL_ADDRESS` to require email verification and send verification and password-reset messages through Lettr. `AUTH_EMAIL_FROM_NAME` is optional. DEN fails closed at startup when verification is required but delivery is not configured. When verification is not required, blank or unset values disable email verification and password reset delivery.
 
 The explicit desktop onboarding page (`GET /?desktopOnboarding=1`) supports the desktop browser auth flow end to end:
 
@@ -113,6 +114,14 @@ The explicit desktop onboarding page (`GET /?desktopOnboarding=1`) supports the 
 - reset-password completion from emailed links
 
 The default root (`GET /`) returns neutral service metadata. It does not serve an API demo or expose mutating control-plane actions.
+
+### Verified organization provisioning
+
+Email/password signup creates the authentication identity and sends verification first. Before verification, DEN does not create a new organization, register the user's domain, grant a trial, or assign usable Managed AI access. The successful verification callback runs an idempotent provisioner; trusted social-provider identities may run the same provisioner immediately only when their email is already verified.
+
+Provisioning first reuses an existing active membership, otherwise joins an enabled exact-domain self-signup organization, or creates a new organization and exact-domain record. A new or renamed organization domain requires an active member whose verified email matches that normalized exact domain. Domain registration policy owns public/company-domain admission; provisioning and billing do not maintain a second provider classification.
+
+Automatic trials are organization-scoped and last 14 days. DEN grants only when the organization has at least one registered domain and every current domain is unclaimed, then records immutable claims for all of them. Existing manual or automatic trials backfill claims without changing their expiry; later domains are consumed by that same trial. Claims survive domain deletion and reassignment, so a consumed domain cannot unlock another trial. Active members inherit the organization entitlement, while individual Managed AI access is assigned only after verified active membership. End users cannot select a Managed AI model or provider; AI Infrastructure owns the active model and backend credential routing.
 
 Generate Better Auth schema (Drizzle):
 
