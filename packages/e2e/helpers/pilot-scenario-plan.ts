@@ -22,6 +22,7 @@ export type PilotFixtureName =
   | 'skill-registry-workspace-events'
   | 'session-queue-runtime'
   | 'packaged-smoke-model'
+  | 'email-verification-handoff'
   | 'port-contention';
 
 export type PilotEnvironmentMutation = {
@@ -36,8 +37,10 @@ export type PilotSelectionPrecondition =
   | 'focused-model-stream-retry'
   | 'focused-session-queue-runtime'
   | 'focused-packaged-smoke'
+  | 'focused-email-verification-handoff'
   | 'isolated-managed-ai-gateway-profile'
   | 'isolated-session-queue-profile'
+  | 'isolated-email-verification-handoff-profile'
   | 'packaged-smoke-launch-mode'
   | 'live-managed-ai-auth';
 
@@ -46,8 +49,11 @@ export type PilotSelectionRejectionCode =
   | 'focused-model-stream-retry'
   | 'focused-session-queue-runtime'
   | 'focused-packaged-smoke'
+  | 'focused-email-verification-handoff'
   | 'session-queue-existing-profile'
   | 'packaged-smoke-launch-mode'
+  | 'email-verification-handoff-existing-profile'
+  | 'email-verification-handoff-custom-opencode-home'
   | 'managed-ai-gateway-existing-profile'
   | 'managed-ai-gateway-custom-opencode-home'
   | 'live-managed-ai-existing-profile'
@@ -70,6 +76,7 @@ export type PilotSelectionSignals = {
   needsSkillRegistryWorkspaceEventFixture: boolean;
   needsRelaunchReconnectCheck: boolean;
   needsSessionQueueRuntimeFixture: boolean;
+  needsEmailVerificationHandoffFixture: boolean;
   requiresExplicitSessionRuntimeActivation: boolean;
   needsPackagedSmokeFixture: boolean;
   needsNoWorkspaceProfile: boolean;
@@ -125,6 +132,7 @@ const SESSION_QUEUE_SCENARIOS = new Set([
 ]);
 
 const DEV_AUTOSTART_DISABLED_SCENARIOS = new Set([
+  'email-verification-handoff',
   'runtime-cold-start-session-handoff',
   'vslo-235-local-host-child-exit',
   'vslo-270-stop-reload-reconnect',
@@ -160,6 +168,7 @@ export function inferPilotSelectionSignals(
     hasScenario(scenarioNames, 'vslo-270-stop-reload-reconnect');
   const needsSessionQueueRuntimeFixture = scenarioNames.some((name) => SESSION_QUEUE_SCENARIOS.has(name));
   const needsPackagedSmokeFixture = hasScenario(scenarioNames, 'packaged-smoke');
+  const needsEmailVerificationHandoffFixture = hasScenario(scenarioNames, 'email-verification-handoff');
   const requiresLiveManagedAiAuth = scenarioNames.some((name) => LIVE_MANAGED_AI_SCENARIOS.has(name));
 
   return {
@@ -179,6 +188,7 @@ export function inferPilotSelectionSignals(
     needsSkillRegistryWorkspaceEventFixture: hasScenario(scenarioNames, 'vslo-270-stop-reload-reconnect'),
     needsRelaunchReconnectCheck: hasScenario(scenarioNames, 'vslo-270-stop-reload-reconnect'),
     needsSessionQueueRuntimeFixture,
+    needsEmailVerificationHandoffFixture,
     requiresExplicitSessionRuntimeActivation:
       hasScenario(scenarioNames, 'session-render-stability') || hasScenario(scenarioNames, 'session-run-truthfulness'),
     needsPackagedSmokeFixture,
@@ -189,6 +199,9 @@ export function inferPilotSelectionSignals(
 }
 
 function selectionRejection(signals: PilotSelectionSignals): PilotSelectionRejectionCode | null {
+  if (signals.needsEmailVerificationHandoffFixture && signals.scenarioNames.length > 1) {
+    return 'focused-email-verification-handoff';
+  }
   if (signals.needsManagedAiGatewayFixture && signals.scenarioNames.length > 1) {
     return 'focused-managed-ai-gateway';
   }
@@ -206,6 +219,12 @@ function selectionRejection(signals: PilotSelectionSignals): PilotSelectionRejec
   }
   if (signals.needsPackagedSmokeFixture && !signals.hasPackagedSmokeLaunch) {
     return 'packaged-smoke-launch-mode';
+  }
+  if (signals.needsEmailVerificationHandoffFixture && signals.profileMode === 'real-profile') {
+    return 'email-verification-handoff-existing-profile';
+  }
+  if (signals.needsEmailVerificationHandoffFixture && signals.profileMode === 'custom-opencode-home') {
+    return 'email-verification-handoff-custom-opencode-home';
   }
   if (signals.needsManagedAiGatewayFixture && signals.profileMode === 'real-profile') {
     return 'managed-ai-gateway-existing-profile';
@@ -253,6 +272,7 @@ export function buildPilotSelectionPlan(signals: PilotSelectionSignals): PilotSe
   addFixture(signals.needsSkillRegistryWorkspaceEventFixture, 'skill-registry-workspace-events');
   addFixture(signals.needsSessionQueueRuntimeFixture, 'session-queue-runtime');
   addFixture(signals.needsPackagedSmokeFixture, 'packaged-smoke-model');
+  addFixture(signals.needsEmailVerificationHandoffFixture, 'email-verification-handoff');
   addFixture(signals.needsPortContentionFixture, 'port-contention');
 
   if (signals.needsAutomationSecondaryWorkspace) {
@@ -337,6 +357,19 @@ export function buildPilotSelectionPlan(signals: PilotSelectionSignals): PilotSe
       addMutation(environment, key, 'clear', '');
     }
   }
+  if (signals.needsEmailVerificationHandoffFixture) {
+    addMutation(environment, 'E2E_DESKTOP_AUTH_SIGNED_OUT', 'set', '1');
+    addMutation(environment, 'VESLO_E2E_DISABLE_UPDATER', 'set-if-empty', '1');
+    for (const key of [
+      'VESLO_E2E_DEN_AUTH_JSON',
+      'E2E_DEN_AUTH_JSON',
+      'VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE',
+      'E2E_DEN_AUTH_SNAPSHOT_FILE',
+      'VESLO_DEN_AUTH_SNAPSHOT_PATH',
+    ]) {
+      addMutation(environment, key, 'clear', '');
+    }
+  }
   if (signals.suite === 'live-inference') {
     for (const [key, value] of [
       ['E2E_MANAGED_AI_GATEWAY_FIXTURE', '0'],
@@ -368,6 +401,9 @@ export function buildPilotSelectionPlan(signals: PilotSelectionSignals): PilotSe
   if (signals.needsPackagedSmokeFixture) {
     preconditions.push('focused-packaged-smoke', 'packaged-smoke-launch-mode');
   }
+  if (signals.needsEmailVerificationHandoffFixture) {
+    preconditions.push('focused-email-verification-handoff', 'isolated-email-verification-handoff-profile');
+  }
   if (signals.requiresLiveManagedAiAuth) preconditions.push('live-managed-ai-auth');
 
   return {
@@ -378,7 +414,7 @@ export function buildPilotSelectionPlan(signals: PilotSelectionSignals): PilotSe
       mode: signals.profileMode,
       defaultWorkspace: signals.needsNoWorkspaceProfile ? 'none' : 'seeded',
     },
-    auth: signals.needsManagedAiGatewayFixture
+    auth: signals.needsManagedAiGatewayFixture || signals.needsEmailVerificationHandoffFixture
       ? 'fixture'
       : signals.requiresLiveManagedAiAuth
         ? 'live-den'

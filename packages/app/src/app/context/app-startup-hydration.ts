@@ -506,16 +506,15 @@ function scheduleUpdaterStartup(deps: AppStartupHydrationDeps) {
   void updaterEnvironment()
     .then((env) => {
       deps.setUpdateEnv(env);
-    })
-    .catch(() => {
-      // ignore
-    })
-    .then(() => {
+      if (!env.supported) return;
       if (deps.launchUpdateCheckTriggered()) {
         return;
       }
       deps.setLaunchUpdateCheckTriggered(true);
       return deps.checkForUpdates({ quiet: true }).catch((e) => deps.reportError(e, "updates.check"));
+    })
+    .catch(() => {
+      // ignore
     });
 }
 

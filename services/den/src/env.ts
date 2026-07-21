@@ -4,6 +4,7 @@ import { resolveVesloDeploymentEndpoints } from "./deployment-endpoints.js"
 import { parseManagedAiEnv } from "./managed-ai/env.js"
 
 const schema = z.object({
+  NODE_ENV: z.string().optional(),
   DATABASE_URL: z.string().min(1),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().optional(),
@@ -141,7 +142,10 @@ function normalizedSecret(raw: string | undefined, label: string, minimumLength 
 export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
   const parsed = schema.parse(input)
   const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
-  const nodeEnv = (input.NODE_ENV ?? "development").toLowerCase()
+  const nodeEnv = parsed.NODE_ENV == null ? "development" : parsed.NODE_ENV.trim().toLowerCase()
+  if (nodeEnv !== "development" && nodeEnv !== "test" && nodeEnv !== "production") {
+    throw new Error("NODE_ENV must be one of 'development', 'test', or 'production'.")
+  }
   const lettrApiKey = parsed.LETTR_API_KEY?.trim() || undefined
   const authEmailAddress = parsed.AUTH_EMAIL_ADDRESS?.trim() || undefined
   const configuredAuthRequireEmailVerification = parsed.DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED?.trim().toLowerCase()
@@ -152,7 +156,7 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
   ) {
     throw new Error("DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED must be either 'true' or 'false'.")
   }
-  const authRequireEmailVerification = configuredAuthRequireEmailVerification === "true"
+  const authRequireEmailVerification = nodeEnv === "production" || configuredAuthRequireEmailVerification === "true"
   const endpoints = resolveVesloDeploymentEndpoints(parsed.VESLO_DEPLOYMENT_DOMAIN)
   const betterAuthUrl = parsed.BETTER_AUTH_URL?.trim().replace(/\/+$/, "") || endpoints.apiBaseUrl
   const defaultCorsOrigins =
@@ -203,6 +207,7 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
   }
 
   return {
+    nodeEnv,
     databaseUrl: parsed.DATABASE_URL,
     betterAuthSecret: parsed.BETTER_AUTH_SECRET,
     betterAuthUrl,

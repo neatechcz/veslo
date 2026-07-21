@@ -209,7 +209,7 @@
 
       <div id="verify-required-card" class="onboard-card hidden">
         <h1>Verify your email</h1>
-        <p class="subtitle">Verify your email before continuing to Veslo.</p>
+        <p class="subtitle">Verify this email address before signing in to Veslo.</p>
 
         <div class="note-box">
           <p id="verify-required-email">Check the inbox for your latest verification message.</p>
@@ -219,9 +219,9 @@
         <div id="verify-required-status" class="note-box hidden" style="margin-top: 12px"></div>
         <div id="verify-required-error" class="error-text hidden"></div>
 
-        <form id="verify-required-form">
-          <div id="verify-required-password-field" class="field">
-            <label for="verify-required-password">Password</label>
+        <form id="verify-required-form" style="margin-top: 14px">
+          <div class="field">
+            <label for="verify-required-password">Confirm password</label>
             <input id="verify-required-password" type="password" autocomplete="current-password" required />
           </div>
           <button id="resend-verification" class="btn-secondary" type="submit">Resend verification email</button>
@@ -367,7 +367,6 @@
         let verificationEmail = "";
         let verificationInfo = "";
         let verificationError = "";
-        let verificationRecoveryPassword = "";
         let forgotStatus = "If the address exists, we will send a reset link without revealing whether it is registered.";
         let resetInfo = "";
 
@@ -402,7 +401,6 @@
         const verifyRequiredStatus = document.getElementById("verify-required-status");
         const verifyRequiredError = document.getElementById("verify-required-error");
         const verifyRequiredForm = document.getElementById("verify-required-form");
-        const verifyRequiredPasswordField = document.getElementById("verify-required-password-field");
         const verifyRequiredPassword = document.getElementById("verify-required-password");
         const resendVerificationBtn = document.getElementById("resend-verification");
         const verifyRequiredBack = document.getElementById("verify-required-back");
@@ -664,6 +662,7 @@
               body: JSON.stringify({
                 email: resetEmail,
                 password: newPassword,
+                callbackURL: buildDesktopOnboardingUrl("verify-email"),
               }),
             });
             data = await response.json().catch(() => null);
@@ -676,6 +675,25 @@
           }
 
           if (!response.ok) {
+            const errorCode = normalizeAuthErrorCode(data);
+            if (errorCode === "EMAIL_NOT_VERIFIED") {
+              return {
+                ok: false,
+                email: resetEmail,
+                verificationRequired: true,
+                verificationInfo: "A new verification email was sent. Verify the address, then return here to sign in.",
+                verificationError: "",
+              };
+            }
+            if (errorCode === "verification_email_delivery_failed") {
+              return {
+                ok: false,
+                email: resetEmail,
+                verificationRequired: true,
+                verificationInfo: "",
+                verificationError: "We could not send the verification email. Use resend to try again.",
+              };
+            }
             return {
               ok: false,
               email: resetEmail,
@@ -683,28 +701,59 @@
             };
           }
 
-          bearerToken = data?.token || "";
+          bearerToken = readAuthToken(data);
           clearStoredResetPasswordEmail();
+          if (!bearerToken) {
+            return {
+              ok: false,
+              email: resetEmail,
+              message: "Verify your email, then sign in with the new password.",
+            };
+          }
           return { ok: true, email: resetEmail, message: "" };
         }
 
         function updateVerifyRequiredUI() {
-          const hasRecoveryPassword = verificationRecoveryPassword.length > 0;
           verifyRequiredEmail.textContent = verificationEmail
-            ? `Signed in as ${verificationEmail}. Check your inbox for the latest verification message.`
+            ? `Check ${verificationEmail} for the latest verification message.`
             : "Check the inbox for your latest verification message.";
-          verifyRequiredPasswordField.classList.toggle("hidden", hasRecoveryPassword);
-          verifyRequiredPassword.required = !hasRecoveryPassword;
-          resendVerificationBtn.textContent = hasRecoveryPassword
-            ? "Retry sending verification email"
-            : "Resend verification email";
           setInlineMessage(verifyRequiredStatus, verificationInfo);
           setInlineMessage(verifyRequiredError, verificationError);
         }
 
-        function clearVerificationRecoveryPassword() {
-          verificationRecoveryPassword = "";
+        function showVerificationRequired(email, info = "", error = "") {
+          verificationEmail = (email || "").trim();
+          verificationInfo = info;
+          verificationError = error;
+          passwordInput.value = "";
           verifyRequiredPassword.value = "";
+          activeView = "verify-required";
+          renderView(true);
+        }
+
+        function readAuthToken(payload) {
+          return typeof payload?.token === "string" ? payload.token.trim() : "";
+        }
+
+        function normalizeAuthErrorCode(payload) {
+          const candidates = [
+            payload?.code,
+            payload?.error?.code,
+            payload?.error,
+            payload?.message,
+          ];
+          const normalized = candidates
+            .filter((value) => typeof value === "string")
+            .join(" ")
+            .trim()
+            .toLowerCase();
+          if (normalized.includes("verification_email_delivery_failed")) {
+            return "verification_email_delivery_failed";
+          }
+          if (normalized.includes("email_not_verified")) {
+            return "EMAIL_NOT_VERIFIED";
+          }
+          return "";
         }
 
         function updateVerifyEmailUI() {
@@ -762,6 +811,11 @@
         function setView(view) {
           activeView = view;
           renderView(true);
+        }
+
+        function returnToSignIn() {
+          mode = "sign-in";
+          setView("auth");
         }
 
         function restoreAfterHandoffError(message, fallbackView) {
@@ -976,14 +1030,13 @@
         verifyRequiredBack.addEventListener("click", () => {
           verificationError = "";
           verificationInfo = "";
-          clearVerificationRecoveryPassword();
-          passwordInput.value = "";
-          setView("auth");
+          verifyRequiredPassword.value = "";
+          returnToSignIn();
         });
 
         verifyEmailReturn.addEventListener("click", () => {
           viewError = "";
-          setView("auth");
+          returnToSignIn();
         });
 
         form.addEventListener("submit", async (event) => {
@@ -1002,10 +1055,10 @@
             const body = {
               email: emailInput.value.trim(),
               password: passwordInput.value,
+              callbackURL: buildDesktopOnboardingUrl("verify-email"),
             };
             if (submittedMode === "sign-up") {
               body.name = document.getElementById("auth-name").value || "Veslo User";
-              body.callbackURL = buildDesktopOnboardingUrl("verify-email");
               const signupInviteToken = readStoredSignupInvitation();
               if (signupInviteToken) {
                 body.inviteToken = signupInviteToken;
@@ -1021,28 +1074,20 @@
             const data = await response.json().catch(() => null);
 
             if (!response.ok) {
-              if (
-                submittedMode === "sign-up" &&
-                response.status === 502 &&
-                data?.code === "VERIFICATION_EMAIL_DELIVERY_FAILED"
-              ) {
-                verificationEmail = emailInput.value.trim();
-                verificationRecoveryPassword = passwordInput.value;
-                passwordInput.value = "";
-                verificationInfo = "Your account was created, but its verification email was not delivered. Retry sending it below.";
-                verificationError = data?.message || "We could not send the verification email. Please try again.";
-                activeView = "verify-required";
-                renderView(true);
+              const errorCode = normalizeAuthErrorCode(data);
+              if (errorCode === "EMAIL_NOT_VERIFIED") {
+                showVerificationRequired(
+                  body.email,
+                  "A new verification email was sent. Verify the address, then return here to sign in.",
+                );
                 return;
               }
-              if (response.status === 403 && data?.code === "EMAIL_NOT_VERIFIED") {
-                verificationEmail = emailInput.value.trim();
-                verificationInfo = "Verification email sent. Check your inbox for the latest link.";
-                verificationError = "";
-                clearVerificationRecoveryPassword();
-                passwordInput.value = "";
-                activeView = "verify-required";
-                renderView(true);
+              if (errorCode === "verification_email_delivery_failed") {
+                showVerificationRequired(
+                  body.email,
+                  "",
+                  "We could not send the verification email. Use resend to try again.",
+                );
                 return;
               }
               if (submittedMode === "sign-up") {
@@ -1058,37 +1103,15 @@
               clearStoredSignupInvitation();
             }
 
-            bearerToken = data?.token || "";
+            bearerToken = readAuthToken(data);
 
-            if (!bearerToken && data?.user?.emailVerified === false) {
-              verificationEmail = (data.user.email || emailInput.value || "").trim();
-              verificationInfo = "Check your inbox for the verification email.";
-              verificationError = "";
-              clearVerificationRecoveryPassword();
-              passwordInput.value = "";
-              activeView = "verify-required";
-              renderView(true);
-              return;
-            }
-
-            const me = await fetch("/v1/me", {
-              method: "GET",
-              credentials: "include",
-              headers: createSessionHeaders(false),
-            });
-            const mePayload = await me.json().catch(() => null);
-            const emailVerified = mePayload?.user?.emailVerified === true;
-
-            if (me.ok && !emailVerified) {
-              verificationEmail = (mePayload?.user?.email || emailInput.value || "").trim();
-              verificationInfo = submittedMode === "sign-up"
-                ? "Check your inbox for the verification email before continuing to Veslo."
-                : "Your account is signed in, but cloud-gated actions still require email verification.";
-              verificationError = "";
-              clearVerificationRecoveryPassword();
-              passwordInput.value = "";
-              activeView = "verify-required";
-              renderView(true);
+            if (!bearerToken) {
+              showVerificationRequired(
+                body.email,
+                submittedMode === "sign-up"
+                  ? "Verification email sent. Verify the address, then return here to sign in."
+                  : "Verify the address, then return here to sign in.",
+              );
               return;
             }
 
@@ -1165,6 +1188,15 @@
             resetPasswordInput.value = "";
             viewError = "";
             resetToken = "";
+            if (signInResult.verificationRequired) {
+              clearStoredResetPasswordEmail();
+              showVerificationRequired(
+                signInResult.email,
+                signInResult.verificationInfo,
+                signInResult.verificationError,
+              );
+              return;
+            }
             if (signInResult.ok) {
               await doHandoff("reset-password");
               return;
@@ -1181,8 +1213,7 @@
 
         verifyRequiredForm.addEventListener("submit", async (event) => {
           event.preventDefault();
-          const resendPassword = verificationRecoveryPassword || verifyRequiredPassword.value;
-          if (!verificationEmail || !resendPassword) return;
+          if (!verificationEmail) return;
 
           verificationInfo = "";
           verificationError = "";
@@ -1197,41 +1228,49 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 email: verificationEmail,
-                password: resendPassword,
+                password: verifyRequiredPassword.value,
                 callbackURL: buildDesktopOnboardingUrl("verify-email"),
               }),
             });
-            const payload = await response.json().catch(() => null);
-            if (response.status === 403 && payload?.code === "EMAIL_NOT_VERIFIED") {
-              clearVerificationRecoveryPassword();
+            const data = await response.json().catch(() => null);
+            const errorCode = normalizeAuthErrorCode(data);
+
+            if (response.status === 403 && errorCode === "EMAIL_NOT_VERIFIED") {
               verificationInfo = "Verification email sent. Check your inbox for the latest link.";
               updateVerifyRequiredUI();
               return;
             }
-            if (!response.ok) {
-              if (response.status === 502 && payload?.code === "VERIFICATION_EMAIL_DELIVERY_FAILED") {
-                verificationError = "We could not send the verification email. Please try again.";
-              } else if (response.status === 401) {
-                verificationError = "The password is incorrect.";
-              } else if (response.status === 429) {
-                verificationError = "Too many attempts. Please wait and try again.";
-              } else {
-                verificationError = payload?.message || payload?.error || `Verification resend failed with ${response.status}.`;
-              }
+            if (response.status === 502 && errorCode === "verification_email_delivery_failed") {
+              verificationError = "We could not resend the verification email. Please try again.";
               updateVerifyRequiredUI();
               return;
             }
-
-            bearerToken = payload?.token || "";
-            clearVerificationRecoveryPassword();
-            await doHandoff("verify-required");
-          } catch (error) {
-            verificationError = error.message || "Network error while sending the verification email.";
+            if (response.status === 401) {
+              verificationError = "Email or password is incorrect.";
+              updateVerifyRequiredUI();
+              return;
+            }
+            if (response.status === 429) {
+              verificationError = "Too many attempts. Please wait and try again.";
+              updateVerifyRequiredUI();
+              return;
+            }
+            if (response.ok) {
+              bearerToken = readAuthToken(data);
+              if (bearerToken) {
+                await doHandoff("verify-required");
+                return;
+              }
+            }
+            verificationError = "We could not resend the verification email. Please try again.";
+            updateVerifyRequiredUI();
+          } catch {
+            verificationError = "We could not resend the verification email. Check your connection and try again.";
             updateVerifyRequiredUI();
           } finally {
             verifyRequiredPassword.value = "";
             resendVerificationBtn.disabled = false;
-            updateVerifyRequiredUI();
+            resendVerificationBtn.textContent = "Resend verification email";
           }
         });
 

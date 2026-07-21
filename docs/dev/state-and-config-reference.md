@@ -98,6 +98,51 @@ Removing a workspace is detach-only by default: it removes the workspace from Ve
 
 Managed by `packages/app/src/app/lib/den-auth.ts`.
 
+### Email activation configuration
+
+`DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` is the DEN email/password session policy.
+Production DEN always resolves the verification policy to enabled, even when
+the raw configured value says `false`. For this policy, DEN startup fails only
+for missing or blank Lettr transport/sender values or invalid verification-flag
+syntax.
+Production and staging owned-server templates set the policy to `true`, and
+Compose defaults it to `true`. The owned-server deployment workflows separately
+require the Compose-parsed effective flag to be exactly `true` and reject
+`false` before any DEN service is deployed. `false` is reserved for explicitly
+isolated local development and database rehearsal configurations. Owned-server
+rehearsals must deliberately layer `rehearsal/compose.override.yml` over the
+production Compose file; that override sets only the isolated DEN service to
+`NODE_ENV=development`, while the base production topology remains hardcoded to
+`NODE_ENV=production` and fail-closed.
+DEN trims and lowercases `NODE_ENV`, accepts only `development`, `test`, or
+`production`, and rejects explicit blank or unknown values during startup.
+Missing `NODE_ENV` retains the local compatibility default of `development`.
+The normalized value also controls Better Auth rate limiting: it is enabled
+only for production, including mixed-case or whitespace-padded production
+input, while development and test remain disabled. DEN leaves Better Auth's
+native per-path rules, default window, maximum, and in-memory storage unchanged.
+
+With the policy enabled, email/password signup awaits Lettr provider acceptance
+for up to 30 seconds and creates no authenticated session. Delivery failure is a
+safe `502 VERIFICATION_EMAIL_DELIVERY_FAILED`; unverified sign-in is
+`403 EMAIL_NOT_VERIFIED` and may send a new verification message only after the
+password succeeds. The 502 belongs only to the originating native signup or
+sign-in request; concurrent accepted and failed delivery requests cannot
+contaminate one another or override another request's result. The anonymous
+verification-send route is disabled. The hosted resend control calls native
+sign-in with the password, so it inherits Better Auth credential checks and the
+production per-IP/per-path limit of three auth requests in ten seconds (`429`
+afterward).
+
+That limiter currently uses process memory and is not an aggregate multi-replica
+limit. The owned-server configuration runs a single DEN replica; horizontal DEN
+scaling requires shared rate-limit storage first.
+
+Verification never auto-signs the user in. A post-activation sign-in must create
+the session before the current or legacy desktop handoff can issue a code. The
+common session policy rejects legacy unverified cookie/bearer sessions and
+Managed AI access with `403 email_verification_required` before protected work.
+
 Primary keys:
 
 - `veslo.den.auth`

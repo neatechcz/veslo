@@ -63,3 +63,43 @@ test('selection compiler preserves the existing focused-isolation rejection orde
     'packaged-smoke-launch-mode',
   );
 });
+
+test('email verification handoff is a focused isolated DEN fixture with no seeded auth', () => {
+  const scenario = '/repo/packages/e2e/pilot-scenarios/email-verification-handoff.toml';
+  const plan = compilePilotSelectionPlan({ scenarios: [scenario] });
+
+  assert.equal(plan.auth, 'fixture');
+  assert.equal(plan.profile.mode, 'isolated');
+  assert.equal(plan.profile.defaultWorkspace, 'seeded');
+  assert.deepEqual(plan.fixtures, ['email-verification-handoff']);
+  assert.deepEqual(plan.preconditions, [
+    'focused-email-verification-handoff',
+    'isolated-email-verification-handoff-profile',
+  ]);
+  assert.deepEqual(
+    plan.environment.find((mutation) => mutation.key === 'VESLO_E2E_DISABLE_UPDATER'),
+    { key: 'VESLO_E2E_DISABLE_UPDATER', operation: 'set-if-empty', value: '1' },
+  );
+  for (const key of [
+    'VESLO_E2E_DEN_AUTH_JSON',
+    'E2E_DEN_AUTH_JSON',
+    'VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE',
+    'E2E_DEN_AUTH_SNAPSHOT_FILE',
+    'VESLO_DEN_AUTH_SNAPSHOT_PATH',
+  ]) {
+    assert.deepEqual(
+      plan.environment.find((mutation) => mutation.key === key),
+      { key, operation: 'clear', value: '' },
+    );
+  }
+  assert.equal(plan.rejection, null);
+
+  assert.equal(
+    compilePilotSelectionPlan({ scenarios: [scenario, '/repo/packages/e2e/pilot-scenarios/smoke.toml'] }).rejection,
+    'focused-email-verification-handoff',
+  );
+  assert.equal(
+    compilePilotSelectionPlan({ scenarios: [scenario], env: { E2E_USE_EXISTING_PROFILE: '1' } }).rejection,
+    'email-verification-handoff-existing-profile',
+  );
+});

@@ -34,15 +34,23 @@ pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @nea
 
 If a match looks like a user-launched production/bundled app or otherwise cannot be identified as an internally started dev/test runtime, stop and report what is running instead of force-killing it.
 
-### Convenience script
+### Manual sidecar ownership audit
 
-`scripts/veslo-kill-zombies.sh` automates steps 1–3 above for the sidecar set (veslo-server, veslo-orchestrator, veslo-code-router, veslo-code). It preserves the currently-running `pnpm dev` process group by default and only terminates orphans from earlier sessions:
+There is no repository convenience script for sidecar cleanup. When the main
+preflight finds a possible `veslo-server`, `veslo-orchestrator`,
+`veslo-code-router`, or `veslo-code` child, audit candidates read-only before
+the termination step:
 
 ```bash
-./scripts/veslo-kill-zombies.sh           # dry run (default)
-./scripts/veslo-kill-zombies.sh --kill    # actually terminate orphans
-./scripts/veslo-kill-zombies.sh --all     # terminate everything, including the live dev session
+ps -axo pid=,ppid=,pgid=,command= | rg 'veslo-server|veslo-orchestrator|veslo-code-router|veslo-code'
+
+for pid in <candidate-pids>; do
+  ps -p "$pid" -o pid=,ppid=,pgid=,command=
+  lsof -a -p "$pid" -d cwd -Fn
+done
 ```
+
+For each candidate, verify the exact PID, its parent PID/process group, working directory, and full command before changing process state. Terminate only an internally started dev/test process from this repo whose ownership is established; a name match by itself is not ownership evidence. If the parent or working directory is ambiguous, stop and report it rather than using a broader process match.
 
 In debug builds (`pnpm dev`), Veslo also runs an equivalent best-effort cleanup at startup — orphan sidecars whose process group differs from the booting Tauri process are SIGTERM'd before the new sidecars spawn. Release builds do not run this cleanup so a shipped Veslo never kills unrelated processes.
 
@@ -267,6 +275,39 @@ pnpm test:pilot:global-managed-ai-model-policy
 pnpm test:pilot -- --scenario sidebar-session-retention
 pnpm test:pilot -- --scenario <name-or-path>
 ```
+
+For the email-verification desktop handoff boundary, run the Desktop Test
+Runtime Preflight first, build the Pilot-enabled desktop binary with the E2E
+config shown above, then use the focused command from `packages/e2e`:
+
+```bash
+pnpm test:pilot:email-verification-handoff
+```
+
+The focused command owns a random Docker Compose project with loopback-only
+MySQL, a real DEN process, and a Lettr capture service. It creates one legacy
+unverified session whose desktop transaction remains pending without a code and
+one post-verification transaction with a one-time PKCE handoff. The runner uses
+a fresh signed-out desktop profile, seeds only the verified PKCE proof, and
+delivers the authorized `veslo://auth-complete` URL by launching the actual
+Tauri binary a second time so the native single-instance/deep-link fan-in is
+exercised. That secondary process requires the explicit loopback HTTP(S) DEN
+fixture URL and receives only the isolated harness profile, desktop port, and OS
+launch variables; it does not inherit the primary Pilot socket, live provider
+credentials, updater variables, or user
+profile paths. The harness waits for the secondary process to exit and, on a
+timeout or launch error, terminates and awaits that exact child before reporting
+the delivery failure. The underlying focused Pilot invocation is
+`pnpm test:pilot -- --scenario email-verification-handoff`; use the wrapper so
+the fixture artifact, DEN process, app profile, container, network, and volume
+are lifecycle-owned and cleaned up. This focused selection also sets
+`VESLO_E2E_DISABLE_UPDATER=1`, removes only the exact harness-owned
+`.tmp-veslo-home` and `.tmp-opencode-home` profiles after the app has stopped,
+and audits the random Compose project's container, network, and volume labels
+after `docker compose down`. A cleanup failure fails the command and is reported
+alongside any earlier acceptance failure. The scenario requires the verified email
+to be visible in the desktop UI and to match both WebView auth storage and the
+native persisted auth snapshot.
 
 `test:pilot:global-managed-ai-model-policy` is a focused-only, isolated-profile
 acceptance scenario. It starts a secret-free local fixture that mounts the real

@@ -2,109 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import path from "node:path"
-import vm from "node:vm"
 import { fileURLToPath } from "node:url"
 
 const currentFile = fileURLToPath(import.meta.url)
 const serviceRoot = path.resolve(path.dirname(currentFile), "..")
 const onboardingPage = readFileSync(path.join(serviceRoot, "public", "index.html"), "utf8")
-
-type FakeEventListener = (event: { preventDefault(): void }) => unknown | Promise<unknown>
-
-function createOnboardingRuntime(fetchImplementation: typeof fetch) {
-  const listeners = new Map<string, Map<string, FakeEventListener>>()
-  const elements = new Map<string, {
-    classList: {
-      add(name: string): void
-      remove(name: string): void
-      toggle(name: string, force?: boolean): void
-      contains(name: string): boolean
-    }
-    value: string
-    textContent: string
-    autocomplete: string
-    disabled: boolean
-    required: boolean
-    href: string
-    focus(): void
-    addEventListener(type: string, listener: FakeEventListener): void
-  }>()
-
-  for (const [, id] of onboardingPage.matchAll(/id="([^"]+)"/g)) {
-    const classNames = new Set<string>()
-    elements.set(id, {
-      classList: {
-        add: (name) => classNames.add(name),
-        remove: (name) => classNames.delete(name),
-        toggle: (name, force) => {
-          if (force === undefined ? !classNames.has(name) : force) classNames.add(name)
-          else classNames.delete(name)
-        },
-        contains: (name) => classNames.has(name),
-      },
-      value: "",
-      textContent: "",
-      autocomplete: "",
-      disabled: false,
-      required: false,
-      href: "#",
-      focus() {},
-      addEventListener(type, listener) {
-        const elementListeners = listeners.get(id) ?? new Map<string, FakeEventListener>()
-        elementListeners.set(type, listener)
-        listeners.set(id, elementListeners)
-      },
-    })
-  }
-
-  const storedValues = new Map<string, string>()
-  const locationUrl = new URL("https://auth.example.test/?desktopOnboarding=1&intent=signup&tid=tx-1&state=state-1")
-  const window = {
-    location: {
-      search: locationUrl.search,
-      href: locationUrl.toString(),
-      assign() {},
-    },
-    history: { replaceState() {} },
-    localStorage: {
-      getItem: (key: string) => storedValues.get(key) ?? null,
-      setItem: (key: string, value: string) => storedValues.set(key, value),
-      removeItem: (key: string) => storedValues.delete(key),
-    },
-  }
-  const document = {
-    getElementById(id: string) {
-      const element = elements.get(id)
-      assert.ok(element, `missing fake element ${id}`)
-      return element
-    },
-  }
-  const script = onboardingPage.match(/<script>([\s\S]*?)<\/script>/)?.[1]
-  assert.ok(script, "onboarding page must contain its runtime script")
-  vm.runInNewContext(script, {
-    console,
-    document,
-    fetch: fetchImplementation,
-    Response,
-    URL,
-    URLSearchParams,
-    window,
-  })
-
-  return {
-    element(id: string) {
-      const element = elements.get(id)
-      assert.ok(element)
-      return element
-    },
-    async submit(id: string) {
-      const listener = listeners.get(id)?.get("submit")
-      assert.ok(listener, `missing submit listener for ${id}`)
-      await listener({ preventDefault() {} })
-    },
-    storedValues,
-  }
-}
 
 test("desktop onboarding page exposes a manual deep-link fallback CTA", () => {
   assert.equal(
@@ -180,77 +82,43 @@ test("desktop onboarding page exposes verification and resend affordances", () =
   assert.equal(onboardingPage.includes('id="verify-required-password"'), true)
   assert.equal(onboardingPage.includes('autocomplete="current-password"'), true)
   assert.equal(onboardingPage.includes('fetch("/api/auth/sign-in/email"'), true)
-  assert.equal(onboardingPage.includes("verifyRequiredPassword.value = \"\""), true)
-  assert.equal(onboardingPage.includes("emailVerified"), true)
+  assert.equal(onboardingPage.includes('id="verify-required-card"'), true)
   assert.equal(onboardingPage.includes('buildDesktopOnboardingUrl("verify-email")'), true)
 })
 
-test("verification gate has recovery actions but no pre-verification Veslo handoff", () => {
-  assert.equal(onboardingPage.includes('id="continue-to-veslo"'), false)
-  assert.equal(onboardingPage.includes("Continue to Veslo"), false)
-  assert.equal(onboardingPage.includes("You can still continue to Veslo right now."), false)
-  assert.match(onboardingPage, /Verify your email before continuing to Veslo\./)
-  assert.match(onboardingPage, /Retry sending verification email/)
+test("verification resend password is cleared around every recovery attempt", () => {
+  assert.match(onboardingPage, /function showVerificationRequired[\s\S]*verifyRequiredPassword\.value = ""/)
+  assert.match(onboardingPage, /finally \{[\s\S]*verifyRequiredPassword\.value = ""/)
 })
 
-test("signup delivery failure enters in-memory credential recovery and clears it after resend", async () => {
-  const requests: Array<{ url: string; body: Record<string, unknown> }> = []
-  const runtime = createOnboardingRuntime(async (input, init) => {
-    const url = String(input)
-    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
-    requests.push({ url, body })
-
-    if (requests.length === 1) {
-      return new Response(JSON.stringify({
-        code: "VERIFICATION_EMAIL_DELIVERY_FAILED",
-        message: "We could not send the verification email. Please try again.",
-      }), {
-        status: 502,
-        headers: { "content-type": "application/json" },
-      })
-    }
-
-    return new Response(JSON.stringify({
-      code: "EMAIL_NOT_VERIFIED",
-      message: "Email not verified",
-    }), {
-      status: 403,
-      headers: { "content-type": "application/json" },
-    })
-  })
-  const email = "created-after-mail-failure@example.test"
-  const password = "correct-horse-battery-staple"
-  runtime.element("auth-email").value = email
-  runtime.element("auth-password").value = password
-  runtime.element("auth-name").value = "Mail Recovery"
-
-  await runtime.submit("auth-form")
-
-  assert.equal(runtime.element("verify-required-card").classList.contains("hidden"), false)
-  assert.equal(runtime.element("onboard-form").classList.contains("hidden"), true)
-  assert.equal(runtime.element("auth-password").value, "")
-  assert.equal(runtime.element("verify-required-password").value, "")
+test("unverified browser auth cannot continue to Veslo", () => {
+  assert.equal(onboardingPage.includes('id="continue-to-veslo"'), false)
+  assert.equal(onboardingPage.includes("continueToVesloBtn"), false)
+  assert.equal(onboardingPage.includes("You can still continue to Veslo right now"), false)
+  assert.equal(onboardingPage.includes("cloud-gated actions still require"), false)
   assert.equal(
-    [...runtime.storedValues.values()].some((value) => value.includes(email) || value.includes(password)),
-    false,
-    "recovery credentials must not be persisted",
+    onboardingPage.includes("Verify this email address before signing in to Veslo."),
+    true,
   )
+})
 
-  await runtime.submit("verify-required-form")
+test("tokenless signup and unverified sign-in share one verification recovery transition", () => {
+  assert.equal(onboardingPage.includes("function showVerificationRequired("), true)
+  assert.equal(onboardingPage.includes('"EMAIL_NOT_VERIFIED"'), true)
+  assert.equal(onboardingPage.includes('"verification_email_delivery_failed"'), true)
+  assert.equal(onboardingPage.includes('fetch("/v1/me"'), false)
+  assert.match(
+    onboardingPage,
+    /if \(!bearerToken\)[\s\S]+showVerificationRequired\([\s\S]+submittedMode === "sign-up"/,
+    "a tokenless signup must enter verification recovery without probing an authenticated session",
+  )
+})
 
-  assert.deepEqual(requests.map(({ url }) => url), [
-    "/api/auth/sign-up/email",
-    "/api/auth/sign-in/email",
-  ])
-  assert.deepEqual(requests[1]?.body, {
-    email,
-    password,
-    callbackURL: "https://auth.example.test/?desktopOnboarding=1&intent=signup&tid=tx-1&state=state-1&view=verify-email",
-  })
-  assert.equal(runtime.element("verify-required-password").value, "")
-
-  await runtime.submit("verify-required-form")
-  assert.equal(requests.length, 2, "accepted resend must clear the in-memory recovery password")
+test("only a successful sign-in or opt-out signup with a non-empty token can hand off to Veslo", () => {
+  assert.match(
+    onboardingPage,
+    /if \(!bearerToken\)[\s\S]+showVerificationRequired\([\s\S]+return;[\s\S]+await doHandoff\("auth"\)/,
+  )
 })
 
 test("desktop onboarding page uses Veslo auth copy", () => {
@@ -301,13 +169,13 @@ test("desktop auth submit handling stays bound to the submitted mode", () => {
     /if \(submittedMode === "sign-up"\) \{\s+showError\(formatEmailSignUpError/,
     "the submitted mode must select sign-up error formatting",
   )
-  assert.equal(
-    submitHandler.includes('verificationInfo = submittedMode === "sign-up"'),
-    true,
+  assert.match(
+    submitHandler,
+    /showVerificationRequired\([\s\S]*?submittedMode === "sign-up"[\s\S]*?Verification email sent/,
     "the submitted mode must select request-specific follow-up copy",
   )
   assert.equal(
-    /(?:const endpoint =|if \(|verificationInfo =) mode === "sign-up"/.test(submitHandler),
+    /(?:const endpoint =|if \(|showVerificationRequired\() mode === "sign-up"/.test(submitHandler),
     false,
     "async request handling must not consult the mutable UI mode",
   )

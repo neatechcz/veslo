@@ -111,6 +111,50 @@ jobs:
           test -f packaging/owned-server/compose.yml
           bash services/den/scripts/validate-live-auth-env.sh production "$OWNED_SERVER_ENV_FILE"
 
+          require_nonempty_effective_env_value() {
+            key="$1"
+            found=0
+            valid=0
+            while IFS= read -r line; do
+              case "$line" in
+                "$key="*)
+                  found=1
+                  value="${line#*=}"
+                  if [[ "$value" =~ [^[:space:]] ]]; then valid=1; else valid=0; fi
+                  ;;
+              esac
+            done <<< "$compose_environment"
+
+            if [ "$found" -ne 1 ] || [ "$valid" -ne 1 ]; then
+              echo "::error::Missing required email activation setting: $key"
+              exit 1
+            fi
+          }
+
+          require_email_verification_enabled() {
+            found=0
+            enabled=0
+            while IFS= read -r line; do
+              case "$line" in
+                "DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED="*)
+                  found=1
+                  value="${line#*=}"
+                  if [ "$value" = "true" ]; then enabled=1; else enabled=0; fi
+                  ;;
+              esac
+            done <<< "$compose_environment"
+
+            if [ "$found" -ne 1 ] || [ "$enabled" -ne 1 ]; then
+              echo "::error::DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED must be true for owned-server deployment"
+              exit 1
+            fi
+          }
+
+          compose_environment="$(sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$OWNED_SERVER_ENV_FILE" config --environment | awk '/^(LETTR_API_KEY|AUTH_EMAIL_ADDRESS|DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED)=/')"
+          require_nonempty_effective_env_value LETTR_API_KEY
+          require_nonempty_effective_env_value AUTH_EMAIL_ADDRESS
+          require_email_verification_enabled
+
           compose() {
             sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$OWNED_SERVER_ENV_FILE" "$@"
           }

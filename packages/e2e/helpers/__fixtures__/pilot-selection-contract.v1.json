@@ -329,6 +329,81 @@
       }
     },
     {
+      "id": "scenario:email-verification-handoff",
+      "scenarios": [
+        "email-verification-handoff"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "email-verification-handoff"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "fixture",
+        "fixtures": [
+          "email-verification-handoff"
+        ],
+        "environment": [
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "E2E_DESKTOP_AUTH_SIGNED_OUT",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_E2E_DISABLE_UPDATER",
+            "operation": "set-if-empty",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
+          }
+        ],
+        "preconditions": [
+          "focused-email-verification-handoff",
+          "isolated-email-verification-handoff-profile"
+        ],
+        "launch": {
+          "devAutostart": "disabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
       "id": "scenario:escape-stop-confirmation",
       "scenarios": [
         "escape-stop-confirmation"

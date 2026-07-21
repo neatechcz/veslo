@@ -8,7 +8,7 @@ import {
   evaluateSessionPolicy,
   SessionPolicyRejectionError,
 } from "../../http/email-verification.js"
-import type { SessionContext } from "../../http/session.js"
+import type { SessionContext } from "../../http/session-context.js"
 
 export type UserSession = {
   token: string

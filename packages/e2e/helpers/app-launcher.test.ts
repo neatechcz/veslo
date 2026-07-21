@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, once } from "node:events";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -13,8 +14,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildWindowsManagedChildCleanupScript,
+  cleanupHarnessOwnedIsolatedProfilePaths,
   createAppLaunchEnv,
+  createNativeAuthHandoffLaunchEnv,
   isDesktopBootstrapReadyDiagnostic,
+  normalizeNativeAuthDeepLink,
   missingE2EDesktopBinaryMessage,
   publishManagedAiFixtureAuthSeed,
   readDesktopBootstrapDiagnosticFile,
@@ -29,7 +33,354 @@ import {
   seedDefaultWorkspaceState,
   shouldForwardAppLogs,
   terminateAppProcess,
+  waitForNativeAuthHandoffProcess,
 } from "./app-launcher.js";
+
+test("email handoff cleanup removes only the two exact harness-owned isolated profiles", () => {
+  const root = mkdtempSync(join(tmpdir(), "veslo-email-profile-cleanup-"));
+  const e2eRoot = join(root, "packages", "e2e");
+  const profileRoot = join(e2eRoot, ".tmp-veslo-home");
+  const opencodeHome = join(e2eRoot, ".tmp-opencode-home");
+  const nearbyUserProfile = join(e2eRoot, "user-profile");
+
+  try {
+    for (const path of [profileRoot, opencodeHome, nearbyUserProfile]) {
+      mkdirSync(path, { recursive: true });
+      writeFileSync(join(path, "proof.txt"), "must be scoped", "utf8");
+    }
+
+    cleanupHarnessOwnedIsolatedProfilePaths({ e2eRoot, profileRoot, opencodeHome });
+
+    assert.equal(existsSync(profileRoot), false);
+    assert.equal(existsSync(opencodeHome), false);
+    assert.equal(existsSync(nearbyUserProfile), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("email handoff cleanup rejects non-harness profile paths without deleting them", () => {
+  const root = mkdtempSync(join(tmpdir(), "veslo-email-profile-reject-"));
+  const e2eRoot = join(root, "packages", "e2e");
+  const userProfile = join(root, "user-profile");
+  const opencodeHome = join(e2eRoot, ".tmp-opencode-home");
+
+  try {
+    mkdirSync(userProfile, { recursive: true });
+    mkdirSync(opencodeHome, { recursive: true });
+
+    assert.throws(
+      () => cleanupHarnessOwnedIsolatedProfilePaths({
+        e2eRoot,
+        profileRoot: userProfile,
+        opencodeHome,
+      }),
+      /harness-owned isolated profile paths/i,
+    );
+    assert.equal(existsSync(userProfile), true);
+    assert.equal(existsSync(opencodeHome), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("native auth deep-link launcher accepts only one-time Veslo auth-complete URLs", () => {
+  const value = "veslo://auth-complete?code=one-time-code&transactionId=transaction-1&state=state-1";
+  assert.equal(normalizeNativeAuthDeepLink(value), value);
+  assert.throws(
+    () => normalizeNativeAuthDeepLink("https://api.veslo.work/auth-complete?code=code"),
+    /veslo:\/\/auth-complete/i,
+  );
+  assert.throws(
+    () => normalizeNativeAuthDeepLink("veslo://auth-complete?transactionId=transaction-1"),
+    /one-time code/i,
+  );
+});
+
+test("secondary native handoff receives only the isolated primary profile contract", () => {
+  const e2eRoot = "/repo/packages/e2e";
+  const profileRoot = `${e2eRoot}/.tmp-veslo-home`;
+  const opencodeHome = `${e2eRoot}/.tmp-opencode-home`;
+  const primaryEnv = createAppLaunchEnv(
+    {
+      PATH: "/usr/bin:/bin",
+      TMPDIR: "/tmp/harness",
+      HOME: "/Users/developer",
+      VESLO_E2E_DEN_AUTH_JSON: '{"token":"live-token"}',
+      VESLO_SKILL_REGISTRY_TOKEN: "registry-secret",
+      VESLO_MANAGED_AI_BASE_URL: "https://live-provider.example.test",
+      VITE_PRIVATE_TOKEN: "vite-secret",
+      OPENCODE_CONFIG: "/Users/developer/.config/opencode.json",
+      OPENAI_API_KEY: "openai-secret",
+      ANTHROPIC_API_KEY: "anthropic-secret",
+      GITHUB_TOKEN: "github-secret",
+      CODEX_HOME: "/Users/developer/.codex",
+      DATABASE_URL: "mysql://secret",
+      TAURI_PILOT_SOCKET: "/tmp/primary-pilot.sock",
+      TAURI_PILOT_LOG_DIR: "/tmp/primary-pilot-logs",
+      VESLO_RUN_ID: "primary-run",
+    },
+    {
+      platform: "linux",
+      opencodeHome,
+      snapshotPath: `${opencodeHome}/.veslo/den-auth.json`,
+      pilotRuntimeDir: "/tmp/veslo-primary-runtime",
+      vesloServerPort: 61234,
+      denApiBase: "http://127.0.0.1:43123",
+    },
+  );
+  Object.assign(primaryEnv, {
+    HOME: profileRoot,
+    USERPROFILE: profileRoot,
+    XDG_DATA_HOME: `${profileRoot}/.local/share`,
+    XDG_CONFIG_HOME: `${profileRoot}/.config`,
+    XDG_CACHE_HOME: `${profileRoot}/.cache`,
+    VESLO_DISABLE_DEV_AUTOSTART: "1",
+    VESLO_E2E_DISABLE_UPDATER: "1",
+  });
+  // These reach the primary process today for fixture support; they must not
+  // cross the secondary native fan-in boundary.
+  Object.assign(primaryEnv, {
+    VESLO_SKILL_REGISTRY_TOKEN: "registry-secret",
+    VESLO_MANAGED_AI_BASE_URL: "https://live-provider.example.test",
+    VITE_PRIVATE_TOKEN: "vite-secret",
+    OPENCODE_CONFIG: "/Users/developer/.config/opencode.json",
+    ANTHROPIC_API_KEY: "anthropic-secret",
+    GITHUB_TOKEN: "github-secret",
+    CODEX_HOME: "/Users/developer/.codex",
+    DATABASE_URL: "mysql://secret",
+  });
+
+  const secondaryEnv = createNativeAuthHandoffLaunchEnv(primaryEnv, {
+    e2eRoot,
+    platform: "linux",
+  });
+
+  assert.deepEqual(secondaryEnv, {
+    PATH: "/usr/bin:/bin",
+    TMPDIR: "/tmp/harness",
+    HOME: profileRoot,
+    USERPROFILE: profileRoot,
+    XDG_DATA_HOME: `${profileRoot}/.local/share`,
+    XDG_CONFIG_HOME: `${profileRoot}/.config`,
+    XDG_CACHE_HOME: `${profileRoot}/.cache`,
+    XDG_RUNTIME_DIR: "/tmp/veslo-primary-runtime",
+    GDK_BACKEND: "x11",
+    OPENCODE_HOME: opencodeHome,
+    VESLO_DATA_DIR: `${opencodeHome}/.veslo`,
+    VESLO_APP_CONFIG_DIR: `${opencodeHome}/.veslo/app-config`,
+    VESLO_APP_DATA_DIR: `${opencodeHome}/.veslo/app-data`,
+    VESLO_APP_LOCAL_DATA_DIR: `${opencodeHome}/.veslo/app-local-data`,
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: `${opencodeHome}/.veslo/den-auth.json`,
+    VESLO_DESKTOP_SERVER_PORT: "61234",
+    VESLO_DEN_API_BASE: "http://127.0.0.1:43123",
+    VESLO_DISABLE_DEV_AUTOSTART: "1",
+    VESLO_E2E_DISABLE_UPDATER: "1",
+  });
+  for (const forbidden of [
+    "TAURI_PILOT_SOCKET",
+    "TAURI_PILOT_LOG_DIR",
+    "VESLO_RUN_ID",
+    "VESLO_SKILL_REGISTRY_TOKEN",
+    "VESLO_MANAGED_AI_BASE_URL",
+    "VITE_PRIVATE_TOKEN",
+    "OPENCODE_CONFIG",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GITHUB_TOKEN",
+    "CODEX_HOME",
+    "DATABASE_URL",
+  ]) {
+    assert.equal(forbidden in secondaryEnv, false, `${forbidden} leaked to secondary Tauri`);
+  }
+});
+
+test("secondary native handoff refuses a primary process using a user profile", () => {
+  assert.throws(
+    () => createNativeAuthHandoffLaunchEnv({
+      HOME: "/Users/developer",
+      USERPROFILE: "/Users/developer",
+      OPENCODE_HOME: "/Users/developer/.opencode",
+    }, {
+      e2eRoot: "/repo/packages/e2e",
+      platform: "linux",
+    }),
+    /exact harness-owned isolated profile/i,
+  );
+});
+
+test("secondary native handoff requires an explicit valid loopback http(s) DEN API base", () => {
+  const e2eRoot = "/repo/packages/e2e";
+  const opencodeHome = `${e2eRoot}/.tmp-opencode-home`;
+  const validPrimaryEnv: NodeJS.ProcessEnv = {
+    HOME: `${e2eRoot}/.tmp-veslo-home`,
+    USERPROFILE: `${e2eRoot}/.tmp-veslo-home`,
+    OPENCODE_HOME: opencodeHome,
+    VESLO_DATA_DIR: `${opencodeHome}/.veslo`,
+    VESLO_APP_CONFIG_DIR: `${opencodeHome}/.veslo/app-config`,
+    VESLO_APP_DATA_DIR: `${opencodeHome}/.veslo/app-data`,
+    VESLO_APP_LOCAL_DATA_DIR: `${opencodeHome}/.veslo/app-local-data`,
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: `${opencodeHome}/.veslo/den-auth.json`,
+    VESLO_DESKTOP_SERVER_PORT: "61234",
+  };
+
+  for (const denApiBase of [
+    undefined,
+    "",
+    "   ",
+    "not a url",
+    "https://api.veslo.example.test",
+  ]) {
+    assert.throws(
+      () => createNativeAuthHandoffLaunchEnv({
+        ...validPrimaryEnv,
+        ...(denApiBase === undefined ? {} : { VESLO_DEN_API_BASE: denApiBase }),
+      }, {
+        e2eRoot,
+        platform: "linux",
+      }),
+      /requires a valid loopback http\(s\) DEN API base/i,
+      `unexpectedly accepted ${JSON.stringify(denApiBase)}`,
+    );
+  }
+
+  for (const denApiBase of [
+    "http://127.0.0.1:43123",
+    "https://localhost:43123",
+    "http://[::1]:43123",
+  ]) {
+    const env = createNativeAuthHandoffLaunchEnv({
+      ...validPrimaryEnv,
+      VESLO_DEN_API_BASE: denApiBase,
+    }, {
+      e2eRoot,
+      platform: "linux",
+    });
+    assert.equal(env.VESLO_DEN_API_BASE, denApiBase);
+  }
+});
+
+test("secondary native handoff awaits a normal zero exit", async () => {
+  const child = spawn(process.execPath, ["-e", "process.exit(0)"], {
+    stdio: "ignore",
+  });
+
+  await waitForNativeAuthHandoffProcess(child, { timeoutMs: 2_000 });
+  assert.equal(child.exitCode, 0);
+});
+
+test("secondary native handoff timeout terminates only that child and awaits forced exit", {
+  skip: process.platform === "win32" ? "POSIX signal assertions are not available on Windows." : false,
+}, async () => {
+  const child = spawn(process.execPath, [
+    "-e",
+    'process.on("SIGTERM", () => {}); console.log("ready"); setInterval(() => {}, 1000);',
+  ], {
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  try {
+    await once(child.stdout!, "data");
+    await assert.rejects(
+      waitForNativeAuthHandoffProcess(child, {
+        timeoutMs: 20,
+        forceKillAfterMs: 30,
+        forceExitWaitMs: 250,
+        platform: "linux",
+        log: () => {},
+      }),
+      /did not exit within 20ms/i,
+    );
+    assert.equal(child.signalCode, "SIGKILL");
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  }
+});
+
+test("secondary native handoff surfaces timeout and exact-child cleanup failure together", async () => {
+  const emitter = new EventEmitter();
+  const signals: Array<NodeJS.Signals | undefined> = [];
+  const child = Object.assign(emitter, {
+    exitCode: null,
+    signalCode: null,
+    kill(signal?: NodeJS.Signals) {
+      signals.push(signal);
+      return true;
+    },
+  });
+
+  await assert.rejects(
+    waitForNativeAuthHandoffProcess(child as never, {
+      timeoutMs: 5,
+      forceKillAfterMs: 5,
+      forceExitWaitMs: 5,
+      platform: "linux",
+      log: () => {},
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors.length, 2);
+      assert.match(String(error.errors[0]), /did not exit within 5ms/i);
+      assert.match(String(error.errors[1]), /could not confirm.*exit/i);
+      return true;
+    },
+  );
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
+test("secondary native handoff cleans up the exact child after a process error", async () => {
+  const emitter = new EventEmitter();
+  const signals: Array<NodeJS.Signals | undefined> = [];
+  const child = Object.assign(emitter, {
+    exitCode: null as number | null,
+    signalCode: null as NodeJS.Signals | null,
+    kill(signal?: NodeJS.Signals) {
+      signals.push(signal);
+      setImmediate(() => {
+        child.signalCode = signal ?? "SIGTERM";
+        emitter.emit("exit", null, child.signalCode);
+      });
+      return true;
+    },
+  });
+
+  const pending = waitForNativeAuthHandoffProcess(child as never, {
+    timeoutMs: 2_000,
+    forceKillAfterMs: 50,
+    forceExitWaitMs: 50,
+    platform: "linux",
+    log: () => {},
+  });
+  emitter.emit("error", new Error("secondary spawn boundary failed"));
+
+  await assert.rejects(pending, /secondary spawn boundary failed/i);
+  assert.deepEqual(signals, ["SIGTERM"]);
+  assert.equal(child.signalCode, "SIGTERM");
+});
+
+test("native auth launcher wires the sanitized environment into the real secondary binary spawn", () => {
+  const source = readFileSync(new URL("./app-launcher.ts", import.meta.url), "utf8");
+  const launchStart = source.indexOf("export async function launchNativeAuthDeepLink(");
+  const launchEnd = source.indexOf("export function missingE2EDesktopBinaryMessage", launchStart);
+  assert.ok(launchStart >= 0 && launchEnd > launchStart);
+
+  const launchSource = source.slice(launchStart, launchEnd);
+  assert.match(
+    launchSource,
+    /spawn\(resolveBinaryPath\(\), \[deepLink\], \{\s*env: \{ \.\.\.activeNativeAuthHandoffEnv \},/,
+  );
+  assert.match(
+    launchSource,
+    /await waitForNativeAuthHandoffProcess\(secondary, options\)/,
+  );
+  assert.doesNotMatch(launchSource, /env:\s*process\.env|TAURI_PILOT_SOCKET/);
+
+  const startAppSource = source.slice(source.indexOf("export async function startApp("));
+  assert.match(
+    startAppSource,
+    /createNativeAuthHandoffLaunchEnv\(appSpawnEnv, \{\s*e2eRoot:/,
+  );
+});
 
 test("shouldForwardAppLogs keeps captured app output quiet only when explicitly requested", () => {
   assert.equal(shouldForwardAppLogs({}), true);

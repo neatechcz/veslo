@@ -73,12 +73,11 @@ test("Den explicit full backend URLs still override deployment-domain defaults",
   assert.equal(parsed.microsoft.connectorBaseUrl, "https://api.override.example");
 });
 
-test("Den explicitly enabled production verification normalizes provider configuration", async () => {
+test("Den production defaults to required email verification and normalizes provider configuration", async () => {
   const { parseEnv } = await import("../src/env.js");
   const parsed = parseEnv({
     ...baseEnv,
     NODE_ENV: "production",
-    DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "true",
     LETTR_API_KEY: "  lettr-test-key  ",
     AUTH_EMAIL_ADDRESS: "  noreply@veslo.test  ",
   });
@@ -89,17 +88,29 @@ test("Den explicitly enabled production verification normalizes provider configu
   assert.equal(parsed.email.address, "noreply@veslo.test");
 });
 
-test("Den production parser preserves the explicit rehearsal email-verification opt-out", async () => {
+test("Den production cannot opt out of required email verification", async () => {
   const { parseEnv } = await import("../src/env.js");
-  const parsed = parseEnv({
-    ...baseEnv,
-    NODE_ENV: "production",
-    DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
-  });
 
-  assert.equal(parsed.authRequireEmailVerification, false);
-  assert.equal(parsed.desktopAuthRequireEmailVerified, false);
-  assert.equal(parsed.email.lettrApiKey, undefined);
+  for (const configuredValue of ["false", "  false  "]) {
+    const parsed = parseEnv({
+      ...baseEnv,
+      ...productionEmailEnv,
+      NODE_ENV: "production",
+      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: configuredValue,
+    });
+
+    assert.equal(parsed.authRequireEmailVerification, true);
+    assert.equal(parsed.desktopAuthRequireEmailVerified, true);
+  }
+
+  assert.throws(
+    () => parseEnv({
+      ...baseEnv,
+      NODE_ENV: "production",
+      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+    }),
+    /LETTR_API_KEY and AUTH_EMAIL_ADDRESS are required/,
+  );
 });
 
 test("Den strictly parses explicit email verification flags", async () => {
@@ -148,7 +159,6 @@ test("Den rejects missing or blank email delivery configuration when verificatio
     () => parseEnv({
       ...baseEnv,
       NODE_ENV: "production",
-      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "true",
     }),
     /LETTR_API_KEY and AUTH_EMAIL_ADDRESS are required/,
   );
@@ -156,7 +166,6 @@ test("Den rejects missing or blank email delivery configuration when verificatio
     () => parseEnv({
       ...baseEnv,
       NODE_ENV: "production",
-      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "true",
       AUTH_EMAIL_ADDRESS: "noreply@veslo.test",
     }),
     /LETTR_API_KEY and AUTH_EMAIL_ADDRESS are required/,
@@ -165,7 +174,6 @@ test("Den rejects missing or blank email delivery configuration when verificatio
     () => parseEnv({
       ...baseEnv,
       NODE_ENV: "production",
-      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "true",
       LETTR_API_KEY: "   ",
       AUTH_EMAIL_ADDRESS: "noreply@veslo.test",
     }),
@@ -175,7 +183,6 @@ test("Den rejects missing or blank email delivery configuration when verificatio
     () => parseEnv({
       ...baseEnv,
       NODE_ENV: "production",
-      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "true",
       LETTR_API_KEY: "lettr-test-key",
     }),
     /LETTR_API_KEY and AUTH_EMAIL_ADDRESS are required/,
@@ -184,7 +191,6 @@ test("Den rejects missing or blank email delivery configuration when verificatio
     () => parseEnv({
       ...baseEnv,
       NODE_ENV: "production",
-      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "true",
       LETTR_API_KEY: "lettr-test-key",
       AUTH_EMAIL_ADDRESS: "   ",
     }),
@@ -202,4 +208,59 @@ test("Den supports an explicit development opt-out from required email verificat
 
   assert.equal(parsed.authRequireEmailVerification, false);
   assert.equal(parsed.desktopAuthRequireEmailVerified, false);
+});
+
+test("Den normalizes supported NODE_ENV values before deriving verification policy", async () => {
+  const { parseEnv } = await import("../src/env.js");
+
+  assert.throws(
+    () => parseEnv({
+      ...baseEnv,
+      NODE_ENV: " production ",
+      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+    }),
+    /LETTR_API_KEY and AUTH_EMAIL_ADDRESS are required/,
+  );
+
+  const production = parseEnv({
+    ...baseEnv,
+    ...productionEmailEnv,
+    NODE_ENV: " PrOdUcTiOn ",
+    DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+  });
+  assert.equal(production.authRequireEmailVerification, true);
+
+  for (const nodeEnv of [" development ", " TEST "]) {
+    const parsed = parseEnv({
+      ...baseEnv,
+      NODE_ENV: nodeEnv,
+      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+    });
+    assert.equal(parsed.authRequireEmailVerification, false);
+  }
+});
+
+test("Den rejects malformed or production-like NODE_ENV values instead of falling back", async () => {
+  const { parseEnv } = await import("../src/env.js");
+
+  for (const nodeEnv of ["prod", "productionx", "staging", "", "   "]) {
+    assert.throws(
+      () => parseEnv({
+        ...baseEnv,
+        NODE_ENV: nodeEnv,
+        DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+      }),
+      /NODE_ENV must be one of 'development', 'test', or 'production'/,
+    );
+  }
+});
+
+test("Den keeps the missing NODE_ENV compatibility default in development mode", async () => {
+  const { parseEnv } = await import("../src/env.js");
+  const parsed = parseEnv({
+    ...baseEnv,
+    DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+  });
+
+  assert.equal(parsed.authRequireEmailVerification, false);
 });

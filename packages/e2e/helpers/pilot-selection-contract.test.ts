@@ -60,7 +60,7 @@ test('SelectionPlan compiler characterizes every standalone Pilot TOML', () => {
     .sort()
     .map((entry) => join(scenarioRoot, entry));
 
-  assert.equal(scenarios.length, 80, 'update the matrix deliberately when a scenario is added or removed');
+  assert.equal(scenarios.length, 81, 'update the matrix deliberately when a scenario is added or removed');
   for (const scenario of scenarios) {
     assert.equal(existsSync(scenario), true, `missing scenario: ${scenario}`);
     assertContractParity({ scenarios: [scenario] });
@@ -121,7 +121,7 @@ test('SelectionPlan compiler characterizes topology-sensitive multi-scenario and
 test('checked-in SelectionPlan matrix freezes every suite, standalone scenario, and topology exception', () => {
   const fixture = JSON.parse(readFileSync(selectionFixturePath, 'utf8')) as SelectionFixture;
   assert.equal(fixture.schema, 'veslo-tauri-pilot-selection-contract/v1');
-  assert.equal(fixture.cases.length, 93, 'regenerate the fixture deliberately when the policy matrix changes');
+  assert.equal(fixture.cases.length, 94, 'regenerate the fixture deliberately when the policy matrix changes');
 
   for (const fixtureCase of fixture.cases) {
     const scenarios = fixtureCase.scenarios.map((name) => join(scenarioRoot, `${name}.toml`));

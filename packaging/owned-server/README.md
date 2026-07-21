@@ -47,7 +47,11 @@ Auth email and standalone AI Gateway alert email use Lettr over HTTPS via `LETTR
 
 The web app reads public `NEXT_PUBLIC_*` values at image build time. Rebuild the `web` image after changing those values.
 
-For database restore rehearsals, use `env.staging.example` and `rehearsal/README.md`. The rehearsal commands use a separate Compose project name and start only `den`, `ai-gateway`, and their database dependencies. They do not start `proxy` or bind public ports 80/443.
+For database restore rehearsals, use `env.rehearsal.example` and
+`rehearsal/README.md`. The rehearsal commands deliberately include the
+rehearsal-only Compose override, use a separate Compose project name, and start
+only `den`, `ai-gateway`, and their database dependencies. They do not change
+the production Compose runtime mode, start `proxy`, or bind public ports 80/443.
 
 For Phase 4 dark launch, use `dark-launch/README.md`. The dark-launch path
 requires production-equivalent env values and real Den plus AI Gateway dumps.

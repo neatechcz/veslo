@@ -5,9 +5,11 @@ import { basename, dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  cleanupHarnessOwnedIsolatedProfilePaths,
   resolveLaunchTimeout,
   resolvePilotRuntimeDir,
   resolvePilotSocketPath,
+  launchNativeAuthDeepLink,
   startApp,
   stopApp,
   waitForDesktopBootstrapReady,
@@ -45,6 +47,13 @@ import {
   type SessionQueueRuntimeFixture,
 } from './session-queue-runtime-fixture.js';
 import { createSessionRenderArtifactManifest } from './session-render-fixture.js';
+import {
+  buildEmailVerificationHandoffRuntimeCleanupScript,
+  buildEmailVerificationHandoffSignedOutUiProbeScript,
+  buildEmailVerificationHandoffWebViewSetupScript,
+  parseEmailVerificationHandoffFixture,
+  type EmailVerificationHandoffFixture,
+} from './email-verification-handoff-fixture.js';
 
 export { buildPilotCommand } from './pilot-command.js';
 export { redactPilotCommandArgs, redactPilotDiagnosticText } from './pilot-redaction.js';
@@ -853,7 +862,8 @@ export function scenarioSelectionDisablesDevAutostart(scenarios: string[]): bool
   return scenarios.some((scenario) => {
     const normalized = scenario.replaceAll('\\', '/');
     const isCanonicalLiveInference = normalized.endsWith('/pilot-scenarios/message-send-registry-degraded.toml');
-    return normalized.endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
+    return normalized.endsWith('/pilot-scenarios/email-verification-handoff.toml') ||
+      normalized.endsWith('/pilot-scenarios/runtime-cold-start-session-handoff.toml') ||
       normalized.endsWith('/pilot-scenarios/vslo-235-local-host-child-exit.toml') ||
       normalized.endsWith('/pilot-scenarios/vslo-270-stop-reload-reconnect.toml') ||
       normalized.endsWith('/pilot-scenarios/global-managed-ai-model-policy.toml') ||
@@ -1123,6 +1133,23 @@ function assertSelectionPlanPackagedSmokeEnvironment(
   }
 }
 
+function readEmailVerificationHandoffFixtureFromEnvironment(
+  env: Record<string, string | undefined> = process.env,
+): EmailVerificationHandoffFixture {
+  const fixturePath = env.VESLO_TEST_EMAIL_VERIFICATION_PILOT_FIXTURE_PATH?.trim();
+  if (!fixturePath || !isAbsolute(fixturePath) || !existsSync(fixturePath)) {
+    throw new Error(
+      'email-verification-handoff requires an absolute harness-owned fixture path; run the focused package command.',
+    );
+  }
+  const fixture = parseEmailVerificationHandoffFixture(JSON.parse(readFileSync(fixturePath, 'utf8')));
+  const expectedDenBase = env.VESLO_TEST_DEN_BASE_URL?.trim().replace(/\/+$/, '');
+  if (expectedDenBase && fixture.denBaseUrl !== expectedDenBase) {
+    throw new Error('Email verification handoff fixture DEN endpoint does not match the acceptance harness.');
+  }
+  return fixture;
+}
+
 function setEnvironmentForFixture(
   values: Record<string, string>,
   targetEnv: NodeJS.ProcessEnv = process.env,
@@ -1202,6 +1229,12 @@ export function scenarioSelectionNeedsPortContentionFixture(scenarios: string[])
   );
 }
 
+export function scenarioSelectionNeedsEmailVerificationHandoffFixture(scenarios: string[]): boolean {
+  return scenarios.some((scenario) =>
+    scenario.replaceAll('\\', '/').endsWith('/pilot-scenarios/email-verification-handoff.toml'),
+  );
+}
+
 export function scenarioSelectionRequiresLiveManagedAiAuth(scenarios: string[]): boolean {
   return scenarios.some((scenario) => {
     const normalized = scenario.replaceAll('\\', '/');
@@ -1252,6 +1285,8 @@ export function legacyPilotSelectionSignals(
     needsSkillRegistryWorkspaceEventFixture: scenarioSelectionNeedsSkillRegistryWorkspaceEventFixture(options.scenarios),
     needsRelaunchReconnectCheck: scenarioSelectionNeedsRelaunchReconnectCheck(options.scenarios),
     needsSessionQueueRuntimeFixture: scenarioSelectionNeedsSessionQueueRuntimeFixture(options.scenarios),
+    needsEmailVerificationHandoffFixture:
+      scenarioSelectionNeedsEmailVerificationHandoffFixture(options.scenarios),
     requiresExplicitSessionRuntimeActivation:
       scenarioSelectionRequiresExplicitSessionRuntimeActivation(options.scenarios),
     needsPackagedSmokeFixture,
@@ -1786,6 +1821,35 @@ async function installPilotBrowserPrelude(
   });
 }
 
+async function waitForEmailVerificationHandoffSignedOutUi(
+  options: Omit<RunPilotCommandOptions, 'args'> = {},
+): Promise<void> {
+  const timeoutMs = Math.min(15_000, options.timeoutMs ?? resolveLaunchTimeout());
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      await runPilotCommand({
+        ...options,
+        args: [
+          '--window',
+          'main',
+          'eval',
+          '--json',
+          buildEmailVerificationHandoffSignedOutUiProbeScript(),
+        ],
+        timeoutMs: Math.min(2_000, Math.max(1, deadline - Date.now())),
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, DEFAULT_READY_POLL_INTERVAL));
+    }
+  }
+  const message = lastError instanceof Error ? ` Last error: ${lastError.message}` : '';
+  throw new Error(`Signed-out browser-login boundary was not ready within ${timeoutMs}ms.${message}`);
+}
+
 export async function runPilotScenarios(options: RunPilotScenariosOptions = {}): Promise<void> {
   const e2eRoot = options.e2eRoot ?? resolve(__dirname, '..');
   const scenarios = resolvePilotScenarioSelection(options, e2eRoot);
@@ -1817,6 +1881,13 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   const usesManagedAiGatewayFixture = selectionPlanHasFixture(selectionPlan, 'managed-ai-gateway');
   const usesSessionQueueRuntimeFixture = selectionPlanHasFixture(selectionPlan, 'session-queue-runtime');
   const usesPackagedSmokeFixture = selectionPlanHasFixture(selectionPlan, 'packaged-smoke-model');
+  const usesEmailVerificationHandoffFixture = selectionPlanHasFixture(
+    selectionPlan,
+    'email-verification-handoff',
+  );
+  const emailVerificationHandoffFixture = usesEmailVerificationHandoffFixture
+    ? readEmailVerificationHandoffFixtureFromEnvironment()
+    : null;
   const runRoot = options.runRoot ?? join(e2eRoot, PILOT_RUNS_DIRNAME);
   prunePilotRunHistory({
     rootDir: runRoot,
@@ -1843,6 +1914,19 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   const restoreManagedAiFixtureEnvironment = usesManagedAiGatewayFixture
     ? configureManagedAiGatewayFixtureEnvironment()
     : null;
+  const restoreEmailVerificationHandoffEnvironment = emailVerificationHandoffFixture
+    ? setEnvironmentForFixture({
+        E2E_DESKTOP_AUTH_SIGNED_OUT: '1',
+        E2E_SKILL_REGISTRY_FIXTURE: '0',
+        E2E_SKILL_REGISTRY_SERVER_ENV: '0',
+        VESLO_E2E_DEN_AUTH_JSON: '',
+        E2E_DEN_AUTH_JSON: '',
+        VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: '',
+        E2E_DEN_AUTH_SNAPSHOT_FILE: '',
+        VESLO_DEN_AUTH_SNAPSHOT_PATH: '',
+        VESLO_DEN_API_BASE: emailVerificationHandoffFixture.denBaseUrl,
+      })
+    : null;
   const restoreLiveParityRuntimePreferencesEnvironment = requiresLiveManagedAiAuth
     ? configureLiveParityRuntimePreferencesEnvironment()
     : null;
@@ -1855,6 +1939,7 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
   let packagedSmokeModelFixture: PackagedSmokeModelFixture | null = null;
   let restoreSessionQueueFixtureEnvironment: EnvironmentRestore | null = null;
   let restorePackagedSmokeFixtureEnvironment: EnvironmentRestore | null = null;
+  let emailVerificationHandoffRuntimeReadyForCleanup = false;
 
   try {
     if (selectionPlanHasFixture(selectionPlan, 'port-contention')) {
@@ -1922,9 +2007,45 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     });
     runContext.record('app.launch.started');
     await ensurePilotReady({ binary, socket, cwd: e2eRoot, timeoutMs });
+    emailVerificationHandoffRuntimeReadyForCleanup = usesEmailVerificationHandoffFixture;
     runContext.record('pilot.ready');
     await installPilotBrowserPrelude({ binary, socket, cwd: e2eRoot, timeoutMs });
     runContext.record('pilot.browser-prelude.installed');
+    if (emailVerificationHandoffFixture) {
+      runContext.record('email-verification.signed-out-boundary.starting');
+      const setupResult = await runPilotCommand({
+        binary,
+        socket,
+        cwd: e2eRoot,
+        args: [
+          '--window',
+          'main',
+          'eval',
+          '--json',
+          buildEmailVerificationHandoffWebViewSetupScript(emailVerificationHandoffFixture),
+        ],
+        timeoutMs: Math.min(15_000, timeoutMs),
+      });
+      const setupEvidence = parsePilotJsonOutput(setupResult.stdout) as Record<string, unknown> | null;
+      if (
+        setupEvidence?.signedOutBeforeHandoff !== true ||
+        setupEvidence.unverifiedStatus !== 'pending' ||
+        setupEvidence.unverifiedCode !== null ||
+        setupEvidence.unverifiedAuthorizeStatus !== 403
+      ) {
+        throw new Error('Email verification handoff setup did not prove the unverified signed-out boundary.');
+      }
+      runContext.record('email-verification.signed-out-boundary.verified');
+      await waitForEmailVerificationHandoffSignedOutUi({
+        binary,
+        socket,
+        cwd: e2eRoot,
+        timeoutMs,
+      });
+      runContext.record('email-verification.signed-out-ui.ready');
+      await launchNativeAuthDeepLink(emailVerificationHandoffFixture.verified.deepLink);
+      runContext.record('email-verification.native-deep-link.delivered');
+    }
     if (requiresLiveManagedAiAuth) {
       runContext.record('auth.hydration.starting');
       await verifyPilotDesktopAuthHydration({ binary, socket, cwd: e2eRoot, timeoutMs });
@@ -2054,8 +2175,46 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
     throw error;
   } finally {
     stopRunHeartbeat();
+    let emailVerificationRuntimeCleanupError: unknown = null;
+    if (emailVerificationHandoffRuntimeReadyForCleanup) {
+      try {
+        await runPilotCommand({
+          binary,
+          socket,
+          cwd: e2eRoot,
+          args: [
+            '--window',
+            'main',
+            'eval',
+            '--json',
+            buildEmailVerificationHandoffRuntimeCleanupScript(),
+          ],
+          timeoutMs: Math.min(15_000, timeoutMs),
+        });
+        runContext.record('email-verification.runtime.cleaned');
+      } catch (error) {
+        emailVerificationRuntimeCleanupError = error;
+        runContext.record('email-verification.runtime.cleanup-failed', {
+          reason: safePilotRunFailureReason(error),
+        });
+        console.warn(
+          `[e2e] Email verification runtime cleanup failed: ${safePilotRunFailureReason(error)}`,
+        );
+      }
+    }
     try {
-      await stopApp();
+      try {
+        await stopApp();
+      } finally {
+        if (usesEmailVerificationHandoffFixture) {
+          cleanupHarnessOwnedIsolatedProfilePaths({
+            e2eRoot,
+            profileRoot: join(e2eRoot, '.tmp-veslo-home'),
+            opencodeHome: join(e2eRoot, '.tmp-opencode-home'),
+          });
+          runContext.record('email-verification.profiles.cleaned');
+        }
+      }
       await stopPortContentionFixture(portContentionFixture);
       await sessionQueueRuntimeFixture?.stop();
       await packagedSmokeModelFixture?.stop();
@@ -2064,6 +2223,10 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
       restoreCanonicalLiveInferenceEnvironment?.();
       restoreLiveParityRuntimePreferencesEnvironment?.();
       restoreManagedAiFixtureEnvironment?.();
+      restoreEmailVerificationHandoffEnvironment?.();
+      if (emailVerificationRuntimeCleanupError && !failureReason) {
+        throw emailVerificationRuntimeCleanupError;
+      }
     } catch (error) {
       if (!failureReason) {
         failureReason = safePilotRunFailureReason(error);

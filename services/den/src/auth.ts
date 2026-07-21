@@ -108,6 +108,7 @@ export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
   trustedOrigins: env.corsOrigins.length > 0 ? env.corsOrigins : undefined,
+  rateLimit: { enabled: env.nodeEnv === "production" },
   socialProviders,
   database: drizzleAdapter(db, {
     provider: "mysql",
@@ -240,20 +241,14 @@ export function createAuthNodeHandler(baseHandler: AuthNodeHandler, guard = guar
     }
 
     if (contentLengthExceedsAuthLimit(req)) {
-      req.resume()
-      sendAuthJson(res, 413, {
-        code: "AUTH_REQUEST_TOO_LARGE",
-        message: "Authentication request body is too large.",
-      })
+      safelyDrainRejectedAuthRequest(req)
+      sendAuthRequestTooLarge(res)
       return
     }
 
     const body = await readRequestBody(req, AUTH_REQUEST_BODY_LIMIT_BYTES)
     if (!body.ok) {
-      sendAuthJson(res, 413, {
-        code: "AUTH_REQUEST_TOO_LARGE",
-        message: "Authentication request body is too large.",
-      })
+      sendAuthRequestTooLarge(res)
       return
     }
 
@@ -364,7 +359,7 @@ function readRequestBody(
       totalBytes += buffer.byteLength
       if (totalBytes > limitBytes) {
         finish({ ok: false })
-        req.resume()
+        safelyDrainRejectedAuthRequest(req)
         return
       }
       chunks.push(decoder.decode(buffer, { stream: true }))
@@ -383,6 +378,27 @@ function readRequestBody(
     req.on("error", onError)
     req.on("aborted", onAborted)
   })
+}
+
+function safelyDrainRejectedAuthRequest(req: IncomingMessage) {
+  let listening = true
+  const cleanup = () => {
+    if (!listening) return
+    listening = false
+    req.off("error", onDrainError)
+    req.off("end", cleanup)
+    req.off("close", cleanup)
+  }
+  const onDrainError = () => cleanup()
+
+  req.once("error", onDrainError)
+  req.once("end", cleanup)
+  req.once("close", cleanup)
+  if (req.destroyed || req.readableEnded) {
+    cleanup()
+    return
+  }
+  req.resume()
 }
 
 function parseEmailSignupBody(rawBody: string) {
@@ -431,6 +447,13 @@ function setRequestSignupInviteToken(req: AuthNodeRequest, inviteToken: string |
 
 function sendAuthSignupError(res: ServerResponse, status: number, error: string) {
   sendAuthJson(res, status, { error })
+}
+
+function sendAuthRequestTooLarge(res: ServerResponse) {
+  sendAuthJson(res, 413, {
+    code: "AUTH_REQUEST_TOO_LARGE",
+    message: "Authentication request body is too large.",
+  })
 }
 
 function sendAuthJson(res: ServerResponse, status: number, body: Record<string, unknown>) {

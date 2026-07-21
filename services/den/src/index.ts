@@ -6,7 +6,11 @@ import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { sql } from "drizzle-orm"
-import { auth, createAuthNodeHandler, guardEmailSignupRequest } from "./auth.js"
+import {
+  auth,
+  createAuthNodeHandler,
+  guardEmailSignupRequest,
+} from "./auth.js"
 import { createDrizzleOrganizationBillingStore, createOrganizationBillingRepository } from "./billing/repository.js"
 import { db } from "./db/index.js"
 import { AdminUserStateTable, AuthUserTable, PlatformRoleTable } from "./db/schema.js"

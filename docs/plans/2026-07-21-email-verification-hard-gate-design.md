@@ -20,7 +20,9 @@ When verification enforcement is enabled:
 - signup creates the unverified account but does not create a usable session or token.
 - sign-in stays blocked until Better Auth records `emailVerified=true`.
 - desktop authorization rejects an unverified session even if one exists from legacy state.
-- production startup fails when verification is required but Lettr transport or sender configuration is missing.
+- production DEN forces the verification policy to enabled even when the raw configured value is `false`.
+- for this policy, DEN startup fails only for missing or blank Lettr transport/sender values or invalid verification-flag syntax.
+- the owned-server deployment workflows separately require the effective flag to be exactly `true` and reject `false` before deployment.
 
 Development and isolated tests may explicitly disable the verification policy when they do not run an email transport. Production deployment defaults and examples keep the policy enabled.
 
@@ -37,9 +39,11 @@ An unverified sign-in attempt remains blocked and triggers another verification 
 
 ## Error Handling
 
-DEN must not report that an email was sent until Lettr returns a successful response. If Lettr rejects or cannot accept the message, the hosted page shows a delivery error and keeps an explicit resend path. Because Better Auth may already have created the unverified account before the send fails, a subsequent sign-in or resend request must remain a supported recovery path.
+DEN must not report that an email was sent until Lettr returns a successful response. If Lettr rejects or cannot accept the message, DEN returns the stable safe 502 delivery error and the hosted page keeps an explicit resend path. Because Better Auth may already have created the unverified account before the send fails, a subsequent password-confirmed sign-in remains the supported recovery and resend path; the anonymous send-verification route stays disabled.
 
-Missing production mail configuration is a startup error, not a runtime mode that silently disables verification. Provider errors must stay free of API keys and raw secret values in logs and responses.
+The delivery outcome belongs only to the originating native signup or sign-in request. Concurrent accepted and failed delivery requests cannot contaminate one another or override a different request's response.
+
+Missing or blank production mail configuration and invalid verification-flag syntax are startup errors, not runtime modes that silently disable verification. A syntactically valid raw `false` value does not disable verification in production DEN; the runtime forces the policy on, while the owned-server deploy guard rejects that value before deployment. Provider errors must stay free of API keys and raw secret values in logs and responses.
 
 Legacy unverified sessions cannot complete desktop authorization. Existing verified users and social-provider users whose provider supplies a verified email continue through the normal flow.
 

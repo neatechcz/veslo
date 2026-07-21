@@ -241,6 +241,10 @@ test("auth verification callback maps provider failure to a stable safe API erro
         assert.equal((error as Error).name, "APIError")
         assert.equal((error as Error).message, "We could not send the verification email. Please try again.")
         assert.equal((error as Error & { status?: string }).status, "INTERNAL_SERVER_ERROR")
+        assert.equal(
+          (error as Error & { body?: { code?: string } }).body?.code,
+          "VERIFICATION_EMAIL_DELIVERY_FAILED",
+        )
         return true
       },
     )
@@ -285,7 +289,8 @@ test("background auth email helper absorbs rejected password reset sends", async
     }
   }
 })
-test("background auth email helper absorbs rejected Lettr sends", async () => {
+
+test("background auth email helper absorbs rejected verification sends", async () => {
   withRequiredEnv()
 
   const errors: string[] = []
@@ -302,7 +307,10 @@ test("background auth email helper absorbs rejected Lettr sends", async () => {
   try {
     const { fireAndForgetAuthEmail, sendVerificationAuthEmail } = await importAuthMailer()
 
-    await fireAndForgetAuthEmail(sendVerificationAuthEmail({ to: "user@example.com", url: "https://example.com/verify" }), "verification email")
+    await fireAndForgetAuthEmail(
+      sendVerificationAuthEmail({ to: "user@example.com", url: "https://example.com/verify" }),
+      "verification email",
+    )
 
     assert.equal(errors.some((entry) => entry.includes("verification email")), true)
     assert.equal(errors.some((entry) => entry.includes("lettr unavailable")), true)

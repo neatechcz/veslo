@@ -97,6 +97,7 @@ let fixtureCleanupPromise: Promise<void> | null = null;
 let appProcessExitPromise: Promise<AppProcessExit> | null = null;
 let resolveAppProcessExit: ((result: AppProcessExit) => void) | null = null;
 let activeAppLocalDataDir: string | null = null;
+let activeNativeAuthHandoffEnv: NodeJS.ProcessEnv | null = null;
 
 type AppProcessExit = {
   code: number | null;
@@ -111,6 +112,7 @@ type ManagedChildCleanupResult = {
 type TerminateAppProcessOptions = {
   platform?: NodeJS.Platform;
   forceKillAfterMs?: number;
+  forceExitWaitMs?: number;
   log?: (message: string) => void;
 };
 
@@ -139,6 +141,15 @@ type ResolvePilotSocketPathOptions = ResolvePilotRuntimeDirOptions & {
   runtimeDir?: string;
 };
 
+type NativeAuthHandoffLaunchEnvOptions = {
+  e2eRoot: string;
+  platform?: NodeJS.Platform;
+};
+
+type WaitForNativeAuthHandoffProcessOptions = TerminateAppProcessOptions & {
+  timeoutMs?: number;
+};
+
 export type StartAppProfileContext = {
   profileRoot: string | null;
   opencodeHome: string | null;
@@ -157,6 +168,36 @@ export type StartAppOptions = {
   beforeLaunch?: (context: StartAppProfileContext) => Promise<void> | void;
   pilotDiagnostics?: PilotRunDiagnostics;
 };
+
+export type HarnessOwnedIsolatedProfilePaths = {
+  e2eRoot: string;
+  profileRoot: string;
+  opencodeHome: string;
+};
+
+export function cleanupHarnessOwnedIsolatedProfilePaths(
+  paths: HarnessOwnedIsolatedProfilePaths,
+): void {
+  const e2eRoot = resolve(paths.e2eRoot);
+  const expectedProfileRoot = resolve(e2eRoot, ".tmp-veslo-home");
+  const expectedOpencodeHome = resolve(e2eRoot, ".tmp-opencode-home");
+  if (
+    basename(e2eRoot) !== "e2e" ||
+    basename(dirname(e2eRoot)) !== "packages" ||
+    resolve(paths.profileRoot) !== expectedProfileRoot ||
+    resolve(paths.opencodeHome) !== expectedOpencodeHome
+  ) {
+    throw new Error(
+      "Refusing to remove paths that are not the exact harness-owned isolated profile paths.",
+    );
+  }
+
+  rmSync(expectedProfileRoot, { recursive: true, force: true });
+  rmSync(expectedOpencodeHome, { recursive: true, force: true });
+  if (existsSync(expectedProfileRoot) || existsSync(expectedOpencodeHome)) {
+    throw new Error("Harness-owned isolated profile cleanup did not remove both profile paths.");
+  }
+}
 
 const SAFE_PILOT_DIAGNOSTIC_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -461,6 +502,223 @@ function resolveBinaryPath(): string {
   throw new Error(missingE2EDesktopBinaryMessage(unbundledPath));
 }
 
+export function normalizeNativeAuthDeepLink(value: string): string {
+  const trimmed = value.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error("Native auth deep link must be a valid veslo://auth-complete URL.");
+  }
+  if (parsed.protocol !== "veslo:" || parsed.hostname !== "auth-complete") {
+    throw new Error("Native auth deep link must use veslo://auth-complete.");
+  }
+  if (!parsed.searchParams.get("code")?.trim()) {
+    throw new Error("Native auth deep link must contain a one-time code.");
+  }
+  return trimmed;
+}
+
+const NATIVE_AUTH_HANDOFF_SYSTEM_ENV_KEYS = [
+  "PATH",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "SHELL",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "SYSTEMROOT",
+  "SystemRoot",
+  "WINDIR",
+  "COMSPEC",
+  "PATHEXT",
+  "DISPLAY",
+  "XAUTHORITY",
+  "DBUS_SESSION_BUS_ADDRESS",
+] as const;
+
+const NATIVE_AUTH_HANDOFF_ISOLATED_ENV_KEYS = [
+  "HOME",
+  "USERPROFILE",
+  "XDG_DATA_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_RUNTIME_DIR",
+  "GDK_BACKEND",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "WEBVIEW2_USER_DATA_FOLDER",
+  "OPENCODE_HOME",
+  "VESLO_DATA_DIR",
+  "VESLO_APP_CONFIG_DIR",
+  "VESLO_APP_DATA_DIR",
+  "VESLO_APP_LOCAL_DATA_DIR",
+  "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+  "VESLO_DESKTOP_SERVER_PORT",
+  "VESLO_DEN_API_BASE",
+] as const;
+
+export function createNativeAuthHandoffLaunchEnv(
+  primaryEnv: NodeJS.ProcessEnv,
+  options: NativeAuthHandoffLaunchEnvOptions,
+): NodeJS.ProcessEnv {
+  const platform = options.platform ?? process.platform;
+  const pathApi = platform === "win32" ? win32 : posix;
+  const e2eRoot = pathApi.resolve(options.e2eRoot);
+  const expectedProfileRoot = pathApi.join(e2eRoot, ".tmp-veslo-home");
+  const expectedOpencodeHome = pathApi.join(e2eRoot, ".tmp-opencode-home");
+  const expectedVesloDataDir = pathApi.join(expectedOpencodeHome, ".veslo");
+  const expectedPaths: Record<string, string> = {
+    HOME: expectedProfileRoot,
+    USERPROFILE: expectedProfileRoot,
+    OPENCODE_HOME: expectedOpencodeHome,
+    VESLO_DATA_DIR: expectedVesloDataDir,
+    VESLO_APP_CONFIG_DIR: pathApi.join(expectedVesloDataDir, "app-config"),
+    VESLO_APP_DATA_DIR: pathApi.join(expectedVesloDataDir, "app-data"),
+    VESLO_APP_LOCAL_DATA_DIR: pathApi.join(expectedVesloDataDir, "app-local-data"),
+    VESLO_DEN_AUTH_SNAPSHOT_PATH: pathApi.join(expectedVesloDataDir, "den-auth.json"),
+  };
+  if (
+    pathApi.basename(e2eRoot) !== "e2e" ||
+    pathApi.basename(pathApi.dirname(e2eRoot)) !== "packages" ||
+    Object.entries(expectedPaths).some(([key, expected]) =>
+      pathApi.resolve(primaryEnv[key]?.trim() || ".") !== pathApi.resolve(expected)
+    )
+  ) {
+    throw new Error(
+      "Secondary native auth handoff requires the exact harness-owned isolated profile.",
+    );
+  }
+
+  const serverPort = parseTcpPort(
+    primaryEnv.VESLO_DESKTOP_SERVER_PORT,
+    "VESLO_DESKTOP_SERVER_PORT",
+  );
+  if (!serverPort) {
+    throw new Error("Secondary native auth handoff requires the isolated desktop server port.");
+  }
+  const denApiBase = primaryEnv.VESLO_DEN_API_BASE?.trim() || "";
+  let denUrl: URL | null = null;
+  try {
+    denUrl = new URL(denApiBase);
+  } catch {
+    // The shared validation error below keeps missing and malformed values on
+    // the same fail-closed boundary.
+  }
+  if (
+    !denUrl ||
+    !["http:", "https:"].includes(denUrl.protocol) ||
+    !["127.0.0.1", "localhost", "::1", "[::1]"].includes(denUrl.hostname.toLowerCase())
+  ) {
+    throw new Error(
+      "Secondary native auth handoff requires a valid loopback http(s) DEN API base.",
+    );
+  }
+
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of [
+    ...NATIVE_AUTH_HANDOFF_SYSTEM_ENV_KEYS,
+    ...NATIVE_AUTH_HANDOFF_ISOLATED_ENV_KEYS,
+  ]) {
+    const value = primaryEnv[key];
+    if (value !== undefined) env[key] = value;
+  }
+  env.VESLO_DISABLE_DEV_AUTOSTART = "1";
+  env.VESLO_E2E_DISABLE_UPDATER = "1";
+  return env;
+}
+
+export async function waitForNativeAuthHandoffProcess(
+  child: ChildProcess,
+  options: WaitForNativeAuthHandoffProcessOptions = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  let timeout: NodeJS.Timeout | null = null;
+  try {
+    const result = await new Promise<AppProcessExit>((resolveExit, rejectExit) => {
+      let settled = false;
+      const cleanupListeners = () => {
+        child.off("error", onError);
+        child.off("exit", onExit);
+        if (timeout) clearTimeout(timeout);
+        timeout = null;
+      };
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanupListeners();
+        callback();
+      };
+      const onError = (error: Error) => finish(() => rejectExit(error));
+      const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
+        finish(() => resolveExit({ code, signal }));
+
+      child.once("error", onError);
+      child.once("exit", onExit);
+      if (childHasExited(child)) {
+        onExit(child.exitCode, child.signalCode);
+        return;
+      }
+      timeout = setTimeout(() => {
+        finish(() => rejectExit(
+          new Error(`Secondary Tauri deep-link process did not exit within ${timeoutMs}ms.`),
+        ));
+      }, timeoutMs);
+    });
+    if (result.code !== 0) {
+      throw new Error(
+        `Secondary Tauri deep-link process exited with ${result.code ?? result.signal ?? "unknown status"}.`,
+      );
+    }
+  } catch (processError) {
+    if (childHasExited(child)) throw processError;
+
+    let cleanupError: unknown = null;
+    try {
+      const termination = await terminateAppProcess(child, options);
+      if (!termination.exited) {
+        cleanupError = new Error(
+          "Could not confirm secondary Tauri deep-link process exit after termination escalation.",
+        );
+      }
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (cleanupError) {
+      throw new AggregateError(
+        [processError, cleanupError],
+        "Secondary Tauri deep-link delivery and cleanup both failed.",
+      );
+    }
+    throw processError;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export async function launchNativeAuthDeepLink(
+  value: string,
+  options: { timeoutMs?: number } = {},
+): Promise<void> {
+  if (!appProcessOwnedByHarness || !appProcess) {
+    throw new Error("Native auth deep-link delivery requires the harness-owned Tauri app to be running.");
+  }
+  if (!activeNativeAuthHandoffEnv) {
+    throw new Error(
+      "Native auth deep-link delivery requires the active harness-owned isolated launch environment.",
+    );
+  }
+
+  const deepLink = normalizeNativeAuthDeepLink(value);
+  const secondary = spawn(resolveBinaryPath(), [deepLink], {
+    env: { ...activeNativeAuthHandoffEnv },
+    stdio: "ignore",
+  });
+  await waitForNativeAuthHandoffProcess(secondary, options);
+}
+
 export function missingE2EDesktopBinaryMessage(binaryPath: string): string {
   return `Tauri binary not found at ${binaryPath}. Run: ${E2E_DESKTOP_BUILD_COMMAND} (uses src-tauri/tauri.e2e.conf.json).`;
 }
@@ -625,6 +883,7 @@ export async function terminateAppProcess(
 ): Promise<TerminateAppProcessResult> {
   const platform = options.platform ?? process.platform;
   const forceKillAfterMs = options.forceKillAfterMs ?? 5_000;
+  const forceExitWaitMs = options.forceExitWaitMs ?? 5_000;
   const log = options.log ?? console.log;
 
   if (childHasExited(child)) {
@@ -671,7 +930,7 @@ export async function terminateAppProcess(
 
     timeoutTimer = setTimeout(() => {
       if (!childHasExited(child)) finish(false);
-    }, forceKillAfterMs + 5_000);
+    }, forceKillAfterMs + forceExitWaitMs);
   });
 
   return { exited, forced };
@@ -1253,6 +1512,7 @@ async function cleanupStartedFixtures(): Promise<void> {
 
 export async function startApp(options: StartAppOptions = {}): Promise<void> {
   throwManagedChildCleanupFailure();
+  activeNativeAuthHandoffEnv = null;
   const binaryPath = resolveBinaryPath();
   const pilotDiagnostics = normalizePilotRunDiagnostics(options.pilotDiagnostics);
   const forwardAppLogs = shouldForwardAppLogs(process.env);
@@ -1467,24 +1727,35 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     writeAppOutput(appStderrLog, "stderr", stderrRedactor.flush());
   };
 
+  const appSpawnEnv: NodeJS.ProcessEnv = {
+    ...env,
+    ...(skillRegistryFixtureBaseUrl && exposeSkillRegistryServerEnv
+      ? {
+          VESLO_SKILL_REGISTRY_BASE_URL: skillRegistryFixtureBaseUrl,
+          VESLO_SKILL_REGISTRY_TOKEN: "veslo-e2e-registry-token",
+        }
+      : {}),
+    ...(managedAiGatewayFixtureBaseUrl
+      ? {
+          VESLO_MANAGED_AI_BASE_URL: managedAiGatewayFixtureBaseUrl,
+          VESLO_AI_GATEWAY_BASE_URL: managedAiGatewayFixtureBaseUrl,
+        }
+      : {}),
+  };
+  const nativeAuthHandoffEnv =
+    appSpawnEnv.E2E_DESKTOP_AUTH_SIGNED_OUT?.trim() === "1" &&
+    !CUSTOM_OPENCODE_HOME &&
+    !REAL_PROFILE_ENV
+      ? createNativeAuthHandoffLaunchEnv(appSpawnEnv, {
+          e2eRoot: join(resolveDesktopRoot(), "..", "e2e"),
+        })
+      : null;
+
   appProcess = spawn(binaryPath, [], {
-    env: {
-      ...env,
-      ...(skillRegistryFixtureBaseUrl && exposeSkillRegistryServerEnv
-        ? {
-            VESLO_SKILL_REGISTRY_BASE_URL: skillRegistryFixtureBaseUrl,
-            VESLO_SKILL_REGISTRY_TOKEN: "veslo-e2e-registry-token",
-          }
-        : {}),
-      ...(managedAiGatewayFixtureBaseUrl
-        ? {
-            VESLO_MANAGED_AI_BASE_URL: managedAiGatewayFixtureBaseUrl,
-            VESLO_AI_GATEWAY_BASE_URL: managedAiGatewayFixtureBaseUrl,
-          }
-        : {}),
-    },
+    env: appSpawnEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  activeNativeAuthHandoffEnv = nativeAuthHandoffEnv;
   appProcessOwnedByHarness = true;
   lastOwnedAppProcessPid = appProcess.pid ?? null;
   managedChildCleanupPromise = null;
@@ -1510,6 +1781,7 @@ export async function startApp(options: StartAppOptions = {}): Promise<void> {
     lastOwnedAppProcessPid = exitedPid ?? null;
     appProcess = null;
     appProcessOwnedByHarness = false;
+    activeNativeAuthHandoffEnv = null;
     resolveAppProcessExit?.({ code, signal });
     resolveAppProcessExit = null;
     void (async () => {
@@ -1529,6 +1801,7 @@ export async function waitForAppExit(): Promise<AppProcessExit | null> {
 
 export async function stopApp(): Promise<void> {
   if (!appProcessOwnedByHarness || !appProcess) {
+    activeNativeAuthHandoffEnv = null;
     try {
       await cleanupManagedChildProcessesForLastOwnedApp("stop fallback");
     } finally {
@@ -1546,6 +1819,7 @@ export async function stopApp(): Promise<void> {
     appProcess = null;
     appProcessOwnedByHarness = false;
   }
+  activeNativeAuthHandoffEnv = null;
   if (!result.exited) {
     console.warn(
       `[e2e] App process PID ${processToStop.pid} did not exit after termination request.`,

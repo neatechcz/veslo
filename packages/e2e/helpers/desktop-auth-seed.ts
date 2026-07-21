@@ -78,6 +78,17 @@ export function resolveE2EDesktopAuthSnapshotPath(opencodeHome: string): string 
 export function resolveDesktopAuthSeedFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): DesktopAuthSeed | null {
+  if (normalizeOptionalBoolean(env.E2E_DESKTOP_AUTH_SIGNED_OUT) === true) {
+    return {
+      authJson: null,
+      keepSignedIn: false,
+      language: firstOptionalText(env.VESLO_E2E_LANGUAGE, env.E2E_LANGUAGE) ?? 'en',
+      onboardingComplete:
+        firstOptionalBoolean(env.VESLO_E2E_ONBOARDING_COMPLETE, env.E2E_ONBOARDING_COMPLETE) ?? true,
+      source: 'e2e-signed-out',
+    };
+  }
+
   const snapshotFile = firstOptionalText(
     env.VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE,
     env.E2E_DEN_AUTH_SNAPSHOT_FILE,

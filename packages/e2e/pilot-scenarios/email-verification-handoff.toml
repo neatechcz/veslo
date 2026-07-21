@@ -1,0 +1,124 @@
+[scenario]
+name = "email-verification-handoff"
+fail_fast = true
+global_timeout_ms = 120000
+
+[[step]]
+name = "real desktop root is ready"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "start verified native handoff observation"
+action = "eval"
+script = '''
+const completeSelector = '[data-testid="email-verification-handoff-complete"]';
+const errorSelector = '[data-testid="email-verification-handoff-error"]';
+document.querySelector(completeSelector)?.remove();
+document.querySelector(errorSelector)?.remove();
+
+const expected = window.__vesloEmailVerificationHandoffExpected;
+if (!expected || !expected.email || !expected.userId) {
+  throw new Error("Email verification fixture expectations were not installed in the WebView");
+}
+
+const appendMarker = (selector, payload) => {
+  if (document.querySelector(completeSelector) || document.querySelector(errorSelector)) return;
+  const marker = document.createElement("pre");
+  marker.dataset.testid = selector === completeSelector
+    ? "email-verification-handoff-complete"
+    : "email-verification-handoff-error";
+  marker.textContent = JSON.stringify(payload);
+  document.body.append(marker);
+};
+
+void (async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const readBrowserAuth = () => {
+    const raw = window.localStorage.getItem("veslo.den.auth") || window.sessionStorage.getItem("veslo.den.auth");
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch { return null; }
+  };
+  const readNativeAuth = async () => {
+    const snapshot = await window.__TAURI_INTERNALS__.invoke("den_auth_snapshot_read");
+    if (!snapshot || typeof snapshot.authJson !== "string" || !snapshot.authJson.trim()) return null;
+    try { return JSON.parse(snapshot.authJson); } catch { return null; }
+  };
+
+  let latest = { browserMatches: false, nativeMatches: false, visibleIdentity: false };
+  try {
+    const deadline = Date.now() + 70000;
+    while (Date.now() < deadline) {
+      const browserAuth = readBrowserAuth();
+      const nativeAuth = await readNativeAuth();
+      const visibleText = `${document.body?.innerText ?? ""}`;
+      latest = {
+        browserMatches: browserAuth?.user?.id === expected.userId &&
+          browserAuth?.user?.email === expected.email &&
+          browserAuth?.denApiBase === expected.denBaseUrl &&
+          typeof browserAuth?.token === "string" && browserAuth.token.length > 0,
+        nativeMatches: nativeAuth?.user?.id === expected.userId &&
+          nativeAuth?.user?.email === expected.email &&
+          nativeAuth?.denApiBase === expected.denBaseUrl &&
+          typeof nativeAuth?.token === "string" && nativeAuth.token.length > 0,
+        visibleIdentity: visibleText.includes(expected.email),
+      };
+      if (latest.browserMatches && latest.nativeMatches && latest.visibleIdentity) {
+        window.__vesloEmailVerificationHandoffEvidence = latest;
+        appendMarker(completeSelector, latest);
+        return;
+      }
+      await sleep(250);
+    }
+    throw new Error(`Verified identity did not become visible and persisted after native handoff: ${JSON.stringify(latest)}`);
+  } catch (error) {
+    appendMarker(errorSelector, {
+      message: error?.message || String(error),
+      latest,
+    });
+  }
+})();
+true;
+'''
+
+[[step]]
+name = "verified native handoff observation finished"
+action = "wait"
+target = "[data-testid=\"email-verification-handoff-complete\"], [data-testid=\"email-verification-handoff-error\"]"
+timeout_ms = 75000
+
+[[step]]
+name = "verified native handoff becomes the visible persisted desktop identity"
+action = "eval"
+script = '''
+const error = document.querySelector('[data-testid="email-verification-handoff-error"]');
+if (error) {
+  throw new Error(`Email verification handoff failed: ${(error.textContent || "").slice(0, 4000)}`);
+}
+const evidence = window.__vesloEmailVerificationHandoffEvidence;
+if (!evidence?.browserMatches || !evidence?.nativeMatches || !evidence?.visibleIdentity) {
+  throw new Error("Verified handoff evidence is incomplete");
+}
+true;
+'''
+
+[[step]]
+name = "one-time PKCE proof is consumed and unverified transaction stayed code-free"
+action = "eval"
+script = '''
+const expected = window.__vesloEmailVerificationHandoffExpected;
+const evidence = window.__vesloEmailVerificationHandoffEvidence;
+if (!evidence?.browserMatches || !evidence?.nativeMatches || !evidence?.visibleIdentity) {
+  throw new Error("Verified handoff evidence is incomplete");
+}
+if (window.localStorage.getItem("veslo.den.desktopAuthPending")) {
+  throw new Error("Desktop PKCE proof was not consumed after exchange");
+}
+if (expected?.unverified?.status !== "pending" || expected?.unverified?.code !== null ||
+    expected?.unverified?.authorizeStatus !== 403 ||
+    expected?.unverified?.authorizeError !== "email_verification_required") {
+  throw new Error("Unverified transaction fixture crossed the authorization boundary");
+}
+true;
+'''

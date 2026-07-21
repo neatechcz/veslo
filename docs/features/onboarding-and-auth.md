@@ -37,7 +37,53 @@ Important pieces:
 - deep-link completion returns to the desktop app
 - a temporary pending auth state is stored during the handoff
 
-If browser sign-in requires email verification, the verification callback page preserves the active desktop onboarding query context and routes the user back into the same onboarding page. The canonical onboarding page then completes the normal desktop handoff to the `veslo://auth-complete` deep link.
+### Email Activation Boundary
+
+Email/password registration is not a signed-in state. DEN authorizes the signup,
+creates the unverified account, and waits for Lettr to accept the verification
+message, but Better Auth creates no session, cookie, or bearer token. The hosted
+page shows the verify-email state with no Continue to Veslo action. The provider
+request has a 30-second timeout; rejection, transport failure, or timeout is
+shown as a safe delivery failure and returned as
+`502 VERIFICATION_EMAIL_DELIVERY_FAILED` rather than as a successful send.
+That outcome belongs only to the originating native signup or sign-in request;
+concurrent accepted and failed delivery requests cannot contaminate one another
+or change another request's browser result.
+
+An unverified sign-in stays blocked with `403 EMAIL_NOT_VERIFIED` and, after
+valid password confirmation, triggers a fresh verification message. The same
+native sign-in operation powers the hosted page's explicit resend action.
+Anonymous `POST /api/auth/send-verification-email` is disabled and returns 404,
+so unknown accounts and invalid passwords do not become a resend or account
+enumeration surface. Production sign-in/signup attempts are rate-limited by IP
+and auth path (three attempts per ten seconds, then 429). The current limiter is
+in process memory and is per DEN replica; the owned-server topology therefore
+keeps DEN single-replica until shared rate-limit storage is added.
+
+The verification callback page preserves the active desktop onboarding query
+context and routes the user back into the same onboarding page. Verification
+does not auto-sign in. The user signs in after activation, and only that verified
+session can complete the normal desktop handoff to the
+`veslo://auth-complete` deep link.
+
+In an explicit non-production verification opt-out, a signup response with a
+non-empty token follows that same authenticated handoff path. Only a null or
+blank signup token enters verification recovery, so the development topology
+remains usable without weakening the production gate.
+
+Defense in depth applies to sessions created before this policy. The shared DEN
+session boundary returns `403 email_verification_required` for unverified
+cookie or bearer sessions before protected API and Managed AI work, and both
+current and legacy desktop handoff routes use that boundary before issuing a
+one-time code. Both desktop exchange generations also re-read the current user
+and disabled state inside the final exchange transaction before consuming the
+code or inserting a Better Auth session. A rejected exchange leaves the code
+and authorized transaction retryable; disabled state takes precedence over
+email-verification state. Code consumption, Better Auth session creation, and
+the final desktop transaction transition commit as one unit: if the final
+compare-and-set loses a race, the stable conflict response is preserved while
+every earlier exchange mutation is rolled back so the same code remains
+retryable.
 
 Desktop auth transactions are one-time state. If a verification or sign-in return attempts to complete a transaction that the desktop app or another browser tab already advanced, the hosted onboarding page checks the transaction status before surfacing an error. Already authorized transactions reuse the existing handoff code, and already exchanged transactions show the signed-in success state instead of exposing `transaction_not_ready` to the user.
 
