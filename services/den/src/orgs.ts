@@ -5,7 +5,9 @@ import {
   createDrizzleAutomaticOrganizationTrialStore,
 } from "./billing/automatic-organization-trial.js"
 import { db } from "./db/index.js"
-import { OrgMembershipTable, OrgTable } from "./db/schema.js"
+import { OrgMembershipTable, OrgTable, OrganizationDomainTable } from "./db/schema.js"
+import { normalizeEmailDomain } from "./org-admin/policy.js"
+import { OrganizationAdminRepositoryError } from "./org-admin/repository.js"
 
 type EnsureDefaultOrgDependencies = {
   createId(): string
@@ -40,20 +42,69 @@ export function createEnsureDefaultOrg(deps: EnsureDefaultOrgDependencies) {
   }
 }
 
+export class SignupOrganizationDomainConflictError extends Error {
+  constructor(readonly domain: string, options?: ErrorOptions) {
+    super("signup_organization_domain_conflict", options)
+    this.name = "SignupOrganizationDomainConflictError"
+  }
+}
+
+type EnsureSignupOrganizationDependencies = {
+  createId(): string
+  findExistingOrganizationId(userId: string): Promise<string | null>
+  createOrganizationMembershipDomainAndTrial(input: {
+    orgId: string
+    membershipId: string
+    domainId: string
+    userId: string
+    name: string
+    slug: string
+    domain: string
+  }): Promise<void>
+}
+
+export function createEnsureSignupOrganization(deps: EnsureSignupOrganizationDependencies) {
+  return async (userId: string, name: string, email: string) => {
+    const domain = normalizeEmailDomain(email)
+    if (!domain) {
+      throw new OrganizationAdminRepositoryError("domain_not_allowed")
+    }
+
+    const existingOrganizationId = await deps.findExistingOrganizationId(userId)
+    if (existingOrganizationId) {
+      return existingOrganizationId
+    }
+
+    const orgId = deps.createId()
+    await deps.createOrganizationMembershipDomainAndTrial({
+      orgId,
+      membershipId: deps.createId(),
+      domainId: deps.createId(),
+      userId,
+      name,
+      slug: `personal-${orgId.slice(0, 8)}`,
+      domain,
+    })
+    return orgId
+  }
+}
+
 export const automaticOrganizationTrialService = createAutomaticOrganizationTrialService({
   store: createDrizzleAutomaticOrganizationTrialStore(db),
 })
 
+async function findExistingOrganizationId(userId: string) {
+  const existing = await db
+    .select({ orgId: OrgMembershipTable.org_id })
+    .from(OrgMembershipTable)
+    .where(eq(OrgMembershipTable.user_id, userId))
+    .limit(1)
+  return existing[0]?.orgId ?? null
+}
+
 export const ensureDefaultOrg = createEnsureDefaultOrg({
   createId: randomUUID,
-  async findExistingOrganizationId(userId) {
-    const existing = await db
-      .select({ orgId: OrgMembershipTable.org_id })
-      .from(OrgMembershipTable)
-      .where(eq(OrgMembershipTable.user_id, userId))
-      .limit(1)
-    return existing[0]?.orgId ?? null
-  },
+  findExistingOrganizationId,
   async createOrganizationAndMembership(input) {
     await db.transaction(async (tx) => {
       await tx.insert(OrgTable).values({
@@ -74,3 +125,62 @@ export const ensureDefaultOrg = createEnsureDefaultOrg({
     return automaticOrganizationTrialService.ensureTrial(orgId)
   },
 })
+
+export const ensureSignupOrganization = createEnsureSignupOrganization({
+  createId: randomUUID,
+  findExistingOrganizationId,
+  async createOrganizationMembershipDomainAndTrial(input) {
+    await db.transaction(async (tx) => {
+      await tx.insert(OrgTable).values({
+        id: input.orgId,
+        name: input.name,
+        slug: input.slug,
+        owner_user_id: input.userId,
+      })
+      await tx.insert(OrgMembershipTable).values({
+        id: input.membershipId,
+        org_id: input.orgId,
+        user_id: input.userId,
+        role: "organization_admin",
+      })
+      try {
+        await tx.insert(OrganizationDomainTable).values({
+          id: input.domainId,
+          org_id: input.orgId,
+          domain: input.domain,
+          enabled: true,
+          self_signup_enabled: true,
+        })
+      } catch (error) {
+        if (isDuplicateKeyError(error)) {
+          throw new SignupOrganizationDomainConflictError(input.domain, { cause: error })
+        }
+        throw error
+      }
+
+      await createAutomaticOrganizationTrialService({
+        store: createDrizzleAutomaticOrganizationTrialStore(tx),
+      }).ensureTrial(input.orgId)
+    })
+  },
+})
+
+function isDuplicateKeyError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false
+  }
+
+  const candidate = error as {
+    code?: unknown
+    errno?: unknown
+    sqlState?: unknown
+    message?: unknown
+    cause?: unknown
+  }
+  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : ""
+
+  return candidate.code === "ER_DUP_ENTRY" ||
+    candidate.errno === 1062 ||
+    (candidate.sqlState === "23000" && message.includes("duplicate")) ||
+    isDuplicateKeyError(candidate.cause)
+}
