@@ -77,9 +77,17 @@ test("desktop reset password signs in and completes handoff after password updat
 })
 
 test("desktop onboarding page exposes verification and resend affordances", () => {
-  assert.equal(onboardingPage.includes("/api/auth/send-verification-email"), true)
+  assert.equal(onboardingPage.includes("/api/auth/send-verification-email"), false)
+  assert.equal(onboardingPage.includes('id="verify-required-password"'), true)
+  assert.equal(onboardingPage.includes('autocomplete="current-password"'), true)
+  assert.equal(onboardingPage.includes('fetch("/api/auth/sign-in/email"'), true)
   assert.equal(onboardingPage.includes('id="verify-required-card"'), true)
   assert.equal(onboardingPage.includes('buildDesktopOnboardingUrl("verify-email")'), true)
+})
+
+test("verification resend password is cleared around every recovery attempt", () => {
+  assert.match(onboardingPage, /function showVerificationRequired[\s\S]*verifyRequiredPassword\.value = ""/)
+  assert.match(onboardingPage, /finally \{[\s\S]*verifyRequiredPassword\.value = ""/)
 })
 
 test("unverified browser auth cannot continue to Veslo", () => {

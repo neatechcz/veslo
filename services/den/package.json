@@ -8,6 +8,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts",
+    "test:email-verification:integration": "node scripts/run-email-verification-integration.mjs --integration",
     "test:desktop-auth-v2": "tsx --test test/desktop-auth-v2-contract.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

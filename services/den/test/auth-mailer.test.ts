@@ -195,8 +195,12 @@ test("auth verification callback maps provider failure to a stable safe API erro
       (error: unknown) => {
         assert.equal(error instanceof Error, true)
         assert.equal((error as Error).name, "APIError")
-        assert.equal((error as Error).message, "verification_email_delivery_failed")
+        assert.equal((error as Error).message, "We could not send the verification email. Please try again.")
         assert.equal((error as Error & { status?: string }).status, "INTERNAL_SERVER_ERROR")
+        assert.equal(
+          (error as Error & { body?: { code?: string } }).body?.code,
+          "VERIFICATION_EMAIL_DELIVERY_FAILED",
+        )
         return true
       },
     )

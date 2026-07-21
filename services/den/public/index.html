@@ -219,9 +219,13 @@
         <div id="verify-required-status" class="note-box hidden" style="margin-top: 12px"></div>
         <div id="verify-required-error" class="error-text hidden"></div>
 
-        <div class="helper-row">
-          <button id="resend-verification" class="btn-secondary" type="button">Resend verification email</button>
-        </div>
+        <form id="verify-required-form" style="margin-top: 14px">
+          <div class="field">
+            <label for="verify-required-password">Confirm password</label>
+            <input id="verify-required-password" type="password" autocomplete="current-password" required />
+          </div>
+          <button id="resend-verification" class="btn-secondary" type="submit">Resend verification email</button>
+        </form>
 
         <div class="toggle-row">
           <button id="verify-required-back" type="button">Back to sign in</button>
@@ -318,6 +322,8 @@
         const verifyRequiredEmail = document.getElementById("verify-required-email");
         const verifyRequiredStatus = document.getElementById("verify-required-status");
         const verifyRequiredError = document.getElementById("verify-required-error");
+        const verifyRequiredForm = document.getElementById("verify-required-form");
+        const verifyRequiredPassword = document.getElementById("verify-required-password");
         const resendVerificationBtn = document.getElementById("resend-verification");
         const verifyRequiredBack = document.getElementById("verify-required-back");
         const verifyEmailCard = document.getElementById("verify-email-card");
@@ -633,6 +639,8 @@
           verificationEmail = (email || "").trim();
           verificationInfo = info;
           verificationError = error;
+          passwordInput.value = "";
+          verifyRequiredPassword.value = "";
           activeView = "verify-required";
           renderView(true);
         }
@@ -698,7 +706,7 @@
           if (activeView === "verify-required") {
             updateVerifyRequiredUI();
             verifyRequiredCard.classList.remove("hidden");
-            resendVerificationBtn.focus();
+            verifyRequiredPassword.focus();
             return;
           }
 
@@ -935,6 +943,7 @@
         verifyRequiredBack.addEventListener("click", () => {
           verificationError = "";
           verificationInfo = "";
+          verifyRequiredPassword.value = "";
           returnToSignIn();
         });
 
@@ -1106,7 +1115,8 @@
           }
         });
 
-        resendVerificationBtn.addEventListener("click", async () => {
+        verifyRequiredForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
           if (!verificationEmail) return;
 
           verificationInfo = "";
@@ -1116,27 +1126,53 @@
           updateVerifyRequiredUI();
 
           try {
-            const response = await fetch("/api/auth/send-verification-email", {
+            const response = await fetch("/api/auth/sign-in/email", {
               method: "POST",
               credentials: "include",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 email: verificationEmail,
+                password: verifyRequiredPassword.value,
                 callbackURL: buildDesktopOnboardingUrl("verify-email"),
               }),
             });
-            if (!response.ok) {
+            const data = await response.json().catch(() => null);
+            const errorCode = normalizeAuthErrorCode(data);
+
+            if (response.status === 403 && errorCode === "EMAIL_NOT_VERIFIED") {
+              verificationInfo = "Verification email sent. Check your inbox for the latest link.";
+              updateVerifyRequiredUI();
+              return;
+            }
+            if (response.status === 502 && errorCode === "verification_email_delivery_failed") {
               verificationError = "We could not resend the verification email. Please try again.";
               updateVerifyRequiredUI();
               return;
             }
-
-            verificationInfo = "Verification email sent. Check your inbox for the latest link.";
+            if (response.status === 401) {
+              verificationError = "Email or password is incorrect.";
+              updateVerifyRequiredUI();
+              return;
+            }
+            if (response.status === 429) {
+              verificationError = "Too many attempts. Please wait and try again.";
+              updateVerifyRequiredUI();
+              return;
+            }
+            if (response.ok) {
+              bearerToken = readAuthToken(data);
+              if (bearerToken) {
+                await doHandoff("verify-required");
+                return;
+              }
+            }
+            verificationError = "We could not resend the verification email. Please try again.";
             updateVerifyRequiredUI();
           } catch {
             verificationError = "We could not resend the verification email. Check your connection and try again.";
             updateVerifyRequiredUI();
           } finally {
+            verifyRequiredPassword.value = "";
             resendVerificationBtn.disabled = false;
             resendVerificationBtn.textContent = "Resend verification email";
           }

@@ -231,6 +231,10 @@ function createOnboardingBrowser({
       elements.get("reset-password-new-password").value = "new-secure-password";
       await elements.get("reset-password-form").dispatch("submit", { preventDefault() {} });
     },
+    async submitVerificationRecovery(password = "secure-password") {
+      elements.get("verify-required-password").value = password;
+      await elements.get("verify-required-form").dispatch("submit", { preventDefault() {} });
+    },
   };
 }
 
@@ -331,21 +335,29 @@ function createOnboardingBrowser({
 
 {
   const requests = [];
-  let resendAttempts = 0;
+  const recoveryBodies = [];
+  let signInAttempts = 0;
   const browser = createOnboardingBrowser({
-    async fetchImpl(url) {
+    async fetchImpl(url, init) {
       requests.push(url);
       if (url === "/api/auth/sign-in/email") {
+        signInAttempts += 1;
+        const body = JSON.parse(init.body);
+        if (signInAttempts === 2 || signInAttempts === 3) recoveryBodies.push(body);
+        if (signInAttempts === 2) {
+          return jsonResponse(502, {
+            code: "VERIFICATION_EMAIL_DELIVERY_FAILED",
+            message: "We could not send the verification email. Please try again.",
+          });
+        }
+        if (signInAttempts === 4) return jsonResponse(200, { token: "verified-token" });
         return jsonResponse(403, {
           code: "EMAIL_NOT_VERIFIED",
           message: "Email not verified",
         });
       }
-      if (url === "/api/auth/send-verification-email") {
-        resendAttempts += 1;
-        return resendAttempts === 1
-          ? jsonResponse(503, { message: "provider details must stay private" })
-          : jsonResponse(200, { ok: true });
+      if (url === "/v2/desktop-auth/authorize") {
+        return jsonResponse(200, { redirectUrl: "veslo://auth-complete?code=recovered-code" });
       }
       throw new Error(`unexpected unverified sign-in request: ${url}`);
     },
@@ -354,18 +366,42 @@ function createOnboardingBrowser({
   await browser.submitAuth("waiting@example.test");
   assert.equal(browser.element("verify-required-card").classList.contains("hidden"), false);
   assert.match(browser.element("verify-required-status").textContent, /new verification email/i);
-  await browser.element("resend-verification").dispatch("click");
+  assert.equal(browser.element("auth-password").value, "", "entering recovery must clear the sign-in password");
+  assert.equal(browser.element("verify-required-password").value, "");
+
+  await browser.submitVerificationRecovery("recovery-password");
   assert.equal(browser.element("verify-required-card").classList.contains("hidden"), false);
   assert.match(browser.element("verify-required-error").textContent, /could not resend/i);
   assert.equal(browser.element("resend-verification").disabled, false);
-  await browser.element("resend-verification").dispatch("click");
+  assert.equal(browser.element("verify-required-password").value, "", "failed recovery must clear the password");
+
+  await browser.submitVerificationRecovery("recovery-password");
   assert.equal(browser.element("verify-required-card").classList.contains("hidden"), false);
   assert.match(browser.element("verify-required-status").textContent, /verification email sent/i);
+  assert.equal(browser.element("verify-required-password").value, "", "accepted recovery must clear the password");
+  assert.deepEqual(recoveryBodies, [
+    {
+      email: "waiting@example.test",
+      password: "recovery-password",
+      callbackURL: "https://den.example.test/?desktopOnboarding=1&tid=transaction-1&state=state-1&intent=signin&view=verify-email",
+    },
+    {
+      email: "waiting@example.test",
+      password: "recovery-password",
+      callbackURL: "https://den.example.test/?desktopOnboarding=1&tid=transaction-1&state=state-1&intent=signin&view=verify-email",
+    },
+  ]);
+
+  await browser.element("verify-required-back").dispatch("click");
+  await browser.submitAuth("waiting@example.test");
   assert.deepEqual(requests, [
     "/api/auth/sign-in/email",
-    "/api/auth/send-verification-email",
-    "/api/auth/send-verification-email",
+    "/api/auth/sign-in/email",
+    "/api/auth/sign-in/email",
+    "/api/auth/sign-in/email",
+    "/v2/desktop-auth/authorize",
   ]);
+  assert.deepEqual(browser.assignedLocations, ["veslo://auth-complete?code=recovered-code"]);
 }
 
 {

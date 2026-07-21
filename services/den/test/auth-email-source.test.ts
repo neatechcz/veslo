@@ -22,7 +22,11 @@ test("auth config wires Better Auth verification and reset callbacks", () => {
   assert.equal(source.includes("requireEmailVerification: env.authRequireEmailVerification"), true)
   assert.equal(source.includes("fireAndForgetAuthEmail(sendVerificationAuthEmail"), false)
   assert.equal(source.includes("fireAndForgetAuthEmail(sendResetPasswordAuthEmail"), true)
-  assert.equal(source.includes('message: "verification_email_delivery_failed"'), true)
+  assert.equal(source.includes('"VERIFICATION_EMAIL_DELIVERY_FAILED"'), true)
+  assert.equal(source.includes('disabledPaths: ["/send-verification-email"]'), true)
+  assert.equal(source.includes("createEmailVerificationToken"), false)
+  assert.equal(source.includes("createVerificationEmailResendHandler"), false)
+  assert.equal(indexSource.includes('app.post("/api/auth/send-verification-email"'), false)
   assert.equal(source.includes("maybeAssignDefaultManagedAiAccessForNewUser"), true)
 })
 
@@ -48,6 +52,18 @@ test("email signup route is gated before Better Auth creates a user", () => {
   assert.equal(indexSource.includes("createAuthNodeHandler"), true)
   assert.equal(indexSource.includes("guardEmailSignupRequest"), true)
   assert.doesNotMatch(indexSource, /app\.all\("\/api\/auth\/\*", toNodeHandler\(auth\)\)/)
+  assert.equal(indexSource.includes("asyncRoute(createAuthNodeHandler("), true)
+  assert.equal(source.includes("AUTH_REQUEST_BODY_LIMIT_BYTES = 64 * 1024"), true)
+})
+
+test("verification delivery outcome is request scoped and preserves Better Auth credential checks", () => {
+  assert.match(source, /WeakMap<Request, VerificationDeliveryOutcome>/)
+  assert.equal(source.includes('ctx.path === "/sign-up/email" || ctx.path === "/sign-in/email"'), true)
+  assert.equal(source.includes('status: "initialized"'), true)
+  assert.equal(source.includes('outcome.status = "pending"'), true)
+  assert.equal(source.includes('outcome.status = "accepted"'), true)
+  assert.equal(source.includes('outcome.status = "failed"'), true)
+  assert.equal(source.includes("verificationDeliveryOutcomes.delete(request)"), true)
 })
 
 test("auth user create hook gates before insert, activates organization access, and assigns managed AI last", () => {

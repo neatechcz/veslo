@@ -40,6 +40,7 @@
     "test:den-admin-billing-integrated": "playwright test ./specs/den-admin-billing-integrated.playwright.spec.ts",
     "test:den-admin-billing-lifecycle": "playwright test ./specs/den-admin-billing-lifecycle.playwright.spec.ts",
     "test:den-admin-billing-stripe-live": "playwright test ./specs/den-admin-billing-stripe-live.playwright.spec.ts",
+    "test:email-verification:browser": "node ../../services/den/scripts/run-email-verification-integration.mjs --browser",
     "test:live-codex-auth-upload": "playwright test ./specs/live-admin-codex-auth-upload.playwright.spec.ts"
   },
   "devDependencies": {
