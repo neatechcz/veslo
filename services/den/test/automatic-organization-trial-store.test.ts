@@ -31,6 +31,8 @@ type HarnessOptions = {
   events?: RawRow[]
   duplicateClaimDomains?: string[]
   claimInsertError?: unknown
+  accountInsertError?: unknown
+  eventInsertError?: unknown
 }
 
 const TRIAL_EXPIRY = new Date("2026-08-04T00:00:00.000Z")
@@ -188,13 +190,15 @@ function createDatabaseHarness(options: HarnessOptions = {}) {
       for(lock: string) {
         const tableName = table === OrgTable
           ? "organization"
-          : table === OrganizationBillingAccountTable
-            ? "account"
-            : table === OrganizationBillingEventTable
-              ? "history"
-              : table === OrganizationTrialDomainClaimTable
-                ? "claims"
-                : "other"
+          : table === OrganizationDomainTable
+            ? "domains"
+            : table === OrganizationBillingAccountTable
+              ? "account"
+              : table === OrganizationBillingEventTable
+                ? "history"
+                : table === OrganizationTrialDomainClaimTable
+                  ? "claims"
+                  : "other"
         operations.push(`lock:${tableName}:${lock}`)
         return query
       },
@@ -237,6 +241,9 @@ function createDatabaseHarness(options: HarnessOptions = {}) {
               assert.ok(row)
               const orgId = String(row.org_id)
               operations.push(`insert:account:${orgId}`)
+              if (options.accountInsertError) {
+                throw options.accountInsertError
+              }
               if (snapshot.accounts.has(orgId)) {
                 throw duplicateKeyError()
               }
@@ -248,6 +255,9 @@ function createDatabaseHarness(options: HarnessOptions = {}) {
               assert.ok(row)
               const eventId = String(row.stripe_event_id)
               operations.push(`insert:event:${eventId}`)
+              if (options.eventInsertError) {
+                throw options.eventInsertError
+              }
               if (snapshot.events.has(eventId)) {
                 throw duplicateKeyError()
               }
@@ -303,6 +313,14 @@ test("store atomically consumes all current domains and creates the unlimited ma
     ["alpha.example", "org_1"],
     ["beta.example", "org_1"],
   ])
+  assert.deepEqual(harness.isolationLevels, ["serializable"])
+  assert.deepEqual(harness.operations.filter((entry) => entry.startsWith("lock:")), [
+    "lock:organization:update",
+    "lock:domains:update",
+    "lock:account:update",
+    "lock:history:update",
+    "lock:claims:update",
+  ])
   assert.ok(harness.operations.includes("select:domains:stable-order"))
   const account = harness.state.accounts.get("org_1")
   assert.equal(account?.mode, "manual_access")
@@ -357,6 +375,38 @@ test("store backfills an existing manual trial without changing billing dates", 
   assert.equal(harness.state.accounts.get("org_1")?.updated_at, originalUpdatedAt)
   assert.equal(harness.operations.some((entry) => entry.startsWith("insert:account:")), false)
   assert.equal(harness.operations.some((entry) => entry.startsWith("insert:event:")), false)
+})
+
+test("store does not partially backfill an existing trial with a foreign-claimed current domain", async () => {
+  const originalExpiry = new Date("2026-07-29T10:15:00.000Z")
+  const originalUpdatedAt = new Date("2026-07-15T10:15:00.000Z")
+  const harness = createDatabaseHarness({
+    domains: [
+      { orgId: "org_1", domain: "own.example" },
+      { orgId: "org_1", domain: "fresh.example" },
+      { orgId: "org_1", domain: "foreign.example" },
+    ],
+    claims: [
+      { domain: "own.example", orgId: "org_1" },
+      { domain: "foreign.example", orgId: "org_2" },
+    ],
+    accounts: [{
+      id: "billing_existing",
+      org_id: "org_1",
+      source: "manual_trial",
+      manual_access_expires_at: originalExpiry,
+      updated_at: originalUpdatedAt,
+    }],
+  })
+  const store = createDrizzleAutomaticOrganizationTrialStore(harness.database)
+
+  assert.deepEqual(await store.grantOrSyncDomainTrial(grantInput()), { granted: false })
+  assert.equal(harness.state.claims.get("own.example")?.org_id, "org_1")
+  assert.equal(harness.state.claims.get("foreign.example")?.org_id, "org_2")
+  assert.equal(harness.state.claims.has("fresh.example"), false)
+  assert.equal(harness.state.accounts.get("org_1")?.manual_access_expires_at, originalExpiry)
+  assert.equal(harness.state.accounts.get("org_1")?.updated_at, originalUpdatedAt)
+  assert.equal(harness.operations.some((entry) => entry.startsWith("insert:")), false)
 })
 
 test("store uses historical automatic-trial event to backfill claims without creating billing", async () => {
@@ -425,6 +475,39 @@ test("duplicate-key claim race rolls back every claim and billing write", async 
   assert.deepEqual(await store.grantOrSyncDomainTrial(grantInput()), { granted: false })
   assert.equal(harness.operations.includes("insert:claim:alpha.example"), true)
   assert.equal(harness.operations.includes("insert:claim:beta.example"), true)
+  assert.equal(harness.state.claims.size, 0)
+  assert.equal(harness.state.accounts.size, 0)
+  assert.equal(harness.state.events.size, 0)
+})
+
+test("account insert failure rolls back all preceding domain claims and propagates", async () => {
+  const accountFailure = new Error("account_insert_failed")
+  const harness = createDatabaseHarness({
+    domains: [{ orgId: "org_1", domain: "account-failure.example" }],
+    accountInsertError: accountFailure,
+  })
+  const store = createDrizzleAutomaticOrganizationTrialStore(harness.database)
+
+  await assert.rejects(store.grantOrSyncDomainTrial(grantInput()), accountFailure)
+  assert.equal(harness.operations.includes("insert:claim:account-failure.example"), true)
+  assert.equal(harness.operations.includes("insert:account:org_1"), true)
+  assert.equal(harness.state.claims.size, 0)
+  assert.equal(harness.state.accounts.size, 0)
+  assert.equal(harness.state.events.size, 0)
+})
+
+test("event insert failure rolls back domain claims and billing account and propagates", async () => {
+  const eventFailure = new Error("event_insert_failed")
+  const harness = createDatabaseHarness({
+    domains: [{ orgId: "org_1", domain: "event-failure.example" }],
+    eventInsertError: eventFailure,
+  })
+  const store = createDrizzleAutomaticOrganizationTrialStore(harness.database)
+
+  await assert.rejects(store.grantOrSyncDomainTrial(grantInput()), eventFailure)
+  assert.equal(harness.operations.includes("insert:claim:event-failure.example"), true)
+  assert.equal(harness.operations.includes("insert:account:org_1"), true)
+  assert.equal(harness.operations.includes(`insert:event:${automaticHistoryId("org_1")}`), true)
   assert.equal(harness.state.claims.size, 0)
   assert.equal(harness.state.accounts.size, 0)
   assert.equal(harness.state.events.size, 0)

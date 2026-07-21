@@ -147,6 +147,27 @@ test("an existing manual trial backfills domains without changing its expiry", a
   assert.deepEqual(store.grants, [])
 })
 
+test("an existing manual trial does not partially backfill a mixed foreign-claimed domain set", async () => {
+  const originalExpiry = new Date("2026-07-30T15:30:00.000Z")
+  const store = new FakeAutomaticOrganizationTrialStore()
+  store.domainsByOrg.set("org_1", ["own.example", "fresh.example", "foreign.example"])
+  store.claims.set("own.example", "org_1")
+  store.claims.set("foreign.example", "org_2")
+  store.accounts.set("org_1", {
+    source: "manual_trial",
+    manualAccessExpiresAt: originalExpiry,
+  })
+
+  assert.equal((await createService(store).ensureTrial("org_1")).granted, false)
+  assert.deepEqual([...store.claims], [
+    ["own.example", "org_1"],
+    ["foreign.example", "org_2"],
+  ])
+  assert.equal(store.claims.has("fresh.example"), false)
+  assert.equal(store.accounts.get("org_1")?.manualAccessExpiresAt, originalExpiry)
+  assert.deepEqual(store.grants, [])
+})
+
 test("historical automatic-trial event backfills newly registered domains", async () => {
   const store = new FakeAutomaticOrganizationTrialStore()
   store.domainsByOrg.set("org_1", ["later.example"])
