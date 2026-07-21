@@ -846,7 +846,7 @@ function applyAdminCapabilities() {
 
   els.platformNavigation.classList.toggle("hidden", !canManagePlatform);
   els.organizationContextHeader.classList.toggle("hidden", !inOrganizationWorkspace);
-  els.platformAdminControls.forEach((node) => node.classList.toggle("hidden", !canManagePlatform));
+  els.platformAdminControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.setPlatformAdmin));
   els.organizationBillingControls.forEach((node) => node.classList.toggle("hidden", !canManageOrganizationBilling));
   els.aiAccessControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.editAiAccess));
   els.userGlobalControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.editProfile));

@@ -504,26 +504,24 @@ test.describe('AI Gateway admin data isolation', () => {
     await page.locator(`[data-user-id="${member.userId}"]`).click();
     await expect.poll(() => requestCount(harness.records, 'GET', qualifiedPath)).toBe(1);
     await expect(page.locator('#user-editor-modal')).toHaveAttribute('open', '');
-    await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-A-AI-CREDENTIAL');
+    await expect(page.locator('#user-ai-access-enabled')).toBeVisible();
+    await expect(page.locator('#user-platform-admin')).toBeVisible();
+    await expect(page.locator('#user-ai-access-provider')).toHaveCount(0);
+    await expect(page.locator('#user-ai-access-credential')).toHaveCount(0);
     expect(qualifiedPath).toContain('%2F');
     expect(qualifiedPath).toContain('%40');
 
     await page.locator('#user-ai-access-enabled').uncheck();
-    await page.locator('#user-ai-access-provider').selectOption('codex_oauth');
-    await page.locator('#user-ai-access-credential').selectOption('ORG-A-AI-CREDENTIAL-id');
+    await page.locator('#user-platform-admin').check();
+    const platformAdminPath = `/admin/api/users/${encodeURIComponent(member.userId)}`;
+    const platformSave = harness.delayNext('PATCH', platformAdminPath);
     const save = harness.delayNext('PUT', qualifiedPath);
     await page.locator('#user-save-button').click();
+    const platformSaveRecord = await platformSave.arrived;
+    expect(platformSaveRecord.body).toEqual({ platformAdmin: true });
+    platformSave.release(json(200, { user: { ...member, id: member.userId, platformAdmin: true } }));
     const saveRecord = await save.arrived;
-    expect(saveRecord.body).toEqual({
-      enabled: false,
-      provider: 'codex_oauth',
-      credentialId: 'ORG-A-AI-CREDENTIAL-id',
-    });
-    expect(Object.keys(saveRecord.body as Record<string, unknown>).sort()).toEqual([
-      'credentialId',
-      'enabled',
-      'provider',
-    ]);
+    expect(saveRecord.body).toEqual({ enabled: false });
 
     await switchOrganization(page, ORG_B);
     await waitForPageReady(page);
@@ -536,6 +534,36 @@ test.describe('AI Gateway admin data isolation', () => {
     await expect(page.locator('#user-save-status')).not.toHaveText('AI access saved.');
     expect(requestCount(harness.records, 'GET', '/admin/api/users')).toBe(globalRequestCount);
     expect(harness.records.some((record) => /^\/admin\/api\/users\/.+\/ai-access$/.test(record.path))).toBe(false);
+  });
+
+  test('organization admin can toggle AI access but cannot elevate platform admin', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    harness.state.session = {
+      user: {
+        id: 'organization-admin',
+        email: 'organization-admin@example.test',
+        emailVerified: true,
+        name: 'ORGANIZATION-ADMIN',
+      },
+      platformAdmin: false,
+      activeOrgId: ORG_A.id,
+      organizations: [{ ...ORG_A, role: 'organization_admin' }],
+      capabilities: ['organization', 'users', 'managedAiUserAccess'],
+      allowedPages: ['organization', 'users'],
+    };
+    const member = ORG_MEMBERS[ORG_A.id][0];
+    const qualifiedPath = qualifiedAiAccessPath(ORG_A.id, member.userId);
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-platform-admin')).not.toBeVisible();
+    await expect(page.locator('#user-platform-admin')).toBeDisabled();
+    await page.locator('#user-ai-access-enabled').uncheck();
+    await page.locator('#user-save-button').click();
+    await expect.poll(() => requestCount(harness.records, 'PUT', qualifiedPath)).toBe(1);
+    const putRecord = harness.records.find((record) => record.method === 'PUT' && record.path === qualifiedPath);
+    expect(putRecord?.body).toEqual({ enabled: false });
+    expect(harness.records.some((record) => record.method === 'PATCH' && /^\/admin\/api\/users\//.test(record.path))).toBe(false);
   });
 
   test('organization A to B transitions isolate Overview, domains, invites, billing, AI access, and audit until each destination is complete', async ({ page }) => {
@@ -618,7 +646,9 @@ test.describe('AI Gateway admin data isolation', () => {
       }
       if (scenario.page === 'ai-access') {
         await page.locator(`[data-user-id="${ORG_MEMBERS[ORG_A.id][0].userId}"]`).click();
-        await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-A-AI-CREDENTIAL');
+        await expect(page.locator('#user-ai-access-enabled')).toBeVisible();
+        await expect(page.locator('#user-ai-access-provider')).toHaveCount(0);
+        await expect(page.locator('#user-ai-access-credential')).toHaveCount(0);
       }
 
       const controls = scenario.paths.map((path) => harness.delayNext('GET', path));
@@ -659,7 +689,7 @@ test.describe('AI Gateway admin data isolation', () => {
 
       if (scenario.page === 'ai-access') {
         await page.locator(`[data-user-id="${ORG_MEMBERS[ORG_B.id][0].userId}"]`).click();
-        await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-B-AI-CREDENTIAL');
+        await expect(page.locator('#user-ai-access-enabled')).toBeVisible();
         await page.locator('#user-modal-close').click();
       }
     }
@@ -843,18 +873,15 @@ test.describe('AI Gateway admin data isolation', () => {
 
     await page.locator(`[data-user-id="${first.userId}"]`).click();
     await delayedGet.arrived;
-    await expect(page.locator('#user-ai-access-credential')).not.toContainText('ORG-A-AI-CREDENTIAL');
+    await expect(page.locator('#user-ai-access-provider')).toHaveCount(0);
+    await expect(page.locator('#user-ai-access-credential')).toHaveCount(0);
     delayedGet.release(harness.responseFor('GET', firstPath));
-    await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-A-AI-CREDENTIAL');
+    await expect(page.locator('#user-ai-access-enabled')).toBeChecked();
 
     const save = harness.delayNext('PUT', firstPath);
     await page.locator('#user-save-button').click();
     const saveRecord = await save.arrived;
-    expect(saveRecord.body).toEqual({
-      enabled: true,
-      provider: 'codex_oauth',
-      credentialId: 'ORG-A-AI-CREDENTIAL-id',
-    });
+    expect(saveRecord.body).toEqual({ enabled: true });
     await page.locator('#user-modal-close').click();
     await page.locator(`[data-user-id="${second.userId}"]`).click();
     await expect.poll(() => requestCount(harness.records, 'GET', secondPath)).toBe(1);
@@ -1199,6 +1226,16 @@ function defaultResponse(state: HarnessState, record: RequestRecord): HarnessRes
   if (decodedPath === '/admin/api/users' && record.method === 'GET') {
     return json(200, { users: state.globalUsers });
   }
+  const userMatch = decodedPath.match(/^\/admin\/api\/users\/(.+)$/);
+  if (userMatch && record.method === 'PATCH') {
+    const user = state.globalUsers.find((entry) => entry.id === userMatch[1]);
+    return json(200, {
+      user: {
+        ...(user || { id: userMatch[1] }),
+        platformAdmin: isObject(record.body) && record.body.platformAdmin === true,
+      },
+    });
+  }
   if (decodedPath === '/admin/api/organizations' && record.method === 'GET') {
     return json(200, { organizations: state.organizations });
   }
@@ -1282,8 +1319,8 @@ function defaultResponse(state: HarnessState, record: RequestRecord): HarnessRes
         id: `ai-access-${aiAccessMatch[1]}`,
         userId: aiAccessMatch[2],
         enabled: body.enabled === true,
-        provider: typeof body.provider === 'string' ? body.provider : '',
-        credentialId: typeof body.credentialId === 'string' ? body.credentialId : null,
+        provider: current.aiAccess?.provider || 'codex_oauth',
+        credentialId: current.aiAccess?.credentialId || null,
         updatedAt: '2026-07-14T12:00:00.000Z',
       },
       availableCredentials: current.availableCredentials,
