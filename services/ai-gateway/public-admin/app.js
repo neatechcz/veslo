@@ -3889,6 +3889,7 @@ async function saveUser() {
     `user-save:${targetUser?.id || "create"}`,
   );
   if (!isCurrentRouteMutation(mutation)) return;
+  let aiAccessSaved = false;
 
   try {
     els.userSaveButton.disabled = true;
@@ -3909,6 +3910,12 @@ async function saveUser() {
         return;
       }
     }
+    if (canEditAiAccess) {
+      const savedAiAccess = await saveUserAiAccess(targetUser.id, aiAccessInput, mutation);
+      if (!savedAiAccess) return;
+      aiAccessSaved = true;
+    }
+    if (!isCurrentRouteMutation(mutation)) return;
     if (wasCreating) {
       const created = await fetchJson("/users", {
         method: "POST",
@@ -3947,11 +3954,6 @@ async function saveUser() {
       });
     }
     if (!isCurrentRouteMutation(mutation)) return;
-    if (canEditAiAccess) {
-      const savedAiAccess = await saveUserAiAccess(targetUser.id, aiAccessInput, mutation);
-      if (!savedAiAccess) return;
-    }
-    if (!isCurrentRouteMutation(mutation)) return;
     if (!organizationMembershipSave && (wasCreating || updatePayload)) await loadUsers(mutation);
     if (!isCurrentRouteMutation(mutation)) return;
     const selectedUser = organizationMembershipSave
@@ -3977,11 +3979,54 @@ async function saveUser() {
     closeModal(els.userEditorModal);
   } catch (error) {
     if (!isCurrentRouteMutation(mutation)) return;
-    await loadRouteData(state.route);
-    setUserSaveStatus(
-      `Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`,
-      "error",
-    );
+    const recoveryRoute = state.route ? { ...state.route } : null;
+    const recoveryTarget = targetUser
+      ? {
+          userId: targetUser.id,
+          membershipId: targetUser.membershipId || null,
+        }
+      : null;
+    const failureDetail = error instanceof Error ? error.message : "unknown_error";
+    const failureMessage = canEditAiAccess && !aiAccessSaved
+      ? permissions.setPlatformAdmin && updatePayload
+        ? `Unable to save AI access. Platform Admin was not changed: ${failureDetail}`
+        : `Unable to save AI access: ${failureDetail}`
+      : canEditAiAccess && updatePayload && aiAccessSaved
+        ? `AI access was saved, but the Platform Admin result could not be confirmed: ${failureDetail}`
+        : `Unable to save user: ${failureDetail}`;
+    if (!recoveryRoute) return;
+    const recovery = await loadRouteData(recoveryRoute);
+    if (!isRouteLoadResultCurrent(recovery, recoveryRoute)) return;
+    if (recoveryTarget) {
+      const recoveredTarget = currentRouteSubjects().find((entry) => (
+        entry.id === recoveryTarget.userId
+        && (!recoveryTarget.membershipId || entry.membershipId === recoveryTarget.membershipId)
+      ));
+      if (!recoveredTarget) return;
+      state.userMode = "edit";
+      state.selectedUserId = recoveredTarget.id;
+      if (recoveryTarget.membershipId) {
+        state.selectedOrganizationMemberId = recoveryTarget.membershipId;
+      }
+      renderUsers();
+      if (canEditAiAccess) {
+        const recoveryMutation = beginCurrentRouteMutation(`user-save-recovery:${recoveredTarget.id}`);
+        if (!isCurrentRouteMutation(recoveryMutation) || state.selectedUserId !== recoveredTarget.id) return;
+        await loadUserAiAccess(recoveredTarget.id, recoveryMutation);
+        if (!isCurrentRouteMutation(recoveryMutation) || state.selectedUserId !== recoveredTarget.id) return;
+        const currentTarget = currentUser();
+        if (
+          !currentTarget
+          || currentTarget.id !== recoveryTarget.userId
+          || (recoveryTarget.membershipId && currentTarget.membershipId !== recoveryTarget.membershipId)
+        ) {
+          return;
+        }
+        populateUserEditor(currentTarget);
+      }
+      openUserEditor(recoveredTarget.id);
+    }
+    setUserSaveStatus(failureMessage, "error");
   } finally {
     if (isCurrentRouteMutation(mutation)) {
       els.userSaveButton.disabled = false;

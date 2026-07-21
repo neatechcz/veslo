@@ -3015,7 +3015,20 @@ test("GET /admin/app.js saves AI access and platform admin through separate togg
     )
     assert.doesNotMatch(saveAccess, /provider:|credentialId:/)
     assert.match(saveUserSource, /body:\s*JSON\.stringify\(updatePayload\)/)
-    assert.match(saveUserSource, /await loadRouteData\(state\.route\)[\s\S]*Unable to save user:/)
+    assert.ok(
+      saveUserSource.indexOf("await saveUserAiAccess")
+        < saveUserSource.indexOf('await fetchJson(`/users/${encodeURIComponent(targetUser.id)}`'),
+      "AI access must be saved before the privileged Platform Admin update",
+    )
+    assert.match(saveUserSource, /Platform Admin was not changed/)
+    assert.match(
+      saveUserSource,
+      /const recovery = await loadRouteData\(recoveryRoute\);\s*if \(!isRouteLoadResultCurrent\(recovery, recoveryRoute\)\) return;/,
+    )
+    assert.match(
+      saveUserSource,
+      /await loadUserAiAccess\(recoveredTarget\.id, recoveryMutation\);\s*if \(!isCurrentRouteMutation\(recoveryMutation\) \|\| state\.selectedUserId !== recoveredTarget\.id\) return;/,
+    )
     assert.match(
       script,
       /async function saveUser\(\) \{[\s\S]*const canEditAiAccess = permissions\.editAiAccess && !wasCreating;[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput, mutation\)/,
