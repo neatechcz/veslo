@@ -8,6 +8,13 @@ const baseEnv = {
   BETTER_AUTH_URL: "http://localhost:8788",
 }
 
+const productionEnv = {
+  ...baseEnv,
+  NODE_ENV: "production",
+  LETTR_API_KEY: "lettr-test-key",
+  AUTH_EMAIL_ADDRESS: "noreply@veslo.test",
+}
+
 Object.assign(process.env, baseEnv)
 
 test("den env exposes Microsoft OAuth configuration", async () => {
@@ -36,8 +43,7 @@ test("den env rejects missing or weak Microsoft token encryption keys in product
 
   assert.throws(
     () => parseEnv({
-      ...baseEnv,
-      NODE_ENV: "production",
+      ...productionEnv,
       MICROSOFT_CLIENT_ID: "microsoft-client-id",
       MICROSOFT_CLIENT_SECRET: "microsoft-client-secret",
     }),
@@ -46,8 +52,7 @@ test("den env rejects missing or weak Microsoft token encryption keys in product
 
   assert.throws(
     () => parseEnv({
-      ...baseEnv,
-      NODE_ENV: "production",
+      ...productionEnv,
       MICROSOFT_CLIENT_ID: "microsoft-client-id",
       MICROSOFT_CLIENT_SECRET: "microsoft-client-secret",
       MICROSOFT_TOKEN_SECRET_KEY: "too-short",
@@ -61,8 +66,7 @@ test("den env requires Microsoft client id and secret together in production", a
 
   assert.throws(
     () => parseEnv({
-      ...baseEnv,
-      NODE_ENV: "production",
+      ...productionEnv,
       MICROSOFT_CLIENT_ID: "microsoft-client-id",
       MICROSOFT_TOKEN_SECRET_KEY: "microsoft-token-secret-012345678901",
     }),
@@ -71,8 +75,7 @@ test("den env requires Microsoft client id and secret together in production", a
 
   assert.throws(
     () => parseEnv({
-      ...baseEnv,
-      NODE_ENV: "production",
+      ...productionEnv,
       MICROSOFT_CLIENT_SECRET: "microsoft-client-secret",
       MICROSOFT_TOKEN_SECRET_KEY: "microsoft-token-secret-012345678901",
     }),
