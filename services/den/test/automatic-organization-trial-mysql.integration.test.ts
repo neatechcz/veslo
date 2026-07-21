@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
+import { eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/mysql2"
 import { migrate } from "drizzle-orm/mysql2/migrator"
 import mysql, { type Pool } from "mysql2/promise"
@@ -19,6 +20,7 @@ import {
   OrganizationDomainTable,
   OrgTable,
 } from "../src/db/schema.js"
+import { isMySqlDeadlockError } from "../src/db/mysql-errors.js"
 import {
   OrganizationDomainExistsError,
   createDrizzleOrganizationDomainMutationStore,
@@ -272,6 +274,148 @@ if (!dedicatedDatabaseUrl) {
         `automatic_organization_trial:${lockOrderOrgId}`,
       ])
       assertCountRow(lockOrderRows[0], {
+        domain_count: 1,
+        claim_count: 1,
+        billing_count: 1,
+        event_count: 1,
+      })
+
+      const inversionOrgId = `org_lock_inversion_${fixture}`
+      const inversionDomain = `${fixture}.lock-inversion.integration.test`
+      const inversionOwnerUserId = `inv_u_o_${fixture}`
+      const inversionReplacementUserId = `inv_u_r_${fixture}`
+      const inversionOwnerMembershipId = `inv_m_o_${fixture}`
+      await database.insert(AuthUserTable).values([{
+        id: inversionOwnerUserId,
+        name: "Lock Inversion Owner",
+        email: `owner@${inversionDomain}`,
+        emailVerified: true,
+      }, {
+        id: inversionReplacementUserId,
+        name: "Lock Inversion Replacement",
+        email: `replacement@unrelated-${fixture}.integration.test`,
+        emailVerified: true,
+      }])
+      await database.insert(OrgTable).values({
+        id: inversionOrgId,
+        name: "Domain Mutation Lock Inversion",
+        slug: `domain-mutation-lock-inversion-${fixture}`,
+        owner_user_id: inversionOwnerUserId,
+      })
+      await database.insert(OrgMembershipTable).values([{
+        id: inversionOwnerMembershipId,
+        org_id: inversionOrgId,
+        user_id: inversionOwnerUserId,
+        role: "organization_admin" as const,
+        status: "active" as const,
+      }, {
+        id: `inv_m_r_${fixture}`,
+        org_id: inversionOrgId,
+        user_id: inversionReplacementUserId,
+        role: "organization_admin" as const,
+        status: "active" as const,
+      }])
+
+      const inversionMembershipLocked = createDeferred<void>()
+      const releaseInversionOwnerOrgUpdate = createDeferred<void>()
+      const inversionDomainEvidenceStarted = createDeferred<void>()
+      const ownerStyleResult = database.transaction(async (tx: any) => {
+        await tx
+          .update(OrgMembershipTable)
+          .set({ role: "member" })
+          .where(eq(OrgMembershipTable.id, inversionOwnerMembershipId))
+        inversionMembershipLocked.resolve()
+        await releaseInversionOwnerOrgUpdate.promise
+        await tx
+          .update(OrgTable)
+          .set({ owner_user_id: inversionReplacementUserId })
+          .where(eq(OrgTable.id, inversionOrgId))
+      }, { isolationLevel: "serializable" }).then(
+        () => ({ status: "fulfilled" as const }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      )
+      await withTimeout(
+        inversionMembershipLocked.promise,
+        5_000,
+        "owner-style transaction did not lock membership",
+      )
+
+      let inversionMemberReadAttempts = 0
+      const inversionMutationService = createOrganizationDomainMutationService({
+        store: createDrizzleOrganizationDomainMutationStore(database, {
+          createMemberReader(transaction) {
+            const reader = createDrizzleOrganizationDomainMemberReader(transaction)
+            return {
+              async listMembers(orgId) {
+                inversionMemberReadAttempts += 1
+                inversionDomainEvidenceStarted.resolve()
+                return reader.listMembers(orgId)
+              },
+            }
+          },
+        }),
+      })
+      const inversionDomainResult = inversionMutationService.create({
+        id: `domain_lock_inversion_${fixture}`,
+        orgId: inversionOrgId,
+        domain: inversionDomain,
+        enabled: true,
+        selfSignupEnabled: false,
+      }).then(
+        (value) => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }),
+      )
+      try {
+        await withTimeout(
+          inversionDomainEvidenceStarted.promise,
+          5_000,
+          "domain mutation did not reach membership evidence while holding the organization lock",
+        )
+      } finally {
+        releaseInversionOwnerOrgUpdate.resolve()
+      }
+
+      const [settledOwnerStyle, settledInversionDomain] = await withTimeout(
+        Promise.all([ownerStyleResult, inversionDomainResult]),
+        10_000,
+        "lock-inversion transactions did not settle",
+      )
+      if (settledOwnerStyle.status === "rejected") {
+        assert.equal(
+          isMySqlDeadlockError(settledOwnerStyle.reason),
+          true,
+          "the competing owner-style transaction may only fail as the selected deadlock victim",
+        )
+      } else {
+        assert.ok(
+          inversionMemberReadAttempts >= 2,
+          "a committed owner-style transaction means the domain deadlock victim must have retried",
+        )
+      }
+      assert.equal(settledInversionDomain.status, "fulfilled")
+      if (settledInversionDomain.status === "rejected") {
+        assert.equal(isMySqlDeadlockError(settledInversionDomain.reason), false)
+        assert.fail(`domain mutation leaked an unexpected error: ${String(settledInversionDomain.reason)}`)
+      }
+      assert.equal(settledInversionDomain.value.domain.domain, inversionDomain)
+
+      const inversionRows = await queryRows(pool, `
+        SELECT
+          (SELECT COUNT(*) FROM organization_domain WHERE org_id = ? AND domain = ?) AS domain_count,
+          (SELECT COUNT(*) FROM organization_trial_domain_claim WHERE org_id = ? AND domain = ?) AS claim_count,
+          (SELECT COUNT(*) FROM organization_billing_account WHERE org_id = ?) AS billing_count,
+          (SELECT COUNT(*) FROM organization_billing_event
+            WHERE org_id = ? AND stripe_event_id = ?) AS event_count
+      `, [
+        inversionOrgId,
+        inversionDomain,
+        inversionOrgId,
+        inversionDomain,
+        inversionOrgId,
+        inversionOrgId,
+        `automatic_organization_trial:${inversionOrgId}`,
+      ])
+      assertCountRow(inversionRows[0], {
         domain_count: 1,
         claim_count: 1,
         billing_count: 1,

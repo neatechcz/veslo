@@ -83,6 +83,7 @@ import { OrganizationDomainVerifiedMemberRequiredError } from "../org-admin/doma
 import {
   OrganizationDomainExistsError,
   OrganizationDomainNotFoundError,
+  OrganizationNotFoundError,
   createDrizzleOrganizationDomainMutationStore,
   createOrganizationDomainMutationService,
   type OrganizationDomainMutationService,
@@ -1863,6 +1864,10 @@ function sendOrganizationDomainMutationError(error: unknown, res: express.Respon
     return true
   }
   if (error instanceof OrganizationDomainNotFoundError) {
+    res.status(404).json({ error: error.code })
+    return true
+  }
+  if (error instanceof OrganizationNotFoundError) {
     res.status(404).json({ error: error.code })
     return true
   }

@@ -5,7 +5,7 @@ import {
   createDrizzleAutomaticOrganizationTrialStore,
   type AutomaticOrganizationTrialStore,
 } from "../billing/automatic-organization-trial.js"
-import { isMySqlDuplicateKeyError } from "../db/mysql-errors.js"
+import { isMySqlDeadlockError, isMySqlDuplicateKeyError } from "../db/mysql-errors.js"
 import { OrganizationDomainTable, OrgTable } from "../db/schema.js"
 import {
   createDrizzleOrganizationDomainMemberReader,
@@ -59,6 +59,15 @@ export class OrganizationDomainNotFoundError extends Error {
   constructor() {
     super("domain_not_found")
     this.name = "OrganizationDomainNotFoundError"
+  }
+}
+
+export class OrganizationNotFoundError extends Error {
+  readonly code = "organization_not_found"
+
+  constructor() {
+    super("organization_not_found")
+    this.name = "OrganizationNotFoundError"
   }
 }
 
@@ -153,6 +162,8 @@ type DrizzleOrganizationDomainMutationStoreFactories = {
   createAutomaticTrialStore?: (transaction: any) => AutomaticOrganizationTrialStore
 }
 
+const DOMAIN_MUTATION_TRANSACTION_MAX_ATTEMPTS = 3
+
 export function createDrizzleOrganizationDomainMutationStore(
   database: any,
   factories: DrizzleOrganizationDomainMutationStoreFactories = {},
@@ -169,64 +180,72 @@ export function createDrizzleOrganizationDomainMutationStore(
       return findDomainByName(database, domain)
     },
     async transaction<T>(run: (scope: OrganizationDomainMutationScope) => Promise<T>) {
-      try {
-        return await database.transaction(async (tx: any) => {
-          const verifier = createOrganizationDomainVerifier(
-            createMemberReader(tx),
-          )
-          const scope: OrganizationDomainMutationScope = {
-            async lockOrganization(orgId) {
-              await tx
-                .select({ id: OrgTable.id })
-                .from(OrgTable)
-                .where(eq(OrgTable.id, orgId))
-                .for("update")
-                .limit(1)
-            },
-            findById(orgId, domainId) {
-              return findDomainById(tx, orgId, domainId)
-            },
-            requireVerifiedMember(orgId, domain) {
-              return verifier.requireVerifiedMember(orgId, domain)
-            },
-            async insert(record) {
-              await tx.insert(OrganizationDomainTable).values({
-                id: record.id,
-                org_id: record.orgId,
-                domain: record.domain,
-                enabled: record.enabled,
-                self_signup_enabled: record.selfSignupEnabled,
-              })
-            },
-            async update(orgId, domainId, update) {
-              await tx
-                .update(OrganizationDomainTable)
-                .set({
-                  ...(update.domain !== undefined ? { domain: update.domain } : {}),
-                  ...(update.enabled !== undefined ? { enabled: update.enabled } : {}),
-                  ...(update.selfSignupEnabled !== undefined
-                    ? { self_signup_enabled: update.selfSignupEnabled }
-                    : {}),
+      for (let attempt = 1; attempt <= DOMAIN_MUTATION_TRANSACTION_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          return await database.transaction(async (tx: any) => {
+            const verifier = createOrganizationDomainVerifier(
+              createMemberReader(tx),
+            )
+            const scope: OrganizationDomainMutationScope = {
+              async lockOrganization(orgId) {
+                const rows = await tx
+                  .select({ id: OrgTable.id })
+                  .from(OrgTable)
+                  .where(eq(OrgTable.id, orgId))
+                  .for("update")
+                  .limit(1)
+                if (rows.length === 0) {
+                  throw new OrganizationNotFoundError()
+                }
+              },
+              findById(orgId, domainId) {
+                return findDomainById(tx, orgId, domainId)
+              },
+              requireVerifiedMember(orgId, domain) {
+                return verifier.requireVerifiedMember(orgId, domain)
+              },
+              async insert(record) {
+                await tx.insert(OrganizationDomainTable).values({
+                  id: record.id,
+                  org_id: record.orgId,
+                  domain: record.domain,
+                  enabled: record.enabled,
+                  self_signup_enabled: record.selfSignupEnabled,
                 })
-                .where(and(
-                  eq(OrganizationDomainTable.org_id, orgId),
-                  eq(OrganizationDomainTable.id, domainId),
-                ))
-            },
-            async synchronizeTrial(orgId) {
-              await createAutomaticOrganizationTrialService({
-                store: createAutomaticTrialStore(tx),
-              }).ensureTrial(orgId)
-            },
+              },
+              async update(orgId, domainId, update) {
+                await tx
+                  .update(OrganizationDomainTable)
+                  .set({
+                    ...(update.domain !== undefined ? { domain: update.domain } : {}),
+                    ...(update.enabled !== undefined ? { enabled: update.enabled } : {}),
+                    ...(update.selfSignupEnabled !== undefined
+                      ? { self_signup_enabled: update.selfSignupEnabled }
+                      : {}),
+                  })
+                  .where(and(
+                    eq(OrganizationDomainTable.org_id, orgId),
+                    eq(OrganizationDomainTable.id, domainId),
+                  ))
+              },
+              async synchronizeTrial(orgId) {
+                await createAutomaticOrganizationTrialService({
+                  store: createAutomaticTrialStore(tx),
+                }).ensureTrial(orgId)
+              },
+            }
+            return run(scope)
+          }, { isolationLevel: "serializable" })
+        } catch (error) {
+          if (isMySqlDuplicateKeyError(error)) {
+            throw new OrganizationDomainExistsError()
           }
-          return run(scope)
-        }, { isolationLevel: "serializable" })
-      } catch (error) {
-        if (isMySqlDuplicateKeyError(error)) {
-          throw new OrganizationDomainExistsError()
+          if (!isMySqlDeadlockError(error) || attempt === DOMAIN_MUTATION_TRANSACTION_MAX_ATTEMPTS) {
+            throw error
+          }
         }
-        throw error
       }
+      throw new Error("domain_mutation_transaction_attempts_exhausted")
     },
   }
 }

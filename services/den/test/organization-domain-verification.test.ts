@@ -10,6 +10,7 @@ import {
 } from "../src/org-admin/domain-verification.js"
 import {
   OrganizationDomainExistsError,
+  OrganizationNotFoundError,
   createDrizzleOrganizationDomainMutationStore,
   createOrganizationDomainMutationService,
   type OrganizationDomainMutationRecord,
@@ -498,6 +499,292 @@ test("production domain mutations start a serializable outer transaction", async
   assert.deepEqual(transactionOptions, { isolationLevel: "serializable" })
 })
 
+for (const [label, firstAttemptError] of [
+  ["direct", Object.assign(new Error("deadlock victim"), { code: "ER_LOCK_DEADLOCK" })],
+  ["nested", Object.assign(new Error("failed query"), {
+    cause: Object.assign(new Error("deadlock victim"), { errno: 1213 }),
+  })],
+] as const) {
+  test(`production mutation store restarts the complete transaction with fresh factories after a ${label} deadlock`, async () => {
+    let attempts = 0
+    const transactions: Array<{ attempt: number }> = []
+    const memberFactoryTransactions: unknown[] = []
+    const trialFactoryTransactions: unknown[] = []
+    const transactionCallbackAttempts: number[] = []
+    const store = createDrizzleOrganizationDomainMutationStore({
+      async transaction<T>(run: (tx: { attempt: number }) => Promise<T>, options: unknown) {
+        assert.deepEqual(options, { isolationLevel: "serializable" })
+        const tx = { attempt: ++attempts }
+        transactions.push(tx)
+        const result = await run(tx)
+        if (attempts === 1) throw firstAttemptError
+        return result
+      },
+    }, {
+      createMemberReader(transaction) {
+        memberFactoryTransactions.push(transaction)
+        return {
+          async listMembers() {
+            return [{
+              orgId: "org_1",
+              userId: "user_verified",
+              email: "owner@team.example.com",
+              emailVerified: true,
+              membershipStatus: "active",
+            }]
+          },
+        }
+      },
+      createAutomaticTrialStore(transaction) {
+        trialFactoryTransactions.push(transaction)
+        return {
+          async listOrganizationIds() {
+            return []
+          },
+          async grantOrSyncDomainTrial() {
+            return { granted: true }
+          },
+        }
+      },
+    })
+
+    const result = await store.transaction(async (scope) => {
+      transactionCallbackAttempts.push(attempts)
+      await scope.requireVerifiedMember("org_1", "team.example.com")
+      await scope.synchronizeTrial("org_1")
+      return attempts
+    })
+
+    assert.equal(result, 2)
+    assert.deepEqual(transactionCallbackAttempts, [1, 2])
+    assert.equal(transactions.length, 2)
+    assert.notEqual(transactions[0], transactions[1])
+    assert.deepEqual(memberFactoryTransactions, transactions)
+    assert.deepEqual(trialFactoryTransactions, transactions)
+  })
+}
+
+test("production mutation store rethrows a deadlock after three complete attempts", async () => {
+  const deadlock = Object.assign(new Error("deadlock victim"), { code: "ER_LOCK_DEADLOCK" })
+  let attempts = 0
+  let transactionCallbackRuns = 0
+  const store = createDrizzleOrganizationDomainMutationStore({
+    async transaction<T>(run: (tx: { attempt: number }) => Promise<T>) {
+      attempts += 1
+      await run({ attempt: attempts })
+      throw deadlock
+    },
+  }, {
+    createMemberReader() {
+      return { async listMembers() { return [] } }
+    },
+  })
+
+  await assert.rejects(
+    store.transaction(async () => {
+      transactionCallbackRuns += 1
+      return "unreachable"
+    }),
+    (error: unknown) => error === deadlock,
+  )
+  assert.equal(attempts, 3)
+  assert.equal(transactionCallbackRuns, 3)
+})
+
+test("production mutation store never retries unrelated transaction failures", async () => {
+  const unrelated = new Error("database unavailable")
+  let attempts = 0
+  const store = createDrizzleOrganizationDomainMutationStore({
+    async transaction<T>(run: (tx: { attempt: number }) => Promise<T>) {
+      attempts += 1
+      await run({ attempt: attempts })
+      throw unrelated
+    },
+  }, {
+    createMemberReader() {
+      return { async listMembers() { return [] } }
+    },
+  })
+
+  await assert.rejects(
+    store.transaction(async () => "unreachable"),
+    (error: unknown) => error === unrelated,
+  )
+  assert.equal(attempts, 1)
+})
+
+test("production mutation store maps duplicate keys without retrying", async () => {
+  const duplicate = Object.assign(new Error("duplicate domain"), { code: "ER_DUP_ENTRY", errno: 1062 })
+  let attempts = 0
+  const store = createDrizzleOrganizationDomainMutationStore({
+    async transaction<T>(run: (tx: { attempt: number }) => Promise<T>) {
+      attempts += 1
+      await run({ attempt: attempts })
+      throw duplicate
+    },
+  }, {
+    createMemberReader() {
+      return { async listMembers() { return [] } }
+    },
+  })
+
+  await assert.rejects(
+    store.transaction(async () => "unreachable"),
+    OrganizationDomainExistsError,
+  )
+  assert.equal(attempts, 1)
+})
+
+test("service preflight stays outside a retried domain transaction", async () => {
+  let preflightReads = 0
+  let attempts = 0
+  const database = {
+    select() {
+      return {
+        from() { return this },
+        where() { return this },
+        async limit() {
+          preflightReads += 1
+          return []
+        },
+      }
+    },
+    async transaction<T>(run: (tx: unknown) => Promise<T>, options: unknown) {
+      assert.deepEqual(options, { isolationLevel: "serializable" })
+      attempts += 1
+      let selected = 0
+      let inserted: StoredDomain | null = null
+      const tx = {
+        select() {
+          return {
+            from() { return this },
+            where() { return this },
+            for() { return this },
+            async limit() {
+              selected += 1
+              if (selected === 1) return [{ id: "org_1" }]
+              return inserted ? [inserted] : []
+            },
+          }
+        },
+        insert() {
+          return {
+            async values(value: Omit<StoredDomain, "created_at" | "updated_at">) {
+              inserted = {
+                ...value,
+                created_at: new Date("2026-07-21T08:00:00.000Z"),
+                updated_at: new Date("2026-07-21T08:00:00.000Z"),
+              }
+            },
+          }
+        },
+      }
+      const result = await run(tx)
+      if (attempts === 1) {
+        throw Object.assign(new Error("deadlock victim"), { code: "ER_LOCK_DEADLOCK" })
+      }
+      return result
+    },
+  }
+  const service = createOrganizationDomainMutationService({
+    store: createDrizzleOrganizationDomainMutationStore(database, {
+      createMemberReader() {
+        return {
+          async listMembers() {
+            return [{
+              orgId: "org_1",
+              userId: "user_verified",
+              email: "owner@team.example.com",
+              emailVerified: true,
+              membershipStatus: "active",
+            }]
+          },
+        }
+      },
+      createAutomaticTrialStore() {
+        return {
+          async listOrganizationIds() { return [] },
+          async grantOrSyncDomainTrial() { return { granted: true } },
+        }
+      },
+    }),
+  })
+
+  const result = await service.create({
+    id: "domain_1",
+    orgId: "org_1",
+    domain: "team.example.com",
+    enabled: true,
+    selfSignupEnabled: false,
+  })
+
+  assert.equal(result.domain.domain, "team.example.com")
+  assert.equal(preflightReads, 1)
+  assert.equal(attempts, 2)
+})
+
+test("missing organization lock aborts domain creation before evidence or writes", async () => {
+  let memberReads = 0
+  let inserts = 0
+  let trialSyncs = 0
+  const emptySelect = {
+    from() { return this },
+    where() { return this },
+    for() { return this },
+    async limit() { return [] },
+  }
+  const database = {
+    select() { return { ...emptySelect } },
+    async transaction<T>(run: (tx: unknown) => Promise<T>) {
+      return run({
+        select() { return { ...emptySelect } },
+        insert() {
+          return { async values() { inserts += 1 } }
+        },
+      })
+    },
+  }
+  const service = createOrganizationDomainMutationService({
+    store: createDrizzleOrganizationDomainMutationStore(database, {
+      createMemberReader() {
+        return {
+          async listMembers() {
+            memberReads += 1
+            return []
+          },
+        }
+      },
+      createAutomaticTrialStore() {
+        return {
+          async listOrganizationIds() { return [] },
+          async grantOrSyncDomainTrial() {
+            trialSyncs += 1
+            return { granted: true }
+          },
+        }
+      },
+    }),
+  })
+
+  await assert.rejects(
+    service.create({
+      id: "domain_1",
+      orgId: "org_missing",
+      domain: "team.example.com",
+      enabled: true,
+      selfSignupEnabled: false,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof OrganizationNotFoundError)
+      assert.equal(error.code, "organization_not_found")
+      return true
+    },
+  )
+  assert.equal(memberReads, 0)
+  assert.equal(inserts, 0)
+  assert.equal(trialSyncs, 0)
+})
+
 type StoredDomain = {
   id: string
   org_id: string
@@ -833,6 +1120,71 @@ test("admin domain routes return stable verification errors and audit only commi
       },
     })
     assert.equal("email" in audits[0].payload, false)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("admin domain routes return organization_not_found when the locked organization disappeared", async () => {
+  const { createOrganizationDomainAdminRouteDeps } = await import("../src/http/admin-runtime.js")
+  const audits: unknown[] = []
+  const snapshot = {
+    user: {
+      id: "platform_admin",
+      email: "admin@unrelated.example",
+      emailVerified: true,
+      name: "Platform Admin",
+    },
+    platformAdmin: true,
+    activeOrgId: "org_missing",
+    organizations: [],
+  }
+  const mutations = {
+    async create() {
+      throw new OrganizationNotFoundError()
+    },
+    async update() {
+      throw new OrganizationNotFoundError()
+    },
+  } as unknown as ReturnType<typeof createOrganizationDomainMutationService>
+  const app = express()
+  app.use(express.json())
+  app.use(createAdminRouter({
+    getSessionSnapshot: async () => snapshot,
+    ...createOrganizationDomainAdminRouteDeps({
+      mutations,
+      async requireOrganizationAccess() {
+        return {
+          snapshot,
+          organization: {
+            id: "org_missing",
+            name: "Removed",
+            slug: "removed",
+            ownerUserId: "owner_1",
+            seatLimit: null,
+          },
+        }
+      },
+      async recordOrganizationAudit(...args) {
+        audits.push(args)
+      },
+    }),
+  }))
+  app.use(errorMiddleware)
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/organizations/org_missing/domains`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: "team.example.com" }),
+    })
+    assert.equal(response.status, 404)
+    assert.deepEqual(await response.json(), { error: "organization_not_found" })
+    assert.deepEqual(audits, [])
   } finally {
     server.close()
     await once(server, "close")
