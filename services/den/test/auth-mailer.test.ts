@@ -20,6 +20,10 @@ function importAuthMailer() {
   return import(`../src/email/auth-mailer.js?case=${Date.now()}-${Math.random()}`)
 }
 
+function importAuth() {
+  return import(`../src/auth.js?case=${Date.now()}-${Math.random()}`)
+}
+
 test("verification auth email uses Lettr send-email payload", async () => {
   withRequiredEnv()
 
@@ -95,7 +99,120 @@ test("verification auth email uses branded button copy without a visible raw url
   }
 })
 
-test("background auth email helper absorbs rejected Lettr sends", async () => {
+test("verification auth email rejects without exposing the provider response body", async () => {
+  withRequiredEnv()
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response("sensitive Lettr provider response body", {
+    status: 503,
+    statusText: "Service Unavailable",
+  })
+
+  try {
+    const { sendVerificationAuthEmail } = await importAuthMailer()
+
+    await assert.rejects(
+      sendVerificationAuthEmail({ to: "user@example.com", url: "https://example.com/verify" }),
+      (error: unknown) => {
+        assert.equal(error instanceof Error, true)
+        assert.match((error as Error).message, /Failed to send auth email: 503 Service Unavailable/)
+        assert.doesNotMatch((error as Error).message, /sensitive Lettr provider response body/)
+        return true
+      },
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+    for (const key of Object.keys(requiredEnv)) {
+      delete process.env[key]
+    }
+  }
+})
+
+test("verification auth email aborts a stalled Lettr request after a bounded timeout", async () => {
+  withRequiredEnv()
+
+  const originalFetch = globalThis.fetch
+  let requestSignal: AbortSignal | null = null
+  globalThis.fetch = async (_input, init) => {
+    requestSignal = init?.signal instanceof AbortSignal ? init.signal : null
+    return new Promise<Response>((_resolve, reject) => {
+      requestSignal?.addEventListener("abort", () => {
+        reject(new DOMException("sensitive provider timeout body lettr_test_key", "AbortError"))
+      }, { once: true })
+    })
+  }
+
+  try {
+    const { sendVerificationAuthEmail } = await importAuthMailer()
+    const sendOutcome = sendVerificationAuthEmail(
+      { to: "user@example.com", url: "https://example.com/verify" },
+      { timeoutMs: 5 },
+    ).then(
+      () => ({ kind: "resolved" as const, error: null }),
+      (error: unknown) => ({ kind: "rejected" as const, error }),
+    )
+    let fallbackTimeout: ReturnType<typeof setTimeout> | undefined
+    const fallback = new Promise<{ kind: "test_timeout"; error: null }>((resolve) => {
+      fallbackTimeout = setTimeout(() => resolve({ kind: "test_timeout", error: null }), 1_000)
+    })
+
+    const outcome = await Promise.race([sendOutcome, fallback])
+    clearTimeout(fallbackTimeout)
+
+    assert.equal(outcome.kind, "rejected")
+    assert.equal(requestSignal?.aborted, true)
+    assert.equal(outcome.error instanceof Error, true)
+    assert.equal((outcome.error as Error).message, "Failed to send auth email: request timed out after 5ms")
+    assert.doesNotMatch((outcome.error as Error).message, /sensitive provider timeout body|lettr_test_key/)
+  } finally {
+    globalThis.fetch = originalFetch
+    for (const key of Object.keys(requiredEnv)) {
+      delete process.env[key]
+    }
+  }
+})
+
+test("auth verification callback maps provider failure to a stable safe API error", async () => {
+  withRequiredEnv()
+
+  const errors: string[] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map((value) => String(value)).join(" "))
+  }
+
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response("sensitive provider body lettr_test_key", {
+    status: 503,
+    statusText: "Service Unavailable",
+  })
+
+  try {
+    const { sendVerificationEmailForAuth } = await importAuth()
+
+    await assert.rejects(
+      () => sendVerificationEmailForAuth({ user: { email: "user@example.com" }, url: "https://example.com/verify" }),
+      (error: unknown) => {
+        assert.equal(error instanceof Error, true)
+        assert.equal((error as Error).name, "APIError")
+        assert.equal((error as Error).message, "verification_email_delivery_failed")
+        assert.equal((error as Error & { status?: string }).status, "INTERNAL_SERVER_ERROR")
+        return true
+      },
+    )
+
+    assert.deepEqual(errors, ["[auth-mailer] verification delivery failed"])
+    assert.doesNotMatch(errors.join("\n"), /sensitive provider body|lettr_test_key/)
+  } finally {
+    globalThis.fetch = originalFetch
+    console.error = originalError
+    for (const key of Object.keys(requiredEnv)) {
+      delete process.env[key]
+    }
+  }
+})
+
+test("background auth email helper absorbs rejected password reset sends", async () => {
   withRequiredEnv()
 
   const errors: string[] = []
@@ -110,11 +227,11 @@ test("background auth email helper absorbs rejected Lettr sends", async () => {
   }
 
   try {
-    const { fireAndForgetAuthEmail, sendVerificationAuthEmail } = await importAuthMailer()
+    const { fireAndForgetAuthEmail, sendResetPasswordAuthEmail } = await importAuthMailer()
 
-    await fireAndForgetAuthEmail(sendVerificationAuthEmail({ to: "user@example.com", url: "https://example.com/verify" }), "verification email")
+    await fireAndForgetAuthEmail(sendResetPasswordAuthEmail({ to: "user@example.com", url: "https://example.com/reset" }), "password reset email")
 
-    assert.equal(errors.some((entry) => entry.includes("verification email")), true)
+    assert.equal(errors.some((entry) => entry.includes("password reset email")), true)
     assert.equal(errors.some((entry) => entry.includes("lettr unavailable")), true)
   } finally {
     globalThis.fetch = originalFetch

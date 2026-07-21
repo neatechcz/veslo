@@ -58,10 +58,9 @@ const socialProviders = env.github.clientId && env.github.clientSecret
 const authEmailVerification = isAuthEmailConfigured()
   ? {
       sendOnSignUp: true,
+      sendOnSignIn: true,
       autoSignInAfterVerification: false,
-      sendVerificationEmail: async ({ user, url }: { user: { email: string }; url: string }) => {
-        void fireAndForgetAuthEmail(sendVerificationAuthEmail({ to: user.email, url }), "verification email")
-      },
+      sendVerificationEmail: sendVerificationEmailForAuth,
     }
   : undefined
 
@@ -86,7 +85,7 @@ export const auth = betterAuth({
   ...(authEmailVerification ? { emailVerification: authEmailVerification } : {}),
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: false,
+    requireEmailVerification: env.authRequireEmailVerification,
     ...(authEmailPasswordReset ?? {}),
   },
   databaseHooks: {
@@ -124,6 +123,23 @@ export const auth = betterAuth({
     },
   },
 })
+
+export async function sendVerificationEmailForAuth({
+  user,
+  url,
+}: {
+  user: { email: string }
+  url: string
+}) {
+  try {
+    await sendVerificationAuthEmail({ to: user.email, url })
+  } catch {
+    console.error("[auth-mailer] verification delivery failed")
+    throw new APIError("INTERNAL_SERVER_ERROR", {
+      message: "verification_email_delivery_failed",
+    })
+  }
+}
 
 export function createAuthNodeHandler(baseHandler: AuthNodeHandler, guard = guardEmailSignupRequest): AuthNodeHandler {
   return async (req, res) => {
