@@ -245,6 +245,7 @@ function organizationMemberFixture(overrides: Partial<{
   userId: string
   name: string
   email: string
+  platformAdmin: boolean
   role: "member" | "organization_admin"
   status: "active" | "disabled" | "removed"
   createdAt: string
@@ -254,6 +255,7 @@ function organizationMemberFixture(overrides: Partial<{
     userId: "user_1",
     name: "Member One",
     email: "member@example.test",
+    platformAdmin: false,
     role: "member" as const,
     status: "active" as const,
     createdAt: "2026-07-14T08:00:00.000Z",
@@ -264,7 +266,11 @@ function organizationMemberFixture(overrides: Partial<{
 test("GET organization members returns only the exact path organization's service response", async () => {
   const requestedOrganizationIds: string[] = []
   const expected = {
-    members: [organizationMemberFixture({ membershipId: "membership_exact", userId: "user_exact" })],
+    members: [organizationMemberFixture({
+      membershipId: "membership_exact",
+      userId: "user_exact",
+      platformAdmin: true,
+    })],
   }
   const app = createApp({
     admin: createAdminServiceStub({
@@ -284,8 +290,37 @@ test("GET organization members returns only the exact path organization's servic
     })
 
     assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), expected)
+    const payload = await response.json()
+    assert.deepEqual(payload, expected)
+    assert.equal(payload.members[0].platformAdmin, true)
     assert.deepEqual(requestedOrganizationIds, ["org_exact"])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET organization members rejects responses without authoritative platform admin state", async () => {
+  const member = organizationMemberFixture()
+  const { platformAdmin: _platformAdmin, ...memberWithoutPlatformAdmin } = member
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async listOrganizationMembers() {
+        return { members: [memberWithoutPlatformAdmin] } as never
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_admin/members`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+
+    assert.equal(response.status, 502)
+    assert.deepEqual(await response.json(), { error: "organization_member_response_invalid" })
   } finally {
     server.close()
     await once(server, "close")
@@ -1020,7 +1055,7 @@ test("GET /admin/app.js keeps organization workspace data and member actions pat
     assert.match(memberAdapter, /orgName:\s*organization\.name\s*\|\|\s*organization\.id/)
     assert.doesNotMatch(memberAdapter, /organization\.slug/)
     assert.doesNotMatch(memberAdapter, /\borgSlug\s*:/)
-    assert.match(memberAdapter, /platformAdmin:\s*false/)
+    assert.match(memberAdapter, /platformAdmin:\s*member\?\.platformAdmin === true/)
 
     assert.match(finishRoute, /Array\.isArray\(result\.organizationMembers\)[\s\S]*result\.selectedUserId = result\.organizationMembers\[0\]\?\.userId \|\| null/)
     assert.match(finishRoute, /result\.selectedOrganizationMemberId = result\.organizationMembers\[0\]\?\.membershipId \|\| null/)
@@ -1587,7 +1622,7 @@ test("GET /admin user editor scopes visibility, payloads, and actions to the can
     assert.equal(scriptResponse.status, 200)
     const script = await scriptResponse.text()
     assert.match(script, /adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
-    assert.match(script, /buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload\)/)
+    assert.match(script, /buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload, currentUser\)/)
     assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "create-user"\)/)
     assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "disable-user"\)/)
     assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "delete-user"\)/)
@@ -2222,7 +2257,7 @@ test("GET /admin/app.js saves organization membership changes only from the user
     const script = await response.text()
     assert.match(script, /function normalizeOrganizationRoleInput\(value\)/)
     assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
-    assert.match(script, /function buildUserUpdatePayload\(payload\)/)
+    assert.match(script, /function buildUserUpdatePayload\(payload, currentUser = null\)/)
     assert.match(script, /function buildUserRoleFilterOptions\(\)/)
     assert.match(script, /const permissions = adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
     assert.match(script, /els\.userName\.disabled = state\.routeActionsLocked \|\| !permissions\.editProfile/)
@@ -2233,7 +2268,7 @@ test("GET /admin/app.js saves organization membership changes only from the user
     assert.match(script, /event\.target\.closest\("\[data-invite-resend\]"\)/)
     assert.match(
       script,
-      /return buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload\)/,
+      /return buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload, currentUser\)/,
     )
     assert.match(
       script,

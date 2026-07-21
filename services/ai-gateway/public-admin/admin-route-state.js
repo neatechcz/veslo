@@ -219,7 +219,7 @@ export function canPerformAdminRouteAction(route, access, action) {
   return Boolean(permission && adminUserRoutePermissions(route, access)[permission]);
 }
 
-export function buildAdminUserUpdatePayload(route, access, payload) {
+export function buildAdminUserUpdatePayload(route, access, payload, currentUser = null) {
   if (!payload || typeof payload !== "object") return null;
   const permissions = adminUserRoutePermissions(route, access);
   if (permissions.editProfile && permissions.setPlatformAdmin && permissions.editMembership) {
@@ -237,8 +237,15 @@ export function buildAdminUserUpdatePayload(route, access, payload) {
     };
   }
   if (permissions.setPlatformAdmin) {
+    if (
+      currentUser
+      && typeof currentUser.platformAdmin === "boolean"
+      && currentUser.platformAdmin === (payload.platformAdmin === true)
+    ) {
+      return null;
+    }
     return {
-      platformAdmin: payload.platformAdmin,
+      platformAdmin: payload.platformAdmin === true,
     };
   }
   return null;

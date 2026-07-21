@@ -101,6 +101,7 @@ export type AdminOrganizationMemberRecord = {
   userId: string
   name: string
   email: string
+  platformAdmin: boolean
   role: (typeof OrgRole)[number]
   status?: "active" | "disabled" | "removed"
   createdAt: Date | string

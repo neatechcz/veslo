@@ -241,6 +241,19 @@ test("user update payloads contain only fields authorized by the canonical route
     routes.buildAdminUserUpdatePayload(aiAccess, platformAccess, input),
     { platformAdmin: true },
   );
+  assert.equal(
+    routes.buildAdminUserUpdatePayload(aiAccess, platformAccess, input, { platformAdmin: true }),
+    null,
+  );
+  assert.deepEqual(
+    routes.buildAdminUserUpdatePayload(
+      aiAccess,
+      platformAccess,
+      { ...input, platformAdmin: false },
+      { platformAdmin: true },
+    ),
+    { platformAdmin: false },
+  );
   assert.equal(routes.buildAdminUserUpdatePayload(aiAccess, {
     platformAdmin: false,
     organizationIds: ["org_1"],

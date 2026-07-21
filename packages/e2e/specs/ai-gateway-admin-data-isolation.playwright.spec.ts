@@ -545,6 +545,37 @@ test.describe('AI Gateway admin data isolation', () => {
     expect(harness.records.some((record) => /^\/admin\/api\/users\/.+\/ai-access$/.test(record.path))).toBe(false);
   });
 
+  test('saving AI access preserves an existing Platform Admin unless privilege is explicitly unchecked', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const member = harness.state.membersByOrgId[ORG_A.id][0];
+    member.platformAdmin = true;
+    const qualifiedPath = qualifiedAiAccessPath(ORG_A.id, member.userId);
+    const platformAdminPath = `/admin/api/users/${encodeURIComponent(member.userId)}`;
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-platform-admin')).toBeChecked();
+
+    await page.locator('#user-ai-access-enabled').uncheck();
+    await page.locator('#user-save-button').click();
+    await expect.poll(() => requestCount(harness.records, 'PUT', qualifiedPath)).toBe(1);
+    expect(requestCount(harness.records, 'PATCH', platformAdminPath)).toBe(0);
+
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-platform-admin')).toBeChecked();
+
+    await page.locator('#user-platform-admin').uncheck();
+    await page.locator('#user-save-button').click();
+    await expect.poll(() => requestCount(harness.records, 'PATCH', platformAdminPath)).toBe(1);
+    const privilegePatch = harness.records.find(
+      (record) => record.method === 'PATCH' && record.path === platformAdminPath,
+    );
+    expect(privilegePatch?.body).toEqual({ platformAdmin: false });
+
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-platform-admin')).not.toBeChecked();
+  });
+
   test('failed AI access save cannot silently elevate Platform Admin', async ({ page }) => {
     const harness = await installAdminHarness(page);
     const member = ORG_MEMBERS[ORG_A.id][0];
@@ -1359,11 +1390,24 @@ function defaultResponse(state: HarnessState, record: RequestRecord): HarnessRes
   }
   const userMatch = decodedPath.match(/^\/admin\/api\/users\/(.+)$/);
   if (userMatch && record.method === 'PATCH') {
+    const platformAdmin = isObject(record.body) && record.body.platformAdmin === true;
     const user = state.globalUsers.find((entry) => entry.id === userMatch[1]);
+    if (user) {
+      user.platformAdmin = platformAdmin;
+    }
+    let organizationMember: TestOrganizationMember | undefined;
+    for (const members of Object.values(state.membersByOrgId)) {
+      const member = members.find((entry) => entry.userId === userMatch[1]);
+      if (member) {
+        member.platformAdmin = platformAdmin;
+        organizationMember = member;
+      }
+    }
     return json(200, {
       user: {
-        ...(user || { id: userMatch[1] }),
-        platformAdmin: isObject(record.body) && record.body.platformAdmin === true,
+        ...(user || organizationMember || { id: userMatch[1] }),
+        id: userMatch[1],
+        platformAdmin,
       },
     });
   }
@@ -1683,6 +1727,7 @@ function organizationMember(membershipId: string, userId: string, name: string, 
     email,
     role: 'member',
     status: 'active',
+    platformAdmin: false,
     createdAt: '2026-07-14T08:00:00.000Z',
   };
 }

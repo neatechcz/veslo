@@ -17,6 +17,51 @@ test("bootstrap platform admin allowlist recognizes michal.sara@neatech.cz", () 
   assert.equal(adminRuntime.isBootstrapPlatformAdminEmail("someone@example.com"), false)
 })
 
+test("organization member records include authoritative platform admin state", () => {
+  const mergeOrganizationMemberPlatformAdminState = (
+    adminRuntime as Record<string, unknown>
+  ).mergeOrganizationMemberPlatformAdminState as undefined | ((
+    members: Array<{
+      membershipId: string
+      userId: string
+      name: string
+      email: string
+      role: "member"
+      status: "active"
+      createdAt: string
+    }>,
+    platformAdminUserIds: ReadonlySet<string>,
+  ) => Array<{ userId: string; platformAdmin: boolean }>)
+
+  assert.equal(typeof mergeOrganizationMemberPlatformAdminState, "function")
+  assert.deepEqual(
+    mergeOrganizationMemberPlatformAdminState?.([
+      {
+        membershipId: "membership_platform",
+        userId: "user_platform",
+        name: "Platform Admin",
+        email: "platform@example.test",
+        role: "member",
+        status: "active",
+        createdAt: "2026-07-21T08:00:00.000Z",
+      },
+      {
+        membershipId: "membership_member",
+        userId: "user_member",
+        name: "Member",
+        email: "member@example.test",
+        role: "member",
+        status: "active",
+        createdAt: "2026-07-21T08:00:00.000Z",
+      },
+    ], new Set(["user_platform"])).map(({ userId, platformAdmin }) => ({ userId, platformAdmin })),
+    [
+      { userId: "user_platform", platformAdmin: true },
+      { userId: "user_member", platformAdmin: false },
+    ],
+  )
+})
+
 test("admin runtime forwards managed AI Codex status provider into route deps", async () => {
   const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
 

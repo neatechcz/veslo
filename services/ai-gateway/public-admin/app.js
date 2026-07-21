@@ -904,8 +904,8 @@ function buildUserRoleFilterOptions() {
   return `<option value="">Role</option>${platformAdminOption}<option value="member">Member</option>`;
 }
 
-function buildUserUpdatePayload(payload) {
-  return buildAdminUserUpdatePayload(state.route, routeAccessSnapshot(), payload);
+function buildUserUpdatePayload(payload, currentUser = null) {
+  return buildAdminUserUpdatePayload(state.route, routeAccessSnapshot(), payload, currentUser);
 }
 
 function normalizeAiAccess(payload) {
@@ -2911,7 +2911,7 @@ function organizationMemberToRouteSubject(member, organization) {
     role,
     status,
     disabled: status === "disabled" || status === "removed",
-    platformAdmin: false,
+    platformAdmin: member?.platformAdmin === true,
     memberships: [{
       membershipId,
       orgId: organization.id,
@@ -3869,7 +3869,7 @@ async function saveUser() {
     orgId: els.userOrg.value || null,
     orgRole: normalizeOrganizationRoleInput(els.userRole.value),
   };
-  const updatePayload = wasCreating ? payload : buildUserUpdatePayload(payload);
+  const updatePayload = wasCreating ? payload : buildUserUpdatePayload(payload, targetUser);
   const canEditAiAccess = permissions.editAiAccess && !wasCreating;
   const organizationId = organizationIdForRoute(state.route);
   const organizationMembershipSave = !wasCreating
@@ -3948,10 +3948,29 @@ async function saveUser() {
       );
       state.selectedOrganizationMemberId = targetUser.membershipId;
     } else if (updatePayload) {
-      await fetchJson(`/users/${encodeURIComponent(targetUser.id)}`, {
+      const updated = await fetchJson(`/users/${encodeURIComponent(targetUser.id)}`, {
         method: "PATCH",
         body: JSON.stringify(updatePayload),
       });
+      if (!isCurrentRouteMutation(mutation)) return;
+      if (
+        state.route?.area === "organization"
+        && state.route.page === "ai-access"
+        && Object.prototype.hasOwnProperty.call(updatePayload, "platformAdmin")
+      ) {
+        if (
+          !updated?.user
+          || updated.user.id !== targetUser.id
+          || typeof updated.user.platformAdmin !== "boolean"
+        ) {
+          throw new Error("user_update_response_invalid");
+        }
+        state.organizationMembers = state.organizationMembers.map((member) =>
+          member.userId === targetUser.id
+            ? { ...member, platformAdmin: updated.user.platformAdmin }
+            : member
+        );
+      }
     }
     if (!isCurrentRouteMutation(mutation)) return;
     if (!organizationMembershipSave && (wasCreating || updatePayload)) await loadUsers(mutation);

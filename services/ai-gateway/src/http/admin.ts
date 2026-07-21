@@ -128,6 +128,7 @@ export type AdminOrganizationMemberRecord = {
   userId: string;
   name: string;
   email: string;
+  platformAdmin: boolean;
   role: CurrentAdminOrganizationRole;
   status: "active" | "disabled" | "removed";
   createdAt: string;
@@ -483,6 +484,35 @@ class HttpError extends Error {
   ) {
     super(message);
   }
+}
+
+function isAdminOrganizationMemberRecord(value: unknown): value is AdminOrganizationMemberRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const member = value as Record<string, unknown>;
+  return typeof member.membershipId === "string"
+    && member.membershipId.trim().length > 0
+    && typeof member.userId === "string"
+    && member.userId.trim().length > 0
+    && typeof member.name === "string"
+    && typeof member.email === "string"
+    && typeof member.platformAdmin === "boolean"
+    && (member.role === "organization_admin" || member.role === "member")
+    && (member.status === "active" || member.status === "disabled" || member.status === "removed")
+    && typeof member.createdAt === "string"
+    && member.createdAt.trim().length > 0;
+}
+
+function readAdminOrganizationMembersPayload(payload: unknown): { members: AdminOrganizationMemberRecord[] } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new HttpError("organization_member_response_invalid", 502);
+  }
+  const members = (payload as { members?: unknown }).members;
+  if (!Array.isArray(members) || !members.every(isAdminOrganizationMemberRecord)) {
+    throw new HttpError("organization_member_response_invalid", 502);
+  }
+  return { members };
 }
 
 function requireAdminDependency<T>(value: T | null | undefined, name: string): T {
@@ -3688,7 +3718,9 @@ export function createAdminRouter(adminService: AdminService) {
     if (!requireAdminCapability(res, "organization") || !requireOrganizationAccess(res, req.params.orgId)) return;
 
     try {
-      const payload = await adminService.listOrganizationMembers(res.locals.adminToken as string, req.params.orgId);
+      const payload = readAdminOrganizationMembersPayload(
+        await adminService.listOrganizationMembers(res.locals.adminToken as string, req.params.orgId),
+      );
       res.json(payload);
     } catch (error) {
       if (mapHttpError(error, res)) {
@@ -4319,45 +4351,11 @@ export function createAdminRouter(adminService: AdminService) {
     userId: string,
   ): Promise<boolean> => {
     try {
-      const payload: unknown = await adminService.listOrganizationMembers(
+      const payload = readAdminOrganizationMembersPayload(await adminService.listOrganizationMembers(
         res.locals.adminToken as string,
         orgId,
-      );
-      if (
-        !payload
-        || typeof payload !== "object"
-        || Array.isArray(payload)
-        || !Array.isArray((payload as { members?: unknown }).members)
-      ) {
-        res.status(502).json({ error: "organization_member_response_invalid" });
-        return false;
-      }
-      const members = (payload as { members: unknown[] }).members;
-      if (!members.every((member): member is AdminOrganizationMemberRecord => (
-        member != null
-        && typeof member === "object"
-        && !Array.isArray(member)
-        && typeof (member as { membershipId?: unknown }).membershipId === "string"
-        && (member as { membershipId: string }).membershipId.trim().length > 0
-        && typeof (member as { userId?: unknown }).userId === "string"
-        && (member as { userId: string }).userId.trim().length > 0
-        && typeof (member as { name?: unknown }).name === "string"
-        && typeof (member as { email?: unknown }).email === "string"
-        && (
-          (member as { role?: unknown }).role === "organization_admin"
-          || (member as { role?: unknown }).role === "member"
-        )
-        && (
-          (member as { status?: unknown }).status === "active"
-          || (member as { status?: unknown }).status === "disabled"
-          || (member as { status?: unknown }).status === "removed"
-        )
-        && typeof (member as { createdAt?: unknown }).createdAt === "string"
-        && (member as { createdAt: string }).createdAt.trim().length > 0
-      ))) {
-        res.status(502).json({ error: "organization_member_response_invalid" });
-        return false;
-      }
+      ));
+      const members = payload.members;
       const targetMembers = members.filter((member) => member.userId === userId);
       if (targetMembers.length > 1) {
         res.status(502).json({ error: "organization_member_response_invalid" });
@@ -4369,6 +4367,10 @@ export function createAdminRouter(adminService: AdminService) {
       }
       return true;
     } catch (error) {
+      if (error instanceof HttpError && error.message === "organization_member_response_invalid") {
+        res.status(502).json({ error: error.message });
+        return false;
+      }
       const status = error && typeof error === "object"
         ? (error as { status?: unknown }).status
         : null;

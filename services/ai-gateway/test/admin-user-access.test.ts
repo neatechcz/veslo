@@ -38,6 +38,7 @@ const ORGANIZATION_MEMBER: AdminOrganizationMemberRecord = {
   userId: "user_123",
   name: "Target User",
   email: "target@example.test",
+  platformAdmin: false,
   role: "member",
   status: "active",
   createdAt: "2026-07-12T08:00:00.000Z",

@@ -563,6 +563,8 @@ function mapInviteRow(row: typeof OrganizationInviteTable.$inferSelect): AdminOr
   }
 }
 
+type AdminOrganizationMemberWithoutPlatformAdmin = Omit<AdminOrganizationMemberRecord, "platformAdmin">
+
 function mapMemberRow(row: {
   membershipId: string
   userId: string
@@ -571,7 +573,7 @@ function mapMemberRow(row: {
   role: (typeof OrgRole)[number]
   status?: "active" | "disabled" | "removed"
   createdAt: Date
-}): AdminOrganizationMemberRecord {
+}): AdminOrganizationMemberWithoutPlatformAdmin {
   return {
     membershipId: row.membershipId,
     userId: row.userId,
@@ -581,6 +583,25 @@ function mapMemberRow(row: {
     status: row.status,
     createdAt: row.createdAt,
   }
+}
+
+export function mergeOrganizationMemberPlatformAdminState(
+  members: AdminOrganizationMemberWithoutPlatformAdmin[],
+  platformAdminUserIds: ReadonlySet<string>,
+): AdminOrganizationMemberRecord[] {
+  return members.map((member) => ({
+    ...member,
+    platformAdmin:
+      platformAdminUserIds.has(member.userId)
+      || isBootstrapPlatformAdminEmail(member.email),
+  }))
+}
+
+async function resolveOrganizationMemberPlatformAdminState(
+  members: AdminOrganizationMemberWithoutPlatformAdmin[],
+): Promise<AdminOrganizationMemberRecord[]> {
+  const platformAdminUserIds = await loadPlatformAdminUserIds(members.map((member) => member.userId))
+  return mergeOrganizationMemberPlatformAdminState(members, platformAdminUserIds)
 }
 
 export async function requirePlatformAdminSnapshot(req: express.Request, res: express.Response): Promise<AdminSessionSnapshot | null> {
@@ -874,7 +895,10 @@ async function loadOrganizationMember(orgId: string, membershipId: string) {
     .where(and(eq(OrgMembershipTable.org_id, orgId), eq(OrgMembershipTable.id, membershipId)))
     .limit(1)
 
-  return rows[0] ? mapMemberRow(rows[0]) : null
+  if (!rows[0]) {
+    return null
+  }
+  return (await resolveOrganizationMemberPlatformAdminState([mapMemberRow(rows[0])]))[0] ?? null
 }
 
 async function loadOrganizationMemberByUserId(orgId: string, userId: string) {
@@ -893,7 +917,10 @@ async function loadOrganizationMemberByUserId(orgId: string, userId: string) {
     .where(and(eq(OrgMembershipTable.org_id, orgId), eq(OrgMembershipTable.user_id, userId)))
     .limit(1)
 
-  return rows[0] ? mapMemberRow(rows[0]) : null
+  if (!rows[0]) {
+    return null
+  }
+  return (await resolveOrganizationMemberPlatformAdminState([mapMemberRow(rows[0])]))[0] ?? null
 }
 
 async function loadOrganizationMembers(orgId: string) {
@@ -911,7 +938,7 @@ async function loadOrganizationMembers(orgId: string) {
     .innerJoin(AuthUserTable, eq(OrgMembershipTable.user_id, AuthUserTable.id))
     .where(eq(OrgMembershipTable.org_id, orgId))
 
-  return rows.map(mapMemberRow)
+  return resolveOrganizationMemberPlatformAdminState(rows.map(mapMemberRow))
 }
 
 async function loadAdminUsersForOrganization(org: AdminOrganizationRecord) {
