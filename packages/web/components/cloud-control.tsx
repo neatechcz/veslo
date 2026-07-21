@@ -5,10 +5,15 @@ import { getAuthErrorMessage } from "../lib/auth-error-message";
 import { buildAuthCallbackUrl } from "../lib/auth-urls";
 import {
   GITHUB_AUTH_CALLBACK_MARKER_PARAM,
-  GITHUB_AUTH_CALLBACK_MARKER_VALUE,
-  clearStoredSignupInvitation,
-  parseGitHubAuthCallbackUrl,
-  readStoredSignupInvitation
+  type GitHubAuthCallbackOutcome,
+  clearPendingGitHubAuth,
+  clearStoredSignupInvitationFromBrowser,
+  consumePendingGitHubAuth,
+  deriveAuthInitialization,
+  getGitHubAuthCallbackMarker,
+  readStoredSignupInvitationFromBrowser,
+  replaceBrowserHistoryUrl,
+  storePendingGitHubAuth
 } from "../lib/signup-invitation";
 
 type Step = 1 | 2;
@@ -156,12 +161,10 @@ function getAuthInfoForMode(mode: AuthMode): string {
 }
 
 const LAST_WORKER_STORAGE_KEY = "veslo:web:last-worker";
-const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "veslo:web:pending-github-signup";
 const AUTH_TOKEN_STORAGE_KEY = "veslo:web:auth-token";
 const SELECTED_ORG_STORAGE_KEY = "veslo:web:selected-org-id";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "Veslo User";
-const DESKTOP_ONBOARDING_PARAM = "desktopOnboarding";
 const VESLO_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_VESLO_APP_CONNECT_URL ?? "").trim();
 
 function getEmailDomain(email: string): string {
@@ -230,13 +233,9 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
   }
 }
 
-function getGithubCallbackUrl(): string {
-  return buildAuthCallbackUrl("/");
-}
-
-function getGithubErrorCallbackUrl(): string {
+function getGithubCallbackUrl(outcome: GitHubAuthCallbackOutcome): string {
   const url = new URL(buildAuthCallbackUrl("/"));
-  url.searchParams.set(GITHUB_AUTH_CALLBACK_MARKER_PARAM, GITHUB_AUTH_CALLBACK_MARKER_VALUE);
+  url.searchParams.set(GITHUB_AUTH_CALLBACK_MARKER_PARAM, getGitHubAuthCallbackMarker(outcome));
   return url.toString();
 }
 
@@ -972,6 +971,7 @@ export function CloudControlPanel() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [githubNewUserCallback, setGithubNewUserCallback] = useState(false);
   const [authInfo, setAuthInfo] = useState(getAuthInfoForMode("sign-up"));
   const [authError, setAuthError] = useState<string | null>(null);
   const [verificationBusy, setVerificationBusy] = useState(false);
@@ -1426,26 +1426,44 @@ export function CloudControlPanel() {
       return;
     }
 
-    const callbackError = parseGitHubAuthCallbackUrl(window.location.href);
-    if (!callbackError) {
-      return;
+    const initialDerivation = deriveAuthInitialization(window.location.href, null);
+    const pendingGitHubAuth = initialDerivation.githubCallback
+      ? consumePendingGitHubAuth(window)
+      : null;
+    const initialization = deriveAuthInitialization(
+      window.location.href,
+      pendingGitHubAuth?.mode ?? null
+    );
+
+    if (initialization.desktopOnboarding) {
+      setDesktopOnboarding(true);
+      setDesktopTransactionId(initialization.desktopTransactionId);
     }
 
-    const pendingSignup = window.sessionStorage.getItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY) === "1";
-    const submittedMode: AuthMode = pendingSignup ? "sign-up" : "sign-in";
-    window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-    window.history.replaceState({}, "", callbackError.scrubbedUrl);
-    setAuthMode(submittedMode);
-    setAuthInfo(getAuthInfoForMode(submittedMode));
-    setAuthError(getAuthErrorMessage({
-      error: callbackError.error,
-      message: callbackError.errorDescription
-    }, "GitHub sign-in failed. Try again."));
-    trackPosthogEvent("den_auth_failed", {
-      mode: submittedMode,
-      method: "github",
-      reason: "callback_error"
-    });
+    if (initialization.authMode) {
+      setAuthMode(initialization.authMode);
+      setAuthInfo(getAuthInfoForMode(initialization.authMode));
+    }
+
+    if (initialization.githubCallback) {
+      replaceBrowserHistoryUrl(window, initialization.githubCallback.scrubbedUrl);
+      setAuthError(null);
+
+      if (initialization.githubSignupConfirmed) {
+        clearStoredSignupInvitationFromBrowser(window);
+        setGithubNewUserCallback(true);
+      } else if (initialization.githubCallback.outcome === "error") {
+        setAuthError(getAuthErrorMessage({
+          error: initialization.githubCallback.error,
+          message: initialization.githubCallback.errorDescription
+        }, "GitHub sign-in failed. Try again."));
+        trackPosthogEvent("den_auth_failed", {
+          mode: initialization.authMode ?? "sign-in",
+          method: "github",
+          reason: "callback_error"
+        });
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -1536,14 +1554,11 @@ export function CloudControlPanel() {
     }
 
     identifyPosthogUser(user);
-
-    const pendingSignup = window.sessionStorage.getItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-    if (!pendingSignup) {
+    if (!githubNewUserCallback) {
       return;
     }
 
-    window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-    clearStoredSignupInvitation(window.sessionStorage);
+    setGithubNewUserCallback(false);
     trackPosthogEvent("den_signup_completed", {
       mode: "sign-up",
       method: "github",
@@ -1555,7 +1570,7 @@ export function CloudControlPanel() {
       userId: user.id,
       authMethod: "github"
     });
-  }, [user?.id]);
+  }, [user?.id, githubNewUserCallback]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1583,20 +1598,6 @@ export function CloudControlPanel() {
     const nextQuery = params.toString();
     const nextUrl = nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname;
     window.history.replaceState({}, "", nextUrl);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const params = new URLSearchParams(window.location.search);
-    if (params.get(DESKTOP_ONBOARDING_PARAM) === "1") {
-      setDesktopOnboarding(true);
-      setDesktopTransactionId(params.get("tid") ?? params.get("transactionId"));
-      setAuthMode("sign-in");
-      setAuthInfo(getAuthInfoForMode("sign-in"));
-    }
   }, []);
 
   useEffect(() => {
@@ -1775,6 +1776,7 @@ export function CloudControlPanel() {
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submittedMode = authMode;
+    clearPendingGitHubAuth(window);
 
     setAuthBusy(true);
     setAuthError(null);
@@ -1787,7 +1789,7 @@ export function CloudControlPanel() {
       const endpoint = submittedMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
       const trimmedEmail = email.trim();
       const signupInviteToken = submittedMode === "sign-up"
-        ? readStoredSignupInvitation(window.sessionStorage)
+        ? readStoredSignupInvitationFromBrowser(window)
         : null;
       const body =
         submittedMode === "sign-up"
@@ -1819,7 +1821,7 @@ export function CloudControlPanel() {
       }
 
       if (submittedMode === "sign-up") {
-        clearStoredSignupInvitation(window.sessionStorage);
+        clearStoredSignupInvitationFromBrowser(window);
       }
 
       const token = getToken(payload);
@@ -1920,12 +1922,9 @@ export function CloudControlPanel() {
 
     const submittedMode = authMode;
     const signupInviteToken = submittedMode === "sign-up"
-      ? readStoredSignupInvitation(window.sessionStorage)
+      ? readStoredSignupInvitationFromBrowser(window)
       : null;
-    const shouldTrackGithubSignup = submittedMode === "sign-up";
-    if (shouldTrackGithubSignup) {
-      window.sessionStorage.setItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY, "1");
-    }
+    storePendingGitHubAuth(window, submittedMode);
 
     setAuthBusy(true);
     setAuthError(null);
@@ -1936,13 +1935,13 @@ export function CloudControlPanel() {
     });
 
     try {
-      const callbackURL = getGithubCallbackUrl();
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
         body: JSON.stringify({
           provider: "github",
-          callbackURL,
-          errorCallbackURL: getGithubErrorCallbackUrl(),
+          callbackURL: getGithubCallbackUrl("success"),
+          newUserCallbackURL: getGithubCallbackUrl("new-user"),
+          errorCallbackURL: getGithubCallbackUrl("error"),
           ...(signupInviteToken
             ? { additionalData: { vesloSignupInviteToken: signupInviteToken } }
             : {})
@@ -1950,9 +1949,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        if (shouldTrackGithubSignup) {
-          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-        }
+        clearPendingGitHubAuth(window);
         setAuthInfo(getAuthInfoForMode(submittedMode));
         setAuthError(getAuthErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
@@ -1969,9 +1966,7 @@ export function CloudControlPanel() {
       const redirectUrl = payloadUrl || headerUrl;
 
       if (!redirectUrl) {
-        if (shouldTrackGithubSignup) {
-          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-        }
+        clearPendingGitHubAuth(window);
         setAuthInfo(getAuthInfoForMode(submittedMode));
         setAuthError("GitHub sign-in did not return a redirect URL.");
         trackPosthogEvent("den_auth_failed", {
@@ -1989,9 +1984,7 @@ export function CloudControlPanel() {
       });
       window.location.assign(redirectUrl);
     } catch (error) {
-      if (shouldTrackGithubSignup) {
-        window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-      }
+      clearPendingGitHubAuth(window);
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthInfo(getAuthInfoForMode(submittedMode));
       setAuthError(message);
@@ -2066,7 +2059,7 @@ export function CloudControlPanel() {
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
       window.localStorage.removeItem(SELECTED_ORG_STORAGE_KEY);
-      window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+      clearPendingGitHubAuth(window);
     }
   }
 

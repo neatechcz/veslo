@@ -91,24 +91,44 @@ assert.ok(
   "email auth submission must stay bound to the immutable submitted mode",
 );
 assert.ok(
-  source.includes("readStoredSignupInvitation(window.sessionStorage)") &&
+  source.includes("readStoredSignupInvitationFromBrowser(window)") &&
     source.includes("inviteToken: signupInviteToken"),
   "email signup must read and submit the session invitation token",
 );
 assert.ok(
   source.includes("additionalData: { vesloSignupInviteToken: signupInviteToken }") &&
-    source.includes("errorCallbackURL: getGithubErrorCallbackUrl()"),
-  "GitHub signup must send the invitation through OAuth state and use a marked error callback",
+    source.includes('callbackURL: getGithubCallbackUrl("success")') &&
+    source.includes('newUserCallbackURL: getGithubCallbackUrl("new-user")') &&
+    source.includes('errorCallbackURL: getGithubCallbackUrl("error")'),
+  "GitHub signup must use distinct marked success, new-user, and error callbacks",
 );
 assert.ok(
-  source.includes("parseGitHubAuthCallbackUrl(window.location.href)") &&
+  source.includes("deriveAuthInitialization(window.location.href") &&
+    source.includes("consumePendingGitHubAuth(window)") &&
     source.includes('reason: "callback_error"'),
-  "marked GitHub callback errors must be rendered and tracked without token data",
+  "one authoritative initializer must correlate and render marked GitHub callbacks",
 );
 assert.ok(
-  source.includes("clearStoredSignupInvitation(window.sessionStorage)") &&
-    source.includes("window.history.replaceState({}, \"\", callbackError.scrubbedUrl)"),
-  "successful signup must clear invitation state and callback errors must be scrubbed",
+  source.includes("clearStoredSignupInvitationFromBrowser(window)") &&
+    source.includes("replaceBrowserHistoryUrl(window, initialization.githubCallback.scrubbedUrl)"),
+  "confirmed signup must clear invitation state and callback URLs must be scrubbed",
+);
+assert.ok(
+  source.includes("githubNewUserCallback") &&
+    !source.includes("const pendingSignup = window.sessionStorage.getItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY)") &&
+    !source.includes("clearStoredSignupInvitation(window.sessionStorage);\n    trackPosthogEvent(\"den_signup_completed\""),
+  "user presence plus a stale marker must not clear invitations or emit signup completion",
+);
+assert.ok(
+  source.includes("clearPendingGitHubAuth(window);") &&
+    !source.includes("window.sessionStorage.setItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY") &&
+    !source.includes("window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY"),
+  "email auth and callback cleanup must use guarded bounded pending-context helpers",
+);
+assert.ok(
+  !source.includes('params.get(DESKTOP_ONBOARDING_PARAM) === "1"') &&
+    source.includes("initialization.desktopOnboarding"),
+  "desktop and GitHub callback mode must be derived by the same initialization path",
 );
 assert.ok(
   source.includes('className="ow-link"') && source.includes("disabled={authBusy}"),
