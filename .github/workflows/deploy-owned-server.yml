@@ -49,6 +49,9 @@ jobs:
       CODEX_MODEL_MIGRATION: ${{ inputs.codex_model_migration }}
       PROBE_CODEX_CREDENTIALS: ${{ inputs.probe_codex_credentials }}
       VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_DEPLOYMENT_DOMAIN || 'veslo.work' }}
+      DEN_LOG_MASTER_KEY: ${{ secrets.DEN_LOG_MASTER_KEY }}
+      DEN_LOG_MASTER_KEY_VERSION: v1
+      DEN_LOG_RETENTION_DAYS: "30"
       REPO_URL: https://github.com/${{ github.repository }}.git
       GITHUB_TOKEN: ${{ github.token }}
     steps:
@@ -57,7 +60,7 @@ jobs:
           set -euo pipefail
 
           missing=0
-          for key in OWNED_SERVER_APP_DIR OWNED_SERVER_ENV_FILE DEPLOY_BRANCH REPO_URL GITHUB_TOKEN; do
+          for key in OWNED_SERVER_APP_DIR OWNED_SERVER_ENV_FILE DEPLOY_BRANCH REPO_URL GITHUB_TOKEN DEN_LOG_MASTER_KEY DEN_LOG_MASTER_KEY_VERSION; do
             if [ -z "${!key}" ]; then
               echo "::error::Missing required owned-server deployment value: $key"
               missing=1

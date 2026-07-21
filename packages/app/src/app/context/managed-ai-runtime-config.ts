@@ -47,6 +47,12 @@ import {
 const RUNTIME_AUTH_PRIME_SUCCESS_TTL_MS = 15_000;
 const RUNTIME_START_MANAGED_AI_ACCESS_WAIT_MS = 15_000;
 const RUNTIME_START_MANAGED_AI_ACCESS_POLL_MS = 100;
+// A first server-owned submit can arrive while the desktop has restored a
+// cached access proof but has not finished loading the live model roster or
+// workspace default. Treat only those observable startup states as pending;
+// a settled configuration error must remain an immediate user-visible error.
+const SERVER_SEND_MANAGED_AI_READINESS_WAIT_MS = 15_000;
+const SERVER_SEND_MANAGED_AI_READINESS_POLL_MS = 100;
 const SERVER_RELOAD_RETRY_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 15_000] as const;
 
 export type ManagedAiRuntimeAuthPrimeDiagnosticReason =
@@ -1486,10 +1492,60 @@ export function createManagedAiRuntimeConfigSync(
   const prepareManagedAiRuntimeConfigForServerSend = async (
     input: ManagedAiServerSendTarget,
   ): Promise<ManagedAiConfigSyncOutcome> => {
-    return syncWorkspaceManagedAiConfig({
-      serverSendTarget: input,
-      reason: "send-preflight",
-    });
+    const startedAt = now();
+    let attempts = 0;
+
+    for (;;) {
+      const outcome = await syncWorkspaceManagedAiConfig({
+        serverSendTarget: input,
+        reason: "send-preflight",
+      });
+      if (outcome.kind !== "skipped-pending") {
+        if (attempts > 0) {
+          deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:server-send-readiness", {
+            traceId: input.traceId || null,
+            action: "resolved",
+            attempts,
+            waitedMs: Math.max(0, now() - startedAt),
+            outcome: outcome.kind,
+          });
+        }
+        return outcome;
+      }
+
+      const managedProfile = deps.managedAiAccess();
+      const pendingStartupReadiness =
+        !deps.workspaceDefaultModelReady() ||
+        !deps.managedAiAccessReady() ||
+        deps.managedAiAccessBusy();
+      const waitedMs = Math.max(0, now() - startedAt);
+      if (!pendingStartupReadiness || waitedMs >= SERVER_SEND_MANAGED_AI_READINESS_WAIT_MS) {
+        deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:server-send-readiness", {
+          traceId: input.traceId || null,
+          action: "unresolved",
+          attempts,
+          waitedMs,
+          workspaceDefaultModelReady: deps.workspaceDefaultModelReady(),
+          accessReady: deps.managedAiAccessReady(),
+          accessBusy: deps.managedAiAccessBusy(),
+          profileRosterReady: !managedProfile || Array.isArray(managedProfile.selectableModels),
+        });
+        return outcome;
+      }
+
+      attempts += 1;
+      deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:server-send-readiness", {
+        traceId: input.traceId || null,
+        action: attempts === 1 ? "wait" : "retry",
+        attempts,
+        waitedMs,
+        workspaceDefaultModelReady: deps.workspaceDefaultModelReady(),
+        accessReady: deps.managedAiAccessReady(),
+        accessBusy: deps.managedAiAccessBusy(),
+        profileRosterReady: !managedProfile || Array.isArray(managedProfile.selectableModels),
+      });
+      await delay(SERVER_SEND_MANAGED_AI_READINESS_POLL_MS);
+    }
   };
 
   const prepareManagedAiRuntimeConfigForEngineStart = async (

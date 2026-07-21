@@ -31,7 +31,7 @@ jobs:
       VESLO_RUNTIME_DIAGNOSTICS: "0"
       VITE_VESLO_RUNTIME_DIAGNOSTICS: "0"
       VESLO_USER_DIAGNOSTIC_CAPTURE: "1"
-      VESLO_DEPLOYMENT_DOMAIN: ${{ vars.VESLO_DEPLOYMENT_DOMAIN }}
+      VESLO_DEPLOYMENT_DOMAIN: veslo.work
 
     steps:
       - name: Enable git long paths

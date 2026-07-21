@@ -539,6 +539,113 @@ test("a proof-cache profile cannot patch managed runtime config before its live 
   assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-active", ifIdle: true }]);
 });
 
+test("server submit waits for startup default-model readiness before verifying its exact target", async () => {
+  const client = createVesloClient();
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  let workspaceDefaultModelReady = false;
+  const waits: number[] = [];
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    workspaceDefaultModelReady: () => workspaceDefaultModelReady,
+    delay: async (ms) => {
+      waits.push(ms);
+      workspaceDefaultModelReady = true;
+    },
+    recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+  }));
+
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-startup-default-model",
+  });
+
+  assert.deepEqual(outcome, { kind: "verified" });
+  assert.deepEqual(waits, [100]);
+  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
+  assert.ok(traces.some((entry) =>
+    entry.event === "managed-ai-config-sync:server-send-readiness" &&
+    entry.payload.action === "wait" &&
+    entry.payload.traceId === "send-startup-default-model",
+  ));
+  assert.ok(traces.some((entry) =>
+    entry.event === "managed-ai-config-sync:server-send-readiness" &&
+    entry.payload.action === "resolved" &&
+    entry.payload.outcome === "verified",
+  ));
+});
+
+test("server submit waits for a cached managed profile to receive its live model roster", async () => {
+  const client = createVesloClient();
+  const proofProfile: ManagedAiAccessProfile = {
+    userId: profile.userId,
+    providerId: profile.providerId,
+    effectiveModel: profile.effectiveModel,
+    updatedAt: profile.updatedAt,
+  };
+  let currentProfile = proofProfile;
+  let managedAiAccessBusy = true;
+  const waits: number[] = [];
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    managedAiAccess: () => currentProfile,
+    managedAiAccessBusy: () => managedAiAccessBusy,
+    delay: async (ms) => {
+      waits.push(ms);
+      currentProfile = profile;
+      managedAiAccessBusy = false;
+    },
+  }));
+
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-startup-live-roster",
+  });
+
+  assert.deepEqual(outcome, { kind: "verified" });
+  assert.deepEqual(waits, [100]);
+  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
+});
+
+test("server submit stops waiting for startup readiness after its bounded timeout", async () => {
+  const client = createVesloClient();
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  let currentNow = 0;
+  const waits: number[] = [];
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    workspaceDefaultModelReady: () => false,
+    now: () => currentNow,
+    delay: async (ms) => {
+      waits.push(ms);
+      currentNow += ms;
+    },
+    recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+  }));
+
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-startup-timeout",
+  });
+
+  assert.deepEqual(outcome, { kind: "skipped-pending" });
+  assert.equal(waits.reduce((total, ms) => total + ms, 0), 15_000);
+  assert.deepEqual(client.getConfigCalls, []);
+  assert.ok(traces.some((entry) =>
+    entry.event === "managed-ai-config-sync:server-send-readiness" &&
+    entry.payload.action === "unresolved" &&
+    entry.payload.waitedMs === 15_000,
+  ));
+});
+
 test("a stale config sync cannot patch after a newer fingerprint completes", async () => {
   const client = createVesloClient();
   const firstRead = createDeferred<{ opencode?: Record<string, unknown> | null }>();
