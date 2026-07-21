@@ -7,6 +7,11 @@ type AuthEmailInput = {
   text: string
 }
 
+type AuthEmailSendOptions = {
+  timeoutMs?: number
+}
+
+const AUTH_EMAIL_TIMEOUT_MS = 30_000
 const VESLO_LOGO_URL = "https://veslo.work/assets/veslo-logo-square.svg"
 
 function escapeHtmlAttribute(value: string) {
@@ -17,7 +22,7 @@ function escapeHtmlAttribute(value: string) {
     .replace(/>/g, "&gt;")
 }
 
-async function sendAuthEmail(input: AuthEmailInput) {
+async function sendAuthEmail(input: AuthEmailInput, options: AuthEmailSendOptions = {}) {
   if (!env.email.lettrApiKey) {
     throw new Error("LETTR_API_KEY is required to send auth emails")
   }
@@ -26,21 +31,37 @@ async function sendAuthEmail(input: AuthEmailInput) {
     throw new Error("AUTH_EMAIL_ADDRESS is required to send auth emails")
   }
 
-  const response = await fetch("https://app.lettr.com/api/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.email.lettrApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: env.email.address,
-      from_name: env.email.fromName,
-      to: [input.to],
-      subject: input.subject,
-      html: input.html,
-      text: input.text,
-    }),
-  })
+  const timeoutMs = options.timeoutMs ?? AUTH_EMAIL_TIMEOUT_MS
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  unrefTimer(timeout)
+
+  let response: Response
+  try {
+    response = await fetch("https://app.lettr.com/api/emails", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${env.email.lettrApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: env.email.address,
+        from_name: env.email.fromName,
+        to: [input.to],
+        subject: input.subject,
+        html: input.html,
+        text: input.text,
+      }),
+    })
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error(`Failed to send auth email: request timed out after ${timeoutMs}ms`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to send auth email: ${response.status} ${response.statusText}`)
@@ -54,13 +75,16 @@ export function fireAndForgetAuthEmail(promise: Promise<unknown>, label: string)
   })
 }
 
-export async function sendVerificationAuthEmail(input: { to: string; url: string }) {
+export async function sendVerificationAuthEmail(
+  input: { to: string; url: string },
+  options: AuthEmailSendOptions = {},
+) {
   return sendAuthEmail({
     to: input.to,
     subject: "Verify your Veslo email",
     html: buildVerificationEmailHtml(input.url),
     text: buildVerificationEmailText(input.url),
-  })
+  }, options)
 }
 
 export async function sendResetPasswordAuthEmail(input: { to: string; url: string }) {
@@ -160,4 +184,18 @@ Verify email:
 ${url}
 
 If you did not create a Veslo account, you can ignore this email.`
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError"
+}
+
+function unrefTimer(handle: unknown) {
+  if (!handle || typeof handle !== "object") {
+    return
+  }
+  const unref = (handle as { unref?: unknown }).unref
+  if (typeof unref === "function") {
+    unref.call(handle)
+  }
 }

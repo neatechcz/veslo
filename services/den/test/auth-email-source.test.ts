@@ -16,8 +16,13 @@ test("auth config wires Better Auth verification and reset callbacks", () => {
   assert.equal(source.includes("emailVerification:"), true)
   assert.equal(source.includes("sendVerificationEmail:"), true)
   assert.equal(source.includes("sendOnSignUp: true"), true)
+  assert.equal(source.includes("sendOnSignIn: true"), true)
+  assert.equal(source.includes("await sendVerificationAuthEmail"), true)
   assert.equal(source.includes("sendResetPassword:"), true)
-  assert.equal(source.includes("requireEmailVerification: false"), true)
+  assert.equal(source.includes("requireEmailVerification: env.authRequireEmailVerification"), true)
+  assert.equal(source.includes("fireAndForgetAuthEmail(sendVerificationAuthEmail"), false)
+  assert.equal(source.includes("fireAndForgetAuthEmail(sendResetPasswordAuthEmail"), true)
+  assert.equal(source.includes('message: "verification_email_delivery_failed"'), true)
   assert.equal(source.includes("maybeAssignDefaultManagedAiAccessForNewUser"), true)
 })
 
@@ -35,7 +40,7 @@ test("auth config gates email callbacks behind explicit auth email configuration
   assert.equal(source.includes('...(authEmailVerification ? { emailVerification: authEmailVerification } : {})'), true)
   assert.equal(source.includes("emailAndPassword: {"), true)
   assert.equal(source.includes("enabled: true"), true)
-  assert.equal(source.includes("requireEmailVerification: false"), true)
+  assert.equal(source.includes("requireEmailVerification: env.authRequireEmailVerification"), true)
 })
 
 test("email signup route is gated before Better Auth creates a user", () => {
