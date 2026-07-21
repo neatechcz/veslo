@@ -2511,6 +2511,55 @@ test("organization admins can access session, users, and organization gateway ad
   }
 })
 
+test("organization domain verification conflicts pass through the gateway unchanged", async () => {
+  const verificationRequired = () => Object.assign(
+    new Error("domain_verified_member_required"),
+    { status: 409 },
+  )
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async createOrganizationDomain() {
+        throw verificationRequired()
+      },
+      async updateOrganizationDomain() {
+        throw verificationRequired()
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const requests = [
+      fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/domains`, {
+        method: "POST",
+        headers: {
+          cookie: ADMIN_COOKIE,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ domain: "team.example.com" }),
+      }),
+      fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/domains/domain_1`, {
+        method: "PATCH",
+        headers: {
+          cookie: ADMIN_COOKIE,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ domain: "team.example.com" }),
+      }),
+    ]
+
+    for (const response of await Promise.all(requests)) {
+      assert.equal(response.status, 409)
+      assert.deepEqual(await response.json(), { error: "domain_verified_member_required" })
+    }
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
 test("POST /admin/api/organizations/:orgId/invites/:inviteId/resend forwards invite resend payloads", async () => {
   let captured: unknown = null
   const admin = createAdminServiceStub() as AdminService & {
