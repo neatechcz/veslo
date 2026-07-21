@@ -78,8 +78,38 @@ test("desktop reset password signs in and completes handoff after password updat
 
 test("desktop onboarding page exposes verification and resend affordances", () => {
   assert.equal(onboardingPage.includes("/api/auth/send-verification-email"), true)
-  assert.equal(onboardingPage.includes("emailVerified"), true)
+  assert.equal(onboardingPage.includes('id="verify-required-card"'), true)
   assert.equal(onboardingPage.includes('buildDesktopOnboardingUrl("verify-email")'), true)
+})
+
+test("unverified browser auth cannot continue to Veslo", () => {
+  assert.equal(onboardingPage.includes('id="continue-to-veslo"'), false)
+  assert.equal(onboardingPage.includes("continueToVesloBtn"), false)
+  assert.equal(onboardingPage.includes("You can still continue to Veslo right now"), false)
+  assert.equal(onboardingPage.includes("cloud-gated actions still require"), false)
+  assert.equal(
+    onboardingPage.includes("Verify this email address before signing in to Veslo."),
+    true,
+  )
+})
+
+test("signup and unverified sign-in share one verification recovery transition", () => {
+  assert.equal(onboardingPage.includes("function showVerificationRequired("), true)
+  assert.equal(onboardingPage.includes('"EMAIL_NOT_VERIFIED"'), true)
+  assert.equal(onboardingPage.includes('"verification_email_delivery_failed"'), true)
+  assert.equal(onboardingPage.includes('fetch("/v1/me"'), false)
+  assert.match(
+    onboardingPage,
+    /mode === "sign-up"[\s\S]+showVerificationRequired\(/,
+    "a successful signup must enter verification recovery without probing an authenticated session",
+  )
+})
+
+test("only a successful sign-in with a non-empty token can hand off to Veslo", () => {
+  assert.match(
+    onboardingPage,
+    /if \(!bearerToken\)[\s\S]+showVerificationRequired\([\s\S]+return;[\s\S]+await doHandoff\("auth"\)/,
+  )
 })
 
 test("desktop onboarding page uses Veslo auth copy", () => {
