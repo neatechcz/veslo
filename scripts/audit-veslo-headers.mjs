@@ -173,8 +173,8 @@ const allowRules = [
     tokens: ["x-veslo-session-id"],
   },
   {
-    path: "services/den/src/auth.ts",
-    reason: "Den signup invite auth boundary",
+    path: "services/den/src/auth/signup-invite-context.ts",
+    reason: "Den signup invite context boundary",
     tokens: ["x-veslo-signup-invite-token"],
   },
   {
