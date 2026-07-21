@@ -39,6 +39,11 @@ export function workspaceSkillLockfilePath(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "veslo.skills.lock.json");
 }
 
+/** Server-owned effective runtime skill view consumed by the orchestrator. */
+export function workspaceEffectiveSkillManifestPath(workspaceRoot: string): string {
+  return join(workspaceRoot, ".opencode", "veslo.runtime.skills.json");
+}
+
 export function projectCommandsDir(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "commands");
 }

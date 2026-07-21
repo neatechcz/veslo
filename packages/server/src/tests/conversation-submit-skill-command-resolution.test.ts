@@ -64,4 +64,38 @@ describe("conversation submit skill command resolution", () => {
 
     expect(result).toBe("company-research-czech");
   });
+
+  test("never resolves a raw user-global skill even when legacy includeGlobal is true", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-global-workspace-"));
+    const dataDir = await mkdtemp(join(tmpdir(), "veslo-submit-global-data-"));
+    const homeDir = await mkdtemp(join(tmpdir(), "veslo-submit-global-home-"));
+    tempDirs.push(workspaceRoot, dataDir, homeDir);
+    await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+    await mkdir(join(homeDir, ".config", "opencode", "skills", "raw-global"), { recursive: true });
+    await writeFile(
+      join(homeDir, ".config", "opencode", "skills", "raw-global", "SKILL.md"),
+      "---\nname: raw-global\ndescription: Raw global skill\n---\n",
+      "utf8",
+    );
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = homeDir;
+    try {
+      const resolver = createConversationSubmitSkillCommandResolver({ dataDir });
+      const result = await resolver({
+        request: {
+          clientMessageId: "msg-global-1",
+          origin: "session:normal",
+          draft: { mode: "prompt", text: "use raw global skill", parts: [] },
+        },
+        text: "use raw global skill",
+        workspace: workspace(workspaceRoot),
+        includeGlobal: true,
+      });
+      expect(result).toBeNull();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    }
+  });
 });

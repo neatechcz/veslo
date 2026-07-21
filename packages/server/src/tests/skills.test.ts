@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "bun:test";
 
-import { listSkills } from "../skills.js";
+import { listActiveWorkspaceSkills, listSkills } from "../skills.js";
 import type { DisabledSkillRecord } from "../types.js";
 
 const tempDirs: string[] = [];
@@ -231,6 +231,108 @@ test("listSkills discovers materialized user-global skills under XDG_CONFIG_HOME
       process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
     }
   }
+});
+
+test("listActiveWorkspaceSkills never promotes a raw user-global skill", async () => {
+  const previousHome = process.env.HOME;
+  const previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  const homeDir = await mkdtemp(join(tmpdir(), "veslo-active-skills-home-"));
+  const xdgConfigHome = await mkdtemp(join(tmpdir(), "veslo-active-skills-xdg-"));
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-active-skills-workspace-"));
+  tempDirs.push(homeDir, xdgConfigHome, workspaceRoot);
+
+  process.env.HOME = homeDir;
+  process.env.XDG_CONFIG_HOME = xdgConfigHome;
+  try {
+    await mkdir(join(workspaceRoot, ".opencode", "skills", "workspace-only"), { recursive: true });
+    await writeFile(
+      join(workspaceRoot, ".opencode", "skills", "workspace-only", "SKILL.md"),
+      "---\nname: workspace-only\ndescription: Workspace-only skill\n---\n",
+      "utf8",
+    );
+    await mkdir(join(xdgConfigHome, "opencode", "skills", "raw-global"), { recursive: true });
+    await writeFile(
+      join(xdgConfigHome, "opencode", "skills", "raw-global", "SKILL.md"),
+      "---\nname: raw-global\ndescription: Must not be active\n---\n",
+      "utf8",
+    );
+
+    const items = await listActiveWorkspaceSkills(workspaceRoot);
+    expect(items.map((item) => item.name)).toEqual(["workspace-only"]);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+  }
+});
+
+test("active workspace resolution stops at the registered workspace root", async () => {
+  const repoRoot = await mkdtemp(join(tmpdir(), "veslo-active-skills-parent-repo-"));
+  const workspaceRoot = join(repoRoot, ".tmp", "fixture-workspace");
+  tempDirs.push(repoRoot);
+
+  await mkdir(join(repoRoot, ".git"), { recursive: true });
+  await mkdir(join(repoRoot, ".opencode", "skills", "parent-only"), { recursive: true });
+  await writeFile(
+    join(repoRoot, ".opencode", "skills", "parent-only", "SKILL.md"),
+    "---\nname: parent-only\ndescription: Must stay outside the registered workspace\n---\n",
+    "utf8",
+  );
+  await mkdir(join(workspaceRoot, ".opencode", "skills", "fixture-only"), { recursive: true });
+  await writeFile(
+    join(workspaceRoot, ".opencode", "skills", "fixture-only", "SKILL.md"),
+    "---\nname: fixture-only\ndescription: Registered workspace skill\n---\n",
+    "utf8",
+  );
+
+  const items = await listActiveWorkspaceSkills(workspaceRoot);
+  expect(items.map((item) => item.name)).toEqual(["fixture-only"]);
+});
+
+test("active skill precedence keeps workspace-local over a user projection", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-precedence-local-"));
+  await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+  const localDir = join(workspaceRoot, ".opencode", "skills", "shared-tool");
+  const projectedDir = join(workspaceRoot, ".opencode", "skills", "veslo-user", "shared-tool");
+  await mkdir(localDir, { recursive: true });
+  await mkdir(projectedDir, { recursive: true });
+  await writeFile(join(localDir, "SKILL.md"), "---\nname: shared-tool\ndescription: local\n---\n\n# Local\n", "utf8");
+  await writeFile(join(projectedDir, "SKILL.md"), "---\nname: shared-tool\ndescription: imported\n---\n\n# Imported\n", "utf8");
+  await writeFile(join(projectedDir, ".veslo-managed.json"), JSON.stringify({ installationId: "imported-1", source: "personal" }), "utf8");
+
+  const items = await listActiveWorkspaceSkills(workspaceRoot);
+  expect(items).toHaveLength(1);
+  expect(items[0]?.path).toBe(join(localDir, "SKILL.md"));
+});
+
+test("active skill precedence fails closed for a locked policy/local collision", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-precedence-locked-"));
+  await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+  const localDir = join(workspaceRoot, ".opencode", "skills", "locked-tool");
+  const policyDir = join(workspaceRoot, ".opencode", "skills", "veslo-managed", "locked-tool");
+  await mkdir(localDir, { recursive: true });
+  await mkdir(policyDir, { recursive: true });
+  await writeFile(join(localDir, "SKILL.md"), "---\nname: locked-tool\ndescription: local\n---\n\n# Local\n", "utf8");
+  await writeFile(join(policyDir, "SKILL.md"), "---\nname: locked-tool\ndescription: policy\n---\n\n# Policy\n", "utf8");
+  await writeFile(join(policyDir, ".veslo-managed.json"), JSON.stringify({ installationId: "policy-1", source: "organization", removalPolicy: "locked" }), "utf8");
+
+  expect(await listActiveWorkspaceSkills(workspaceRoot)).toEqual([]);
+});
+
+test("active skill precedence lets an admin-removable policy yield to local authorship", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-precedence-removable-"));
+  tempDirs.push(workspaceRoot);
+  await mkdir(join(workspaceRoot, ".opencode", "skills", "removable-tool"), { recursive: true });
+  await mkdir(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "removable-tool"), { recursive: true });
+  await writeFile(join(workspaceRoot, ".opencode", "skills", "removable-tool", "SKILL.md"), "---\nname: removable-tool\ndescription: local\n---\n", "utf8");
+  await writeFile(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "removable-tool", "SKILL.md"), "---\nname: removable-tool\ndescription: policy\n---\n", "utf8");
+  await writeFile(join(workspaceRoot, ".opencode", "skills", "veslo-managed", "removable-tool", ".veslo-managed.json"), JSON.stringify({ installationId: "policy-1", source: "organization", removalPolicy: "user_removable" }), "utf8");
+
+  const items = await listActiveWorkspaceSkills(workspaceRoot);
+  expect(items).toHaveLength(1);
+  expect(items[0]?.path).toContain(join("removable-tool", "SKILL.md"));
+  expect(items[0]?.path).not.toContain(join("veslo-managed", "removable-tool"));
 });
 
 test("listSkills path matching keeps disabled scope boundaries", async () => {

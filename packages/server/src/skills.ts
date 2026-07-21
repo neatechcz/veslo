@@ -31,6 +31,8 @@ import {
   workspaceSkillRootsForMutation,
   workspaceSkillsRoot,
 } from "./skill-roots.js";
+import { recordSkillAudit } from "./skill-audit-trace.js";
+import { workspaceEffectiveSkillManifestPath } from "./workspace-files.js";
 
 const MANAGED_MARKER_FILE = ".veslo-managed.json";
 const MANAGED_SKILL_SOURCES = new Set(["personal", "workspace", "organization", "platform"]);
@@ -56,6 +58,8 @@ export interface SkillRemovalJournalContext {
 export type ListSkillsOptions = {
   includeGlobal?: boolean;
   includeDisabled?: boolean;
+  /** Internal/runtime callers may need all candidates before policy resolution. */
+  includeDuplicates?: boolean;
   disabledSkills?: DisabledSkillRecord[];
   workspaceId?: string;
   workspaceOwner?: ResourceOwner;
@@ -277,7 +281,7 @@ async function listSkillsInDir(dir: string, scope: "project" | "global", owner: 
     return [];
   }
   const items: SkillItem[] = [];
-  for (const entry of entries) {
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
     if (!entry.isDirectory()) continue;
     const skillPath = join(dir, entry.name, "SKILL.md");
     if (await exists(skillPath)) {
@@ -296,7 +300,7 @@ async function listSkillsInDir(dir: string, scope: "project" | "global", owner: 
       } catch {
         continue;
       }
-      for (const subEntry of subEntries) {
+      for (const subEntry of subEntries.sort((left, right) => left.name.localeCompare(right.name))) {
         if (!subEntry.isDirectory()) continue;
         const subSkillPath = join(domainDir, subEntry.name, "SKILL.md");
         if (!(await exists(subSkillPath))) continue;
@@ -308,13 +312,16 @@ async function listSkillsInDir(dir: string, scope: "project" | "global", owner: 
   return items;
 }
 
-export async function listSkills(
+async function collectSkillItems(
   workspaceRoot: string,
   includeGlobalOrOptions: boolean | ListSkillsOptions,
   options: ListSkillsOptions = {},
 ): Promise<SkillItem[]> {
   const normalizedOptions = normalizeListSkillsOptions(includeGlobalOrOptions, options);
-  const roots = await findWorkspaceRoots(workspaceRoot);
+  // A registered workspace is the runtime boundary. Do not inherit skills
+  // from an ancestor repository merely because the workspace happens to be
+  // nested under another checkout (for example a fixture under veslo-main).
+  const roots = await findWorkspaceRoots(workspaceRoot, { boundaryRoot: workspaceRoot });
   const items: SkillItem[] = [];
   for (const root of roots) {
     const workspaceOwner = normalizedOptions.workspaceOwner ?? workspaceResourceOwner({ root });
@@ -333,12 +340,133 @@ export async function listSkills(
 
   const markedItems = applyDisabledSkillRecords(items, normalizedOptions);
   const filteredItems = normalizedOptions.includeDisabled ? markedItems : markedItems.filter((item) => item.enabled !== false);
+  if (normalizedOptions.includeDuplicates) return filteredItems;
   const seen = new Set<string>();
   return filteredItems.filter((item) => {
     if (seen.has(item.name)) return false;
     seen.add(item.name);
     return true;
   });
+}
+
+export async function listSkills(
+  workspaceRoot: string,
+  includeGlobalOrOptions: boolean | ListSkillsOptions,
+  options: ListSkillsOptions = {},
+): Promise<SkillItem[]> {
+  const result = await collectSkillItems(workspaceRoot, includeGlobalOrOptions, options);
+  recordSkillAudit("management-inventory", {
+    workspaceRoot,
+    includeGlobal: normalizeListSkillsOptions(includeGlobalOrOptions, options).includeGlobal,
+    itemCount: result.length,
+    items: result.map((item) => ({ name: item.name, path: item.path, scope: item.scope, source: item.registry?.source ?? null })),
+  });
+  return result;
+}
+
+type ActiveSkillClass = "workspace-local" | "user-imported" | "policy-enforced";
+
+function activeSkillClass(item: SkillItem): ActiveSkillClass {
+  const source = item.registry?.source;
+  if (source === "organization" || source === "platform") return "policy-enforced";
+  if (source === "personal") return "user-imported";
+  if (source === "workspace" && item.registry) return "user-imported";
+  return "workspace-local";
+}
+
+function isLockedPolicy(item: SkillItem): boolean {
+  return activeSkillClass(item) === "policy-enforced" && item.registry?.removalPolicy === "locked";
+}
+
+/**
+ * Apply the runtime precedence contract before an engine or slash resolver can
+ * see a skill. Equal-precedence duplicates and locked-policy/local conflicts
+ * fail closed; no filesystem enumeration order is used as a tie-breaker.
+ */
+function resolveActiveSkillCandidates(items: SkillItem[]): SkillItem[] {
+  const byName = new Map<string, SkillItem[]>();
+  for (const item of items) {
+    const group = byName.get(item.name) ?? [];
+    group.push(item);
+    byName.set(item.name, group);
+  }
+
+  const resolved: SkillItem[] = [];
+  for (const group of byName.values()) {
+    if (group.length === 1) {
+      resolved.push(group[0]!);
+      continue;
+    }
+    const policies = group.filter((item) => activeSkillClass(item) === "policy-enforced");
+    const locals = group.filter((item) => activeSkillClass(item) === "workspace-local");
+    const imports = group.filter((item) => activeSkillClass(item) === "user-imported");
+    if (policies.length > 1) continue;
+    if (policies.length === 1 && locals.length > 0) {
+      if (isLockedPolicy(policies[0]!)) continue;
+      if (locals.length === 1) resolved.push(locals[0]!);
+      continue;
+    }
+    if (policies.length === 1) {
+      resolved.push(policies[0]!);
+      continue;
+    }
+    if (locals.length > 0) {
+      if (locals.length === 1) resolved.push(locals[0]!);
+      continue;
+    }
+    if (imports.length === 1) resolved.push(imports[0]!);
+  }
+  return resolved.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function writeEffectiveSkillManifest(workspaceRoot: string, skills: SkillItem[]): Promise<void> {
+  const path = workspaceEffectiveSkillManifestPath(workspaceRoot);
+  const payload = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    workspaceRoot: resolve(workspaceRoot),
+    entries: skills.map((item) => ({
+      name: item.name,
+      path: resolve(item.path),
+      source: activeSkillClass(item),
+      removalPolicy: item.registry?.removalPolicy ?? "user_removable",
+    })),
+  };
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  } catch {
+    // Runtime inventory must remain read-only from the API's perspective. The
+    // orchestrator can fall back to an empty view if this local hint cannot be
+    // persisted (for example on a read-only workspace).
+  }
+}
+
+/**
+ * Active runtime inventory for a workspace.
+ *
+ * This intentionally has no global-root switch. External user/global roots
+ * belong to import discovery or management inventory and must never become an
+ * active runtime input merely because a caller passes includeGlobal=true.
+ */
+export async function listActiveWorkspaceSkills(
+  workspaceRoot: string,
+  options: Omit<ListSkillsOptions, "includeGlobal" | "globalOwner"> = {},
+): Promise<SkillItem[]> {
+  const candidates = await collectSkillItems(workspaceRoot, {
+    ...options,
+    includeGlobal: false,
+    includeDuplicates: true,
+  });
+  const result = resolveActiveSkillCandidates(candidates);
+  await writeEffectiveSkillManifest(workspaceRoot, result);
+  recordSkillAudit("active-runtime-resolution", {
+    workspaceRoot,
+    candidateCount: candidates.length,
+    activeCount: result.length,
+    active: result.map((item) => ({ name: item.name, path: item.path, source: activeSkillClass(item) })),
+  });
+  return result;
 }
 
 export const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {

@@ -154,6 +154,7 @@ export type OrchestratorStatus = {
   dataDir: string;
   daemon: OrchestratorDaemonState | null;
   opencode: OrchestratorOpencodeState | null;
+  engineTopology?: string | null;
   cliVersion?: string | null;
   sidecar?: OrchestratorSidecarInfo | null;
   binaries?: OrchestratorBinaryState | null;

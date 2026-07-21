@@ -9,6 +9,8 @@ import { parseSkillMarkdownMetadata } from "./skill-metadata.js";
 import { prepareSkillContent } from "./skills.js";
 import {
   SKILL_ENTRYPOINT,
+  VESLO_MANAGED_SKILL_CATEGORY,
+  VESLO_REGISTRY_PERSONAL_SKILL_CATEGORY,
   isPathInside,
   workspaceSkillRootsForMutation,
   workspaceSkillsRoot,
@@ -455,7 +457,11 @@ const findLocalSkillConflict = async (workspaceRoot: string, name: string): Prom
       continue;
     }
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name === USER_GLOBAL_SKILL_MATERIALIZED_CATEGORY) continue;
+      if (!entry.isDirectory() || [
+        USER_GLOBAL_SKILL_MATERIALIZED_CATEGORY,
+        VESLO_MANAGED_SKILL_CATEGORY,
+        VESLO_REGISTRY_PERSONAL_SKILL_CATEGORY,
+      ].includes(entry.name)) continue;
       const nested = join(root, entry.name, name, SKILL_ENTRYPOINT);
       if (await exists(nested)) return nested;
     }

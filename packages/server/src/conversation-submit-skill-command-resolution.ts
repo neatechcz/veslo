@@ -2,12 +2,12 @@ import type { ConversationSubmitSkillCommandResolver } from "./conversation-subm
 import { workspaceResourceOwner } from "./resource-owner.js";
 import { listDisabledSkills } from "./skill-enabled-overrides.js";
 import { resolveSkillMatch } from "./skill-resolver.js";
-import { listSkills } from "./skills.js";
+import { listActiveWorkspaceSkills } from "./skills.js";
 
 export function createConversationSubmitSkillCommandResolver(_input: {
   dataDir?: string;
 }): ConversationSubmitSkillCommandResolver {
-  return async ({ text, workspace, includeGlobal }) => {
+  return async ({ text, workspace }) => {
     const normalizedText = text.trim();
     if (!normalizedText || !workspace) return null;
 
@@ -16,8 +16,7 @@ export function createConversationSubmitSkillCommandResolver(_input: {
       includeGlobal: true,
       ...(_input.dataDir ? { dataDir: _input.dataDir } : {}),
     });
-    const skills = await listSkills(workspace.path, {
-      includeGlobal,
+    const skills = await listActiveWorkspaceSkills(workspace.path, {
       disabledSkills,
       workspaceId: workspace.id,
       workspaceOwner: workspaceResourceOwner({

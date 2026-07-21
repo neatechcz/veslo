@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 import { recordAudit } from "../audit.js";
 import { fetchOrgSkillsCatalog } from "../den-catalog.js";
@@ -22,6 +22,7 @@ import { resolveSkillMatch } from "../skill-resolver.js";
 import {
   deleteSkillAtPathRecoverable,
   deleteSkillRecoverable,
+  listActiveWorkspaceSkills,
   listSkills,
   readSkillAtPath,
   readSkillFilesAtPath,
@@ -30,6 +31,7 @@ import {
 } from "../skills.js";
 import type { WorkspaceInfo } from "../types.js";
 import { shortId } from "../utils.js";
+import { userGlobalMaterializedSkillsRoot } from "../user-skill-store.js";
 
 export type WorkspaceSkillRouteDependencies = {
   serverDataDir: string;
@@ -59,20 +61,33 @@ export function registerWorkspaceSkillRoutes(
 
   const listWorkspaceRuntimeSkills = async (
     workspace: WorkspaceInfo,
-    options: { includeGlobal: boolean; includeDisabled?: boolean },
+    options: { includeGlobal?: boolean; includeDisabled?: boolean },
   ) => {
     const disabledSkills = await listDisabledSkills({
       dataDir: serverDataDir,
       workspaceId: workspace.id,
       includeGlobal: true,
     });
-    return listSkills(workspace.path, {
-      includeGlobal: options.includeGlobal,
+    const listOptions = {
       disabledSkills,
       workspaceId: workspace.id,
       workspaceOwner: ownerForWorkspace(workspace),
       ...(options.includeDisabled !== undefined ? { includeDisabled: options.includeDisabled } : {}),
-    });
+    };
+    if (options.includeGlobal === true) {
+      // Compatibility management view: broad global discovery is never used
+      // by active resolution or engine launch.
+      const projectedRoot = resolve(userGlobalMaterializedSkillsRoot(workspace.path));
+      const seen = new Set<string>();
+      return (await listSkills(workspace.path, { ...listOptions, includeGlobal: true, includeDuplicates: true }))
+        .filter((skill) => !resolve(skill.path).startsWith(`${projectedRoot}${sep}`))
+        .filter((skill) => {
+          if (seen.has(skill.name)) return false;
+          seen.add(skill.name);
+          return true;
+        });
+    }
+    return listActiveWorkspaceSkills(workspace.path, listOptions);
   };
 
   addRoute(routes, "GET", "/hub/skills", "client", async (ctx) => {
@@ -102,11 +117,18 @@ export function registerWorkspaceSkillRoutes(
     const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readJsonBody(ctx.request);
     const text = typeof body.text === "string" ? body.text : "";
-    const includeGlobal = body?.includeGlobal === true || ctx.url.searchParams.get("includeGlobal") === "true";
     const threshold = typeof body.threshold === "number" ? body.threshold : undefined;
     const ambiguityDelta = typeof body.ambiguityDelta === "number" ? body.ambiguityDelta : undefined;
     const maxCandidates = typeof body.maxCandidates === "number" ? body.maxCandidates : undefined;
-    const skills = await listWorkspaceRuntimeSkills(workspace, { includeGlobal });
+    const skills = await listActiveWorkspaceSkills(workspace.path, {
+      disabledSkills: await listDisabledSkills({
+        dataDir: serverDataDir,
+        workspaceId: workspace.id,
+        includeGlobal: true,
+      }),
+      workspaceId: workspace.id,
+      workspaceOwner: ownerForWorkspace(workspace),
+    });
     const result = resolveSkillMatch({
       text,
       skills,
@@ -178,7 +200,22 @@ export function registerWorkspaceSkillRoutes(
     const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
     const instancePath = ctx.url.searchParams.get("path")?.trim() ?? "";
     if (instancePath) {
-      const allowedItem = items.find((skill) => skill.name === name && resolve(skill.path) === resolve(instancePath));
+      // An explicit workspace path is a management/read operation. It may
+      // address a suppressed conflict, but it must never opt into raw global
+      // roots merely because the legacy query flag is present.
+      const readableItems = await listSkills(workspace.path, {
+        includeGlobal: false,
+        includeDisabled,
+        includeDuplicates: true,
+        disabledSkills: await listDisabledSkills({
+          dataDir: serverDataDir,
+          workspaceId: workspace.id,
+          includeGlobal: true,
+        }),
+        workspaceId: workspace.id,
+        workspaceOwner: ownerForWorkspace(workspace),
+      });
+      const allowedItem = readableItems.find((skill) => skill.name === name && resolve(skill.path) === resolve(instancePath));
       if (!allowedItem) {
         throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
       }
@@ -207,7 +244,19 @@ export function registerWorkspaceSkillRoutes(
     const items = await listWorkspaceRuntimeSkills(workspace, { includeGlobal, includeDisabled });
     const instancePath = ctx.url.searchParams.get("path")?.trim() ?? "";
     if (instancePath) {
-      const allowedItem = items.find((skill) => skill.name === name && resolve(skill.path) === resolve(instancePath));
+      const readableItems = await listSkills(workspace.path, {
+        includeGlobal: false,
+        includeDisabled,
+        includeDuplicates: true,
+        disabledSkills: await listDisabledSkills({
+          dataDir: serverDataDir,
+          workspaceId: workspace.id,
+          includeGlobal: true,
+        }),
+        workspaceId: workspace.id,
+        workspaceOwner: ownerForWorkspace(workspace),
+      });
+      const allowedItem = readableItems.find((skill) => skill.name === name && resolve(skill.path) === resolve(instancePath));
       if (!allowedItem) {
         throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
       }

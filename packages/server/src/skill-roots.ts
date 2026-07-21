@@ -6,6 +6,7 @@ import { projectSkillsDir } from "./workspace-files.js";
 
 export const SKILL_ENTRYPOINT = "SKILL.md";
 export const VESLO_MANAGED_SKILL_CATEGORY = "veslo-managed";
+export const VESLO_REGISTRY_PERSONAL_SKILL_CATEGORY = "veslo-registry";
 
 const uniquePaths = (paths: string[]): string[] =>
   Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)));
@@ -22,22 +23,53 @@ export function workspaceSkillsRoot(workspaceRoot: string): string {
   return projectSkillsDir(workspaceRoot);
 }
 
-export async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
+export type WorkspaceRootResolutionOptions = {
+  /**
+   * Hard boundary owned by the caller (normally the registered workspace
+   * root). No implicit walk into the user's home or filesystem root is ever
+   * allowed.
+   */
+  boundaryRoot?: string;
+};
+
+export async function findWorkspaceRoots(
+  workspaceRoot: string,
+  options: WorkspaceRootResolutionOptions = {},
+): Promise<string[]> {
   const roots: string[] = [];
   let current = resolve(workspaceRoot);
+  let boundary = options.boundaryRoot?.trim() ? resolve(options.boundaryRoot) : current;
+  if (!options.boundaryRoot?.trim()) {
+    let probe = current;
+    while (true) {
+      if (await exists(join(probe, ".git"))) {
+        boundary = probe;
+        break;
+      }
+      const parent = resolve(probe, "..");
+      if (parent === probe) break;
+      probe = parent;
+    }
+  }
+  if (!isPathInside(boundary, current)) return roots;
   while (true) {
     roots.push(current);
     const gitPath = join(current, ".git");
     if (await exists(gitPath)) break;
     const parent = resolve(current, "..");
-    if (parent === current) break;
+    if (parent === current || !isPathInside(boundary, parent)) break;
     current = parent;
   }
   return roots;
 }
 
-export async function workspaceSkillRootsForMutation(workspaceRoot: string): Promise<string[]> {
-  const roots = await findWorkspaceRoots(workspaceRoot);
+export async function workspaceSkillRootsForMutation(
+  workspaceRoot: string,
+  options: WorkspaceRootResolutionOptions = {},
+): Promise<string[]> {
+  const roots = await findWorkspaceRoots(workspaceRoot, options.boundaryRoot
+    ? options
+    : { ...options, boundaryRoot: workspaceRoot });
   return roots.flatMap((root) => [
     workspaceSkillsRoot(root),
     join(root, ".claude", "skills"),
@@ -61,6 +93,11 @@ export function userGlobalSkillRootsForMutation(): string[] {
 
 export function workspaceManagedSkillsRoot(workspaceRoot: string): string {
   return join(workspaceSkillsRoot(workspaceRoot), VESLO_MANAGED_SKILL_CATEGORY);
+}
+
+/** Registry-backed personal-global projection; separate from user-store skills. */
+export function workspaceRegistryPersonalSkillsRoot(workspaceRoot: string): string {
+  return join(workspaceSkillsRoot(workspaceRoot), VESLO_REGISTRY_PERSONAL_SKILL_CATEGORY);
 }
 
 export function personalGlobalManagedSkillsRoot(globalSkillsRoot?: string): string {

@@ -207,6 +207,41 @@ test("workspace registry not configured status skips sync without blocking runti
   assert.deepEqual(debugLabels, ["skills:materialization:skip:not-configured"]);
 });
 
+test("runtime skill preparation resolves the active manifest before launch", () => {
+  assert.match(
+    source,
+    /const ensureActiveRuntimeManifest[\s\S]*client\.listSkills\(workspaceId, \{ includeGlobal: false \}\)/s,
+    "runtime startup must publish the active-skill manifest before the orchestrator stages skills",
+  );
+});
+
+test("local-only runtime still resolves active skills before engine startup", async () => {
+  let listed = 0;
+  const gate = createGate({
+    client: {
+      getWorkspaceSkillMaterializationStatus: async () => ({
+        registryConfigured: false,
+        workspaceRegistryConfigured: false,
+        status: "not-configured",
+        reloadRequired: false,
+      }),
+      listSkills: async (_workspaceId: string, options: { includeGlobal?: boolean }) => {
+        listed += 1;
+        assert.equal(options.includeGlobal, false);
+        return { items: [{ name: "workspace-only" }] };
+      },
+    },
+  });
+
+  const ready = await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "send-preflight" },
+  );
+
+  assert.equal(ready, true);
+  assert.equal(listed, 1);
+});
+
 test("degraded workspace materialization status skips sync without blocking runtime", async () => {
   const debugLabels: string[] = [];
   let syncCalled = false;

@@ -16,6 +16,8 @@ import {
 import { exists } from "./utils.js";
 import { validateSkillName } from "./validators.js";
 import { projectSkillsDir } from "./workspace-files.js";
+import { findWorkspaceRoots } from "./skill-roots.js";
+import { recordSkillAudit } from "./skill-audit-trace.js";
 
 export type SkillImportSourceAgent = "codex" | "claude" | "opencode" | "agents";
 export type SkillImportSourceLocation = "user-global" | "workspace";
@@ -111,19 +113,6 @@ const uniqueRoots = (roots: SkillRoot[]): SkillRoot[] => {
   });
 };
 
-async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
-  const roots: string[] = [];
-  let current = resolve(workspaceRoot);
-  while (true) {
-    roots.push(current);
-    if (await exists(join(current, ".git"))) break;
-    const parent = resolve(current, "..");
-    if (parent === current) break;
-    current = parent;
-  }
-  return roots;
-}
-
 async function buildCandidateRoots(input: SkillImportCandidateInput): Promise<SkillRoot[]> {
   const homeDir = userHomeDir(input);
   const configHome = userConfigHomeDir(input);
@@ -138,7 +127,7 @@ async function buildCandidateRoots(input: SkillImportCandidateInput): Promise<Sk
 
   for (const workspace of input.workspaces) {
     if (workspace.workspaceType !== "local" || !workspace.path.trim()) continue;
-    for (const root of await findWorkspaceRoots(workspace.path)) {
+    for (const root of await findWorkspaceRoots(workspace.path, { boundaryRoot: workspace.path })) {
       roots.push(
         { sourceAgent: "codex", sourceLocation: "workspace", root: join(root, ".codex", "skills"), workspace },
         { sourceAgent: "claude", sourceLocation: "workspace", root: join(root, ".claude", "skills"), workspace },
@@ -364,11 +353,25 @@ export async function listSkillImportCandidates(input: SkillImportCandidateInput
       candidates.push(await candidateFromFolder(input, root, folder));
     }
   }
-  return markDuplicateCandidates(candidates).sort((left, right) =>
+  const result = markDuplicateCandidates(candidates).sort((left, right) =>
     left.sourceAgent.localeCompare(right.sourceAgent) ||
     left.name.localeCompare(right.name) ||
     left.sourcePath.localeCompare(right.sourcePath)
   );
+  recordSkillAudit("import-discovery", {
+    workspaceRoot: input.workspaces.map((workspace) => workspace.path),
+    candidateCount: result.length,
+    candidates: result.map((candidate) => ({
+      id: candidate.id,
+      name: candidate.name,
+      sourceAgent: candidate.sourceAgent,
+      sourceLocation: candidate.sourceLocation,
+      sourcePath: candidate.sourcePath,
+      target: candidate.target,
+      status: candidate.status,
+    })),
+  });
+  return result;
 }
 
 async function importUserGlobalCandidate(
@@ -508,5 +511,16 @@ export async function importSkillCandidates(input: SkillImportRequest): Promise<
     );
   }
 
+  recordSkillAudit("import-commit", {
+    candidateIds: Array.from(ids),
+    results: results.map((result) => ({
+      candidateId: result.candidateId,
+      name: result.name ?? null,
+      ok: result.ok,
+      code: result.code ?? null,
+      target: result.target ?? null,
+      path: result.path ?? null,
+    })),
+  });
   return { results };
 }

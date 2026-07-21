@@ -4873,8 +4873,11 @@ function parseOpencodeErrorBody(input: string): unknown {
   return workspaceConfigOwner.parseOpencodeErrorBody(input);
 }
 
-async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
-  return workspaceConfigOwner.reloadOpencodeEngine(workspace);
+async function reloadOpencodeEngine(
+  workspace: WorkspaceInfo,
+  options?: { fallbackBaseUrl?: string },
+): Promise<void> {
+  return workspaceConfigOwner.reloadOpencodeEngine(workspace, options);
 }
 
 async function writeVesloConfig(workspaceRoot: string, payload: Record<string, unknown>, merge: boolean): Promise<void> {

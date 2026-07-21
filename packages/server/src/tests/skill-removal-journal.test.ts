@@ -571,7 +571,7 @@ test("GET /skill-removals filters to visible workspace removals by default and b
   ]);
 });
 
-test("recoverable delete supports skills discovered in a parent workspace root", async () => {
+test("recoverable delete rejects skills outside the registered workspace root", async () => {
   const repoRoot = await tempDir("veslo-skill-removal-repo-");
   await mkdir(join(repoRoot, ".git"), { recursive: true });
   const nestedWorkspace = join(repoRoot, "packages", "app");
@@ -589,9 +589,7 @@ test("recoverable delete supports skills discovered in a parent workspace root",
       headers: { Authorization: "Bearer client-token" },
     },
   );
-  expect(deleteResponse.status).toBe(200);
-  const deletePayload = await deleteResponse.json() as { removalId: string };
-  expect(deletePayload.removalId).toBeString();
+  expect(deleteResponse.status).toBe(400);
 });
 
 test("user-global restore returns reload metadata for callers without workspace audit", async () => {

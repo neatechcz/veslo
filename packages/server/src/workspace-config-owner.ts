@@ -191,51 +191,89 @@ export function parseOpencodeErrorBody(input: string): unknown {
   }
 }
 
-export async function reloadOpencodeEngine(workspace: WorkspaceInfo): Promise<void> {
-  const baseUrl = workspace.baseUrl?.trim() ?? "";
-  if (!baseUrl) {
+export type ReloadOpencodeEngineOptions = {
+  /** Current orchestrator-derived mount used when a persisted mount is stale. */
+  fallbackBaseUrl?: string;
+};
+
+export async function reloadOpencodeEngine(
+  workspace: WorkspaceInfo,
+  options: ReloadOpencodeEngineOptions = {},
+): Promise<void> {
+  const baseUrls = Array.from(new Set([
+    workspace.baseUrl?.trim() ?? "",
+    options.fallbackBaseUrl?.trim() ?? "",
+  ].filter(Boolean)));
+  if (baseUrls.length === 0) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  const directory = resolveOpencodeDirectory(workspace);
-  const targetUrl = buildOpencodeReloadUrl(baseUrl, directory);
+  // Reload is a workspace operation, never a stale per-session directory
+  // operation. A persisted directory from another workspace must not be sent
+  // to the current mount.
+  const directory = normalizeOpencodeDirectory(
+    workspace.workspaceType === "local" ? workspace.path : (resolveOpencodeDirectory(workspace) ?? workspace.path),
+  );
   const headers: Record<string, string> = {};
   const auth = buildOpencodeAuthHeader(workspace);
   if (auth) headers.Authorization = auth;
 
   const timeoutMs = resolveOpenCodeJsonFetchTimeoutMs();
-  const controller = new AbortController();
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-  if (typeof timeout === "object" && timeout && "unref" in timeout) {
-    (timeout as { unref?: () => void }).unref?.();
-  }
-
-  try {
-    const response = await fetch(targetUrl, { method: "POST", headers, signal: controller.signal });
-    if (response.ok) return;
-    const body = parseOpencodeErrorBody(await readResponseTextWithLimit(response, OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES));
-    throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
-      status: response.status,
-      body,
-    });
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
-    if (timedOut || isAbortError(error)) {
-      throw new ApiError(502, "opencode_request_timeout", "OpenCode request timed out", {
-        path: "/instance/dispose",
-        timeoutMs,
-      });
+  let lastError: unknown = null;
+  for (const baseUrl of baseUrls) {
+    const targetUrl = buildOpencodeReloadUrl(baseUrl, directory);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    if (typeof timeout === "object" && timeout && "unref" in timeout) {
+      (timeout as { unref?: () => void }).unref?.();
     }
-    throw new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  } finally {
-    clearTimeout(timeout);
+    try {
+      const response = await fetch(targetUrl, { method: "POST", headers, signal: controller.signal });
+      if (response.ok) return;
+      const body = parseOpencodeErrorBody(await readResponseTextWithLimit(response, OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES));
+      const error = new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
+        status: response.status,
+        body,
+        targetUrl,
+        directory,
+      });
+      lastError = error;
+      if (![404, 502, 503].includes(response.status) || baseUrl === baseUrls[baseUrls.length - 1]) throw error;
+    } catch (error) {
+      if (error instanceof ApiError) {
+        lastError = error;
+        const status = error.details && typeof error.details === "object"
+          ? (error.details as Record<string, unknown>).status
+          : undefined;
+        if ((typeof status === "number" && ![404, 502, 503].includes(status)) || baseUrl === baseUrls[baseUrls.length - 1]) {
+          throw error;
+        }
+        continue;
+      }
+      if (timedOut || isAbortError(error)) {
+        const timeoutError = new ApiError(502, "opencode_request_timeout", "OpenCode request timed out", {
+          path: "/instance/dispose",
+          timeoutMs,
+          targetUrl,
+        });
+        lastError = timeoutError;
+        if (baseUrl === baseUrls[baseUrls.length - 1]) throw timeoutError;
+        continue;
+      }
+      lastError = new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
+        error: error instanceof Error ? error.message : String(error),
+        targetUrl,
+      });
+      if (baseUrl === baseUrls[baseUrls.length - 1]) throw lastError;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  throw lastError instanceof Error ? lastError : new ApiError(502, "opencode_reload_failed", "OpenCode reload failed");
 }
 
 export async function writeVesloConfig(

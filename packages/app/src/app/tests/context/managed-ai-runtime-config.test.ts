@@ -148,6 +148,7 @@ function createOptions(
       { id: "ws-private", workspaceType: "local", path: "/private", directory: "/private" },
     ],
     engine: () => ({ running: true, runtime: "direct", childKind: "direct", projectDir: "/repo" }),
+    orchestratorEngineTopology: () => null,
     orchestratorStatusEngines: () => [],
     orchestratorEngines: () => [],
     resolveConversationServerWorkspaceId: (workspaceId) =>
@@ -1484,6 +1485,29 @@ test("inactive workspace heal marks unauthorized workspaces for the current toke
   assert.deepEqual(errors, []);
   assert.deepEqual(client.getConfigCalls, ["ws-private"]);
   assert.deepEqual(client.patched, []);
+});
+
+test("shared engine defers inactive workspace reload until that workspace is active", async () => {
+  const client = createVesloClient();
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    return { opencode: {} };
+  };
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    orchestratorEngineTopology: () => "shared-unsandboxed",
+    recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+  }));
+
+  await sync.healInactiveManagedAiWorkspaceConfigs();
+
+  assert.equal(client.patched.length, 1);
+  assert.deepEqual(client.reloadEngineCalls, []);
+  assert.ok(traces.some((entry) =>
+    entry.event === "managed-ai-config-sync:reload-deferred-shared-inactive" &&
+    entry.payload.workspaceId === "ws-private",
+  ));
 });
 
 test("inactive workspace heal keeps config tracking across managed access metadata refresh", async () => {

@@ -141,6 +141,20 @@ export function createWorkspaceSkillMaterializationGate(
         denUserId: denAuth?.user?.id?.trim() || undefined,
       };
 
+      // The orchestrator stages the effective-skill view synchronously while
+      // starting the engine. Force the server to resolve the active workspace
+      // skills now so the manifest exists before prepareWorkspaceRuntime()
+      // starts the process. This is intentionally separate from registry
+      // materialization: local-only workspaces need the same guarantee.
+      const ensureActiveRuntimeManifest = async (): Promise<void> => {
+        if (typeof client.listSkills !== "function") {
+          trace("active-manifest-unsupported");
+          return;
+        }
+        const active = await client.listSkills(workspaceId, { includeGlobal: false });
+        trace("active-manifest-ready", { activeCount: active.items.length });
+      };
+
       const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId, materializationAuth);
       observedMaterializationStatus = {
         registryConfigured: status.registryConfigured,
@@ -160,6 +174,7 @@ export function createWorkspaceSkillMaterializationGate(
         status.workspaceRegistryConfigured === false ||
         status.status === "not-configured";
       if (workspaceRegistryUnavailable) {
+        await ensureActiveRuntimeManifest();
         deps.wsDebug("skills:materialization:skip:not-configured", {
           workspaceId,
           reason: context?.reason ?? null,
@@ -167,6 +182,7 @@ export function createWorkspaceSkillMaterializationGate(
         return true;
       }
       if (status.status === "degraded" && status.reloadRequired !== true) {
+        await ensureActiveRuntimeManifest();
         deps.wsDebug("skills:materialization:degraded", {
           workspaceId,
           reason: context?.reason ?? null,
@@ -198,6 +214,7 @@ export function createWorkspaceSkillMaterializationGate(
       }
 
       if (status.status === "current" && status.reloadRequired !== true) {
+        await ensureActiveRuntimeManifest();
         trace("skip:current");
         deps.wsDebug("skills:materialization:skip:current", {
           workspaceId,
@@ -227,6 +244,7 @@ export function createWorkspaceSkillMaterializationGate(
       if (result.synced || result.reloadRequired === true) {
         deps.refreshSkills({ force: true }).catch(e => reportError(e, "workspace.refreshSkills"));
       }
+      await ensureActiveRuntimeManifest();
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);

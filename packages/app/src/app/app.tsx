@@ -2479,6 +2479,7 @@ export default function App() {
     activeWorkspacePath: () => workspaceStore.activeWorkspacePath(),
     workspaces: () => workspaceStore.workspaces(),
     engine: () => workspaceStore.engine(),
+    orchestratorEngineTopology: () => orchestratorStatusState()?.engineTopology ?? null,
     orchestratorStatusEngines: () => orchestratorStatusState()?.engines ?? [],
     orchestratorEngines: () => orchestratorEnginesState(),
     resolveConversationServerWorkspaceId,

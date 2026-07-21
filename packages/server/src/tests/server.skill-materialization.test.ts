@@ -732,7 +732,7 @@ test("POST /skills/materialization/sync-global downloads personal global package
       },
     });
     runningServers.push(registry as { stop?: (closeActiveConnections?: boolean) => void });
-    const { server } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
+    const { server, workspaceRoot } = await startFixture({ registryBaseUrl: `http://127.0.0.1:${registry.port}` });
 
     const response = await fetch(`http://127.0.0.1:${server.port}/skills/materialization/sync-global`, {
       method: "POST",
@@ -785,6 +785,9 @@ test("POST /skills/materialization/sync-global downloads personal global package
     expect(
       await readFile(join(homeRoot, ".config", "opencode", "skills", "veslo-managed", "veslo-automations", "SKILL.md"), "utf8"),
     ).toContain("Veslo Automations Disabled");
+    expect(
+      await readFile(join(workspaceRoot, ".opencode", "skills", "veslo-registry", "global-tool", "SKILL.md"), "utf8"),
+    ).toContain("# global-tool");
     expect(registryCalls).toEqual([
       {
         pathname: "/v1/skill-installations",
@@ -2293,7 +2296,7 @@ test("GET workspace skills includes managed registry metadata for platform globa
 
     expect(item).toMatchObject({
       name: "veslo-automations",
-      scope: "global",
+      scope: "project",
       registry: {
         installationId: "platform_install_veslo_automations",
         skillId: "platform_skill_veslo_automations",

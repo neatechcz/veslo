@@ -8,6 +8,7 @@ import {
   buildOpencodeReloadUrl,
   createWorkspaceConfigOwner,
   normalizeConversationReadDirectoryRequest,
+  reloadOpencodeEngine,
   readVesloConfig,
   resolveConversationReadDirectory,
   writeVesloConfig,
@@ -124,5 +125,34 @@ describe("workspace-config-owner", () => {
     });
     expect(Array.isArray(payload.skills)).toBe(true);
     expect(payload.commands).toEqual([]);
+  });
+
+  test("reload retries the orchestrator fallback after a persisted mount timeout", async () => {
+    const workspace = await tempWorkspace();
+    workspace.baseUrl = "http://127.0.0.1:41001";
+    const previousFetch = globalThis.fetch;
+    const previousTimeout = process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS;
+    const urls: string[] = [];
+    process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS = "10";
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("41001")) {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        throw error;
+      }
+      return new Response(null, { status: 200 });
+    }) as typeof fetch;
+    try {
+      await reloadOpencodeEngine(workspace, { fallbackBaseUrl: "http://127.0.0.1:41002" });
+      expect(urls).toHaveLength(2);
+      expect(urls[0]).toContain("41001");
+      expect(urls[1]).toContain("41002");
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousTimeout === undefined) delete process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS;
+      else process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS = previousTimeout;
+    }
   });
 });

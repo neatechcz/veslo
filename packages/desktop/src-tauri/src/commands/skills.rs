@@ -45,6 +45,22 @@ fn ensure_global_skill_root() -> Result<PathBuf, String> {
 
 fn collect_project_skill_roots(project_dir: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
+    // Find the nearest repository boundary first. If no .git exists anywhere
+    // above the registered workspace, keep the workspace itself as the only
+    // trusted root instead of walking to a filesystem/home root.
+    let mut boundary = project_dir;
+    let mut probe = project_dir;
+    while !probe.join(".git").exists() {
+        let Some(parent) = probe.parent() else { break };
+        if parent == probe {
+            break;
+        }
+        probe = parent;
+        if probe.join(".git").exists() {
+            boundary = probe;
+            break;
+        }
+    }
     let mut current = Some(project_dir);
 
     while let Some(dir) = current {
@@ -63,11 +79,13 @@ fn collect_project_skill_roots(project_dir: &Path) -> Vec<PathBuf> {
             roots.push(claude_root);
         }
 
-        if dir.join(".git").exists() {
+        if dir == boundary {
             break;
         }
 
-        current = dir.parent();
+        current = dir
+            .parent()
+            .filter(|parent| parent.starts_with(project_dir));
     }
 
     roots
@@ -333,7 +351,7 @@ fn resolve_skill_file_at_path(
 
     let canonical_candidate = fs::canonicalize(&candidate)
         .map_err(|e| format!("Failed to resolve {}: {e}", candidate.display()))?;
-    let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
+    let roots = collect_skill_roots(project_dir, SkillListScope::Workspace)?;
     for root in roots {
         let Ok(canonical_root) = fs::canonicalize(&root) else {
             continue;
@@ -901,7 +919,7 @@ pub fn list_local_skills(
     let project_dir = project_dir_buf.to_string_lossy();
     let project_dir = project_dir.as_ref();
 
-    let skill_roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
+    let skill_roots = collect_skill_roots(project_dir, SkillListScope::Workspace)?;
     list_skill_cards_from_roots(skill_roots)
 }
 
@@ -958,7 +976,7 @@ pub fn read_local_skill(
     let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
-    let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
+    let roots = collect_skill_roots(project_dir, SkillListScope::Workspace)?;
 
     for root in roots {
         let Some(path) = find_skill_file_in_root(&root, &name) else {
@@ -1019,7 +1037,7 @@ pub fn write_local_skill(
     let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
-    let roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
+    let roots = collect_skill_roots(project_dir, SkillListScope::Workspace)?;
     let mut target: Option<PathBuf> = None;
 
     for root in roots {
@@ -1198,7 +1216,7 @@ pub fn uninstall_skill(
     let project_dir = project_dir.as_ref();
 
     let name = validate_skill_name(&name)?;
-    let skill_roots = collect_skill_roots(project_dir, SkillListScope::Effective)?;
+    let skill_roots = collect_skill_roots(project_dir, SkillListScope::Workspace)?;
     let mut removed = false;
 
     for root in skill_roots {

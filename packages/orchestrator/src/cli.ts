@@ -60,6 +60,13 @@ import {
 } from "./engine-paths.js";
 import { ensureOpencodeManagedTools as ensureOpencodeManagedToolsRuntime } from "./opencode-managed-dependencies.js";
 import { migrateLegacyWorkspaceConfigDir } from "./workspace-runtime-migration.js";
+import {
+  buildEngineConfigEnv,
+  buildEngineSkillConflictEnv,
+  buildEngineSkillIsolationEnv,
+  buildEngineSkillViewEnv,
+} from "./engine-launch-contract.js";
+import { stageEngineSkillView } from "./engine-skill-staging.js";
 import { sanitizeOpencodeRuntimeConfigText } from "./opencode-config-sanitizer.js";
 import {
   normalizeWorkspacePath,
@@ -2297,7 +2304,7 @@ function writeRuntimeTrace(file: string, event: string, payload: LogAttributes =
   const entry = {
     time: new Date().toISOString(),
     event,
-    ...payload,
+    ...(sanitizeTracePayload(payload) as LogAttributes),
   };
   try {
     appendFileSync(file, `${JSON.stringify(entry)}\n`, "utf8");
@@ -2308,6 +2315,48 @@ function writeRuntimeTrace(file: string, event: string, payload: LogAttributes =
     console.log(`[veslo:runtime-trace] ${event} ${JSON.stringify(entry)}`);
   } catch {
     console.log(`[veslo:runtime-trace] ${event}`);
+  }
+}
+
+const TRACE_PATH_KEYS = new Set([
+  "path", "sourcePath", "workspace", "workspacePath", "workspaceRoot", "stagingRoot", "skillWorkspace",
+  "workdir", "configDir", "skillDir", "rootDir", "dataDir", "traceFile", "file", "manifestPath", "engineDirectory",
+]);
+
+function redactTracePath(value: string): string {
+  if (!isAbsolute(value) && !/^[A-Za-z]:[\\/]/.test(value) && !value.startsWith("\\\\")) return value;
+  const tail = value.replace(/\\/g, "/").split("/").filter(Boolean).slice(-4).join("/");
+  return `<local>/${tail || basename(value)}`;
+}
+
+function sanitizeTracePayload(value: unknown, key?: string): unknown {
+  if (typeof value === "string") {
+    if (key === "search" || key === "targetSearch") {
+      return value.replace(/directory=[^&]*/gi, "directory=[redacted]");
+    }
+    return key && TRACE_PATH_KEYS.has(key) ? redactTracePath(value) : value;
+  }
+  if (Array.isArray(value)) return value.map((item) => sanitizeTracePayload(item));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, sanitizeTracePayload(childValue, childKey)]));
+}
+
+function writeSkillAuditTrace(event: string, payload: LogAttributes = {}): void {
+  const files = Array.from(new Set([
+    process.env.VESLO_SKILL_AUDIT_LOG_FILE?.trim(),
+    process.env.VESLO_RUNTIME_TRACE_FILE?.trim(),
+    process.env.VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_MIRROR_FILE?.trim(),
+    process.env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE?.trim(),
+  ].filter((file): file is string => Boolean(file))));
+  if (!files.length) return;
+  try {
+    const line = `${JSON.stringify({ schema: "veslo-skill-audit/v1", source: "orchestrator", at: new Date().toISOString(), event, processPid: process.pid, ...(sanitizeTracePayload(payload) as LogAttributes) })}\n`;
+    for (const file of files) {
+      mkdirSync(dirname(file), { recursive: true });
+      appendFileSync(file, line, "utf8");
+    }
+  } catch {
+    // Diagnostics must never affect runtime behavior.
   }
 }
 
@@ -2374,7 +2423,7 @@ function writeSendWorkflowTrace(event: string, payload: LogAttributes = {}): voi
     event,
     processPid: process.pid,
     processRunId: process.env.VESLO_RUN_ID?.trim() || null,
-    ...payload,
+    ...(sanitizeTracePayload(payload) as LogAttributes),
   };
   try {
     const file = resolveSendWorkflowTraceFile();
@@ -2659,6 +2708,8 @@ function shellQuote(arg: string): string {
 async function startOpencode(options: {
   bin: string;
   workspace: string;
+  /** Workspace whose effective skill manifest should feed the engine view. */
+  skillWorkspace?: string;
   configDir?: string;
   hotReload: OpencodeHotReload;
   bindHost: string;
@@ -2717,10 +2768,52 @@ async function startOpencode(options: {
     ? normalizeRuntimeOptionPath(listenerLimitPreloadPath)
     : null;
 
+  const skillStagingRoot = join(
+    options.configDir ?? join(options.workspace, ".veslo", "opencode-runtime"),
+    "skill-staging",
+  );
+  const skillStaging = await stageEngineSkillView({
+    workspace: options.skillWorkspace ?? options.workspace,
+    stagingRoot: skillStagingRoot,
+    requireEffectiveManifest: true,
+  });
+  options.logger.info(
+    "engine skill staging prepared",
+    {
+      workspace: options.workspace,
+      skillWorkspace: options.skillWorkspace ?? options.workspace,
+      stagingRoot: skillStaging.stagingRoot,
+      source: skillStaging.source,
+      materialized: skillStaging.materialized,
+      suppressed: skillStaging.suppressed,
+    },
+    "opencode",
+  );
+  writeSkillAuditTrace("orchestrator:skill-staging", {
+    workspace: options.workspace,
+    skillWorkspace: options.skillWorkspace ?? options.workspace,
+    stagingRoot: skillStaging.stagingRoot,
+    source: skillStaging.source,
+    materialized: skillStaging.materialized,
+    materializedDetails: skillStaging.materializedDetails,
+    suppressed: skillStaging.suppressed,
+  });
+
   const env = {
     ...process.env,
     OPENCODE_CLIENT: "veslo-orchestrator",
-    OPENCODE_DISABLE_CLAUDE_CODE: "1",
+    // Keep project `.claude/skills` compatibility, while preventing the
+    // upstream loader from scanning user-global Claude/Agents skill roots.
+    ...buildEngineSkillIsolationEnv(),
+    ...buildEngineSkillViewEnv(skillStaging.stagingRoot, process.env.OPENCODE_CONFIG_CONTENT),
+    ...buildEngineSkillConflictEnv({
+      suppressed: skillStaging.suppressed.length,
+      configPath: options.configDir
+        ? (await fileExists(join(options.configDir, "opencode.jsonc"))
+          ? join(options.configDir, "opencode.jsonc")
+          : join(options.configDir, "opencode.json"))
+        : undefined,
+    }),
     VESLO: "1",
     VESLO_RUN_ID: options.runId,
     VESLO_LOG_FORMAT: options.logFormat,
@@ -2734,7 +2827,7 @@ async function startOpencode(options: {
     ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
     ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
     ...(options.vesloServerToken ? { [VESLO_OPENCODE_SERVER_CLIENT_TOKEN_ENV]: options.vesloServerToken } : {}),
-    ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
+    ...buildEngineConfigEnv(options.configDir),
     [OPENCODE_EVENT_MAX_LISTENERS_ENV]: String(opencodeEventMaxListeners),
     ...(listenerLimitPreloadOption
       ? {
@@ -2793,8 +2886,9 @@ async function startOpencode(options: {
       // F4Ú4 — engine needs write access beyond workspace:
       //   - OPENCODE_CONFIG_DIR (SQLite migrations, logs, telemetry, auth cache)
       //   - /tmp + /private/tmp + /var/folders (SQLite WAL/SHM, scratch files)
-      //   - XDG dirs opencode uses: ~/.local/state/opencode, ~/.local/share/opencode,
-      //     ~/.cache/opencode, ~/.config/opencode (sessions DB, model cache, settings)
+      //   - XDG data/cache dirs opencode uses: ~/.local/state/opencode,
+      //     ~/.local/share/opencode, ~/.cache/opencode. Config discovery is
+      //     isolated to the Veslo-owned per-workspace XDG_CONFIG_HOME below.
       //   VSLO-86: `@opencode-ai/plugin` + zod are vendored into
       //   `<workspace>/.opencode/node_modules/` and `<configDir>/node_modules/`
       //   at provisioning time, so the engine no longer needs to walk into
@@ -2814,7 +2908,6 @@ async function startOpencode(options: {
           `${home}/.local/state/opencode`,
           `${home}/.local/share/opencode`,
           `${home}/.cache/opencode`,
-          `${home}/.config/opencode`,
         );
       }
       launch = await sandbox.buildLaunch({
@@ -4460,6 +4553,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     config: { maxEngines, idleSuspendMs },
   });
 
+  let sharedSkillWorkspacePath: string | null = null;
   const sharedOpenCodeEngine =
     engineTopology.mode === "shared-unsandboxed"
       ? new SharedOpenCodeEngine({
@@ -4495,6 +4589,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               const spawned = await startOpencode({
                 bin: opencodeBinary.bin,
                 workspace: workdir,
+                skillWorkspace: sharedSkillWorkspacePath ?? undefined,
                 configDir,
                 hotReload: opencodeHotReload,
                 bindHost: opencodeHost,
@@ -4625,6 +4720,24 @@ async function runRouterDaemon(args: ParsedArgs) {
           },
         })
       : null;
+  const prepareSharedSkillWorkspace = async (workspacePath: string, reason: string): Promise<void> => {
+    if (!sharedOpenCodeEngine) return;
+    const nextPath = resolve(workspacePath);
+    const running = sharedOpenCodeEngine.getRunning();
+    if (running && sharedSkillWorkspacePath && sharedSkillWorkspacePath !== nextPath) {
+      const activeRuns = runStore.activeForEngineOwner("shared-unsandboxed");
+      if (activeRuns.length > 0) {
+        throw new Error("shared_engine_skill_view_busy");
+      }
+      traceRuntime("orchestrator:shared-skill-view:restart", {
+        reason,
+        previousWorkspace: sharedSkillWorkspacePath,
+        nextWorkspace: nextPath,
+      });
+      await sharedOpenCodeEngine.dispose();
+    }
+    sharedSkillWorkspacePath = nextPath;
+  };
   const sharedMcpRuntimePrimeFlights = createOpenCodeMcpRuntimePrimeFlights();
   const sharedEngineLivenessTimer = sharedOpenCodeEngine
     ? setInterval(() => {
@@ -5059,6 +5172,25 @@ async function runRouterDaemon(args: ParsedArgs) {
           workspace.path &&
           engineTopology.mode === "shared-unsandboxed"
         ) {
+          try {
+            await prepareSharedSkillWorkspace(workspace.path, `activate ${workspace.id}`);
+          } catch (error) {
+            traceRuntime("orchestrator:activate-shared-skill-view:blocked-active-runs", {
+              workspaceId: workspace.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            send(409, {
+              error: "shared_engine_skill_view_busy",
+              message: "Shared engine skill view cannot switch while a run is active",
+            });
+            return;
+          }
+        }
+        if (
+          workspace.workspaceType === "local" &&
+          workspace.path &&
+          engineTopology.mode === "shared-unsandboxed"
+        ) {
           const configSyncStartedAt = Date.now();
           try {
             // A shared engine starts with its own scratch directory. Mirror the
@@ -5360,6 +5492,24 @@ async function runRouterDaemon(args: ParsedArgs) {
         });
         writeSendWorkflowTrace("orchestrator:proxy-ensure:start", workflowBase);
         try {
+          if (
+            engineTopology.mode === "shared-unsandboxed" &&
+            proxyMethod !== "GET" &&
+            proxyMethod !== "HEAD"
+          ) {
+            try {
+              await prepareSharedSkillWorkspace(ws.path, `proxy ${proxyMethod} ${url.pathname}`);
+            } catch (error) {
+              if (error instanceof Error && error.message === "shared_engine_skill_view_busy") {
+                send(409, {
+                  error: "shared_engine_skill_view_busy",
+                  message: "Shared engine skill view cannot switch while a run is active",
+                });
+                return;
+              }
+              throw error;
+            }
+          }
           proxyTarget = await resolveOpencodeProxyTarget({
             topology: engineTopology.mode,
             method: proxyMethod,

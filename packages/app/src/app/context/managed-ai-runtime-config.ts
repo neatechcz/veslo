@@ -185,6 +185,7 @@ export type ManagedAiRuntimeConfigSyncOptions = {
   activeWorkspacePath: Accessor<string>;
   workspaces: Accessor<ManagedAiRuntimeWorkspace[]>;
   engine: Accessor<RuntimeSandboxEngineInfo>;
+  orchestratorEngineTopology?: Accessor<string | null | undefined>;
   orchestratorStatusEngines: Accessor<RuntimeSandboxEngineSnapshot[]>;
   orchestratorEngines: Accessor<RuntimeSandboxEngineSnapshot[]>;
   resolveConversationServerWorkspaceId: (workspaceId: string) => string | null;
@@ -439,6 +440,23 @@ export function createManagedAiRuntimeConfigSync(
     client: ManagedAiRuntimeConfigVesloClient;
     traceContext: Record<string, unknown>;
   }>();
+  const isSharedEngineTopology = (): boolean => {
+    const explicitTopology = deps.orchestratorEngineTopology?.()?.trim();
+    if (explicitTopology) return explicitTopology === "shared-unsandboxed";
+    return [...deps.orchestratorStatusEngines(), ...deps.orchestratorEngines()]
+      .some((engine) => engine?.workspaceId?.trim() === "shared-unsandboxed");
+  };
+  const canReloadPendingWorkspace = (workspaceId: string): boolean => {
+    if (!isSharedEngineTopology()) return true;
+    const activeWorkspaceId = deps.activeWorkspaceId().trim();
+    return Boolean(activeWorkspaceId) && activeWorkspaceId === workspaceId.trim();
+  };
+  const hasReloadEligiblePendingWorkspace = (): boolean => {
+    for (const workspaceId of pendingServerReloads.keys()) {
+      if (canReloadPendingWorkspace(workspaceId)) return true;
+    }
+    return false;
+  };
   const serverReloadInFlight = new Map<string, Promise<boolean>>();
   let serverReloadRetryTimer: number | null = null;
   let serverReloadRetryAttempt = 0;
@@ -1684,7 +1702,7 @@ export function createManagedAiRuntimeConfigSync(
 
   const schedulePendingServerReloadRetry = () => {
     if (
-      pendingServerReloads.size === 0 ||
+      !hasReloadEligiblePendingWorkspace() ||
       serverReloadRetryTimer !== null ||
       typeof window === "undefined" ||
       deps.anyActiveRuns() ||
@@ -1702,7 +1720,7 @@ export function createManagedAiRuntimeConfigSync(
     serverReloadRetryTimer = window.setTimeout(() => {
       serverReloadRetryTimer = null;
       void flushPendingServerReloads().finally(() => {
-        if (pendingServerReloads.size > 0) schedulePendingServerReloadRetry();
+        if (hasReloadEligiblePendingWorkspace()) schedulePendingServerReloadRetry();
       });
     }, delayMs);
   };
@@ -1710,6 +1728,14 @@ export function createManagedAiRuntimeConfigSync(
   const flushPendingServerReloads = async (): Promise<void> => {
     if (deps.anyActiveRuns() || deps.sendPromptInFlight()) return;
     for (const [workspaceId, pending] of pendingServerReloads) {
+      if (!canReloadPendingWorkspace(workspaceId)) {
+        deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:reload-deferred-shared-inactive", {
+          workspaceId,
+          activeWorkspaceId: deps.activeWorkspaceId().trim() || null,
+          engineTopology: "shared-unsandboxed",
+        });
+        continue;
+      }
       try {
         await reloadPendingServerConfig({
           workspaceId,
@@ -1746,7 +1772,16 @@ export function createManagedAiRuntimeConfigSync(
       !deps.anyActiveRuns() &&
       !deps.sendPromptInFlight()
     ) {
-      void flushPendingServerReloads();
+      if (canReloadPendingWorkspace(input.vesloWorkspaceId)) {
+        void flushPendingServerReloads();
+      } else {
+        deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:reload-deferred-shared-inactive", {
+          workspaceId: input.vesloWorkspaceId,
+          activeWorkspaceId: deps.activeWorkspaceId().trim() || null,
+          engineTopology: "shared-unsandboxed",
+          source: input.traceContext.syncReason ?? null,
+        });
+      }
     }
   };
 

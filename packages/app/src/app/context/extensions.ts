@@ -1385,6 +1385,26 @@ export function createExtensionsStore(options: {
             globalSkillCount: globalSkills.length,
             workspaceCount: localWorkspaces.length,
           });
+          recordSendWorkflowTrace("skills-inventory", "skills-audit-snapshot", {
+            traceId,
+            workspaceRoot: options.activeWorkspaceRoot(),
+            visibleInventory: next.map((item) => ({
+              name: item.name,
+              global: item.globalInstance?.path ?? null,
+              workspace: item.workspaceInstances.map((instance) => instance.path),
+              hub: item.hubItem?.name ?? null,
+            })),
+            activeWorkspaceSkills: Object.values(workspaceSkillsByWorkspaceId).flatMap((entry) =>
+              entry.skills.map((item) => ({ name: item.name, path: item.path, registry: item.registry?.source ?? null })),
+            ),
+            importCandidates: skillImportCandidates().map((item) => ({
+              id: item.id,
+              name: item.name,
+              sourceAgent: item.sourceAgent,
+              sourceLocation: item.sourceLocation,
+              status: item.status,
+            })),
+          });
           result = "published";
         } catch (e) {
           if (abortedRefreshes.has("skill-inventory")) {
@@ -1700,9 +1720,7 @@ export function createExtensionsStore(options: {
 
       try {
         setSkillsStatus(null);
-        const response = await vesloClient.listSkills(vesloWorkspaceId, {
-          includeGlobal: isLocalWorkspace,
-        });
+        const response = await vesloClient.listSkills(vesloWorkspaceId, { includeGlobal: false });
         if (abortedRefreshes.has("skills")) return;
         const next: SkillCard[] = Array.isArray(response.items)
           ? response.items.map((entry) => ({
@@ -2574,7 +2592,7 @@ export function createExtensionsStore(options: {
         const result = await skillReadClient.getSkill(
           vesloWorkspaceId,
           trimmed,
-          { includeGlobal: isLocalWorkspace, ...(instancePath?.trim() ? { path: instancePath.trim() } : {}) },
+          { includeGlobal: false, ...(instancePath?.trim() ? { path: instancePath.trim() } : {}) },
         );
         return {
           name: result.item.name,
@@ -2743,7 +2761,7 @@ export function createExtensionsStore(options: {
         if (vesloWorkspaceId && typeof vesloClient.getSkillFiles === "function") {
           const workspaceId = target.workspaceId?.trim() || vesloWorkspaceId;
           const result = await vesloClient.getSkillFiles(workspaceId, name, {
-            includeGlobal: isLocalWorkspace,
+            includeGlobal: false,
             includeDisabled: true,
             path: entryFilePath,
           });

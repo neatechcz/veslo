@@ -340,7 +340,7 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
     }
 
     const [skillsResponse, mcpResponse] = await Promise.all([
-      remoteContext.vesloClient.listSkills(remoteContext.workspaceId, { includeGlobal: true }),
+      remoteContext.vesloClient.listSkills(remoteContext.workspaceId, { includeGlobal: false }),
       remoteContext.vesloClient.mcp.list(remoteContext.workspaceId),
     ]);
     const skillItems = Array.isArray(skillsResponse.items) ? skillsResponse.items : [];

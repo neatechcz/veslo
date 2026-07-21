@@ -56,6 +56,8 @@ export type MaterializeSkillSetInput = {
   skills: WorkspaceSkillMaterialization[];
   loadPackage: (skill: WorkspaceSkillMaterialization) => Promise<SkillPackageArchive>;
   dataDir?: string;
+  /** Optional Veslo-owned projection root; defaults to workspace/veslo-managed. */
+  rootDir?: string;
 };
 
 export type MaterializePersonalGlobalSkillSetInput = Omit<MaterializeSkillSetInput, "workspaceRoot"> & {
@@ -467,7 +469,7 @@ const materializeSkillSetToRoot = async (
 };
 
 export async function materializeWorkspaceSkillSet(input: MaterializeSkillSetInput): Promise<SkillSetMaterializationResult> {
-  return materializeSkillSetToRoot(workspaceManagedSkillsRoot(input.workspaceRoot), input);
+  return materializeSkillSetToRoot(input.rootDir ?? workspaceManagedSkillsRoot(input.workspaceRoot), input);
 }
 
 export async function materializePersonalGlobalSkillSet(

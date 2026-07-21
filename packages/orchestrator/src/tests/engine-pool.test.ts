@@ -280,6 +280,33 @@ describe("EnginePool", () => {
     }
   });
 
+  test("lifecycle restart keeps the same workspace config contract", async () => {
+    const launchContexts: Array<{ workspaceId: string; workdir: string; configDir: string }> = [];
+    const h = harness({
+      spawnEngine: async (context) => {
+        launchContexts.push({
+          workspaceId: context.workspaceId,
+          workdir: context.workdir,
+          configDir: context.configDir,
+        });
+        const child = spawnLongLivedChild();
+        h.registry.push(child);
+        return { child, baseUrl: `http://127.0.0.1:${context.port}` };
+      },
+    });
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      await h.pool.suspend("a", "skill-runtime-refresh");
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      expect(launchContexts).toEqual([
+        { workspaceId: "a", workdir: "/tmp/a", configDir: "/tmp/cfg/a" },
+        { workspaceId: "a", workdir: "/tmp/a", configDir: "/tmp/cfg/a" },
+      ]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
   test("killAll stops all engines and clears pool", async () => {
     const h = harness();
     try {

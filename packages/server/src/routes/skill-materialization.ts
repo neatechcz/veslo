@@ -36,6 +36,7 @@ import type { SkillPackageArchive } from "../skill-packages.js";
 import {
   personalGlobalManagedSkillsRoot,
   userGlobalSkillRootsForMutation,
+  workspaceRegistryPersonalSkillsRoot,
   workspaceManagedSkillsRoot,
 } from "../skill-roots.js";
 import type {
@@ -48,6 +49,7 @@ import {
   materializeUserGlobalSkillsForWorkspace,
   userGlobalMaterializedSkillsRoot,
 } from "../user-skill-store.js";
+import { listActiveWorkspaceSkills } from "../skills.js";
 import { shortId } from "../utils.js";
 import { writeWorkspaceSkillLockfile } from "../workspace-skill-lockfile.js";
 import {
@@ -756,6 +758,29 @@ export function registerSkillMaterializationRoutes(
       unmanagedSkillRoots: userGlobalSkillRootsForMutation(),
     });
 
+    // Keep the registry-backed personal-global set as storage/provenance, but
+    // make the active runtime copy workspace-owned. The engine never receives
+    // the raw global root; every registered local workspace gets an isolated
+    // projection that is reconciled by the normal materializer lifecycle.
+    const workspaceProjections = [];
+    for (const workspace of ctx.config.workspaces) {
+      if (workspace.workspaceType !== "local") continue;
+      const projectionSkills = materializations.map((skill) => ({
+        ...skill,
+        target: "workspace" as const,
+      }));
+      const projection = await materializeWorkspaceSkillSet({
+        workspaceRoot: workspace.path,
+        rootDir: workspaceRegistryPersonalSkillsRoot(workspace.path),
+        skills: projectionSkills,
+        loadPackage: async (skill) => loadPackage({ ...skill, target: "personal-global" }),
+      });
+      // Materialization must publish the effective runtime manifest before a
+      // caller can start an engine for this workspace.
+      await listActiveWorkspaceSkills(workspace.path);
+      workspaceProjections.push({ workspaceId: workspace.id, ...projection });
+    }
+
     await recordAudit(result.rootDir, {
       id: shortId(),
       workspaceId: "global",
@@ -772,6 +797,15 @@ export function registerSkillMaterializationRoutes(
         action: "updated",
         path: result.rootDir,
       });
+      const projection = workspaceProjections.find((entry) => entry.workspaceId === workspace.id);
+      if (projection) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+          type: "skill",
+          name: "veslo-registry",
+          action: "updated",
+          path: projection.rootDir,
+        });
+      }
     }
 
     return jsonResponse({
@@ -785,6 +819,7 @@ export function registerSkillMaterializationRoutes(
       conflicts,
       removedSkillNames: result.removedSkillNames,
       backupDirs: result.backupDirs,
+      workspaceProjections,
     });
   });
 
@@ -897,6 +932,23 @@ export function registerSkillMaterializationRoutes(
         unmanagedSkillRoots: userGlobalSkillRootsForMutation(),
       });
     }
+    let personalGlobalProjectionResult: SkillSetMaterializationResult = {
+      rootDir: workspaceRegistryPersonalSkillsRoot(workspace.path),
+      materializedSkills: [],
+      removedSkillNames: [],
+      backupDirs: [],
+    };
+    if (personalGlobalSyncRequired) {
+      personalGlobalProjectionResult = await materializeWorkspaceSkillSet({
+        workspaceRoot: workspace.path,
+        rootDir: workspaceRegistryPersonalSkillsRoot(workspace.path),
+        skills: personalGlobalMaterializations.map((skill) => ({
+          ...skill,
+          target: "workspace" as const,
+        })),
+        loadPackage: async (skill) => loadPackage({ ...skill, target: "personal-global" }),
+      });
+    }
     const responseMaterializations = [
       ...workspaceMaterializations,
       ...personalGlobalMaterializations,
@@ -916,6 +968,11 @@ export function registerSkillMaterializationRoutes(
       entries: lockfileEntries,
     });
 
+    // The orchestrator stages from this manifest during process startup. Write
+    // it in the same sync transaction so staging cannot observe a missing
+    // manifest between materialization and engine launch.
+    await listActiveWorkspaceSkills(workspace.path);
+
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -931,6 +988,14 @@ export function registerSkillMaterializationRoutes(
       action: "updated",
       path: workspaceResult.rootDir,
     });
+    if (personalGlobalSyncRequired) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+        type: "skill",
+        name: "veslo-registry",
+        action: "updated",
+        path: personalGlobalProjectionResult.rootDir,
+      });
+    }
 
     return jsonResponse({
       workspaceId: workspace.id,
@@ -940,16 +1005,19 @@ export function registerSkillMaterializationRoutes(
       registryConfigured: true,
       rootDir: workspaceResult.rootDir,
       globalRootDir: personalGlobalResult.rootDir,
+      globalProjectionRootDir: personalGlobalProjectionResult.rootDir,
       lockfilePath,
       materializedSkills: responseMaterializations.map(materializationSummaryPayload),
       conflicts,
       removedSkillNames: [
         ...workspaceResult.removedSkillNames,
         ...personalGlobalResult.removedSkillNames,
+        ...personalGlobalProjectionResult.removedSkillNames,
       ].sort(),
       backupDirs: [
         ...workspaceResult.backupDirs,
         ...personalGlobalResult.backupDirs,
+        ...personalGlobalProjectionResult.backupDirs,
       ],
     });
   });

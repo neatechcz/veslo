@@ -7,6 +7,7 @@ import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "../int
 import { updateJsoncTopLevel } from "../jsonc.js";
 import {
   emitReloadEvent,
+  buildOrchestratorWorkspaceOpencodeBaseUrl,
   ensureWritable,
   jsonResponse,
   readJsonBody,
@@ -50,7 +51,7 @@ export type WorkspaceManagementRouteDependencies = {
     merge: boolean,
   ) => Promise<void>;
   buildConfigTrigger: (path: string) => ReloadTrigger;
-  reloadOpencodeEngine: (workspace: WorkspaceInfo) => Promise<void>;
+  reloadOpencodeEngine: (workspace: WorkspaceInfo, options?: { fallbackBaseUrl?: string }) => Promise<void>;
   reloadWorkspaceEngineIfIdle: (input: {
     workspaceId: string;
     reload: () => Promise<void>;
@@ -453,7 +454,9 @@ export function registerWorkspaceManagementRoutes(
     if (ifIdle) {
       const result = await reloadWorkspaceEngineIfIdle({
         workspaceId: workspace.id,
-        reload: () => reloadOpencodeEngine(workspace),
+        reload: () => reloadOpencodeEngine(workspace, {
+          fallbackBaseUrl: buildOrchestratorWorkspaceOpencodeBaseUrl(ctx.config, workspace),
+        }),
       });
       if (result.kind === "blocked") {
         throw new ApiError(409, "reload_blocked_active_runs", "Workspace engine reload is blocked by an active or reconciling run", {
@@ -462,7 +465,9 @@ export function registerWorkspaceManagementRoutes(
         });
       }
     } else {
-      await reloadOpencodeEngine(workspace);
+      await reloadOpencodeEngine(workspace, {
+        fallbackBaseUrl: buildOrchestratorWorkspaceOpencodeBaseUrl(ctx.config, workspace),
+      });
     }
 
     await recordAudit(workspace.path, {
