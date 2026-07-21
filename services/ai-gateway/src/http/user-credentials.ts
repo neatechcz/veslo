@@ -1,7 +1,10 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
 import type { AiAccessRepository, UserAiAccessPolicyRecord } from "../access/repository.js";
-import type { AutomaticUserAiAccessService } from "../access/automatic-user-access.js";
+import {
+  AutomaticUserAiAccessInfrastructureError,
+  type AutomaticUserAiAccessService,
+} from "../access/automatic-user-access.js";
 import { resolveAuthorizedModelRoster } from "../access/authorized-model-roster.js";
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js";
 import type { PlatformModelPolicyRepository, PlatformModelRef } from "../model-policy/repository.js";
@@ -54,9 +57,18 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
 
   const getUserAiAccess = asyncHandler(async (_req: Request, res: Response) => {
     const session = res.locals.userSession as UserSession;
-    let aiAccess = deps.automaticUserAiAccess
-      ? await deps.automaticUserAiAccess.getOrCreateUserAiAccess(session.user.id)
-      : await deps.aiAccess?.getUserAiAccess(session.user.id);
+    let aiAccess: UserAiAccessPolicyRecord | null | undefined;
+    try {
+      aiAccess = deps.automaticUserAiAccess
+        ? await deps.automaticUserAiAccess.getOrCreateUserAiAccess(session.user.id)
+        : await deps.aiAccess?.getUserAiAccess(session.user.id);
+    } catch (error) {
+      if (error instanceof AutomaticUserAiAccessInfrastructureError) {
+        res.status(error.status).json({ error: error.code });
+        return;
+      }
+      throw error;
+    }
     if (!aiAccess) {
       res.json({ aiAccess: null });
       return;

@@ -3,6 +3,7 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 
+import { AutomaticUserAiAccessInfrastructureError } from "../src/access/automatic-user-access.js";
 import type { UserAiAccessPolicyRecord } from "../src/access/repository.js";
 import type { CredentialRecord } from "../src/credentials/repository.js";
 import { createApp } from "../src/index.js";
@@ -347,6 +348,38 @@ test("GET explicit user AI access aliases lazily return the same server-derived 
       assert.equal((await response.json()).aiAccess.assignmentOrigin, undefined, path);
     }
     assert.deepEqual(initializedUsers, ["user_123", "user_123", "user_123", "user_123"]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("GET self and explicit AI access aliases map missing automatic infrastructure to stable 503", async () => {
+  const runtime = createUserAiAccessApp({
+    aiAccess: null,
+    getOrCreateAiAccess: async () => {
+      throw new AutomaticUserAiAccessInfrastructureError("gateway_platform_model_policy_unavailable");
+    },
+  });
+  const server = runtime.app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    for (const path of [
+      "/api/me/ai-access",
+      "/api/users/user_123/ai-access",
+      "/ai-gateway/me/ai-access",
+      "/ai-gateway/users/user_123/ai-access",
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, { headers: runtime.authHeader });
+      assert.equal(response.status, 503, path);
+      assert.deepEqual(
+        await response.json(),
+        { error: "gateway_platform_model_policy_unavailable" },
+        path,
+      );
+    }
   } finally {
     server.close();
     await once(server, "close");

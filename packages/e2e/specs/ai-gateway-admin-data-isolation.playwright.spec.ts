@@ -148,6 +148,14 @@ test.describe('AI Gateway admin data isolation', () => {
     await expect(page.locator('#auth-state')).toHaveText('Signed in');
   });
 
+  test('platform admin retains the global model policy controls in AI Infrastructure', async ({ page }) => {
+    await installAdminHarness(page);
+    await openAdmin(page, '/admin/ai-infrastructure');
+
+    await expect(page.locator('#model-policy-panel')).toBeVisible();
+    await expect(page.locator('#model-policy-save-button')).toBeVisible();
+  });
+
   test('Platform Users to organization Members clears global users synchronously and reveals only scoped members atomically', async ({ page }) => {
     const harness = await installAdminHarness(page);
     await openAdmin(page, '/admin/platform-users');
@@ -1250,6 +1258,9 @@ function defaultResponse(state: HarnessState, record: RequestRecord): HarnessRes
   }
   if (decodedPath === '/admin/api/usage' && record.method === 'GET') {
     return json(200, emptyUsage());
+  }
+  if (decodedPath === '/admin/api/ai-infrastructure/model-policy' && record.method === 'GET') {
+    return json(200, { policy: null });
   }
 
   const organizationMatch = decodedPath.match(/^\/admin\/api\/organizations\/([^/]+)$/);

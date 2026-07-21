@@ -2096,6 +2096,8 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
     assert.match(script, /function applyAdminCapabilities\(\)/)
     assert.match(script, /canAccessAdminRoute\(requestedRoute, routeAccessSnapshot\(\)\)/)
     assert.match(script, /els\.platformNavigation\.classList\.toggle\("hidden", !canManagePlatform\)/)
+    assert.match(script, /els\.platformAdminControls\.forEach\(\(node\) => node\.classList\.toggle\("hidden", !canManagePlatform\)\)/)
+    assert.match(script, /els\.userPlatformAdminControls\.forEach\(\(node\) => node\.classList\.toggle\("hidden", !userPermissions\.setPlatformAdmin\)\)/)
     assert.match(script, /route\.area === "platform"[\s\S]*loadPlatformRouteResult\(route, signal\)/)
     assert.match(script, /loadOrganizationWorkspace\(route, signal\)/)
     assert.doesNotMatch(script, /\bloadSessions\(\)/)
