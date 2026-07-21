@@ -6,15 +6,9 @@ import { db } from "../db/index.js"
 import { AdminUserStateTable } from "../db/schema.js"
 import { env } from "../env.js"
 import { enforceSessionPolicy } from "./email-verification.js"
+import type { SessionContext } from "./session-context.js"
 
-export type SessionContext = {
-  user: {
-    id: string
-    email: string | null
-    emailVerified: boolean
-    name: string | null
-  }
-}
+export type { SessionContext } from "./session-context.js"
 
 export async function requireSession(req: express.Request, res: express.Response): Promise<SessionContext | null> {
   const session = await auth.api.getSession({

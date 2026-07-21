@@ -3,8 +3,16 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 
 const sessionSource = readFileSync(new URL("../src/http/session.ts", import.meta.url), "utf8")
+const emailVerificationSource = readFileSync(new URL("../src/http/email-verification.ts", import.meta.url), "utf8")
 const legacyDesktopAuthSource = readFileSync(new URL("../src/http/desktop-auth.ts", import.meta.url), "utf8")
 const desktopAuthV2Source = readFileSync(new URL("../src/http/desktop-auth-v2.ts", import.meta.url), "utf8")
+
+test("shared verification policy depends on a neutral session context instead of the runtime session boundary", () => {
+  assert.match(sessionSource, /import type \{ SessionContext \} from "\.\/session-context\.js"/)
+  assert.match(sessionSource, /export type \{ SessionContext \} from "\.\/session-context\.js"/)
+  assert.match(emailVerificationSource, /import type \{ SessionContext \} from "\.\/session-context\.js"/)
+  assert.doesNotMatch(emailVerificationSource, /from "\.\/session\.js"/)
+})
 
 test("common DEN session boundary applies the verification policy after normalizing the session", () => {
   const contextIndex = sessionSource.indexOf("const context: SessionContext")

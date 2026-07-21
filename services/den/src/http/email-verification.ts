@@ -1,5 +1,5 @@
 import type { Response } from "express"
-import type { SessionContext } from "./session.js"
+import type { SessionContext } from "./session-context.js"
 
 type SessionPolicy = {
   disabled: boolean
