@@ -82,8 +82,9 @@ export function createDrizzleAutomaticOrganizationTrialStore(
     },
 
     async grantOrSyncDomainTrial(input) {
-      try {
-        return await database.transaction(async (tx: any) => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          return await database.transaction(async (tx: any) => {
           const organizationRows = await tx
             .select({ id: OrgTable.id })
             .from(OrgTable)
@@ -135,20 +136,12 @@ export function createDrizzleAutomaticOrganizationTrialStore(
             domain: string
             orgId: string
           }) => [normalizeDomain(entry.domain), entry.orgId]))
-          const hasForeignClaim = domains.some((domain) => {
-            const claimedBy = claimsByDomain.get(domain)
-            return claimedBy !== undefined && claimedBy !== input.orgId
-          })
           const hasExistingTrial = existingAccounts[0]?.source === "manual_trial" || history.length > 0
           const claimedAt = new Date(
             input.manualAccessExpiresAt.getTime() - AUTOMATIC_ORGANIZATION_TRIAL_DAYS * DAY_MS,
           )
 
           if (hasExistingTrial) {
-            if (hasForeignClaim) {
-              return { granted: false }
-            }
-
             const missingDomains = domains.filter((domain) => !claimsByDomain.has(domain))
             if (missingDomains.length > 0) {
               await insertDomainClaims(tx, input.orgId, missingDomains, claimedAt)
@@ -190,13 +183,18 @@ export function createDrizzleAutomaticOrganizationTrialStore(
             processed_at: claimedAt,
           })
           return { granted: true }
-        }, { isolationLevel: "serializable" })
-      } catch (error) {
-        if (isMySqlDuplicateKeyError(error)) {
-          return { granted: false }
+          }, { isolationLevel: "serializable" })
+        } catch (error) {
+          if (isMySqlDuplicateKeyError(error)) {
+            if (attempt < 2) {
+              continue
+            }
+            return { granted: false }
+          }
+          throw error
         }
-        throw error
       }
+      return { granted: false }
     },
   }
 }

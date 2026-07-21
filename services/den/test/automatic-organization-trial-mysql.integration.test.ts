@@ -178,6 +178,89 @@ if (!dedicatedDatabaseUrl) {
       `, [directOrgId, directOrgId, `automatic_organization_trial:${directOrgId}`])
       assertCountRow(directRows[0], { claim_count: 1, billing_count: 1, event_count: 1 })
 
+      const existingTrialOrgId = `org_existing_trial_${fixture}`
+      const foreignClaimOrgId = `org_foreign_claim_${fixture}`
+      const existingTrialDomains = {
+        own: `${fixture}.existing-own.integration.test`,
+        fresh: `${fixture}.existing-fresh.integration.test`,
+        foreign: `${fixture}.existing-foreign.integration.test`,
+      }
+      const existingTrialExpiry = new Date("2026-08-01T12:34:56.000Z")
+      const existingTrialUpdatedAt = new Date("2026-07-18T09:10:11.000Z")
+      await database.insert(OrgTable).values([{
+        id: existingTrialOrgId,
+        name: "Existing Trial Domain Backfill",
+        slug: `existing-trial-domain-backfill-${fixture}`,
+        owner_user_id: `user_existing_trial_${fixture}`,
+      }, {
+        id: foreignClaimOrgId,
+        name: "Historical Foreign Claim",
+        slug: `historical-foreign-claim-${fixture}`,
+        owner_user_id: `user_foreign_claim_${fixture}`,
+      }])
+      await database.insert(OrganizationDomainTable).values(Object.values(existingTrialDomains).map((domain, index) => ({
+        id: `domain_existing_trial_${fixture}_${index}`,
+        org_id: existingTrialOrgId,
+        domain,
+        enabled: true,
+        self_signup_enabled: true,
+      })))
+      await database.insert(schema.OrganizationTrialDomainClaimTable).values([{
+        id: `claim_existing_own_${fixture}`,
+        domain: existingTrialDomains.own,
+        org_id: existingTrialOrgId,
+        claimed_at: new Date("2026-07-01T00:00:00.000Z"),
+      }, {
+        id: `claim_existing_foreign_${fixture}`,
+        domain: existingTrialDomains.foreign,
+        org_id: foreignClaimOrgId,
+        claimed_at: new Date("2026-06-01T00:00:00.000Z"),
+      }])
+      await database.insert(schema.OrganizationBillingAccountTable).values({
+        id: `billing_existing_trial_${fixture}`,
+        org_id: existingTrialOrgId,
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "active",
+        managed_ai_basic_quantity: 0,
+        managed_ai_extended_quantity: 0,
+        local_models_quantity: 0,
+        manual_access_enabled: true,
+        manual_access_unlimited: true,
+        manual_access_expires_at: existingTrialExpiry,
+        created_at: new Date("2026-07-01T00:00:00.000Z"),
+        updated_at: existingTrialUpdatedAt,
+      })
+
+      assert.deepEqual(
+        await directStore.grantOrSyncDomainTrial({ ...directGrant, orgId: existingTrialOrgId }),
+        { granted: false },
+      )
+      const existingTrialRows = await queryRows(pool, `
+        SELECT
+          (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS own_claim_org_id,
+          (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS fresh_claim_org_id,
+          (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS foreign_claim_org_id,
+          (SELECT UNIX_TIMESTAMP(manual_access_expires_at) FROM organization_billing_account WHERE org_id = ?) AS expiry_epoch,
+          (SELECT UNIX_TIMESTAMP(updated_at) FROM organization_billing_account WHERE org_id = ?) AS updated_epoch,
+          (SELECT COUNT(*) FROM organization_billing_event WHERE org_id = ?) AS event_count
+      `, [
+        existingTrialDomains.own,
+        existingTrialDomains.fresh,
+        existingTrialDomains.foreign,
+        existingTrialOrgId,
+        existingTrialOrgId,
+        existingTrialOrgId,
+      ])
+      assert.deepEqual(existingTrialRows[0], {
+        own_claim_org_id: existingTrialOrgId,
+        fresh_claim_org_id: existingTrialOrgId,
+        foreign_claim_org_id: foreignClaimOrgId,
+        expiry_epoch: Math.floor(existingTrialExpiry.getTime() / 1_000),
+        updated_epoch: Math.floor(existingTrialUpdatedAt.getTime() / 1_000),
+        event_count: 0,
+      })
+
       const lockOrderOrgId = `org_lock_order_${fixture}`
       const lockOrderDomain = `${fixture}.lock-order.integration.test`
       await database.insert(OrgTable).values({

@@ -30,6 +30,7 @@ type HarnessOptions = {
   accounts?: RawRow[]
   events?: RawRow[]
   duplicateClaimDomains?: string[]
+  concurrentClaimRace?: { domain: string; orgId: string }
   claimInsertError?: unknown
   accountInsertError?: unknown
   eventInsertError?: unknown
@@ -122,6 +123,7 @@ function createDatabaseHarness(options: HarnessOptions = {}) {
   const operations: string[] = []
   const isolationLevels: string[] = []
   const duplicateClaimDomains = new Set(options.duplicateClaimDomains ?? [])
+  let concurrentClaimRacePending = options.concurrentClaimRace
 
   function project(selection: Record<string, any>, row: RawRow) {
     return Object.fromEntries(Object.entries(selection).map(([alias, column]) => [alias, row[column.name]]))
@@ -228,6 +230,16 @@ function createDatabaseHarness(options: HarnessOptions = {}) {
                 operations.push(`insert:claim:${domain}`)
                 if (options.claimInsertError) {
                   throw options.claimInsertError
+                }
+                if (concurrentClaimRacePending?.domain === domain) {
+                  state.claims.set(domain, {
+                    id: "claim_concurrent_race",
+                    domain,
+                    org_id: concurrentClaimRacePending.orgId,
+                    claimed_at: TRIAL_CREATED_AT,
+                  })
+                  concurrentClaimRacePending = undefined
+                  throw duplicateKeyError()
                 }
                 if (duplicateClaimDomains.has(domain) || snapshot.claims.has(domain)) {
                   throw duplicateKeyError()
@@ -377,7 +389,7 @@ test("store backfills an existing manual trial without changing billing dates", 
   assert.equal(harness.operations.some((entry) => entry.startsWith("insert:event:")), false)
 })
 
-test("store does not partially backfill an existing trial with a foreign-claimed current domain", async () => {
+test("store claims fresh domains for an existing trial while preserving foreign claims and billing dates", async () => {
   const originalExpiry = new Date("2026-07-29T10:15:00.000Z")
   const originalUpdatedAt = new Date("2026-07-15T10:15:00.000Z")
   const harness = createDatabaseHarness({
@@ -403,10 +415,13 @@ test("store does not partially backfill an existing trial with a foreign-claimed
   assert.deepEqual(await store.grantOrSyncDomainTrial(grantInput()), { granted: false })
   assert.equal(harness.state.claims.get("own.example")?.org_id, "org_1")
   assert.equal(harness.state.claims.get("foreign.example")?.org_id, "org_2")
-  assert.equal(harness.state.claims.has("fresh.example"), false)
+  assert.equal(harness.state.claims.get("fresh.example")?.org_id, "org_1")
   assert.equal(harness.state.accounts.get("org_1")?.manual_access_expires_at, originalExpiry)
   assert.equal(harness.state.accounts.get("org_1")?.updated_at, originalUpdatedAt)
-  assert.equal(harness.operations.some((entry) => entry.startsWith("insert:")), false)
+  assert.deepEqual(
+    harness.operations.filter((entry) => entry.startsWith("insert:")),
+    ["insert:claim:fresh.example"],
+  )
 })
 
 test("store uses historical automatic-trial event to backfill claims without creating billing", async () => {
@@ -478,6 +493,55 @@ test("duplicate-key claim race rolls back every claim and billing write", async 
   assert.equal(harness.state.claims.size, 0)
   assert.equal(harness.state.accounts.size, 0)
   assert.equal(harness.state.events.size, 0)
+})
+
+test("existing trial retries a concurrent claim race and still consumes every other fresh domain", async () => {
+  const originalExpiry = new Date("2026-07-29T10:15:00.000Z")
+  const harness = createDatabaseHarness({
+    organizations: ["org_1", "org_other"],
+    domains: [
+      { orgId: "org_1", domain: "alpha-fresh.example" },
+      { orgId: "org_1", domain: "race.example" },
+      { orgId: "org_1", domain: "zeta-fresh.example" },
+    ],
+    accounts: [{
+      id: "billing_existing",
+      org_id: "org_1",
+      source: "manual_trial",
+      manual_access_expires_at: originalExpiry,
+    }],
+    concurrentClaimRace: { domain: "race.example", orgId: "org_other" },
+  })
+  const store = createDrizzleAutomaticOrganizationTrialStore(harness.database)
+
+  assert.deepEqual(await store.grantOrSyncDomainTrial(grantInput()), { granted: false })
+  assert.equal(harness.state.claims.get("alpha-fresh.example")?.org_id, "org_1")
+  assert.equal(harness.state.claims.get("race.example")?.org_id, "org_other")
+  assert.equal(harness.state.claims.get("zeta-fresh.example")?.org_id, "org_1")
+  assert.equal(harness.state.accounts.get("org_1")?.manual_access_expires_at, originalExpiry)
+  assert.equal(harness.state.events.size, 0)
+  assert.equal(harness.isolationLevels.length, 2)
+})
+
+test("new organization remains all-or-nothing after a concurrent mixed-claim race", async () => {
+  const harness = createDatabaseHarness({
+    organizations: ["org_1", "org_other"],
+    domains: [
+      { orgId: "org_1", domain: "alpha-fresh.example" },
+      { orgId: "org_1", domain: "race.example" },
+      { orgId: "org_1", domain: "zeta-fresh.example" },
+    ],
+    concurrentClaimRace: { domain: "race.example", orgId: "org_other" },
+  })
+  const store = createDrizzleAutomaticOrganizationTrialStore(harness.database)
+
+  assert.deepEqual(await store.grantOrSyncDomainTrial(grantInput()), { granted: false })
+  assert.equal(harness.state.claims.has("alpha-fresh.example"), false)
+  assert.equal(harness.state.claims.get("race.example")?.org_id, "org_other")
+  assert.equal(harness.state.claims.has("zeta-fresh.example"), false)
+  assert.equal(harness.state.accounts.size, 0)
+  assert.equal(harness.state.events.size, 0)
+  assert.equal(harness.isolationLevels.length, 2)
 })
 
 test("account insert failure rolls back all preceding domain claims and propagates", async () => {

@@ -35,17 +35,11 @@ class FakeAutomaticOrganizationTrialStore implements AutomaticOrganizationTrialS
     const account = this.accounts.get(input.orgId)
     const hasTrialHistory = this.automaticTrialHistory.has(input.orgId)
     const hasExistingTrial = account?.source === "manual_trial" || hasTrialHistory
-    const hasForeignClaim = domains.some((domain) => {
-      const owner = this.claims.get(domain)
-      return owner !== undefined && owner !== input.orgId
-    })
-
     if (hasExistingTrial) {
-      if (hasForeignClaim) {
-        return { granted: false }
-      }
       for (const domain of domains) {
-        this.claims.set(domain, input.orgId)
+        if (!this.claims.has(domain)) {
+          this.claims.set(domain, input.orgId)
+        }
       }
       return { granted: false }
     }
@@ -147,7 +141,7 @@ test("an existing manual trial backfills domains without changing its expiry", a
   assert.deepEqual(store.grants, [])
 })
 
-test("an existing manual trial does not partially backfill a mixed foreign-claimed domain set", async () => {
+test("an existing manual trial consumes fresh domains from a mixed foreign-claimed domain set", async () => {
   const originalExpiry = new Date("2026-07-30T15:30:00.000Z")
   const store = new FakeAutomaticOrganizationTrialStore()
   store.domainsByOrg.set("org_1", ["own.example", "fresh.example", "foreign.example"])
@@ -162,8 +156,8 @@ test("an existing manual trial does not partially backfill a mixed foreign-claim
   assert.deepEqual([...store.claims], [
     ["own.example", "org_1"],
     ["foreign.example", "org_2"],
+    ["fresh.example", "org_1"],
   ])
-  assert.equal(store.claims.has("fresh.example"), false)
   assert.equal(store.accounts.get("org_1")?.manualAccessExpiresAt, originalExpiry)
   assert.deepEqual(store.grants, [])
 })
@@ -221,13 +215,18 @@ test("reconciliation skips domainless organizations and grants only an entirely 
   assert.equal(store.claims.has("fresh.example"), false)
 })
 
-test("reconciliation backfills every current trial domain without expiry changes and is safe to rerun", async () => {
+test("reconciliation backfills fresh trial domains beside foreign claims without expiry changes and is safe to rerun", async () => {
   const manualExpiry = new Date("2026-07-28T00:00:00.000Z")
   const store = new FakeAutomaticOrganizationTrialStore()
   store.organizationIds = ["org_manual", "org_automatic"]
-  store.domainsByOrg.set("org_manual", ["manual-first.example", "manual-later.example"])
+  store.domainsByOrg.set("org_manual", [
+    "manual-first.example",
+    "manual-later.example",
+    "manual-foreign.example",
+  ])
   store.domainsByOrg.set("org_automatic", ["automatic.example"])
   store.claims.set("manual-first.example", "org_manual")
+  store.claims.set("manual-foreign.example", "org_other")
   store.accounts.set("org_manual", {
     source: "manual_trial",
     manualAccessExpiresAt: manualExpiry,
@@ -241,6 +240,7 @@ test("reconciliation backfills every current trial domain without expiry changes
   assert.doesNotMatch(JSON.stringify(firstSummary), /example|@/i)
   assert.equal(store.claims.get("manual-first.example"), "org_manual")
   assert.equal(store.claims.get("manual-later.example"), "org_manual")
+  assert.equal(store.claims.get("manual-foreign.example"), "org_other")
   assert.equal(store.claims.get("automatic.example"), "org_automatic")
   assert.equal(store.accounts.get("org_manual")?.manualAccessExpiresAt, manualExpiry)
   assert.deepEqual(store.grants, [])
