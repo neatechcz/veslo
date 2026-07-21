@@ -890,12 +890,13 @@
 
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
+          const submittedMode = mode;
           authError = "";
           submitBtn.disabled = true;
           submitBtn.textContent = "Working...";
 
           try {
-            const endpoint = mode === "sign-up"
+            const endpoint = submittedMode === "sign-up"
               ? "/api/auth/sign-up/email"
               : "/api/auth/sign-in/email";
 
@@ -903,7 +904,7 @@
               email: emailInput.value.trim(),
               password: passwordInput.value,
             };
-            if (mode === "sign-up") {
+            if (submittedMode === "sign-up") {
               body.name = document.getElementById("auth-name").value || "Veslo User";
               body.callbackURL = buildDesktopOnboardingUrl("verify-email");
             }
@@ -917,7 +918,7 @@
             const data = await response.json().catch(() => null);
 
             if (!response.ok) {
-              if (mode === "sign-up") {
+              if (submittedMode === "sign-up") {
                 showError(formatEmailSignUpError(data, response.status));
               } else {
                 showError(data?.message || data?.error || `Request failed (${response.status})`);
@@ -938,7 +939,7 @@
 
             if (me.ok && !emailVerified) {
               verificationEmail = (mePayload?.user?.email || emailInput.value || "").trim();
-              verificationInfo = mode === "sign-up"
+              verificationInfo = submittedMode === "sign-up"
                 ? "Check your inbox for the verification email. You can still continue to Veslo right now."
                 : "Your account is signed in, but cloud-gated actions still require email verification.";
               verificationError = "";

@@ -106,8 +106,39 @@ test("desktop email sign-up explains the company email requirement", () => {
   )
   assert.match(
     onboardingPage,
-    /if \(mode === "sign-up"\) \{\s+showError\(formatEmailSignUpError\(data, response\.status\)\);\s+\} else \{\s+showError\(data\?\.message \|\| data\?\.error \|\| `Request failed \(\$\{response\.status\}\)`\);\s+\}/,
+    /if \(submittedMode === "sign-up"\) \{\s+showError\(formatEmailSignUpError\(data, response\.status\)\);\s+\} else \{\s+showError\(data\?\.message \|\| data\?\.error \|\| `Request failed \(\$\{response\.status\}\)`\);\s+\}/,
     "only the email sign-up failure branch should use the company-email formatter",
+  )
+})
+
+test("desktop auth submit handling stays bound to the submitted mode", () => {
+  const handlerStart = onboardingPage.indexOf('form.addEventListener("submit"')
+  const handlerEnd = onboardingPage.indexOf('forgotForm.addEventListener("submit"', handlerStart)
+  const submitHandler = onboardingPage.slice(handlerStart, handlerEnd)
+
+  assert.notEqual(handlerStart, -1)
+  assert.notEqual(handlerEnd, -1)
+  assert.equal(submitHandler.includes("const submittedMode = mode;"), true)
+  assert.equal(submitHandler.includes('const endpoint = submittedMode === "sign-up"'), true)
+  assert.match(
+    submitHandler,
+    /if \(submittedMode === "sign-up"\) \{\s+body\.name =/,
+    "the submitted mode must select sign-up request fields",
+  )
+  assert.match(
+    submitHandler,
+    /if \(submittedMode === "sign-up"\) \{\s+showError\(formatEmailSignUpError/,
+    "the submitted mode must select sign-up error formatting",
+  )
+  assert.equal(
+    submitHandler.includes('verificationInfo = submittedMode === "sign-up"'),
+    true,
+    "the submitted mode must select request-specific follow-up copy",
+  )
+  assert.equal(
+    /(?:const endpoint =|if \(|verificationInfo =) mode === "sign-up"/.test(submitHandler),
+    false,
+    "async request handling must not consult the mutable UI mode",
   )
 })
 
