@@ -205,20 +205,51 @@ test("deleting and re-registering a consumed domain never grants another trial",
   assert.equal(store.accounts.has("org_2"), false)
 })
 
-test("reconciliation counts only newly granted domain-backed trials", async () => {
+test("reconciliation skips domainless organizations and grants only an entirely unclaimed domain set", async () => {
   const store = new FakeAutomaticOrganizationTrialStore()
-  store.organizationIds = ["org_no_domain", "org_new", "org_existing"]
-  store.domainsByOrg.set("org_new", ["new.example"])
-  store.domainsByOrg.set("org_existing", ["existing.example"])
-  store.accounts.set("org_existing", {
+  store.organizationIds = ["org_no_domain", "org_unclaimed", "org_mixed"]
+  store.domainsByOrg.set("org_unclaimed", ["first.example", "second.example"])
+  store.domainsByOrg.set("org_mixed", ["claimed.example", "fresh.example"])
+  store.claims.set("claimed.example", "org_historical")
+
+  const summary = await createService(store).reconcile()
+
+  assert.deepEqual(summary, { scanned: 3, granted: 1 })
+  assert.deepEqual(store.grants.map((entry) => entry.orgId), ["org_unclaimed"])
+  assert.equal(store.accounts.has("org_no_domain"), false)
+  assert.equal(store.accounts.has("org_mixed"), false)
+  assert.equal(store.claims.has("fresh.example"), false)
+})
+
+test("reconciliation backfills every current trial domain without expiry changes and is safe to rerun", async () => {
+  const manualExpiry = new Date("2026-07-28T00:00:00.000Z")
+  const store = new FakeAutomaticOrganizationTrialStore()
+  store.organizationIds = ["org_manual", "org_automatic"]
+  store.domainsByOrg.set("org_manual", ["manual-first.example", "manual-later.example"])
+  store.domainsByOrg.set("org_automatic", ["automatic.example"])
+  store.claims.set("manual-first.example", "org_manual")
+  store.accounts.set("org_manual", {
     source: "manual_trial",
-    manualAccessExpiresAt: new Date("2026-07-28T00:00:00.000Z"),
+    manualAccessExpiresAt: manualExpiry,
   })
+  store.automaticTrialHistory.add("org_automatic")
   const service = createService(store)
 
-  assert.deepEqual(await service.reconcile(), { scanned: 3, granted: 1 })
-  assert.deepEqual(await service.reconcile(), { scanned: 3, granted: 0 })
-  assert.deepEqual(store.grants.map((entry) => entry.orgId), ["org_new"])
+  const firstSummary = await service.reconcile()
+  assert.deepEqual(firstSummary, { scanned: 2, granted: 0 })
+  assert.deepEqual(Object.keys(firstSummary).sort(), ["granted", "scanned"])
+  assert.doesNotMatch(JSON.stringify(firstSummary), /example|@/i)
+  assert.equal(store.claims.get("manual-first.example"), "org_manual")
+  assert.equal(store.claims.get("manual-later.example"), "org_manual")
+  assert.equal(store.claims.get("automatic.example"), "org_automatic")
+  assert.equal(store.accounts.get("org_manual")?.manualAccessExpiresAt, manualExpiry)
+  assert.deepEqual(store.grants, [])
+
+  const claimsAfterFirstRun = [...store.claims]
+  assert.deepEqual(await service.reconcile(), { scanned: 2, granted: 0 })
+  assert.deepEqual([...store.claims], claimsAfterFirstRun)
+  assert.equal(store.accounts.get("org_manual")?.manualAccessExpiresAt, manualExpiry)
+  assert.deepEqual(store.grants, [])
 })
 
 test("concurrent organizations cannot both consume the same domain", async () => {
