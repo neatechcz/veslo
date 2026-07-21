@@ -16,6 +16,7 @@ import {
   type SignupAccessError,
 } from "./auth/signup-gate.js"
 import { isAdminProvisioningSignupRequest } from "./auth/admin-provisioning.js"
+import { betterAuthAccountOptions } from "./auth/oauth-state-config.js"
 import {
   resolveSignupInviteTokenFromAuthContext,
   SIGNUP_INVITE_TOKEN_HEADER,
@@ -84,6 +85,7 @@ export const auth = betterAuth({
     provider: "mysql",
     schema,
   }),
+  account: betterAuthAccountOptions,
   plugins: [bearer()],
   ...(authEmailVerification ? { emailVerification: authEmailVerification } : {}),
   emailAndPassword: {

@@ -171,10 +171,12 @@ test("admin invite resend rotates only the derived token hash while returning th
   const resendInviteSource = source.match(/async function resendAdminOrganizationInvite[\s\S]*?async function revokeAdminOrganizationInvite/)?.[0] ?? ""
 
   assert.match(resendInviteSource, /inviteToken/)
-  assert.match(resendInviteSource, /token_hash:\s*hashOrganizationInviteToken\(inviteToken\)/)
+  assert.match(resendInviteSource, /rotateOrganizationInviteToken/)
+  assert.match(resendInviteSource, /token_hash:\s*nextTokenHash/)
   assert.match(resendInviteSource, /const resendNow = new Date\(\)/)
   assert.match(resendInviteSource, /evaluateAdminInviteResendStatus\(invite\.status,\s*invite\.expires_at,\s*resendNow\)/)
   assert.match(resendInviteSource, /eq\(OrganizationInviteTable\.status,\s*"pending"\)/)
+  assert.match(resendInviteSource, /eq\(OrganizationInviteTable\.token_hash,\s*expectedTokenHash\)/)
   assert.match(resendInviteSource, /gt\(OrganizationInviteTable\.expires_at,\s*resendNow\)/)
   assert.match(resendInviteSource, /extractAffectedRows\(result\) === 0/)
   assert.match(resendInviteSource, /inviteToken/)
@@ -213,6 +215,7 @@ test("admin invite resend queues the rotated registration link only after update
   assert.ok(deliveryIndex > auditIndex)
   assert.ok(returnIndex > deliveryIndex)
   assert.match(resendInviteSource, /queueOrganizationInvitationAuthEmail\(\{[\s\S]*to:\s*invite\.email,[\s\S]*inviteToken/)
+  assert.match(resendInviteSource, /if \(!rotation\.ok\)[\s\S]*invite_not_pending[\s\S]*return rotation\.value/)
 })
 
 test("admin invite list and revoke routes never queue invitation emails", async () => {

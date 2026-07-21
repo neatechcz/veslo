@@ -78,6 +78,7 @@ import {
   extractAffectedRows,
 } from "../org-admin/repository.js"
 import { hashOrganizationInviteToken } from "../org-admin/invite-token.js"
+import { rotateOrganizationInviteToken } from "../org-admin/invite-token-rotation.js"
 import { createAdminProvisioningSignupHeaders } from "../auth/admin-provisioning.js"
 import { buildOrganizationInvitationUrl } from "../auth/signup-invitation.js"
 import {
@@ -2175,51 +2176,65 @@ async function resendAdminOrganizationInvite(req: express.Request, res: express.
     return null
   }
 
-  const inviteToken = randomBytes(24).toString("base64url")
-  const result = await db
-    .update(OrganizationInviteTable)
-    .set({
-      token_hash: hashOrganizationInviteToken(inviteToken),
-      status: "pending",
-      expires_at: expiresAt,
-      updated_at: resendNow,
-    })
-    .where(and(
-      eq(OrganizationInviteTable.org_id, context.organization.id),
-      eq(OrganizationInviteTable.id, inviteId),
-      eq(OrganizationInviteTable.status, "pending"),
-      or(
-        isNull(OrganizationInviteTable.expires_at),
-        gt(OrganizationInviteTable.expires_at, resendNow),
-      ),
-    ))
+  const rotation = await rotateOrganizationInviteToken({
+    expectedTokenHash: invite.token_hash,
+    createInviteToken: () => randomBytes(24).toString("base64url"),
+    compareAndSwap: async ({ expectedTokenHash, nextTokenHash }) => {
+      const result = await db
+        .update(OrganizationInviteTable)
+        .set({
+          token_hash: nextTokenHash,
+          status: "pending",
+          expires_at: expiresAt,
+          updated_at: resendNow,
+        })
+        .where(and(
+          eq(OrganizationInviteTable.org_id, context.organization.id),
+          eq(OrganizationInviteTable.id, inviteId),
+          eq(OrganizationInviteTable.status, "pending"),
+          eq(OrganizationInviteTable.token_hash, expectedTokenHash),
+          or(
+            isNull(OrganizationInviteTable.expires_at),
+            gt(OrganizationInviteTable.expires_at, resendNow),
+          ),
+        ))
 
-  if (extractAffectedRows(result) === 0) {
+      if (extractAffectedRows(result) === 0) {
+        return false
+      }
+      return true
+    },
+    onCommitted: async ({ inviteToken }) => {
+      await recordAdminOrganizationAudit(context.snapshot, context.organization.id, "org.invite.resent", {
+        inviteId,
+        email: invite.email,
+        expiresAt,
+      })
+
+      const updatedRows = await db
+        .select()
+        .from(OrganizationInviteTable)
+        .where(eq(OrganizationInviteTable.id, inviteId))
+        .limit(1)
+
+      queueOrganizationInvitationAuthEmail({
+        to: invite.email,
+        inviteToken,
+      })
+
+      return {
+        invite: mapInviteRow(updatedRows[0]),
+        inviteToken,
+      }
+    },
+  })
+
+  if (!rotation.ok) {
     res.status(409).json({ error: "invite_not_pending" })
     return null
   }
 
-  await recordAdminOrganizationAudit(context.snapshot, context.organization.id, "org.invite.resent", {
-    inviteId,
-    email: invite.email,
-    expiresAt,
-  })
-
-  const updatedRows = await db
-    .select()
-    .from(OrganizationInviteTable)
-    .where(eq(OrganizationInviteTable.id, inviteId))
-    .limit(1)
-
-  queueOrganizationInvitationAuthEmail({
-    to: invite.email,
-    inviteToken,
-  })
-
-  return {
-    invite: mapInviteRow(updatedRows[0]),
-    inviteToken,
-  }
+  return rotation.value
 }
 
 async function revokeAdminOrganizationInvite(req: express.Request, res: express.Response) {
