@@ -32,7 +32,6 @@ export type OrganizationDomainMutationUpdate = {
 export type OrganizationDomainMutationScope = {
   lockOrganization(orgId: string): Promise<void>
   findById(orgId: string, domainId: string): Promise<OrganizationDomainMutationRecord | null>
-  findByDomain(domain: string): Promise<OrganizationDomainMutationRecord | null>
   requireVerifiedMember(orgId: string, domain: string): Promise<{ userId: string }>
   insert(record: OrganizationDomainMutationRecord): Promise<void>
   update(orgId: string, domainId: string, update: OrganizationDomainMutationUpdate): Promise<void>
@@ -40,6 +39,8 @@ export type OrganizationDomainMutationScope = {
 }
 
 export type OrganizationDomainMutationStore = {
+  findById(orgId: string, domainId: string): Promise<OrganizationDomainMutationRecord | null>
+  findByDomain(domain: string): Promise<OrganizationDomainMutationRecord | null>
   transaction<T>(run: (scope: OrganizationDomainMutationScope) => Promise<T>): Promise<T>
 }
 
@@ -66,12 +67,12 @@ export function createOrganizationDomainMutationService(input: {
 }) {
   return {
     async create(record: OrganizationDomainMutationRecord) {
+      if (await input.store.findByDomain(record.domain)) {
+        throw new OrganizationDomainExistsError()
+      }
+
       return input.store.transaction(async (scope) => {
         await scope.lockOrganization(record.orgId)
-        if (await scope.findByDomain(record.domain)) {
-          throw new OrganizationDomainExistsError()
-        }
-
         const evidence = await scope.requireVerifiedMember(record.orgId, record.domain)
         await scope.insert(record)
         await scope.synchronizeTrial(record.orgId)
@@ -92,6 +93,16 @@ export function createOrganizationDomainMutationService(input: {
       enabled?: boolean
       selfSignupEnabled?: boolean
     }) {
+      const preflightExisting = await input.store.findById(inputUpdate.orgId, inputUpdate.domainId)
+      if (!preflightExisting) {
+        throw new OrganizationDomainNotFoundError()
+      }
+      const preflightDomainChanged = inputUpdate.domain !== undefined
+        && inputUpdate.domain !== preflightExisting.domain
+      if (preflightDomainChanged && await input.store.findByDomain(inputUpdate.domain!)) {
+        throw new OrganizationDomainExistsError()
+      }
+
       return input.store.transaction(async (scope) => {
         await scope.lockOrganization(inputUpdate.orgId)
         const existing = await scope.findById(inputUpdate.orgId, inputUpdate.domainId)
@@ -102,9 +113,6 @@ export function createOrganizationDomainMutationService(input: {
         const domainChanged = inputUpdate.domain !== undefined && inputUpdate.domain !== existing.domain
         let verifiedMemberUserId: string | null = null
         if (domainChanged) {
-          if (await scope.findByDomain(inputUpdate.domain!)) {
-            throw new OrganizationDomainExistsError()
-          }
           const evidence = await scope.requireVerifiedMember(inputUpdate.orgId, inputUpdate.domain!)
           verifiedMemberUserId = evidence.userId
         }
@@ -154,6 +162,12 @@ export function createDrizzleOrganizationDomainMutationStore(
     ?? createDrizzleAutomaticOrganizationTrialStore
 
   return {
+    findById(orgId, domainId) {
+      return findDomainById(database, orgId, domainId)
+    },
+    findByDomain(domain) {
+      return findDomainByName(database, domain)
+    },
     async transaction<T>(run: (scope: OrganizationDomainMutationScope) => Promise<T>) {
       try {
         return await database.transaction(async (tx: any) => {
@@ -169,24 +183,8 @@ export function createDrizzleOrganizationDomainMutationStore(
                 .for("update")
                 .limit(1)
             },
-            async findById(orgId, domainId) {
-              const rows = await tx
-                .select()
-                .from(OrganizationDomainTable)
-                .where(and(
-                  eq(OrganizationDomainTable.org_id, orgId),
-                  eq(OrganizationDomainTable.id, domainId),
-                ))
-                .limit(1)
-              return rows[0] ? mapDomainRow(rows[0]) : null
-            },
-            async findByDomain(domain) {
-              const rows = await tx
-                .select()
-                .from(OrganizationDomainTable)
-                .where(eq(OrganizationDomainTable.domain, domain))
-                .limit(1)
-              return rows[0] ? mapDomainRow(rows[0]) : null
+            findById(orgId, domainId) {
+              return findDomainById(tx, orgId, domainId)
             },
             requireVerifiedMember(orgId, domain) {
               return verifier.requireVerifiedMember(orgId, domain)
@@ -231,6 +229,27 @@ export function createDrizzleOrganizationDomainMutationStore(
       }
     },
   }
+}
+
+async function findDomainById(database: any, orgId: string, domainId: string) {
+  const rows = await database
+    .select()
+    .from(OrganizationDomainTable)
+    .where(and(
+      eq(OrganizationDomainTable.org_id, orgId),
+      eq(OrganizationDomainTable.id, domainId),
+    ))
+    .limit(1)
+  return rows[0] ? mapDomainRow(rows[0]) : null
+}
+
+async function findDomainByName(database: any, domain: string) {
+  const rows = await database
+    .select()
+    .from(OrganizationDomainTable)
+    .where(eq(OrganizationDomainTable.domain, domain))
+    .limit(1)
+  return rows[0] ? mapDomainRow(rows[0]) : null
 }
 
 function mapDomainRow(row: typeof OrganizationDomainTable.$inferSelect): OrganizationDomainMutationRecord {

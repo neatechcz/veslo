@@ -144,6 +144,14 @@ function createMutationHarness(input: {
 
   const service = createOrganizationDomainMutationService({
     store: {
+      async findById(orgId, domainId) {
+        calls.push(`preflight-id:${orgId}:${domainId}`)
+        return domains.find((entry) => entry.orgId === orgId && entry.id === domainId) ?? null
+      },
+      async findByDomain(domain) {
+        calls.push(`preflight-domain:${domain}`)
+        return domains.find((entry) => entry.domain === domain) ?? null
+      },
       async transaction<T>(run: (scope: OrganizationDomainMutationScope) => Promise<T>) {
         const snapshot = structuredClone(domains)
         calls.push("transaction:serializable")
@@ -155,10 +163,6 @@ function createMutationHarness(input: {
             async findById(orgId, domainId) {
               calls.push(`find-id:${orgId}:${domainId}`)
               return domains.find((entry) => entry.orgId === orgId && entry.id === domainId) ?? null
-            },
-            async findByDomain(domain) {
-              calls.push(`find-domain:${domain}`)
-              return domains.find((entry) => entry.domain === domain) ?? null
             },
             async requireVerifiedMember(orgId, domain) {
               calls.push(`verify:${orgId}:${domain}`)
@@ -263,9 +267,9 @@ test("domain create and update lock the organization before every other scoped o
     selfSignupEnabled: false,
   })
   assert.deepEqual(createHarness.calls.slice(0, 3), [
+    "preflight-domain:team.example.com",
     "transaction:serializable",
     "lock:org_1",
-    "find-domain:team.example.com",
   ])
 
   const updateHarness = createMutationHarness({
@@ -283,9 +287,9 @@ test("domain create and update lock the organization before every other scoped o
     enabled: false,
   })
   assert.deepEqual(updateHarness.calls.slice(0, 3), [
+    "preflight-id:org_1:domain_1",
     "transaction:serializable",
     "lock:org_1",
-    "find-id:org_1:domain_1",
   ])
 })
 
@@ -445,6 +449,40 @@ test("duplicate domain conflict takes precedence over missing verification evide
     OrganizationDomainExistsError,
   )
   assert.equal(harness.calls.some((entry) => entry.startsWith("verify:")), false)
+  assert.deepEqual(harness.calls, ["preflight-domain:team.example.com"])
+})
+
+test("actual rename preflights outside the transaction and never gap-locks an absent domain inside", async () => {
+  const harness = createMutationHarness({
+    domains: [{
+      id: "domain_1",
+      orgId: "org_1",
+      domain: "old.example.com",
+      enabled: true,
+      selfSignupEnabled: false,
+    }],
+    members: [{
+      orgId: "org_1",
+      userId: "user_verified",
+      email: "owner@new.example.com",
+      emailVerified: true,
+      membershipStatus: "active",
+    }],
+  })
+
+  await harness.service.update({
+    orgId: "org_1",
+    domainId: "domain_1",
+    domain: "new.example.com",
+  })
+
+  assert.deepEqual(harness.calls.slice(0, 4), [
+    "preflight-id:org_1:domain_1",
+    "preflight-domain:new.example.com",
+    "transaction:serializable",
+    "lock:org_1",
+  ])
+  assert.equal(harness.calls.some((entry) => entry.startsWith("transaction-domain:")), false)
 })
 
 test("production domain mutations start a serializable outer transaction", async () => {
@@ -472,10 +510,12 @@ type StoredDomain = {
 
 function createRecordingDrizzleDomainDatabase(input: {
   domains?: StoredDomain[]
+  preflightSelectResults?: Array<() => unknown[]>
   selectResults: Array<() => unknown[]>
   updateTarget?: { orgId: string; domainId: string }
 }) {
   let domains = structuredClone(input.domains ?? [])
+  let preflightSelectIndex = 0
   let selectIndex = 0
   const calls: string[] = []
   const tx = {
@@ -523,6 +563,20 @@ function createRecordingDrizzleDomainDatabase(input: {
     },
   }
   const database = {
+    select() {
+      return {
+        from() {
+          return this
+        },
+        where() {
+          return this
+        },
+        async limit() {
+          calls.push(`preflight-select:${preflightSelectIndex}`)
+          return structuredClone(input.preflightSelectResults?.[preflightSelectIndex++]?.() ?? [])
+        },
+      }
+    },
     async transaction<T>(run: (transaction: typeof tx) => Promise<T>, options: unknown) {
       assert.deepEqual(options, { isolationLevel: "serializable" })
       const snapshot = structuredClone(domains)
@@ -552,9 +606,11 @@ function createRecordingDrizzleDomainDatabase(input: {
 test("production mutation store composes verification and trial sync with the exact outer transaction", async () => {
   let harness: ReturnType<typeof createRecordingDrizzleDomainDatabase>
   harness = createRecordingDrizzleDomainDatabase({
+    preflightSelectResults: [
+      () => [],
+    ],
     selectResults: [
       () => [{ id: "org_1" }],
-      () => [],
       () => harness.domains,
     ],
   })
@@ -624,10 +680,13 @@ test("production mutation store rolls a domain rename back when tx-scoped trial 
       },
     ],
     updateTarget: { orgId: "org_1", domainId: "domain_1" },
+    preflightSelectResults: [
+      () => harness.domains,
+      () => [],
+    ],
     selectResults: [
       () => [{ id: "org_1" }],
       () => harness.domains,
-      () => [],
     ],
   })
   const factoryTransactions: unknown[] = []

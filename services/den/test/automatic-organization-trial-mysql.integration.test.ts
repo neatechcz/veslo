@@ -14,13 +14,17 @@ import {
 } from "../src/billing/automatic-organization-trial.js"
 import * as schema from "../src/db/schema.js"
 import {
+  AuthUserTable,
+  OrgMembershipTable,
   OrganizationDomainTable,
   OrgTable,
 } from "../src/db/schema.js"
 import {
+  OrganizationDomainExistsError,
   createDrizzleOrganizationDomainMutationStore,
   createOrganizationDomainMutationService,
 } from "../src/org-admin/domain-mutations.js"
+import { createDrizzleOrganizationDomainMemberReader } from "../src/org-admin/domain-verification.js"
 
 const DEDICATED_DATABASE_URL_ENV = "DEN_AUTOMATIC_TRIAL_MYSQL_TEST_DATABASE_URL"
 const dedicatedDatabaseUrl = process.env[DEDICATED_DATABASE_URL_ENV]?.trim()
@@ -274,6 +278,118 @@ if (!dedicatedDatabaseUrl) {
         event_count: 1,
       })
 
+      const domainRaceDomain = `${fixture}.domain-race.integration.test`
+      const domainRaceInputs = ["a", "b"].map((suffix) => ({
+        orgId: `org_domain_race_${fixture}_${suffix}`,
+        domainId: `domain_race_${fixture}_${suffix}`,
+        membershipId: `membership_race_${fixture}_${suffix}`,
+        userId: `user_race_${fixture}_${suffix}`,
+        email: `${suffix}@${domainRaceDomain}`,
+        name: `Domain Race ${suffix.toUpperCase()}`,
+        slug: `domain-race-${fixture}-${suffix}`,
+      }))
+      await database.insert(AuthUserTable).values(domainRaceInputs.map((entry) => ({
+        id: entry.userId,
+        name: entry.name,
+        email: entry.email,
+        emailVerified: true,
+      })))
+      await database.insert(OrgTable).values(domainRaceInputs.map((entry) => ({
+        id: entry.orgId,
+        name: entry.name,
+        slug: entry.slug,
+        owner_user_id: entry.userId,
+      })))
+      await database.insert(OrgMembershipTable).values(domainRaceInputs.map((entry) => ({
+        id: entry.membershipId,
+        org_id: entry.orgId,
+        user_id: entry.userId,
+        role: "organization_admin" as const,
+        status: "active" as const,
+      })))
+
+      const preflightBarrier = createBarrier(2, 5_000, "domain race preflight did not rendezvous")
+      const memberProofBarrier = createBarrier(2, 5_000, "domain race member proof did not rendezvous")
+      const baseRaceStore = createDrizzleOrganizationDomainMutationStore(database, {
+        createMemberReader(transaction) {
+          const reader = createDrizzleOrganizationDomainMemberReader(transaction)
+          return {
+            async listMembers(orgId) {
+              const members = await reader.listMembers(orgId)
+              await memberProofBarrier.wait()
+              return members
+            },
+          }
+        },
+      })
+      const raceStore = {
+        findById: baseRaceStore.findById,
+        async findByDomain(domain: string) {
+          const existing = await baseRaceStore.findByDomain(domain)
+          await preflightBarrier.wait()
+          return existing
+        },
+        transaction: baseRaceStore.transaction,
+      }
+      const raceService = createOrganizationDomainMutationService({ store: raceStore })
+      const raceResults = await withTimeout(
+        Promise.allSettled(domainRaceInputs.map((entry) => raceService.create({
+          id: entry.domainId,
+          orgId: entry.orgId,
+          domain: domainRaceDomain,
+          enabled: true,
+          selfSignupEnabled: false,
+        }))),
+        10_000,
+        "concurrent same-domain mutations did not settle",
+      )
+      const raceWinningIndexes = raceResults.flatMap((result, index) => result.status === "fulfilled" ? [index] : [])
+      const raceLosingIndexes = raceResults.flatMap((result, index) => result.status === "rejected" ? [index] : [])
+      assert.equal(raceWinningIndexes.length, 1)
+      assert.equal(raceLosingIndexes.length, 1)
+      const raceLoser = raceResults[raceLosingIndexes[0] ?? -1]
+      assert.ok(raceLoser?.status === "rejected")
+      assert.ok(raceLoser.reason instanceof OrganizationDomainExistsError)
+
+      const raceWinnerInput = domainRaceInputs[raceWinningIndexes[0] ?? -1]
+      const raceLoserInput = domainRaceInputs[raceLosingIndexes[0] ?? -1]
+      assert.ok(raceWinnerInput)
+      assert.ok(raceLoserInput)
+      const domainRaceRows = await queryRows(pool, `
+        SELECT
+          (SELECT COUNT(*) FROM organization_domain WHERE org_id = ? AND domain = ?) AS winner_domain_count,
+          (SELECT COUNT(*) FROM organization_trial_domain_claim WHERE org_id = ? AND domain = ?) AS winner_claim_count,
+          (SELECT COUNT(*) FROM organization_billing_account WHERE org_id = ?) AS winner_billing_count,
+          (SELECT COUNT(*) FROM organization_billing_event
+            WHERE org_id = ? AND stripe_event_id = ?) AS winner_event_count,
+          (SELECT COUNT(*) FROM organization_domain WHERE org_id = ?) AS loser_domain_count,
+          (SELECT COUNT(*) FROM organization_trial_domain_claim WHERE org_id = ?) AS loser_claim_count,
+          (SELECT COUNT(*) FROM organization_billing_account WHERE org_id = ?) AS loser_billing_count,
+          (SELECT COUNT(*) FROM organization_billing_event WHERE org_id = ?) AS loser_event_count
+      `, [
+        raceWinnerInput.orgId,
+        domainRaceDomain,
+        raceWinnerInput.orgId,
+        domainRaceDomain,
+        raceWinnerInput.orgId,
+        raceWinnerInput.orgId,
+        `automatic_organization_trial:${raceWinnerInput.orgId}`,
+        raceLoserInput.orgId,
+        raceLoserInput.orgId,
+        raceLoserInput.orgId,
+        raceLoserInput.orgId,
+      ])
+      assertCountRow(domainRaceRows[0], {
+        winner_domain_count: 1,
+        winner_claim_count: 1,
+        winner_billing_count: 1,
+        winner_event_count: 1,
+        loser_domain_count: 0,
+        loser_claim_count: 0,
+        loser_billing_count: 0,
+        loser_event_count: 0,
+      })
+
       const uniquenessOrgIds = [`org_unique_${fixture}_a`, `org_unique_${fixture}_b`]
       await database.insert(OrgTable).values(uniquenessOrgIds.map((orgId, index) => ({
         id: orgId,
@@ -424,4 +540,18 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 
 function delay(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
+}
+
+function createBarrier(participants: number, timeoutMs: number, timeoutMessage: string) {
+  const released = createDeferred<void>()
+  let arrivals = 0
+  return {
+    async wait() {
+      arrivals += 1
+      if (arrivals === participants) {
+        released.resolve()
+      }
+      await withTimeout(released.promise, timeoutMs, timeoutMessage)
+    },
+  }
 }
