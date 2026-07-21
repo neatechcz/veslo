@@ -22,7 +22,10 @@ test("auth config wires Better Auth verification and reset callbacks", () => {
   assert.equal(source.includes("requireEmailVerification: env.authRequireEmailVerification"), true)
   assert.equal(source.includes("fireAndForgetAuthEmail(sendVerificationAuthEmail"), false)
   assert.equal(source.includes("fireAndForgetAuthEmail(sendResetPasswordAuthEmail"), true)
-  assert.equal(source.includes('message: "verification_email_delivery_failed"'), true)
+  assert.equal(source.includes('code: "VERIFICATION_EMAIL_DELIVERY_FAILED"'), true)
+  assert.equal(source.includes("createVerificationDeliveryOutcomePlugin()"), true)
+  assert.equal(source.includes('disabledPaths: ["/send-verification-email"]'), true)
+  assert.equal(source.includes('ctx.path === "/send-verification-email"'), false)
   assert.equal(source.includes("maybeAssignDefaultManagedAiAccessForNewUser"), true)
 })
 
@@ -48,6 +51,8 @@ test("email signup route is gated before Better Auth creates a user", () => {
   assert.equal(indexSource.includes("createAuthNodeHandler"), true)
   assert.equal(indexSource.includes("guardEmailSignupRequest"), true)
   assert.doesNotMatch(indexSource, /app\.all\("\/api\/auth\/\*", toNodeHandler\(auth\)\)/)
+  assert.equal(indexSource.includes('app.all("/api/auth/*", asyncRoute(createAuthNodeHandler('), true)
+  assert.equal(source.includes("AUTH_REQUEST_BODY_LIMIT_BYTES = 64 * 1024"), true)
 })
 
 test("auth user create hook gates before insert, activates organization access, and assigns managed AI last", () => {

@@ -109,6 +109,7 @@ jobs:
 
           test -f "$OWNED_SERVER_ENV_FILE"
           test -f packaging/owned-server/compose.yml
+          bash services/den/scripts/validate-live-auth-env.sh production "$OWNED_SERVER_ENV_FILE"
 
           compose() {
             sudo -n docker compose -f packaging/owned-server/compose.yml --env-file "$OWNED_SERVER_ENV_FILE" "$@"

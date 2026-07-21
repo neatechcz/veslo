@@ -152,7 +152,7 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
   ) {
     throw new Error("DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED must be either 'true' or 'false'.")
   }
-  const authRequireEmailVerification = nodeEnv === "production" || configuredAuthRequireEmailVerification === "true"
+  const authRequireEmailVerification = configuredAuthRequireEmailVerification === "true"
   const endpoints = resolveVesloDeploymentEndpoints(parsed.VESLO_DEPLOYMENT_DOMAIN)
   const betterAuthUrl = parsed.BETTER_AUTH_URL?.trim().replace(/\/+$/, "") || endpoints.apiBaseUrl
   const defaultCorsOrigins =
