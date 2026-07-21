@@ -181,6 +181,49 @@ test("admin invite resend rotates only the derived token hash while returning th
   assert.doesNotMatch(resendInviteSource, /token_hash:\s*inviteToken/)
 })
 
+test("admin invite creation queues a registration email only after persistence and audit succeed", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  const createInviteSource = source.match(/async function createAdminOrganizationInvite[\s\S]*?async function resendAdminOrganizationInvite/)?.[0] ?? ""
+
+  const persistIndex = createInviteSource.indexOf("createOrganizationInviteRecord")
+  const auditIndex = createInviteSource.indexOf("recordAdminOrganizationAudit")
+  const deliveryIndex = createInviteSource.indexOf("queueOrganizationInvitationAuthEmail")
+  const returnIndex = createInviteSource.indexOf("return {")
+
+  assert.ok(persistIndex >= 0)
+  assert.ok(auditIndex > persistIndex)
+  assert.ok(deliveryIndex > auditIndex)
+  assert.ok(returnIndex > deliveryIndex)
+  assert.match(createInviteSource, /queueOrganizationInvitationAuthEmail\(\{[\s\S]*to:\s*invite\.email,[\s\S]*inviteToken/)
+})
+
+test("admin invite resend queues the rotated registration link only after update and audit succeed", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  const resendInviteSource = source.match(/async function resendAdminOrganizationInvite[\s\S]*?async function revokeAdminOrganizationInvite/)?.[0] ?? ""
+
+  const updateIndex = resendInviteSource.indexOf(".update(OrganizationInviteTable)")
+  const conflictIndex = resendInviteSource.indexOf("extractAffectedRows(result) === 0")
+  const auditIndex = resendInviteSource.indexOf("recordAdminOrganizationAudit")
+  const deliveryIndex = resendInviteSource.indexOf("queueOrganizationInvitationAuthEmail")
+  const returnIndex = resendInviteSource.indexOf("return {")
+
+  assert.ok(updateIndex >= 0)
+  assert.ok(conflictIndex > updateIndex)
+  assert.ok(auditIndex > conflictIndex)
+  assert.ok(deliveryIndex > auditIndex)
+  assert.ok(returnIndex > deliveryIndex)
+  assert.match(resendInviteSource, /queueOrganizationInvitationAuthEmail\(\{[\s\S]*to:\s*invite\.email,[\s\S]*inviteToken/)
+})
+
+test("admin invite list and revoke routes never queue invitation emails", async () => {
+  const source = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
+  const listInviteSource = source.match(/async function listAdminOrganizationInvites[\s\S]*?async function createAdminOrganizationInvite/)?.[0] ?? ""
+  const revokeInviteSource = source.match(/async function revokeAdminOrganizationInvite[\s\S]*?async function loadOrganizationMembership/)?.[0] ?? ""
+
+  assert.doesNotMatch(listInviteSource, /queueOrganizationInvitationAuthEmail/)
+  assert.doesNotMatch(revokeInviteSource, /queueOrganizationInvitationAuthEmail/)
+})
+
 test("admin invite resend status guard only allows pending invites", () => {
   assert.equal(typeof adminRuntime.evaluateAdminInviteResendStatus, "function")
   const evaluateAdminInviteResendStatus = adminRuntime.evaluateAdminInviteResendStatus as (

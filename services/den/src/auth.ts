@@ -16,6 +16,10 @@ import {
   type SignupAccessError,
 } from "./auth/signup-gate.js"
 import { isAdminProvisioningSignupRequest } from "./auth/admin-provisioning.js"
+import {
+  resolveSignupInviteTokenFromAuthContext,
+  SIGNUP_INVITE_TOKEN_HEADER,
+} from "./auth/signup-invite-context.js"
 import { normalizeInviteEmail } from "./org-admin/policy.js"
 import {
   acceptOrganizationInvite,
@@ -36,8 +40,6 @@ type AuthNodeHandler = (req: AuthNodeRequest, res: ServerResponse) => unknown
 type EmailSignupGuardResult =
   | { ok: true }
   | { ok: false; status: number; error: "invalid_signup_request" | SignupAccessError }
-
-const SIGNUP_INVITE_TOKEN_HEADER = "x-veslo-signup-invite-token"
 
 const signupAccessDependencies = {
   resolveEnabledOrganizationDomainForEmail,
@@ -99,7 +101,7 @@ export const auth = betterAuth({
 
           await authorizeSignupBeforeUserCreate({
             email: typeof user.email === "string" ? user.email : null,
-            inviteToken: readInviteTokenFromAuthContext(context),
+            inviteToken: await resolveSignupInviteTokenFromAuthContext(context),
           })
         },
         after: async (user, context) => {
@@ -110,7 +112,7 @@ export const auth = betterAuth({
               email: user.email,
             },
             name,
-            inviteToken: readInviteTokenFromAuthContext(context),
+            inviteToken: await resolveSignupInviteTokenFromAuthContext(context),
             createMembershipId: randomUUID,
             resolveEnabledOrganizationDomainForEmail,
             createOrActivateOrganizationMembership,
@@ -237,34 +239,6 @@ function readInviteToken(body: Record<string, unknown>) {
   return null
 }
 
-function readInviteTokenFromAuthContext(context: unknown) {
-  if (!isRecord(context)) {
-    return null
-  }
-
-  if (isRecord(context.body)) {
-    const token = readInviteToken(context.body)
-    if (token) {
-      return token
-    }
-  }
-
-  if (context.path !== "/sign-up/email") {
-    return null
-  }
-
-  const getHeader = context.getHeader
-  if (typeof getHeader !== "function") {
-    return null
-  }
-
-  return decodeSignupInviteTokenHeader(getHeader(SIGNUP_INVITE_TOKEN_HEADER))
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
-}
-
 function setRequestSignupInviteToken(req: AuthNodeRequest, inviteToken: string | null) {
   const headers = req.headers as Record<string, string | string[] | undefined>
   if (!inviteToken) {
@@ -273,15 +247,6 @@ function setRequestSignupInviteToken(req: AuthNodeRequest, inviteToken: string |
   }
 
   headers[SIGNUP_INVITE_TOKEN_HEADER] = Buffer.from(inviteToken, "utf8").toString("base64url")
-}
-
-function decodeSignupInviteTokenHeader(value: string | null | undefined) {
-  if (!value) {
-    return null
-  }
-
-  const decoded = Buffer.from(value, "base64url").toString("utf8").trim()
-  return decoded || null
 }
 
 function sendAuthSignupError(res: ServerResponse, status: number, error: string) {

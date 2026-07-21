@@ -79,6 +79,11 @@ import {
 } from "../org-admin/repository.js"
 import { hashOrganizationInviteToken } from "../org-admin/invite-token.js"
 import { createAdminProvisioningSignupHeaders } from "../auth/admin-provisioning.js"
+import { buildOrganizationInvitationUrl } from "../auth/signup-invitation.js"
+import {
+  fireAndForgetAuthEmail,
+  sendOrganizationInvitationAuthEmail,
+} from "../email/auth-mailer.js"
 
 type ListedUserRow = {
   id: string
@@ -209,6 +214,31 @@ export function evaluateAdminInviteResendStatus(
     return { ok: false, status: 409, error: "invite_already_revoked" }
   }
   return { ok: false, status: 409, error: "invite_expired" }
+}
+
+type OrganizationInvitationEmailDependencies = {
+  publicAppBaseUrl: string
+  buildInvitationUrl: typeof buildOrganizationInvitationUrl
+  sendInvitationEmail: typeof sendOrganizationInvitationAuthEmail
+  fireAndForgetEmail: typeof fireAndForgetAuthEmail
+}
+
+const organizationInvitationEmailDependencies: OrganizationInvitationEmailDependencies = {
+  publicAppBaseUrl: env.publicAppBaseUrl,
+  buildInvitationUrl: buildOrganizationInvitationUrl,
+  sendInvitationEmail: sendOrganizationInvitationAuthEmail,
+  fireAndForgetEmail: fireAndForgetAuthEmail,
+}
+
+export function queueOrganizationInvitationAuthEmail(
+  input: { to: string; inviteToken: string },
+  dependencies: OrganizationInvitationEmailDependencies = organizationInvitationEmailDependencies,
+) {
+  const url = dependencies.buildInvitationUrl(dependencies.publicAppBaseUrl, input.inviteToken)
+  void dependencies.fireAndForgetEmail(
+    dependencies.sendInvitationEmail({ to: input.to, url }),
+    "organization invitation email",
+  )
 }
 
 function readSeatLimit(value: unknown): number | null | "invalid" {
@@ -2076,6 +2106,11 @@ async function createAdminOrganizationInvite(req: express.Request, res: express.
       expiresAt: invite.expiresAt,
     })
 
+    queueOrganizationInvitationAuthEmail({
+      to: invite.email,
+      inviteToken,
+    })
+
     return {
       invite: {
         id: invite.id,
@@ -2175,6 +2210,11 @@ async function resendAdminOrganizationInvite(req: express.Request, res: express.
     .from(OrganizationInviteTable)
     .where(eq(OrganizationInviteTable.id, inviteId))
     .limit(1)
+
+  queueOrganizationInvitationAuthEmail({
+    to: invite.email,
+    inviteToken,
+  })
 
   return {
     invite: mapInviteRow(updatedRows[0]),
