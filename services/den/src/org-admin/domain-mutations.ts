@@ -6,7 +6,7 @@ import {
   type AutomaticOrganizationTrialStore,
 } from "../billing/automatic-organization-trial.js"
 import { isMySqlDuplicateKeyError } from "../db/mysql-errors.js"
-import { OrganizationDomainTable } from "../db/schema.js"
+import { OrganizationDomainTable, OrgTable } from "../db/schema.js"
 import {
   createDrizzleOrganizationDomainMemberReader,
   createOrganizationDomainVerifier,
@@ -30,6 +30,7 @@ export type OrganizationDomainMutationUpdate = {
 }
 
 export type OrganizationDomainMutationScope = {
+  lockOrganization(orgId: string): Promise<void>
   findById(orgId: string, domainId: string): Promise<OrganizationDomainMutationRecord | null>
   findByDomain(domain: string): Promise<OrganizationDomainMutationRecord | null>
   requireVerifiedMember(orgId: string, domain: string): Promise<{ userId: string }>
@@ -66,6 +67,7 @@ export function createOrganizationDomainMutationService(input: {
   return {
     async create(record: OrganizationDomainMutationRecord) {
       return input.store.transaction(async (scope) => {
+        await scope.lockOrganization(record.orgId)
         if (await scope.findByDomain(record.domain)) {
           throw new OrganizationDomainExistsError()
         }
@@ -91,6 +93,7 @@ export function createOrganizationDomainMutationService(input: {
       selfSignupEnabled?: boolean
     }) {
       return input.store.transaction(async (scope) => {
+        await scope.lockOrganization(inputUpdate.orgId)
         const existing = await scope.findById(inputUpdate.orgId, inputUpdate.domainId)
         if (!existing) {
           throw new OrganizationDomainNotFoundError()
@@ -108,8 +111,13 @@ export function createOrganizationDomainMutationService(input: {
 
         const update: OrganizationDomainMutationUpdate = {}
         if (domainChanged) update.domain = inputUpdate.domain
-        if (inputUpdate.enabled !== undefined) update.enabled = inputUpdate.enabled
-        if (inputUpdate.selfSignupEnabled !== undefined) {
+        if (inputUpdate.enabled !== undefined && inputUpdate.enabled !== existing.enabled) {
+          update.enabled = inputUpdate.enabled
+        }
+        if (
+          inputUpdate.selfSignupEnabled !== undefined
+          && inputUpdate.selfSignupEnabled !== existing.selfSignupEnabled
+        ) {
           update.selfSignupEnabled = inputUpdate.selfSignupEnabled
         }
         const changedFields = Object.keys(update)
@@ -153,6 +161,14 @@ export function createDrizzleOrganizationDomainMutationStore(
             createMemberReader(tx),
           )
           const scope: OrganizationDomainMutationScope = {
+            async lockOrganization(orgId) {
+              await tx
+                .select({ id: OrgTable.id })
+                .from(OrgTable)
+                .where(eq(OrgTable.id, orgId))
+                .for("update")
+                .limit(1)
+            },
             async findById(orgId, domainId) {
               const rows = await tx
                 .select()

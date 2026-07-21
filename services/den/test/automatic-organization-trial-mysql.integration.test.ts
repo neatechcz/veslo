@@ -8,6 +8,7 @@ import mysql, { type Pool } from "mysql2/promise"
 
 import {
   AUTOMATIC_ORGANIZATION_TRIAL_DAYS,
+  createAutomaticOrganizationTrialService,
   createDrizzleAutomaticOrganizationTrialStore,
   type AutomaticOrganizationTrialGrant,
 } from "../src/billing/automatic-organization-trial.js"
@@ -16,6 +17,10 @@ import {
   OrganizationDomainTable,
   OrgTable,
 } from "../src/db/schema.js"
+import {
+  createDrizzleOrganizationDomainMutationStore,
+  createOrganizationDomainMutationService,
+} from "../src/org-admin/domain-mutations.js"
 
 const DEDICATED_DATABASE_URL_ENV = "DEN_AUTOMATIC_TRIAL_MYSQL_TEST_DATABASE_URL"
 const dedicatedDatabaseUrl = process.env[DEDICATED_DATABASE_URL_ENV]?.trim()
@@ -164,6 +169,111 @@ if (!dedicatedDatabaseUrl) {
       `, [directOrgId, directOrgId, `automatic_organization_trial:${directOrgId}`])
       assertCountRow(directRows[0], { claim_count: 1, billing_count: 1, event_count: 1 })
 
+      const lockOrderOrgId = `org_lock_order_${fixture}`
+      const lockOrderDomain = `${fixture}.lock-order.integration.test`
+      await database.insert(OrgTable).values({
+        id: lockOrderOrgId,
+        name: "Domain Mutation Lock Order",
+        slug: `domain-mutation-lock-order-${fixture}`,
+        owner_user_id: `user_lock_order_${fixture}`,
+      })
+
+      const memberReadReached = createDeferred<void>()
+      const releaseMemberRead = createDeferred<void>()
+      const directTransactionStarted = createDeferred<void>()
+      const domainMutationService = createOrganizationDomainMutationService({
+        store: createDrizzleOrganizationDomainMutationStore(database, {
+          createMemberReader() {
+            return {
+              async listMembers() {
+                memberReadReached.resolve()
+                await releaseMemberRead.promise
+                return [{
+                  orgId: lockOrderOrgId,
+                  userId: `user_lock_order_${fixture}`,
+                  email: `owner@${lockOrderDomain}`,
+                  emailVerified: true,
+                  membershipStatus: "active",
+                }]
+              },
+            }
+          },
+        }),
+      })
+      const adminMutation = domainMutationService.create({
+        id: `domain_lock_order_${fixture}`,
+        orgId: lockOrderOrgId,
+        domain: lockOrderDomain,
+        enabled: true,
+        selfSignupEnabled: false,
+      })
+      let directTrial: Promise<{ granted: boolean; expiresAt: Date }> | undefined
+      let directSettled = false
+      let directRemainedPendingWhileAdminHeldLock = false
+      try {
+        await withTimeout(memberReadReached.promise, 5_000, "admin mutation did not reach member proof")
+        const directStore = createDrizzleAutomaticOrganizationTrialStore({
+          async transaction<T>(run: (transaction: any) => Promise<T>, options: unknown) {
+            directTransactionStarted.resolve()
+            return database.transaction(run, options as any)
+          },
+        })
+        directTrial = createAutomaticOrganizationTrialService({ store: directStore })
+          .ensureTrial(lockOrderOrgId)
+        void directTrial.then(
+          () => { directSettled = true },
+          () => { directSettled = true },
+        )
+        await withTimeout(directTransactionStarted.promise, 5_000, "direct trial transaction did not start")
+        await delay(200)
+        directRemainedPendingWhileAdminHeldLock = !directSettled
+      } finally {
+        releaseMemberRead.resolve()
+      }
+
+      assert.ok(directTrial)
+      const [adminMutationResult, directTrialResult] = await withTimeout(
+        Promise.allSettled([adminMutation, directTrial]),
+        10_000,
+        "domain mutation and direct trial did not settle",
+      )
+      assert.equal(
+        directRemainedPendingWhileAdminHeldLock,
+        true,
+        "direct trial must wait for the admin transaction's organization lock",
+      )
+      assert.equal(adminMutationResult.status, "fulfilled")
+      assert.equal(directTrialResult.status, "fulfilled")
+      if (adminMutationResult.status === "fulfilled") {
+        assert.equal(adminMutationResult.value.domain.domain, lockOrderDomain)
+      }
+      if (directTrialResult.status === "fulfilled") {
+        assert.equal(directTrialResult.value.granted, false)
+      }
+
+      const lockOrderRows = await queryRows(pool, `
+        SELECT
+          (SELECT COUNT(*) FROM organization_domain WHERE org_id = ? AND domain = ?) AS domain_count,
+          (SELECT COUNT(*) FROM organization_trial_domain_claim WHERE org_id = ? AND domain = ?) AS claim_count,
+          (SELECT COUNT(*) FROM organization_billing_account WHERE org_id = ?) AS billing_count,
+          (SELECT COUNT(*) FROM organization_billing_event
+            WHERE org_id = ? AND stripe_event_id = ?) AS event_count
+      `, [
+        lockOrderOrgId,
+        lockOrderDomain,
+        lockOrderOrgId,
+        lockOrderDomain,
+        lockOrderOrgId,
+        lockOrderOrgId,
+        `automatic_organization_trial:${lockOrderOrgId}`,
+      ])
+      assertCountRow(lockOrderRows[0], {
+        domain_count: 1,
+        claim_count: 1,
+        billing_count: 1,
+        event_count: 1,
+      })
+
       const uniquenessOrgIds = [`org_unique_${fixture}_a`, `org_unique_${fixture}_b`]
       await database.insert(OrgTable).values(uniquenessOrgIds.map((orgId, index) => ({
         id: orgId,
@@ -286,4 +396,32 @@ function assertCountRow(row: Record<string, unknown> | undefined, expected: Reco
     Object.fromEntries(Object.keys(expected).map((key) => [key, Number(row[key])])),
     expected,
   )
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds))
 }

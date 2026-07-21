@@ -149,6 +149,9 @@ function createMutationHarness(input: {
         calls.push("transaction:serializable")
         try {
           const result = await run({
+            async lockOrganization(orgId: string) {
+              calls.push(`lock:${orgId}`)
+            },
             async findById(orgId, domainId) {
               calls.push(`find-id:${orgId}:${domainId}`)
               return domains.find((entry) => entry.orgId === orgId && entry.id === domainId) ?? null
@@ -240,6 +243,50 @@ test("verified domain creation inserts before trial synchronization and returns 
   assert.equal(result.verifiedMemberUserId, "user_verified")
   assert.equal(result.domain.domain, "team.example.com")
   assert.ok(harness.calls.indexOf("insert:team.example.com") < harness.calls.indexOf("trial:org_1"))
+})
+
+test("domain create and update lock the organization before every other scoped operation", async () => {
+  const createHarness = createMutationHarness({
+    members: [{
+      orgId: "org_1",
+      userId: "user_verified",
+      email: "owner@team.example.com",
+      emailVerified: true,
+      membershipStatus: "active",
+    }],
+  })
+  await createHarness.service.create({
+    id: "domain_1",
+    orgId: "org_1",
+    domain: "team.example.com",
+    enabled: true,
+    selfSignupEnabled: false,
+  })
+  assert.deepEqual(createHarness.calls.slice(0, 3), [
+    "transaction:serializable",
+    "lock:org_1",
+    "find-domain:team.example.com",
+  ])
+
+  const updateHarness = createMutationHarness({
+    domains: [{
+      id: "domain_1",
+      orgId: "org_1",
+      domain: "team.example.com",
+      enabled: true,
+      selfSignupEnabled: false,
+    }],
+  })
+  await updateHarness.service.update({
+    orgId: "org_1",
+    domainId: "domain_1",
+    enabled: false,
+  })
+  assert.deepEqual(updateHarness.calls.slice(0, 3), [
+    "transaction:serializable",
+    "lock:org_1",
+    "find-id:org_1:domain_1",
+  ])
 })
 
 test("trial synchronization failure rolls domain creation back", async () => {
@@ -354,6 +401,28 @@ test("settings-only and same-normalized-domain updates do not require fresh evid
   assert.equal(harness.calls.includes("trial:org_1"), false)
 })
 
+test("unchanged boolean settings produce no update and no changed fields", async () => {
+  const harness = createMutationHarness({
+    domains: [{
+      id: "domain_1",
+      orgId: "org_1",
+      domain: "team.example.com",
+      enabled: true,
+      selfSignupEnabled: false,
+    }],
+  })
+
+  const result = await harness.service.update({
+    orgId: "org_1",
+    domainId: "domain_1",
+    enabled: true,
+    selfSignupEnabled: false,
+  })
+
+  assert.deepEqual(result.changedFields, [])
+  assert.equal(harness.calls.some((entry) => entry.startsWith("update:")), false)
+})
+
 test("duplicate domain conflict takes precedence over missing verification evidence", async () => {
   const harness = createMutationHarness({
     domains: [{
@@ -403,7 +472,8 @@ type StoredDomain = {
 
 function createRecordingDrizzleDomainDatabase(input: {
   domains?: StoredDomain[]
-  selectResults: Array<() => StoredDomain[]>
+  selectResults: Array<() => unknown[]>
+  updateTarget?: { orgId: string; domainId: string }
 }) {
   let domains = structuredClone(input.domains ?? [])
   let selectIndex = 0
@@ -415,6 +485,9 @@ function createRecordingDrizzleDomainDatabase(input: {
           return this
         },
         where() {
+          return this
+        },
+        for() {
           return this
         },
         async limit() {
@@ -438,7 +511,11 @@ function createRecordingDrizzleDomainDatabase(input: {
           return {
             async where() {
               calls.push(`update:${String(update.domain ?? "settings")}`)
-              domains = domains.map((entry) => ({ ...entry, ...update }))
+              domains = domains.map((entry) => (
+                entry.org_id === input.updateTarget?.orgId && entry.id === input.updateTarget.domainId
+                  ? { ...entry, ...update }
+                  : entry
+              ))
             },
           }
         },
@@ -476,6 +553,7 @@ test("production mutation store composes verification and trial sync with the ex
   let harness: ReturnType<typeof createRecordingDrizzleDomainDatabase>
   harness = createRecordingDrizzleDomainDatabase({
     selectResults: [
+      () => [{ id: "org_1" }],
       () => [],
       () => harness.domains,
     ],
@@ -536,11 +614,20 @@ test("production mutation store rolls a domain rename back when tx-scoped trial 
   }
   let harness: ReturnType<typeof createRecordingDrizzleDomainDatabase>
   harness = createRecordingDrizzleDomainDatabase({
-    domains: [original],
+    domains: [
+      original,
+      {
+        ...original,
+        id: "domain_other",
+        org_id: "org_other",
+        domain: "untouched.example.com",
+      },
+    ],
+    updateTarget: { orgId: "org_1", domainId: "domain_1" },
     selectResults: [
+      () => [{ id: "org_1" }],
       () => harness.domains,
       () => [],
-      () => harness.domains,
     ],
   })
   const factoryTransactions: unknown[] = []
@@ -586,6 +673,7 @@ test("production mutation store rolls a domain rename back when tx-scoped trial 
   assert.ok(harness.calls.indexOf("update:new.example.com") < harness.calls.indexOf("trial:sync"))
   assert.equal(harness.calls.at(-1), "outer:rollback")
   assert.equal(harness.domains[0].domain, "old.example.com")
+  assert.equal(harness.domains[1].domain, "untouched.example.com")
 })
 
 Object.assign(process.env, {
@@ -791,6 +879,20 @@ test("admin domain rename enforces proof while settings and same-domain patches 
       verificationCallsAfterDeniedRename,
     )
     assert.equal(unverified.calls.includes("trial:org_1"), false)
+
+    const auditCountBeforeNoOp = audits.length
+    const updateCountBeforeNoOp = unverified.calls.filter((entry) => entry.startsWith("update:")).length
+    const noOpPatch = await fetch(url, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: false, selfSignupEnabled: true }),
+    })
+    assert.equal(noOpPatch.status, 200)
+    assert.equal(audits.length, auditCountBeforeNoOp)
+    assert.equal(
+      unverified.calls.filter((entry) => entry.startsWith("update:")).length,
+      updateCountBeforeNoOp,
+    )
 
     mutationService = verified.service
     const acceptedRename = await fetch(url, {
