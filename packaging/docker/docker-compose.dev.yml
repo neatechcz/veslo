@@ -99,6 +99,7 @@ services:
       BETTER_AUTH_SECRET: dev_only_den_better_auth_secret_key_32b__
       BETTER_AUTH_URL: http://host.docker.internal:${DEN_PORT:-8788}
       CORS_ORIGINS: http://127.0.0.1:${VESLO_AI_GATEWAY_PORT:-4034},http://localhost:${VESLO_AI_GATEWAY_PORT:-4034},http://127.0.0.1:${DEN_PORT:-8788},http://localhost:${DEN_PORT:-8788}
+      # Isolated local Docker development may disable email verification because it has no Lettr transport.
       DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false"
       PROVISIONER_MODE: stub
     healthcheck:

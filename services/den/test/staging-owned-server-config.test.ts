@@ -1,5 +1,9 @@
 import assert from "node:assert/strict"
-import { existsSync, readFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 import test from "node:test"
 
 const repoRootUrl = new URL("../../..", import.meta.url)
@@ -16,6 +20,83 @@ function parseEnvTemplate(contents: string): Map<string, string> {
     values.set(line.slice(0, separatorIndex), line.slice(separatorIndex + 1))
   }
   return values
+}
+
+function readWorkflowEmailActivationValidationBlock(workflow: string) {
+  const deployStep = workflow.match(
+    /- name: Deploy Compose stack[\s\S]*?(?=\n\s+- name: Verify public)/,
+  )?.[0]
+  assert.ok(deployStep)
+
+  const script = deployStep
+    .split("\n")
+    .slice(2)
+    .map((line) => line.replace(/^ {10}/, ""))
+    .join("\n")
+  const functionsStart = script.indexOf("require_nonempty_effective_env_value()")
+  const callsStart = script.indexOf("compose_environment=\"")
+  const composeFunctionStart = script.indexOf("\ncompose() {", callsStart)
+  assert.ok(functionsStart >= 0 && callsStart > functionsStart && composeFunctionStart > callsStart)
+  return script.slice(functionsStart, composeFunctionStart).trimEnd()
+}
+
+function runWorkflowEmailActivationValidation(workflow: string, envContents: string) {
+  const validationBlock = readWorkflowEmailActivationValidationBlock(workflow)
+
+  const tempDirectory = mkdtempSync(join(tmpdir(), "veslo-email-activation-env-"))
+  const envPath = join(tempDirectory, "deployment.env")
+  const composePath = join(tempDirectory, "compose.yml")
+  const dockerStubPath = join(tempDirectory, "docker")
+  const sudoStubPath = join(tempDirectory, "sudo")
+  writeFileSync(envPath, envContents, "utf8")
+  writeFileSync(composePath, "services:\n  validation-probe:\n    image: scratch\n", "utf8")
+  writeFileSync(dockerStubPath, [
+    "#!/usr/bin/env bash",
+    "set -euo pipefail",
+    "args=(\"$@\")",
+    "for ((index = 0; index < ${#args[@]}; index++)); do",
+    "  if [ \"${args[$index]}\" = \"-f\" ]; then",
+    "    args[$((index + 1))]=\"$VESLO_TEST_COMPOSE_FILE\"",
+    "  fi",
+    "done",
+    "exec \"$VESLO_TEST_REAL_DOCKER\" \"${args[@]}\"",
+    "",
+  ].join("\n"), "utf8")
+  writeFileSync(sudoStubPath, [
+    "#!/usr/bin/env bash",
+    "set -euo pipefail",
+    "if [ \"${1:-}\" = \"-n\" ]; then shift; fi",
+    "exec \"$@\"",
+    "",
+  ].join("\n"), "utf8")
+  chmodSync(dockerStubPath, 0o755)
+  chmodSync(sudoStubPath, 0o755)
+  try {
+    const realDocker = spawnSync("bash", ["-c", "command -v docker"], { encoding: "utf8" }).stdout.trim()
+    assert.ok(realDocker, "Docker executable must be available for effective Compose validation")
+    const validationEnv = {
+      ...process.env,
+      PATH: `${tempDirectory}:${process.env.PATH ?? ""}`,
+      OWNED_SERVER_ENV_FILE: envPath,
+      STAGING_SERVER_ENV_FILE: envPath,
+      STAGING_COMPOSE_PROJECT: "veslo-email-activation-validation",
+      VESLO_TEST_COMPOSE_FILE: composePath,
+      VESLO_TEST_REAL_DOCKER: realDocker,
+    }
+    delete validationEnv.LETTR_API_KEY
+    delete validationEnv.AUTH_EMAIL_ADDRESS
+    delete validationEnv.DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED
+    delete validationEnv.VESLO_TEST_UNSET_LETTR
+    delete validationEnv.VESLO_TEST_UNSET_ADDRESS
+
+    return spawnSync("bash", ["-c", `set -euo pipefail\n${validationBlock}`], {
+      cwd: fileURLToPath(repoRootUrl),
+      encoding: "utf8",
+      env: validationEnv,
+    })
+  } finally {
+    rmSync(tempDirectory, { force: true, recursive: true })
+  }
 }
 
 test("owned-server has separate durable staging and local rehearsal env templates", () => {
@@ -168,5 +249,152 @@ test("owned-server deploy workflows wait for database health before migrations",
       /wait_for_compose_health den-db[\s\S]+wait_for_compose_health ai-gateway-db[\s\S]+pnpm --filter @neatech\/den db:migrate/,
       `${workflowPath} must wait for both databases before Den migrations`,
     )
+  }
+})
+
+test("production owned-server templates require configured email activation", () => {
+  for (const envPath of [
+    "packaging/owned-server/env.example",
+    "packaging/owned-server/env.staging.example",
+  ]) {
+    const envTemplate = read(envPath)
+
+    for (const requiredText of [
+      "DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true",
+      "LETTR_API_KEY=replace_with_lettr_api_key",
+      "AUTH_EMAIL_ADDRESS=auth@veslo.work",
+    ]) {
+      assert.match(
+        envTemplate,
+        new RegExp(requiredText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        `${envPath} must ship a fail-closed email activation value for ${requiredText.split("=")[0]}`,
+      )
+    }
+  }
+
+  const compose = read("packaging/owned-server/compose.yml")
+  assert.match(compose, /LETTR_API_KEY:\s*\$\{LETTR_API_KEY:-\}/)
+  assert.match(compose, /AUTH_EMAIL_ADDRESS:\s*\$\{AUTH_EMAIL_ADDRESS:-\}/)
+  assert.match(
+    compose,
+    /DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED:\s*\$\{DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED:-true\}/,
+  )
+
+  const rehearsalEnv = read("packaging/owned-server/env.rehearsal.example")
+  assert.match(rehearsalEnv, /isolated rehearsal may disable email verification/i)
+  assert.match(rehearsalEnv, /DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=false/)
+
+  const localDocker = read("packaging/docker/docker-compose.dev.yml")
+  assert.match(localDocker, /isolated local Docker development may disable email verification/i)
+  assert.match(localDocker, /DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false"/)
+})
+
+test("owned-server deploy workflows validate email activation before starting Den", () => {
+  for (const [workflowPath, envFileVariable] of [
+    [".github/workflows/deploy-owned-server.yml", "OWNED_SERVER_ENV_FILE"],
+    [".github/workflows/deploy-staging-server.yml", "STAGING_SERVER_ENV_FILE"],
+  ] as const) {
+    const workflow = read(workflowPath)
+    const deployStep = workflow.match(
+      /- name: Deploy Compose stack[\s\S]*?(?=\n\s+- name: Verify public)/,
+    )?.[0]
+
+    assert.ok(deployStep, `${workflowPath} must contain its Compose deploy step`)
+    assert.match(deployStep, /require_nonempty_effective_env_value\(\)/)
+    assert.match(deployStep, /require_email_verification_enabled\(\)/)
+    assert.match(deployStep, new RegExp(`--env-file "\\$${envFileVariable}" config --environment`))
+    assert.match(deployStep, /require_nonempty_effective_env_value LETTR_API_KEY/)
+    assert.match(deployStep, /require_nonempty_effective_env_value AUTH_EMAIL_ADDRESS/)
+    assert.match(deployStep, /require_email_verification_enabled/)
+    assert.match(deployStep, /Missing required email activation setting: \$key/)
+    assert.match(deployStep, /DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED must be true/)
+    assert.doesNotMatch(deployStep, /\$LETTR_API_KEY|\$AUTH_EMAIL_ADDRESS/)
+
+    const validationIndex = deployStep.indexOf("config --environment")
+    const composeStartIndex = deployStep.indexOf("compose up -d")
+    assert.ok(
+      validationIndex >= 0 && composeStartIndex > validationIndex,
+      `${workflowPath} must reject unsafe email activation config before starting Compose services`,
+    )
+  }
+})
+
+test("owned-server email activation validation uses effective Compose env-file values", {
+  skip: spawnSync("docker", ["compose", "version"]).status === 0 ? false : "Docker Compose is unavailable",
+}, () => {
+  for (const workflowPath of [
+    ".github/workflows/deploy-owned-server.yml",
+    ".github/workflows/deploy-staging-server.yml",
+  ]) {
+    const workflow = read(workflowPath)
+    assert.match(
+      readWorkflowEmailActivationValidationBlock(workflow),
+      /compose_environment="\$\(sudo -n docker compose[\s\S]*config --environment \| awk/,
+      `${workflowPath} harness must execute the unchanged workflow assignment and filter`,
+    )
+    const accepted = runWorkflowEmailActivationValidation(workflow, [
+      "LETTR_API_KEY='not-a-real-secret'",
+      "AUTH_EMAIL_ADDRESS=\"auth@veslo.work\"",
+      "DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=\"true\"",
+      "",
+    ].join("\n"))
+    assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout)
+    assert.doesNotMatch(`${accepted.stdout}\n${accepted.stderr}`, /not-a-real-secret|auth@veslo\.work/)
+
+    for (const [unsafeEnv, expectedError] of [
+      [
+        "AUTH_EMAIL_ADDRESS=auth@veslo.work\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\n",
+        "Missing required email activation setting: LETTR_API_KEY",
+      ],
+      [
+        "LETTR_API_KEY=not-a-real-secret\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\n",
+        "Missing required email activation setting: AUTH_EMAIL_ADDRESS",
+      ],
+      [
+        "LETTR_API_KEY=not-a-real-secret\nAUTH_EMAIL_ADDRESS=auth@veslo.work\n",
+        "DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED must be true",
+      ],
+      [
+        "LETTR_API_KEY=\"\"\nAUTH_EMAIL_ADDRESS=auth@veslo.work\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\n",
+        "Missing required email activation setting: LETTR_API_KEY",
+      ],
+      [
+        "LETTR_API_KEY=not-a-real-secret\nAUTH_EMAIL_ADDRESS=''\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\n",
+        "Missing required email activation setting: AUTH_EMAIL_ADDRESS",
+      ],
+      [
+        "LETTR_API_KEY=   \nAUTH_EMAIL_ADDRESS=auth@veslo.work\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\n",
+        "Missing required email activation setting: LETTR_API_KEY",
+      ],
+      [
+        "LETTR_API_KEY=\"   \"\nAUTH_EMAIL_ADDRESS=auth@veslo.work\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\n",
+        "Missing required email activation setting: LETTR_API_KEY",
+      ],
+      [
+        "LETTR_API_KEY=${VESLO_TEST_UNSET_LETTR:-}\nAUTH_EMAIL_ADDRESS=auth@veslo.work\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\n",
+        "Missing required email activation setting: LETTR_API_KEY",
+      ],
+      [
+        "LETTR_API_KEY=not-a-real-secret\nAUTH_EMAIL_ADDRESS=${VESLO_TEST_UNSET_ADDRESS:-}\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\n",
+        "Missing required email activation setting: AUTH_EMAIL_ADDRESS",
+      ],
+      [
+        "LETTR_API_KEY=not-a-real-secret\nAUTH_EMAIL_ADDRESS=auth@veslo.work\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=false\n",
+        "DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED must be true",
+      ],
+      [
+        "LETTR_API_KEY=not-a-real-secret\nLETTR_API_KEY=\"\"\nAUTH_EMAIL_ADDRESS=auth@veslo.work\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\n",
+        "Missing required email activation setting: LETTR_API_KEY",
+      ],
+      [
+        "LETTR_API_KEY=not-a-real-secret\nAUTH_EMAIL_ADDRESS=auth@veslo.work\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true\nDESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=\"false\"\n",
+        "DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED must be true",
+      ],
+    ] as const) {
+      const rejected = runWorkflowEmailActivationValidation(workflow, unsafeEnv)
+      assert.notEqual(rejected.status, 0)
+      assert.match(rejected.stdout, new RegExp(expectedError))
+      assert.doesNotMatch(`${rejected.stdout}\n${rejected.stderr}`, /not-a-real-secret|auth@veslo\.work/)
+    }
   }
 })

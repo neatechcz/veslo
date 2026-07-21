@@ -96,6 +96,50 @@ jobs:
           test -f packaging/owned-server/compose.yml
           test -f "packaging/owned-server/${STAGING_SERVER_CADDYFILE#./}"
 
+          require_nonempty_effective_env_value() {
+            key="$1"
+            found=0
+            valid=0
+            while IFS= read -r line; do
+              case "$line" in
+                "$key="*)
+                  found=1
+                  value="${line#*=}"
+                  if [[ "$value" =~ [^[:space:]] ]]; then valid=1; else valid=0; fi
+                  ;;
+              esac
+            done <<< "$compose_environment"
+
+            if [ "$found" -ne 1 ] || [ "$valid" -ne 1 ]; then
+              echo "::error::Missing required email activation setting: $key"
+              exit 1
+            fi
+          }
+
+          require_email_verification_enabled() {
+            found=0
+            enabled=0
+            while IFS= read -r line; do
+              case "$line" in
+                "DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED="*)
+                  found=1
+                  value="${line#*=}"
+                  if [ "$value" = "true" ]; then enabled=1; else enabled=0; fi
+                  ;;
+              esac
+            done <<< "$compose_environment"
+
+            if [ "$found" -ne 1 ] || [ "$enabled" -ne 1 ]; then
+              echo "::error::DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED must be true for staging deployment"
+              exit 1
+            fi
+          }
+
+          compose_environment="$(sudo -n docker compose -p "$STAGING_COMPOSE_PROJECT" -f packaging/owned-server/compose.yml --env-file "$STAGING_SERVER_ENV_FILE" config --environment | awk '/^(LETTR_API_KEY|AUTH_EMAIL_ADDRESS|DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED)=/')"
+          require_nonempty_effective_env_value LETTR_API_KEY
+          require_nonempty_effective_env_value AUTH_EMAIL_ADDRESS
+          require_email_verification_enabled
+
           compose() {
             VESLO_CADDYFILE="$STAGING_SERVER_CADDYFILE" \
               sudo -n docker compose \

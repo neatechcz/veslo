@@ -35,9 +35,10 @@ cp .env.development .env
 - `WORKER_TOKEN_ENCRYPTION_KEY` optional key material for encrypting worker host/client tokens at rest (falls back to `BETTER_AUTH_SECRET` when unset)
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
-- `LETTR_API_KEY` optional Lettr API key used to send Better Auth verification and password reset emails. Blank or unset values disable email verification and password reset delivery.
-- `AUTH_EMAIL_ADDRESS` optional sender address for auth emails, for example `noreply@mail.veslo.work`. Blank or unset values disable email verification and password reset delivery.
+- `LETTR_API_KEY` Lettr API key used to send Better Auth verification and password reset emails. It is required whenever email verification is enabled and in every production process.
+- `AUTH_EMAIL_ADDRESS` sender address for auth emails, for example `noreply@mail.veslo.work`. It is required whenever email verification is enabled and in every production process.
 - `AUTH_EMAIL_FROM_NAME` optional sender display name for auth emails, for example `Veslo`.
+- `DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` email/password activation policy. Production DEN forces the verification policy to enabled even when the raw configured value is `false`. For this policy, DEN startup fails only for missing or blank Lettr transport/sender values or invalid verification-flag syntax. The owned-server deployment workflows separately require the effective flag to be exactly `true` and reject `false` before deployment. Local development may explicitly set this to `false` when it intentionally runs without mail delivery.
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS). Hosted environments can leave it blank to derive the app and AI Gateway origins from `VESLO_DEPLOYMENT_DOMAIN`. In production, wildcard `*` is rejected. Desktop CORS origins (`tauri://localhost`, `http://localhost:1420`, `http://localhost:1421`) are appended server-side to the Express CORS allowlist.
 - `PROVISIONER_MODE` `stub`, `render`, or `owned-server`
@@ -103,7 +104,41 @@ access tokens, or refresh tokens.
 
 ## Auth setup (Better Auth)
 
-Set `LETTR_API_KEY` and `AUTH_EMAIL_ADDRESS` to enable email verification and password reset delivery through Lettr. `AUTH_EMAIL_FROM_NAME` is optional. Blank or unset values disable email verification and password reset delivery.
+Production DEN forces email verification on even when the raw configured
+`DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED` value is `false`. For this policy, DEN
+startup fails only for missing or blank `LETTR_API_KEY`/`AUTH_EMAIL_ADDRESS`
+transport values or invalid verification-flag syntax. Both owned-server
+deployment workflows apply a stricter deploy policy: the Compose-parsed
+effective flag must be exactly
+`true`, and an explicit `false` is rejected before deployment.
+`AUTH_EMAIL_FROM_NAME` is optional. Local development may explicitly set
+`DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=false` when the environment is intentionally
+isolated and does not run Lettr.
+
+Email/password signup waits for Lettr to accept the verification message, has a
+30-second provider timeout, and returns no authenticated session, cookie, or
+bearer token before verification. A provider rejection or timeout returns the
+safe `502 VERIFICATION_EMAIL_DELIVERY_FAILED` response; it never reports the
+message as sent and never exposes the provider response or API key.
+
+Delivery accounting is request scoped: the safe 502 result belongs only to the originating native signup or sign-in request. Concurrent accepted and failed delivery requests cannot contaminate one another or change another request's response.
+
+An unverified sign-in remains blocked with `403 EMAIL_NOT_VERIFIED`. A valid
+email/password attempt also requests a fresh verification message, which is the
+hosted page's secure resend mechanism. The public Better Auth anonymous resend
+route is disabled, so a resend requires password confirmation and preserves the
+normal credential checks. Sign-in/signup requests use Better Auth's production
+rate limit: three requests per IP and auth path in ten seconds, followed by
+`429`. Its current storage is process memory and therefore per DEN replica; the
+owned-server deployment runs one DEN replica, and any future horizontal scale
+must introduce shared rate-limit storage before relying on the same aggregate
+limit.
+
+After the link records `emailVerified=true`, the user signs in and only then can
+the hosted page authorize the desktop one-time-code handoff. The common DEN
+session boundary also rejects legacy unverified cookie and bearer sessions,
+including Managed AI access, with `403 email_verification_required`; both the
+current and legacy desktop handoff routes use that boundary.
 
 The explicit desktop onboarding page (`GET /?desktopOnboarding=1`) supports the desktop browser auth flow end to end:
 
@@ -113,6 +148,21 @@ The explicit desktop onboarding page (`GET /?desktopOnboarding=1`) supports the 
 - reset-password completion from emailed links
 
 The default root (`GET /`) returns neutral service metadata. It does not serve an API demo or expose mutating control-plane actions.
+
+Run the isolated acceptance lanes from the repository root. They own their
+temporary database, real DEN process, Lettr capture service, and cleanup:
+
+```bash
+pnpm --dir services/den test:email-verification:integration
+pnpm --dir packages/e2e test:email-verification:browser
+```
+
+After the desktop-runtime preflight and Pilot-enabled build described in the
+testing playbook, run the real Tauri handoff lane:
+
+```bash
+pnpm --dir packages/e2e test:pilot:email-verification-handoff
+```
 
 Generate Better Auth schema (Drizzle):
 
@@ -206,7 +256,7 @@ existing package versions.
 - `GET /admin/api/debug-logs/export`
   - Platform-admin-only JSONL export for the active debug-log filters.
 - `POST /v1/desktop-auth/handoff`
-  - Requires an authenticated browser session (Better Auth cookie). Returns a single-use, short-lived one-time code that the desktop app can exchange for credentials.
+  - Requires an authenticated, email-verified browser session (Better Auth cookie). Returns a single-use, short-lived one-time code that the desktop app can exchange for credentials.
   - Respects `x-veslo-org-id` header to select the active organization.
 - `POST /v1/desktop-auth/start`
   - Starts desktop browser authentication with PKCE.
@@ -230,3 +280,9 @@ owned-server env file referenced by `OWNED_SERVER_ENV_FILE`, not in a retired
 Render deploy workflow. Render and Vercel worker-provisioning variables may
 still be present as rollback or worker-domain configuration, but they are not
 the production Den deployment mechanism.
+
+The production and staging workflows use Docker Compose's env-file parser, then
+validate the effective `LETTR_API_KEY`, `AUTH_EMAIL_ADDRESS`, and
+`DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=true` values before starting DEN. This
+check rejects an effective `false` value and is unconditional; it does not
+depend on whether the optional backup scheduler is installed.

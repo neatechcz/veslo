@@ -34,15 +34,23 @@ pgrep -fl "pnpm -w dev:ui|pnpm --filter @neatech/veslo-ui dev|pnpm --filter @nea
 
 If a match looks like a user-launched production/bundled app or otherwise cannot be identified as an internally started dev/test runtime, stop and report what is running instead of force-killing it.
 
-### Convenience script
+### Manual sidecar ownership audit
 
-`scripts/veslo-kill-zombies.sh` automates steps 1–3 above for the sidecar set (veslo-server, veslo-orchestrator, veslo-code-router, veslo-code). It preserves the currently-running `pnpm dev` process group by default and only terminates orphans from earlier sessions:
+There is no repository convenience script for sidecar cleanup. When the main
+preflight finds a possible `veslo-server`, `veslo-orchestrator`,
+`veslo-code-router`, or `veslo-code` child, audit candidates read-only before
+the termination step:
 
 ```bash
-./scripts/veslo-kill-zombies.sh           # dry run (default)
-./scripts/veslo-kill-zombies.sh --kill    # actually terminate orphans
-./scripts/veslo-kill-zombies.sh --all     # terminate everything, including the live dev session
+ps -axo pid=,ppid=,pgid=,command= | rg 'veslo-server|veslo-orchestrator|veslo-code-router|veslo-code'
+
+for pid in <candidate-pids>; do
+  ps -p "$pid" -o pid=,ppid=,pgid=,command=
+  lsof -a -p "$pid" -d cwd -Fn
+done
 ```
+
+For each candidate, verify the exact PID, its parent PID/process group, working directory, and full command before changing process state. Terminate only an internally started dev/test process from this repo whose ownership is established; a name match by itself is not ownership evidence. If the parent or working directory is ambiguous, stop and report it rather than using a broader process match.
 
 In debug builds (`pnpm dev`), Veslo also runs an equivalent best-effort cleanup at startup — orphan sidecars whose process group differs from the booting Tauri process are SIGTERM'd before the new sidecars spawn. Release builds do not run this cleanup so a shipped Veslo never kills unrelated processes.
 
