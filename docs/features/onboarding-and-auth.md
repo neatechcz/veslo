@@ -47,7 +47,11 @@ The hosted desktop onboarding page also caches the current desktop auth transact
 
 DEN signup runs authorization before Better Auth creates the user, including email/password and social provider signups. An enabled organization domain with self-signup enabled can auto-activate a member only while the organization has an available seat. Invite signup checks that organization's seat capacity before user creation, and domain-joined and invite-joined signups receive active organization membership without a personal default organization.
 
-Temporary signup policy, as of 2026-06-21: if the email has no enabled self-signup domain and no invite token, signup is allowed and the post-create hook creates the user's normal default personal organization. This temporarily opens personal-domain signup such as Gmail while preserving existing invite-token validation and organization seat-limit enforcement.
+When signup is authorized to bootstrap a previously unclaimed company domain, DEN atomically creates the organization, the first user's organization-admin membership, an enabled self-signup domain rule, and the automatic organization trial. Domain matching uses the normalized exact value after `@`: `team.example.com` does not claim `example.com`. Later users with the same exact domain join the organization as members, subject to its seat limit.
+
+The domain's unique index serializes concurrent first signups. The winning transaction creates the organization; a losing signup rolls back its provisional organization and joins the winning domain owner. Signup never re-enables a disabled or invite-only domain. A valid organization invitation remains an independent path and does not create another organization or domain.
+
+Temporary integration state, as of 2026-07-21: the pre-create gate still permits an unmatched domain to enter organization bootstrap. The separate corporate-email signup policy must narrow that path to company domains and reject personal domains without removing bootstrap for the first eligible company user.
 
 Key persistent settings:
 
