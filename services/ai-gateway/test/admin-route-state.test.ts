@@ -172,7 +172,7 @@ test("platform authority does not grant global user actions inside organization 
     editProfile: false,
     editMembership: false,
     editAiAccess: true,
-    setPlatformAdmin: false,
+    setPlatformAdmin: true,
     disableUser: false,
     deleteUser: false,
   });
@@ -194,7 +194,11 @@ test("platform authority does not grant global user actions inside organization 
   );
   for (const action of ["create-user", "edit-user-profile", "set-platform-admin", "disable-user", "delete-user"]) {
     assert.equal(routes.canPerformAdminRouteAction(members, access, action), false, action);
-    assert.equal(routes.canPerformAdminRouteAction(aiAccess, access, action), false, action);
+    assert.equal(
+      routes.canPerformAdminRouteAction(aiAccess, access, action),
+      action === "set-platform-admin",
+      action,
+    );
   }
   assert.equal(routes.canPerformAdminRouteAction(members, access, "edit-membership"), true);
   assert.equal(routes.canPerformAdminRouteAction(aiAccess, access, "edit-ai-access"), true);
@@ -233,7 +237,15 @@ test("user update payloads contain only fields authorized by the canonical route
     routes.buildAdminUserUpdatePayload(members, platformAccess, input),
     { orgId: "org_1", orgRole: "organization_admin" },
   );
-  assert.equal(routes.buildAdminUserUpdatePayload(aiAccess, platformAccess, input), null);
+  assert.deepEqual(
+    routes.buildAdminUserUpdatePayload(aiAccess, platformAccess, input),
+    { platformAdmin: true },
+  );
+  assert.equal(routes.buildAdminUserUpdatePayload(aiAccess, {
+    platformAdmin: false,
+    organizationIds: ["org_1"],
+    capabilities: ["managedAiUserAccess"],
+  }, input), null);
 });
 
 test("route mutation tokens reject completions after every platform and organization scope change", () => {

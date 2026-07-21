@@ -179,12 +179,13 @@ export function adminUserRoutePermissions(route, access) {
     && canAccessAdminRoute(route, access);
   const managedAiAccess = Array.isArray(access?.capabilities)
     && access.capabilities.includes("managedAiUserAccess");
+  const organizationAiAccess = organizationRouteAllowed && route.page === "ai-access";
   return {
     createUser: platformUsers,
     editProfile: platformUsers,
     editMembership: platformUsers || (organizationRouteAllowed && route.page === "members"),
-    editAiAccess: managedAiAccess && organizationRouteAllowed && route.page === "ai-access",
-    setPlatformAdmin: platformUsers,
+    editAiAccess: managedAiAccess && organizationAiAccess,
+    setPlatformAdmin: platformUsers || (organizationAiAccess && access?.platformAdmin === true),
     disableUser: platformUsers,
     deleteUser: platformUsers,
   };
@@ -233,6 +234,11 @@ export function buildAdminUserUpdatePayload(route, access, payload) {
     return {
       orgId: route.organizationId,
       orgRole: payload.orgRole,
+    };
+  }
+  if (permissions.setPlatformAdmin) {
+    return {
+      platformAdmin: payload.platformAdmin,
     };
   }
   return null;

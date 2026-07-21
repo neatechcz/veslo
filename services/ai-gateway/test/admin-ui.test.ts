@@ -1380,7 +1380,7 @@ test("GET /admin/app.js checks the HTTP-only admin cookie before showing the log
   }
 })
 
-test("GET /admin/platform-users keeps model choice out of the admin-managed user access editor", async () => {
+test("GET /admin/platform-users keeps all infrastructure choice out of the member AI access editor", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -1397,17 +1397,16 @@ test("GET /admin/platform-users keeps model choice out of the admin-managed user
     const html = await response.text()
     assert.match(html, /AI access/i)
     assert.match(html, /id="user-ai-access-enabled"/)
-    assert.match(html, /id="user-ai-access-provider"/)
-    assert.match(html, /id="user-ai-access-credential"/)
+    assert.match(html, /id="user-platform-admin"/)
+    assert.doesNotMatch(html, /id="user-ai-access-provider"/)
+    assert.doesNotMatch(html, /id="user-ai-access-credential"/)
     assert.doesNotMatch(html, /id="user-ai-access-default-model"/)
     assert.doesNotMatch(html, /id="user-ai-access-model-options"/)
     assert.doesNotMatch(html, /id="user-ai-access-allowed-models"/)
     assert.doesNotMatch(html, />Default model</i)
     assert.doesNotMatch(html, />Allowed models</i)
-    assert.match(html, /Models are managed centrally in AI Infrastructure/i)
+    assert.match(html, /Infrastructure and models are selected automatically/i)
     assert.match(html, /id="user-save-status"/)
-    assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
-    assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
   } finally {
     server.close()
     await once(server, "close")
@@ -2963,7 +2962,7 @@ test("GET /admin/app.js renders credential usage and Codex limits status", async
   }
 })
 
-test("GET /admin/app.js saves user ai access without per-user model authority", async () => {
+test("GET /admin/app.js saves AI access and platform admin through separate toggle-only requests", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -2998,8 +2997,8 @@ test("GET /admin/app.js saves user ai access without per-user model authority", 
     assert.doesNotMatch(script, /\/users\/\$\{encodeURIComponent\([^)]+\)\}\/ai-access/)
     assert.match(saveAccess, /body:\s*JSON\.stringify\(aiAccessInput\)/)
     assert.doesNotMatch(saveAccess, /body:\s*JSON\.stringify\(\{[\s\S]*organizationId/)
-    assert.match(script, /user-ai-access-provider/)
-    assert.match(script, /user-ai-access-credential/)
+    assert.doesNotMatch(script, /user-ai-access-provider/)
+    assert.doesNotMatch(script, /user-ai-access-credential/)
     assert.doesNotMatch(script, /user-ai-access-default-model/)
     assert.doesNotMatch(script, /userAiAccessModelOptions/)
     assert.doesNotMatch(script, /user-ai-access-allowed-models/)
@@ -3007,16 +3006,14 @@ test("GET /admin/app.js saves user ai access without per-user model authority", 
     assert.doesNotMatch(script, /refreshSelectedAiAccessModels/)
     assert.doesNotMatch(script, /defaultModel:/)
     assert.doesNotMatch(script, /allowedModels:/)
-    assert.match(script, /availableCredentials/)
-    assert.match(script, /Select assigned credential/)
-    assert.match(script, /No eligible Codex credential/)
-    assert.match(script, /No healthy Codex credentials with OK upstream status are available for assignment\./)
     assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
-    assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(
       script,
-      /async function saveUserAiAccess\([\s\S]*input = null,[\s\S]*mutation = beginCurrentRouteMutation[\s\S]*enabled: input\.enabled === true,[\s\S]*provider:[\s\S]*credentialId:[\s\S]*fetchJson\(aiAccessMemberPath\(selection\)/,
+      /async function saveUserAiAccess\([\s\S]*input = null,[\s\S]*mutation = beginCurrentRouteMutation[\s\S]*enabled: input\.enabled === true[\s\S]*fetchJson\(aiAccessMemberPath\(selection\)/,
     )
+    assert.doesNotMatch(saveAccess, /provider:|credentialId:/)
+    assert.match(saveUserSource, /body:\s*JSON\.stringify\(updatePayload\)/)
+    assert.match(saveUserSource, /await loadRouteData\(state\.route\)[\s\S]*Unable to save user:/)
     assert.match(
       script,
       /async function saveUser\(\) \{[\s\S]*const canEditAiAccess = permissions\.editAiAccess && !wasCreating;[\s\S]*await saveUserAiAccess\(targetUser\.id, aiAccessInput, mutation\)/,

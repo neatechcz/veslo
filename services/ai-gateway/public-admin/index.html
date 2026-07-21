@@ -714,7 +714,7 @@
               <option value="member">Member</option>
             </select>
           </label>
-          <label class="switch-row" data-platform-admin-control data-user-global-control>
+          <label class="switch-row" data-platform-admin-control>
             <span>Platform admin</span>
             <input id="user-platform-admin" type="checkbox" />
           </label>
@@ -731,24 +731,8 @@
               <span>Enable AI access</span>
               <input id="user-ai-access-enabled" type="checkbox" />
             </label>
-            <label>
-              <span>Assigned provider</span>
-              <select id="user-ai-access-provider" class="input">
-                <option value="">Not assigned</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="codex_oauth">Codex / ChatGPT runtime</option>
-                <option value="openai_compatible">OpenAI-compatible provider</option>
-              </select>
-            </label>
-            <label>
-              <span>Assigned credential</span>
-              <select id="user-ai-access-credential" class="input">
-                <option value="">Select assigned credential</option>
-              </select>
-            </label>
-            <p class="editor-note muted">Models are managed centrally in AI Infrastructure. User access only controls whether this user can use the platform model and which compatible credential is assigned.</p>
-            <p id="user-ai-access-status" class="editor-note muted">Assignments are enforced by the gateway for this signed-in user, including Codex OAuth inference proxying.</p>
+            <p class="editor-note muted">Infrastructure and models are selected automatically from AI Infrastructure.</p>
+            <p id="user-ai-access-status" class="editor-note muted">This switch controls whether the user may use the platform-managed AI service.</p>
           </section>
         </form>
         <div class="button-row modal-actions">
