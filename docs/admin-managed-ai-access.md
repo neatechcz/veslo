@@ -9,29 +9,32 @@ This flow replaces the old user-managed BYOK provider/model settings in Veslo.
 - The embedded DEN managed-AI admin is retired. DEN `/admin` page requests redirect to the matching standalone AI Gateway `/admin` page; DEN keeps backend APIs and storage for auth, users, organizations, domains, invites, memberships, platform roles, and seat limits.
 - The standalone AI Gateway owns effective AI access for each signed-in Den user.
 - The only user assignment control is `enabled`. Provider, credential, and model routing are technical Gateway state derived from platform infrastructure, not client input.
-- The global platform model policy separately controls the enabled backend
-  models and exactly one active fallback model.
+- The global platform model policy may retain an infrastructure catalog of enabled backend models, but exactly one global active model is the exclusive runtime model authority.
 - There are no custom per-user or per-organization Managed-AI model policies.
-  The Gateway publishes the intersection of the assigned user's same-provider
-  roster and current platform `enabledModels`; an app may request one of those
-  published models, while an omitted model uses the active fallback and every
-  other model, provider, or credential override is rejected.
+  A user-supplied model cannot switch the runtime model. The Gateway uses the
+  global active model and rejects a conflicting model, provider, or credential
+  override.
 
 ## Runtime flow
 
 1. The user signs into the Veslo app with the existing browser-based Den flow.
 2. The app calls `GET /ai-gateway/me/ai-access` on `packages/server` with the Den bearer token and authenticated organization id.
 3. `packages/server` proxies that to the standalone AI Gateway's `GET /api/me/ai-access` endpoint. Defaults derive the gateway from `VESLO_DEPLOYMENT_DOMAIN`, using `https://ai.veslo.work` for production and `https://ai.staging.veslo.work` for staging unless a full URL override is set.
-4. The app treats the returned provider, `effectiveModel`, and
-   `selectableModels` roster as Gateway-managed state.
+4. The app treats the returned provider and `effectiveModel` as Gateway-managed state. Self-access keeps `selectableModels` empty because users cannot select an alternative model.
 5. Prompt traffic still goes through the local Veslo server compatibility path.
 6. The local Veslo server forwards managed prompt traffic to standalone AI Gateway.
-7. AI Gateway evaluates the provider request in this order: authenticated session, DEN billing entitlement, user enablement/provider assignment, requested authorized model or global fallback resolution, then credential selection and brokerage. Denial or unavailable billing stops before user access, model, lease, credential, or provider work.
-8. AI Gateway forwards the resolved authorized/fallback model upstream and records usage/audit state against the resolved user, organization, session, and credential.
+7. AI Gateway evaluates the provider request in this order: authenticated session, DEN billing entitlement, user enablement/provider assignment, the single global active model, then credential selection and brokerage. Denial or unavailable billing stops before user access, model, lease, credential, or provider work.
+8. AI Gateway forwards the global active model upstream and records usage/audit state against the resolved user, organization, session, and credential. A user request cannot switch that model.
 
-Credential selection and rotation are separate from model selection. The global policy publishes the eligible same-provider roster and one active fallback; credential health, capability, assignment, and capacity decide which compatible platform credential can serve the resolved model.
+Credential selection and rotation are separate from model selection. The single global active model fixes the provider/model pair; credential health, capability, assignment, and capacity decide which compatible platform credential can serve it.
 
-After authentication and a positive DEN organization entitlement, a missing AI-access record is created lazily as enabled. The Gateway derives its provider and credential from the global platform model policy and current credential capability evidence. An explicitly disabled record is preserved unchanged and never re-enabled by the lazy path. Self-access reads, inference authorization, and organization-qualified admin reads and writes all use the same automatic-access service, so they cannot disagree about the effective assignment.
+The same automatic-access service is entered behind three distinct guards:
+
+- Inference first requires an authenticated session and positive DEN organization entitlement; only then can a missing AI-access record be created lazily as enabled.
+- Self-access (`GET /api/me/ai-access` and its exact-user aliases) runs after an authenticated session without a billing entitlement check. It can initialize a missing record so settings can show the effective access state even when inference billing is unavailable.
+- An organization-qualified admin GET runs only after admin authentication, validation of the target's active membership, and organization authorization, without a billing entitlement check because it reads administrative state rather than authorizing inference.
+
+The Gateway derives enabled access from the global platform model policy and current credential capability evidence. An explicitly disabled record is preserved unchanged and never re-enabled by any lazy path.
 
 Local Veslo server runtime state for this proxy path is owned by
 `packages/server/src/ai-gateway-runtime-owner.ts`. The HTTP transport remains
@@ -47,22 +50,20 @@ Deploy the global-model transition in this order:
 4. Remove per-user model controls from the app and admin UI.
 5. Remove the historical database columns only in a separately approved cleanup after the rollback window closes.
 
-The retained `default_model` and `allowed_models_json` values are rollback-only data. The standalone AI Gateway never uses those columns as runtime model authority. DEN provider inference defaults to `denInferenceMode: "retired"` and returns `den_managed_ai_inference_retired`. The old per-user policy path is available only when a caller explicitly constructs the DEN proxy with the code-level dependency `denInferenceMode: "legacy_rollback"`; there is currently no operator environment switch for that mode. DEN compatibility reads stay mutation-free. The canonical standalone Gateway performs lazy automatic assignment after entitlement instead of depending on DEN signup-time provider resolution. A direct legacy DEN enable request requires an injected server-side automatic-access resolver and fails closed with `user_ai_access_automatic_resolution_unavailable` when that resolver is absent.
+Historical per-user `provider`, `default_model`, and `allowed_models_json` values are retained only for history or rollback. They are not runtime authority in the standalone AI Gateway: enabled reads and inference resolve the current global active model, and self-access exposes no alternative selectable models. DEN provider inference defaults to `denInferenceMode: "retired"` and returns `den_managed_ai_inference_retired`. The old per-user policy path is available only when a caller explicitly constructs the DEN proxy with the code-level dependency `denInferenceMode: "legacy_rollback"`; there is currently no operator environment switch for that mode. DEN compatibility reads stay mutation-free. The canonical standalone Gateway performs lazy automatic assignment at the guarded Gateway entry points instead of depending on DEN signup-time provider resolution. A direct legacy DEN enable request requires an injected server-side automatic-access resolver and fails closed with `user_ai_access_automatic_resolution_unavailable` when that resolver is absent.
 
 ## App behavior
 
 - End users no longer get provider connect/disconnect controls.
 - End users do not get provider connect/disconnect controls or arbitrary model,
   provider, or credential entry.
-- Settings shows the managed AI access summary and a default-off Session model
-  selector preference. It only reveals a composer picker after Gateway publishes
-  two or more eligible models, then lists the complete published roster.
-- A missing assignment becomes enabled lazily after the Gateway authenticates the user and confirms DEN organization entitlement. Infrastructure can still be unavailable when no compatible credential exists; that is an explicit availability failure, not an implicit user denial.
+- Settings shows the read-only managed AI access summary. Self-access returns the global active model as `effectiveModel` and an empty `selectableModels` array, so it does not expose alternative selectable models.
+- A missing assignment can become enabled lazily on authenticated self-access without a billing check. Inference performs the separate DEN entitlement check before it reaches the same initializer. Infrastructure can still be unavailable when no compatible credential exists; that is an explicit availability failure, not an implicit user denial.
 - The desktop app caches a non-secret local proof of the user's managed-AI policy for 3 days in `${VESLO_APP_DATA_DIR or app_data_dir()}/access-proofs.v1.json`. This avoids repeatedly calling `GET /ai-gateway/me/ai-access` during normal app flow and restart without adding UI. The file stores policy metadata only; Den and gateway bearer tokens are never persisted there.
 - Generated project OpenCode config must also stay non-secret: provider routing points at the local Veslo server and references `{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}` for local auth. Managed gateway bearer tokens stay in local Veslo server runtime memory and are attached by the proxy.
 - The authenticated Den organization id follows the same local runtime-only boundary. Access priming binds it to the actor token in memory; provider proxying strips caller-supplied organization headers and injects the bound id. It is never written to OpenCode provider config.
 - Standalone AI Gateway is authoritative for inference, AI-access assignments,
-  the live authorized model roster and active fallback, credentials, and usage.
+  the single global active model, credentials, and usage.
   DEN remains authoritative for identity, organization membership, and billing
   entitlement. Prompt traffic still carries the current DEN auth or local Veslo
   server token at runtime, and failed/no-access refreshes clear the cached proof
@@ -78,7 +79,7 @@ The retained `default_model` and `allowed_models_json` values are rollback-only 
 - The UI invokes admin AI-access reads and writes only from the canonical Organization AI Access workspace and uses the organization-qualified `GET` and `PUT` routes under `/admin/api/organizations/:organizationId/members/:userId/ai-access`. Server authorization does not trust or require the browser route or referrer: it independently requires managed-AI admin capability, access to the organization named in the API path, and exactly one active target-user membership returned by the scoped organization-member API. Missing, inactive, duplicate, or malformed membership evidence fails closed. The former unqualified `/admin/api/users/:userId/ai-access` routes are removed.
 - For writes, all fallible response preparation completes before the Gateway transaction; the transaction then persists the assignment and its success audit together. The audit uses the authenticated admin user id and validated organization id; if the audit insert fails, the policy write rolls back and the request fails.
 - Organization Audit is a fail-closed facade over DEN-owned organization events and Gateway-owned AI-access events. The Gateway fetches both sources, labels each row with its source, assigns a stable source-qualified id, merges newest-first, and applies one final hard limit. It never returns a partial history when either source is unavailable. Mutations owned by DEN are audited only in DEN and are not duplicated as synthetic Gateway rows.
-- Email/password signup waits for verification and active DEN organization membership; it does not choose provider, credential, or model routing. On the first qualified Gateway access, the same lazy service creates an enabled assignment from the current platform policy and capability evidence. Trusted already-verified social identity follows the same membership prerequisite.
+- Email/password signup waits for verification and active DEN organization membership; it does not choose provider, credential, or model routing. A subsequent authenticated self-access can initialize the assignment without billing, inference can initialize it only after positive entitlement, and an organization-qualified admin read can initialize it only after scoped membership and role authorization. Trusted already-verified social identity follows the same membership prerequisite.
 - Admin edits change only enablement and are marked `admin_assigned`; enabling re-derives current technical routing server-side.
 - Assigned Codex access is lazily repaired by the canonical AI Gateway on the next Codex request, including both `auto_assigned` and `admin_assigned` rows. If the assigned credential is missing, no longer healthy, revoked, permanently unavailable, or currently exhausted, the Gateway selects another healthy eligible Codex credential and updates the user's policy before routing the request. DEN compatibility reads are mutation-free. If no replacement exists, the request fails explicitly and the existing assignment is kept.
 - Automatic Codex routing uses credentials whose provider is `codex_oauth`, whose stored state is `healthy`, and whose capability evidence supports the active platform model. A successful `codex | OK` probe remains eligible even when rate-limit windows cannot be parsed; revoked, draining, unhealthy, invalid-grant, or probe-failing credentials are excluded.
@@ -144,31 +145,11 @@ Use these commands when verifying the admin-managed flow locally or against the 
   cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara@neatech.cz
   ```
 
-  This check may use the global Platform Users directory for lookup. Any
-  AI-access update resolves and validates an active organization membership;
-  pass `--organization-id <organization-id>` when the intended organization is
-  known instead of relying on automatic active-membership resolution.
+  This check may use the global Platform Users directory for lookup. Pass
+  `--organization-id <organization-id>` when the intended organization is known
+  instead of relying on automatic active-membership resolution.
 
-- Assign a live user to OpenAI before a live OpenAI desktop roundtrip:
-
-  ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --organization-id <organization-id> --provider openai
-  VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=gpt-4o-mini pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
-  ```
-
-- Assign a live user to Anthropic before a live Anthropic desktop roundtrip:
-
-  ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --organization-id <organization-id> --provider anthropic
-  VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=anthropic VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=claude-3-7-sonnet-latest pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
-  ```
-
-- Assign a live user to an OpenAI-compatible credential before a live custom-provider desktop roundtrip:
-
-  ```bash
-  cd packages/e2e && pnpm run check:live-admin-user -- --email michal.sara99@gmail.com --organization-id <organization-id> --provider openai_compatible --credential-id <credential-id>
-  VESLO_E2E_EXPECTED_MANAGED_AI_PROVIDER=openai_compatible VESLO_E2E_EXPECTED_MANAGED_AI_MODEL=<custom-model> pnpm test --spec ./specs/den-managed-openai-anthropic.spec.ts
-  ```
+- Before a live inference roundtrip, configure the single global active model and compatible credential in AI Infrastructure, then enable the member with the Organization AI Access toggle. Do not pass provider, credential, or model assignment fields for the user; the API rejects them and the user cannot switch the global runtime model.
 
 - Validate a local Codex `auth.json` without uploading:
 
