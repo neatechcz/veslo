@@ -7,8 +7,9 @@ import { OrganizationAdminRepositoryError } from "../org-admin/repository.js"
 import { normalizeInviteEmail } from "../org-admin/policy.js"
 import { hashOrganizationInviteToken } from "../org-admin/invite-token.js"
 import type { OrgRole } from "../db/schema.js"
+import { SignupOrganizationDomainConflictError } from "./signup-organization.js"
 
-const SIGNUP_DOMAIN_GATE_TEMPORARILY_DISABLED = true
+const SIGNUP_ORGANIZATION_BOOTSTRAP_ENABLED = true
 
 export type SignupAccessError = "domain_not_allowed" | "seat_limit_reached"
 
@@ -27,13 +28,13 @@ export type SignupAccessInput = {
 export type SignupAccessDecision =
   | { ok: true; mode: "domain"; organizationId: string }
   | { ok: true; mode: "invite" }
-  | { ok: true; mode: "personal" }
+  | { ok: true; mode: "organization_bootstrap" }
   | { ok: false; error: SignupAccessError }
 
 export type ResolvedSignupAccessDecision =
   | { ok: true; mode: "domain"; organizationId: string; role: "member" }
   | { ok: true; mode: "invite"; organizationId: string; role: (typeof OrgRole)[number]; inviteToken: string }
-  | { ok: true; mode: "personal" }
+  | { ok: true; mode: "organization_bootstrap" }
   | { ok: false; error: SignupAccessError }
 
 export function decideSignupAccess(input: SignupAccessInput): SignupAccessDecision {
@@ -52,8 +53,8 @@ export function decideSignupAccess(input: SignupAccessInput): SignupAccessDecisi
     return { ok: true, mode: "invite" }
   }
 
-  if (SIGNUP_DOMAIN_GATE_TEMPORARILY_DISABLED) {
-    return { ok: true, mode: "personal" }
+  if (SIGNUP_ORGANIZATION_BOOTSTRAP_ENABLED) {
+    return { ok: true, mode: "organization_bootstrap" }
   }
 
   return { ok: false, error: "domain_not_allowed" }
@@ -129,8 +130,8 @@ export async function resolveEmailSignupAccess(input: EmailSignupAccessInput): P
     if (!decision.ok) {
       return decision
     }
-    if (decision.mode === "personal") {
-      return { ok: true, mode: "personal" }
+    if (decision.mode === "organization_bootstrap") {
+      return { ok: true, mode: "organization_bootstrap" }
     }
     if (decision.mode === "invite") {
       return { ok: false, error: "domain_not_allowed" }
@@ -169,8 +170,8 @@ export async function resolveEmailSignupAccess(input: EmailSignupAccessInput): P
     }
   }
 
-  if (SIGNUP_DOMAIN_GATE_TEMPORARILY_DISABLED) {
-    return { ok: true, mode: "personal" }
+  if (SIGNUP_ORGANIZATION_BOOTSTRAP_ENABLED) {
+    return { ok: true, mode: "organization_bootstrap" }
   }
 
   return { ok: false, error: "domain_not_allowed" }
@@ -234,7 +235,7 @@ async function acceptSignupInviteWithTokenFallback(input: Pick<
 export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUserCreateInput) {
   const email = normalizeInviteEmail(input.user.email)
   if (!email) {
-    return { activatedOrganizationMembership: false, createDefaultOrganization: false }
+    return { activatedOrganizationMembership: false, createSignupOrganization: false }
   }
 
   const matchingDomain = await resolveAllowedDomain(email, input)
@@ -246,7 +247,7 @@ export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUs
       role: "member",
     })
 
-    return { activatedOrganizationMembership: true, createDefaultOrganization: false }
+    return { activatedOrganizationMembership: true, createSignupOrganization: false }
   }
 
   if (input.inviteToken) {
@@ -256,18 +257,18 @@ export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUs
       userId: input.user.id,
       email,
     })
-    return { activatedOrganizationMembership: true, createDefaultOrganization: false }
+    return { activatedOrganizationMembership: true, createSignupOrganization: false }
   }
 
   return {
     activatedOrganizationMembership: false,
-    createDefaultOrganization: SIGNUP_DOMAIN_GATE_TEMPORARILY_DISABLED,
+    createSignupOrganization: SIGNUP_ORGANIZATION_BOOTSTRAP_ENABLED,
   }
 }
 
 export type RunSignupAfterUserCreateSideEffectsInput = CompleteSignupAfterUserCreateInput & {
   name: string
-  ensureDefaultOrg(userId: string, name: string): Promise<unknown>
+  ensureSignupOrganization(userId: string, name: string, email: string): Promise<unknown>
   assignManagedAiAccess(userId: string): Promise<unknown>
   cleanupCreatedAuthUser(userId: string): Promise<void>
 }
@@ -280,8 +281,35 @@ export async function runSignupAfterUserCreateSideEffects(input: RunSignupAfterU
     signupResult = await completeSignupAfterUserCreate(input)
     hasActiveMembership = signupResult.activatedOrganizationMembership
 
-    if (signupResult.createDefaultOrganization) {
-      await input.ensureDefaultOrg(input.user.id, input.name)
+    if (signupResult.createSignupOrganization) {
+      const email = normalizeInviteEmail(input.user.email)
+      if (!email) {
+        throw new OrganizationAdminRepositoryError("domain_not_allowed")
+      }
+
+      try {
+        await input.ensureSignupOrganization(input.user.id, input.name, email)
+      } catch (error) {
+        if (!(error instanceof SignupOrganizationDomainConflictError)) {
+          throw error
+        }
+
+        const matchingDomain = await resolveAllowedDomain(email, input)
+        if (!matchingDomain) {
+          throw new OrganizationAdminRepositoryError("domain_not_allowed")
+        }
+        await input.createOrActivateOrganizationMembership({
+          membershipId: input.createMembershipId(),
+          orgId: matchingDomain.orgId,
+          userId: input.user.id,
+          role: "member",
+        })
+      }
+
+      signupResult = {
+        activatedOrganizationMembership: true,
+        createSignupOrganization: false,
+      }
       hasActiveMembership = true
     }
   } catch (error) {

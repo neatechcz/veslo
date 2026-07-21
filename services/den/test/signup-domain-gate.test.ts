@@ -11,6 +11,7 @@ import {
   createAdminProvisioningSignupHeaders,
   isAdminProvisioningSignupRequest,
 } from "../src/auth/admin-provisioning.js"
+import { SignupOrganizationDomainConflictError } from "../src/auth/signup-organization.js"
 import { OrganizationAdminRepositoryError, type OrganizationAdminInviteRecord } from "../src/org-admin/repository.js"
 
 test("enabled organization domain auto-activates when a seat is available", () => {
@@ -37,7 +38,7 @@ test("enabled organization domain blocks when seat limit is reached", () => {
   )
 })
 
-test("missing enabled domain allows personal signup while domain gate is temporarily disabled", () => {
+test("missing registered domain selects organization bootstrap", () => {
   assert.deepEqual(
     decideSignupAccess({
       matchingDomain: null,
@@ -45,11 +46,11 @@ test("missing enabled domain allows personal signup while domain gate is tempora
       seatLimit: null,
       hasValidInvite: false,
     }),
-    { ok: true, mode: "personal" },
+    { ok: true, mode: "organization_bootstrap" },
   )
 })
 
-test("email signup without an enabled domain or invite is temporarily allowed", async () => {
+test("email signup without an enabled domain or invite selects organization bootstrap", async () => {
   const decision = await resolveEmailSignupAccess({
     email: "person@gmail.com",
     inviteToken: null,
@@ -58,18 +59,18 @@ test("email signup without an enabled domain or invite is temporarily allowed", 
         throw new OrganizationAdminRepositoryError("domain_not_allowed")
       },
       countActiveOrganizationSeats: async () => {
-        throw new Error("domain seat count should not be used for personal signup")
+        throw new Error("domain seat count should not be used for organization bootstrap")
       },
       assertCanActivateOrganizationSeat: async () => {
-        throw new Error("invite seat check should not be used for personal signup")
+        throw new Error("invite seat check should not be used for organization bootstrap")
       },
       resolveValidOrganizationInviteForSignup: async () => {
-        throw new Error("invite lookup should not be used for personal signup")
+        throw new Error("invite lookup should not be used for organization bootstrap")
       },
     },
   })
 
-  assert.deepEqual(decision, { ok: true, mode: "personal" })
+  assert.deepEqual(decision, { ok: true, mode: "organization_bootstrap" })
 })
 
 test("post-create domain signup activates membership and skips default org fallback", async () => {
@@ -102,7 +103,7 @@ test("post-create domain signup activates membership and skips default org fallb
     },
   })
 
-  assert.deepEqual(result, { activatedOrganizationMembership: true, createDefaultOrganization: false })
+  assert.deepEqual(result, { activatedOrganizationMembership: true, createSignupOrganization: false })
   assert.deepEqual(activated, [{
     membershipId: "membership_1",
     orgId: "org_1",
@@ -141,7 +142,7 @@ test("post-create domain signup ignores unrelated invite token and activates dom
     },
   })
 
-  assert.deepEqual(result, { activatedOrganizationMembership: true, createDefaultOrganization: false })
+  assert.deepEqual(result, { activatedOrganizationMembership: true, createSignupOrganization: false })
   assert.deepEqual(activated, [{
     membershipId: "membership_1",
     orgId: "org_1",
@@ -362,7 +363,7 @@ test("post-create invite acceptance accepts legacy pending invites stored with r
     },
   })
 
-  assert.deepEqual(result, { activatedOrganizationMembership: true, createDefaultOrganization: false })
+  assert.deepEqual(result, { activatedOrganizationMembership: true, createSignupOrganization: false })
   assert.equal(acceptedTokenHashes.length, 2)
   assert.notEqual(acceptedTokenHashes[0], "legacy_raw_invite_token")
   assert.equal(acceptedTokenHashes[1], "legacy_raw_invite_token")
@@ -415,7 +416,7 @@ test("post-create invite acceptance rejects submitted stored token hashes as bea
   assert.notEqual(acceptedTokenHashes[0], storedTokenHash)
 })
 
-test("post-create signup without domain or invite creates a default personal org while domain gate is temporarily disabled", async () => {
+test("post-create signup without domain or invite requests organization bootstrap", async () => {
   const result = await completeSignupAfterUserCreate({
     user: { id: "user_1", email: "personal@example.test" },
     inviteToken: null,
@@ -431,7 +432,137 @@ test("post-create signup without domain or invite creates a default personal org
     },
   })
 
-  assert.deepEqual(result, { activatedOrganizationMembership: false, createDefaultOrganization: true })
+  assert.deepEqual(result, { activatedOrganizationMembership: false, createSignupOrganization: true })
+})
+
+test("first signup bootstraps its organization before managed AI assignment", async () => {
+  const calls: string[] = []
+  const result = await runSignupAfterUserCreateSideEffects({
+    user: { id: "user_1", email: "user@team.example.com" },
+    name: "User One",
+    inviteToken: null,
+    createMembershipId: () => "membership_1",
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      throw new OrganizationAdminRepositoryError("domain_not_allowed")
+    },
+    createOrActivateOrganizationMembership: async () => {
+      throw new Error("existing domain membership should not be activated")
+    },
+    acceptOrganizationInvite: async () => {
+      throw new Error("invite should not be accepted")
+    },
+    ensureSignupOrganization: async (userId, name, email) => {
+      calls.push(`bootstrap:${userId}:${name}:${email}`)
+      return "org_1"
+    },
+    assignManagedAiAccess: async () => {
+      calls.push("managed-ai")
+      return true
+    },
+    cleanupCreatedAuthUser: async () => {
+      calls.push("cleanup")
+    },
+  })
+
+  assert.deepEqual(result, { activatedOrganizationMembership: true, createSignupOrganization: false })
+  assert.deepEqual(calls, [
+    "bootstrap:user_1:User One:user@team.example.com",
+    "managed-ai",
+  ])
+})
+
+test("concurrent first signup joins the organization that won the domain claim", async () => {
+  let domainLookups = 0
+  const calls: string[] = []
+  const result = await runSignupAfterUserCreateSideEffects({
+    user: { id: "user_loser", email: "user@team.example.com" },
+    name: "User Loser",
+    inviteToken: null,
+    createMembershipId: () => "membership_loser",
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      domainLookups += 1
+      if (domainLookups === 1) {
+        throw new OrganizationAdminRepositoryError("domain_not_allowed")
+      }
+      return {
+        id: "domain_winner",
+        orgId: "org_winner",
+        domain: "team.example.com",
+        enabled: true,
+        selfSignupEnabled: true,
+        organization: { id: "org_winner", seatLimit: 10 },
+      }
+    },
+    createOrActivateOrganizationMembership: async (input) => {
+      calls.push(`member:${input.orgId}:${input.role}`)
+      return {
+        id: input.membershipId,
+        orgId: input.orgId,
+        userId: input.userId,
+        role: input.role,
+        status: "active",
+        createdAt: new Date("2026-07-21T08:00:00.000Z"),
+      }
+    },
+    acceptOrganizationInvite: async () => {
+      throw new Error("invite should not be accepted")
+    },
+    ensureSignupOrganization: async () => {
+      calls.push("bootstrap")
+      throw new SignupOrganizationDomainConflictError("team.example.com")
+    },
+    assignManagedAiAccess: async () => {
+      calls.push("managed-ai")
+      return true
+    },
+    cleanupCreatedAuthUser: async () => {
+      calls.push("cleanup")
+    },
+  })
+
+  assert.deepEqual(result, { activatedOrganizationMembership: true, createSignupOrganization: false })
+  assert.equal(domainLookups, 2)
+  assert.deepEqual(calls, ["bootstrap", "member:org_winner:member", "managed-ai"])
+})
+
+test("concurrent conflict never re-enables a disabled or invite-only domain", async () => {
+  const calls: string[] = []
+  await assert.rejects(
+    runSignupAfterUserCreateSideEffects({
+      user: { id: "user_loser", email: "user@team.example.com" },
+      name: "User Loser",
+      inviteToken: null,
+      createMembershipId: () => "membership_loser",
+      resolveEnabledOrganizationDomainForEmail: async () => {
+        throw new OrganizationAdminRepositoryError("domain_not_allowed")
+      },
+      createOrActivateOrganizationMembership: async () => {
+        calls.push("member")
+        throw new Error("disabled domain membership must not be activated")
+      },
+      acceptOrganizationInvite: async () => {
+        throw new Error("invite should not be accepted")
+      },
+      ensureSignupOrganization: async () => {
+        calls.push("bootstrap")
+        throw new SignupOrganizationDomainConflictError("team.example.com")
+      },
+      assignManagedAiAccess: async () => {
+        calls.push("managed-ai")
+        return true
+      },
+      cleanupCreatedAuthUser: async (userId) => {
+        calls.push(`cleanup:${userId}`)
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof OrganizationAdminRepositoryError)
+      assert.equal(error.code, "domain_not_allowed")
+      return true
+    },
+  )
+
+  assert.deepEqual(calls, ["bootstrap", "cleanup:user_loser"])
 })
 
 test("post-create activation failure cleans up the just-created auth user before rethrowing", async () => {
@@ -459,7 +590,7 @@ test("post-create activation failure cleans up the just-created auth user before
       acceptOrganizationInvite: async () => {
         throw new Error("invite should not be accepted")
       },
-      ensureDefaultOrg: async () => {
+      ensureSignupOrganization: async () => {
         calls.push("default-org")
         throw new Error("default org should not be created")
       },
@@ -507,7 +638,7 @@ test("post-create managed AI assignment runs after active membership creation su
     acceptOrganizationInvite: async () => {
       throw new Error("invite should not be accepted")
     },
-    ensureDefaultOrg: async () => {
+    ensureSignupOrganization: async () => {
       throw new Error("default org should not be created")
     },
     assignManagedAiAccess: async () => {
@@ -519,7 +650,7 @@ test("post-create managed AI assignment runs after active membership creation su
     },
   })
 
-  assert.deepEqual(result, { activatedOrganizationMembership: true, createDefaultOrganization: false })
+  assert.deepEqual(result, { activatedOrganizationMembership: true, createSignupOrganization: false })
   assert.deepEqual(calls, ["activate", "managed-ai"])
 })
 

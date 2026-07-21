@@ -4,6 +4,7 @@ import {
   createAutomaticOrganizationTrialService,
   createDrizzleAutomaticOrganizationTrialStore,
 } from "./billing/automatic-organization-trial.js"
+import { SignupOrganizationDomainConflictError } from "./auth/signup-organization.js"
 import { db } from "./db/index.js"
 import { OrgMembershipTable, OrgTable, OrganizationDomainTable } from "./db/schema.js"
 import { normalizeEmailDomain } from "./org-admin/policy.js"
@@ -42,12 +43,7 @@ export function createEnsureDefaultOrg(deps: EnsureDefaultOrgDependencies) {
   }
 }
 
-export class SignupOrganizationDomainConflictError extends Error {
-  constructor(readonly domain: string, options?: ErrorOptions) {
-    super("signup_organization_domain_conflict", options)
-    this.name = "SignupOrganizationDomainConflictError"
-  }
-}
+export { SignupOrganizationDomainConflictError } from "./auth/signup-organization.js"
 
 type EnsureSignupOrganizationDependencies = {
   createId(): string
