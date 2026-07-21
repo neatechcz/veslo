@@ -17,7 +17,10 @@ import {
   type SignupAccessError,
 } from "./auth/signup-gate.js"
 import { isAdminProvisioningSignupRequest } from "./auth/admin-provisioning.js"
-import { provisionVerifiedSignupIdentity } from "./auth/verified-signup.js"
+import {
+  provisionVerifiedSignupIdentity,
+  runWithUserProvisioningLock,
+} from "./auth/verified-signup.js"
 import { normalizeInviteEmail } from "./org-admin/policy.js"
 import {
   acceptOrganizationInvite,
@@ -141,6 +144,7 @@ export const auth = betterAuth({
             },
             name,
             inviteToken: readInviteTokenFromAuthContext(context),
+            runWithUserProvisioningLock,
             createMembershipId: randomUUID,
             findExistingOrganizationId: findExistingActiveOrganizationId,
             resolveEnabledOrganizationDomainForEmail,

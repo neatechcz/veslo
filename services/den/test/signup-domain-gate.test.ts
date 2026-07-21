@@ -14,6 +14,8 @@ import {
 import { SignupOrganizationDomainConflictError } from "../src/auth/signup-organization.js"
 import { OrganizationAdminRepositoryError, type OrganizationAdminInviteRecord } from "../src/org-admin/repository.js"
 
+const runWithoutConcurrency = async <T>(_userId: string, operation: () => Promise<T>) => operation()
+
 test("enabled organization domain auto-activates when a seat is available", () => {
   assert.deepEqual(
     decideSignupAccess({
@@ -445,6 +447,7 @@ test("unverified first signup defers organization bootstrap and managed AI witho
     },
     name: "Unverified Owner",
     inviteToken: null,
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_unverified",
     findExistingOrganizationId: async () => null,
     resolveEnabledOrganizationDomainForEmail: async () => {
@@ -485,6 +488,7 @@ test("first signup bootstraps its organization before managed AI assignment", as
     user: { id: "user_1", email: "user@team.example.com", emailVerified: true },
     name: "User One",
     inviteToken: null,
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_1",
     findExistingOrganizationId: async () => null,
     resolveEnabledOrganizationDomainForEmail: async () => {
@@ -527,6 +531,7 @@ test("concurrent first signup joins the organization that won the domain claim",
     user: { id: "user_loser", email: "user@team.example.com", emailVerified: true },
     name: "User Loser",
     inviteToken: null,
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_loser",
     findExistingOrganizationId: async () => null,
     resolveEnabledOrganizationDomainForEmail: async () => {
@@ -586,6 +591,7 @@ test("concurrent conflict never re-enables a disabled or invite-only domain", as
       user: { id: "user_loser", email: "user@team.example.com", emailVerified: true },
       name: "User Loser",
       inviteToken: null,
+      runWithUserProvisioningLock: runWithoutConcurrency,
       createMembershipId: () => "membership_loser",
       findExistingOrganizationId: async () => null,
       resolveEnabledOrganizationDomainForEmail: async () => {
@@ -629,6 +635,7 @@ test("post-create activation failure cleans up the just-created auth user before
       user: { id: "user_1", email: "user@neatech.cz", emailVerified: true },
       name: "User One",
       inviteToken: null,
+      runWithUserProvisioningLock: runWithoutConcurrency,
       createMembershipId: () => "membership_1",
       findExistingOrganizationId: async () => null,
       resolveEnabledOrganizationDomainForEmail: async () => ({
@@ -671,6 +678,7 @@ test("post-create managed AI assignment runs after active membership creation su
     user: { id: "user_1", email: "user@neatech.cz", emailVerified: true },
     name: "User One",
     inviteToken: null,
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_1",
     findExistingOrganizationId: async () => "org_1",
     resolveEnabledOrganizationDomainForEmail: async () => ({

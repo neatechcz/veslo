@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 const currentFile = fileURLToPath(import.meta.url)
 const serviceRoot = path.resolve(path.dirname(currentFile), "..")
 const source = readFileSync(path.join(serviceRoot, "src", "auth.ts"), "utf8")
+const verifiedSignupSource = readFileSync(path.join(serviceRoot, "src", "auth", "verified-signup.ts"), "utf8")
 const indexSource = readFileSync(path.join(serviceRoot, "src", "index.ts"), "utf8")
 const envSource = readFileSync(path.join(serviceRoot, "src", "env.ts"), "utf8")
 const envExampleSource = readFileSync(path.join(serviceRoot, ".env.example"), "utf8")
@@ -82,8 +83,11 @@ test("auth user creation defers unverified identities, provisions trusted verifi
   assert.match(afterHookSource, /isAdminProvisioningSignupRequest\(context\)/)
   assert.match(afterHookSource, /emailVerified: user\.emailVerified === true/)
   assert.match(afterHookSource, /findExistingOrganizationId: findExistingActiveOrganizationId/)
+  assert.match(afterHookSource, /runWithUserProvisioningLock/)
   assert.match(source, /afterEmailVerification: async \(user(?:[^)]*)\)/)
   assert.match(source, /await provisionVerifiedSignupIdentity/)
+  assert.match(verifiedSignupSource, /GET_LOCK/)
+  assert.match(verifiedSignupSource, /RELEASE_LOCK/)
 })
 
 test("auth activation cleanup removes only Better Auth rows for the created user", () => {

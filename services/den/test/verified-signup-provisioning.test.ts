@@ -7,6 +7,30 @@ import {
 import { SignupOrganizationDomainConflictError } from "../src/auth/signup-organization.js"
 import { OrganizationAdminRepositoryError } from "../src/org-admin/repository.js"
 
+const runWithoutConcurrency = async <T>(_userId: string, operation: () => Promise<T>) => operation()
+
+function createUserProvisioningLock() {
+  const pending = new Map<string, Promise<void>>()
+  return async <T>(userId: string, operation: () => Promise<T>) => {
+    const previous = pending.get(userId) ?? Promise.resolve()
+    let release = () => undefined
+    const current = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const queued = previous.then(() => current)
+    pending.set(userId, queued)
+    await previous
+    try {
+      return await operation()
+    } finally {
+      release()
+      if (pending.get(userId) === queued) {
+        pending.delete(userId)
+      }
+    }
+  }
+}
+
 test("verification provisions organization domain and trial before managed AI", async () => {
   const calls: string[] = []
 
@@ -17,6 +41,7 @@ test("verification provisions organization domain and trial before managed AI", 
       email: "owner@team.example.com",
       emailVerified: true,
     },
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_1",
     findExistingOrganizationId: async () => null,
     resolveEnabledOrganizationDomainForEmail: async () => {
@@ -55,6 +80,7 @@ test("verified user-create reuses an existing active membership instead of boots
     },
     name: "Existing User",
     inviteToken: null,
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_unused",
     findExistingOrganizationId: async () => "org_existing",
     resolveEnabledOrganizationDomainForEmail: async () => {
@@ -97,6 +123,7 @@ test("unverified provisioner defers without touching organizations or managed AI
       email: "user@team.example.com",
       emailVerified: false,
     },
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => {
       calls.push("membership-id")
       return "membership_unused"
@@ -135,6 +162,7 @@ test("membership activated before verification receives managed AI only after ve
   let activeOrganizationId: string | null = null
   const calls: string[] = []
   const dependencies = {
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_1",
     findExistingOrganizationId: async () => activeOrganizationId,
     resolveEnabledOrganizationDomainForEmail: async () => ({
@@ -211,6 +239,7 @@ test("invite accepted before verification receives managed AI only after verific
   let activeOrganizationId: string | null = null
   const calls: string[] = []
   const dependencies = {
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_invited",
     findExistingOrganizationId: async () => activeOrganizationId,
     resolveEnabledOrganizationDomainForEmail: async () => {
@@ -295,6 +324,7 @@ test("trusted verified social creation provisions immediately", async () => {
     },
     name: "Social Owner",
     inviteToken: null,
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_social",
     findExistingOrganizationId: async () => null,
     resolveEnabledOrganizationDomainForEmail: async () => {
@@ -336,6 +366,7 @@ test("verified provisioning retry does not create duplicate organization domain 
       email: "retry@team.example.com",
       emailVerified: true,
     },
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_retry",
     findExistingOrganizationId: async () => activeOrganizationId,
     resolveEnabledOrganizationDomainForEmail: async () => {
@@ -373,6 +404,7 @@ test("verified provisioning recovers a concurrent signup domain claim by joining
       email: "loser@team.example.com",
       emailVerified: true,
     },
+    runWithUserProvisioningLock: runWithoutConcurrency,
     createMembershipId: () => "membership_loser",
     findExistingOrganizationId: async () => null,
     resolveEnabledOrganizationDomainForEmail: async () => {
@@ -412,4 +444,171 @@ test("verified provisioning recovers a concurrent signup domain claim by joining
 
   assert.equal(result.organizationId, "org_winner")
   assert.deepEqual(calls, ["organization-domain-trial", "membership:org_winner", "ai-access"])
+})
+
+test("concurrent verified provisioning for one user creates only one membership", async () => {
+  let activeOrganizationId: string | null = null
+  const memberships: Array<{ orgId: string; role: string }> = []
+  const aiAccessUsers = new Set<string>()
+  const runWithUserProvisioningLock = createUserProvisioningLock()
+  const input = {
+    user: {
+      id: "user_concurrent",
+      name: "Concurrent User",
+      email: "user@existing.example.com",
+      emailVerified: true,
+    },
+    runWithUserProvisioningLock,
+    createMembershipId: () => `membership_${memberships.length + 1}`,
+    findExistingOrganizationId: async () => {
+      const snapshot = activeOrganizationId
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      return snapshot
+    },
+    resolveEnabledOrganizationDomainForEmail: async () => ({
+      id: "domain_existing",
+      orgId: "org_existing",
+      domain: "existing.example.com",
+      enabled: true,
+      selfSignupEnabled: true,
+      organization: { id: "org_existing", seatLimit: 10 },
+    }),
+    createOrActivateOrganizationMembership: async (membership: {
+      membershipId: string
+      orgId: string
+      userId: string
+      role: "member" | "organization_admin"
+    }) => {
+      memberships.push({ orgId: membership.orgId, role: membership.role })
+      activeOrganizationId = membership.orgId
+      return {
+        id: membership.membershipId,
+        orgId: membership.orgId,
+        userId: membership.userId,
+        role: membership.role,
+        status: "active" as const,
+        createdAt: new Date("2026-07-21T08:00:00.000Z"),
+      }
+    },
+    ensureSignupOrganization: async () => {
+      throw new Error("organization should not be created")
+    },
+    assignManagedAiAccess: async (userId: string) => {
+      aiAccessUsers.add(userId)
+      return true
+    },
+  }
+
+  const results = await Promise.all([
+    provisionVerifiedSignupUser(input),
+    provisionVerifiedSignupUser(input),
+  ])
+
+  assert.deepEqual(results.map((entry) => entry.organizationId), ["org_existing", "org_existing"])
+  assert.deepEqual(memberships, [{ orgId: "org_existing", role: "member" }])
+  assert.deepEqual([...aiAccessUsers], ["user_concurrent"])
+})
+
+test("concurrent verified first-user provisioning preserves one organization admin membership", async () => {
+  let activeOrganizationId: string | null = null
+  const organizations: string[] = []
+  const memberships: Array<{ orgId: string; role: string }> = []
+  const aiAccessUsers = new Set<string>()
+  const runWithUserProvisioningLock = createUserProvisioningLock()
+  const input = {
+    user: {
+      id: "user_concurrent_founder",
+      name: "Concurrent Founder",
+      email: "founder@new.example.com",
+      emailVerified: true,
+    },
+    runWithUserProvisioningLock,
+    createMembershipId: () => `membership_${memberships.length + 1}`,
+    findExistingOrganizationId: async () => {
+      const snapshot = activeOrganizationId
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      return snapshot
+    },
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      throw new OrganizationAdminRepositoryError("domain_not_allowed")
+    },
+    createOrActivateOrganizationMembership: async () => {
+      throw new Error("existing domain membership should not be activated")
+    },
+    ensureSignupOrganization: async () => {
+      const orgId = `org_${organizations.length + 1}`
+      organizations.push(orgId)
+      memberships.push({ orgId, role: "organization_admin" })
+      activeOrganizationId = orgId
+      return orgId
+    },
+    assignManagedAiAccess: async (userId: string) => {
+      aiAccessUsers.add(userId)
+      return true
+    },
+  }
+
+  const results = await Promise.all([
+    provisionVerifiedSignupUser(input),
+    provisionVerifiedSignupUser(input),
+  ])
+
+  assert.deepEqual(results.map((entry) => entry.organizationId), ["org_1", "org_1"])
+  assert.deepEqual(organizations, ["org_1"])
+  assert.deepEqual(memberships, [{ orgId: "org_1", role: "organization_admin" }])
+  assert.deepEqual([...aiAccessUsers], ["user_concurrent_founder"])
+})
+
+test("domain conflict recovery reuses a concurrently created admin membership without downgrading it", async () => {
+  let activeOrganizationId: string | null = null
+  let role = "organization_admin"
+  let domainLookups = 0
+  const membershipWrites: string[] = []
+
+  const result = await provisionVerifiedSignupUser({
+    user: {
+      id: "user_founder",
+      name: "Founder",
+      email: "founder@team.example.com",
+      emailVerified: true,
+    },
+    runWithUserProvisioningLock: createUserProvisioningLock(),
+    createMembershipId: () => "membership_founder",
+    findExistingOrganizationId: async () => activeOrganizationId,
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      domainLookups += 1
+      if (domainLookups === 1) {
+        throw new OrganizationAdminRepositoryError("domain_not_allowed")
+      }
+      return {
+        id: "domain_winner",
+        orgId: "org_winner",
+        domain: "team.example.com",
+        enabled: true,
+        selfSignupEnabled: true,
+        organization: { id: "org_winner", seatLimit: 10 },
+      }
+    },
+    createOrActivateOrganizationMembership: async (membership) => {
+      membershipWrites.push(membership.role)
+      role = membership.role
+      return {
+        id: membership.membershipId,
+        orgId: membership.orgId,
+        userId: membership.userId,
+        role: membership.role,
+        status: "active",
+        createdAt: new Date("2026-07-21T08:00:00.000Z"),
+      }
+    },
+    ensureSignupOrganization: async () => {
+      activeOrganizationId = "org_winner"
+      throw new SignupOrganizationDomainConflictError("team.example.com")
+    },
+    assignManagedAiAccess: async () => true,
+  })
+
+  assert.equal(result.organizationId, "org_winner")
+  assert.equal(role, "organization_admin")
+  assert.deepEqual(membershipWrites, [])
 })

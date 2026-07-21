@@ -271,6 +271,7 @@ export type RunSignupAfterUserCreateSideEffectsInput = Omit<CompleteSignupAfterU
     emailVerified: boolean
   }
   name: string
+  runWithUserProvisioningLock<T>(userId: string, operation: () => Promise<T>): Promise<T>
   findExistingOrganizationId(userId: string): Promise<string | null>
   ensureSignupOrganization(userId: string, name: string, email: string): Promise<string>
   assignManagedAiAccess(userId: string): Promise<unknown>
@@ -284,6 +285,7 @@ export type ProvisionVerifiedSignupUserInput = {
     email: string | null | undefined
     emailVerified: boolean
   }
+  runWithUserProvisioningLock<T>(userId: string, operation: () => Promise<T>): Promise<T>
   createMembershipId(): string
   findExistingOrganizationId(userId: string): Promise<string | null>
   resolveEnabledOrganizationDomainForEmail(email: string): Promise<OrganizationAdminResolvedDomain>
@@ -311,8 +313,12 @@ export async function provisionVerifiedSignupUser(input: ProvisionVerifiedSignup
     throw new OrganizationAdminRepositoryError("domain_not_allowed")
   }
 
-  let organizationId = await input.findExistingOrganizationId(input.user.id)
-  if (!organizationId) {
+  const organizationId = await input.runWithUserProvisioningLock(input.user.id, async () => {
+    const existingOrganizationId = await input.findExistingOrganizationId(input.user.id)
+    if (existingOrganizationId) {
+      return existingOrganizationId
+    }
+
     const matchingDomain = await resolveAllowedDomain(email, input)
     if (matchingDomain) {
       await input.createOrActivateOrganizationMembership({
@@ -321,33 +327,38 @@ export async function provisionVerifiedSignupUser(input: ProvisionVerifiedSignup
         userId: input.user.id,
         role: "member",
       })
-      organizationId = matchingDomain.orgId
-    } else {
-      try {
-        organizationId = await input.ensureSignupOrganization(
-          input.user.id,
-          input.user.name ?? email,
-          email,
-        )
-      } catch (error) {
-        if (!(error instanceof SignupOrganizationDomainConflictError)) {
-          throw error
-        }
-
-        const winningDomain = await resolveAllowedDomain(email, input)
-        if (!winningDomain) {
-          throw new OrganizationAdminRepositoryError("domain_not_allowed")
-        }
-        await input.createOrActivateOrganizationMembership({
-          membershipId: input.createMembershipId(),
-          orgId: winningDomain.orgId,
-          userId: input.user.id,
-          role: "member",
-        })
-        organizationId = winningDomain.orgId
-      }
+      return matchingDomain.orgId
     }
-  }
+
+    try {
+      return await input.ensureSignupOrganization(
+        input.user.id,
+        input.user.name ?? email,
+        email,
+      )
+    } catch (error) {
+      if (!(error instanceof SignupOrganizationDomainConflictError)) {
+        throw error
+      }
+
+      const concurrentOrganizationId = await input.findExistingOrganizationId(input.user.id)
+      if (concurrentOrganizationId) {
+        return concurrentOrganizationId
+      }
+
+      const winningDomain = await resolveAllowedDomain(email, input)
+      if (!winningDomain) {
+        throw new OrganizationAdminRepositoryError("domain_not_allowed")
+      }
+      await input.createOrActivateOrganizationMembership({
+        membershipId: input.createMembershipId(),
+        orgId: winningDomain.orgId,
+        userId: input.user.id,
+        role: "member",
+      })
+      return winningDomain.orgId
+    }
+  })
 
   await input.assignManagedAiAccess(input.user.id)
   return {
@@ -374,6 +385,7 @@ export async function runSignupAfterUserCreateSideEffects(input: RunSignupAfterU
         ...input.user,
         name: input.name,
       },
+      runWithUserProvisioningLock: input.runWithUserProvisioningLock,
       createMembershipId: input.createMembershipId,
       findExistingOrganizationId: input.findExistingOrganizationId,
       resolveEnabledOrganizationDomainForEmail: input.resolveEnabledOrganizationDomainForEmail,

@@ -46,6 +46,43 @@ function createEndpointAuth() {
   })
 }
 
+function createVerificationCallbackAuth(input: {
+  afterEmailVerification(user: { email: string; emailVerified: boolean }): Promise<void>
+}) {
+  let verificationUrl: string | null = null
+  const callbackAuth = betterAuth({
+    baseURL: baseUrl,
+    secret: "endpoint-callback-test-secret-32-chars",
+    database: memoryAdapter({
+      user: [],
+      session: [],
+      account: [],
+      verification: [],
+    }),
+    trustedOrigins: [trustedOrigin],
+    emailVerification: {
+      sendOnSignUp: true,
+      async sendVerificationEmail({ url }) {
+        verificationUrl = url
+      },
+      afterEmailVerification: input.afterEmailVerification,
+    },
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+    },
+    rateLimit: { enabled: false },
+    logger: { disabled: true },
+  })
+
+  return {
+    auth: callbackAuth,
+    readVerificationUrl() {
+      return verificationUrl
+    },
+  }
+}
+
 async function post(auth: ReturnType<typeof createEndpointAuth>, path: string, body: Record<string, unknown>) {
   return auth.handler(new Request(`${baseUrl}/api/auth${path}`, {
     method: "POST",
@@ -134,6 +171,66 @@ test("real auth endpoints preserve accepted verification delivery", async () => 
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test("Better Auth awaits afterEmailVerification with the committed verified user", async () => {
+  const callbackUsers: Array<{ email: string; emailVerified: boolean }> = []
+  const successful = createVerificationCallbackAuth({
+    async afterEmailVerification(user) {
+      callbackUsers.push({ email: user.email, emailVerified: user.emailVerified })
+    },
+  })
+  const successfulEmail = "callback-success@example.test"
+  const signup = await post(successful.auth, "/sign-up/email", {
+    name: "Callback Success",
+    email: successfulEmail,
+    password,
+    callbackURL: trustedOrigin,
+  })
+  assert.equal(signup.status, 200)
+  const verificationUrl = successful.readVerificationUrl()
+  assert.ok(verificationUrl)
+  const verification = await successful.auth.handler(new Request(verificationUrl))
+  assert.ok(verification.status === 200 || verification.status === 302)
+  assert.deepEqual(callbackUsers, [{ email: successfulEmail, emailVerified: true }])
+
+  const rejected = createVerificationCallbackAuth({
+    async afterEmailVerification(user) {
+      assert.equal(user.emailVerified, true)
+      throw new Error("provisioning failed after verification commit")
+    },
+  })
+  const rejectedEmail = "callback-rejected@example.test"
+  assert.equal((await post(rejected.auth, "/sign-up/email", {
+    name: "Callback Rejected",
+    email: rejectedEmail,
+    password,
+    callbackURL: trustedOrigin,
+  })).status, 200)
+  const rejectedVerificationUrl = rejected.readVerificationUrl()
+  assert.ok(rejectedVerificationUrl)
+  const originalConsoleError = console.error
+  const callbackErrors: unknown[][] = []
+  console.error = (...args: unknown[]) => {
+    callbackErrors.push(args)
+  }
+  let rejectedVerification: Response
+  try {
+    rejectedVerification = await rejected.auth.handler(new Request(rejectedVerificationUrl))
+  } finally {
+    console.error = originalConsoleError
+  }
+  assert.equal(rejectedVerification.status, 500)
+  assert.equal(callbackErrors.length, 1)
+
+  const signInAfterRejectedCallback = await post(rejected.auth, "/sign-in/email", {
+    email: rejectedEmail,
+    password,
+    callbackURL: trustedOrigin,
+  })
+  assert.equal(signInAfterRejectedCallback.status, 200)
+  const signInPayload = await signInAfterRejectedCallback.json() as Record<string, unknown>
+  assert.equal(typeof signInPayload.token, "string")
 })
 
 test("public verification resend is disabled identically for known and unknown emails", async () => {

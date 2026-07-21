@@ -63,8 +63,51 @@ if (!dedicatedDatabaseUrl) {
         createSignupOrganizationPersistence,
         SignupOrganizationDomainConflictError,
       } = await import("../src/orgs.js")
+      const { createDatabaseUserProvisioningLock } = await import("../src/auth/verified-signup.js")
 
       const fixture = randomUUID().replaceAll("-", "").slice(0, 12)
+      const runWithUserProvisioningLock = createDatabaseUserProvisioningLock(database)
+      const provisioningLockUserId = `not_yet_committed_${fixture}`
+      assert.ok(provisioningLockUserId.length < 64)
+      const firstProvisioningEntered = createDeferred<void>()
+      const releaseFirstProvisioning = createDeferred<void>()
+      const provisioningOrder: string[] = []
+      const firstProvisioning = runWithUserProvisioningLock(provisioningLockUserId, async () => {
+        provisioningOrder.push("first:start")
+        firstProvisioningEntered.resolve()
+        await releaseFirstProvisioning.promise
+        provisioningOrder.push("first:end")
+        return "first"
+      })
+      await withTimeout(firstProvisioningEntered.promise, 5_000, "first provisioning did not acquire its advisory lock")
+      const secondProvisioning = runWithUserProvisioningLock(provisioningLockUserId, async () => {
+        provisioningOrder.push("second:start")
+        return "second"
+      })
+      await delay(200)
+      assert.deepEqual(provisioningOrder, ["first:start"])
+      releaseFirstProvisioning.resolve()
+      assert.deepEqual(
+        await withTimeout(Promise.all([firstProvisioning, secondProvisioning]), 15_000, "provisioning lock did not serialize"),
+        ["first", "second"],
+      )
+      assert.deepEqual(provisioningOrder, ["first:start", "first:end", "second:start"])
+
+      await assert.rejects(
+        runWithUserProvisioningLock(provisioningLockUserId, async () => {
+          throw new Error("expected provisioning failure")
+        }),
+        /expected provisioning failure/,
+      )
+      assert.equal(
+        await withTimeout(
+          runWithUserProvisioningLock(provisioningLockUserId, async () => "reacquired"),
+          5_000,
+          "provisioning advisory lock was not released after failure",
+        ),
+        "reacquired",
+      )
+
       const sharedDomain = `${fixture}.signup.integration.test`
       const signupInputs = ["a", "b"].map((suffix) => ({
         orgId: `org_signup_${fixture}_${suffix}`,
