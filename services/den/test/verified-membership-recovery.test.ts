@@ -14,58 +14,76 @@ const { createDatabaseUserProvisioningLock } = await import("../src/auth/verifie
 
 test("production provisioning lock holds a cross-process advisory lock during organization work", async () => {
   const calls: string[] = []
+  const queries: Array<{ query: string; values: unknown[] }> = []
   let executes = 0
-  const tx = {
-    async execute() {
+  const connection = {
+    async execute(query: string, values: unknown[]) {
       executes += 1
+      queries.push({ query, values })
       calls.push(executes === 1 ? "advisory-lock:acquire" : "advisory-lock:release")
       return executes === 1
         ? [[{ acquired: 1 }], []]
         : [[{ released: 1 }], []]
     },
-  }
-  const database = {
-    async transaction<T>(operation: (activeTx: typeof tx) => Promise<T>) {
-      calls.push("transaction:start")
-      const result = await operation(tx)
-      calls.push("transaction:commit")
-      return result
+    release() {
+      calls.push("connection:release")
+    },
+    destroy() {
+      calls.push("connection:destroy")
     },
   }
-  const runWithUserProvisioningLock = createDatabaseUserProvisioningLock(database)
+  const lockPool = {
+    async getConnection() {
+      calls.push("connection:acquire")
+      return connection
+    },
+  }
+  const runWithUserProvisioningLock = createDatabaseUserProvisioningLock(lockPool)
+  const longUserId = `user_${"a".repeat(256)}`
 
-  assert.equal(await runWithUserProvisioningLock("user_1", async () => {
+  assert.equal(await runWithUserProvisioningLock(longUserId, async () => {
     calls.push("organization-work")
     return "org_1"
   }), "org_1")
   assert.deepEqual(calls, [
-    "transaction:start",
+    "connection:acquire",
     "advisory-lock:acquire",
     "organization-work",
     "advisory-lock:release",
-    "transaction:commit",
+    "connection:release",
   ])
+  assert.match(queries[0]?.query ?? "", /GET_LOCK/)
+  assert.equal(queries[0]?.values[1], 10)
+  assert.equal(typeof queries[0]?.values[0], "string")
+  assert.ok(String(queries[0]?.values[0]).length <= 64)
+  assert.equal(queries[1]?.values[0], queries[0]?.values[0])
 })
 
 test("production provisioning lock fails closed when MySQL does not acquire it", async () => {
   let operationCalls = 0
-  const database = {
-    async transaction<T>(operation: (tx: { execute(): Promise<unknown> }) => Promise<T>) {
-      return operation({
+  let connectionReleases = 0
+  const lockPool = {
+    async getConnection() {
+      return {
         async execute() {
           return [[{ acquired: 0 }], []]
         },
-      })
+        release() {
+          connectionReleases += 1
+        },
+        destroy() {},
+      }
     },
   }
 
   await assert.rejects(
-    createDatabaseUserProvisioningLock(database)("missing_or_uncommitted_user", async () => {
+    createDatabaseUserProvisioningLock(lockPool)("missing_or_uncommitted_user", async () => {
       operationCalls += 1
     }),
     /signup_user_provisioning_lock_unavailable/,
   )
   assert.equal(operationCalls, 0)
+  assert.equal(connectionReleases, 1)
 })
 
 test("verified no-membership read provisions with the verified coordinator and re-reads memberships", async () => {

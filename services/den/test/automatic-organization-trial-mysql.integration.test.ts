@@ -2,10 +2,10 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/mysql2"
 import { migrate } from "drizzle-orm/mysql2/migrator"
-import mysql, { type Pool } from "mysql2/promise"
+import mysql, { type Pool, type PoolConnection } from "mysql2/promise"
 
 import {
   AUTOMATIC_ORGANIZATION_TRIAL_DAYS,
@@ -66,47 +66,7 @@ if (!dedicatedDatabaseUrl) {
       const { createDatabaseUserProvisioningLock } = await import("../src/auth/verified-signup.js")
 
       const fixture = randomUUID().replaceAll("-", "").slice(0, 12)
-      const runWithUserProvisioningLock = createDatabaseUserProvisioningLock(database)
-      const provisioningLockUserId = `not_yet_committed_${fixture}`
-      assert.ok(provisioningLockUserId.length < 64)
-      const firstProvisioningEntered = createDeferred<void>()
-      const releaseFirstProvisioning = createDeferred<void>()
-      const provisioningOrder: string[] = []
-      const firstProvisioning = runWithUserProvisioningLock(provisioningLockUserId, async () => {
-        provisioningOrder.push("first:start")
-        firstProvisioningEntered.resolve()
-        await releaseFirstProvisioning.promise
-        provisioningOrder.push("first:end")
-        return "first"
-      })
-      await withTimeout(firstProvisioningEntered.promise, 5_000, "first provisioning did not acquire its advisory lock")
-      const secondProvisioning = runWithUserProvisioningLock(provisioningLockUserId, async () => {
-        provisioningOrder.push("second:start")
-        return "second"
-      })
-      await delay(200)
-      assert.deepEqual(provisioningOrder, ["first:start"])
-      releaseFirstProvisioning.resolve()
-      assert.deepEqual(
-        await withTimeout(Promise.all([firstProvisioning, secondProvisioning]), 15_000, "provisioning lock did not serialize"),
-        ["first", "second"],
-      )
-      assert.deepEqual(provisioningOrder, ["first:start", "first:end", "second:start"])
-
-      await assert.rejects(
-        runWithUserProvisioningLock(provisioningLockUserId, async () => {
-          throw new Error("expected provisioning failure")
-        }),
-        /expected provisioning failure/,
-      )
-      assert.equal(
-        await withTimeout(
-          runWithUserProvisioningLock(provisioningLockUserId, async () => "reacquired"),
-          5_000,
-          "provisioning advisory lock was not released after failure",
-        ),
-        "reacquired",
-      )
+      await verifyUserProvisioningAdvisoryLocks(databaseUrl, fixture, createDatabaseUserProvisioningLock)
 
       const sharedDomain = `${fixture}.signup.integration.test`
       const signupInputs = ["a", "b"].map((suffix) => ({
@@ -598,6 +558,149 @@ if (!dedicatedDatabaseUrl) {
       assert.equal(domainInsertResults.filter((entry) => entry.status === "rejected").length, 1)
     })
   })
+}
+
+type UserProvisioningLockConnection = {
+  execute(query: string, values: unknown[]): Promise<unknown>
+  release(): void
+  destroy(): void
+}
+
+type UserProvisioningLockFactory = (lockPool: {
+  getConnection(): Promise<UserProvisioningLockConnection>
+}) => <T>(userId: string, operation: () => Promise<T>) => Promise<T>
+
+async function verifyUserProvisioningAdvisoryLocks(
+  databaseUrl: string,
+  fixture: string,
+  createDatabaseUserProvisioningLock: UserProvisioningLockFactory,
+) {
+  const concurrency = 2
+  const workPool = mysql.createPool({
+    uri: databaseUrl,
+    waitForConnections: true,
+    connectionLimit: concurrency,
+    queueLimit: 0,
+  })
+  const lockPool = mysql.createPool({
+    uri: databaseUrl,
+    waitForConnections: true,
+    connectionLimit: concurrency,
+    queueLimit: 0,
+  })
+  const workDatabase = drizzle(workPool, { schema, mode: "default" })
+  const secondGetLockAttempted = createDeferred<void>()
+  let getLockAttempts = 0
+  const observedLockPool = {
+    async getConnection(): Promise<UserProvisioningLockConnection> {
+      const connection = await lockPool.getConnection()
+      return {
+        async execute(query, values) {
+          if (query.includes("GET_LOCK")) {
+            getLockAttempts += 1
+            if (getLockAttempts === 2) {
+              secondGetLockAttempted.resolve()
+            }
+          }
+          return connection.execute(query, values)
+        },
+        release() {
+          connection.release()
+        },
+        destroy() {
+          connection.destroy()
+        },
+      }
+    },
+  }
+  const runWithUserProvisioningLock = createDatabaseUserProvisioningLock(observedLockPool)
+  const provisioningLockUserId = `not_yet_committed_${fixture}`
+  const heldWorkConnections: PoolConnection[] = []
+  const firstProvisioningEntered = createDeferred<void>()
+  const releaseFirstProvisioning = createDeferred<void>()
+  let serializationOperations: Array<Promise<string>> = []
+  let exhaustionOperations: Array<Promise<number>> = []
+
+  try {
+    const provisioningOrder: string[] = []
+    const firstProvisioning = runWithUserProvisioningLock(provisioningLockUserId, async () => {
+      provisioningOrder.push("first:start")
+      firstProvisioningEntered.resolve()
+      await releaseFirstProvisioning.promise
+      provisioningOrder.push("first:end")
+      return "first"
+    })
+    serializationOperations = [firstProvisioning]
+    await withTimeout(firstProvisioningEntered.promise, 5_000, "first provisioning did not acquire its advisory lock")
+    const secondProvisioning = runWithUserProvisioningLock(provisioningLockUserId, async () => {
+      provisioningOrder.push("second:start")
+      return "second"
+    })
+    serializationOperations.push(secondProvisioning)
+    await withTimeout(secondGetLockAttempted.promise, 5_000, "second provisioning did not attempt the same advisory lock")
+    assert.deepEqual(provisioningOrder, ["first:start"])
+    releaseFirstProvisioning.resolve()
+    assert.deepEqual(
+      await withTimeout(Promise.all([firstProvisioning, secondProvisioning]), 15_000, "provisioning lock did not serialize"),
+      ["first", "second"],
+    )
+    assert.deepEqual(provisioningOrder, ["first:start", "first:end", "second:start"])
+
+    await assert.rejects(
+      runWithUserProvisioningLock(provisioningLockUserId, async () => {
+        throw new Error("expected provisioning failure")
+      }),
+      /expected provisioning failure/,
+    )
+    assert.equal(
+      await withTimeout(
+        runWithUserProvisioningLock(provisioningLockUserId, async () => "reacquired"),
+        5_000,
+        "provisioning advisory lock was not released after failure",
+      ),
+      "reacquired",
+    )
+
+    heldWorkConnections.push(...await Promise.all(
+      Array.from({ length: concurrency }, () => workPool.getConnection()),
+    ))
+    const allProvisioningCallbacksEntered = createDeferred<void>()
+    let enteredCallbacks = 0
+    exhaustionOperations = Array.from({ length: concurrency }, (_, index) =>
+      runWithUserProvisioningLock(`pool_exhaustion_${fixture}_${index}`, async () => {
+        enteredCallbacks += 1
+        if (enteredCallbacks === concurrency) {
+          allProvisioningCallbacksEntered.resolve()
+        }
+        return workDatabase.transaction(async (tx) => {
+          await tx.execute(sql`SELECT ${index} AS worker_value`)
+          return index
+        })
+      })
+    )
+
+    await withTimeout(
+      allProvisioningCallbacksEntered.promise,
+      5_000,
+      "dedicated advisory lock pool was blocked by an exhausted work pool",
+    )
+    assert.equal(enteredCallbacks, concurrency)
+    for (const connection of heldWorkConnections.splice(0)) {
+      connection.release()
+    }
+    assert.deepEqual(
+      await withTimeout(Promise.all(exhaustionOperations), 15_000, "work queries did not resume after pool release"),
+      [0, 1],
+    )
+  } finally {
+    for (const connection of heldWorkConnections) {
+      connection.release()
+    }
+    releaseFirstProvisioning.resolve()
+    await Promise.allSettled(serializationOperations)
+    await Promise.allSettled(exhaustionOperations)
+    await Promise.all([workPool.end(), lockPool.end()])
+  }
 }
 
 async function withTemporaryIntegrationDatabase(
