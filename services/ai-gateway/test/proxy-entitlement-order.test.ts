@@ -3,12 +3,14 @@ import { once } from "node:events"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
 
+import { AutomaticUserAiAccessInfrastructureError } from "../src/access/automatic-user-access.js"
 import { ManagedAiEntitlementLookupError } from "../src/billing/den-managed-ai-entitlement-resolver.js"
 import { createApp } from "../src/index.js"
 
 function createOrderedProxyApp(input: {
   events: string[]
   entitlement: () => Promise<{ orgId: string; canUseManagedAi: boolean }>
+  accessError?: Error & { status?: number; code?: string }
 }) {
   return createApp({
     proxy: {
@@ -25,10 +27,11 @@ function createOrderedProxyApp(input: {
           return input.entitlement()
         },
       },
-      aiAccess: {
-        async getUserAiAccess() {
+      automaticUserAiAccess: {
+        async resolveUserAiAccess() {
           input.events.push("access")
-          return {
+          if (input.accessError) throw input.accessError
+          const aiAccess = {
             id: "access_1",
             userId: "user_1",
             enabled: true,
@@ -40,14 +43,28 @@ function createOrderedProxyApp(input: {
             createdAt: new Date(),
             updatedAt: new Date(),
           }
+          input.events.push("policy")
+          return {
+            aiAccess,
+            platformPolicy: {
+              id: "platform" as const,
+              enabledModels: [{ provider: "openai" as const, model: "gpt-5.4" }],
+              activeModel: { provider: "openai" as const, model: "gpt-5.4" },
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          }
         },
-        async upsertUserAiAccess() {
+        async getOrCreateUserAiAccess() {
+          throw new Error("proxy must use the atomic access and policy resolver")
+        },
+        async buildEnabledUpdate() {
           throw new Error("unused")
         },
       },
       modelPolicy: {
         async getPolicy() {
-          input.events.push("policy")
+          input.events.push("policy-refetch")
           return {
             id: "platform" as const,
             enabledModels: [{ provider: "openai" as const, model: "gpt-5.4" }],
@@ -174,4 +191,18 @@ test("Gateway preserves safe org-context errors without leaking DEN response det
   assert.equal(response.status, 403)
   assert.deepEqual(response.body, { error: "organization_forbidden" })
   assert.deepEqual(events, ["session", "entitlement"])
+})
+
+test("automatic access infrastructure failure is a stable 503 after entitlement", async () => {
+  const events: string[] = []
+  const error = new AutomaticUserAiAccessInfrastructureError("gateway_platform_model_policy_unavailable")
+  const response = await request(createOrderedProxyApp({
+    events,
+    accessError: error,
+    async entitlement() { return { orgId: "org_1", canUseManagedAi: true } },
+  }))
+
+  assert.equal(response.status, 503)
+  assert.deepEqual(response.body, { error: "gateway_platform_model_policy_unavailable" })
+  assert.deepEqual(events, ["session", "entitlement", "access"])
 })

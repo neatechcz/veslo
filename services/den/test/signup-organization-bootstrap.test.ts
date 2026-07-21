@@ -113,6 +113,7 @@ test("signup organization bootstrap preserves a concurrent domain claim conflict
 
 test("signup organization persistence maps MySQL duplicate domain claims and rejects its transaction", async () => {
   const inserts: string[] = []
+  const transactionConfigs: unknown[] = []
   let transactionRejected = false
   const tx = {
     insert(table: unknown) {
@@ -129,7 +130,8 @@ test("signup organization persistence maps MySQL duplicate domain claims and rej
     },
   }
   const database = {
-    async transaction<T>(callback: (activeTx: typeof tx) => Promise<T>) {
+    async transaction<T>(callback: (activeTx: typeof tx) => Promise<T>, config?: unknown) {
+      transactionConfigs.push(config)
       try {
         return await callback(tx)
       } catch (error) {
@@ -159,6 +161,7 @@ test("signup organization persistence maps MySQL duplicate domain claims and rej
 
   assert.equal(transactionRejected, true)
   assert.deepEqual(inserts, ["organization", "membership", "domain"])
+  assert.deepEqual(transactionConfigs, [{ isolationLevel: "serializable" }])
 })
 
 test("production bootstrap wires organization, membership, domain, and trial through one transaction", async () => {

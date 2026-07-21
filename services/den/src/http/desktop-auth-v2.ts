@@ -326,11 +326,6 @@ desktopAuthV2Router.post("/authorize", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  if (env.desktopAuthRequireEmailVerified && !session.user.emailVerified) {
-    res.status(403).json({ error: "email_verification_required" })
-    return
-  }
-
   const rows = await db
     .select()
     .from(DesktopAuthTransactionTable)

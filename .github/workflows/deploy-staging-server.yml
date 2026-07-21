@@ -95,6 +95,7 @@ jobs:
           test -f "$STAGING_SERVER_ENV_FILE"
           test -f packaging/owned-server/compose.yml
           test -f "packaging/owned-server/${STAGING_SERVER_CADDYFILE#./}"
+          bash services/den/scripts/validate-live-auth-env.sh staging "$STAGING_SERVER_ENV_FILE"
 
           compose() {
             VESLO_CADDYFILE="$STAGING_SERVER_CADDYFILE" \

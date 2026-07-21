@@ -1,4 +1,5 @@
 import { APIError, betterAuth } from "better-auth"
+import { createAuthMiddleware } from "better-auth/api"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { bearer } from "better-auth/plugins/bearer"
 import { eq } from "drizzle-orm"
@@ -9,7 +10,7 @@ import { maybeAssignDefaultManagedAiAccessForNewUser } from "./managed-ai/signup
 import * as schema from "./db/schema.js"
 import { fireAndForgetAuthEmail, sendResetPasswordAuthEmail, sendVerificationAuthEmail } from "./email/auth-mailer.js"
 import { env, isAuthEmailConfigured } from "./env.js"
-import { ensureSignupOrganization } from "./orgs.js"
+import { ensureSignupOrganization, findExistingActiveOrganizationId } from "./orgs.js"
 import {
   resolveEmailSignupAccess,
   runSignupAfterUserCreateSideEffects,
@@ -21,6 +22,10 @@ import {
   resolveSignupInviteTokenFromAuthContext,
   SIGNUP_INVITE_TOKEN_HEADER,
 } from "./auth/signup-invite-context.js"
+import {
+  provisionVerifiedSignupIdentity,
+  runWithUserProvisioningLock,
+} from "./auth/verified-signup.js"
 import { normalizeInviteEmail } from "./org-admin/policy.js"
 import {
   acceptOrganizationInvite,
@@ -36,11 +41,22 @@ type AuthNodeRequest = IncomingMessage & {
   originalUrl?: string
 }
 
-type AuthNodeHandler = (req: AuthNodeRequest, res: ServerResponse) => unknown
+type AuthNodeHandler = (req: AuthNodeRequest, res: ServerResponse) => Promise<unknown>
 
 type EmailSignupGuardResult =
   | { ok: true }
   | { ok: false; status: number; error: "invalid_signup_request" | SignupAccessError }
+
+type VerificationDeliveryOutcome = {
+  status: "initialized" | "pending" | "accepted" | "failed"
+}
+
+export const AUTH_REQUEST_BODY_LIMIT_BYTES = 64 * 1024
+const VERIFICATION_EMAIL_DELIVERY_FAILED = {
+  code: "VERIFICATION_EMAIL_DELIVERY_FAILED",
+  message: "We could not send the verification email. Please try again.",
+} as const
+const verificationDeliveryOutcomes = new WeakMap<Request, VerificationDeliveryOutcome>()
 
 const signupAccessDependencies = {
   resolveEnabledOrganizationDomainForEmail,
@@ -61,9 +77,21 @@ const socialProviders = env.github.clientId && env.github.clientSecret
 const authEmailVerification = isAuthEmailConfigured()
   ? {
       sendOnSignUp: true,
+      sendOnSignIn: true,
       autoSignInAfterVerification: false,
-      sendVerificationEmail: async ({ user, url }: { user: { email: string }; url: string }) => {
-        void fireAndForgetAuthEmail(sendVerificationAuthEmail({ to: user.email, url }), "verification email")
+      sendVerificationEmail: sendVerificationEmailForAuth,
+      afterEmailVerification: async (user: {
+        id: string
+        name?: string | null
+        email?: string | null
+        emailVerified?: boolean
+      }) => {
+        await provisionVerifiedSignupIdentity({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          emailVerified: user.emailVerified === true,
+        })
       },
     }
   : undefined
@@ -86,11 +114,12 @@ export const auth = betterAuth({
     schema,
   }),
   account: betterAuthAccountOptions,
-  plugins: [bearer()],
+  disabledPaths: ["/send-verification-email"],
+  plugins: [bearer(), createVerificationDeliveryOutcomePlugin()],
   ...(authEmailVerification ? { emailVerification: authEmailVerification } : {}),
   emailAndPassword: {
     enabled: true,
-    requireEmailVerification: false,
+    requireEmailVerification: env.authRequireEmailVerification,
     ...(authEmailPasswordReset ?? {}),
   },
   databaseHooks: {
@@ -107,15 +136,22 @@ export const auth = betterAuth({
           })
         },
         after: async (user, context) => {
+          if (isAdminProvisioningSignupRequest(context)) {
+            return
+          }
+
           const name = user.name ?? user.email ?? "Personal"
           await runSignupAfterUserCreateSideEffects({
             user: {
               id: user.id,
               email: user.email,
+              emailVerified: user.emailVerified === true,
             },
             name,
             inviteToken: await resolveSignupInviteTokenFromAuthContext(context),
+            runWithUserProvisioningLock,
             createMembershipId: randomUUID,
+            findExistingOrganizationId: findExistingActiveOrganizationId,
             resolveEnabledOrganizationDomainForEmail,
             createOrActivateOrganizationMembership,
             acceptOrganizationInvite,
@@ -129,20 +165,109 @@ export const auth = betterAuth({
   },
 })
 
+export async function sendVerificationEmailForAuth({
+  user,
+  url,
+}: {
+  user: { email: string }
+  url: string
+}, request?: Request) {
+  const outcome = request ? verificationDeliveryOutcomes.get(request) : undefined
+  if (outcome) {
+    outcome.status = "pending"
+  }
+
+  try {
+    await sendVerificationAuthEmail({ to: user.email, url })
+    if (outcome) {
+      outcome.status = "accepted"
+    }
+  } catch {
+    if (outcome) {
+      outcome.status = "failed"
+    }
+    console.error("[auth-mailer] verification delivery failed")
+    throw new APIError("INTERNAL_SERVER_ERROR", {
+      code: VERIFICATION_EMAIL_DELIVERY_FAILED.code,
+      message: VERIFICATION_EMAIL_DELIVERY_FAILED.message,
+    })
+  }
+}
+
+function createVerificationDeliveryOutcomePlugin() {
+  const matcher = (ctx: { path?: string }) =>
+    ctx.path === "/sign-up/email" ||
+    ctx.path === "/sign-in/email"
+
+  return {
+    id: "verification-delivery-outcome",
+    hooks: {
+      before: [{
+        matcher,
+        handler: createAuthMiddleware(async (ctx) => {
+          if (ctx.request) {
+            verificationDeliveryOutcomes.set(ctx.request, { status: "initialized" })
+          }
+        }),
+      }],
+      after: [{
+        matcher,
+        handler: createAuthMiddleware(async (ctx) => {
+          if (!ctx.request) {
+            return
+          }
+
+          const outcome = verificationDeliveryOutcomes.get(ctx.request)
+          verificationDeliveryOutcomes.delete(ctx.request)
+          if (!outcome || outcome.status === "initialized" || outcome.status === "accepted") {
+            return
+          }
+
+          return new Response(JSON.stringify(VERIFICATION_EMAIL_DELIVERY_FAILED), {
+            status: 502,
+            headers: { "Content-Type": "application/json" },
+          })
+        }),
+      }],
+    },
+  }
+}
+
 export function createAuthNodeHandler(baseHandler: AuthNodeHandler, guard = guardEmailSignupRequest): AuthNodeHandler {
   return async (req, res) => {
-    if (!isBetterAuthEmailSignupRequest(req)) {
+    if (!authRequestCanHaveBody(req)) {
       return baseHandler(req, res)
     }
 
-    const rawBody = await readRequestBody(req)
-    const guardResult = await guard(req, rawBody)
-    if (!guardResult.ok) {
-      sendAuthSignupError(res, guardResult.status, guardResult.error)
+    if (contentLengthExceedsAuthLimit(req)) {
+      req.resume()
+      sendAuthJson(res, 413, {
+        code: "AUTH_REQUEST_TOO_LARGE",
+        message: "Authentication request body is too large.",
+      })
       return
     }
 
-    setRequestSignupInviteToken(req, parseEmailSignupBody(rawBody)?.inviteToken ?? null)
+    const body = await readRequestBody(req, AUTH_REQUEST_BODY_LIMIT_BYTES)
+    if (!body.ok) {
+      sendAuthJson(res, 413, {
+        code: "AUTH_REQUEST_TOO_LARGE",
+        message: "Authentication request body is too large.",
+      })
+      return
+    }
+
+    const rawBody = body.rawBody
+    if (isBetterAuthEmailSignupRequest(req)) {
+      const guardResult = await guard(req, rawBody)
+      if (!guardResult.ok) {
+        sendAuthSignupError(res, guardResult.status, guardResult.error)
+        return
+      }
+
+      setRequestSignupInviteToken(req, parseEmailSignupBody(rawBody)?.inviteToken ?? null)
+    }
+
     req.body = rawBody
     return baseHandler(req, res)
   }
@@ -190,21 +315,74 @@ async function authorizeSignupBeforeUserCreate(input: {
 }
 
 function isBetterAuthEmailSignupRequest(req: AuthNodeRequest) {
-  if (req.method !== "POST") {
-    return false
-  }
-
-  const requestUrl = req.originalUrl ?? req.url ?? ""
-  const pathname = new URL(requestUrl, "http://localhost").pathname.replace(/\/+$/, "")
-  return pathname === "/api/auth/sign-up/email" || pathname === "/sign-up/email"
+  return req.method === "POST" && readAuthRequestPath(req) === "/sign-up/email"
 }
 
-async function readRequestBody(req: IncomingMessage) {
-  let rawBody = ""
-  for await (const chunk of req) {
-    rawBody += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
+function readAuthRequestPath(req: AuthNodeRequest) {
+  const requestUrl = req.originalUrl ?? req.url ?? ""
+  const pathname = new URL(requestUrl, "http://localhost").pathname.replace(/\/+$/, "")
+  return pathname.startsWith("/api/auth/") ? pathname.slice("/api/auth".length) : pathname
+}
+
+function authRequestCanHaveBody(req: IncomingMessage) {
+  return req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS"
+}
+
+function contentLengthExceedsAuthLimit(req: IncomingMessage) {
+  const rawContentLength = req.headers["content-length"]
+  if (typeof rawContentLength !== "string") {
+    return false
   }
-  return rawBody
+  const contentLength = Number(rawContentLength)
+  return Number.isFinite(contentLength) && contentLength > AUTH_REQUEST_BODY_LIMIT_BYTES
+}
+
+function readRequestBody(
+  req: IncomingMessage,
+  limitBytes: number,
+): Promise<{ ok: true; rawBody: string } | { ok: false }> {
+  return new Promise((resolve, reject) => {
+    const chunks: string[] = []
+    const decoder = new TextDecoder()
+    let totalBytes = 0
+    let settled = false
+
+    const cleanup = () => {
+      req.off("data", onData)
+      req.off("end", onEnd)
+      req.off("error", onError)
+      req.off("aborted", onAborted)
+    }
+    const finish = (result: { ok: true; rawBody: string } | { ok: false }) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(result)
+    }
+    const onData = (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      totalBytes += buffer.byteLength
+      if (totalBytes > limitBytes) {
+        finish({ ok: false })
+        req.resume()
+        return
+      }
+      chunks.push(decoder.decode(buffer, { stream: true }))
+    }
+    const onEnd = () => finish({ ok: true, rawBody: chunks.join("") + decoder.decode() })
+    const onError = (error: Error) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(error)
+    }
+    const onAborted = () => onError(new Error("Auth request body was aborted"))
+
+    req.on("data", onData)
+    req.on("end", onEnd)
+    req.on("error", onError)
+    req.on("aborted", onAborted)
+  })
 }
 
 function parseEmailSignupBody(rawBody: string) {
@@ -252,9 +430,13 @@ function setRequestSignupInviteToken(req: AuthNodeRequest, inviteToken: string |
 }
 
 function sendAuthSignupError(res: ServerResponse, status: number, error: string) {
+  sendAuthJson(res, status, { error })
+}
+
+function sendAuthJson(res: ServerResponse, status: number, body: Record<string, unknown>) {
   res.statusCode = status
   res.setHeader("Content-Type", "application/json")
-  res.end(JSON.stringify({ error }))
+  res.end(JSON.stringify(body))
 }
 
 async function cleanupCreatedAuthUser(userId: string) {

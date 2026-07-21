@@ -382,11 +382,11 @@ test("replacePlatformModelPolicy normalizes duplicates and writes the global aud
     enabledModels: expectedPolicy.enabledModels,
     activeModel: expectedPolicy.activeModel,
   }]);
-  assert.deepEqual(assignmentProviderChecks, ["codex_oauth"]);
+  assert.deepEqual(assignmentProviderChecks, []);
   assert.doesNotMatch(JSON.stringify(auditEvents), /test-key|secret_/);
 });
 
-test("replacePlatformModelPolicy rejects active provider changes that would strand enabled assignments", async () => {
+test("replacePlatformModelPolicy allows provider changes despite historical enabled assignments", async () => {
   const previous = policyRecord({
     enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
     activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
@@ -398,24 +398,29 @@ test("replacePlatformModelPolicy rejects active provider changes that would stra
     incompatibleAssignmentCount: 1,
   });
 
-  await assert.rejects(
-    harness.service.replacePlatformModelPolicy("admin-token", {
+  const response = await harness.service.replacePlatformModelPolicy("admin-token", {
+    enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+    activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+  }, "user_platform_admin");
+
+  assert.deepEqual(response, {
+    policy: {
       enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
       activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
-    }, "user_platform_admin"),
-    (error: unknown) =>
-      (error as { message?: string; status?: number }).message
-        === "model_policy_active_provider_has_incompatible_assignments"
-      && (error as { status?: number }).status === 409,
-  );
-
-  assert.deepEqual(harness.assignmentProviderChecks, ["openai_compatible"]);
-  assert.equal(harness.modelPolicy.current, previous);
-  assert.equal(harness.mutationCalls.length, 0);
-  assert.deepEqual(harness.auditEvents, []);
+      updatedAt: NOW.toISOString(),
+    },
+  });
+  assert.deepEqual(harness.assignmentProviderChecks, []);
+  assert.deepEqual(harness.mutationCalls, [{
+    actorUserId: "user_platform_admin",
+    enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+    activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+  }]);
+  assert.equal(harness.auditEvents[0]?.action, "platform.model_policy.update");
+  assert.equal(harness.modelPolicy.current?.activeModel.provider, "openai_compatible");
 });
 
-test("replacePlatformModelPolicy fails closed when assignment compatibility cannot be verified", async () => {
+test("replacePlatformModelPolicy does not read historical assignment compatibility", async () => {
   const previous = policyRecord({
     enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
     activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
@@ -424,32 +429,16 @@ test("replacePlatformModelPolicy fails closed when assignment compatibility cann
     policy: previous,
     failAssignmentCompatibilityRead: true,
   });
-  const consoleErrors: unknown[][] = [];
-  const originalConsoleError = console.error;
-  console.error = (...args: unknown[]) => {
-    consoleErrors.push(args);
-  };
 
-  try {
-    await assert.rejects(
-      harness.service.replacePlatformModelPolicy("admin-token", {
-        enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
-        activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
-      }, "user_platform_admin"),
-      (error: unknown) =>
-        (error as { message?: string; status?: number }).message
-          === "model_policy_assignment_compatibility_unavailable"
-        && (error as { status?: number }).status === 503,
-    );
-  } finally {
-    console.error = originalConsoleError;
-  }
+  const response = await harness.service.replacePlatformModelPolicy("admin-token", {
+    enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
+    activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
+  }, "user_platform_admin");
 
-  assert.equal(consoleErrors[0]?.[0], "model_policy_assignment_compatibility_check_failed");
-  assert.deepEqual(harness.assignmentProviderChecks, ["codex_oauth"]);
-  assert.equal(harness.modelPolicy.current, previous);
-  assert.equal(harness.mutationCalls.length, 0);
-  assert.deepEqual(harness.auditEvents, []);
+  assert.equal(response.policy.activeModel.model, "gpt-5.5");
+  assert.deepEqual(harness.assignmentProviderChecks, []);
+  assert.equal(harness.mutationCalls.length, 1);
+  assert.equal(harness.auditEvents.length, 1);
 });
 
 test("replacePlatformModelPolicy rejects empty enabled models before persistence", async () => {
@@ -779,6 +768,52 @@ test("failed model policy replacement preserves the previous policy and records 
   );
   assert.equal(harness.modelPolicy.current, previous);
   assert.deepEqual(harness.auditEvents, []);
+});
+
+test("PUT switches the platform provider despite historical enabled assignments", async () => {
+  const harness = createHarness({
+    policy: policyRecord({
+      enabledModels: [{ provider: "codex_oauth", model: "gpt-5.4" }],
+      activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
+    }),
+    credentials: [credential({ id: "cred_custom", provider: "openai_compatible" })],
+    openAiCompatibleModels: ["custom/model-v1"],
+    incompatibleAssignmentCount: 1,
+  });
+  const app = createApp({ admin: harness.service });
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    const response = await fetch(
+      `http://127.0.0.1:${port}/admin/api/ai-infrastructure/model-policy`,
+      {
+        method: "PUT",
+        headers: { cookie: ADMIN_COOKIE, "content-type": "application/json" },
+        body: JSON.stringify({
+          enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+          activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+        }),
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      policy: {
+        enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
+        activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
+        updatedAt: NOW.toISOString(),
+      },
+    });
+    assert.deepEqual(harness.assignmentProviderChecks, []);
+    assert.equal(harness.modelPolicy.current?.activeModel.provider, "openai_compatible");
+    assert.equal(harness.mutationCalls[0]?.actorUserId, "user_platform_admin");
+    assert.equal(harness.auditEvents[0]?.action, "platform.model_policy.update");
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
 });
 
 test("PUT does not report success when required model policy audit persistence fails", async () => {

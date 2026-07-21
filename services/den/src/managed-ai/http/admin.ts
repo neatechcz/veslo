@@ -63,8 +63,6 @@ type CreateCredentialInput = {
 
 type UpdateUserAiAccessInput = {
   enabled: boolean
-  provider: AiAccessProvider | null
-  credentialId: string | null
 }
 
 type ManagedAiAdminRouteOptions = {
@@ -77,6 +75,7 @@ type ManagedAiAdminRouteOptions = {
   secrets: SecretStore
   usage: UsageRepository
   codexStatusProvider?: CodexCredentialStatusProvider | null
+  resolveEnabledUserAiAccess?: (userId: string) => Promise<UpsertUserAiAccessPolicyInput>
   now?: () => Date
 }
 
@@ -495,13 +494,24 @@ export function createManagedAiAdminRouteDeps(
       }
 
       try {
-        const validated = validateUserAiAccessInput({
-          ...(req.body ?? {}),
-          userId,
-        })
-        if (validated.enabled) {
-          await assertAssignableCredential(validated.provider, validated.credentialId)
+        const body = req.body && typeof req.body === "object" && !Array.isArray(req.body)
+          ? req.body as Record<string, unknown>
+          : {}
+        if (Object.keys(body).some((key) => key !== "enabled")) {
+          throw new HttpError("user_ai_access_routing_not_supported", 400)
         }
+        if (typeof body.enabled !== "boolean") {
+          throw new HttpError("user_ai_access_enabled_required", 400)
+        }
+        const validated: UpsertUserAiAccessPolicyInput = body.enabled
+          ? await resolveEnabledUserAiAccess(userId)
+          : {
+              userId,
+              enabled: false,
+              provider: null,
+              credentialId: null,
+              assignmentOrigin: "admin_assigned",
+            }
 
         const saved = await deps.aiAccess.upsertUserAiAccess(validated)
         await recordAuditEvent({
@@ -514,7 +524,7 @@ export function createManagedAiAdminRouteDeps(
         })
         return {
           aiAccess: toAdminUserAiAccessRecord(saved)!,
-          availableCredentials: await listAvailableAssignmentCredentials(),
+          availableCredentials: [],
         }
       } catch (error) {
         return handleRouteError(res, error, "ai_access_update_failed")
@@ -983,6 +993,21 @@ export function createManagedAiAdminRouteDeps(
       }
     },
   }
+
+  async function resolveEnabledUserAiAccess(userId: string) {
+    if (!deps.resolveEnabledUserAiAccess) {
+      throw new HttpError("user_ai_access_automatic_resolution_unavailable", 503)
+    }
+    const resolved = await deps.resolveEnabledUserAiAccess(userId)
+    if (
+      resolved.userId !== userId
+      || resolved.enabled !== true
+      || resolved.assignmentOrigin !== "admin_assigned"
+    ) {
+      throw new HttpError("user_ai_access_automatic_resolution_invalid", 502)
+    }
+    return resolved
+  }
 }
 
 export function createManagedAiAdminUiRouter(deps: ManagedAiAdminUiOptions) {
@@ -1352,34 +1377,6 @@ function normalizeOpenAiCompatibleBaseUrl(input: unknown): string {
 
   parsed.pathname = parsed.pathname.replace(/\/+$/, "")
   return parsed.toString().replace(/\/+$/, "")
-}
-
-function validateUserAiAccessInput(input: UpdateUserAiAccessInput & { userId: string }): UpsertUserAiAccessPolicyInput {
-  if (Object.hasOwn(input, "defaultModel") || Object.hasOwn(input, "allowedModels")) {
-    throw new HttpError("user_model_policy_not_supported", 400)
-  }
-  const enabled = input.enabled === true
-  const provider = parseAiAccessProvider(input.provider)
-  const credentialId =
-    typeof input.credentialId === "string" && input.credentialId.trim()
-      ? input.credentialId.trim()
-      : null
-
-  if (enabled && !provider) {
-    throw new HttpError("invalid_ai_access_provider", 400)
-  }
-
-  if (enabled && (provider === "codex_oauth" || provider === "openai_compatible") && !credentialId) {
-    throw new HttpError("invalid_ai_access_credential_id", 400)
-  }
-
-  return {
-    userId: input.userId,
-    enabled,
-    provider,
-    credentialId,
-    assignmentOrigin: "admin_assigned",
-  }
 }
 
 function parseCredentialProvider(value: unknown): LeaseProvider | null {

@@ -47,7 +47,7 @@ The hosted desktop onboarding page also caches the current desktop auth transact
 
 ## Signup Domain Policy and Organization Invitations
 
-DEN authorizes signup before Better Auth creates the user, including email/password and social-provider signup. The durable signup paths are:
+DEN authorizes signup before Better Auth creates the user, including email/password and social-provider signup. Authorization decides whether the address may proceed; email/password organization provisioning still waits for verified identity. The durable signup paths are:
 
 - An enabled organization domain with self-signup enabled can auto-activate a member only while the organization has an available seat.
 - An unclaimed exact domain that is not a known personal-email provider can bootstrap a new organization. The first signup becomes its organization admin; later users join as members through the resulting domain rule, subject to seat capacity.
@@ -61,7 +61,9 @@ There is no admin approval queue or notification path for rejected signup attemp
 
 Domain-joined and invite-joined signups receive active organization membership without a personal default organization.
 
-When signup is authorized to bootstrap a previously unclaimed company domain, DEN atomically creates the organization, the first user's organization-admin membership, an enabled self-signup domain rule, and the automatic organization trial. Domain matching uses the normalized exact value after `@`: `team.example.com` does not claim `example.com`. Later users with the same exact domain join the organization as members, subject to its seat limit.
+Email/password signup creates an unverified authentication identity first. Until the email is verified, DEN does not create a new organization, register the email domain, grant an organization trial, or assign usable Managed AI access. Successful verification invokes the idempotent organization provisioner. A trusted social identity can use the immediate path only when its provider result marks the email as verified.
+
+After verification, a user whose exact email domain already has an enabled self-signup rule joins that organization, subject to its seat limit. Otherwise DEN atomically creates the organization, the first user's active organization-admin membership, and an enabled self-signup domain rule before applying the domain-bound trial decision. Email/password therefore completes verification before organization provisioning, and DEN resolves active membership before AI Gateway can create the effective assignment. Gateway can lazily create a missing enabled record on authenticated self-access without checking billing; inference reaches the initializer only after positive DEN entitlement, while an organization-qualified admin read first requires scoped membership and role authorization. Routing follows the single global active model and compatible infrastructure capability; DEN does not select a user model, provider, or credential. Domain matching uses the normalized exact value after `@`: `owner@team.example.com` proves `team.example.com`, not `example.com`.
 
 The domain's unique index serializes concurrent first signups. The winning transaction creates the organization; a losing signup rolls back its provisional organization and joins the winning domain owner. Signup never re-enables a disabled or invite-only domain. A valid organization invitation remains an independent path and does not create another organization or domain.
 
@@ -72,6 +74,8 @@ Each newly generated registration link carries its one-time token in the URL fra
 Email/password auth sends the stored invitation token only with signup requests and clears it after signup succeeds. Sign-in never sends it, and a recoverable signup failure keeps it available for retry.
 
 Browser-side invitation persistence before auth submission uses `sessionStorage` rather than `localStorage`. During GitHub signup, Better Auth also carries the token temporarily in encrypted cookie-backed OAuth state. The browser correlates callback completion with the exact cryptographically random auth-attempt identifier stored for at most ten minutes. That pending context is consumed once and the flow fails closed when storage, expiry, or correlation cannot be verified. Only a correlated new-user signup callback clears the invitation and records signup completion; existing-user and error callbacks retain the invitation for a later valid signup attempt.
+
+The signup/registration policy remains the sole authority for deciding whether a domain may be registered. Organization provisioning and trial code trust that result; they do not maintain another public-email-provider list or classify a registered domain independently.
 
 Key persistent settings:
 

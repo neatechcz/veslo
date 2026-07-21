@@ -1,6 +1,7 @@
 import { Router } from "express"
 
 import type { AiAccessProvider, AiAccessRepository } from "../access/repository.js"
+import { respondToSessionPolicyRejection } from "../../http/email-verification.js"
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js"
 
 export type UserCredentialDependencies = {
@@ -23,7 +24,16 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
       return
     }
 
-    const session = await deps.sessionResolver.resolveSession(token)
+    let session: UserSession | null
+    try {
+      session = await deps.sessionResolver.resolveSession(token)
+    } catch (error) {
+      if (respondToSessionPolicyRejection(res, error)) {
+        return
+      }
+      next(error)
+      return
+    }
     if (!session) {
       res.status(401).json({ error: "unauthorized" })
       return

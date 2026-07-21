@@ -148,6 +148,14 @@ test.describe('AI Gateway admin data isolation', () => {
     await expect(page.locator('#auth-state')).toHaveText('Signed in');
   });
 
+  test('platform admin retains the global model policy controls in AI Infrastructure', async ({ page }) => {
+    await installAdminHarness(page);
+    await openAdmin(page, '/admin/ai-infrastructure');
+
+    await expect(page.locator('#model-policy-panel')).toBeVisible();
+    await expect(page.locator('#model-policy-save-button')).toBeVisible();
+  });
+
   test('Platform Users to organization Members clears global users synchronously and reveals only scoped members atomically', async ({ page }) => {
     const harness = await installAdminHarness(page);
     await openAdmin(page, '/admin/platform-users');
@@ -494,7 +502,7 @@ test.describe('AI Gateway admin data isolation', () => {
     expect.soft(await page.locator('body').innerText()).not.toContain(ORG_A_SLUG_MARKER);
   });
 
-  test('AI Access uses encoded organization-qualified GET and exact PUT, and delayed success cannot mutate a new organization', async ({ page }) => {
+  test('AI Access uses encoded organization-qualified GET and privilege-last writes, and delayed success cannot mutate a new organization', async ({ page }) => {
     const harness = await installAdminHarness(page);
     await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
     const member = ORG_MEMBERS[ORG_A.id][0];
@@ -504,31 +512,30 @@ test.describe('AI Gateway admin data isolation', () => {
     await page.locator(`[data-user-id="${member.userId}"]`).click();
     await expect.poll(() => requestCount(harness.records, 'GET', qualifiedPath)).toBe(1);
     await expect(page.locator('#user-editor-modal')).toHaveAttribute('open', '');
-    await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-A-AI-CREDENTIAL');
+    await expect(page.locator('#user-ai-access-enabled')).toBeVisible();
+    await expect(page.locator('#user-platform-admin')).toBeVisible();
+    await expect(page.locator('#user-ai-access-provider')).toHaveCount(0);
+    await expect(page.locator('#user-ai-access-credential')).toHaveCount(0);
     expect(qualifiedPath).toContain('%2F');
     expect(qualifiedPath).toContain('%40');
 
     await page.locator('#user-ai-access-enabled').uncheck();
-    await page.locator('#user-ai-access-provider').selectOption('codex_oauth');
-    await page.locator('#user-ai-access-credential').selectOption('ORG-A-AI-CREDENTIAL-id');
-    const save = harness.delayNext('PUT', qualifiedPath);
+    await page.locator('#user-platform-admin').check();
+    const platformAdminPath = `/admin/api/users/${encodeURIComponent(member.userId)}`;
+    const platformSave = harness.delayNext('PATCH', platformAdminPath);
+    const aiSave = harness.delayNext('PUT', qualifiedPath);
     await page.locator('#user-save-button').click();
-    const saveRecord = await save.arrived;
-    expect(saveRecord.body).toEqual({
-      enabled: false,
-      provider: 'codex_oauth',
-      credentialId: 'ORG-A-AI-CREDENTIAL-id',
-    });
-    expect(Object.keys(saveRecord.body as Record<string, unknown>).sort()).toEqual([
-      'credentialId',
-      'enabled',
-      'provider',
-    ]);
+    const aiSaveRecord = await aiSave.arrived;
+    expect(aiSaveRecord.body).toEqual({ enabled: false });
+    expect(requestCount(harness.records, 'PATCH', platformAdminPath)).toBe(0);
+    aiSave.release(harness.responseFor('PUT', qualifiedPath, aiSaveRecord.body));
+    const platformSaveRecord = await platformSave.arrived;
+    expect(platformSaveRecord.body).toEqual({ platformAdmin: true });
 
     await switchOrganization(page, ORG_B);
     await waitForPageReady(page);
     await expect(page.locator('#user-editor-modal')).not.toHaveAttribute('open', '');
-    save.release(harness.responseFor('PUT', qualifiedPath, saveRecord.body));
+    platformSave.release(json(200, { user: { ...member, id: member.userId, platformAdmin: true } }));
     await waitAnimationFrames(page, 3);
 
     await expect(page).toHaveURL(new RegExp(`/admin/organizations/${ORG_B.id}/ai-access$`));
@@ -536,6 +543,145 @@ test.describe('AI Gateway admin data isolation', () => {
     await expect(page.locator('#user-save-status')).not.toHaveText('AI access saved.');
     expect(requestCount(harness.records, 'GET', '/admin/api/users')).toBe(globalRequestCount);
     expect(harness.records.some((record) => /^\/admin\/api\/users\/.+\/ai-access$/.test(record.path))).toBe(false);
+  });
+
+  test('saving AI access preserves an existing Platform Admin unless privilege is explicitly unchecked', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const member = harness.state.membersByOrgId[ORG_A.id][0];
+    member.platformAdmin = true;
+    const qualifiedPath = qualifiedAiAccessPath(ORG_A.id, member.userId);
+    const platformAdminPath = `/admin/api/users/${encodeURIComponent(member.userId)}`;
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-platform-admin')).toBeChecked();
+
+    await page.locator('#user-ai-access-enabled').uncheck();
+    await page.locator('#user-save-button').click();
+    await expect.poll(() => requestCount(harness.records, 'PUT', qualifiedPath)).toBe(1);
+    expect(requestCount(harness.records, 'PATCH', platformAdminPath)).toBe(0);
+
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-platform-admin')).toBeChecked();
+
+    await page.locator('#user-platform-admin').uncheck();
+    await page.locator('#user-save-button').click();
+    await expect.poll(() => requestCount(harness.records, 'PATCH', platformAdminPath)).toBe(1);
+    const privilegePatch = harness.records.find(
+      (record) => record.method === 'PATCH' && record.path === platformAdminPath,
+    );
+    expect(privilegePatch?.body).toEqual({ platformAdmin: false });
+
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-platform-admin')).not.toBeChecked();
+  });
+
+  test('failed AI access save cannot silently elevate Platform Admin', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const member = ORG_MEMBERS[ORG_A.id][0];
+    const qualifiedPath = qualifiedAiAccessPath(ORG_A.id, member.userId);
+    const platformAdminPath = `/admin/api/users/${encodeURIComponent(member.userId)}`;
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-editor-modal')).toHaveAttribute('open', '');
+    await page.locator('#user-ai-access-enabled').uncheck();
+    await page.locator('#user-platform-admin').check();
+
+    const failedAiSave = harness.respondNext(
+      'PUT',
+      qualifiedPath,
+      json(500, { error: 'controlled_ai_access_failure' }),
+    );
+    const recoveryOrganization = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}`);
+    const recoveryMembers = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}/members`);
+
+    await page.locator('#user-save-button').click();
+    const aiSaveRecord = await failedAiSave.arrived;
+    expect(aiSaveRecord.body).toEqual({ enabled: false });
+    expect(requestCount(harness.records, 'PATCH', platformAdminPath)).toBe(0);
+
+    await Promise.all([recoveryOrganization.arrived, recoveryMembers.arrived]);
+    recoveryOrganization.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}`));
+    recoveryMembers.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}/members`));
+    await waitForPageReady(page);
+    await expect.poll(() => requestCount(harness.records, 'GET', qualifiedPath)).toBe(2);
+
+    expect(requestCount(harness.records, 'PATCH', platformAdminPath)).toBe(0);
+    await expect(page.locator('#user-save-status')).toHaveText(
+      'Unable to save AI access. Platform Admin was not changed: controlled_ai_access_failure',
+    );
+  });
+
+  test('partial privilege-last failure restores authoritative AI access and reports the uncertain Platform Admin result', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const member = ORG_MEMBERS[ORG_A.id][0];
+    const qualifiedPath = qualifiedAiAccessPath(ORG_A.id, member.userId);
+    const platformAdminPath = `/admin/api/users/${encodeURIComponent(member.userId)}`;
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-ai-access-enabled')).toBeChecked();
+    await page.locator('#user-ai-access-enabled').uncheck();
+    await page.locator('#user-platform-admin').check();
+
+    const failedPlatformSave = harness.respondNext(
+      'PATCH',
+      platformAdminPath,
+      json(500, { error: 'controlled_platform_admin_failure' }),
+    );
+    const recoveryOrganization = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}`);
+    const recoveryMembers = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}/members`);
+
+    await page.locator('#user-save-button').click();
+    await failedPlatformSave.arrived;
+    const aiSaveRecord = harness.records.find(
+      (record) => record.method === 'PUT' && record.path === qualifiedPath,
+    );
+    expect(aiSaveRecord?.body).toEqual({ enabled: false });
+
+    await Promise.all([recoveryOrganization.arrived, recoveryMembers.arrived]);
+    recoveryOrganization.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}`));
+    recoveryMembers.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}/members`));
+    await waitForPageReady(page);
+    await expect.poll(() => requestCount(harness.records, 'GET', qualifiedPath)).toBe(2);
+
+    await expect(page.locator('#user-editor-modal')).toHaveAttribute('open', '');
+    await expect(page.locator('#user-ai-access-enabled')).not.toBeChecked();
+    await expect(page.locator('#user-save-status')).toHaveText(
+      'AI access was saved, but the Platform Admin result could not be confirmed: controlled_platform_admin_failure',
+    );
+    await expect(page.locator('#user-save-status')).toHaveAttribute('data-tone', 'error');
+  });
+
+  test('organization admin can toggle AI access but cannot elevate platform admin', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    harness.state.session = {
+      user: {
+        id: 'organization-admin',
+        email: 'organization-admin@example.test',
+        emailVerified: true,
+        name: 'ORGANIZATION-ADMIN',
+      },
+      platformAdmin: false,
+      activeOrgId: ORG_A.id,
+      organizations: [{ ...ORG_A, role: 'organization_admin' }],
+      capabilities: ['organization', 'users', 'managedAiUserAccess'],
+      allowedPages: ['organization', 'users'],
+    };
+    const member = ORG_MEMBERS[ORG_A.id][0];
+    const qualifiedPath = qualifiedAiAccessPath(ORG_A.id, member.userId);
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
+    await page.locator(`[data-user-id="${member.userId}"]`).click();
+    await expect(page.locator('#user-platform-admin')).not.toBeVisible();
+    await expect(page.locator('#user-platform-admin')).toBeDisabled();
+    await page.locator('#user-ai-access-enabled').uncheck();
+    await page.locator('#user-save-button').click();
+    await expect.poll(() => requestCount(harness.records, 'PUT', qualifiedPath)).toBe(1);
+    const putRecord = harness.records.find((record) => record.method === 'PUT' && record.path === qualifiedPath);
+    expect(putRecord?.body).toEqual({ enabled: false });
+    expect(harness.records.some((record) => record.method === 'PATCH' && /^\/admin\/api\/users\//.test(record.path))).toBe(false);
   });
 
   test('organization A to B transitions isolate Overview, domains, invites, billing, AI access, and audit until each destination is complete', async ({ page }) => {
@@ -618,7 +764,9 @@ test.describe('AI Gateway admin data isolation', () => {
       }
       if (scenario.page === 'ai-access') {
         await page.locator(`[data-user-id="${ORG_MEMBERS[ORG_A.id][0].userId}"]`).click();
-        await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-A-AI-CREDENTIAL');
+        await expect(page.locator('#user-ai-access-enabled')).toBeVisible();
+        await expect(page.locator('#user-ai-access-provider')).toHaveCount(0);
+        await expect(page.locator('#user-ai-access-credential')).toHaveCount(0);
       }
 
       const controls = scenario.paths.map((path) => harness.delayNext('GET', path));
@@ -659,7 +807,7 @@ test.describe('AI Gateway admin data isolation', () => {
 
       if (scenario.page === 'ai-access') {
         await page.locator(`[data-user-id="${ORG_MEMBERS[ORG_B.id][0].userId}"]`).click();
-        await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-B-AI-CREDENTIAL');
+        await expect(page.locator('#user-ai-access-enabled')).toBeVisible();
         await page.locator('#user-modal-close').click();
       }
     }
@@ -752,6 +900,43 @@ test.describe('AI Gateway admin data isolation', () => {
     await expect(page.locator('[data-user-id]')).toHaveCount(0);
   });
 
+  test('verified-member domain conflict keeps the add modal usable and never adds an optimistic row', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const domainsPath = `/admin/api/organizations/${ORG_A.id}/domains`;
+    const rejectedDomain = 'unverified-domain.example';
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/domains-invites`);
+    await expect(page.locator('[data-domain-id]')).toHaveCount(1);
+    await page.locator('#organization-domain-add-button').click();
+    await expect(page.locator('#organization-domain-modal')).toHaveAttribute('open', '');
+    await page.locator('#organization-domain-modal-domain').fill(rejectedDomain);
+
+    const rejectedSave = harness.delayNext('POST', domainsPath);
+    await page.locator('#organization-domain-modal-save').click();
+    const request = await rejectedSave.arrived;
+    expect(request.body).toEqual({
+      domain: rejectedDomain,
+      enabled: true,
+      selfSignupEnabled: false,
+    });
+    await expect(page.locator('#organization-domain-modal-save')).toBeDisabled();
+    await expect(page.locator('[data-domain-id]')).toHaveCount(1);
+    await expect(page.locator('#organization-domain-list')).not.toContainText(rejectedDomain);
+
+    rejectedSave.release(json(409, { error: 'domain_verified_member_required' }));
+
+    await expect(page.locator('#organization-domain-modal')).toHaveAttribute('open', '');
+    await expect(page.locator('#organization-domain-modal-status')).toHaveText(
+      'Unable to save domain: Add and verify a member email from this domain before registering it.',
+    );
+    await expect(page.locator('#organization-domain-modal-status')).toHaveAttribute('data-tone', 'error');
+    await expect(page.locator('#organization-domain-modal-save')).toBeEnabled();
+    await expect(page.locator('#organization-domain-modal-domain')).toHaveValue(rejectedDomain);
+    await expect(page.locator('[data-domain-id]')).toHaveCount(1);
+    await expect(page.locator('#organization-domain-list')).not.toContainText(rejectedDomain);
+    expect(requestCount(harness.records, 'GET', domainsPath)).toBe(1);
+  });
+
   test('route-owned dialogs close immediately and late abandoned organization responses cannot restore selected content', async ({ page }) => {
     const harness = await installAdminHarness(page);
     await openAdmin(page, `/admin/organizations/${ORG_A.id}/domains-invites`);
@@ -806,18 +991,15 @@ test.describe('AI Gateway admin data isolation', () => {
 
     await page.locator(`[data-user-id="${first.userId}"]`).click();
     await delayedGet.arrived;
-    await expect(page.locator('#user-ai-access-credential')).not.toContainText('ORG-A-AI-CREDENTIAL');
+    await expect(page.locator('#user-ai-access-provider')).toHaveCount(0);
+    await expect(page.locator('#user-ai-access-credential')).toHaveCount(0);
     delayedGet.release(harness.responseFor('GET', firstPath));
-    await expect(page.locator('#user-ai-access-credential')).toContainText('ORG-A-AI-CREDENTIAL');
+    await expect(page.locator('#user-ai-access-enabled')).toBeChecked();
 
     const save = harness.delayNext('PUT', firstPath);
     await page.locator('#user-save-button').click();
     const saveRecord = await save.arrived;
-    expect(saveRecord.body).toEqual({
-      enabled: true,
-      provider: 'codex_oauth',
-      credentialId: 'ORG-A-AI-CREDENTIAL-id',
-    });
+    expect(saveRecord.body).toEqual({ enabled: true });
     await page.locator('#user-modal-close').click();
     await page.locator(`[data-user-id="${second.userId}"]`).click();
     await expect.poll(() => requestCount(harness.records, 'GET', secondPath)).toBe(1);
@@ -832,6 +1014,50 @@ test.describe('AI Gateway admin data isolation', () => {
     const legacyPath = `/admin/api/users/${encodeURIComponent(first.userId)}/ai-access`;
     expect(harness.records.filter((record) => record.path === legacyPath)).toHaveLength(0);
     expect(harness.records.some((record) => /^\/admin\/api\/users\/.+\/ai-access$/.test(record.path))).toBe(false);
+  });
+
+  test('route switch during delayed save recovery cannot publish the abandoned member error', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const first = ORG_MEMBERS[ORG_A.id][0];
+    const firstPath = qualifiedAiAccessPath(ORG_A.id, first.userId);
+    const second = ORG_MEMBERS[ORG_B.id][0];
+    const secondPath = qualifiedAiAccessPath(ORG_B.id, second.userId);
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/ai-access`);
+    await page.locator(`[data-user-id="${first.userId}"]`).click();
+    await expect(page.locator('#user-editor-modal')).toHaveAttribute('open', '');
+
+    const failedSave = harness.respondNext(
+      'PUT',
+      firstPath,
+      json(500, { error: 'abandoned_recovery_error' }),
+    );
+    const abandonedOrganization = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}`);
+    const abandonedMembers = harness.delayNext('GET', `/admin/api/organizations/${ORG_A.id}/members`);
+
+    await page.locator('#user-save-button').click();
+    await failedSave.arrived;
+    await Promise.all([abandonedOrganization.arrived, abandonedMembers.arrived]);
+
+    const destinationOrganization = harness.delayNext('GET', `/admin/api/organizations/${ORG_B.id}`);
+    const destinationMembers = harness.delayNext('GET', `/admin/api/organizations/${ORG_B.id}/members`);
+    await navigateWithPopstate(page, `/admin/organizations/${ORG_B.id}/ai-access`);
+    await Promise.all([destinationOrganization.arrived, destinationMembers.arrived]);
+    destinationOrganization.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_B.id}`));
+    destinationMembers.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_B.id}/members`));
+    await waitForPageReady(page);
+
+    await page.locator(`[data-user-id="${second.userId}"]`).click();
+    await expect.poll(() => requestCount(harness.records, 'GET', secondPath)).toBe(1);
+    await expect(page.locator('#user-editor-title')).toHaveText('ORG-B-BOB');
+    await expect(page.locator('#user-editor-modal')).toHaveAttribute('open', '');
+
+    abandonedOrganization.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}`));
+    abandonedMembers.release(harness.responseFor('GET', `/admin/api/organizations/${ORG_A.id}/members`));
+    await waitAnimationFrames(page, 3);
+
+    await expect(page.locator('#user-editor-title')).toHaveText('ORG-B-BOB');
+    await expect(page.locator('#user-save-status')).not.toContainText('abandoned_recovery_error');
   });
 
   test('wrong membershipId or userId in member PATCH responses cannot show success and forces scoped recovery', async ({ page }) => {
@@ -1162,6 +1388,29 @@ function defaultResponse(state: HarnessState, record: RequestRecord): HarnessRes
   if (decodedPath === '/admin/api/users' && record.method === 'GET') {
     return json(200, { users: state.globalUsers });
   }
+  const userMatch = decodedPath.match(/^\/admin\/api\/users\/(.+)$/);
+  if (userMatch && record.method === 'PATCH') {
+    const platformAdmin = isObject(record.body) && record.body.platformAdmin === true;
+    const user = state.globalUsers.find((entry) => entry.id === userMatch[1]);
+    if (user) {
+      user.platformAdmin = platformAdmin;
+    }
+    let organizationMember: TestOrganizationMember | undefined;
+    for (const members of Object.values(state.membersByOrgId)) {
+      const member = members.find((entry) => entry.userId === userMatch[1]);
+      if (member) {
+        member.platformAdmin = platformAdmin;
+        organizationMember = member;
+      }
+    }
+    return json(200, {
+      user: {
+        ...(user || organizationMember || { id: userMatch[1] }),
+        id: userMatch[1],
+        platformAdmin,
+      },
+    });
+  }
   if (decodedPath === '/admin/api/organizations' && record.method === 'GET') {
     return json(200, { organizations: state.organizations });
   }
@@ -1176,6 +1425,9 @@ function defaultResponse(state: HarnessState, record: RequestRecord): HarnessRes
   }
   if (decodedPath === '/admin/api/usage' && record.method === 'GET') {
     return json(200, emptyUsage());
+  }
+  if (decodedPath === '/admin/api/ai-infrastructure/model-policy' && record.method === 'GET') {
+    return json(200, { policy: null });
   }
 
   const organizationMatch = decodedPath.match(/^\/admin\/api\/organizations\/([^/]+)$/);
@@ -1245,8 +1497,8 @@ function defaultResponse(state: HarnessState, record: RequestRecord): HarnessRes
         id: `ai-access-${aiAccessMatch[1]}`,
         userId: aiAccessMatch[2],
         enabled: body.enabled === true,
-        provider: typeof body.provider === 'string' ? body.provider : '',
-        credentialId: typeof body.credentialId === 'string' ? body.credentialId : null,
+        provider: current.aiAccess?.provider || 'codex_oauth',
+        credentialId: current.aiAccess?.credentialId || null,
         updatedAt: '2026-07-14T12:00:00.000Z',
       },
       availableCredentials: current.availableCredentials,
@@ -1475,6 +1727,7 @@ function organizationMember(membershipId: string, userId: string, name: string, 
     email,
     role: 'member',
     status: 'active',
+    platformAdmin: false,
     createdAt: '2026-07-14T08:00:00.000Z',
   };
 }

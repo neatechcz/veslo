@@ -96,7 +96,10 @@ export function applyPlatformModelPolicy(input: {
   }
 
   const requestBody = { ...(input.body as Record<string, unknown>) };
-  const requestedModel = typeof requestBody.model === "string" ? requestBody.model : "";
+  const requestedModel = normalizeManagedModelRef(
+    typeof requestBody.model === "string" ? requestBody.model : "",
+    input.routeProvider,
+  );
   if (requestedModel && requestedModel !== input.activeModel.model) {
     return {
       ok: false,

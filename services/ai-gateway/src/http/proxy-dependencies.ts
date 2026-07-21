@@ -1,6 +1,7 @@
 import type { AlertRepository } from "../alerts/repository.js";
 import type { AutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AiAccessRepository } from "../access/repository.js";
+import type { AutomaticUserAiAccessService } from "../access/automatic-user-access.js";
 import type { GatewaySessionResolver } from "../auth/gateway-session.js";
 import type { ManagedAiEntitlementResolver } from "../billing/den-managed-ai-entitlement-resolver.js";
 import type { CredentialRepository } from "../credentials/repository.js";
@@ -18,6 +19,7 @@ import type { UsageRepository } from "../usage/repository.js";
 
 export type ProxyDependencies = {
   aiAccess?: AiAccessRepository;
+  automaticUserAiAccess?: AutomaticUserAiAccessService;
   alertRepository?: AlertRepository;
   autoAssignedCodexCredentialRotation?: AutoAssignedCodexCredentialRotationService;
   gatewaySessions: GatewaySessionResolver;

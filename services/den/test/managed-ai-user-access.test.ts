@@ -13,6 +13,7 @@ Object.assign(process.env, {
 })
 
 const { createUserCredentialsRouter } = await import("../src/managed-ai/http/user-credentials.js")
+const { SessionPolicyRejectionError } = await import("../src/http/email-verification.js")
 
 function createAiAccessRecord(overrides: Partial<UserAiAccessPolicyRecord> = {}): UserAiAccessPolicyRecord {
   return {
@@ -134,6 +135,45 @@ test("GET /api/me/ai-access fails explicitly when gateway policy compatibility d
     assert.equal(response.status, 503)
     assert.deepEqual(await response.json(), { error: "platform_model_policy_not_configured" })
     assert.equal(repairCalls, 0)
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET /api/me/ai-access preserves an email-verification-required session rejection", async () => {
+  const app = express()
+  app.use(
+    createUserCredentialsRouter({
+      sessionResolver: {
+        async resolveSession() {
+          throw new SessionPolicyRejectionError({
+            status: 403,
+            body: {
+              error: "email_verification_required",
+              message: "Verify your email to continue.",
+              email: "user@example.com",
+            },
+          })
+        },
+      },
+    }),
+  )
+
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/api/me/ai-access`, {
+      headers: { authorization: "Bearer den_token_123" },
+    })
+
+    assert.equal(response.status, 403)
+    assert.deepEqual(await response.json(), {
+      error: "email_verification_required",
+      message: "Verify your email to continue.",
+      email: "user@example.com",
+    })
   } finally {
     server.close()
     await once(server, "close")

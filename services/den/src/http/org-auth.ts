@@ -2,7 +2,7 @@ import express from "express"
 import { and, eq } from "drizzle-orm"
 import { db } from "../db/index.js"
 import { OrgMembershipTable, OrgRole, OrgTable, PlatformRoleTable } from "../db/schema.js"
-import { ensureDefaultOrg } from "../orgs.js"
+import { provisionVerifiedSignupIdentity } from "../auth/verified-signup.js"
 import { hasRequiredOrgRole, pickActiveOrganization, toCurrentOrgRole, type OrganizationAccessSummary } from "./access.js"
 import { requireSession, type SessionContext } from "./session.js"
 
@@ -124,15 +124,24 @@ export async function findUserOrganization(userId: string, orgId: string): Promi
     : null
 }
 
-export async function resolveMembershipOrganizations(session: SessionContext) {
-  let organizations = await resolveUserOrganizations(session.user.id)
-  if (organizations.length === 0) {
-    const fallbackName = session.user.name ?? session.user.email ?? "Personal"
-    await ensureDefaultOrg(session.user.id, fallbackName)
-    organizations = await resolveUserOrganizations(session.user.id)
+export function createResolveMembershipOrganizations(deps: {
+  resolveUserOrganizations(userId: string): Promise<OrganizationSummary[]>
+  provisionVerifiedSignupUser(user: SessionContext["user"]): Promise<unknown>
+}) {
+  return async (session: SessionContext) => {
+    let organizations = await deps.resolveUserOrganizations(session.user.id)
+    if (organizations.length === 0 && session.user.emailVerified) {
+      await deps.provisionVerifiedSignupUser(session.user)
+      organizations = await deps.resolveUserOrganizations(session.user.id)
+    }
+    return organizations
   }
-  return organizations
 }
+
+export const resolveMembershipOrganizations = createResolveMembershipOrganizations({
+  resolveUserOrganizations,
+  provisionVerifiedSignupUser: provisionVerifiedSignupIdentity,
+})
 
 export async function isPlatformAdmin(userId: string) {
   const rows = await db

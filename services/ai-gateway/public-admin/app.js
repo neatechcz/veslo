@@ -101,7 +101,6 @@ const state = {
   codexAuthUploadByCredentialId: {},
   userMode: "edit",
   userAiAccessByUserId: {},
-  userAiAccessAvailableCredentialsByUserId: {},
   modelPolicy: createModelPolicyState(),
   modelDiscovery: createModelDiscoveryState(),
 };
@@ -140,6 +139,7 @@ const els = {
   organizationSections: Array.from(document.querySelectorAll("[data-organization-section]")),
   organizationPlaceholders: Array.from(document.querySelectorAll("[data-organization-placeholder]")),
   platformAdminControls: Array.from(document.querySelectorAll("[data-platform-admin-control]")),
+  userPlatformAdminControls: Array.from(document.querySelectorAll("[data-user-platform-admin-control]")),
   organizationBillingControls: Array.from(document.querySelectorAll("[data-organization-billing-control]")),
   aiAccessControls: Array.from(document.querySelectorAll("[data-ai-access-control]")),
   userGlobalControls: Array.from(document.querySelectorAll("[data-user-global-control]")),
@@ -247,8 +247,6 @@ const els = {
   userPlatformAdmin: document.getElementById("user-platform-admin"),
   userSendInvite: document.getElementById("user-send-invite"),
   userAiAccessEnabled: document.getElementById("user-ai-access-enabled"),
-  userAiAccessProvider: document.getElementById("user-ai-access-provider"),
-  userAiAccessCredential: document.getElementById("user-ai-access-credential"),
   userAiAccessStatus: document.getElementById("user-ai-access-status"),
   userEditorModal: document.getElementById("user-editor-modal"),
   userModalClose: document.getElementById("user-modal-close"),
@@ -391,7 +389,6 @@ function clearRouteOwnedState() {
   state.organizationDomainMode = "create";
   state.userMode = "edit";
   state.userAiAccessByUserId = {};
-  state.userAiAccessAvailableCredentialsByUserId = {};
   state.codexAuthCredentialUpload = null;
   state.codexAuthUploadByCredentialId = {};
   state.modelPolicy = createModelPolicyState();
@@ -851,6 +848,7 @@ function applyAdminCapabilities() {
   els.platformNavigation.classList.toggle("hidden", !canManagePlatform);
   els.organizationContextHeader.classList.toggle("hidden", !inOrganizationWorkspace);
   els.platformAdminControls.forEach((node) => node.classList.toggle("hidden", !canManagePlatform));
+  els.userPlatformAdminControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.setPlatformAdmin));
   els.organizationBillingControls.forEach((node) => node.classList.toggle("hidden", !canManageOrganizationBilling));
   els.aiAccessControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.editAiAccess));
   els.userGlobalControls.forEach((node) => node.classList.toggle("hidden", !userPermissions.editProfile));
@@ -906,8 +904,8 @@ function buildUserRoleFilterOptions() {
   return `<option value="">Role</option>${platformAdminOption}<option value="member">Member</option>`;
 }
 
-function buildUserUpdatePayload(payload) {
-  return buildAdminUserUpdatePayload(state.route, routeAccessSnapshot(), payload);
+function buildUserUpdatePayload(payload, currentUser = null) {
+  return buildAdminUserUpdatePayload(state.route, routeAccessSnapshot(), payload, currentUser);
 }
 
 function normalizeAiAccess(payload) {
@@ -934,48 +932,10 @@ function currentUserAiAccess(userId) {
   return normalizeAiAccess(state.userAiAccessByUserId[userId] || null);
 }
 
-function normalizeAvailableCredentials(payload) {
-  if (!Array.isArray(payload)) {
-    return [];
-  }
-
-  return payload
-    .filter((entry) => entry && typeof entry === "object")
-    .map((entry) => ({
-      id: typeof entry.id === "string" ? entry.id.trim() : "",
-      name: typeof entry.name === "string" ? entry.name.trim() : "",
-      provider: typeof entry.provider === "string" ? entry.provider.trim() : "",
-    }))
-    .filter((entry) => entry.id)
-    .map((entry) => ({
-      id: entry.id,
-      name: entry.name || entry.id,
-      provider: entry.provider,
-    }));
-}
-
-function currentUserAiAccessAvailableCredentials(userId, provider = "") {
-  return normalizeAvailableCredentials(state.userAiAccessAvailableCredentialsByUserId[userId] || [])
-    .filter((entry) => !provider || entry.provider === provider);
-}
-
 function readAiAccessFormValue() {
   return {
     enabled: els.userAiAccessEnabled.checked,
-    provider: els.userAiAccessProvider.value || null,
   };
-}
-
-function readAiAccessCredentialValue() {
-  const selectedProvider = els.userAiAccessProvider.value || "";
-  if (selectedProvider === "codex_oauth" || selectedProvider === "openai_compatible") {
-    const selectedCredentialId = els.userAiAccessCredential.value.trim();
-    return selectedCredentialId || null;
-  }
-
-  const user = currentUser();
-  const currentAiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
-  return currentAiAccess.provider === selectedProvider ? currentAiAccess.credentialId : null;
 }
 
 function healthyModelDiscoveryCredentials() {
@@ -1543,6 +1503,18 @@ function formatAdminError(error) {
       .join(" · ");
   }
   return error instanceof Error ? error.message : "unknown_error";
+}
+
+function formatOrganizationDomainError(error) {
+  const code = typeof error?.payload?.error === "string"
+    ? error.payload.error
+    : error instanceof Error ? error.message : "unknown_error";
+  switch (code) {
+    case "domain_verified_member_required":
+      return "Add and verify a member email from this domain before registering it.";
+    default:
+      return code;
+  }
 }
 
 async function bootstrapSession({ refreshVisibleRoute = false } = {}) {
@@ -2340,9 +2312,6 @@ async function loadUserAiAccess(userId, mutation = null) {
     const payload = await fetchJson(aiAccessMemberPath(selection));
     if (!isCurrentRouteMutation(activeMutation) || !isAiAccessMemberSelectionCurrent(selection)) return null;
     const aiAccess = normalizeAiAccess(payload?.aiAccess || null);
-    state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
-      payload?.availableCredentials,
-    );
     state.userAiAccessByUserId[resolvedUserId] = aiAccess;
     return aiAccess;
   } catch (error) {
@@ -2371,13 +2340,8 @@ async function saveUserAiAccess(
   const aiAccessInput = input && typeof input === "object"
     ? {
         enabled: input.enabled === true,
-        provider: typeof input.provider === "string" ? input.provider : null,
-        credentialId: typeof input.credentialId === "string" ? input.credentialId : null,
       }
-    : {
-        ...readAiAccessFormValue(),
-        credentialId: readAiAccessCredentialValue(),
-      };
+    : readAiAccessFormValue();
 
   try {
     const saved = await fetchJson(aiAccessMemberPath(selection), {
@@ -2385,9 +2349,6 @@ async function saveUserAiAccess(
       body: JSON.stringify(aiAccessInput),
     });
     if (!isCurrentRouteMutation(mutation) || !isAiAccessMemberSelectionCurrent(selection)) return false;
-    state.userAiAccessAvailableCredentialsByUserId[resolvedUserId] = normalizeAvailableCredentials(
-      saved?.availableCredentials,
-    );
     state.userAiAccessByUserId[resolvedUserId] = normalizeAiAccess(saved?.aiAccess || null);
     return true;
   } catch (error) {
@@ -2950,7 +2911,7 @@ function organizationMemberToRouteSubject(member, organization) {
     role,
     status,
     disabled: status === "disabled" || status === "removed",
-    platformAdmin: false,
+    platformAdmin: member?.platformAdmin === true,
     memberships: [{
       membershipId,
       orgId: organization.id,
@@ -3037,57 +2998,15 @@ function currentAlert() {
   return state.alerts.find((entry) => entry.id === state.selectedAlertId) || state.alerts[0] || null;
 }
 
-function renderAiAccessCredentialOptions(user, aiAccess) {
-  const selectedProvider = els.userAiAccessProvider.value || aiAccess.provider || "";
-  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id, selectedProvider) : [];
-  const emptyLabel =
-    selectedProvider === "codex_oauth" && availableCredentials.length === 0
-      ? "No eligible Codex credential"
-      : selectedProvider === "openai_compatible" && availableCredentials.length === 0
-        ? "No OpenAI-compatible credential"
-      : "Select assigned credential";
-  const options = [
-    `<option value="">${escapeHtml(emptyLabel)}</option>`,
-    ...availableCredentials.map(
-      (credential) =>
-        `<option value="${escapeHtml(credential.id)}">${escapeHtml(credential.name)}</option>`,
-    ),
-  ];
-
-  els.userAiAccessCredential.innerHTML = options.join("");
-  const selectedCredentialId =
-    (aiAccess.provider === "codex_oauth" || aiAccess.provider === "openai_compatible") &&
-    availableCredentials.some((entry) => entry.id === aiAccess.credentialId)
-      ? aiAccess.credentialId
-      : "";
-  els.userAiAccessCredential.value = selectedCredentialId || "";
-  els.userAiAccessCredential.disabled = state.routeActionsLocked ||
-    state.userMode === "create" ||
-    !user ||
-    (els.userAiAccessProvider.value !== "codex_oauth" && els.userAiAccessProvider.value !== "openai_compatible") ||
-    availableCredentials.length === 0;
-}
-
-function updateAiAccessStatusText(user, aiAccess) {
+function updateAiAccessStatusText(_user, aiAccess) {
   if (state.userMode === "create") {
-    els.userAiAccessStatus.textContent = "Create the user first, then assign access to the platform-managed model.";
-    return;
-  }
-
-  const selectedProvider = els.userAiAccessProvider.value || "";
-  const availableCredentials = user?.id ? currentUserAiAccessAvailableCredentials(user.id, selectedProvider) : [];
-  if (selectedProvider === "codex_oauth" && availableCredentials.length === 0) {
-    els.userAiAccessStatus.textContent = "No healthy Codex credentials with OK upstream status are available for assignment.";
-    return;
-  }
-  if (selectedProvider === "openai_compatible" && availableCredentials.length === 0) {
-    els.userAiAccessStatus.textContent = "Create a healthy OpenAI-compatible credential first, then assign it here.";
+    els.userAiAccessStatus.textContent = "Create the user first, then manage AI access from the organization.";
     return;
   }
 
   els.userAiAccessStatus.textContent = aiAccess.updatedAt
-    ? `Assignment updated ${formatDate(aiAccess.updatedAt)}. The model is managed in AI Infrastructure.`
-    : "The assignment is enforced by the gateway; the model is managed in AI Infrastructure.";
+    ? `AI access updated ${formatDate(aiAccess.updatedAt)}. Infrastructure is selected automatically.`
+    : "Infrastructure and models are selected automatically from AI Infrastructure.";
 }
 
 function populateUserEditor(user) {
@@ -3129,9 +3048,6 @@ function populateUserEditor(user) {
   if (permissions.editAiAccess) {
     els.userAiAccessEnabled.checked = aiAccess.enabled;
     els.userAiAccessEnabled.disabled = state.routeActionsLocked || isCreate || !user;
-    els.userAiAccessProvider.value = aiAccess.provider || "";
-    els.userAiAccessProvider.disabled = state.routeActionsLocked || isCreate || !user;
-    renderAiAccessCredentialOptions(user, aiAccess);
     updateAiAccessStatusText(user, aiAccess);
   }
   els.userSaveButton.textContent = permissions.editAiAccess && !permissions.editMembership
@@ -3791,7 +3707,7 @@ async function saveOrganizationDomainModal() {
   } catch (error) {
     if (!isCurrentRouteMutation(mutation)) return;
     setDomainModalStatus(
-      `Unable to save domain: ${error instanceof Error ? error.message : "unknown_error"}`,
+      `Unable to save domain: ${formatOrganizationDomainError(error)}`,
       "error",
     );
   } finally {
@@ -3953,7 +3869,7 @@ async function saveUser() {
     orgId: els.userOrg.value || null,
     orgRole: normalizeOrganizationRoleInput(els.userRole.value),
   };
-  const updatePayload = wasCreating ? payload : buildUserUpdatePayload(payload);
+  const updatePayload = wasCreating ? payload : buildUserUpdatePayload(payload, targetUser);
   const canEditAiAccess = permissions.editAiAccess && !wasCreating;
   const organizationId = organizationIdForRoute(state.route);
   const organizationMembershipSave = !wasCreating
@@ -3967,15 +3883,13 @@ async function saveUser() {
   }
   if (!wasCreating && !updatePayload && !canEditAiAccess) return;
   const aiAccessInput = canEditAiAccess
-    ? {
-        ...readAiAccessFormValue(),
-        credentialId: readAiAccessCredentialValue(),
-      }
+    ? readAiAccessFormValue()
     : null;
   const mutation = beginCurrentRouteMutation(
     `user-save:${targetUser?.id || "create"}`,
   );
   if (!isCurrentRouteMutation(mutation)) return;
+  let aiAccessSaved = false;
 
   try {
     els.userSaveButton.disabled = true;
@@ -3996,6 +3910,12 @@ async function saveUser() {
         return;
       }
     }
+    if (canEditAiAccess) {
+      const savedAiAccess = await saveUserAiAccess(targetUser.id, aiAccessInput, mutation);
+      if (!savedAiAccess) return;
+      aiAccessSaved = true;
+    }
+    if (!isCurrentRouteMutation(mutation)) return;
     if (wasCreating) {
       const created = await fetchJson("/users", {
         method: "POST",
@@ -4028,15 +3948,29 @@ async function saveUser() {
       );
       state.selectedOrganizationMemberId = targetUser.membershipId;
     } else if (updatePayload) {
-      await fetchJson(`/users/${encodeURIComponent(targetUser.id)}`, {
+      const updated = await fetchJson(`/users/${encodeURIComponent(targetUser.id)}`, {
         method: "PATCH",
         body: JSON.stringify(updatePayload),
       });
-    }
-    if (!isCurrentRouteMutation(mutation)) return;
-    if (canEditAiAccess) {
-      const savedAiAccess = await saveUserAiAccess(targetUser.id, aiAccessInput, mutation);
-      if (!savedAiAccess) return;
+      if (!isCurrentRouteMutation(mutation)) return;
+      if (
+        state.route?.area === "organization"
+        && state.route.page === "ai-access"
+        && Object.prototype.hasOwnProperty.call(updatePayload, "platformAdmin")
+      ) {
+        if (
+          !updated?.user
+          || updated.user.id !== targetUser.id
+          || typeof updated.user.platformAdmin !== "boolean"
+        ) {
+          throw new Error("user_update_response_invalid");
+        }
+        state.organizationMembers = state.organizationMembers.map((member) =>
+          member.userId === targetUser.id
+            ? { ...member, platformAdmin: updated.user.platformAdmin }
+            : member
+        );
+      }
     }
     if (!isCurrentRouteMutation(mutation)) return;
     if (!organizationMembershipSave && (wasCreating || updatePayload)) await loadUsers(mutation);
@@ -4064,10 +3998,54 @@ async function saveUser() {
     closeModal(els.userEditorModal);
   } catch (error) {
     if (!isCurrentRouteMutation(mutation)) return;
-    setUserSaveStatus(
-      `Unable to save user: ${error instanceof Error ? error.message : "unknown_error"}`,
-      "error",
-    );
+    const recoveryRoute = state.route ? { ...state.route } : null;
+    const recoveryTarget = targetUser
+      ? {
+          userId: targetUser.id,
+          membershipId: targetUser.membershipId || null,
+        }
+      : null;
+    const failureDetail = error instanceof Error ? error.message : "unknown_error";
+    const failureMessage = canEditAiAccess && !aiAccessSaved
+      ? permissions.setPlatformAdmin && updatePayload
+        ? `Unable to save AI access. Platform Admin was not changed: ${failureDetail}`
+        : `Unable to save AI access: ${failureDetail}`
+      : canEditAiAccess && updatePayload && aiAccessSaved
+        ? `AI access was saved, but the Platform Admin result could not be confirmed: ${failureDetail}`
+        : `Unable to save user: ${failureDetail}`;
+    if (!recoveryRoute) return;
+    const recovery = await loadRouteData(recoveryRoute);
+    if (!isRouteLoadResultCurrent(recovery, recoveryRoute)) return;
+    if (recoveryTarget) {
+      const recoveredTarget = currentRouteSubjects().find((entry) => (
+        entry.id === recoveryTarget.userId
+        && (!recoveryTarget.membershipId || entry.membershipId === recoveryTarget.membershipId)
+      ));
+      if (!recoveredTarget) return;
+      state.userMode = "edit";
+      state.selectedUserId = recoveredTarget.id;
+      if (recoveryTarget.membershipId) {
+        state.selectedOrganizationMemberId = recoveryTarget.membershipId;
+      }
+      renderUsers();
+      if (canEditAiAccess) {
+        const recoveryMutation = beginCurrentRouteMutation(`user-save-recovery:${recoveredTarget.id}`);
+        if (!isCurrentRouteMutation(recoveryMutation) || state.selectedUserId !== recoveredTarget.id) return;
+        await loadUserAiAccess(recoveredTarget.id, recoveryMutation);
+        if (!isCurrentRouteMutation(recoveryMutation) || state.selectedUserId !== recoveredTarget.id) return;
+        const currentTarget = currentUser();
+        if (
+          !currentTarget
+          || currentTarget.id !== recoveryTarget.userId
+          || (recoveryTarget.membershipId && currentTarget.membershipId !== recoveryTarget.membershipId)
+        ) {
+          return;
+        }
+        populateUserEditor(currentTarget);
+      }
+      openUserEditor(recoveredTarget.id);
+    }
+    setUserSaveStatus(failureMessage, "error");
   } finally {
     if (isCurrentRouteMutation(mutation)) {
       els.userSaveButton.disabled = false;
@@ -4365,15 +4343,6 @@ function bindActions() {
   els.userSearch.addEventListener("input", renderUsers);
   els.userStatusFilter.addEventListener("change", renderUsers);
   els.userRoleFilter.addEventListener("change", renderUsers);
-  els.userAiAccessProvider.addEventListener("change", () => {
-    if (!canPerformAdminRouteAction(state.route, routeAccessSnapshot(), "edit-ai-access")) {
-      return;
-    }
-    const user = currentUser();
-    const aiAccess = user?.id ? currentUserAiAccess(user.id) : normalizeAiAccess(null);
-    renderAiAccessCredentialOptions(user, aiAccess);
-    updateAiAccessStatusText(user, aiAccess);
-  });
   els.auditSearch.addEventListener("input", renderAudit);
   els.auditActorFilter.addEventListener("change", renderAudit);
   els.auditEntityFilter.addEventListener("change", renderAudit);

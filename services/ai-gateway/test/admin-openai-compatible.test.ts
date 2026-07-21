@@ -43,6 +43,7 @@ function createDenClient() {
           userId: "user_123",
           name: "Target User",
           email: "target@example.test",
+          platformAdmin: false,
           role: "member",
           status: "active",
           createdAt: "2026-07-12T08:00:00.000Z",
@@ -173,7 +174,7 @@ test("POST /admin/api/credentials creates an openai-compatible platform credenti
   }
 });
 
-test("GET qualified AI access returns assignable openai-compatible credentials", async () => {
+test("GET qualified AI access returns read-only openai-compatible routing metadata", async () => {
   const app = createApp({
     admin: createDefaultAdminService("http://den.example.test", {
       denClient: createDenClient() as never,
@@ -192,6 +193,23 @@ test("GET qualified AI access returns assignable openai-compatible credentials",
         async upsertUserAiAccess() {
           throw new Error("unused");
         },
+      },
+      automaticUserAiAccess: {
+        async getOrCreateUserAiAccess(userId: string) {
+          return {
+            id: "ai_access_user_123",
+            userId,
+            enabled: true,
+            provider: "openai_compatible",
+            credentialId: "cred_custom_1",
+            defaultModel: "custom-model",
+            allowedModels: ["custom-model"],
+            assignmentOrigin: "auto_assigned",
+            createdAt: new Date("2026-05-03T08:00:00.000Z"),
+            updatedAt: new Date("2026-05-03T08:00:00.000Z"),
+          };
+        },
+        async buildEnabledUpdate() { throw new Error("unused"); },
       },
       modelPolicyRepository: {
         async getPolicy() {
@@ -247,15 +265,11 @@ test("GET qualified AI access returns assignable openai-compatible credentials",
         enabled: true,
         provider: "openai_compatible",
         credentialId: "cred_custom_1",
+        defaultModel: "custom-model",
+        allowedModels: ["custom-model"],
         updatedAt: "2026-05-03T08:00:00.000Z",
       },
-      availableCredentials: [
-        {
-          id: "cred_custom_1",
-          name: "Custom compatible provider",
-          provider: "openai_compatible",
-        },
-      ],
+      availableCredentials: [],
     });
   } finally {
     server.close();

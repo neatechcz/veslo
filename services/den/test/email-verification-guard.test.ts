@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import type { Response } from "express"
-import { requireVerifiedEmail } from "../src/http/email-verification.js"
+import { enforceSessionPolicy, requireVerifiedEmail } from "../src/http/email-verification.js"
 import type { SessionContext } from "../src/http/session.js"
 
 function fakeResponse() {
@@ -45,4 +45,50 @@ test("requireVerifiedEmail responds with a stable 403 payload for unverified ses
     message: "Verify your email to continue.",
     email: "user@example.com",
   })
+})
+
+test("enforceSessionPolicy allows unverified sessions when verification is disabled", () => {
+  const res = fakeResponse()
+  const result = enforceSessionPolicy(res, {
+    user: { id: "u_1", email: "user@example.com", emailVerified: false, name: "User" },
+  } satisfies SessionContext, {
+    disabled: false,
+    requireEmailVerification: false,
+  })
+
+  assert.equal(result, true)
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.jsonBody, null)
+})
+
+test("enforceSessionPolicy rejects unverified sessions with the stable response when verification is enabled", () => {
+  const res = fakeResponse()
+  const result = enforceSessionPolicy(res, {
+    user: { id: "u_1", email: "user@example.com", emailVerified: false, name: "User" },
+  } satisfies SessionContext, {
+    disabled: false,
+    requireEmailVerification: true,
+  })
+
+  assert.equal(result, false)
+  assert.equal(res.statusCode, 403)
+  assert.deepEqual(res.jsonBody, {
+    error: "email_verification_required",
+    message: "Verify your email to continue.",
+    email: "user@example.com",
+  })
+})
+
+test("enforceSessionPolicy preserves disabled-user rejection precedence", () => {
+  const res = fakeResponse()
+  const result = enforceSessionPolicy(res, {
+    user: { id: "u_1", email: "user@example.com", emailVerified: false, name: "User" },
+  } satisfies SessionContext, {
+    disabled: true,
+    requireEmailVerification: true,
+  })
+
+  assert.equal(result, false)
+  assert.equal(res.statusCode, 403)
+  assert.deepEqual(res.jsonBody, { error: "user_disabled" })
 })

@@ -81,7 +81,7 @@ test("codex proxy rejects an assigned credential that cannot serve the request m
   }
 });
 
-test("codex proxy rejects a requested model not allowed by user access before credential repair", async () => {
+test("codex proxy rejects a client model override before credential repair", async () => {
   let repairCalls = 0;
   const app = express();
   app.use(express.json());
@@ -127,7 +127,7 @@ test("codex proxy rejects a requested model not allowed by user access before cr
       body: JSON.stringify({ model: "gpt-5.4", messages: [] }),
     });
     assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), { error: "model_not_allowed" });
+    assert.deepEqual(await response.json(), { error: "model_override_not_allowed" });
     assert.equal(repairCalls, 0);
   } finally {
     server.close();

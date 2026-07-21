@@ -1614,6 +1614,10 @@ tr.row-muted strong {
   padding: 8px 0;
 }
 
+.switch-row.hidden {
+  display: none !important;
+}
+
 .page[data-page] {
   min-height: 0;
 }

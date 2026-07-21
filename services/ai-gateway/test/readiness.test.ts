@@ -22,9 +22,6 @@ function createReadyDependencies() {
       async countEnabledPolicies() {
         return 2;
       },
-      async countEnabledPoliciesIncompatibleWithProvider() {
-        return 0;
-      },
     },
     modelCapabilities: {
       async checkHealthyCredentialForModel() {
@@ -162,18 +159,20 @@ test("readiness reports the configured active model", async () => {
   });
 });
 
-test("readiness reports enabled AI access policies that do not match the active provider", async () => {
+test("readiness ignores historical user providers after a healthy global provider switch", async () => {
+  let historicalProviderReads = 0;
+  const aiAccessWithHistoricalProvider = {
+    async countEnabledPolicies() {
+      return 3;
+    },
+    async countEnabledPoliciesIncompatibleWithProvider() {
+      historicalProviderReads += 1;
+      return 1;
+    },
+  };
   const payload = await checkReadiness({
     ...createReadyDependencies(),
-    aiAccess: {
-      async countEnabledPolicies() {
-        return 3;
-      },
-      async countEnabledPoliciesIncompatibleWithProvider(provider) {
-        assert.equal(provider, "openai");
-        return 1;
-      },
-    },
+    aiAccess: aiAccessWithHistoricalProvider,
     modelPolicy: {
       async getPolicy() {
         return {
@@ -187,14 +186,18 @@ test("readiness reports enabled AI access policies that do not match the active 
     },
   });
 
-  assert.equal(payload.ok, false);
-  assert.equal(payload.status, "not_ready");
+  assert.equal(payload.ok, true);
+  assert.equal(payload.status, "ready");
   assert.deepEqual(payload.checks.aiAccessPolicies, {
-    ok: false,
+    ok: true,
     enabledPolicyCount: 3,
-    incompatibleProviderPolicyCount: 1,
-    reason: "ai_access_policy_provider_mismatch",
   });
+  assert.deepEqual(payload.checks.credentials, {
+    ok: true,
+    healthyCredentialCount: 1,
+    reason: undefined,
+  });
+  assert.equal(historicalProviderReads, 0);
 });
 
 test("default runtime dependencies share the platform model policy repository", () => {

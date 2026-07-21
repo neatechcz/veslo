@@ -148,7 +148,7 @@ if (corsOrigins.length > 0) {
 
 // Better Auth reads the raw request body itself — mount BEFORE express.json()
 // so the body stream isn't consumed by Express's JSON parser first
-app.all("/api/auth/*", createAuthNodeHandler(toNodeHandler(auth), guardEmailSignupRequest))
+app.all("/api/auth/*", asyncRoute(createAuthNodeHandler(toNodeHandler(auth), guardEmailSignupRequest)))
 app.use(createOrganizationBillingWebhookRouter({
   config: env.organizationBilling.stripe,
   repository: organizationBillingRepository,
@@ -754,6 +754,27 @@ async function ensureTables() {
     await ensureIndex("organization_domain", "organization_domain_org_id", ["org_id"])
     await ensureIndex("organization_domain", "organization_domain_org_enabled", ["org_id", "enabled"])
     await ensureIndex("organization_domain", "organization_domain_self_signup", ["self_signup_enabled"])
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`organization_trial_domain_claim\` (
+        \`id\` varchar(64) NOT NULL,
+        \`domain\` varchar(255) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`claimed_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`organization_trial_domain_claim_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex(
+      "organization_trial_domain_claim",
+      "organization_trial_domain_claim_domain",
+      ["domain"],
+      true,
+    )
+    await ensureIndex(
+      "organization_trial_domain_claim",
+      "organization_trial_domain_claim_org_id",
+      ["org_id"],
+    )
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`organization_invite\` (

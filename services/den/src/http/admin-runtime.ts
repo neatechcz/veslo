@@ -61,6 +61,7 @@ import {
   type OrganizationBillingTierAllowlistInput,
   type UpsertOrganizationBillingAccountInput,
 } from "../billing/repository.js"
+import { createDrizzleManualTrialBillingWriter } from "../billing/manual-trial-domain-claims.js"
 import type { OrganizationBillingInterval } from "../billing/stripe-config.js"
 import {
   createOrganizationStripeBillingService,
@@ -85,6 +86,15 @@ import {
   fireAndForgetAuthEmail,
   sendOrganizationInvitationAuthEmail,
 } from "../email/auth-mailer.js"
+import { OrganizationDomainVerifiedMemberRequiredError } from "../org-admin/domain-verification.js"
+import {
+  OrganizationDomainExistsError,
+  OrganizationDomainNotFoundError,
+  OrganizationNotFoundError,
+  createDrizzleOrganizationDomainMutationStore,
+  createOrganizationDomainMutationService,
+  type OrganizationDomainMutationService,
+} from "../org-admin/domain-mutations.js"
 
 type ListedUserRow = {
   id: string
@@ -584,6 +594,8 @@ function mapInviteRow(row: typeof OrganizationInviteTable.$inferSelect): AdminOr
   }
 }
 
+type AdminOrganizationMemberWithoutPlatformAdmin = Omit<AdminOrganizationMemberRecord, "platformAdmin">
+
 function mapMemberRow(row: {
   membershipId: string
   userId: string
@@ -592,7 +604,7 @@ function mapMemberRow(row: {
   role: (typeof OrgRole)[number]
   status?: "active" | "disabled" | "removed"
   createdAt: Date
-}): AdminOrganizationMemberRecord {
+}): AdminOrganizationMemberWithoutPlatformAdmin {
   return {
     membershipId: row.membershipId,
     userId: row.userId,
@@ -602,6 +614,25 @@ function mapMemberRow(row: {
     status: row.status,
     createdAt: row.createdAt,
   }
+}
+
+export function mergeOrganizationMemberPlatformAdminState(
+  members: AdminOrganizationMemberWithoutPlatformAdmin[],
+  platformAdminUserIds: ReadonlySet<string>,
+): AdminOrganizationMemberRecord[] {
+  return members.map((member) => ({
+    ...member,
+    platformAdmin:
+      platformAdminUserIds.has(member.userId)
+      || isBootstrapPlatformAdminEmail(member.email),
+  }))
+}
+
+async function resolveOrganizationMemberPlatformAdminState(
+  members: AdminOrganizationMemberWithoutPlatformAdmin[],
+): Promise<AdminOrganizationMemberRecord[]> {
+  const platformAdminUserIds = await loadPlatformAdminUserIds(members.map((member) => member.userId))
+  return mergeOrganizationMemberPlatformAdminState(members, platformAdminUserIds)
 }
 
 export async function requirePlatformAdminSnapshot(req: express.Request, res: express.Response): Promise<AdminSessionSnapshot | null> {
@@ -895,7 +926,10 @@ async function loadOrganizationMember(orgId: string, membershipId: string) {
     .where(and(eq(OrgMembershipTable.org_id, orgId), eq(OrgMembershipTable.id, membershipId)))
     .limit(1)
 
-  return rows[0] ? mapMemberRow(rows[0]) : null
+  if (!rows[0]) {
+    return null
+  }
+  return (await resolveOrganizationMemberPlatformAdminState([mapMemberRow(rows[0])]))[0] ?? null
 }
 
 async function loadOrganizationMemberByUserId(orgId: string, userId: string) {
@@ -914,7 +948,10 @@ async function loadOrganizationMemberByUserId(orgId: string, userId: string) {
     .where(and(eq(OrgMembershipTable.org_id, orgId), eq(OrgMembershipTable.user_id, userId)))
     .limit(1)
 
-  return rows[0] ? mapMemberRow(rows[0]) : null
+  if (!rows[0]) {
+    return null
+  }
+  return (await resolveOrganizationMemberPlatformAdminState([mapMemberRow(rows[0])]))[0] ?? null
 }
 
 async function loadOrganizationMembers(orgId: string) {
@@ -932,7 +969,7 @@ async function loadOrganizationMembers(orgId: string) {
     .innerJoin(AuthUserTable, eq(OrgMembershipTable.user_id, AuthUserTable.id))
     .where(eq(OrgMembershipTable.org_id, orgId))
 
-  return rows.map(mapMemberRow)
+  return resolveOrganizationMemberPlatformAdminState(rows.map(mapMemberRow))
 }
 
 async function loadAdminUsersForOrganization(org: AdminOrganizationRecord) {
@@ -1219,6 +1256,9 @@ async function updateAdminOrganization(req: express.Request, res: express.Respon
 type OrganizationBillingAdminRouteDepsInput = {
   repository: OrganizationBillingRepository
   stripeService: OrganizationStripeBillingService | null
+  upsertManualTrialAndClaimDomains(
+    input: UpsertOrganizationBillingAccountInput,
+  ): Promise<OrganizationBillingAccountRecord>
   requireOrganizationAccess?: typeof requireAdminOrganizationAccess
   requirePlatformAdmin?: typeof requirePlatformAdminSnapshot
   recordOrganizationAudit?: typeof recordAdminOrganizationAudit
@@ -1274,6 +1314,7 @@ function readPlatformBillingUpdate(
   mode: OrganizationBillingModeValue
   quantities: OrganizationBillingQuantities
   manualAccess: { enabled: boolean; licenseLimit: number } | null
+  manualTrialUpdate: boolean
 } | null {
   if (!isRecord(body)) {
     res.status(400).json({ error: "invalid_billing_update" })
@@ -1463,6 +1504,7 @@ function readPlatformBillingUpdate(
       enabled: manualAccessEnabled,
       licenseLimit: manualAccessLicenseLimit,
     },
+    manualTrialUpdate: isManualTrialUpdate,
   }
 }
 
@@ -1477,7 +1519,7 @@ export function createOrganizationBillingAdminRouteDeps(
   | "cancelOrganizationBilling"
   | "updatePlatformOrganizationBilling"
 > {
-  const { repository, stripeService } = input
+  const { repository, stripeService, upsertManualTrialAndClaimDomains } = input
   const requireOrganizationAccess = input.requireOrganizationAccess ?? requireAdminOrganizationAccess
   const requirePlatformAdmin = input.requirePlatformAdmin ?? requirePlatformAdminSnapshot
   const recordOrganizationAudit = input.recordOrganizationAudit ?? recordAdminOrganizationAudit
@@ -1656,7 +1698,11 @@ export function createOrganizationBillingAdminRouteDeps(
           })
         }
         if (update.accountChanged) {
-          await repository.upsertBillingAccount(update.account)
+          if (update.manualTrialUpdate) {
+            await upsertManualTrialAndClaimDomains(update.account)
+          } else {
+            await repository.upsertBillingAccount(update.account)
+          }
         }
         if (update.allowedTiers) {
           await repository.setAllowedTiers(context.organization.id, update.allowedTiers)
@@ -1869,147 +1915,144 @@ async function listAdminOrganizationDomains(req: express.Request, res: express.R
   }
 }
 
-async function createAdminOrganizationDomain(req: express.Request, res: express.Response) {
-  const context = await requireAdminOrganizationAccess(req, res, {
-    orgId: req.params.orgId,
-  })
-  if (!context) {
-    return null
-  }
-
-  const domain = normalizeOrganizationDomain((req.body ?? {}).domain)
-  if (!domain) {
-    res.status(400).json({ error: "invalid_domain" })
-    return null
-  }
-
-  const existing = await db
-    .select({ id: OrganizationDomainTable.id })
-    .from(OrganizationDomainTable)
-    .where(eq(OrganizationDomainTable.domain, domain))
-    .limit(1)
-  if (existing.length > 0) {
-    res.status(409).json({ error: "domain_exists" })
-    return null
-  }
-
-  const enabled = readBodyBoolean((req.body ?? {}).enabled) ?? true
-  const selfSignupEnabled = readBodyBoolean((req.body ?? {}).selfSignupEnabled) ?? false
-  const domainId = `domain_${randomBytes(8).toString("hex")}`
-
-  await db.insert(OrganizationDomainTable).values({
-    id: domainId,
-    org_id: context.organization.id,
-    domain,
-    enabled,
-    self_signup_enabled: selfSignupEnabled,
-  })
-
-  const rows = await db
-    .select()
-    .from(OrganizationDomainTable)
-    .where(eq(OrganizationDomainTable.id, domainId))
-    .limit(1)
-
-  const created = rows[0] ? mapDomainRow(rows[0]) : null
-  if (!created) {
-    res.status(500).json({ error: "domain_creation_failed" })
-    return null
-  }
-
-  await recordAdminOrganizationAudit(context.snapshot, context.organization.id, "org.domain.created", {
-    domainId,
-    domain,
-    enabled,
-    selfSignupEnabled,
-  })
-
-  return { domain: created }
+type OrganizationDomainAdminRouteDepsInput = {
+  mutations: OrganizationDomainMutationService
+  createDomainId?: () => string
+  requireOrganizationAccess?: typeof requireAdminOrganizationAccess
+  recordOrganizationAudit?: typeof recordAdminOrganizationAudit
 }
 
-async function updateAdminOrganizationDomain(req: express.Request, res: express.Response) {
-  const context = await requireAdminOrganizationAccess(req, res, {
-    orgId: req.params.orgId,
-  })
-  if (!context) {
-    return null
+function sendOrganizationDomainMutationError(error: unknown, res: express.Response) {
+  if (error instanceof OrganizationDomainVerifiedMemberRequiredError) {
+    res.status(409).json({ error: error.code })
+    return true
   }
-
-  const domainId = readBodyString(req.params.domainId)
-  if (!domainId) {
-    res.status(400).json({ error: "invalid_domain_id" })
-    return null
+  if (error instanceof OrganizationDomainExistsError) {
+    res.status(409).json({ error: error.code })
+    return true
   }
-
-  const existing = await db
-    .select()
-    .from(OrganizationDomainTable)
-    .where(and(eq(OrganizationDomainTable.org_id, context.organization.id), eq(OrganizationDomainTable.id, domainId)))
-    .limit(1)
-  if (!existing[0]) {
-    res.status(404).json({ error: "domain_not_found" })
-    return null
+  if (error instanceof OrganizationDomainNotFoundError) {
+    res.status(404).json({ error: error.code })
+    return true
   }
-
-  const update: Partial<typeof OrganizationDomainTable.$inferInsert> = {}
-  const nextDomain = hasOwnProperty(req.body, "domain") ? normalizeOrganizationDomain((req.body ?? {}).domain) : null
-  if (hasOwnProperty(req.body, "domain")) {
-    if (!nextDomain) {
-      res.status(400).json({ error: "invalid_domain" })
-      return null
-    }
-    if (nextDomain !== existing[0].domain) {
-      const duplicate = await db
-        .select({ id: OrganizationDomainTable.id })
-        .from(OrganizationDomainTable)
-        .where(eq(OrganizationDomainTable.domain, nextDomain))
-        .limit(1)
-      if (duplicate.length > 0) {
-        res.status(409).json({ error: "domain_exists" })
-        return null
-      }
-      update.domain = nextDomain
-    }
+  if (error instanceof OrganizationNotFoundError) {
+    res.status(404).json({ error: error.code })
+    return true
   }
+  return false
+}
 
-  const enabled = hasOwnProperty(req.body, "enabled") ? readBodyBoolean((req.body ?? {}).enabled) : null
-  if (hasOwnProperty(req.body, "enabled")) {
-    if (enabled === null) {
-      res.status(400).json({ error: "invalid_enabled" })
-      return null
-    }
-    update.enabled = enabled
-  }
-
-  const selfSignupEnabled = hasOwnProperty(req.body, "selfSignupEnabled") ? readBodyBoolean((req.body ?? {}).selfSignupEnabled) : null
-  if (hasOwnProperty(req.body, "selfSignupEnabled")) {
-    if (selfSignupEnabled === null) {
-      res.status(400).json({ error: "invalid_self_signup_enabled" })
-      return null
-    }
-    update.self_signup_enabled = selfSignupEnabled
-  }
-
-  if (Object.keys(update).length > 0) {
-    await db
-      .update(OrganizationDomainTable)
-      .set(update)
-      .where(and(eq(OrganizationDomainTable.org_id, context.organization.id), eq(OrganizationDomainTable.id, domainId)))
-
-    await recordAdminOrganizationAudit(context.snapshot, context.organization.id, "org.domain.updated", {
-      domainId,
-      changedFields: Object.keys(update),
-    })
-  }
-
-  const rows = await db
-    .select()
-    .from(OrganizationDomainTable)
-    .where(eq(OrganizationDomainTable.id, domainId))
-    .limit(1)
+export function createOrganizationDomainAdminRouteDeps(
+  input: OrganizationDomainAdminRouteDepsInput,
+): Pick<AdminRouteDeps, "createOrganizationDomain" | "updateOrganizationDomain"> {
+  const requireOrganizationAccess = input.requireOrganizationAccess ?? requireAdminOrganizationAccess
+  const recordOrganizationAudit = input.recordOrganizationAudit ?? recordAdminOrganizationAudit
+  const createDomainId = input.createDomainId ?? (() => `domain_${randomBytes(8).toString("hex")}`)
 
   return {
-    domain: mapDomainRow(rows[0]),
+    async createOrganizationDomain(req, res) {
+      const context = await requireOrganizationAccess(req, res, {
+        orgId: req.params.orgId,
+      })
+      if (!context) {
+        return null
+      }
+
+      const domain = normalizeOrganizationDomain((req.body ?? {}).domain)
+      if (!domain) {
+        res.status(400).json({ error: "invalid_domain" })
+        return null
+      }
+
+      const enabled = readBodyBoolean((req.body ?? {}).enabled) ?? true
+      const selfSignupEnabled = readBodyBoolean((req.body ?? {}).selfSignupEnabled) ?? false
+      const domainId = createDomainId()
+      try {
+        const result = await input.mutations.create({
+          id: domainId,
+          orgId: context.organization.id,
+          domain,
+          enabled,
+          selfSignupEnabled,
+        })
+        await recordOrganizationAudit(context.snapshot, context.organization.id, "org.domain.created", {
+          domainId,
+          domain,
+          enabled,
+          selfSignupEnabled,
+          verifiedMemberUserId: result.verifiedMemberUserId,
+        })
+        return { domain: result.domain }
+      } catch (error) {
+        if (sendOrganizationDomainMutationError(error, res)) {
+          return null
+        }
+        throw error
+      }
+    },
+
+    async updateOrganizationDomain(req, res) {
+      const context = await requireOrganizationAccess(req, res, {
+        orgId: req.params.orgId,
+      })
+      if (!context) {
+        return null
+      }
+
+      const domainId = readBodyString(req.params.domainId)
+      if (!domainId) {
+        res.status(400).json({ error: "invalid_domain_id" })
+        return null
+      }
+
+      const domainProvided = hasOwnProperty(req.body, "domain")
+      const domain = domainProvided ? normalizeOrganizationDomain((req.body ?? {}).domain) : undefined
+      if (domainProvided && !domain) {
+        res.status(400).json({ error: "invalid_domain" })
+        return null
+      }
+
+      const enabledProvided = hasOwnProperty(req.body, "enabled")
+      const enabled = enabledProvided ? readBodyBoolean((req.body ?? {}).enabled) : undefined
+      if (enabledProvided && enabled === null) {
+        res.status(400).json({ error: "invalid_enabled" })
+        return null
+      }
+
+      const selfSignupEnabledProvided = hasOwnProperty(req.body, "selfSignupEnabled")
+      const selfSignupEnabled = selfSignupEnabledProvided
+        ? readBodyBoolean((req.body ?? {}).selfSignupEnabled)
+        : undefined
+      if (selfSignupEnabledProvided && selfSignupEnabled === null) {
+        res.status(400).json({ error: "invalid_self_signup_enabled" })
+        return null
+      }
+
+      try {
+        const result = await input.mutations.update({
+          orgId: context.organization.id,
+          domainId,
+          ...(domain !== undefined && domain !== null ? { domain } : {}),
+          ...(enabled !== undefined && enabled !== null ? { enabled } : {}),
+          ...(selfSignupEnabled !== undefined && selfSignupEnabled !== null ? { selfSignupEnabled } : {}),
+        })
+        if (result.changedFields.length > 0) {
+          await recordOrganizationAudit(context.snapshot, context.organization.id, "org.domain.updated", {
+            domainId,
+            changedFields: result.changedFields,
+            ...(result.verifiedMemberUserId
+              ? { verifiedMemberUserId: result.verifiedMemberUserId }
+              : {}),
+          })
+        }
+        return { domain: result.domain }
+      } catch (error) {
+        if (sendOrganizationDomainMutationError(error, res)) {
+          return null
+        }
+        throw error
+      }
+    },
   }
 }
 
@@ -2875,6 +2918,7 @@ function createDebugLogAdminRouteDeps(debugLogs: DebugLogService | null | undefi
 
 function createOrganizationBillingRuntimeDeps() {
   const repository = createOrganizationBillingRepository(createDrizzleOrganizationBillingStore(db))
+  const upsertManualTrialAndClaimDomains = createDrizzleManualTrialBillingWriter(db)
   const stripeConfig = env.organizationBilling.stripe
   const stripeService = stripeConfig.enabled
     ? createOrganizationStripeBillingService({
@@ -2887,6 +2931,15 @@ function createOrganizationBillingRuntimeDeps() {
   return createOrganizationBillingAdminRouteDeps({
     repository,
     stripeService,
+    upsertManualTrialAndClaimDomains,
+  })
+}
+
+function createOrganizationDomainRuntimeDeps() {
+  return createOrganizationDomainAdminRouteDeps({
+    mutations: createOrganizationDomainMutationService({
+      store: createDrizzleOrganizationDomainMutationStore(db),
+    }),
   })
 }
 
@@ -2901,13 +2954,12 @@ export function createAdminRuntimeRouter(options: CreateAdminRuntimeRouterOption
     updateOrganizationMember: updateAdminOrganizationMember,
     deleteOrganizationMember: deleteAdminOrganizationMember,
     listOrganizationDomains: listAdminOrganizationDomains,
-    createOrganizationDomain: createAdminOrganizationDomain,
-    updateOrganizationDomain: updateAdminOrganizationDomain,
     deleteOrganizationDomain: deleteAdminOrganizationDomain,
     listOrganizationInvites: listAdminOrganizationInvites,
     createOrganizationInvite: createAdminOrganizationInvite,
     resendOrganizationInvite: resendAdminOrganizationInvite,
     revokeOrganizationInvite: revokeAdminOrganizationInvite,
+    ...createOrganizationDomainRuntimeDeps(),
     listUsers: async (req, res) => {
       const snapshot = await requireAdminSessionSnapshot(req, res)
       if (!snapshot) {

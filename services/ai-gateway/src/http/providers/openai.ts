@@ -10,7 +10,7 @@ import type { ResolveLeaseInput, SessionLease } from "../../leases/repository.js
 import type { PlatformModelPolicyRecord } from "../../model-policy/repository.js";
 import type { ProviderTransportResponse } from "../../providers/transport.js";
 import { readOpenAiCompatibleUsage } from "../../usage/token-accounting.js";
-import { applyAiAccessPolicy } from "./access-policy.js";
+import { applyPlatformModelPolicy } from "./access-policy.js";
 import {
   markProviderCredentialFailure,
   readUpstreamFailureReason,
@@ -41,13 +41,15 @@ export function createOpenAiProxyRouter(
     const sessionId = normalizeGatewaySessionId(rawSessionId, gatewaySession.user.id, "openai");
 
     const gatewayAiAccess = res.locals.gatewayAiAccess as UserAiAccessPolicyRecord | undefined;
-    const policyResult = gatewayAiAccess
-      ? applyAiAccessPolicy({
+    const platformPolicy = res.locals.gatewayPlatformModelPolicy as PlatformModelPolicyRecord | null | undefined;
+    const policyResult = gatewayAiAccess && platformPolicy
+      ? applyPlatformModelPolicy({
           routeProvider: "openai",
-          aiAccess: gatewayAiAccess,
-          platformPolicy: res.locals.gatewayPlatformModelPolicy as PlatformModelPolicyRecord | null | undefined,
+          activeModel: platformPolicy.activeModel,
           body: req.body,
         })
+      : gatewayAiAccess
+        ? { ok: false as const, status: 503, error: "gateway_platform_model_policy_unavailable" }
       : { ok: true as const, body: req.body as Record<string, unknown>, model: "" };
     if (!policyResult.ok) {
       res.status(policyResult.status).json({ error: policyResult.error });

@@ -62,18 +62,10 @@ The built-in thinking default is Max (`xhigh`). Existing app-global thinking val
 
 Important product rule:
 
-- Veslo keeps one managed global fallback model for runs without an override.
-- The AI Gateway platform model policy owns the enabled same-provider model roster
-  and its active fallback model.
-- The local **Session model selector** preference is off by default. When it is
-  enabled and the live Gateway access response contains two or more eligible
-  models, a session composer lists the complete published roster and can choose
-  one model for an individual send. It never grants access, switches provider
-  or credentials, or persists
-  a durable per-session model map.
-
-The setting only exposes the selector; it may be enabled while no selector is
-visible if the Gateway has published fewer than two eligible models.
+- The single global active model in AI Gateway is the only managed-AI model used for every run.
+- AI Infrastructure may retain other enabled models as platform catalog and compatibility evidence, but they are not user-selectable runtime alternatives.
+- The self-access response returns the active model as read-only status and keeps `selectableModels` empty.
+- A user cannot select or switch the managed-AI model. Any retained local **Session model selector** preference has no Managed-AI runtime authority and cannot expose an alternative model from self-access.
 
 ## Advanced and Developer Controls
 

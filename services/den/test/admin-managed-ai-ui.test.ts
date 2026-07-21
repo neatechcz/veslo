@@ -14,6 +14,7 @@ Object.assign(process.env, {
 
 const { createManagedAiAdminUiRouter } = await import("../src/managed-ai/http/admin.js")
 const denIndexSource = await readFile(new URL("../src/index.ts", import.meta.url), "utf8")
+const adminRuntimeSource = await readFile(new URL("../src/http/admin-runtime.ts", import.meta.url), "utf8")
 
 function createSession() {
   return {
@@ -134,6 +135,24 @@ test("GET /admin subpages redirect to matching AI Gateway admin subpages", async
     assert.equal(response.status, 302)
     assert.equal(response.headers.get("location"), "https://ai.veslo.work/admin/credentials?provider=codex_oauth")
   })
+})
+
+test("normal DEN AI access administration routes to the standalone Gateway", async () => {
+  await withServer(createUiApp(), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/admin/organizations/org_1/ai-access`, { redirect: "manual" })
+
+    assert.equal(response.status, 302)
+    assert.equal(
+      response.headers.get("location"),
+      "https://ai.veslo.work/admin/organizations/org_1/ai-access",
+    )
+  })
+
+  assert.doesNotMatch(
+    adminRuntimeSource,
+    /resolveEnabledUserAiAccess\s*:/,
+    "the retired embedded DEN enable path must not infer standalone Gateway model policy",
+  )
 })
 
 test("GET /admin/app.js no longer serves a DEN admin frontend asset", async () => {

@@ -3,9 +3,15 @@ import { once } from "node:events"
 import { readFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
+import express from "express"
 
 import { createApp } from "../src/index.js"
-import { adminFallbackShellHtml, PlatformAdminAllowedPages, PlatformAdminCapabilities } from "../src/http/admin.js"
+import {
+  adminFallbackShellHtml,
+  createDefaultAdminService,
+  PlatformAdminAllowedPages,
+  PlatformAdminCapabilities,
+} from "../src/http/admin.js"
 import type {
   AdminService,
   AdminSessionSnapshot,
@@ -239,6 +245,7 @@ function organizationMemberFixture(overrides: Partial<{
   userId: string
   name: string
   email: string
+  platformAdmin: boolean
   role: "member" | "organization_admin"
   status: "active" | "disabled" | "removed"
   createdAt: string
@@ -248,6 +255,7 @@ function organizationMemberFixture(overrides: Partial<{
     userId: "user_1",
     name: "Member One",
     email: "member@example.test",
+    platformAdmin: false,
     role: "member" as const,
     status: "active" as const,
     createdAt: "2026-07-14T08:00:00.000Z",
@@ -258,7 +266,11 @@ function organizationMemberFixture(overrides: Partial<{
 test("GET organization members returns only the exact path organization's service response", async () => {
   const requestedOrganizationIds: string[] = []
   const expected = {
-    members: [organizationMemberFixture({ membershipId: "membership_exact", userId: "user_exact" })],
+    members: [organizationMemberFixture({
+      membershipId: "membership_exact",
+      userId: "user_exact",
+      platformAdmin: true,
+    })],
   }
   const app = createApp({
     admin: createAdminServiceStub({
@@ -278,8 +290,37 @@ test("GET organization members returns only the exact path organization's servic
     })
 
     assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), expected)
+    const payload = await response.json()
+    assert.deepEqual(payload, expected)
+    assert.equal(payload.members[0].platformAdmin, true)
     assert.deepEqual(requestedOrganizationIds, ["org_exact"])
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("GET organization members rejects responses without authoritative platform admin state", async () => {
+  const member = organizationMemberFixture()
+  const { platformAdmin: _platformAdmin, ...memberWithoutPlatformAdmin } = member
+  const app = createApp({
+    admin: createAdminServiceStub({
+      async listOrganizationMembers() {
+        return { members: [memberWithoutPlatformAdmin] } as never
+      },
+    }),
+  })
+  const server = app.listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_admin/members`, {
+      headers: { cookie: ADMIN_COOKIE },
+    })
+
+    assert.equal(response.status, 502)
+    assert.deepEqual(await response.json(), { error: "organization_member_response_invalid" })
   } finally {
     server.close()
     await once(server, "close")
@@ -1014,7 +1055,7 @@ test("GET /admin/app.js keeps organization workspace data and member actions pat
     assert.match(memberAdapter, /orgName:\s*organization\.name\s*\|\|\s*organization\.id/)
     assert.doesNotMatch(memberAdapter, /organization\.slug/)
     assert.doesNotMatch(memberAdapter, /\borgSlug\s*:/)
-    assert.match(memberAdapter, /platformAdmin:\s*false/)
+    assert.match(memberAdapter, /platformAdmin:\s*member\?\.platformAdmin === true/)
 
     assert.match(finishRoute, /Array\.isArray\(result\.organizationMembers\)[\s\S]*result\.selectedUserId = result\.organizationMembers\[0\]\?\.userId \|\| null/)
     assert.match(finishRoute, /result\.selectedOrganizationMemberId = result\.organizationMembers\[0\]\?\.membershipId \|\| null/)
@@ -1374,7 +1415,7 @@ test("GET /admin/app.js checks the HTTP-only admin cookie before showing the log
   }
 })
 
-test("GET /admin/platform-users keeps model choice out of the admin-managed user access editor", async () => {
+test("GET /admin/platform-users keeps all infrastructure choice out of the member AI access editor", async () => {
   const app = createApp({ admin: createAdminServiceStub() })
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -1391,17 +1432,16 @@ test("GET /admin/platform-users keeps model choice out of the admin-managed user
     const html = await response.text()
     assert.match(html, /AI access/i)
     assert.match(html, /id="user-ai-access-enabled"/)
-    assert.match(html, /id="user-ai-access-provider"/)
-    assert.match(html, /id="user-ai-access-credential"/)
+    assert.match(html, /id="user-platform-admin"/)
+    assert.doesNotMatch(html, /id="user-ai-access-provider"/)
+    assert.doesNotMatch(html, /id="user-ai-access-credential"/)
     assert.doesNotMatch(html, /id="user-ai-access-default-model"/)
     assert.doesNotMatch(html, /id="user-ai-access-model-options"/)
     assert.doesNotMatch(html, /id="user-ai-access-allowed-models"/)
     assert.doesNotMatch(html, />Default model</i)
     assert.doesNotMatch(html, />Allowed models</i)
-    assert.match(html, /Models are managed centrally in AI Infrastructure/i)
+    assert.match(html, /Infrastructure and models are selected automatically/i)
     assert.match(html, /id="user-save-status"/)
-    assert.match(html, /<option value="codex_oauth">Codex \/ ChatGPT runtime<\/option>/)
-    assert.match(html, /<option value="openai_compatible">OpenAI-compatible provider<\/option>/)
   } finally {
     server.close()
     await once(server, "close")
@@ -1582,7 +1622,7 @@ test("GET /admin user editor scopes visibility, payloads, and actions to the can
     assert.equal(scriptResponse.status, 200)
     const script = await scriptResponse.text()
     assert.match(script, /adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
-    assert.match(script, /buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload\)/)
+    assert.match(script, /buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload, currentUser\)/)
     assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "create-user"\)/)
     assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "disable-user"\)/)
     assert.match(script, /canPerformAdminRouteAction\(state\.route, routeAccessSnapshot\(\), "delete-user"\)/)
@@ -2091,6 +2131,8 @@ test("GET /admin/app.js gates organization-admin navigation and platform-only lo
     assert.match(script, /function applyAdminCapabilities\(\)/)
     assert.match(script, /canAccessAdminRoute\(requestedRoute, routeAccessSnapshot\(\)\)/)
     assert.match(script, /els\.platformNavigation\.classList\.toggle\("hidden", !canManagePlatform\)/)
+    assert.match(script, /els\.platformAdminControls\.forEach\(\(node\) => node\.classList\.toggle\("hidden", !canManagePlatform\)\)/)
+    assert.match(script, /els\.userPlatformAdminControls\.forEach\(\(node\) => node\.classList\.toggle\("hidden", !userPermissions\.setPlatformAdmin\)\)/)
     assert.match(script, /route\.area === "platform"[\s\S]*loadPlatformRouteResult\(route, signal\)/)
     assert.match(script, /loadOrganizationWorkspace\(route, signal\)/)
     assert.doesNotMatch(script, /\bloadSessions\(\)/)
@@ -2215,7 +2257,7 @@ test("GET /admin/app.js saves organization membership changes only from the user
     const script = await response.text()
     assert.match(script, /function normalizeOrganizationRoleInput\(value\)/)
     assert.match(script, /orgRole:\s*normalizeOrganizationRoleInput\(els\.userRole\.value\)/)
-    assert.match(script, /function buildUserUpdatePayload\(payload\)/)
+    assert.match(script, /function buildUserUpdatePayload\(payload, currentUser = null\)/)
     assert.match(script, /function buildUserRoleFilterOptions\(\)/)
     assert.match(script, /const permissions = adminUserRoutePermissions\(state\.route, routeAccessSnapshot\(\)\)/)
     assert.match(script, /els\.userName\.disabled = state\.routeActionsLocked \|\| !permissions\.editProfile/)
@@ -2226,7 +2268,7 @@ test("GET /admin/app.js saves organization membership changes only from the user
     assert.match(script, /event\.target\.closest\("\[data-invite-resend\]"\)/)
     assert.match(
       script,
-      /return buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload\)/,
+      /return buildAdminUserUpdatePayload\(state\.route, routeAccessSnapshot\(\), payload, currentUser\)/,
     )
     assert.match(
       script,
@@ -2508,6 +2550,88 @@ test("organization admins can access session, users, and organization gateway ad
   } finally {
     server.close()
     await once(server, "close")
+  }
+})
+
+test("organization domain verification conflicts pass through the gateway unchanged", async () => {
+  const denRequests: Array<{ method: string; path: string; authorization: string | undefined }> = []
+  const den = express()
+  den.use(express.json())
+  den.get("/v1/admin/session", (req, res) => {
+    denRequests.push({
+      method: req.method,
+      path: req.path,
+      authorization: req.header("authorization"),
+    })
+    res.json(adminSession())
+  })
+  const rejectDomainVerification = (req: express.Request, res: express.Response) => {
+    denRequests.push({
+      method: req.method,
+      path: req.path,
+      authorization: req.header("authorization"),
+    })
+    res.status(409).json({ error: "domain_verified_member_required" })
+  }
+  den.post("/v1/admin/organizations/:orgId/domains", rejectDomainVerification)
+  den.patch("/v1/admin/organizations/:orgId/domains/:domainId", rejectDomainVerification)
+  const denServer = den.listen(0, "127.0.0.1")
+  await once(denServer, "listening")
+
+  const denPort = (denServer.address() as AddressInfo).port
+  const app = createApp({
+    admin: createDefaultAdminService(`http://127.0.0.1:${denPort}`),
+  })
+  const gatewayServer = app.listen(0, "127.0.0.1")
+  await once(gatewayServer, "listening")
+
+  try {
+    const { port } = gatewayServer.address() as AddressInfo
+    const requests = [
+      fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/domains`, {
+        method: "POST",
+        headers: {
+          cookie: ADMIN_COOKIE,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ domain: "team.example.com" }),
+      }),
+      fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/domains/domain_1`, {
+        method: "PATCH",
+        headers: {
+          cookie: ADMIN_COOKIE,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ domain: "team.example.com" }),
+      }),
+    ]
+
+    for (const response of await Promise.all(requests)) {
+      assert.equal(response.status, 409)
+      assert.deepEqual(await response.json(), { error: "domain_verified_member_required" })
+    }
+    assert.deepEqual(
+      denRequests
+        .filter((entry) => entry.path.includes("/domains"))
+        .sort((left, right) => left.method.localeCompare(right.method)),
+      [
+        {
+          method: "PATCH",
+          path: "/v1/admin/organizations/org_1/domains/domain_1",
+          authorization: "Bearer admin-token",
+        },
+        {
+          method: "POST",
+          path: "/v1/admin/organizations/org_1/domains",
+          authorization: "Bearer admin-token",
+        },
+      ],
+    )
+  } finally {
+    gatewayServer.close()
+    await once(gatewayServer, "close")
+    denServer.close()
+    await once(denServer, "close")
   }
 })
 
@@ -2875,7 +2999,7 @@ test("GET /admin/app.js renders credential usage and Codex limits status", async
   }
 })
 
-test("GET /admin/app.js saves user ai access without per-user model authority", async () => {
+test("GET /admin/app.js saves AI access and platform admin through separate toggle-only requests", async () => {
   const app = createApp()
   const server = app.listen(0, "127.0.0.1")
   await once(server, "listening")
@@ -2910,8 +3034,8 @@ test("GET /admin/app.js saves user ai access without per-user model authority", 
     assert.doesNotMatch(script, /\/users\/\$\{encodeURIComponent\([^)]+\)\}\/ai-access/)
     assert.match(saveAccess, /body:\s*JSON\.stringify\(aiAccessInput\)/)
     assert.doesNotMatch(saveAccess, /body:\s*JSON\.stringify\(\{[\s\S]*organizationId/)
-    assert.match(script, /user-ai-access-provider/)
-    assert.match(script, /user-ai-access-credential/)
+    assert.doesNotMatch(script, /user-ai-access-provider/)
+    assert.doesNotMatch(script, /user-ai-access-credential/)
     assert.doesNotMatch(script, /user-ai-access-default-model/)
     assert.doesNotMatch(script, /userAiAccessModelOptions/)
     assert.doesNotMatch(script, /user-ai-access-allowed-models/)
@@ -2919,15 +3043,26 @@ test("GET /admin/app.js saves user ai access without per-user model authority", 
     assert.doesNotMatch(script, /refreshSelectedAiAccessModels/)
     assert.doesNotMatch(script, /defaultModel:/)
     assert.doesNotMatch(script, /allowedModels:/)
-    assert.match(script, /availableCredentials/)
-    assert.match(script, /Select assigned credential/)
-    assert.match(script, /No eligible Codex credential/)
-    assert.match(script, /No healthy Codex credentials with OK upstream status are available for assignment\./)
     assert.match(script, /credentialId:\s*typeof payload\.credentialId === "string" \? payload\.credentialId : null/)
-    assert.match(script, /credentialId:\s*readAiAccessCredentialValue\(\)/)
     assert.match(
       script,
-      /async function saveUserAiAccess\([\s\S]*input = null,[\s\S]*mutation = beginCurrentRouteMutation[\s\S]*enabled: input\.enabled === true,[\s\S]*provider:[\s\S]*credentialId:[\s\S]*fetchJson\(aiAccessMemberPath\(selection\)/,
+      /async function saveUserAiAccess\([\s\S]*input = null,[\s\S]*mutation = beginCurrentRouteMutation[\s\S]*enabled: input\.enabled === true[\s\S]*fetchJson\(aiAccessMemberPath\(selection\)/,
+    )
+    assert.doesNotMatch(saveAccess, /provider:|credentialId:/)
+    assert.match(saveUserSource, /body:\s*JSON\.stringify\(updatePayload\)/)
+    assert.ok(
+      saveUserSource.indexOf("await saveUserAiAccess")
+        < saveUserSource.indexOf('await fetchJson(`/users/${encodeURIComponent(targetUser.id)}`'),
+      "AI access must be saved before the privileged Platform Admin update",
+    )
+    assert.match(saveUserSource, /Platform Admin was not changed/)
+    assert.match(
+      saveUserSource,
+      /const recovery = await loadRouteData\(recoveryRoute\);\s*if \(!isRouteLoadResultCurrent\(recovery, recoveryRoute\)\) return;/,
+    )
+    assert.match(
+      saveUserSource,
+      /await loadUserAiAccess\(recoveredTarget\.id, recoveryMutation\);\s*if \(!isCurrentRouteMutation\(recoveryMutation\) \|\| state\.selectedUserId !== recoveredTarget\.id\) return;/,
     )
     assert.match(
       script,

@@ -38,6 +38,7 @@ const ORGANIZATION_MEMBER: AdminOrganizationMemberRecord = {
   userId: "user_123",
   name: "Target User",
   email: "target@example.test",
+  platformAdmin: false,
   role: "member",
   status: "active",
   createdAt: "2026-07-12T08:00:00.000Z",
@@ -167,8 +168,6 @@ async function requestQualifiedAiAccess(
           ? {
               body: JSON.stringify(options.body ?? {
                 enabled: true,
-                provider: "codex_oauth",
-                credentialId: "cred_codex_123",
               }),
             }
           : {}),
@@ -230,6 +229,100 @@ function createSupportedModelCapabilities() {
     invalidateCredential() {},
   };
 }
+
+function createToggleOnlyAdminServiceHarness() {
+  const builds: Array<{ userId: string; origin: string }> = [];
+  const reads: string[] = [];
+  const writes: Array<Record<string, unknown>> = [];
+  const derived = {
+    userId: "user_123",
+    enabled: true,
+    provider: "codex_oauth" as const,
+    credentialId: "cred_healthy",
+    defaultModel: "gpt-5.6",
+    allowedModels: ["gpt-5.6"],
+    assignmentOrigin: "admin_assigned" as const,
+  };
+  const savedRecord = {
+    id: "access_user_123",
+    ...derived,
+    createdAt: new Date("2026-07-21T00:00:00.000Z"),
+    updatedAt: new Date("2026-07-21T00:00:00.000Z"),
+  };
+  const service = createDefaultAdminService("http://den.example.test", {
+    automaticUserAiAccess: {
+      async getOrCreateUserAiAccess(userId) {
+        reads.push(userId);
+        return { ...savedRecord, userId, assignmentOrigin: "auto_assigned" };
+      },
+      async buildEnabledUpdate(userId, origin) {
+        builds.push({ userId, origin });
+        return { ...derived, userId, assignmentOrigin: origin };
+      },
+    },
+    aiAccessMutation: {
+      async upsertUserAiAccessWithAudit(input) {
+        writes.push(input);
+        return {
+          ...savedRecord,
+          ...input,
+          createdAt: savedRecord.createdAt,
+          updatedAt: savedRecord.updatedAt,
+        };
+      },
+    },
+  });
+  return { service, builds, reads, writes };
+}
+
+test("default admin GET lazily creates missing AI access through the shared automatic service", async () => {
+  const { service, reads } = createToggleOnlyAdminServiceHarness();
+
+  const result = await service.getUserAiAccess("admin-token", "user_123");
+
+  assert.deepEqual(reads, ["user_123"]);
+  assert.equal(result.aiAccess?.enabled, true);
+  assert.equal(result.aiAccess?.provider, "codex_oauth");
+  assert.deepEqual(result.availableCredentials, []);
+});
+
+test("default admin enable derives routing server-side and audits exact actor and organization", async () => {
+  const { service, builds, writes } = createToggleOnlyAdminServiceHarness();
+
+  await service.upsertUserAiAccess("admin-token", "user_123", { enabled: true }, "org_1", "actor_1");
+
+  assert.deepEqual(builds, [{ userId: "user_123", origin: "admin_assigned" }]);
+  assert.deepEqual(writes, [{
+    userId: "user_123",
+    enabled: true,
+    provider: "codex_oauth",
+    credentialId: "cred_healthy",
+    defaultModel: "gpt-5.6",
+    allowedModels: ["gpt-5.6"],
+    assignmentOrigin: "admin_assigned",
+    actorUserId: "actor_1",
+    organizationId: "org_1",
+  }]);
+});
+
+test("default admin disable clears all routing and model fields without capability work", async () => {
+  const { service, builds, writes } = createToggleOnlyAdminServiceHarness();
+
+  await service.upsertUserAiAccess("admin-token", "user_123", { enabled: false }, "org_1", "actor_1");
+
+  assert.deepEqual(builds, []);
+  assert.deepEqual(writes, [{
+    userId: "user_123",
+    enabled: false,
+    provider: null,
+    credentialId: null,
+    defaultModel: null,
+    allowedModels: [],
+    assignmentOrigin: "admin_assigned",
+    actorUserId: "actor_1",
+    organizationId: "org_1",
+  }]);
+});
 
 function createAdminUserAccessApp(options: { upsertError?: Error; members?: unknown } = {}) {
   adminUserAccessUpsertCalls = 0;
@@ -339,6 +432,8 @@ function createAdminUserAccessApp(options: { upsertError?: Error; members?: unkn
           ...currentAiAccess,
           userId,
           ...input,
+          provider: input.enabled === false ? null : currentAiAccess.provider,
+          credentialId: input.enabled === false ? null : currentAiAccess.credentialId,
           defaultModel: input.enabled === false ? null : currentAiAccess.defaultModel,
           allowedModels: input.enabled === false ? [] : currentAiAccess.allowedModels,
         };
@@ -595,9 +690,6 @@ test("PUT qualified AI access uses the path organization and real session actor 
     orgId: "org_explicit",
     body: {
       enabled: true,
-      provider: "codex_oauth",
-      credentialId: "cred_codex_123",
-      organizationId: "org_conflicting",
     },
   });
 
@@ -609,8 +701,6 @@ test("PUT qualified AI access uses the path organization and real session actor 
     userId: "user_123",
     input: {
       enabled: true,
-      provider: "codex_oauth",
-      credentialId: "cred_codex_123",
     },
     organizationId: "org_explicit",
     actorUserId: "user_admin",
@@ -618,22 +708,35 @@ test("PUT qualified AI access uses the path organization and real session actor 
   assert.deepEqual(calls.order, ["list-members", "upsert-ai-access"]);
 });
 
-test("PUT qualified AI access rejects per-user model fields before writing", async () => {
-  const { app, calls } = createQualifiedAiAccessApp();
+test("PUT qualified AI access rejects every client routing field before membership or writes", async () => {
+  for (const [field, value] of [
+    ["provider", "codex_oauth"],
+    ["credentialId", "cred_codex_123"],
+    ["defaultModel", "gpt-5.4"],
+    ["allowedModels", ["gpt-5.4"]],
+    ["model", "gpt-5.4"],
+    ["routing", { provider: "codex_oauth" }],
+  ] as const) {
+    const { app, calls } = createQualifiedAiAccessApp();
+    const response = await requestQualifiedAiAccess(app, "PUT", {
+      body: { enabled: true, [field]: value },
+    });
 
-  const response = await requestQualifiedAiAccess(app, "PUT", {
-    body: {
-      enabled: true,
-      provider: "codex_oauth",
-      credentialId: "cred_codex_123",
-      defaultModel: "gpt-5.4",
-      allowedModels: ["gpt-5.4"],
-    },
-  });
+    assert.equal(response.status, 400, field);
+    assert.deepEqual(response.body, { error: "user_ai_access_routing_not_supported" }, field);
+    assert.deepEqual(calls.order, [], field);
+  }
+});
 
-  assert.equal(response.status, 400);
-  assert.deepEqual(response.body, { error: "user_model_policy_not_supported" });
-  assert.deepEqual(calls.upsert, []);
+test("PUT qualified AI access requires an exact boolean enabled before membership", async () => {
+  for (const body of [{}, { enabled: "true" }, { enabled: 1 }, { enabled: null }]) {
+    const { app, calls } = createQualifiedAiAccessApp();
+    const response = await requestQualifiedAiAccess(app, "PUT", { body });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(response.body, { error: "user_ai_access_enabled_required" });
+    assert.deepEqual(calls.order, []);
+  }
 });
 
 test("PUT qualified AI access maps audit persistence failures", async () => {
@@ -706,7 +809,7 @@ test("PUT qualified AI access rejects legacy user model fields without writing",
     });
 
     assert.equal(response.status, 400);
-    assert.deepEqual(await response.json(), { error: "user_model_policy_not_supported" });
+    assert.deepEqual(await response.json(), { error: "user_ai_access_routing_not_supported" });
     assert.equal(adminUserAccessUpsertCalls, 0);
   } finally {
     server.close();
@@ -725,8 +828,6 @@ test("PUT qualified AI access forwards path organization scope and real actor", 
       headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
       body: JSON.stringify({
         enabled: true,
-        provider: "codex_oauth",
-        credentialId: "cred_codex_123",
       }),
     });
     assert.equal(response.status, 200);
@@ -751,8 +852,6 @@ test("qualified PUT requires one active scoped membership before writing", async
       headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
       body: JSON.stringify({
         enabled: false,
-        provider: null,
-        credentialId: null,
       }),
     });
 
@@ -779,8 +878,6 @@ test("PUT qualified AI access reports audit persistence failure without success"
       headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
       body: JSON.stringify({
         enabled: false,
-        provider: null,
-        credentialId: null,
       }),
     });
 
@@ -814,6 +911,20 @@ test("qualified AI-access PUT uses one scoped membership lookup without listing 
     aiAccessRepository: {
       async getUserAiAccess() { return null; },
       async upsertUserAiAccess() { throw new Error("plain repository write must not be used"); },
+    },
+    automaticUserAiAccess: {
+      async getOrCreateUserAiAccess() { throw new Error("unused"); },
+      async buildEnabledUpdate(userId, assignmentOrigin) {
+        return {
+          userId,
+          enabled: true,
+          provider: "codex_oauth",
+          credentialId: "cred_codex_123",
+          defaultModel: "gpt-5.5",
+          allowedModels: ["gpt-5.5", "gpt-5.6-sol"],
+          assignmentOrigin,
+        };
+      },
     },
     aiAccessMutation: {
       async upsertUserAiAccessWithAudit(input: Record<string, unknown>) {
@@ -863,8 +974,6 @@ test("qualified AI-access PUT uses one scoped membership lookup without listing 
         headers: { "content-type": "application/json", ...ADMIN_AUTHORIZATION },
         body: JSON.stringify({
           enabled: true,
-          provider: "codex_oauth",
-          credentialId: "cred_codex_123",
         }),
       },
     );
@@ -889,698 +998,7 @@ test("qualified AI-access PUT uses one scoped membership lookup without listing 
   }]);
 });
 
-test("default admin AI-access write prepares fallible response data before committing", async () => {
-  let mutationCalls = 0;
-  let capabilityCalls = 0;
-  const credential = createCredential("cred_custom", { provider: "openai_compatible" });
-  const service = createDefaultAdminService("http://den.example.test", {
-    denClient: {
-      async listUsers() {
-        return [{
-          id: "user_123",
-          name: "Target User",
-          email: "target@example.test",
-          emailVerified: true,
-          platformAdmin: false,
-          disabled: false,
-          memberships: [{
-            membershipId: "membership_123",
-            orgId: "org_1",
-            orgName: "Acme",
-            orgSlug: "acme",
-            role: "member",
-          }],
-        }];
-      },
-    } as never,
-    aiAccessRepository: {
-      async getUserAiAccess() { return null; },
-      async upsertUserAiAccess() { throw new Error("plain repository write must not be used"); },
-    },
-    aiAccessMutation: {
-      async upsertUserAiAccessWithAudit() {
-        mutationCalls += 1;
-        throw new Error("mutation must not start after response preparation fails");
-      },
-    },
-    modelPolicyRepository: {
-      async getPolicy() {
-        return {
-          id: "platform",
-          enabledModels: [{ provider: "openai_compatible", model: "custom/model-v1" }],
-          activeModel: { provider: "openai_compatible", model: "custom/model-v1" },
-          createdAt: new Date("2026-07-12T08:00:00.000Z"),
-          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
-        };
-      },
-      async replacePolicy() { throw new Error("unused"); },
-    },
-    credentialReadRepository: {
-      async listAdminCredentials() { return [credential]; },
-    },
-    modelCapabilities: {
-      async checkCredentialForModel(credentialId: string) {
-        capabilityCalls += 1;
-        return capabilityCalls === 1
-          ? { status: "supported", credentialId }
-          : { status: "transient", reason: "capability_evidence_unavailable" };
-      },
-      async checkHealthyCredentialForModel() { return { status: "transient", reason: "unused" }; },
-      async checkHealthyCredentialsForModels() { return []; },
-      async hasHealthyCredentialForModel() { return false; },
-      invalidateCredential() {},
-    },
-  } as any);
-
-  await assert.rejects(
-    service.upsertUserAiAccess("admin-token", "user_123", {
-      enabled: true,
-      provider: "openai_compatible",
-      credentialId: credential.id,
-    }, "org_1", "user_admin"),
-    /ai_access_credential_capability_unavailable/,
-  );
-  assert.equal(capabilityCalls, 2);
-  assert.equal(mutationCalls, 0);
-});
-
-test("admin user access rejects a provider that differs from the platform active model", async () => {
-  let writes = 0;
-  const service = createDefaultAdminService("http://den.example.test", {
-    aiAccessRepository: {
-      async getUserAiAccess() { return null; },
-      async upsertUserAiAccess() { writes += 1; throw new Error("unexpected write"); },
-    },
-    credentialReadRepository: {
-      async listAdminCredentials() {
-        return [createCredential("cred_custom", { provider: "openai_compatible", state: "healthy" })];
-      },
-    },
-    modelPolicyRepository: {
-      async getPolicy() {
-        return {
-          id: "platform",
-          enabledModels: [{ provider: "codex_oauth", model: "gpt-5.5" }],
-          activeModel: { provider: "codex_oauth", model: "gpt-5.5" },
-          createdAt: new Date("2026-07-12T08:00:00.000Z"),
-          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
-        };
-      },
-      async replacePolicy() { throw new Error("unused"); },
-    },
-  });
-
-  await assert.rejects(
-    service.upsertUserAiAccess("admin-token", "user_123", {
-      enabled: true,
-      provider: "openai_compatible",
-      credentialId: "cred_custom",
-    }),
-    /ai_access_provider_mismatch/,
-  );
-  assert.equal(writes, 0);
-});
-
-test("admin user access rejects and filters a Codex credential that does not support the active model", async () => {
-  let writes = 0;
-  const credential = createCredential("cred_codex_limited");
-  const modelCapabilities = createPlatformModelCapabilityVerifier({
-    credentials: {
-      async listAdminCredentials() { return [credential]; },
-    } as never,
-    secrets: {} as never,
-    codexStatusProvider: {
-      async getStatus() {
-        return {
-          available: true,
-          source: "codex_exec_no_rate_limits",
-          label: "Codex OK, limits unknown",
-          unsupportedModels: ["gpt-5.5"],
-          limits: { fiveHour: null, weekly: null },
-        } as const;
-      },
-    },
-    openAiCompatibleTransport: {} as never,
-  });
-  const service = createDefaultAdminService("http://den.example.test", {
-    aiAccessRepository: {
-      async getUserAiAccess() { return null; },
-      async upsertUserAiAccess() { writes += 1; throw new Error("unexpected write"); },
-    },
-    credentialReadRepository: {
-      async listAdminCredentials() { return [credential]; },
-    },
-    codexStatusProvider: {
-      async getStatus() {
-        return {
-          available: true,
-          source: "codex_exec_no_rate_limits",
-          label: "Codex OK, limits unknown",
-          unsupportedModels: ["gpt-5.5"],
-          limits: { fiveHour: null, weekly: null },
-        } as const;
-      },
-    },
-    modelPolicyRepository: createCodexModelPolicyRepository(),
-    modelCapabilities,
-  } as never);
-
-  await assert.rejects(
-    service.upsertUserAiAccess("admin-token", "user_123", {
-      enabled: true,
-      provider: "codex_oauth",
-      credentialId: credential.id,
-    }),
-    /incompatible_ai_access_credential_id/,
-  );
-  assert.equal(writes, 0);
-  assert.deepEqual((await service.getUserAiAccess("admin-token", "user_123")).availableCredentials, []);
-});
-
-test("admin user access rejects and filters an OpenAI-compatible credential that omits the active model", async () => {
-  let writes = 0;
-  const credential = createCredential("cred_custom_limited", { provider: "openai_compatible" });
-  const modelCapabilities = createPlatformModelCapabilityVerifier({
-    credentials: {
-      async listAdminCredentials() { return [credential]; },
-      async getCredentialRecordById(id: string) {
-        return {
-          id,
-          name: credential.name,
-          ownerUserId: "platform:openai_compatible",
-          provider: "openai_compatible",
-          credentialType: "api_key",
-          state: "healthy",
-          secretRef: "secret_custom_limited",
-          createdAt: new Date("2026-07-12T08:00:00.000Z"),
-          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
-          lastFailureAt: null,
-        };
-      },
-    } as never,
-    secrets: {
-      async get() {
-        return { kind: "openai_compatible_api_key", apiKey: "test-key", baseUrl: "https://models.example.test/v1" };
-      },
-    } as never,
-    codexStatusProvider: {} as never,
-    openAiCompatibleTransport: {
-      async chatCompletions() { throw new Error("unused"); },
-      async listModels() { return { models: ["other-model"] }; },
-    },
-  });
-  const service = createDefaultAdminService("http://den.example.test", {
-    aiAccessRepository: {
-      async getUserAiAccess() { return null; },
-      async upsertUserAiAccess() { writes += 1; throw new Error("unexpected write"); },
-    },
-    credentialReadRepository: {
-      async listAdminCredentials() { return [credential]; },
-    },
-    modelPolicyRepository: {
-      async getPolicy() {
-        return {
-          id: "platform",
-          enabledModels: [{ provider: "openai_compatible", model: "target-model" }],
-          activeModel: { provider: "openai_compatible", model: "target-model" },
-          createdAt: new Date("2026-07-12T08:00:00.000Z"),
-          updatedAt: new Date("2026-07-12T08:00:00.000Z"),
-        };
-      },
-      async replacePolicy() { throw new Error("unused"); },
-    },
-    modelCapabilities,
-  } as never);
-
-  await assert.rejects(
-    service.upsertUserAiAccess("admin-token", "user_123", {
-      enabled: true,
-      provider: "openai_compatible",
-      credentialId: credential.id,
-    }),
-    /incompatible_ai_access_credential_id/,
-  );
-  assert.equal(writes, 0);
-  assert.deepEqual((await service.getUserAiAccess("admin-token", "user_123")).availableCredentials, []);
-});
-
-test("admin user access preserves transient capability failures as 5xx", async () => {
-  let writes = 0;
-  const credential = createCredential("cred_codex_transient");
-  const service = createDefaultAdminService("http://den.example.test", {
-    aiAccessRepository: {
-      async getUserAiAccess() { return null; },
-      async upsertUserAiAccess() { writes += 1; throw new Error("unexpected write"); },
-    },
-    credentialReadRepository: {
-      async listAdminCredentials() { return [credential]; },
-    },
-    codexStatusProvider: {
-      async getStatus() {
-        return { available: true, source: "codex_exec_no_rate_limits", label: "available", limits: { fiveHour: null, weekly: null } } as const;
-      },
-    },
-    modelPolicyRepository: createCodexModelPolicyRepository(),
-    modelCapabilities: {
-      async checkHealthyCredentialForModel() { return { status: "transient", reason: "capability_evidence_unavailable" }; },
-      async checkCredentialForModel() { return { status: "transient", reason: "capability_evidence_unavailable" }; },
-      async hasHealthyCredentialForModel() { return false; },
-      invalidateCredential() {},
-    },
-  } as never);
-
-  await assert.rejects(
-    service.upsertUserAiAccess("admin-token", "user_123", {
-      enabled: true,
-      provider: "codex_oauth",
-      credentialId: credential.id,
-    }),
-    (error: unknown) => error instanceof Error
-      && error.message === "ai_access_credential_capability_unavailable"
-      && (error as { status?: number }).status === 503,
-  );
-  assert.equal(writes, 0);
-});
-
-test("GET qualified AI access only returns eligible codex credentials", async () => {
-  const app = createApp({
-    admin: createDefaultAdminService("http://den.example.test", {
-      denClient: {
-        async startBrowserAuth() {
-          throw new Error("unused");
-        },
-        async exchangeBrowserAuth() {
-          throw new Error("unused");
-        },
-        async getSession() {
-          return {
-            user: {
-              id: "user_admin",
-              email: "admin@example.test",
-              emailVerified: true,
-              name: "Admin",
-            },
-            platformAdmin: true,
-            activeOrgId: null,
-            organizations: [],
-          };
-        },
-        async listUsers() {
-          return [];
-        },
-        async listOrganizationMembers() {
-          return { members: [ORGANIZATION_MEMBER] };
-        },
-        async createUser() {
-          throw new Error("unused");
-        },
-        async updateUser() {
-          throw new Error("unused");
-        },
-        async disableUser() {
-          throw new Error("unused");
-        },
-        async enableUser() {
-          throw new Error("unused");
-        },
-        async deleteUser() {
-          return;
-        },
-      },
-      aiAccessRepository: {
-        async getUserAiAccess(userId: string) {
-          return {
-            id: "ai_access_user_123",
-            userId,
-            enabled: true,
-            provider: "codex_oauth",
-            credentialId: "cred_codex_ok",
-            defaultModel: "gpt-5.4",
-            allowedModels: ["gpt-5.4"],
-            createdAt: new Date("2026-04-27T12:00:00.000Z"),
-            updatedAt: new Date("2026-04-27T12:00:00.000Z"),
-          };
-        },
-        async upsertUserAiAccess() {
-          throw new Error("unused");
-        },
-      },
-      modelPolicyRepository: createCodexModelPolicyRepository(),
-      modelCapabilities: createSupportedModelCapabilities(),
-      credentialReadRepository: {
-        async listAdminCredentials() {
-          return [
-            createCredential("cred_openai_healthy", {
-              provider: "openai",
-              state: "healthy",
-              activeLeases: 0,
-            }),
-            createCredential("cred_codex_revoked", {
-              provider: "codex_oauth",
-              state: "revoked",
-              activeLeases: 0,
-            }),
-            createCredential("cred_codex_unavailable", {
-              provider: "codex_oauth",
-              state: "healthy",
-              activeLeases: 0,
-            }),
-            createCredential("cred_codex_ok", {
-              provider: "codex_oauth",
-              state: "healthy",
-              activeLeases: 1,
-            }),
-          ];
-        },
-      },
-      codexStatusProvider: {
-        async getStatus(input) {
-          return {
-            available: false,
-            source: "unavailable",
-            label: "Codex limits unavailable",
-            detail: input.credentialId === "cred_codex_ok"
-              ? "codex | OK | tokens used | 7,367"
-              : "ERROR: Your access token could not be refreshed because your refresh token was already used.",
-            checkedAt: "2026-04-27T12:00:00.000Z",
-          };
-        },
-      },
-    }),
-  });
-  const server = app.listen(0, "127.0.0.1");
-  await once(server, "listening");
-
-  try {
-    const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
-      headers: ADMIN_AUTHORIZATION,
-    });
-
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.deepEqual(body.availableCredentials, [
-      { id: "cred_codex_ok", name: "Credential cred_codex_ok", provider: "codex_oauth" },
-    ]);
-  } finally {
-    server.close();
-    await once(server, "close");
-  }
-});
-
-test("GET qualified AI access repairs admin-assigned Codex credentials before returning", async () => {
-  const upserts: unknown[] = [];
-  const app = createApp({
-    admin: createDefaultAdminService("http://den.example.test", {
-      denClient: {
-        async startBrowserAuth() {
-          throw new Error("unused");
-        },
-        async exchangeBrowserAuth() {
-          throw new Error("unused");
-        },
-        async getSession() {
-          return {
-            user: {
-              id: "user_admin",
-              email: "admin@example.test",
-              emailVerified: true,
-              name: "Admin",
-            },
-            platformAdmin: true,
-            activeOrgId: null,
-            organizations: [],
-          };
-        },
-        async listUsers() {
-          return [];
-        },
-        async listOrganizationMembers() {
-          return { members: [ORGANIZATION_MEMBER] };
-        },
-        async createUser() {
-          throw new Error("unused");
-        },
-        async updateUser() {
-          throw new Error("unused");
-        },
-        async disableUser() {
-          throw new Error("unused");
-        },
-        async enableUser() {
-          throw new Error("unused");
-        },
-        async deleteUser() {
-          return;
-        },
-      },
-      aiAccessRepository: {
-        async getUserAiAccess(userId: string) {
-          return {
-            id: "ai_access_user_123",
-            userId,
-            enabled: true,
-            provider: "codex_oauth",
-            credentialId: "cred_old",
-            assignmentOrigin: "admin_assigned",
-            createdAt: new Date("2026-05-07T08:00:00.000Z"),
-            updatedAt: new Date("2026-05-07T08:00:00.000Z"),
-          };
-        },
-        async upsertUserAiAccess(input) {
-          upserts.push(input);
-          return {
-            id: "ai_access_user_123",
-            userId: input.userId,
-            enabled: input.enabled,
-            provider: input.provider,
-            credentialId: input.credentialId,
-            assignmentOrigin: input.assignmentOrigin,
-            createdAt: new Date("2026-05-07T08:00:00.000Z"),
-            updatedAt: new Date("2026-05-07T09:00:00.000Z"),
-          };
-        },
-      },
-      modelPolicyRepository: createCodexModelPolicyRepository(),
-      modelCapabilities: createSupportedModelCapabilities(),
-      credentialReadRepository: {
-        async listAdminCredentials() {
-          return [
-            createCredential("cred_old", {
-              provider: "codex_oauth",
-              state: "unhealthy",
-              activeLeases: 0,
-            }),
-            createCredential("cred_new", {
-              provider: "codex_oauth",
-              state: "healthy",
-              activeLeases: 0,
-            }),
-          ];
-        },
-      },
-      credentialWriteRepository: {
-        async getCredentialRecordById(credentialId: string) {
-          if (credentialId === "cred_old") {
-            return createCredential("cred_old", {
-              provider: "codex_oauth",
-              state: "unhealthy",
-              activeLeases: 0,
-            });
-          }
-          if (credentialId === "cred_new") {
-            return createCredential("cred_new", {
-              provider: "codex_oauth",
-              state: "healthy",
-              activeLeases: 0,
-            });
-          }
-          return null;
-        },
-        async listAdminCredentials() {
-          return [
-            createCredential("cred_old", {
-              provider: "codex_oauth",
-              state: "unhealthy",
-              activeLeases: 0,
-            }),
-            createCredential("cred_new", {
-              provider: "codex_oauth",
-              state: "healthy",
-              activeLeases: 0,
-            }),
-          ];
-        },
-      } as any,
-      codexStatusProvider: {
-        async getStatus(input) {
-          return {
-            available: input.credentialId === "cred_new",
-            source: input.credentialId === "cred_new" ? "codex_exec_no_rate_limits" : "unavailable",
-            label: input.credentialId === "cred_new" ? "Codex OK, limits unknown" : "Codex unavailable",
-            detail: input.credentialId === "cred_new" ? null : "invalid_grant",
-            checkedAt: "2026-05-07T09:00:00.000Z",
-            limits: input.credentialId === "cred_new"
-              ? {
-                  fiveHour: null,
-                  weekly: null,
-                }
-              : undefined,
-          };
-        },
-      },
-      auditRepository: {
-        async recordEvent() {
-          return;
-        },
-        async listEvents() {
-          return [];
-        },
-      },
-    }),
-  });
-  const server = app.listen(0, "127.0.0.1");
-  await once(server, "listening");
-
-  try {
-    const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
-      headers: ADMIN_AUTHORIZATION,
-    });
-
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body.aiAccess.credentialId, "cred_new");
-    assert.deepEqual(upserts, [
-      {
-        userId: "user_123",
-        enabled: true,
-        provider: "codex_oauth",
-        credentialId: "cred_new",
-        assignmentOrigin: "admin_assigned",
-      },
-    ]);
-  } finally {
-    server.close();
-    await once(server, "close");
-  }
-});
-
-test("PUT qualified AI access rejects ineligible codex credentials", async () => {
-  let upsertCalled = false;
-  const app = createApp({
-    admin: createDefaultAdminService("http://den.example.test", {
-      denClient: {
-        async startBrowserAuth() {
-          throw new Error("unused");
-        },
-        async exchangeBrowserAuth() {
-          throw new Error("unused");
-        },
-        async getSession() {
-          return {
-            user: {
-              id: "user_admin",
-              email: "admin@example.test",
-              emailVerified: true,
-              name: "Admin",
-            },
-            platformAdmin: true,
-            activeOrgId: null,
-            organizations: [],
-          };
-        },
-        async listUsers() {
-          return [];
-        },
-        async listOrganizationMembers() {
-          return { members: [ORGANIZATION_MEMBER] };
-        },
-        async createUser() {
-          throw new Error("unused");
-        },
-        async updateUser() {
-          throw new Error("unused");
-        },
-        async disableUser() {
-          throw new Error("unused");
-        },
-        async enableUser() {
-          throw new Error("unused");
-        },
-        async deleteUser() {
-          return;
-        },
-      },
-      aiAccessRepository: {
-        async getUserAiAccess() {
-          return null;
-        },
-        async upsertUserAiAccess() {
-          upsertCalled = true;
-          throw new Error("unexpected_ai_access_upsert");
-        },
-      },
-      modelPolicyRepository: createCodexModelPolicyRepository(),
-      credentialReadRepository: {
-        async listAdminCredentials() {
-          return [
-            createCredential("cred_codex_revoked", {
-              provider: "codex_oauth",
-              state: "revoked",
-              activeLeases: 0,
-            }),
-            createCredential("cred_codex_unavailable", {
-              provider: "codex_oauth",
-              state: "healthy",
-              activeLeases: 0,
-            }),
-          ];
-        },
-      },
-      codexStatusProvider: {
-        async getStatus() {
-          return {
-            available: false,
-            source: "unavailable",
-            label: "Codex limits unavailable",
-            detail: null,
-            checkedAt: "2026-04-27T12:00:00.000Z",
-          };
-        },
-      },
-    }),
-  });
-  const server = app.listen(0, "127.0.0.1");
-  await once(server, "listening");
-
-  try {
-    const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
-      method: "PUT",
-      headers: {
-        "content-type": "application/json",
-        ...ADMIN_AUTHORIZATION,
-      },
-      body: JSON.stringify({
-        enabled: true,
-        provider: "codex_oauth",
-        credentialId: "cred_codex_unavailable",
-      }),
-    });
-
-    assert.equal(response.status, 400);
-    assert.deepEqual(await response.json(), {
-      error: "ineligible_ai_access_credential_id",
-    });
-    assert.equal(upsertCalled, false);
-  } finally {
-    server.close();
-    await once(server, "close");
-  }
-});
-
-test("PUT qualified AI access persists the admin managed policy", async () => {
+test("PUT qualified AI access accepts the enabled-only contract", async () => {
   const app = createAdminUserAccessApp();
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -1595,8 +1013,6 @@ test("PUT qualified AI access persists the admin managed policy", async () => {
       },
       body: JSON.stringify({
         enabled: true,
-        provider: "anthropic",
-        credentialId: "cred_openai_123",
       }),
     });
 
@@ -1606,45 +1022,6 @@ test("PUT qualified AI access persists the admin managed policy", async () => {
         ...AI_ACCESS_PAYLOAD,
         userId: "user_123",
         enabled: true,
-        provider: "anthropic",
-        credentialId: "cred_openai_123",
-      },
-      availableCredentials: AVAILABLE_CREDENTIALS,
-    });
-  } finally {
-    server.close();
-    await once(server, "close");
-  }
-});
-
-test("PUT qualified AI access accepts codex_oauth provider", async () => {
-  const app = createAdminUserAccessApp();
-  const server = app.listen(0, "127.0.0.1");
-  await once(server, "listening");
-
-  try {
-    const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/members/user_123/ai-access`, {
-      method: "PUT",
-      headers: {
-        "content-type": "application/json",
-        ...ADMIN_AUTHORIZATION,
-      },
-      body: JSON.stringify({
-        enabled: true,
-        provider: "codex_oauth",
-        credentialId: "cred_codex_123",
-      }),
-    });
-
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      aiAccess: {
-        ...AI_ACCESS_PAYLOAD,
-        userId: "user_123",
-        enabled: true,
-        provider: "codex_oauth",
-        credentialId: "cred_codex_123",
       },
       availableCredentials: AVAILABLE_CREDENTIALS,
     });
@@ -1670,12 +1047,7 @@ test("GET /api/me/ai-access returns the signed-in user's effective ai access pol
       aiAccess: {
         ...AI_ACCESS_PAYLOAD,
         effectiveModel: { provider: "openai", model: "gpt-5.5" },
-        selectableModels: [{
-          provider: "openai",
-          model: "gpt-5.5",
-          registryVersion: "unregistered",
-          capabilityStatus: "unknown",
-        }],
+        selectableModels: [],
       },
     });
   } finally {
@@ -1699,8 +1071,6 @@ test("admin ai access updates flow through to the signed-in user's effective pol
       },
       body: JSON.stringify({
         enabled: false,
-        provider: "anthropic",
-        credentialId: "cred_openai_123",
       }),
     });
 
@@ -1716,8 +1086,8 @@ test("admin ai access updates flow through to the signed-in user's effective pol
         ...AI_ACCESS_PAYLOAD,
         userId: "user_123",
         enabled: false,
-        provider: "anthropic",
-        credentialId: "cred_openai_123",
+        provider: null,
+        credentialId: null,
         defaultModel: null,
         allowedModels: [],
         effectiveModel: null,

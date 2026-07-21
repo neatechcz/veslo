@@ -179,12 +179,13 @@ export function adminUserRoutePermissions(route, access) {
     && canAccessAdminRoute(route, access);
   const managedAiAccess = Array.isArray(access?.capabilities)
     && access.capabilities.includes("managedAiUserAccess");
+  const organizationAiAccess = organizationRouteAllowed && route.page === "ai-access";
   return {
     createUser: platformUsers,
     editProfile: platformUsers,
     editMembership: platformUsers || (organizationRouteAllowed && route.page === "members"),
-    editAiAccess: managedAiAccess && organizationRouteAllowed && route.page === "ai-access",
-    setPlatformAdmin: platformUsers,
+    editAiAccess: managedAiAccess && organizationAiAccess,
+    setPlatformAdmin: platformUsers || (organizationAiAccess && access?.platformAdmin === true),
     disableUser: platformUsers,
     deleteUser: platformUsers,
   };
@@ -218,7 +219,7 @@ export function canPerformAdminRouteAction(route, access, action) {
   return Boolean(permission && adminUserRoutePermissions(route, access)[permission]);
 }
 
-export function buildAdminUserUpdatePayload(route, access, payload) {
+export function buildAdminUserUpdatePayload(route, access, payload, currentUser = null) {
   if (!payload || typeof payload !== "object") return null;
   const permissions = adminUserRoutePermissions(route, access);
   if (permissions.editProfile && permissions.setPlatformAdmin && permissions.editMembership) {
@@ -233,6 +234,18 @@ export function buildAdminUserUpdatePayload(route, access, payload) {
     return {
       orgId: route.organizationId,
       orgRole: payload.orgRole,
+    };
+  }
+  if (permissions.setPlatformAdmin) {
+    if (
+      currentUser
+      && typeof currentUser.platformAdmin === "boolean"
+      && currentUser.platformAdmin === (payload.platformAdmin === true)
+    ) {
+      return null;
+    }
+    return {
+      platformAdmin: payload.platformAdmin === true,
     };
   }
   return null;
