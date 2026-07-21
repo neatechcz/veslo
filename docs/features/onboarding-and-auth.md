@@ -45,13 +45,19 @@ Password reset also stays in the browser handoff flow. The reset page keeps the 
 
 The hosted desktop onboarding page also caches the current desktop auth transaction context in browser session storage. If a later auth or verification return lands back on the onboarding page without the original transaction query, the hosted page restores that context before attempting the desktop handoff. This keeps the original desktop auth transaction alive across browser-managed redirects.
 
-DEN signup runs authorization before Better Auth creates the user, including email/password and social provider signups. An enabled organization domain with self-signup enabled can auto-activate a member only while the organization has an available seat. Invite signup checks that organization's seat capacity before user creation, and domain-joined and invite-joined signups receive active organization membership without a personal default organization.
+DEN signup runs authorization before Better Auth creates the user, including email/password and social provider signups. The durable signup paths are:
+
+- An enabled organization domain with self-signup enabled can auto-activate a member only while the organization has an available seat.
+- An unclaimed exact domain that is not a known personal-email provider can bootstrap a new organization. The first signup becomes its organization admin; later users join as members through the resulting domain rule, subject to seat capacity.
+- A valid organization invitation is the only exception that permits signup with a known personal-email address. DEN validates the invitation token hash, normalized email match, expiry, single-use state, and target organization's seat capacity before creating the user.
+
+Known personal-provider signup without a valid invitation is rejected before account or organization creation with the stable `domain_not_allowed` code. Both the DEN-hosted desktop onboarding registration flow and the public web signup surface translate that code into actionable guidance to use a company email or open the registration link from an organization invitation. There is no admin approval queue or notification path for rejected signup attempts.
+
+Domain-joined and invite-joined signups receive active organization membership without a personal default organization.
 
 When signup is authorized to bootstrap a previously unclaimed company domain, DEN atomically creates the organization, the first user's organization-admin membership, an enabled self-signup domain rule, and the automatic organization trial. Domain matching uses the normalized exact value after `@`: `team.example.com` does not claim `example.com`. Later users with the same exact domain join the organization as members, subject to its seat limit.
 
 The domain's unique index serializes concurrent first signups. The winning transaction creates the organization; a losing signup rolls back its provisional organization and joins the winning domain owner. Signup never re-enables a disabled or invite-only domain. A valid organization invitation remains an independent path and does not create another organization or domain.
-
-Temporary integration state, as of 2026-07-21: the pre-create gate still permits an unmatched domain to enter organization bootstrap. The separate corporate-email signup policy must narrow that path to company domains and reject personal domains without removing bootstrap for the first eligible company user.
 
 Key persistent settings:
 
