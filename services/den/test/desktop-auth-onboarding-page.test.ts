@@ -140,6 +140,50 @@ test("desktop auth submit handling stays bound to the submitted mode", () => {
     false,
     "async request handling must not consult the mutable UI mode",
   )
+  assert.equal(submitHandler.includes("toggleBtn.disabled = true;"), true)
+  assert.equal(submitHandler.includes("toggleBtn.disabled = false;"), true)
+})
+
+test("desktop onboarding captures and scrubs signup invitations in session storage", () => {
+  assert.equal(onboardingPage.includes('const SIGNUP_INVITATION_SESSION_STORAGE_KEY = "veslo:signup-invite-token";'), true)
+  assert.equal(onboardingPage.includes("captureSignupInvitationFromLocation();"), true)
+  assert.equal(onboardingPage.includes("window.sessionStorage.setItem(SIGNUP_INVITATION_SESSION_STORAGE_KEY"), true)
+  assert.equal(onboardingPage.includes('url.searchParams.delete("inviteToken")'), true)
+  assert.equal(onboardingPage.includes('fragmentParams.delete("inviteToken")'), true)
+  assert.equal(onboardingPage.includes("window.history.replaceState({}, \"\", url.toString())"), true)
+  assert.match(
+    onboardingPage,
+    /if \(inviteToken\) \{[\s\S]*?sessionStorage\.setItem[\s\S]*?\} else if \(hadInvitationParameter\) \{[\s\S]*?sessionStorage\.removeItem/,
+    "an invalid incoming token must not leave a stale invitation active",
+  )
+  assert.equal(onboardingPage.includes("window.localStorage.setItem(SIGNUP_INVITATION_SESSION_STORAGE_KEY"), false)
+})
+
+test("desktop email signup sends and consumes invitation state only on success", () => {
+  const handlerStart = onboardingPage.indexOf('form.addEventListener("submit"')
+  const handlerEnd = onboardingPage.indexOf('forgotForm.addEventListener("submit"', handlerStart)
+  const submitHandler = onboardingPage.slice(handlerStart, handlerEnd)
+
+  assert.match(
+    submitHandler,
+    /if \(submittedMode === "sign-up"\) \{[\s\S]*?const signupInviteToken = readStoredSignupInvitation\(\);[\s\S]*?body\.inviteToken = signupInviteToken;/,
+  )
+  assert.match(
+    submitHandler,
+    /if \(!response\.ok\) \{[\s\S]*?return;[\s\S]*?if \(submittedMode === "sign-up"\) \{\s+clearStoredSignupInvitation\(\);\s+\}/,
+    "invitation state must survive recoverable errors and clear after signup succeeds",
+  )
+  assert.equal(
+    /submittedMode === "sign-in"[\s\S]{0,200}inviteToken/.test(submitHandler),
+    false,
+    "sign-in bodies must never include an invitation token",
+  )
+})
+
+test("desktop onboarding inline script remains valid JavaScript", () => {
+  const inlineScript = onboardingPage.match(/<script>([\s\S]*?)<\/script>/)?.[1]
+  assert.ok(inlineScript)
+  assert.doesNotThrow(() => new Function(inlineScript))
 })
 
 test("desktop onboarding page does not ship the public control-plane demo", () => {

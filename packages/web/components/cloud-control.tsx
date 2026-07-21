@@ -3,6 +3,13 @@
 import { FormEvent, useEffect, useState } from "react";
 import { getAuthErrorMessage } from "../lib/auth-error-message";
 import { buildAuthCallbackUrl } from "../lib/auth-urls";
+import {
+  GITHUB_AUTH_CALLBACK_MARKER_PARAM,
+  GITHUB_AUTH_CALLBACK_MARKER_VALUE,
+  clearStoredSignupInvitation,
+  parseGitHubAuthCallbackUrl,
+  readStoredSignupInvitation
+} from "../lib/signup-invitation";
 
 type Step = 1 | 2;
 type AuthMode = "sign-in" | "sign-up";
@@ -225,6 +232,12 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
 
 function getGithubCallbackUrl(): string {
   return buildAuthCallbackUrl("/");
+}
+
+function getGithubErrorCallbackUrl(): string {
+  const url = new URL(buildAuthCallbackUrl("/"));
+  url.searchParams.set(GITHUB_AUTH_CALLBACK_MARKER_PARAM, GITHUB_AUTH_CALLBACK_MARKER_VALUE);
+  return url.toString();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1413,6 +1426,33 @@ export function CloudControlPanel() {
       return;
     }
 
+    const callbackError = parseGitHubAuthCallbackUrl(window.location.href);
+    if (!callbackError) {
+      return;
+    }
+
+    const pendingSignup = window.sessionStorage.getItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY) === "1";
+    const submittedMode: AuthMode = pendingSignup ? "sign-up" : "sign-in";
+    window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+    window.history.replaceState({}, "", callbackError.scrubbedUrl);
+    setAuthMode(submittedMode);
+    setAuthInfo(getAuthInfoForMode(submittedMode));
+    setAuthError(getAuthErrorMessage({
+      error: callbackError.error,
+      message: callbackError.errorDescription
+    }, "GitHub sign-in failed. Try again."));
+    trackPosthogEvent("den_auth_failed", {
+      mode: submittedMode,
+      method: "github",
+      reason: "callback_error"
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     if (authToken) {
       window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, authToken);
     } else {
@@ -1503,6 +1543,7 @@ export function CloudControlPanel() {
     }
 
     window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+    clearStoredSignupInvitation(window.sessionStorage);
     trackPosthogEvent("den_signup_completed", {
       mode: "sign-up",
       method: "github",
@@ -1733,24 +1774,29 @@ export function CloudControlPanel() {
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const submittedMode = authMode;
 
     setAuthBusy(true);
     setAuthError(null);
     trackPosthogEvent("den_auth_submitted", {
-      mode: authMode,
+      mode: submittedMode,
       method: "email"
     });
 
     try {
-      const endpoint = authMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
+      const endpoint = submittedMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
       const trimmedEmail = email.trim();
+      const signupInviteToken = submittedMode === "sign-up"
+        ? readStoredSignupInvitation(window.sessionStorage)
+        : null;
       const body =
-        authMode === "sign-up"
+        submittedMode === "sign-up"
           ? {
               name: DEFAULT_AUTH_NAME,
               email: trimmedEmail,
               password,
-              callbackURL: buildAuthCallbackUrl("/verify-email")
+              callbackURL: buildAuthCallbackUrl("/verify-email"),
+              ...(signupInviteToken ? { inviteToken: signupInviteToken } : {})
             }
           : {
               email: trimmedEmail,
@@ -1765,11 +1811,15 @@ export function CloudControlPanel() {
       if (!response.ok) {
         setAuthError(getAuthErrorMessage(payload, `Authentication failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
-          mode: authMode,
+          mode: submittedMode,
           method: "email",
           status: response.status
         });
         return;
+      }
+
+      if (submittedMode === "sign-up") {
+        clearStoredSignupInvitation(window.sessionStorage);
       }
 
       const token = getToken(payload);
@@ -1783,14 +1833,14 @@ export function CloudControlPanel() {
         authenticatedUser = payloadUser;
         setUser(payloadUser);
         setAuthInfo(`Signed in as ${payloadUser.email}.`);
-        appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", payloadUser.email);
+        appendEvent("success", submittedMode === "sign-up" ? "Account created" : "Signed in", payloadUser.email);
       } else {
         const refreshed = await refreshSession(true);
         if (!refreshed) {
           setAuthInfo("Authentication succeeded, but session details are still syncing.");
         } else {
           authenticatedUser = refreshed;
-          appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
+          appendEvent("success", submittedMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
         }
       }
 
@@ -1798,12 +1848,12 @@ export function CloudControlPanel() {
         identifyPosthogUser(authenticatedUser);
 
         const analyticsPayload = {
-          mode: authMode,
+          mode: submittedMode,
           method: "email",
           email_domain: getEmailDomain(authenticatedUser.email)
         };
 
-        if (authMode === "sign-up") {
+        if (submittedMode === "sign-up") {
           trackPosthogEvent("den_signup_completed", analyticsPayload);
           void trackDenSignupInLoops({
             email: authenticatedUser.email,
@@ -1821,7 +1871,7 @@ export function CloudControlPanel() {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthError(message);
       trackPosthogEvent("den_auth_failed", {
-        mode: authMode,
+        mode: submittedMode,
         method: "email",
         reason: "network_error"
       });
@@ -1868,7 +1918,11 @@ export function CloudControlPanel() {
       return;
     }
 
-    const shouldTrackGithubSignup = authMode === "sign-up";
+    const submittedMode = authMode;
+    const signupInviteToken = submittedMode === "sign-up"
+      ? readStoredSignupInvitation(window.sessionStorage)
+      : null;
+    const shouldTrackGithubSignup = submittedMode === "sign-up";
     if (shouldTrackGithubSignup) {
       window.sessionStorage.setItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY, "1");
     }
@@ -1877,7 +1931,7 @@ export function CloudControlPanel() {
     setAuthError(null);
     setAuthInfo("Redirecting to GitHub...");
     trackPosthogEvent("den_auth_submitted", {
-      mode: authMode,
+      mode: submittedMode,
       method: "github"
     });
 
@@ -1888,7 +1942,10 @@ export function CloudControlPanel() {
         body: JSON.stringify({
           provider: "github",
           callbackURL,
-          errorCallbackURL: callbackURL
+          errorCallbackURL: getGithubErrorCallbackUrl(),
+          ...(signupInviteToken
+            ? { additionalData: { vesloSignupInviteToken: signupInviteToken } }
+            : {})
         })
       });
 
@@ -1896,10 +1953,10 @@ export function CloudControlPanel() {
         if (shouldTrackGithubSignup) {
           window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
         }
-        setAuthInfo(getAuthInfoForMode(authMode));
+        setAuthInfo(getAuthInfoForMode(submittedMode));
         setAuthError(getAuthErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
-          mode: authMode,
+          mode: submittedMode,
           method: "github",
           status: response.status
         });
@@ -1915,10 +1972,10 @@ export function CloudControlPanel() {
         if (shouldTrackGithubSignup) {
           window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
         }
-        setAuthInfo(getAuthInfoForMode(authMode));
+        setAuthInfo(getAuthInfoForMode(submittedMode));
         setAuthError("GitHub sign-in did not return a redirect URL.");
         trackPosthogEvent("den_auth_failed", {
-          mode: authMode,
+          mode: submittedMode,
           method: "github",
           reason: "missing_redirect_url"
         });
@@ -1927,7 +1984,7 @@ export function CloudControlPanel() {
       }
 
       trackPosthogEvent("den_auth_redirected", {
-        mode: authMode,
+        mode: submittedMode,
         method: "github"
       });
       window.location.assign(redirectUrl);
@@ -1936,10 +1993,10 @@ export function CloudControlPanel() {
         window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
       }
       const message = error instanceof Error ? error.message : "Unknown network error";
-      setAuthInfo(getAuthInfoForMode(authMode));
+      setAuthInfo(getAuthInfoForMode(submittedMode));
       setAuthError(message);
       trackPosthogEvent("den_auth_failed", {
-        mode: authMode,
+        mode: submittedMode,
         method: "github",
         reason: "network_error"
       });
@@ -2510,6 +2567,7 @@ export function CloudControlPanel() {
               <button
                 type="button"
                 className="ow-link"
+                disabled={authBusy}
                 onClick={() => {
                   const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
                   setAuthMode(nextMode);

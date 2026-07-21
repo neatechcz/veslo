@@ -107,7 +107,7 @@ test("known personal email with a valid invite skips domain lookup and checks in
         return createInviteRecord({
           orgId: "org_invited",
           email: input.email,
-          role: "admin",
+          role: "organization_admin",
           tokenHash: input.tokenHash,
         })
       },
@@ -118,7 +118,7 @@ test("known personal email with a valid invite skips domain lookup and checks in
     ok: true,
     mode: "invite",
     organizationId: "org_invited",
-    role: "admin",
+    role: "organization_admin",
     inviteToken: "invite_token_1",
   })
   assert.deepEqual(calls, ["invite:person@gmail.com", "invite-seats:org_invited"])
