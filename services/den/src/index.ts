@@ -756,6 +756,27 @@ async function ensureTables() {
     await ensureIndex("organization_domain", "organization_domain_self_signup", ["self_signup_enabled"])
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`organization_trial_domain_claim\` (
+        \`id\` varchar(64) NOT NULL,
+        \`domain\` varchar(255) NOT NULL,
+        \`org_id\` varchar(64) NOT NULL,
+        \`claimed_at\` timestamp(3) NOT NULL DEFAULT (now()),
+        CONSTRAINT \`organization_trial_domain_claim_id\` PRIMARY KEY(\`id\`)
+      )
+    `)
+    await ensureIndex(
+      "organization_trial_domain_claim",
+      "organization_trial_domain_claim_domain",
+      ["domain"],
+      true,
+    )
+    await ensureIndex(
+      "organization_trial_domain_claim",
+      "organization_trial_domain_claim_org_id",
+      ["org_id"],
+    )
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`organization_invite\` (
         \`id\` varchar(64) NOT NULL,
         \`org_id\` varchar(64) NOT NULL,

@@ -182,6 +182,20 @@ export const OrganizationDomainTable = mysqlTable(
   ],
 )
 
+export const OrganizationTrialDomainClaimTable = mysqlTable(
+  "organization_trial_domain_claim",
+  {
+    id: id().primaryKey(),
+    domain: varchar("domain", { length: 255 }).notNull(),
+    org_id: varchar("org_id", { length: 64 }).notNull(),
+    claimed_at: timestamp("claimed_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("organization_trial_domain_claim_domain").on(table.domain),
+    index("organization_trial_domain_claim_org_id").on(table.org_id),
+  ],
+)
+
 export const OrganizationInviteTable = mysqlTable(
   "organization_invite",
   {
