@@ -322,6 +322,7 @@ async function runtimeBillingRouteDeps(input: {
   stripeService?: OrganizationStripeBillingService | null
   platformAdmin?: boolean
   auditEvents?: Array<{ orgId: string; action: string; payload: unknown }>
+  upsertManualTrialAndClaimDomains?: OrganizationBillingRepository["upsertBillingAccount"]
 }) {
   process.env.DATABASE_URL ??= "mysql://veslo:veslo@127.0.0.1:3306/veslo_test"
   process.env.BETTER_AUTH_SECRET ??= "test_secret_for_admin_runtime_123456789"
@@ -329,9 +330,12 @@ async function runtimeBillingRouteDeps(input: {
 
   const { createOrganizationBillingAdminRouteDeps } = await import("../src/http/admin-runtime.js")
   const snapshot = input.platformAdmin === false ? orgAdminSession() : platformAdminSession()
+  const repository = input.repository ?? runtimeRepository()
   return createOrganizationBillingAdminRouteDeps({
-    repository: input.repository ?? runtimeRepository(),
+    repository,
     stripeService: input.stripeService === undefined ? runtimeStripeService() : input.stripeService,
+    upsertManualTrialAndClaimDomains:
+      input.upsertManualTrialAndClaimDomains ?? ((update) => repository.upsertBillingAccount(update)),
     async requireOrganizationAccess(_req, _res) {
       return { snapshot, organization: organization() }
     },
@@ -667,6 +671,8 @@ test("runtime platform billing route grants platform trial access with quantitie
     manualAccessExpiresAt: null,
   })
   let validationCalls = 0
+  let plainBillingWrites = 0
+  let atomicTrialWrites = 0
   const { server, baseUrl } = await listen({
     async getSessionSnapshot() {
       return platformAdminSession()
@@ -683,10 +689,16 @@ test("runtime platform billing route grants platform trial access with quantitie
           assert.deepEqual(input.manualAccess, { enabled: true, licenseLimit: 3 })
         },
         async upsertBillingAccount(input) {
+          plainBillingWrites += 1
           storedAccount = applyBillingAccountUpdate(storedAccount, input)
           return storedAccount
         },
       }),
+      async upsertManualTrialAndClaimDomains(input) {
+        atomicTrialWrites += 1
+        storedAccount = applyBillingAccountUpdate(storedAccount, input)
+        return storedAccount
+      },
     }),
   })
 
@@ -706,6 +718,8 @@ test("runtime platform billing route grants platform trial access with quantitie
     assert.equal(payload.billing.account.quantities.managedAiBasic, 2)
     assert.equal(payload.billing.account.quantities.managedAiExtended, 1)
     assert.equal(validationCalls, 1)
+    assert.equal(atomicTrialWrites, 1)
+    assert.equal(plainBillingWrites, 0)
   } finally {
     server.close()
     await once(server, "close")

@@ -61,6 +61,7 @@ import {
   type OrganizationBillingTierAllowlistInput,
   type UpsertOrganizationBillingAccountInput,
 } from "../billing/repository.js"
+import { createDrizzleManualTrialBillingWriter } from "../billing/manual-trial-domain-claims.js"
 import type { OrganizationBillingInterval } from "../billing/stripe-config.js"
 import {
   createOrganizationStripeBillingService,
@@ -1197,6 +1198,9 @@ async function updateAdminOrganization(req: express.Request, res: express.Respon
 type OrganizationBillingAdminRouteDepsInput = {
   repository: OrganizationBillingRepository
   stripeService: OrganizationStripeBillingService | null
+  upsertManualTrialAndClaimDomains(
+    input: UpsertOrganizationBillingAccountInput,
+  ): Promise<OrganizationBillingAccountRecord>
   requireOrganizationAccess?: typeof requireAdminOrganizationAccess
   requirePlatformAdmin?: typeof requirePlatformAdminSnapshot
   recordOrganizationAudit?: typeof recordAdminOrganizationAudit
@@ -1252,6 +1256,7 @@ function readPlatformBillingUpdate(
   mode: OrganizationBillingModeValue
   quantities: OrganizationBillingQuantities
   manualAccess: { enabled: boolean; licenseLimit: number } | null
+  manualTrialUpdate: boolean
 } | null {
   if (!isRecord(body)) {
     res.status(400).json({ error: "invalid_billing_update" })
@@ -1441,6 +1446,7 @@ function readPlatformBillingUpdate(
       enabled: manualAccessEnabled,
       licenseLimit: manualAccessLicenseLimit,
     },
+    manualTrialUpdate: isManualTrialUpdate,
   }
 }
 
@@ -1455,7 +1461,7 @@ export function createOrganizationBillingAdminRouteDeps(
   | "cancelOrganizationBilling"
   | "updatePlatformOrganizationBilling"
 > {
-  const { repository, stripeService } = input
+  const { repository, stripeService, upsertManualTrialAndClaimDomains } = input
   const requireOrganizationAccess = input.requireOrganizationAccess ?? requireAdminOrganizationAccess
   const requirePlatformAdmin = input.requirePlatformAdmin ?? requirePlatformAdminSnapshot
   const recordOrganizationAudit = input.recordOrganizationAudit ?? recordAdminOrganizationAudit
@@ -1634,7 +1640,11 @@ export function createOrganizationBillingAdminRouteDeps(
           })
         }
         if (update.accountChanged) {
-          await repository.upsertBillingAccount(update.account)
+          if (update.manualTrialUpdate) {
+            await upsertManualTrialAndClaimDomains(update.account)
+          } else {
+            await repository.upsertBillingAccount(update.account)
+          }
         }
         if (update.allowedTiers) {
           await repository.setAllowedTiers(context.organization.id, update.allowedTiers)
@@ -2826,6 +2836,7 @@ function createDebugLogAdminRouteDeps(debugLogs: DebugLogService | null | undefi
 
 function createOrganizationBillingRuntimeDeps() {
   const repository = createOrganizationBillingRepository(createDrizzleOrganizationBillingStore(db))
+  const upsertManualTrialAndClaimDomains = createDrizzleManualTrialBillingWriter(db)
   const stripeConfig = env.organizationBilling.stripe
   const stripeService = stripeConfig.enabled
     ? createOrganizationStripeBillingService({
@@ -2838,6 +2849,7 @@ function createOrganizationBillingRuntimeDeps() {
   return createOrganizationBillingAdminRouteDeps({
     repository,
     stripeService,
+    upsertManualTrialAndClaimDomains,
   })
 }
 

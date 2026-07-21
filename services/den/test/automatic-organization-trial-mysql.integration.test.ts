@@ -13,6 +13,7 @@ import {
   createDrizzleAutomaticOrganizationTrialStore,
   type AutomaticOrganizationTrialGrant,
 } from "../src/billing/automatic-organization-trial.js"
+import { createDrizzleManualTrialBillingWriter } from "../src/billing/manual-trial-domain-claims.js"
 import * as schema from "../src/db/schema.js"
 import {
   AuthUserTable,
@@ -241,8 +242,8 @@ if (!dedicatedDatabaseUrl) {
           (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS own_claim_org_id,
           (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS fresh_claim_org_id,
           (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS foreign_claim_org_id,
-          (SELECT UNIX_TIMESTAMP(manual_access_expires_at) FROM organization_billing_account WHERE org_id = ?) AS expiry_epoch,
-          (SELECT UNIX_TIMESTAMP(updated_at) FROM organization_billing_account WHERE org_id = ?) AS updated_epoch,
+          (SELECT CAST(UNIX_TIMESTAMP(manual_access_expires_at) AS UNSIGNED) FROM organization_billing_account WHERE org_id = ?) AS expiry_epoch,
+          (SELECT CAST(UNIX_TIMESTAMP(updated_at) AS UNSIGNED) FROM organization_billing_account WHERE org_id = ?) AS updated_epoch,
           (SELECT COUNT(*) FROM organization_billing_event WHERE org_id = ?) AS event_count
       `, [
         existingTrialDomains.own,
@@ -258,6 +259,146 @@ if (!dedicatedDatabaseUrl) {
         foreign_claim_org_id: foreignClaimOrgId,
         expiry_epoch: Math.floor(existingTrialExpiry.getTime() / 1_000),
         updated_epoch: Math.floor(existingTrialUpdatedAt.getTime() / 1_000),
+        event_count: 0,
+      })
+
+      const manualTrialOrgId = `org_manual_trial_${fixture}`
+      const manualForeignOrgId = `org_manual_foreign_${fixture}`
+      const manualTrialDomains = {
+        own: `${fixture}.manual-own.integration.test`,
+        fresh: `${fixture}.manual-fresh.integration.test`,
+        foreign: `${fixture}.manual-foreign.integration.test`,
+      }
+      const manualTrialExpiry = new Date("2026-08-03T17:18:19.000Z")
+      await database.insert(OrgTable).values([{
+        id: manualTrialOrgId,
+        name: "Platform Manual Trial",
+        slug: `platform-manual-trial-${fixture}`,
+        owner_user_id: `user_manual_trial_${fixture}`,
+      }, {
+        id: manualForeignOrgId,
+        name: "Platform Manual Foreign Claim",
+        slug: `platform-manual-foreign-${fixture}`,
+        owner_user_id: `user_manual_foreign_${fixture}`,
+      }])
+      await database.insert(OrganizationDomainTable).values(Object.values(manualTrialDomains).map((domain, index) => ({
+        id: `domain_manual_trial_${fixture}_${index}`,
+        org_id: manualTrialOrgId,
+        domain,
+        enabled: true,
+        self_signup_enabled: true,
+      })))
+      await database.insert(schema.OrganizationTrialDomainClaimTable).values([{
+        id: `claim_manual_own_${fixture}`,
+        domain: manualTrialDomains.own,
+        org_id: manualTrialOrgId,
+        claimed_at: new Date("2026-07-01T00:00:00.000Z"),
+      }, {
+        id: `claim_manual_foreign_${fixture}`,
+        domain: manualTrialDomains.foreign,
+        org_id: manualForeignOrgId,
+        claimed_at: new Date("2026-06-01T00:00:00.000Z"),
+      }])
+
+      const writeManualTrial = createDrizzleManualTrialBillingWriter(database, {
+        now: () => new Date("2026-07-21T11:00:00.000Z"),
+      })
+      const writtenManualTrial = await writeManualTrial({
+        id: `billing_manual_trial_${fixture}`,
+        orgId: manualTrialOrgId,
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "active",
+        managedAiBasicQuantity: 3,
+        manualAccessEnabled: true,
+        manualAccessUnlimited: false,
+        manualAccessExpiresAt: manualTrialExpiry,
+      })
+      assert.equal(writtenManualTrial.manualAccessExpiresAt?.getTime(), manualTrialExpiry.getTime())
+
+      const manualTrialRows = await queryRows(pool, `
+        SELECT
+          (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS own_claim_org_id,
+          (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS fresh_claim_org_id,
+          (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS foreign_claim_org_id,
+          (SELECT CAST(UNIX_TIMESTAMP(manual_access_expires_at) AS UNSIGNED) FROM organization_billing_account WHERE org_id = ?) AS expiry_epoch,
+          (SELECT managed_ai_basic_quantity FROM organization_billing_account WHERE org_id = ?) AS basic_quantity
+      `, [
+        manualTrialDomains.own,
+        manualTrialDomains.fresh,
+        manualTrialDomains.foreign,
+        manualTrialOrgId,
+        manualTrialOrgId,
+      ])
+      assert.deepEqual(manualTrialRows[0], {
+        own_claim_org_id: manualTrialOrgId,
+        fresh_claim_org_id: manualTrialOrgId,
+        foreign_claim_org_id: manualForeignOrgId,
+        expiry_epoch: Math.floor(manualTrialExpiry.getTime() / 1_000),
+        basic_quantity: 3,
+      })
+
+      const rollbackOrgId = `org_manual_rollback_${fixture}`
+      const rollbackDomain = `${fixture}.manual-rollback.integration.test`
+      await database.insert(OrgTable).values({
+        id: rollbackOrgId,
+        name: "Manual Trial Atomic Rollback",
+        slug: `manual-trial-atomic-rollback-${fixture}`,
+        owner_user_id: `user_manual_rollback_${fixture}`,
+      })
+      await database.insert(OrganizationDomainTable).values({
+        id: `domain_manual_rollback_${fixture}`,
+        org_id: rollbackOrgId,
+        domain: rollbackDomain,
+        enabled: true,
+        self_signup_enabled: true,
+      })
+      await assert.rejects(writeManualTrial({
+        id: `billing_manual_trial_${fixture}`,
+        orgId: rollbackOrgId,
+        mode: "manual_access",
+        source: "manual_trial",
+        status: "active",
+        manualAccessEnabled: true,
+        manualAccessExpiresAt: manualTrialExpiry,
+      }))
+      const rollbackRows = await queryRows(pool, `
+        SELECT
+          (SELECT COUNT(*) FROM organization_trial_domain_claim WHERE domain = ?) AS claim_count,
+          (SELECT COUNT(*) FROM organization_billing_account WHERE org_id = ?) AS billing_count
+      `, [rollbackDomain, rollbackOrgId])
+      assertCountRow(rollbackRows[0], { claim_count: 0, billing_count: 0 })
+
+      await database
+        .delete(OrganizationDomainTable)
+        .where(eq(OrganizationDomainTable.org_id, manualTrialOrgId))
+      const reassignedOrgId = `org_manual_reassigned_${fixture}`
+      await database.insert(OrgTable).values({
+        id: reassignedOrgId,
+        name: "Reassigned Manual Trial Domain",
+        slug: `reassigned-manual-trial-domain-${fixture}`,
+        owner_user_id: `user_manual_reassigned_${fixture}`,
+      })
+      await database.insert(OrganizationDomainTable).values({
+        id: `domain_manual_reassigned_${fixture}`,
+        org_id: reassignedOrgId,
+        domain: manualTrialDomains.fresh,
+        enabled: true,
+        self_signup_enabled: true,
+      })
+      const reassignedTrial = await createAutomaticOrganizationTrialService({ store: directStore })
+        .ensureTrial(reassignedOrgId)
+      assert.equal(reassignedTrial.granted, false)
+      assert.ok(reassignedTrial.expiresAt instanceof Date)
+      const reassignedRows = await queryRows(pool, `
+        SELECT
+          (SELECT org_id FROM organization_trial_domain_claim WHERE domain = ?) AS claim_org_id,
+          (SELECT COUNT(*) FROM organization_billing_account WHERE org_id = ?) AS billing_count,
+          (SELECT COUNT(*) FROM organization_billing_event WHERE org_id = ?) AS event_count
+      `, [manualTrialDomains.fresh, reassignedOrgId, reassignedOrgId])
+      assert.deepEqual(reassignedRows[0], {
+        claim_org_id: manualTrialOrgId,
+        billing_count: 0,
         event_count: 0,
       })
 
