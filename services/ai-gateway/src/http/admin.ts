@@ -2224,7 +2224,6 @@ export function createDefaultAdminService(
     async replacePlatformModelPolicy(_token, input, actorUserId) {
       const validated = validatePlatformModelPolicyInput(input);
       await assertEnabledModelCapabilities(validated.enabledModels);
-      await assertNoEnabledAssignmentProviderConflicts(validated.activeModel);
       try {
         const saved = await getModelPolicyMutation().replacePolicyWithAudit({
           actorUserId,
@@ -2659,24 +2658,6 @@ export function createDefaultAdminService(
     }
   }
 
-  async function assertNoEnabledAssignmentProviderConflicts(activeModel: PlatformModelRef): Promise<void> {
-    const aiAccess = getAiAccessRepository();
-    if (!aiAccess.countEnabledPoliciesIncompatibleWithProvider) {
-      throw new HttpError("model_policy_assignment_compatibility_unavailable", 503);
-    }
-
-    let incompatibleCount: number;
-    try {
-      incompatibleCount = await aiAccess.countEnabledPoliciesIncompatibleWithProvider(activeModel.provider);
-    } catch (error) {
-      console.error("model_policy_assignment_compatibility_check_failed", error);
-      throw new HttpError("model_policy_assignment_compatibility_unavailable", 503);
-    }
-
-    if (incompatibleCount > 0) {
-      throw new HttpError("model_policy_active_provider_has_incompatible_assignments", 409);
-    }
-  }
 }
 
 function mapModelPolicyCapabilityError(reason: string): HttpError {

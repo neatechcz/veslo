@@ -41,9 +41,6 @@ test("GET /readiness reports unavailable when provider reachability fails", asyn
         async countEnabledPolicies() {
           return 1;
         },
-        async countEnabledPoliciesIncompatibleWithProvider() {
-          return 0;
-        },
       },
       modelPolicy: {
         async getPolicy() {

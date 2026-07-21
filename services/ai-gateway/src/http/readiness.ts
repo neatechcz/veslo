@@ -14,7 +14,7 @@ export type ReadinessProviderProbe = {
 export type ReadinessDependencies = {
   fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
   credentials: Pick<CredentialRepository, "listHealthyCredentialRecordIds">;
-  aiAccess?: Pick<AiAccessRepository, "countEnabledPolicies" | "countEnabledPoliciesIncompatibleWithProvider">;
+  aiAccess?: Pick<AiAccessRepository, "countEnabledPolicies">;
   modelPolicy: Pick<PlatformModelPolicyRepository, "getPolicy">;
   modelCapabilities: PlatformModelCapabilityVerifier;
   probes?: ReadinessProviderProbe[];
@@ -45,7 +45,6 @@ export type ReadinessPayload = {
     aiAccessPolicies: {
       ok: boolean;
       enabledPolicyCount: number;
-      incompatibleProviderPolicyCount?: number;
       reason?: string;
     };
     modelPolicy: {
@@ -81,7 +80,7 @@ export async function checkReadiness(deps: ReadinessDependencies): Promise<Readi
     checkModelPolicy(deps.modelPolicy),
   ]);
   const [aiAccessPolicies, credentials] = await Promise.all([
-    checkAiAccessPolicies(deps.aiAccess, modelPolicy.activeModel),
+    checkAiAccessPolicies(deps.aiAccess),
     checkCredentials(
       deps.credentials,
       deps.modelCapabilities,
@@ -193,8 +192,7 @@ async function checkCredentials(
 }
 
 async function checkAiAccessPolicies(
-  aiAccess: Pick<AiAccessRepository, "countEnabledPolicies" | "countEnabledPoliciesIncompatibleWithProvider"> | undefined,
-  activeModel: PlatformModelRef | null,
+  aiAccess: Pick<AiAccessRepository, "countEnabledPolicies"> | undefined,
 ): Promise<ReadinessPayload["checks"]["aiAccessPolicies"]> {
   if (!aiAccess?.countEnabledPolicies) {
     return {
@@ -212,25 +210,6 @@ async function checkAiAccessPolicies(
         enabledPolicyCount: count,
         reason: "no_enabled_ai_access_policies",
       };
-    }
-
-    if (activeModel) {
-      if (!aiAccess.countEnabledPoliciesIncompatibleWithProvider) {
-        return {
-          ok: false,
-          enabledPolicyCount: count,
-          reason: "ai_access_policy_provider_compatibility_unavailable",
-        };
-      }
-      const incompatibleCount = await aiAccess.countEnabledPoliciesIncompatibleWithProvider(activeModel.provider);
-      if (incompatibleCount > 0) {
-        return {
-          ok: false,
-          enabledPolicyCount: count,
-          incompatibleProviderPolicyCount: incompatibleCount,
-          reason: "ai_access_policy_provider_mismatch",
-        };
-      }
     }
 
     return {

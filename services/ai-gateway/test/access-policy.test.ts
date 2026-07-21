@@ -40,6 +40,25 @@ test("applyPlatformModelPolicy accepts an explicit request for the active model"
   });
 });
 
+test("applyPlatformModelPolicy normalizes the active provider prefix", () => {
+  const result = applyPlatformModelPolicy({
+    routeProvider: "codex_oauth",
+    activeModel: { provider: "codex_oauth", model: "gpt-5.4" },
+    body: {
+      model: " codex_oauth/gpt-5.4 ",
+      messages: [],
+    },
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    body: {
+      model: "gpt-5.4",
+      messages: [],
+    },
+  });
+});
+
 test("applyPlatformModelPolicy rejects a client model override", () => {
   const result = applyPlatformModelPolicy({
     routeProvider: "openai",
