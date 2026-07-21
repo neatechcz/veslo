@@ -9,6 +9,11 @@ import { requireSession } from "./session.js"
 import { resolveMembershipOrganizations, readRequestedOrganizationId, serializeOrganization } from "./org-auth.js"
 import { pickActiveOrganization } from "./access.js"
 import { insertDesktopAuthHandoffRecord } from "./desktop-auth-handoff-recovery.js"
+import { continueDesktopExchangeAfterUserPolicy } from "./desktop-auth-exchange-policy.js"
+import {
+  abortDesktopExchangeTransaction,
+  readDesktopExchangeTransactionFailure,
+} from "./desktop-auth-exchange-transaction.js"
 import {
   createHandoffCode,
   consumeHandoffCode,
@@ -385,64 +390,93 @@ desktopAuthRouter.post("/exchange", asyncRoute(async (req, res) => {
       }
     }
 
-    const updateResult = await tx
-      .update(DesktopAuthHandoffTable)
-      .set({ consumed_at: result.record.consumedAt })
-      .where(and(
-        eq(DesktopAuthHandoffTable.id, record.id),
-        isNull(DesktopAuthHandoffTable.consumed_at),
-        gt(DesktopAuthHandoffTable.expires_at, now),
-      ))
+    return continueDesktopExchangeAfterUserPolicy(
+      {
+        tx,
+        userId: record.userId,
+        requireEmailVerification: env.authRequireEmailVerification,
+      },
+      async () => {
+        const updateResult = await tx
+          .update(DesktopAuthHandoffTable)
+          .set({ consumed_at: result.record.consumedAt })
+          .where(and(
+            eq(DesktopAuthHandoffTable.id, record.id),
+            isNull(DesktopAuthHandoffTable.consumed_at),
+            gt(DesktopAuthHandoffTable.expires_at, now),
+          ))
 
-    const affectedRows = getAffectedRows(updateResult)
-    if (affectedRows !== 1) {
-      return { ok: false as const, status: 410, error: "code_already_consumed" as const }
-    }
+        const affectedRows = getAffectedRows(updateResult)
+        if (affectedRows !== 1) {
+          abortDesktopExchangeTransaction({
+            ok: false,
+            status: 410,
+            error: "code_already_consumed",
+          })
+        }
 
-    // Create a real Better Auth session so the token works with /v1/me
-    const authSessionId = crypto.randomUUID()
-    const sessionToken = crypto.randomBytes(32).toString("base64url")
-    const expiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_MS)
+        // Create a real Better Auth session so the token works with /v1/me
+        const authSessionId = crypto.randomUUID()
+        const sessionToken = crypto.randomBytes(32).toString("base64url")
+        const expiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_MS)
 
-    await tx.insert(AuthSessionTable).values({
-      id: authSessionId,
-      userId: record.userId,
-      token: sessionToken,
-      expiresAt,
-      ipAddress: req.ip ?? null,
-      userAgent: req.get("user-agent") ?? null,
-    })
-
-    if (exchangeProofComplete) {
-      const desktopSessionUpdateResult = await tx
-        .update(DesktopAuthSessionTable)
-        .set({
-          status: "exchanged",
-          exchanged_at: now,
+        await tx.insert(AuthSessionTable).values({
+          id: authSessionId,
+          userId: record.userId,
+          token: sessionToken,
+          expiresAt,
+          ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
         })
-        .where(
-          and(
-            eq(DesktopAuthSessionTable.id, proofSessionId as string),
-            eq(DesktopAuthSessionTable.status, "browser_authed"),
-          ),
-        )
 
-      const desktopSessionAffectedRows = getAffectedRows(desktopSessionUpdateResult)
-      if (desktopSessionAffectedRows !== 1) {
-        return { ok: false as const, status: 409, error: "session_not_ready" as const }
-      }
-    }
+        if (exchangeProofComplete) {
+          const desktopSessionUpdateResult = await tx
+            .update(DesktopAuthSessionTable)
+            .set({
+              status: "exchanged",
+              exchanged_at: now,
+            })
+            .where(
+              and(
+                eq(DesktopAuthSessionTable.id, proofSessionId as string),
+                eq(DesktopAuthSessionTable.status, "browser_authed"),
+              ),
+            )
 
-    return {
-      ok: true as const,
-      token: sessionToken,
-      expiresIn: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
-      userId: record.userId,
-      orgId: record.orgId,
-    }
+          const desktopSessionAffectedRows = getAffectedRows(desktopSessionUpdateResult)
+          if (desktopSessionAffectedRows !== 1) {
+            abortDesktopExchangeTransaction({
+              ok: false,
+              status: 409,
+              error: "session_not_ready",
+            })
+          }
+        }
+
+        return {
+          ok: true as const,
+          token: sessionToken,
+          expiresIn: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
+          userId: record.userId,
+          orgId: record.orgId,
+        }
+      },
+    )
+  }).catch((error: unknown) => {
+    const transactionFailure = readDesktopExchangeTransactionFailure(error)
+    if (transactionFailure) return transactionFailure
+    throw error
   })
 
   if (!exchangeResult.ok) {
+    if ("kind" in exchangeResult && exchangeResult.kind === "policy") {
+      res.status(exchangeResult.status).json(exchangeResult.body)
+      return
+    }
+    if ("kind" in exchangeResult && exchangeResult.kind === "user_not_found") {
+      res.status(404).json({ error: "code_not_found" })
+      return
+    }
     res.status(exchangeResult.status).json({ error: exchangeResult.error })
     return
   }

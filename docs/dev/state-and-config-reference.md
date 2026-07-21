@@ -108,7 +108,18 @@ Production and staging owned-server templates set the policy to `true`, and
 Compose defaults it to `true`. The owned-server deployment workflows separately
 require the Compose-parsed effective flag to be exactly `true` and reject
 `false` before any DEN service is deployed. `false` is reserved for explicitly
-isolated local development and database rehearsal configurations.
+isolated local development and database rehearsal configurations. Owned-server
+rehearsals must deliberately layer `rehearsal/compose.override.yml` over the
+production Compose file; that override sets only the isolated DEN service to
+`NODE_ENV=development`, while the base production topology remains hardcoded to
+`NODE_ENV=production` and fail-closed.
+DEN trims and lowercases `NODE_ENV`, accepts only `development`, `test`, or
+`production`, and rejects explicit blank or unknown values during startup.
+Missing `NODE_ENV` retains the local compatibility default of `development`.
+The normalized value also controls Better Auth rate limiting: it is enabled
+only for production, including mixed-case or whitespace-padded production
+input, while development and test remain disabled. DEN leaves Better Auth's
+native per-path rules, default window, maximum, and in-memory storage unchanged.
 
 With the policy enabled, email/password signup awaits Lettr provider acceptance
 for up to 30 seconds and creates no authenticated session. Delivery failure is a

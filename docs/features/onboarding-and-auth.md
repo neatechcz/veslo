@@ -66,11 +66,24 @@ does not auto-sign in. The user signs in after activation, and only that verifie
 session can complete the normal desktop handoff to the
 `veslo://auth-complete` deep link.
 
+In an explicit non-production verification opt-out, a signup response with a
+non-empty token follows that same authenticated handoff path. Only a null or
+blank signup token enters verification recovery, so the development topology
+remains usable without weakening the production gate.
+
 Defense in depth applies to sessions created before this policy. The shared DEN
 session boundary returns `403 email_verification_required` for unverified
 cookie or bearer sessions before protected API and Managed AI work, and both
 current and legacy desktop handoff routes use that boundary before issuing a
-one-time code.
+one-time code. Both desktop exchange generations also re-read the current user
+and disabled state inside the final exchange transaction before consuming the
+code or inserting a Better Auth session. A rejected exchange leaves the code
+and authorized transaction retryable; disabled state takes precedence over
+email-verification state. Code consumption, Better Auth session creation, and
+the final desktop transaction transition commit as one unit: if the final
+compare-and-set loses a race, the stable conflict response is preserved while
+every earlier exchange mutation is rolled back so the same code remains
+retryable.
 
 Desktop auth transactions are one-time state. If a verification or sign-in return attempts to complete a transaction that the desktop app or another browser tab already advanced, the hosted onboarding page checks the transaction status before surfacing an error. Already authorized transactions reuse the existing handoff code, and already exchanged transactions show the signed-in success state instead of exposing `transaction_not_ready` to the user.
 

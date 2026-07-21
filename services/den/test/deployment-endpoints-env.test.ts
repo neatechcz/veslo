@@ -208,3 +208,58 @@ test("Den supports an explicit development opt-out from required email verificat
   assert.equal(parsed.authRequireEmailVerification, false);
   assert.equal(parsed.desktopAuthRequireEmailVerified, false);
 });
+
+test("Den normalizes supported NODE_ENV values before deriving verification policy", async () => {
+  const { parseEnv } = await import("../src/env.js");
+
+  assert.throws(
+    () => parseEnv({
+      ...baseEnv,
+      NODE_ENV: " production ",
+      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+    }),
+    /LETTR_API_KEY and AUTH_EMAIL_ADDRESS are required/,
+  );
+
+  const production = parseEnv({
+    ...baseEnv,
+    ...productionEmailEnv,
+    NODE_ENV: " PrOdUcTiOn ",
+    DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+  });
+  assert.equal(production.authRequireEmailVerification, true);
+
+  for (const nodeEnv of [" development ", " TEST "]) {
+    const parsed = parseEnv({
+      ...baseEnv,
+      NODE_ENV: nodeEnv,
+      DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+    });
+    assert.equal(parsed.authRequireEmailVerification, false);
+  }
+});
+
+test("Den rejects malformed or production-like NODE_ENV values instead of falling back", async () => {
+  const { parseEnv } = await import("../src/env.js");
+
+  for (const nodeEnv of ["prod", "productionx", "staging", "", "   "]) {
+    assert.throws(
+      () => parseEnv({
+        ...baseEnv,
+        NODE_ENV: nodeEnv,
+        DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+      }),
+      /NODE_ENV must be one of 'development', 'test', or 'production'/,
+    );
+  }
+});
+
+test("Den keeps the missing NODE_ENV compatibility default in development mode", async () => {
+  const { parseEnv } = await import("../src/env.js");
+  const parsed = parseEnv({
+    ...baseEnv,
+    DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED: "false",
+  });
+
+  assert.equal(parsed.authRequireEmailVerification, false);
+});

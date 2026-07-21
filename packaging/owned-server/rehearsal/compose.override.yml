@@ -1,0 +1,6 @@
+# Deliberately include this file only for an isolated owned-server rehearsal.
+# The production Compose topology remains fail-closed with NODE_ENV=production.
+services:
+  den:
+    environment:
+      NODE_ENV: development

@@ -577,6 +577,7 @@
               body: JSON.stringify({
                 email: resetEmail,
                 password: newPassword,
+                callbackURL: buildDesktopOnboardingUrl("verify-email"),
               }),
             });
             data = await response.json().catch(() => null);
@@ -966,10 +967,10 @@
             const body = {
               email: emailInput.value.trim(),
               password: passwordInput.value,
+              callbackURL: buildDesktopOnboardingUrl("verify-email"),
             };
             if (mode === "sign-up") {
               body.name = document.getElementById("auth-name").value || "Veslo User";
-              body.callbackURL = buildDesktopOnboardingUrl("verify-email");
             }
 
             const response = await fetch(endpoint, {
@@ -1004,18 +1005,12 @@
 
             bearerToken = readAuthToken(data);
 
-            if (mode === "sign-up") {
-              showVerificationRequired(
-                body.email,
-                "Verification email sent. Verify the address, then return here to sign in.",
-              );
-              return;
-            }
-
             if (!bearerToken) {
               showVerificationRequired(
                 body.email,
-                "Verify the address, then return here to sign in.",
+                mode === "sign-up"
+                  ? "Verification email sent. Verify the address, then return here to sign in."
+                  : "Verify the address, then return here to sign in.",
               );
               return;
             }

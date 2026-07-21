@@ -11,6 +11,11 @@ import { env } from "../env.js"
 import { asyncRoute } from "./errors.js"
 import { requireSession } from "./session.js"
 import { insertDesktopAuthHandoffRecord } from "./desktop-auth-handoff-recovery.js"
+import { continueDesktopExchangeAfterUserPolicy } from "./desktop-auth-exchange-policy.js"
+import {
+  abortDesktopExchangeTransaction,
+  readDesktopExchangeTransactionFailure,
+} from "./desktop-auth-exchange-transaction.js"
 import {
   resolveMembershipOrganizations,
   readRequestedOrganizationId,
@@ -570,62 +575,91 @@ desktopAuthV2Router.post("/exchange", asyncRoute(async (req, res) => {
       return { ok: false as const, status: 404, error: "transaction_not_found" as const }
     }
 
-    const consumeResult = await tx
-      .update(DesktopAuthHandoffTable)
-      .set({ consumed_at: now })
-      .where(
-        and(
-          eq(DesktopAuthHandoffTable.id, handoffRecord.id),
-          isNull(DesktopAuthHandoffTable.consumed_at),
-          gt(DesktopAuthHandoffTable.expires_at, now),
-        ),
-      )
+    return continueDesktopExchangeAfterUserPolicy(
+      {
+        tx,
+        userId: handoffRecord.userId,
+        requireEmailVerification: env.authRequireEmailVerification,
+      },
+      async () => {
+        const consumeResult = await tx
+          .update(DesktopAuthHandoffTable)
+          .set({ consumed_at: now })
+          .where(
+            and(
+              eq(DesktopAuthHandoffTable.id, handoffRecord.id),
+              isNull(DesktopAuthHandoffTable.consumed_at),
+              gt(DesktopAuthHandoffTable.expires_at, now),
+            ),
+          )
 
-    if (getAffectedRows(consumeResult) !== 1) {
-      return { ok: false as const, status: 410, error: "code_already_consumed" as const }
-    }
+        if (getAffectedRows(consumeResult) !== 1) {
+          abortDesktopExchangeTransaction({
+            ok: false,
+            status: 410,
+            error: "code_already_consumed",
+          })
+        }
 
-    const authSessionId = crypto.randomUUID()
-    const sessionToken = crypto.randomBytes(32).toString("base64url")
-    const expiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_MS)
+        const authSessionId = crypto.randomUUID()
+        const sessionToken = crypto.randomBytes(32).toString("base64url")
+        const expiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_MS)
 
-    await tx.insert(AuthSessionTable).values({
-      id: authSessionId,
-      userId: handoffRecord.userId,
-      token: sessionToken,
-      expiresAt,
-      ipAddress: req.ip ?? null,
-      userAgent: req.get("user-agent") ?? null,
-    })
+        await tx.insert(AuthSessionTable).values({
+          id: authSessionId,
+          userId: handoffRecord.userId,
+          token: sessionToken,
+          expiresAt,
+          ipAddress: req.ip ?? null,
+          userAgent: req.get("user-agent") ?? null,
+        })
 
-    const transactionUpdateResult = await tx
-      .update(DesktopAuthTransactionTable)
-      .set({
-        status: "exchanged",
-        exchanged_at: now,
-        updated_at: now,
-      })
-      .where(
-        and(
-          eq(DesktopAuthTransactionTable.transaction_id, resolvedTransactionId),
-          eq(DesktopAuthTransactionTable.status, "browser_authed"),
-        ),
-      )
+        const transactionUpdateResult = await tx
+          .update(DesktopAuthTransactionTable)
+          .set({
+            status: "exchanged",
+            exchanged_at: now,
+            updated_at: now,
+          })
+          .where(
+            and(
+              eq(DesktopAuthTransactionTable.transaction_id, resolvedTransactionId),
+              eq(DesktopAuthTransactionTable.status, "browser_authed"),
+            ),
+          )
 
-    if (getAffectedRows(transactionUpdateResult) !== 1) {
-      return { ok: false as const, status: 409, error: "transaction_not_ready" as const }
-    }
+        if (getAffectedRows(transactionUpdateResult) !== 1) {
+          abortDesktopExchangeTransaction({
+            ok: false,
+            status: 409,
+            error: "transaction_not_ready",
+          })
+        }
 
-    return {
-      ok: true as const,
-      token: sessionToken,
-      expiresIn: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
-      userId: handoffRecord.userId,
-      orgId: handoffRecord.orgId,
-    }
+        return {
+          ok: true as const,
+          token: sessionToken,
+          expiresIn: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
+          userId: handoffRecord.userId,
+          orgId: handoffRecord.orgId,
+        }
+      },
+    )
+  }).catch((error: unknown) => {
+    const transactionFailure = readDesktopExchangeTransactionFailure(error)
+    if (transactionFailure) return transactionFailure
+    throw error
   })
 
   if (!exchangeResult.ok) {
+    if ("kind" in exchangeResult && exchangeResult.kind === "policy") {
+      res.status(exchangeResult.status).json(exchangeResult.body)
+      return
+    }
+    if ("kind" in exchangeResult && exchangeResult.kind === "user_not_found") {
+      res.status(404).json({ error: "transaction_not_found" })
+      return
+    }
     res.status(exchangeResult.status).json({ error: exchangeResult.error })
     return
   }

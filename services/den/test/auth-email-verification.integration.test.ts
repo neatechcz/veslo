@@ -239,6 +239,167 @@ test("registration remains unauthenticated until the delivered verification link
   assert.equal(afterStatus.body.status, "authorized")
 })
 
+for (const generation of ["v1", "v2"] as const) {
+  test(`${generation} exchange rolls back every prior mutation when the final CAS conflicts`, {
+    timeout: 30_000,
+    skip: acceptanceEnabled ? false : "run with pnpm test:email-verification:integration",
+  }, async () => {
+    const fixture = await createDesktopExchangeConflictFixture(generation)
+    const connection = await mysql.createConnection(databaseUrl)
+    let triggerInstalled = false
+
+    try {
+      await connection.query(fixture.createConflictTriggerSql)
+      triggerInstalled = true
+      const conflict = await postJson(fixture.exchangePath, fixture.exchangeBody)
+      await connection.query(`DROP TRIGGER IF EXISTS \`${fixture.triggerName}\``)
+      triggerInstalled = false
+
+      assert.equal(conflict.response.status, 409, conflict.text)
+      assert.deepEqual(conflict.body, { error: fixture.conflictError })
+
+      const afterConflict = await readDesktopExchangeFixtureState(connection, fixture)
+      assert.deepEqual(afterConflict, {
+        consumedAt: null,
+        authSessionCount: 0,
+        exchangeStatus: "browser_authed",
+      })
+
+      const retry = await postJson(fixture.exchangePath, fixture.exchangeBody)
+      assert.equal(retry.response.status, 200, retry.text)
+      assert.equal(typeof retry.body.token, "string")
+    } finally {
+      if (triggerInstalled) {
+        await connection.query(`DROP TRIGGER IF EXISTS \`${fixture.triggerName}\``)
+      }
+      await cleanupDesktopExchangeConflictFixture(connection, fixture)
+      await connection.end()
+    }
+  })
+}
+
+type DesktopExchangeConflictFixture = {
+  generation: "v1" | "v2"
+  userId: string
+  handoffId: string
+  sessionOrTransactionId: string
+  triggerName: string
+  createConflictTriggerSql: string
+  exchangePath: string
+  exchangeBody: JsonRecord
+  conflictError: "session_not_ready" | "transaction_not_ready"
+}
+
+async function createDesktopExchangeConflictFixture(
+  generation: DesktopExchangeConflictFixture["generation"],
+): Promise<DesktopExchangeConflictFixture> {
+  const connection = await mysql.createConnection(databaseUrl)
+  const nonce = randomUUID().replaceAll("-", "")
+  const userId = randomUUID()
+  const handoffId = randomUUID()
+  const orgId = `org_${nonce}`
+  const code = `${generation}_${nonce}`
+  const state = `state-${nonce}`
+  const codeVerifier = `verifier-${nonce}-0123456789abcdefghijklmnopqrstuvwxyz`
+  const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url")
+  const stateHash = createHash("sha256").update(state).digest("hex")
+  const sessionOrTransactionId = `${generation === "v1" ? "das" : "dat"}_${nonce}`
+  const triggerName = `force_${generation}_exchange_cas_${nonce}`
+
+  try {
+    await connection.execute(
+      "INSERT INTO `user` (id, name, email, email_verified) VALUES (?, ?, ?, ?)",
+      [userId, `Atomicity ${generation}`, `atomicity-${generation}-${nonce}@veslo.test`, true],
+    )
+
+    if (generation === "v1") {
+      await connection.execute(
+        "INSERT INTO desktop_auth_session (id, intent, state_hash, code_challenge, code_challenge_method, redirect_uri, status, user_id, org_id, expires_at) VALUES (?, 'signin', ?, ?, 'S256', 'veslo://auth-complete', 'browser_authed', ?, ?, DATE_ADD(NOW(3), INTERVAL 10 MINUTE))",
+        [sessionOrTransactionId, stateHash, codeChallenge, userId, orgId],
+      )
+    } else {
+      const codeHash = createHash("sha256").update(code).digest("hex")
+      await connection.execute(
+        "INSERT INTO desktop_auth_transaction (id, transaction_id, intent, state_hash, code_challenge, code_challenge_method, redirect_uri, status, user_id, org_id, authorization_code_hash, code_issued_at, expires_at) VALUES (?, ?, 'signin', ?, ?, 'S256', 'veslo://auth-complete', 'browser_authed', ?, ?, ?, NOW(3), DATE_ADD(NOW(3), INTERVAL 10 MINUTE))",
+        [randomUUID(), sessionOrTransactionId, stateHash, codeChallenge, userId, orgId, codeHash],
+      )
+    }
+
+    await connection.execute(
+      "INSERT INTO desktop_auth_handoff (id, code, session_id, user_id, org_id, expires_at) VALUES (?, ?, ?, ?, ?, DATE_ADD(NOW(3), INTERVAL 5 MINUTE))",
+      [handoffId, code, sessionOrTransactionId, userId, orgId],
+    )
+  } finally {
+    await connection.end()
+  }
+
+  if (generation === "v1") {
+    return {
+      generation,
+      userId,
+      handoffId,
+      sessionOrTransactionId,
+      triggerName,
+      createConflictTriggerSql: `CREATE TRIGGER \`${triggerName}\` AFTER INSERT ON \`session\` FOR EACH ROW UPDATE desktop_auth_session SET status = 'cancelled' WHERE id = '${sessionOrTransactionId}' AND NEW.user_id = '${userId}'`,
+      exchangePath: "/v1/desktop-auth/exchange",
+      exchangeBody: { code, sessionId: sessionOrTransactionId, state, codeVerifier },
+      conflictError: "session_not_ready",
+    }
+  }
+
+  return {
+    generation,
+    userId,
+    handoffId,
+    sessionOrTransactionId,
+    triggerName,
+    createConflictTriggerSql: `CREATE TRIGGER \`${triggerName}\` AFTER INSERT ON \`session\` FOR EACH ROW UPDATE desktop_auth_transaction SET status = 'cancelled' WHERE transaction_id = '${sessionOrTransactionId}' AND NEW.user_id = '${userId}'`,
+    exchangePath: "/v2/desktop-auth/exchange",
+    exchangeBody: { code, transactionId: sessionOrTransactionId, state, codeVerifier },
+    conflictError: "transaction_not_ready",
+  }
+}
+
+async function readDesktopExchangeFixtureState(
+  connection: mysql.Connection,
+  fixture: DesktopExchangeConflictFixture,
+) {
+  const [handoffRows] = await connection.execute<mysql.RowDataPacket[]>(
+    "SELECT consumed_at FROM desktop_auth_handoff WHERE id = ?",
+    [fixture.handoffId],
+  )
+  const [sessionRows] = await connection.execute<mysql.RowDataPacket[]>(
+    "SELECT COUNT(*) AS session_count FROM `session` WHERE user_id = ?",
+    [fixture.userId],
+  )
+  const exchangeTable = fixture.generation === "v1" ? "desktop_auth_session" : "desktop_auth_transaction"
+  const idColumn = fixture.generation === "v1" ? "id" : "transaction_id"
+  const [exchangeRows] = await connection.query<mysql.RowDataPacket[]>(
+    `SELECT status FROM ${exchangeTable} WHERE ${idColumn} = ?`,
+    [fixture.sessionOrTransactionId],
+  )
+
+  return {
+    consumedAt: handoffRows[0]?.consumed_at ?? null,
+    authSessionCount: Number(sessionRows[0]?.session_count ?? Number.NaN),
+    exchangeStatus: exchangeRows[0]?.status ?? null,
+  }
+}
+
+async function cleanupDesktopExchangeConflictFixture(
+  connection: mysql.Connection,
+  fixture: DesktopExchangeConflictFixture,
+) {
+  await connection.execute("DELETE FROM `session` WHERE user_id = ?", [fixture.userId])
+  await connection.execute("DELETE FROM desktop_auth_handoff WHERE id = ?", [fixture.handoffId])
+  if (fixture.generation === "v1") {
+    await connection.execute("DELETE FROM desktop_auth_session WHERE id = ?", [fixture.sessionOrTransactionId])
+  } else {
+    await connection.execute("DELETE FROM desktop_auth_transaction WHERE transaction_id = ?", [fixture.sessionOrTransactionId])
+  }
+  await connection.execute("DELETE FROM `user` WHERE id = ?", [fixture.userId])
+}
+
 async function createLegacyUnverifiedSession(email: string) {
   const connection = await mysql.createConnection(databaseUrl)
   try {

@@ -101,19 +101,19 @@ test("unverified browser auth cannot continue to Veslo", () => {
   )
 })
 
-test("signup and unverified sign-in share one verification recovery transition", () => {
+test("tokenless signup and unverified sign-in share one verification recovery transition", () => {
   assert.equal(onboardingPage.includes("function showVerificationRequired("), true)
   assert.equal(onboardingPage.includes('"EMAIL_NOT_VERIFIED"'), true)
   assert.equal(onboardingPage.includes('"verification_email_delivery_failed"'), true)
   assert.equal(onboardingPage.includes('fetch("/v1/me"'), false)
   assert.match(
     onboardingPage,
-    /mode === "sign-up"[\s\S]+showVerificationRequired\(/,
-    "a successful signup must enter verification recovery without probing an authenticated session",
+    /if \(!bearerToken\)[\s\S]+showVerificationRequired\([\s\S]+mode === "sign-up"/,
+    "a tokenless signup must enter verification recovery without probing an authenticated session",
   )
 })
 
-test("only a successful sign-in with a non-empty token can hand off to Veslo", () => {
+test("only a successful sign-in or opt-out signup with a non-empty token can hand off to Veslo", () => {
   assert.match(
     onboardingPage,
     /if \(!bearerToken\)[\s\S]+showVerificationRequired\([\s\S]+return;[\s\S]+await doHandoff\("auth"\)/,
