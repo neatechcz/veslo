@@ -7,6 +7,7 @@ import { OrganizationAdminRepositoryError } from "../org-admin/repository.js"
 import { normalizeInviteEmail } from "../org-admin/policy.js"
 import { hashOrganizationInviteToken } from "../org-admin/invite-token.js"
 import type { OrgRole } from "../db/schema.js"
+import { isPersonalEmailAddress } from "./personal-email-domain.js"
 import { SignupOrganizationDomainConflictError } from "./signup-organization.js"
 
 const SIGNUP_ORGANIZATION_BOOTSTRAP_ENABLED = true
@@ -115,32 +116,39 @@ export async function resolveEmailSignupAccess(input: EmailSignupAccessInput): P
     return { ok: false, error: "domain_not_allowed" }
   }
 
-  const matchingDomain = await resolveAllowedDomain(email, input.dependencies)
-  if (matchingDomain) {
-    const activeSeats = await input.dependencies.countActiveOrganizationSeats(matchingDomain.orgId)
-    const decision = decideSignupAccess({
-      matchingDomain: {
-        organizationId: matchingDomain.orgId,
-        selfSignupEnabled: matchingDomain.selfSignupEnabled,
-      },
-      activeSeats,
-      seatLimit: matchingDomain.organization.seatLimit,
-      hasValidInvite: false,
-    })
-    if (!decision.ok) {
-      return decision
-    }
-    if (decision.mode === "organization_bootstrap") {
-      return { ok: true, mode: "organization_bootstrap" }
-    }
-    if (decision.mode === "invite") {
-      return { ok: false, error: "domain_not_allowed" }
-    }
-    return {
-      ok: true,
-      mode: "domain",
-      organizationId: decision.organizationId,
-      role: "member",
+  const isPersonalEmail = isPersonalEmailAddress(email)
+  if (isPersonalEmail && !input.inviteToken) {
+    return { ok: false, error: "domain_not_allowed" }
+  }
+
+  if (!isPersonalEmail) {
+    const matchingDomain = await resolveAllowedDomain(email, input.dependencies)
+    if (matchingDomain) {
+      const activeSeats = await input.dependencies.countActiveOrganizationSeats(matchingDomain.orgId)
+      const decision = decideSignupAccess({
+        matchingDomain: {
+          organizationId: matchingDomain.orgId,
+          selfSignupEnabled: matchingDomain.selfSignupEnabled,
+        },
+        activeSeats,
+        seatLimit: matchingDomain.organization.seatLimit,
+        hasValidInvite: false,
+      })
+      if (!decision.ok) {
+        return decision
+      }
+      if (decision.mode === "organization_bootstrap") {
+        return { ok: true, mode: "organization_bootstrap" }
+      }
+      if (decision.mode === "invite") {
+        return { ok: false, error: "domain_not_allowed" }
+      }
+      return {
+        ok: true,
+        mode: "domain",
+        organizationId: decision.organizationId,
+        role: "member",
+      }
     }
   }
 
@@ -238,16 +246,23 @@ export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUs
     return { activatedOrganizationMembership: false, createSignupOrganization: false }
   }
 
-  const matchingDomain = await resolveAllowedDomain(email, input)
-  if (matchingDomain) {
-    await input.createOrActivateOrganizationMembership({
-      membershipId: input.createMembershipId(),
-      orgId: matchingDomain.orgId,
-      userId: input.user.id,
-      role: "member",
-    })
+  const isPersonalEmail = isPersonalEmailAddress(email)
+  if (isPersonalEmail && !input.inviteToken) {
+    throw new OrganizationAdminRepositoryError("domain_not_allowed")
+  }
 
-    return { activatedOrganizationMembership: true, createSignupOrganization: false }
+  if (!isPersonalEmail) {
+    const matchingDomain = await resolveAllowedDomain(email, input)
+    if (matchingDomain) {
+      await input.createOrActivateOrganizationMembership({
+        membershipId: input.createMembershipId(),
+        orgId: matchingDomain.orgId,
+        userId: input.user.id,
+        role: "member",
+      })
+
+      return { activatedOrganizationMembership: true, createSignupOrganization: false }
+    }
   }
 
   if (input.inviteToken) {

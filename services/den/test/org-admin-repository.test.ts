@@ -23,12 +23,14 @@ function createMemoryRepository(input: {
   memberships?: OrganizationAdminMembershipRecord[]
   invites?: OrganizationAdminInviteRecord[]
   operations?: string[]
+  beforeMarkInviteAccepted?: (invites: OrganizationAdminInviteRecord[]) => void | Promise<void>
 } = {}) {
   const organizations = [...(input.organizations ?? [])]
   const domains = [...(input.domains ?? [])]
   const memberships = [...(input.memberships ?? [])]
   const invites = [...(input.invites ?? [])]
   const operations = input.operations ?? []
+  const beforeMarkInviteAccepted = input.beforeMarkInviteAccepted
   let nextInvite = 1
   let nextMembership = 1
 
@@ -64,7 +66,8 @@ function createMemoryRepository(input: {
       return created
     },
     async findInviteByTokenHash(tokenHash) {
-      return invites.find((entry) => entry.tokenHash === tokenHash) ?? null
+      const invite = invites.find((entry) => entry.tokenHash === tokenHash)
+      return invite ? { ...invite } : null
     },
     async createOrActivateMembership(input) {
       operations.push(`activate:${input.orgId}:${input.userId}`)
@@ -86,7 +89,11 @@ function createMemoryRepository(input: {
       return created
     },
     async markInviteAccepted(input) {
-      const invite = invites.find((entry) => entry.id === input.inviteId && entry.status === "pending")
+      await beforeMarkInviteAccepted?.(invites)
+      const invite = invites.find((entry) =>
+        entry.id === input.inviteId &&
+        entry.status === "pending" &&
+        entry.tokenHash === input.expectedTokenHash)
       if (!invite) return null
       invite.status = "accepted"
       invite.acceptedByUserId = input.acceptedByUserId
@@ -314,6 +321,63 @@ test("invite cannot be accepted twice", async () => {
   )
 })
 
+test("invite acceptance loses atomically when resend rotates the token after lookup", async () => {
+  let rotated = false
+  const { invites, memberships, operations, repository } = createMemoryRepository({
+    organizations: [{ id: "org_1", seatLimit: 2 }],
+    invites: [{
+      id: "invite_1",
+      orgId: "org_1",
+      email: "invited@neatech.cz",
+      role: "member",
+      status: "pending",
+      tokenHash: "old_token_hash",
+      invitedByUserId: "admin_1",
+      acceptedByUserId: null,
+      expiresAt: null,
+      acceptedAt: null,
+      revokedAt: null,
+      createdAt: new Date("2026-06-06T08:00:00.000Z"),
+      updatedAt: new Date("2026-06-06T08:00:00.000Z"),
+    }],
+    beforeMarkInviteAccepted(activeInvites) {
+      if (rotated) return
+      rotated = true
+      activeInvites[0]!.tokenHash = "new_token_hash"
+      activeInvites[0]!.updatedAt = new Date("2026-06-06T08:05:00.000Z")
+    },
+  })
+
+  await assert.rejects(
+    repository.acceptOrganizationInvite({
+      tokenHash: "old_token_hash",
+      userId: "user_invited",
+      email: "invited@neatech.cz",
+      now: new Date("2026-06-06T08:10:00.000Z"),
+    }),
+    (error) => {
+      assertErrorCode(error, "invite_not_found")
+      return true
+    },
+  )
+
+  assert.equal(invites[0]!.status, "pending")
+  assert.equal(invites[0]!.tokenHash, "new_token_hash")
+  assert.deepEqual(memberships, [])
+  assert.equal(operations.some((operation) => operation.startsWith("activate:")), false)
+
+  const accepted = await repository.acceptOrganizationInvite({
+    tokenHash: "new_token_hash",
+    userId: "user_invited",
+    email: "invited@neatech.cz",
+    now: new Date("2026-06-06T08:11:00.000Z"),
+  })
+
+  assert.equal(accepted.invite.status, "accepted")
+  assert.equal(accepted.membership.userId, "user_invited")
+  assert.equal(memberships.length, 1)
+})
+
 test("invite acceptance rejects mismatched signup email before consuming token", async () => {
   const { invites, memberships, repository } = createMemoryRepository({
     organizations: [{ id: "org_1", seatLimit: 2 }],
@@ -398,6 +462,15 @@ test("invite acceptance locks organization before counting seats and activating"
     "count:org_1",
     "activate:org_1:user_invited",
   ])
+})
+
+test("production invite acceptance CAS requires the token hash read at lookup", () => {
+  const source = readFileSync(new URL("../src/org-admin/repository.ts", import.meta.url), "utf8")
+  const acceptSource = source.match(/async acceptOrganizationInvite[\s\S]*?listOrganizationMembers\(orgId\)/)?.[0] ?? ""
+  const markAcceptedSource = source.match(/async markInviteAccepted[\s\S]*?async listOrganizationMembers/)?.[0] ?? ""
+
+  assert.match(acceptSource, /expectedTokenHash:\s*invite\.tokenHash/)
+  assert.match(markAcceptedSource, /eq\(OrganizationInviteTable\.token_hash,\s*input\.expectedTokenHash\)/)
 })
 
 test("extractAffectedRows handles common MySQL mutation results", () => {

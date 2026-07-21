@@ -191,6 +191,7 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
     databaseUrl: parsed.DATABASE_URL,
     betterAuthSecret: parsed.BETTER_AUTH_SECRET,
     betterAuthUrl,
+    publicAppBaseUrl: endpoints.appBaseUrl,
     workerTokenEncryptionKey: parsed.WORKER_TOKEN_ENCRYPTION_KEY?.trim() || null,
     github: {
       clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,

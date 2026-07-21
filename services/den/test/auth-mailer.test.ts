@@ -95,6 +95,50 @@ test("verification auth email uses branded button copy without a visible raw url
   }
 })
 
+test("organization invitation auth email uses a branded registration payload", async () => {
+  withRequiredEnv()
+
+  const originalFetch = globalThis.fetch
+  const requests: Array<{ url: string; init: RequestInit | undefined }> = []
+  globalThis.fetch = async (input, init) => {
+    requests.push({ url: String(input), init })
+    return new Response(JSON.stringify({ message: "queued" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  }
+
+  try {
+    const { sendOrganizationInvitationAuthEmail } = await importAuthMailer()
+    const invitationUrl = "https://app.veslo.work/?inviteToken=raw-token%2B%2F%3D"
+
+    await sendOrganizationInvitationAuthEmail({
+      to: "invited.user@example.com",
+      url: invitationUrl,
+    })
+
+    assert.equal(requests.length, 1)
+    const body = JSON.parse(String(requests[0]?.init?.body))
+    const html = String(body.html)
+    const text = String(body.text)
+    const visibleHtml = html.replace(/\shref="[^"]*"/g, "")
+
+    assert.deepEqual(body.to, ["invited.user@example.com"])
+    assert.match(String(body.subject), /invited.*Veslo/i)
+    assert.match(html, /https:\/\/veslo\.work\/assets\/veslo-logo-square\.svg/)
+    assert.match(html, />\s*(Register|Join Veslo)\s*</i)
+    assert.match(html, /href="https:\/\/app\.veslo\.work\/\?inviteToken=raw-token%2B%2F%3D"/)
+    assert.doesNotMatch(visibleHtml, /raw-token/)
+    assert.match(text, /register|join Veslo/i)
+    assert.match(text, /https:\/\/app\.veslo\.work\/\?inviteToken=raw-token%2B%2F%3D/)
+  } finally {
+    globalThis.fetch = originalFetch
+    for (const key of Object.keys(requiredEnv)) {
+      delete process.env[key]
+    }
+  }
+})
+
 test("background auth email helper absorbs rejected Lettr sends", async () => {
   withRequiredEnv()
 

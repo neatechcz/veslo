@@ -259,6 +259,82 @@
     </div>
 
     <script>
+      const SIGNUP_INVITATION_SESSION_STORAGE_KEY = "veslo:signup-invite-token";
+      const SIGNUP_INVITATION_MAX_LENGTH = 4096;
+
+      function normalizeSignupInvitation(value) {
+        const normalized = typeof value === "string" ? value.trim() : "";
+        return normalized && normalized.length <= SIGNUP_INVITATION_MAX_LENGTH ? normalized : "";
+      }
+
+      function readStoredSignupInvitation() {
+        try {
+          return normalizeSignupInvitation(
+            window.sessionStorage.getItem(SIGNUP_INVITATION_SESSION_STORAGE_KEY),
+          );
+        } catch {
+          return "";
+        }
+      }
+
+      function clearStoredSignupInvitation() {
+        try {
+          window.sessionStorage.removeItem(SIGNUP_INVITATION_SESSION_STORAGE_KEY);
+        } catch {
+          // Storage access can be denied without making a completed signup fail.
+        }
+      }
+
+      function captureSignupInvitationFromLocation() {
+        let url;
+        let rawInvitation = "";
+        let hadInvitationParameter = false;
+        try {
+          url = new URL(window.location.href);
+          const fragmentSource = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+          const fragmentParams = new URLSearchParams(fragmentSource);
+          const fragmentHasInvitation = fragmentParams.has("inviteToken");
+          const queryHasInvitation = url.searchParams.has("inviteToken");
+          rawInvitation = fragmentHasInvitation
+            ? fragmentParams.get("inviteToken")
+            : url.searchParams.get("inviteToken");
+          hadInvitationParameter = fragmentHasInvitation || queryHasInvitation;
+
+          if (queryHasInvitation) {
+            url.searchParams.delete("inviteToken");
+          }
+          if (fragmentHasInvitation) {
+            fragmentParams.delete("inviteToken");
+            const nextFragment = fragmentParams.toString();
+            url.hash = nextFragment ? "#" + nextFragment : "";
+          }
+        } catch {
+          return;
+        }
+
+        const inviteToken = normalizeSignupInvitation(rawInvitation);
+        if (inviteToken) {
+          try {
+            window.sessionStorage.setItem(SIGNUP_INVITATION_SESSION_STORAGE_KEY, inviteToken);
+          } catch {
+            // Continue to scrub the URL even when storage is unavailable.
+          }
+        } else if (hadInvitationParameter) {
+          try {
+            window.sessionStorage.removeItem(SIGNUP_INVITATION_SESSION_STORAGE_KEY);
+          } catch {
+            // Continue to scrub the URL even when storage is unavailable.
+          }
+        }
+        if (hadInvitationParameter) {
+          try {
+            window.history.replaceState({}, "", url.toString());
+          } catch {
+            // Keep the token out of any other browser persistence surface.
+          }
+        }
+      }
+
       const isDesktopOnboarding = new URLSearchParams(window.location.search).get("desktopOnboarding") === "1";
 
       if (isDesktopOnboarding) {
@@ -268,10 +344,12 @@
 
       /* ======== Desktop Onboarding ======== */
       function initOnboarding() {
+        captureSignupInvitationFromLocation();
         const search = new URLSearchParams(window.location.search);
         const DESKTOP_AUTH_CONTEXT_STORAGE_KEY = "veslo.desktopAuthContext";
         const RESET_PASSWORD_EMAIL_STORAGE_KEY = "veslo.resetPasswordEmail";
         const DESKTOP_AUTH_CONTEXT_TTL_MS = 15 * 60 * 1000;
+        const COMPANY_EMAIL_REQUIRED_MESSAGE = "Use your company email to register. Personal email addresses are not supported. If your organization invited you, open the registration link from that invitation.";
         const onboardingSessionId = (search.get("sid") || "").trim();
         let onboardingTransactionId = (search.get("tid") || "").trim();
         let onboardingState = (search.get("state") || "").trim();
@@ -524,6 +602,13 @@
         function showError(message) {
           authError = message || "";
           setInlineMessage(errorEl, authError);
+        }
+
+        function formatEmailSignUpError(data, status) {
+          if ([data?.code, data?.error, data?.message].some((value) => value === "domain_not_allowed")) {
+            return COMPANY_EMAIL_REQUIRED_MESSAGE;
+          }
+          return data?.message || data?.error || `Request failed (${status})`;
         }
 
         function updateForgotPasswordUI() {
@@ -882,12 +967,14 @@
 
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
+          const submittedMode = mode;
           authError = "";
           submitBtn.disabled = true;
           submitBtn.textContent = "Working...";
+          toggleBtn.disabled = true;
 
           try {
-            const endpoint = mode === "sign-up"
+            const endpoint = submittedMode === "sign-up"
               ? "/api/auth/sign-up/email"
               : "/api/auth/sign-in/email";
 
@@ -895,9 +982,13 @@
               email: emailInput.value.trim(),
               password: passwordInput.value,
             };
-            if (mode === "sign-up") {
+            if (submittedMode === "sign-up") {
               body.name = document.getElementById("auth-name").value || "Veslo User";
               body.callbackURL = buildDesktopOnboardingUrl("verify-email");
+              const signupInviteToken = readStoredSignupInvitation();
+              if (signupInviteToken) {
+                body.inviteToken = signupInviteToken;
+              }
             }
 
             const response = await fetch(endpoint, {
@@ -909,9 +1000,17 @@
             const data = await response.json().catch(() => null);
 
             if (!response.ok) {
-              showError(data?.message || data?.error || `Request failed (${response.status})`);
+              if (submittedMode === "sign-up") {
+                showError(formatEmailSignUpError(data, response.status));
+              } else {
+                showError(data?.message || data?.error || `Request failed (${response.status})`);
+              }
               renderView(false);
               return;
+            }
+
+            if (submittedMode === "sign-up") {
+              clearStoredSignupInvitation();
             }
 
             bearerToken = data?.token || "";
@@ -926,7 +1025,7 @@
 
             if (me.ok && !emailVerified) {
               verificationEmail = (mePayload?.user?.email || emailInput.value || "").trim();
-              verificationInfo = mode === "sign-up"
+              verificationInfo = submittedMode === "sign-up"
                 ? "Check your inbox for the verification email. You can still continue to Veslo right now."
                 : "Your account is signed in, but cloud-gated actions still require email verification.";
               verificationError = "";
@@ -941,6 +1040,7 @@
             renderView(false);
           } finally {
             submitBtn.disabled = false;
+            toggleBtn.disabled = false;
             if (activeView === "auth") {
               updateUI();
             }

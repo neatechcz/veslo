@@ -50,9 +50,83 @@ test("missing registered domain selects organization bootstrap", () => {
   )
 })
 
-test("email signup without an enabled domain or invite selects organization bootstrap", async () => {
+test("known personal email without an invite is rejected before signup lookups", async () => {
+  const calls: string[] = []
   const decision = await resolveEmailSignupAccess({
     email: "person@gmail.com",
+    inviteToken: null,
+    dependencies: {
+      resolveEnabledOrganizationDomainForEmail: async () => {
+        calls.push("domain")
+        return {
+          id: "domain_personal",
+          orgId: "org_personal",
+          domain: "gmail.com",
+          enabled: true,
+          selfSignupEnabled: true,
+          organization: { id: "org_personal", seatLimit: 10 },
+        }
+      },
+      countActiveOrganizationSeats: async () => {
+        calls.push("domain-seats")
+        return 0
+      },
+      assertCanActivateOrganizationSeat: async () => {
+        calls.push("invite-seats")
+      },
+      resolveValidOrganizationInviteForSignup: async () => {
+        calls.push("invite")
+        return createInviteRecord({ email: "person@gmail.com" })
+      },
+    },
+  })
+
+  assert.deepEqual(decision, { ok: false, error: "domain_not_allowed" })
+  assert.deepEqual(calls, [])
+})
+
+test("known personal email with a valid invite skips domain lookup and checks invite seats", async () => {
+  const calls: string[] = []
+  const decision = await resolveEmailSignupAccess({
+    email: "person@gmail.com",
+    inviteToken: "invite_token_1",
+    dependencies: {
+      resolveEnabledOrganizationDomainForEmail: async () => {
+        calls.push("domain")
+        throw new Error("personal invite must not resolve a self-signup domain")
+      },
+      countActiveOrganizationSeats: async () => {
+        calls.push("domain-seats")
+        throw new Error("personal invite must not count self-signup domain seats")
+      },
+      assertCanActivateOrganizationSeat: async (orgId) => {
+        calls.push(`invite-seats:${orgId}`)
+      },
+      resolveValidOrganizationInviteForSignup: async (input) => {
+        calls.push(`invite:${input.email}`)
+        return createInviteRecord({
+          orgId: "org_invited",
+          email: input.email,
+          role: "organization_admin",
+          tokenHash: input.tokenHash,
+        })
+      },
+    },
+  })
+
+  assert.deepEqual(decision, {
+    ok: true,
+    mode: "invite",
+    organizationId: "org_invited",
+    role: "organization_admin",
+    inviteToken: "invite_token_1",
+  })
+  assert.deepEqual(calls, ["invite:person@gmail.com", "invite-seats:org_invited"])
+})
+
+test("unknown company email without a claimed domain selects organization bootstrap", async () => {
+  const decision = await resolveEmailSignupAccess({
+    email: "founder@acme.example",
     inviteToken: null,
     dependencies: {
       resolveEnabledOrganizationDomainForEmail: async () => {
@@ -468,6 +542,109 @@ test("first signup bootstraps its organization before managed AI assignment", as
   assert.deepEqual(calls, [
     "bootstrap:user_1:User One:user@team.example.com",
     "managed-ai",
+  ])
+})
+
+test("post-create uninvited personal email is cleaned up without bootstrap or managed AI", async () => {
+  const calls: string[] = []
+
+  await assert.rejects(
+    runSignupAfterUserCreateSideEffects({
+      user: { id: "user_personal", email: "person@gmail.com" },
+      name: "Personal User",
+      inviteToken: null,
+      createMembershipId: () => "membership_personal",
+      resolveEnabledOrganizationDomainForEmail: async () => {
+        calls.push("domain")
+        return {
+          id: "domain_personal",
+          orgId: "org_personal",
+          domain: "gmail.com",
+          enabled: true,
+          selfSignupEnabled: true,
+          organization: { id: "org_personal", seatLimit: 10 },
+        }
+      },
+      createOrActivateOrganizationMembership: async () => {
+        calls.push("membership")
+        throw new Error("personal email must not activate a domain membership")
+      },
+      acceptOrganizationInvite: async () => {
+        calls.push("invite")
+        throw new Error("uninvited personal email must not accept an invite")
+      },
+      ensureSignupOrganization: async () => {
+        calls.push("bootstrap")
+        throw new Error("personal email must not bootstrap an organization")
+      },
+      assignManagedAiAccess: async () => {
+        calls.push("managed-ai")
+        return true
+      },
+      cleanupCreatedAuthUser: async (userId) => {
+        calls.push(`cleanup:${userId}`)
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof OrganizationAdminRepositoryError)
+      assert.equal(error.code, "domain_not_allowed")
+      return true
+    },
+  )
+
+  assert.deepEqual(calls, ["cleanup:user_personal"])
+})
+
+test("post-create personal email with a valid invite receives access after invite acceptance", async () => {
+  const calls: string[] = []
+  const result = await runSignupAfterUserCreateSideEffects({
+    user: { id: "user_invited", email: "person@gmail.com" },
+    name: "Invited User",
+    inviteToken: "invite_token_1",
+    createMembershipId: () => "membership_invited",
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      calls.push("domain")
+      throw new Error("personal invite must not resolve a self-signup domain")
+    },
+    createOrActivateOrganizationMembership: async () => {
+      calls.push("membership")
+      throw new Error("personal invite must not activate a domain membership")
+    },
+    acceptOrganizationInvite: async (input) => {
+      calls.push(`invite:${input.userId}:${input.email}`)
+      return {
+        invite: createInviteRecord({
+          orgId: "org_invited",
+          email: input.email,
+          tokenHash: input.tokenHash,
+        }),
+        membership: {
+          id: "membership_invited",
+          orgId: "org_invited",
+          userId: input.userId,
+          role: "member",
+          status: "active",
+          createdAt: new Date("2026-07-21T08:00:00.000Z"),
+        },
+      }
+    },
+    ensureSignupOrganization: async () => {
+      calls.push("bootstrap")
+      throw new Error("personal invite must not bootstrap an organization")
+    },
+    assignManagedAiAccess: async (userId) => {
+      calls.push(`managed-ai:${userId}`)
+      return true
+    },
+    cleanupCreatedAuthUser: async () => {
+      calls.push("cleanup")
+    },
+  })
+
+  assert.deepEqual(result, { activatedOrganizationMembership: true, createSignupOrganization: false })
+  assert.deepEqual(calls, [
+    "invite:user_invited:person@gmail.com",
+    "managed-ai:user_invited",
   ])
 })
 

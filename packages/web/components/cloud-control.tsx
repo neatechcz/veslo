@@ -1,7 +1,23 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { getAuthErrorMessage } from "../lib/auth-error-message";
 import { buildAuthCallbackUrl } from "../lib/auth-urls";
+import {
+  GITHUB_AUTH_ATTEMPT_PARAM,
+  GITHUB_AUTH_CALLBACK_MARKER_PARAM,
+  type GitHubAuthCallbackOutcome,
+  clearPendingGitHubAuth,
+  clearStoredSignupInvitationFromBrowser,
+  consumePendingGitHubAuth,
+  createGitHubAuthAttemptId,
+  deriveAuthInitialization,
+  getGitHubAuthCallbackMarker,
+  isSignupInvitationTelemetryAllowed,
+  readStoredSignupInvitationFromBrowser,
+  replaceBrowserHistoryUrl,
+  storePendingGitHubAuth
+} from "../lib/signup-invitation";
 
 type Step = 1 | 2;
 type AuthMode = "sign-in" | "sign-up";
@@ -148,12 +164,10 @@ function getAuthInfoForMode(mode: AuthMode): string {
 }
 
 const LAST_WORKER_STORAGE_KEY = "veslo:web:last-worker";
-const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "veslo:web:pending-github-signup";
 const AUTH_TOKEN_STORAGE_KEY = "veslo:web:auth-token";
 const SELECTED_ORG_STORAGE_KEY = "veslo:web:selected-org-id";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "Veslo User";
-const DESKTOP_ONBOARDING_PARAM = "desktopOnboarding";
 const VESLO_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_VESLO_APP_CONNECT_URL ?? "").trim();
 
 function getEmailDomain(email: string): string {
@@ -165,7 +179,7 @@ function getEmailDomain(email: string): string {
 }
 
 function trackPosthogEvent(eventName: string, properties: Record<string, unknown> = {}) {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isSignupInvitationTelemetryAllowed(window)) {
     return;
   }
 
@@ -177,7 +191,7 @@ function trackPosthogEvent(eventName: string, properties: Record<string, unknown
 }
 
 function identifyPosthogUser(user: AuthUser) {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isSignupInvitationTelemetryAllowed(window)) {
     return;
   }
 
@@ -192,7 +206,7 @@ function identifyPosthogUser(user: AuthUser) {
 }
 
 function resetPosthogUser() {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isSignupInvitationTelemetryAllowed(window)) {
     return;
   }
 
@@ -204,7 +218,7 @@ function resetPosthogUser() {
 }
 
 async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isSignupInvitationTelemetryAllowed(window)) {
     return;
   }
 
@@ -222,8 +236,11 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
   }
 }
 
-function getGithubCallbackUrl(): string {
-  return buildAuthCallbackUrl("/");
+function getGithubCallbackUrl(outcome: GitHubAuthCallbackOutcome, attemptId: string): string {
+  const url = new URL(buildAuthCallbackUrl("/"));
+  url.searchParams.set(GITHUB_AUTH_CALLBACK_MARKER_PARAM, getGitHubAuthCallbackMarker(outcome));
+  url.searchParams.set(GITHUB_AUTH_ATTEMPT_PARAM, attemptId);
+  return url.toString();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -297,36 +314,6 @@ function formatSubscriptionStatus(status: string): string {
     .split("_")
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
     .join(" ");
-}
-
-function getErrorMessage(payload: unknown, fallback: string): string {
-  if (typeof payload === "string" && payload.trim().length > 0) {
-    const trimmed = payload.trim();
-    const lower = trimmed.toLowerCase();
-    if (lower.startsWith("<!doctype") || lower.startsWith("<html") || lower.includes("<body")) {
-      return `${fallback} Upstream returned an HTML error page.`;
-    }
-    if (trimmed.length > 240) {
-      return `${fallback} Upstream returned a non-JSON error payload.`;
-    }
-    return trimmed;
-  }
-
-  if (!isRecord(payload)) {
-    return fallback;
-  }
-
-  const message = payload.message;
-  if (typeof message === "string" && message.trim().length > 0) {
-    return message;
-  }
-
-  const error = payload.error;
-  if (typeof error === "string" && error.trim().length > 0) {
-    return error;
-  }
-
-  return fallback;
 }
 
 function getUser(payload: unknown): AuthUser | null {
@@ -988,6 +975,7 @@ export function CloudControlPanel() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [githubNewUserCallback, setGithubNewUserCallback] = useState(false);
   const [authInfo, setAuthInfo] = useState(getAuthInfoForMode("sign-up"));
   const [authError, setAuthError] = useState<string | null>(null);
   const [verificationBusy, setVerificationBusy] = useState(false);
@@ -1190,7 +1178,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Failed to load organizations (${response.status}).`);
+        const message = getAuthErrorMessage(payload, `Failed to load organizations (${response.status}).`);
         setOrgsError(message);
         return;
       }
@@ -1242,7 +1230,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Failed to load workers (${response.status}).`);
+        const message = getAuthErrorMessage(payload, `Failed to load workers (${response.status}).`);
         setWorkersError(message);
         return;
       }
@@ -1302,7 +1290,7 @@ export function CloudControlPanel() {
       }, 12000);
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Billing lookup failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Billing lookup failed with ${response.status}.`);
         if (!quiet) {
           setBillingError(message);
           appendEvent("error", "Billing check failed", message);
@@ -1366,7 +1354,7 @@ export function CloudControlPanel() {
       }, 12000);
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Subscription update failed (${response.status}).`);
+        const message = getAuthErrorMessage(payload, `Subscription update failed (${response.status}).`);
         setBillingError(message);
         appendEvent("error", "Subscription update failed", message);
         return;
@@ -1436,6 +1424,61 @@ export function CloudControlPanel() {
     setAuthInfo(`Signed in as ${sessionUser.email}.`);
     return sessionUser;
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const initialDerivation = deriveAuthInitialization(window.location.href, null);
+    const pendingGitHubAuth = initialDerivation.githubCallback
+      ? consumePendingGitHubAuth(window, initialDerivation.githubCallback.attemptId)
+      : null;
+    const initialization = deriveAuthInitialization(
+      window.location.href,
+      pendingGitHubAuth
+    );
+
+    if (initialization.desktopOnboarding) {
+      setDesktopOnboarding(true);
+      setDesktopTransactionId(initialization.desktopTransactionId);
+    }
+
+    if (initialization.authMode) {
+      setAuthMode(initialization.authMode);
+      setAuthInfo(getAuthInfoForMode(initialization.authMode));
+    }
+
+    if (initialization.githubCallback) {
+      replaceBrowserHistoryUrl(window, initialization.githubCallback.scrubbedUrl);
+      setAuthError(null);
+
+      if (initialization.githubSignupConfirmed) {
+        clearStoredSignupInvitationFromBrowser(window);
+        setGithubNewUserCallback(true);
+      } else if (initialization.githubCallback.outcome === "error") {
+        const callbackErrorPayload = initialization.githubCallbackCorrelated
+          ? {
+              error: initialization.githubCallback.error,
+              message: initialization.githubCallback.errorDescription
+            }
+          : null;
+        setAuthError(getAuthErrorMessage(
+          callbackErrorPayload,
+          initialization.githubCallbackCorrelated
+            ? "GitHub sign-in failed. Try again."
+            : "GitHub sign-in callback could not be verified. Please try again."
+        ));
+        trackPosthogEvent("den_auth_failed", {
+          mode: initialization.authMode ?? "sign-in",
+          method: "github",
+          reason: initialization.githubCallbackCorrelated
+            ? "callback_error"
+            : "callback_correlation_failed"
+        });
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1525,13 +1568,11 @@ export function CloudControlPanel() {
     }
 
     identifyPosthogUser(user);
-
-    const pendingSignup = window.sessionStorage.getItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-    if (!pendingSignup) {
+    if (!githubNewUserCallback) {
       return;
     }
 
-    window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+    setGithubNewUserCallback(false);
     trackPosthogEvent("den_signup_completed", {
       mode: "sign-up",
       method: "github",
@@ -1543,7 +1584,7 @@ export function CloudControlPanel() {
       userId: user.id,
       authMethod: "github"
     });
-  }, [user?.id]);
+  }, [user?.id, githubNewUserCallback]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1571,20 +1612,6 @@ export function CloudControlPanel() {
     const nextQuery = params.toString();
     const nextUrl = nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname;
     window.history.replaceState({}, "", nextUrl);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const params = new URLSearchParams(window.location.search);
-    if (params.get(DESKTOP_ONBOARDING_PARAM) === "1") {
-      setDesktopOnboarding(true);
-      setDesktopTransactionId(params.get("tid") ?? params.get("transactionId"));
-      setAuthMode("sign-in");
-      setAuthInfo(getAuthInfoForMode("sign-in"));
-    }
   }, []);
 
   useEffect(() => {
@@ -1762,24 +1789,40 @@ export function CloudControlPanel() {
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const submittedMode = authMode;
+    const pendingContextCleared = clearPendingGitHubAuth(window);
+    if (!pendingContextCleared) {
+      setAuthInfo(getAuthInfoForMode(submittedMode));
+      setAuthError("Authentication could not start securely. Reload the page and try again.");
+      trackPosthogEvent("den_auth_failed", {
+        mode: submittedMode,
+        method: "email",
+        reason: "pending_context_cleanup_failed"
+      });
+      return;
+    }
 
     setAuthBusy(true);
     setAuthError(null);
     trackPosthogEvent("den_auth_submitted", {
-      mode: authMode,
+      mode: submittedMode,
       method: "email"
     });
 
     try {
-      const endpoint = authMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
+      const endpoint = submittedMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
       const trimmedEmail = email.trim();
+      const signupInviteToken = submittedMode === "sign-up"
+        ? readStoredSignupInvitationFromBrowser(window)
+        : null;
       const body =
-        authMode === "sign-up"
+        submittedMode === "sign-up"
           ? {
               name: DEFAULT_AUTH_NAME,
               email: trimmedEmail,
               password,
-              callbackURL: buildAuthCallbackUrl("/verify-email")
+              callbackURL: buildAuthCallbackUrl("/verify-email"),
+              ...(signupInviteToken ? { inviteToken: signupInviteToken } : {})
             }
           : {
               email: trimmedEmail,
@@ -1792,13 +1835,17 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        setAuthError(getErrorMessage(payload, `Authentication failed with ${response.status}.`));
+        setAuthError(getAuthErrorMessage(payload, `Authentication failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
-          mode: authMode,
+          mode: submittedMode,
           method: "email",
           status: response.status
         });
         return;
+      }
+
+      if (submittedMode === "sign-up") {
+        clearStoredSignupInvitationFromBrowser(window);
       }
 
       const token = getToken(payload);
@@ -1812,14 +1859,14 @@ export function CloudControlPanel() {
         authenticatedUser = payloadUser;
         setUser(payloadUser);
         setAuthInfo(`Signed in as ${payloadUser.email}.`);
-        appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", payloadUser.email);
+        appendEvent("success", submittedMode === "sign-up" ? "Account created" : "Signed in", payloadUser.email);
       } else {
         const refreshed = await refreshSession(true);
         if (!refreshed) {
           setAuthInfo("Authentication succeeded, but session details are still syncing.");
         } else {
           authenticatedUser = refreshed;
-          appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
+          appendEvent("success", submittedMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
         }
       }
 
@@ -1827,12 +1874,12 @@ export function CloudControlPanel() {
         identifyPosthogUser(authenticatedUser);
 
         const analyticsPayload = {
-          mode: authMode,
+          mode: submittedMode,
           method: "email",
           email_domain: getEmailDomain(authenticatedUser.email)
         };
 
-        if (authMode === "sign-up") {
+        if (submittedMode === "sign-up") {
           trackPosthogEvent("den_signup_completed", analyticsPayload);
           void trackDenSignupInLoops({
             email: authenticatedUser.email,
@@ -1850,7 +1897,7 @@ export function CloudControlPanel() {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthError(message);
       trackPosthogEvent("den_auth_failed", {
-        mode: authMode,
+        mode: submittedMode,
         method: "email",
         reason: "network_error"
       });
@@ -1878,7 +1925,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        setVerificationError(getErrorMessage(payload, `Verification resend failed with ${response.status}.`));
+        setVerificationError(getAuthErrorMessage(payload, `Verification resend failed with ${response.status}.`));
         return;
       }
 
@@ -1897,38 +1944,51 @@ export function CloudControlPanel() {
       return;
     }
 
-    const shouldTrackGithubSignup = authMode === "sign-up";
-    if (shouldTrackGithubSignup) {
-      window.sessionStorage.setItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY, "1");
+    const submittedMode = authMode;
+    const githubAttemptId = createGitHubAuthAttemptId(window);
+    if (!githubAttemptId) {
+      setAuthInfo(getAuthInfoForMode(submittedMode));
+      setAuthError("GitHub sign-in could not start securely. Reload the page and try again.");
+      trackPosthogEvent("den_auth_failed", {
+        mode: submittedMode,
+        method: "github",
+        reason: "attempt_id_unavailable"
+      });
+      return;
     }
+    const signupInviteToken = submittedMode === "sign-up"
+      ? readStoredSignupInvitationFromBrowser(window)
+      : null;
+    storePendingGitHubAuth(window, submittedMode, githubAttemptId);
 
     setAuthBusy(true);
     setAuthError(null);
     setAuthInfo("Redirecting to GitHub...");
     trackPosthogEvent("den_auth_submitted", {
-      mode: authMode,
+      mode: submittedMode,
       method: "github"
     });
 
     try {
-      const callbackURL = getGithubCallbackUrl();
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
         body: JSON.stringify({
           provider: "github",
-          callbackURL,
-          errorCallbackURL: callbackURL
+          callbackURL: getGithubCallbackUrl("success", githubAttemptId),
+          newUserCallbackURL: getGithubCallbackUrl("new-user", githubAttemptId),
+          errorCallbackURL: getGithubCallbackUrl("error", githubAttemptId),
+          ...(signupInviteToken
+            ? { additionalData: { vesloSignupInviteToken: signupInviteToken } }
+            : {})
         })
       });
 
       if (!response.ok) {
-        if (shouldTrackGithubSignup) {
-          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-        }
-        setAuthInfo(getAuthInfoForMode(authMode));
-        setAuthError(getErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
+        clearPendingGitHubAuth(window);
+        setAuthInfo(getAuthInfoForMode(submittedMode));
+        setAuthError(getAuthErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
-          mode: authMode,
+          mode: submittedMode,
           method: "github",
           status: response.status
         });
@@ -1941,13 +2001,11 @@ export function CloudControlPanel() {
       const redirectUrl = payloadUrl || headerUrl;
 
       if (!redirectUrl) {
-        if (shouldTrackGithubSignup) {
-          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-        }
-        setAuthInfo(getAuthInfoForMode(authMode));
+        clearPendingGitHubAuth(window);
+        setAuthInfo(getAuthInfoForMode(submittedMode));
         setAuthError("GitHub sign-in did not return a redirect URL.");
         trackPosthogEvent("den_auth_failed", {
-          mode: authMode,
+          mode: submittedMode,
           method: "github",
           reason: "missing_redirect_url"
         });
@@ -1956,19 +2014,17 @@ export function CloudControlPanel() {
       }
 
       trackPosthogEvent("den_auth_redirected", {
-        mode: authMode,
+        mode: submittedMode,
         method: "github"
       });
       window.location.assign(redirectUrl);
     } catch (error) {
-      if (shouldTrackGithubSignup) {
-        window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-      }
+      clearPendingGitHubAuth(window);
       const message = error instanceof Error ? error.message : "Unknown network error";
-      setAuthInfo(getAuthInfoForMode(authMode));
+      setAuthInfo(getAuthInfoForMode(submittedMode));
       setAuthError(message);
       trackPosthogEvent("den_auth_failed", {
-        mode: authMode,
+        mode: submittedMode,
         method: "github",
         reason: "network_error"
       });
@@ -2038,7 +2094,7 @@ export function CloudControlPanel() {
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
       window.localStorage.removeItem(SELECTED_ORG_STORAGE_KEY);
-      window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+      clearPendingGitHubAuth(window);
     }
   }
 
@@ -2114,7 +2170,7 @@ export function CloudControlPanel() {
       }
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Launch failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Launch failed with ${response.status}.`);
         setLaunchError(message);
         setLaunchStatus("Launch failed. Fix the error and retry.");
         appendEvent("error", "Launch failed", message);
@@ -2210,7 +2266,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Status check failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Status check failed with ${response.status}.`);
         if (!quiet) {
           setLaunchError(message);
           appendEvent("error", "Status check failed", message);
@@ -2311,7 +2367,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Token fetch failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Token fetch failed with ${response.status}.`);
         setLaunchError(message);
         appendEvent("error", "Token fetch failed", message);
         return;
@@ -2390,7 +2446,7 @@ export function CloudControlPanel() {
       });
 
       if (response.status !== 204 && !response.ok) {
-        const message = getErrorMessage(payload, `Delete failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Delete failed with ${response.status}.`);
         setLaunchError(message);
         appendEvent("error", "Delete failed", message);
         return;
@@ -2539,6 +2595,7 @@ export function CloudControlPanel() {
               <button
                 type="button"
                 className="ow-link"
+                disabled={authBusy}
                 onClick={() => {
                   const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
                   setAuthMode(nextMode);

@@ -82,6 +82,7 @@ export type OrganizationAdminDataStore = {
   }): Promise<OrganizationAdminMembershipRecord>
   markInviteAccepted(input: {
     inviteId: string
+    expectedTokenHash: string
     acceptedByUserId: string
     acceptedAt: Date
   }): Promise<OrganizationAdminInviteRecord | null>
@@ -270,6 +271,7 @@ export function createOrganizationAdminRepository(
 
         const acceptedInvite = await activeStore.markInviteAccepted({
           inviteId: invite.id,
+          expectedTokenHash: invite.tokenHash,
           acceptedByUserId: input.userId,
           acceptedAt: acceptNow,
         })
@@ -424,7 +426,11 @@ export function createDrizzleOrganizationAdminStore(database: any): Organization
           accepted_at: input.acceptedAt,
           updated_at: input.acceptedAt,
         })
-        .where(and(eq(OrganizationInviteTable.id, input.inviteId), eq(OrganizationInviteTable.status, "pending")))
+        .where(and(
+          eq(OrganizationInviteTable.id, input.inviteId),
+          eq(OrganizationInviteTable.status, "pending"),
+          eq(OrganizationInviteTable.token_hash, input.expectedTokenHash),
+        ))
 
       if (extractAffectedRows(result) === 0) {
         return null

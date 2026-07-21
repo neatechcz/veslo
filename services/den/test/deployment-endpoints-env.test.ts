@@ -17,6 +17,7 @@ test("Den derives hosted backend URLs from VESLO_DEPLOYMENT_DOMAIN", async () =>
   });
 
   assert.equal(parsed.betterAuthUrl, "https://api.staging.veslo.work");
+  assert.equal(parsed.publicAppBaseUrl, "https://app.staging.veslo.work");
   assert.deepEqual(parsed.corsOrigins, [
     "https://app.staging.veslo.work",
     "https://ai.staging.veslo.work",
