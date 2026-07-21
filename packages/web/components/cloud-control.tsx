@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { getAuthErrorMessage } from "../lib/auth-error-message";
 import { buildAuthCallbackUrl } from "../lib/auth-urls";
 
 type Step = 1 | 2;
@@ -297,36 +298,6 @@ function formatSubscriptionStatus(status: string): string {
     .split("_")
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
     .join(" ");
-}
-
-function getErrorMessage(payload: unknown, fallback: string): string {
-  if (typeof payload === "string" && payload.trim().length > 0) {
-    const trimmed = payload.trim();
-    const lower = trimmed.toLowerCase();
-    if (lower.startsWith("<!doctype") || lower.startsWith("<html") || lower.includes("<body")) {
-      return `${fallback} Upstream returned an HTML error page.`;
-    }
-    if (trimmed.length > 240) {
-      return `${fallback} Upstream returned a non-JSON error payload.`;
-    }
-    return trimmed;
-  }
-
-  if (!isRecord(payload)) {
-    return fallback;
-  }
-
-  const message = payload.message;
-  if (typeof message === "string" && message.trim().length > 0) {
-    return message;
-  }
-
-  const error = payload.error;
-  if (typeof error === "string" && error.trim().length > 0) {
-    return error;
-  }
-
-  return fallback;
 }
 
 function getUser(payload: unknown): AuthUser | null {
@@ -1190,7 +1161,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Failed to load organizations (${response.status}).`);
+        const message = getAuthErrorMessage(payload, `Failed to load organizations (${response.status}).`);
         setOrgsError(message);
         return;
       }
@@ -1242,7 +1213,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Failed to load workers (${response.status}).`);
+        const message = getAuthErrorMessage(payload, `Failed to load workers (${response.status}).`);
         setWorkersError(message);
         return;
       }
@@ -1302,7 +1273,7 @@ export function CloudControlPanel() {
       }, 12000);
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Billing lookup failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Billing lookup failed with ${response.status}.`);
         if (!quiet) {
           setBillingError(message);
           appendEvent("error", "Billing check failed", message);
@@ -1366,7 +1337,7 @@ export function CloudControlPanel() {
       }, 12000);
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Subscription update failed (${response.status}).`);
+        const message = getAuthErrorMessage(payload, `Subscription update failed (${response.status}).`);
         setBillingError(message);
         appendEvent("error", "Subscription update failed", message);
         return;
@@ -1792,7 +1763,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        setAuthError(getErrorMessage(payload, `Authentication failed with ${response.status}.`));
+        setAuthError(getAuthErrorMessage(payload, `Authentication failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
           method: "email",
@@ -1878,7 +1849,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        setVerificationError(getErrorMessage(payload, `Verification resend failed with ${response.status}.`));
+        setVerificationError(getAuthErrorMessage(payload, `Verification resend failed with ${response.status}.`));
         return;
       }
 
@@ -1926,7 +1897,7 @@ export function CloudControlPanel() {
           window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
         }
         setAuthInfo(getAuthInfoForMode(authMode));
-        setAuthError(getErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
+        setAuthError(getAuthErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
           method: "github",
@@ -2114,7 +2085,7 @@ export function CloudControlPanel() {
       }
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Launch failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Launch failed with ${response.status}.`);
         setLaunchError(message);
         setLaunchStatus("Launch failed. Fix the error and retry.");
         appendEvent("error", "Launch failed", message);
@@ -2210,7 +2181,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Status check failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Status check failed with ${response.status}.`);
         if (!quiet) {
           setLaunchError(message);
           appendEvent("error", "Status check failed", message);
@@ -2311,7 +2282,7 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Token fetch failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Token fetch failed with ${response.status}.`);
         setLaunchError(message);
         appendEvent("error", "Token fetch failed", message);
         return;
@@ -2390,7 +2361,7 @@ export function CloudControlPanel() {
       });
 
       if (response.status !== 204 && !response.ok) {
-        const message = getErrorMessage(payload, `Delete failed with ${response.status}.`);
+        const message = getAuthErrorMessage(payload, `Delete failed with ${response.status}.`);
         setLaunchError(message);
         appendEvent("error", "Delete failed", message);
         return;
