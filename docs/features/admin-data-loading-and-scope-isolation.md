@@ -35,6 +35,30 @@ still two different data scopes.
 Platform routes never retain an organization id. Organization routes always
 carry the routed organization id in both the URL and the scope key.
 
+## Organization-administration delegation invariant
+
+Every administration operation available to an organization administrator is
+also available to a platform administrator when the platform administrator has
+explicitly selected and routed into the target organization. This is capability
+delegation, not identity impersonation:
+
+- both roles use the same organization-scoped operation, validation, and data
+  boundary;
+- the organization id must be explicit in the route and server request;
+- a platform administrator does not need a membership in the target
+  organization, but the server must independently verify the platform role;
+- audit records preserve the real actor user id, the target organization id,
+  and whether the operation was performed via `organization_admin` or
+  `platform_admin` authority;
+- platform pages do not mutate organization-owned state, and organization pages
+  do not load a global directory and filter it in the browser.
+
+This invariant applies to current and future organization administration
+domains, including members, domains and invites, billing, AI access, audit, and
+organization-managed skills. Platform-only controls may be added alongside an
+organization workspace, but they must not replace or fork the organization
+administrator's canonical operation.
+
 ## Page-load state
 
 The client owns one current page-load record with a canonical key, a
