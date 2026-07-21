@@ -12,6 +12,7 @@ import {
   clearPendingGitHubAuth,
   clearStoredSignupInvitationFromBrowser,
   consumePendingGitHubAuth,
+  createGitHubAuthAttemptId,
   deriveAuthInitialization,
   parseGitHubAuthCallbackUrl,
   parseSignupInvitationUrl,
@@ -123,11 +124,12 @@ test("stored invitation reads are bounded and normalized", () => {
 
 test("marked GitHub callback errors are parsed and scrubbed without touching unrelated parameters", () => {
   const result = parseGitHubAuthCallbackUrl(
-    "https://app.veslo.work/?authCallback=github-error&error=domain_not_allowed&error_description=Company+email+required&desktopOnboarding=1#keep"
+    "https://app.veslo.work/?authCallback=github-error&authAttempt=attempt-error&error=domain_not_allowed&error_description=Company+email+required&desktopOnboarding=1#keep"
   );
 
   assert.deepEqual(result, {
     outcome: "error",
+    attemptId: "attempt-error",
     error: "domain_not_allowed",
     errorDescription: "Company email required",
     scrubbedUrl: "https://app.veslo.work/?desktopOnboarding=1#keep"
@@ -145,16 +147,16 @@ test("unmarked callback parameters are ignored", () => {
 
 test("callback outcomes distinguish existing-user success from confirmed new-user success", () => {
   const existingUser = deriveAuthInitialization(
-    "https://app.veslo.work/?authCallback=github-success",
-    "sign-up"
+    "https://app.veslo.work/?authCallback=github-success&authAttempt=attempt-valid",
+    { mode: "sign-up", createdAt: 1_000, attemptId: "attempt-valid" }
   );
   assert.equal(existingUser.authMode, "sign-in");
   assert.equal(existingUser.githubSignupConfirmed, false);
   assert.equal(existingUser.githubCallback?.outcome, "success");
 
   const newUser = deriveAuthInitialization(
-    "https://app.veslo.work/?authCallback=github-new-user",
-    null
+    "https://app.veslo.work/?authCallback=github-new-user&authAttempt=attempt-valid",
+    { mode: "sign-up", createdAt: 1_000, attemptId: "attempt-valid" }
   );
   assert.equal(newUser.authMode, "sign-up");
   assert.equal(newUser.githubSignupConfirmed, true);
@@ -163,8 +165,8 @@ test("callback outcomes distinguish existing-user success from confirmed new-use
 
 test("GitHub signup callback mode wins over desktop onboarding while ordinary desktop entry signs in", () => {
   const signupError = deriveAuthInitialization(
-    "https://app.veslo.work/?desktopOnboarding=1&tid=dat_123&authCallback=github-error&error=domain_not_allowed",
-    "sign-up"
+    "https://app.veslo.work/?desktopOnboarding=1&tid=dat_123&authCallback=github-error&authAttempt=attempt-valid&error=domain_not_allowed",
+    { mode: "sign-up", createdAt: 1_000, attemptId: "attempt-valid" }
   );
   assert.equal(signupError.desktopOnboarding, true);
   assert.equal(signupError.desktopTransactionId, "dat_123");
@@ -189,20 +191,99 @@ test("pending GitHub auth context is single-use and expires after ten minutes", 
     }
   };
 
-  storePendingGitHubAuth(browser, "sign-up", 1_000);
-  assert.deepEqual(consumePendingGitHubAuth(browser, 1_000 + GITHUB_AUTH_PENDING_TTL_MS), {
+  storePendingGitHubAuth(browser, "sign-up", "attempt-valid", 1_000);
+  assert.deepEqual(consumePendingGitHubAuth(browser, "attempt-valid", 1_000 + GITHUB_AUTH_PENDING_TTL_MS), {
     mode: "sign-up",
-    createdAt: 1_000
+    createdAt: 1_000,
+    attemptId: "attempt-valid"
   });
   assert.equal(values.has(GITHUB_AUTH_PENDING_STORAGE_KEY), false);
 
-  storePendingGitHubAuth(browser, "sign-up", 2_000);
-  assert.equal(consumePendingGitHubAuth(browser, 2_001 + GITHUB_AUTH_PENDING_TTL_MS), null);
+  storePendingGitHubAuth(browser, "sign-up", "attempt-expired", 2_000);
+  const expiredPending = consumePendingGitHubAuth(
+    browser,
+    "attempt-expired",
+    2_001 + GITHUB_AUTH_PENDING_TTL_MS
+  );
+  assert.equal(expiredPending, null);
+  assert.equal(
+    deriveAuthInitialization(
+      "https://app.veslo.work/?authCallback=github-new-user&authAttempt=attempt-expired",
+      expiredPending
+    ).githubSignupConfirmed,
+    false
+  );
   assert.equal(values.has(GITHUB_AUTH_PENDING_STORAGE_KEY), false);
 
   values.set(GITHUB_AUTH_PENDING_STORAGE_KEY, "1");
-  assert.equal(consumePendingGitHubAuth(browser, 3_000), null);
+  assert.equal(consumePendingGitHubAuth(browser, "attempt-invalid", 3_000), null);
   assert.equal(values.has(GITHUB_AUTH_PENDING_STORAGE_KEY), false);
+});
+
+test("spoofed or missing new-user callback is never confirmed", () => {
+  for (const url of [
+    "https://app.veslo.work/?authCallback=github-new-user",
+    "https://app.veslo.work/?authCallback=github-new-user&authAttempt=spoofed-attempt"
+  ]) {
+    const initialization = deriveAuthInitialization(url, null);
+    assert.equal(initialization.githubSignupConfirmed, false);
+    assert.equal(initialization.githubCallbackCorrelated, false);
+    assert.equal(initialization.authMode, "sign-in");
+  }
+});
+
+test("mismatched and already-consumed new-user callbacks cannot reuse pending signup context", () => {
+  const values = new Map<string, string>();
+  const browser = {
+    sessionStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key)
+    }
+  };
+
+  storePendingGitHubAuth(browser, "sign-up", "attempt-original", 1_000);
+  const mismatchedPending = consumePendingGitHubAuth(browser, "attempt-spoofed", 1_001);
+  assert.equal(mismatchedPending, null);
+  assert.equal(
+    deriveAuthInitialization(
+      "https://app.veslo.work/?authCallback=github-new-user&authAttempt=attempt-spoofed",
+      mismatchedPending
+    ).githubSignupConfirmed,
+    false
+  );
+  assert.equal(consumePendingGitHubAuth(browser, "attempt-original", 1_002), null);
+
+  storePendingGitHubAuth(browser, "sign-up", "attempt-once", 2_000);
+  const consumed = consumePendingGitHubAuth(browser, "attempt-once", 2_001);
+  assert.equal(consumed?.attemptId, "attempt-once");
+  assert.equal(consumePendingGitHubAuth(browser, "attempt-once", 2_002), null);
+
+  const firstInitialization = deriveAuthInitialization(
+    "https://app.veslo.work/?authCallback=github-new-user&authAttempt=attempt-once",
+    consumed
+  );
+  const replayedInitialization = deriveAuthInitialization(
+    "https://app.veslo.work/?authCallback=github-new-user&authAttempt=attempt-once",
+    null
+  );
+  assert.equal(firstInitialization.githubSignupConfirmed, true);
+  assert.equal(replayedInitialization.githubSignupConfirmed, false);
+});
+
+test("GitHub auth attempt IDs come from browser cryptography", () => {
+  assert.equal(
+    createGitHubAuthAttemptId({ crypto: { randomUUID: () => "attempt-random-uuid" } }),
+    "attempt-random-uuid"
+  );
+
+  const deniedCrypto = {} as { crypto: Crypto };
+  Object.defineProperty(deniedCrypto, "crypto", {
+    get() {
+      throw new Error("crypto denied");
+    }
+  });
+  assert.equal(createGitHubAuthAttemptId(deniedCrypto), null);
 });
 
 test("pending and history helpers tolerate denied browser APIs", () => {
@@ -220,8 +301,8 @@ test("pending and history helpers tolerate denied browser APIs", () => {
     }
   });
 
-  assert.doesNotThrow(() => storePendingGitHubAuth(deniedBrowser, "sign-up", 1_000));
-  assert.equal(consumePendingGitHubAuth(deniedBrowser, 1_000), null);
+  assert.doesNotThrow(() => storePendingGitHubAuth(deniedBrowser, "sign-up", "attempt", 1_000));
+  assert.equal(consumePendingGitHubAuth(deniedBrowser, "attempt", 1_000), null);
   assert.doesNotThrow(() => clearPendingGitHubAuth(deniedBrowser));
   assert.equal(readStoredSignupInvitationFromBrowser(deniedBrowser), null);
   assert.doesNotThrow(() => clearStoredSignupInvitationFromBrowser(deniedBrowser));

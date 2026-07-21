@@ -4,11 +4,13 @@ import { FormEvent, useEffect, useState } from "react";
 import { getAuthErrorMessage } from "../lib/auth-error-message";
 import { buildAuthCallbackUrl } from "../lib/auth-urls";
 import {
+  GITHUB_AUTH_ATTEMPT_PARAM,
   GITHUB_AUTH_CALLBACK_MARKER_PARAM,
   type GitHubAuthCallbackOutcome,
   clearPendingGitHubAuth,
   clearStoredSignupInvitationFromBrowser,
   consumePendingGitHubAuth,
+  createGitHubAuthAttemptId,
   deriveAuthInitialization,
   getGitHubAuthCallbackMarker,
   readStoredSignupInvitationFromBrowser,
@@ -233,9 +235,10 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
   }
 }
 
-function getGithubCallbackUrl(outcome: GitHubAuthCallbackOutcome): string {
+function getGithubCallbackUrl(outcome: GitHubAuthCallbackOutcome, attemptId: string): string {
   const url = new URL(buildAuthCallbackUrl("/"));
   url.searchParams.set(GITHUB_AUTH_CALLBACK_MARKER_PARAM, getGitHubAuthCallbackMarker(outcome));
+  url.searchParams.set(GITHUB_AUTH_ATTEMPT_PARAM, attemptId);
   return url.toString();
 }
 
@@ -1428,11 +1431,11 @@ export function CloudControlPanel() {
 
     const initialDerivation = deriveAuthInitialization(window.location.href, null);
     const pendingGitHubAuth = initialDerivation.githubCallback
-      ? consumePendingGitHubAuth(window)
+      ? consumePendingGitHubAuth(window, initialDerivation.githubCallback.attemptId)
       : null;
     const initialization = deriveAuthInitialization(
       window.location.href,
-      pendingGitHubAuth?.mode ?? null
+      pendingGitHubAuth
     );
 
     if (initialization.desktopOnboarding) {
@@ -1453,14 +1456,24 @@ export function CloudControlPanel() {
         clearStoredSignupInvitationFromBrowser(window);
         setGithubNewUserCallback(true);
       } else if (initialization.githubCallback.outcome === "error") {
-        setAuthError(getAuthErrorMessage({
-          error: initialization.githubCallback.error,
-          message: initialization.githubCallback.errorDescription
-        }, "GitHub sign-in failed. Try again."));
+        const callbackErrorPayload = initialization.githubCallbackCorrelated
+          ? {
+              error: initialization.githubCallback.error,
+              message: initialization.githubCallback.errorDescription
+            }
+          : null;
+        setAuthError(getAuthErrorMessage(
+          callbackErrorPayload,
+          initialization.githubCallbackCorrelated
+            ? "GitHub sign-in failed. Try again."
+            : "GitHub sign-in callback could not be verified. Please try again."
+        ));
         trackPosthogEvent("den_auth_failed", {
           mode: initialization.authMode ?? "sign-in",
           method: "github",
-          reason: "callback_error"
+          reason: initialization.githubCallbackCorrelated
+            ? "callback_error"
+            : "callback_correlation_failed"
         });
       }
     }
@@ -1921,10 +1934,21 @@ export function CloudControlPanel() {
     }
 
     const submittedMode = authMode;
+    const githubAttemptId = createGitHubAuthAttemptId(window);
+    if (!githubAttemptId) {
+      setAuthInfo(getAuthInfoForMode(submittedMode));
+      setAuthError("GitHub sign-in could not start securely. Reload the page and try again.");
+      trackPosthogEvent("den_auth_failed", {
+        mode: submittedMode,
+        method: "github",
+        reason: "attempt_id_unavailable"
+      });
+      return;
+    }
     const signupInviteToken = submittedMode === "sign-up"
       ? readStoredSignupInvitationFromBrowser(window)
       : null;
-    storePendingGitHubAuth(window, submittedMode);
+    storePendingGitHubAuth(window, submittedMode, githubAttemptId);
 
     setAuthBusy(true);
     setAuthError(null);
@@ -1939,9 +1963,9 @@ export function CloudControlPanel() {
         method: "POST",
         body: JSON.stringify({
           provider: "github",
-          callbackURL: getGithubCallbackUrl("success"),
-          newUserCallbackURL: getGithubCallbackUrl("new-user"),
-          errorCallbackURL: getGithubCallbackUrl("error"),
+          callbackURL: getGithubCallbackUrl("success", githubAttemptId),
+          newUserCallbackURL: getGithubCallbackUrl("new-user", githubAttemptId),
+          errorCallbackURL: getGithubCallbackUrl("error", githubAttemptId),
           ...(signupInviteToken
             ? { additionalData: { vesloSignupInviteToken: signupInviteToken } }
             : {})

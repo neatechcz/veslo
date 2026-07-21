@@ -97,15 +97,17 @@ assert.ok(
 );
 assert.ok(
   source.includes("additionalData: { vesloSignupInviteToken: signupInviteToken }") &&
-    source.includes('callbackURL: getGithubCallbackUrl("success")') &&
-    source.includes('newUserCallbackURL: getGithubCallbackUrl("new-user")') &&
-    source.includes('errorCallbackURL: getGithubCallbackUrl("error")'),
-  "GitHub signup must use distinct marked success, new-user, and error callbacks",
+    source.includes("const githubAttemptId = createGitHubAuthAttemptId(window);") &&
+    source.includes('callbackURL: getGithubCallbackUrl("success", githubAttemptId)') &&
+    source.includes('newUserCallbackURL: getGithubCallbackUrl("new-user", githubAttemptId)') &&
+    source.includes('errorCallbackURL: getGithubCallbackUrl("error", githubAttemptId)'),
+  "GitHub signup must correlate distinct callbacks with a random attempt ID",
 );
 assert.ok(
   source.includes("deriveAuthInitialization(window.location.href") &&
-    source.includes("consumePendingGitHubAuth(window)") &&
-    source.includes('reason: "callback_error"'),
+    source.includes("consumePendingGitHubAuth(window, initialDerivation.githubCallback.attemptId)") &&
+    source.includes('"callback_error"') &&
+    source.includes('"callback_correlation_failed"'),
   "one authoritative initializer must correlate and render marked GitHub callbacks",
 );
 assert.ok(
@@ -115,6 +117,8 @@ assert.ok(
 );
 assert.ok(
   source.includes("githubNewUserCallback") &&
+    source.includes("initialization.githubSignupConfirmed") &&
+    source.includes("initialization.githubCallbackCorrelated") &&
     !source.includes("const pendingSignup = window.sessionStorage.getItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY)") &&
     !source.includes("clearStoredSignupInvitation(window.sessionStorage);\n    trackPosthogEvent(\"den_signup_completed\""),
   "user presence plus a stale marker must not clear invitations or emit signup completion",
