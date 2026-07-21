@@ -49,7 +49,7 @@ Legacy unverified sessions cannot complete desktop authorization. Existing verif
 - Better Auth configuration owns signup and sign-in enforcement.
 - The Lettr auth mailer owns provider acceptance and safe error reporting.
 - The hosted DEN onboarding page owns verification-required, resend, and post-verification browser states.
-- Desktop Auth v2 owns the final verification check before issuing a one-time code.
+- Both current and legacy desktop-auth handoff routes own the final verification check before issuing a one-time code.
 - Deployment configuration owns an enabled production policy and required Lettr values.
 
 ## Verification Strategy
