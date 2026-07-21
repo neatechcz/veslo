@@ -13,6 +13,7 @@ import {
   createGitHubAuthAttemptId,
   deriveAuthInitialization,
   getGitHubAuthCallbackMarker,
+  isSignupInvitationTelemetryAllowed,
   readStoredSignupInvitationFromBrowser,
   replaceBrowserHistoryUrl,
   storePendingGitHubAuth
@@ -178,7 +179,7 @@ function getEmailDomain(email: string): string {
 }
 
 function trackPosthogEvent(eventName: string, properties: Record<string, unknown> = {}) {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isSignupInvitationTelemetryAllowed(window)) {
     return;
   }
 
@@ -190,7 +191,7 @@ function trackPosthogEvent(eventName: string, properties: Record<string, unknown
 }
 
 function identifyPosthogUser(user: AuthUser) {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isSignupInvitationTelemetryAllowed(window)) {
     return;
   }
 
@@ -205,7 +206,7 @@ function identifyPosthogUser(user: AuthUser) {
 }
 
 function resetPosthogUser() {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isSignupInvitationTelemetryAllowed(window)) {
     return;
   }
 
@@ -217,7 +218,7 @@ function resetPosthogUser() {
 }
 
 async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || !isSignupInvitationTelemetryAllowed(window)) {
     return;
   }
 

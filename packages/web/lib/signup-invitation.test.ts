@@ -9,11 +9,13 @@ import {
   GITHUB_AUTH_PENDING_STORAGE_KEY,
   GITHUB_AUTH_PENDING_TTL_MS,
   SIGNUP_INVITATION_SESSION_STORAGE_KEY,
+  SIGNUP_INVITATION_TELEMETRY_SIGNAL,
   clearPendingGitHubAuth,
   clearStoredSignupInvitationFromBrowser,
   consumePendingGitHubAuth,
   createGitHubAuthAttemptId,
   deriveAuthInitialization,
+  guardSignupInvitationTelemetryBootstrap,
   parseGitHubAuthCallbackUrl,
   parseSignupInvitationUrl,
   replaceBrowserHistoryUrl,
@@ -81,15 +83,87 @@ test("bootstrap executes before React, stores only in session storage, and scrub
         replaceState: (_state: unknown, _title: string, url: string) => {
           replacedUrl = url;
         }
-      }
+      },
+      telemetryStarted: false
     }
   };
 
   vm.runInNewContext(signupInvitationBootstrapScript, context);
+  vm.runInNewContext(
+    guardSignupInvitationTelemetryBootstrap("window.telemetryStarted = true;"),
+    context
+  );
 
   assert.equal(values.get(SIGNUP_INVITATION_SESSION_STORAGE_KEY), "raw-token");
   assert.equal(replacedUrl, "https://app.veslo.work/?keep=query#keep=fragment");
+  assert.equal(Reflect.get(context.window, SIGNUP_INVITATION_TELEMETRY_SIGNAL), true);
+  assert.equal(context.window.telemetryStarted, true);
   assert.equal("localStorage" in context.window, false);
+});
+
+test("history scrub failure keeps invitation telemetry fail closed without throwing", () => {
+  const values = new Map<string, string>();
+  const context = {
+    URL,
+    URLSearchParams,
+    window: {
+      location: { href: "https://app.veslo.work/?inviteToken=raw-token&keep=1" },
+      sessionStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key)
+      },
+      history: {
+        replaceState: () => {
+          throw new Error("history denied");
+        }
+      },
+      telemetryStarted: false
+    }
+  };
+
+  assert.doesNotThrow(() => vm.runInNewContext(signupInvitationBootstrapScript, context));
+  vm.runInNewContext(
+    guardSignupInvitationTelemetryBootstrap("window.telemetryStarted = true;"),
+    context
+  );
+
+  assert.equal(values.get(SIGNUP_INVITATION_SESSION_STORAGE_KEY), "raw-token");
+  assert.equal(context.window.location.href.includes("inviteToken=raw-token"), true);
+  assert.equal(Reflect.get(context.window, SIGNUP_INVITATION_TELEMETRY_SIGNAL), false);
+  assert.equal(context.window.telemetryStarted, false);
+});
+
+test("URL without an invitation allows guarded telemetry without a history write", () => {
+  let historyWrites = 0;
+  const context = {
+    URL,
+    URLSearchParams,
+    window: {
+      location: { href: "https://app.veslo.work/?keep=1" },
+      sessionStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+        removeItem: () => undefined
+      },
+      history: {
+        replaceState: () => {
+          historyWrites += 1;
+        }
+      },
+      telemetryStarted: false
+    }
+  };
+
+  vm.runInNewContext(signupInvitationBootstrapScript, context);
+  vm.runInNewContext(
+    guardSignupInvitationTelemetryBootstrap("window.telemetryStarted = true;"),
+    context
+  );
+
+  assert.equal(historyWrites, 0);
+  assert.equal(Reflect.get(context.window, SIGNUP_INVITATION_TELEMETRY_SIGNAL), true);
+  assert.equal(context.window.telemetryStarted, true);
 });
 
 test("invalid incoming invitation clears stale session invitation state", () => {

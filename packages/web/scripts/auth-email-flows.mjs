@@ -78,6 +78,15 @@ assert.ok(
   "invitation capture must execute before PostHog initialization",
 );
 assert.ok(
+  layoutSource.includes("guardSignupInvitationTelemetryBootstrap(posthogBootstrap)") &&
+    signupInvitationSource.includes("SIGNUP_INVITATION_TELEMETRY_SIGNAL"),
+  "PostHog bootstrap must be fail closed behind successful invitation URL scrubbing",
+);
+assert.ok(
+  (source.match(/!isSignupInvitationTelemetryAllowed\(window\)/g) ?? []).length === 4,
+  "all subsequent client telemetry helpers must respect the invitation scrub signal",
+);
+assert.ok(
   signupInvitationSource.includes('window.sessionStorage') &&
     !signupInvitationSource.includes('window.localStorage'),
   "invitation bootstrap must use session storage only",

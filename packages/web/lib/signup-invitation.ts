@@ -1,5 +1,6 @@
 export const SIGNUP_INVITATION_SESSION_STORAGE_KEY = "veslo:signup-invite-token";
 export const SIGNUP_INVITATION_MAX_LENGTH = 4096;
+export const SIGNUP_INVITATION_TELEMETRY_SIGNAL = "__vesloSignupInvitationTelemetryAllowed";
 export const GITHUB_AUTH_CALLBACK_MARKER_PARAM = "authCallback";
 export const GITHUB_AUTH_ATTEMPT_PARAM = "authAttempt";
 export const GITHUB_AUTH_PENDING_STORAGE_KEY = "veslo:web:pending-github-auth";
@@ -239,6 +240,18 @@ export function replaceBrowserHistoryUrl(browser: HistoryBrowser, url: string): 
   }
 }
 
+export function isSignupInvitationTelemetryAllowed(browser: object): boolean {
+  try {
+    return Reflect.get(browser, SIGNUP_INVITATION_TELEMETRY_SIGNAL) === true;
+  } catch {
+    return false;
+  }
+}
+
+export function guardSignupInvitationTelemetryBootstrap(telemetrySource: string): string {
+  return `if (window[${JSON.stringify(SIGNUP_INVITATION_TELEMETRY_SIGNAL)}] === true) {\n${telemetrySource}\n}`;
+}
+
 export function createGitHubAuthAttemptId(browser: CryptoBrowser): string | null {
   let browserCrypto: CryptoBrowser["crypto"];
   try {
@@ -342,6 +355,15 @@ export function deriveAuthInitialization(
 export const signupInvitationBootstrapScript = `(() => {
   const sessionKey = ${JSON.stringify(SIGNUP_INVITATION_SESSION_STORAGE_KEY)};
   const maxLength = ${SIGNUP_INVITATION_MAX_LENGTH};
+  const telemetrySignal = ${JSON.stringify(SIGNUP_INVITATION_TELEMETRY_SIGNAL)};
+  const setTelemetryAllowed = (allowed) => {
+    try {
+      window[telemetrySignal] = allowed === true;
+    } catch {
+      // Keep telemetry fail closed when the signal cannot be written.
+    }
+  };
+  setTelemetryAllowed(false);
   let parsed;
   try {
     const url = new URL(window.location.href);
@@ -380,10 +402,15 @@ export const signupInvitationBootstrapScript = `(() => {
     }
   }
   if (parsed.hadInvitationParameter) {
+    let scrubbed = false;
     try {
       window.history.replaceState({}, "", parsed.scrubbedUrl);
+      scrubbed = true;
     } catch {
-      // A failed history write must not expose the token elsewhere.
+      // The token remains in the URL, so telemetry must stay disabled.
     }
+    setTelemetryAllowed(scrubbed);
+  } else {
+    setTelemetryAllowed(true);
   }
 })();`;

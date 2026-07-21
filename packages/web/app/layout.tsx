@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import Script from "next/script";
-import { signupInvitationBootstrapScript } from "../lib/signup-invitation";
+import {
+  guardSignupInvitationTelemetryBootstrap,
+  signupInvitationBootstrapScript
+} from "../lib/signup-invitation";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -36,7 +39,13 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: signupInvitationBootstrapScript }}
         />
         {posthogBootstrap ? (
-          <Script id="posthog" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: posthogBootstrap }} />
+          <Script
+            id="posthog"
+            strategy="beforeInteractive"
+            dangerouslySetInnerHTML={{
+              __html: guardSignupInvitationTelemetryBootstrap(posthogBootstrap)
+            }}
+          />
         ) : null}
       </head>
       <body>{children}</body>
