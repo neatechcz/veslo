@@ -17,8 +17,8 @@ This document maps the main Veslo code surfaces so future coding agents can find
 
 ## Managed-AI Ownership
 
-- Standalone AI Gateway owns user AI-access records, the global model policy, platform credentials, runtime model enforcement, credential rotation, usage, and the canonical `/admin` UI.
-- DEN owns identity, organization membership, and billing entitlement. Its runtime managed-AI surface is the minimal authenticated entitlement facade; production provider inference routes are retired. The signup hook can consume an explicitly injected read-only Gateway policy projection, but the committed default leaves that resolver unwired and skips auto-assignment.
+- Standalone AI Gateway owns user AI-access records, the global model policy, platform credentials, runtime model enforcement, credential rotation, usage, and the canonical `/admin` UI. Its lazy automatic access service runs after successful authentication and DEN entitlement, creates missing access as enabled, derives technical routing from platform policy and capability evidence, and preserves explicit disablement.
+- DEN owns identity, organization membership, and billing entitlement. Its runtime managed-AI surface is the minimal authenticated entitlement facade; production provider inference routes are retired. Verified signup establishes organization membership, while the Gateway owns effective assignment.
 - `packages/server` owns only the local-first proxy handoff. It keeps gateway authorization and authenticated organization context in actor-scoped runtime memory, never in OpenCode config, and injects that context before forwarding to AI Gateway.
 - Admin platform routes have no organization context. Organization context exists only under `/admin/organizations/:orgId/...` and is authorized by DEN-backed organization membership.
 

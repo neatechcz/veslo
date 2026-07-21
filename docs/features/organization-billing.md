@@ -30,13 +30,14 @@ Automatic trial rules:
 - the unique claim ledger is immutable during normal domain administration, so deleting, disabling, renaming, transferring, or later re-registering a domain never restores trial eligibility
 - existing manual or automatic trial state keeps its configured expiry while reconciliation backfills claims for all current domains
 - paid or other non-trial billing configuration is preserved and does not consume domain claims merely by existing
+- membership changes, including adding, removing, disabling, or reactivating members, never reset or extend the organization trial
 - startup reconciliation is idempotent and reports only scanned and newly granted counts
 
 Organization domains and trial claims are different records: a domain record represents current routing and may be changed, while its historical trial claim remains permanent. A historical claim never blocks registration; it only prevents the domain from funding another automatic trial.
 
 ## Platform Trials
 
-Platform trials are temporary platform-admin grants for organizations that need free Managed AI access before or outside Stripe billing. In Den Admin Billing, platform admins use the same Basic and Extended license quantity controls as checkout, choose a trial end date, and click `Create trial`.
+Platform trials are temporary platform-admin grants for organizations that need free Managed AI access before or outside Stripe billing. In the standalone Gateway organization Billing page, platform admins use the same Basic and Extended license quantity controls as checkout, choose a trial end date, and click `Create trial`.
 
 Trial rules:
 
@@ -48,7 +49,7 @@ Trial rules:
 - once Stripe reports an active or trialing subscription, Stripe-owned billing clears the platform trial immediately
 - revoking a trial disables access immediately and behaves like unpaid access with no grace period
 - after a trial expires, entitlement derivation treats the organization as unpaid unless another active billing source exists
-- when an existing manual trial has registered domains, the automatic reconciliation path claims those domains without recalculating its administrator-set expiry
+- when an existing manual trial has registered domains, the automatic reconciliation path claims those domains without changing its administrator-set expiry
 
 ## Stripe Sandbox and Live Switch
 
@@ -94,7 +95,7 @@ DEN is the billing source of truth and exposes the user-authenticated minimal fa
 
 AI Gateway resolves each Managed AI proxy request in this order: authenticated session, billing entitlement, user enablement/provider assignment, global active model, then credential/lease/token brokerage. It briefly caches both allow and deny decisions and coalesces concurrent lookups, but does not cache failed or malformed DEN responses.
 
-Verified signup assigns Managed AI access only after DEN has resolved an active organization membership. An administrator can disable an individual's AI access, but end users do not choose a model or provider. The AI Infrastructure model policy and credential routing select the active backend configuration for managed inference.
+Verified signup resolves an active organization membership before Managed AI can be assigned. On qualified self-access or inference, AI Gateway lazily creates a missing enabled assignment after entitlement. An administrator can disable an individual's AI access, but end users do not choose a model or provider. The AI Infrastructure model policy and credential routing select the active backend configuration for managed inference.
 
 An organization that is resolved successfully but cannot use Managed AI receives HTTP `402` with `error: "managed_ai_entitlement_denied"`. DEN/network/malformed-response failure receives HTTP `503` with `error: "managed_ai_entitlement_unavailable"`. Both stop before AI-access, model, credential, lease, or provider calls. History/settings reads remain allowed by the entitlement model. Local Models mode can allow BYOK/local-provider usage without granting Managed AI inference.
 

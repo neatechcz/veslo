@@ -165,12 +165,12 @@ PUT /admin/api/users/:userId/ai-access
 Requests to those legacy API paths receive the normal JSON API `404`; they do
 not fall through to the admin HTML shell.
 
-AI-access assignment owns only `enabled`, `provider`, and `credentialId`.
-Backend model selection belongs to the global model policy under AI
-Infrastructure: administrators may enable multiple backend models but select
-exactly one active model for all managed-AI users. Users cannot choose or
-switch models, and user AI-access writes containing legacy per-user model
-fields are rejected.
+AI-access administration owns only the `enabled` toggle. Provider,
+`credentialId`, model, redemption, and other routing fields are derived by the
+Gateway and rejected when supplied in user AI-access writes. Backend model and
+credential management belongs under AI Infrastructure: platform administrators
+may enable multiple backend models but select exactly one active model for all
+managed-AI users. Users cannot choose or switch models.
 
 ## Required route data and readiness
 
