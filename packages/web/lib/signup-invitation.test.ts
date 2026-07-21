@@ -303,10 +303,41 @@ test("pending and history helpers tolerate denied browser APIs", () => {
 
   assert.doesNotThrow(() => storePendingGitHubAuth(deniedBrowser, "sign-up", "attempt", 1_000));
   assert.equal(consumePendingGitHubAuth(deniedBrowser, "attempt", 1_000), null);
-  assert.doesNotThrow(() => clearPendingGitHubAuth(deniedBrowser));
+  assert.equal(clearPendingGitHubAuth(deniedBrowser), false);
   assert.equal(readStoredSignupInvitationFromBrowser(deniedBrowser), null);
   assert.doesNotThrow(() => clearStoredSignupInvitationFromBrowser(deniedBrowser));
   assert.doesNotThrow(() => replaceBrowserHistoryUrl(deniedBrowser, "https://app.veslo.work/"));
+});
+
+test("pending GitHub auth fails closed when single-use removal is denied", () => {
+  const rawPending = JSON.stringify({
+    mode: "sign-up",
+    createdAt: 1_000,
+    attemptId: "attempt-remove-denied"
+  });
+  const browser = {
+    sessionStorage: {
+      getItem: () => rawPending,
+      setItem: () => undefined,
+      removeItem: () => {
+        throw new Error("remove denied");
+      }
+    }
+  };
+
+  const first = consumePendingGitHubAuth(browser, "attempt-remove-denied", 1_001);
+  const replay = consumePendingGitHubAuth(browser, "attempt-remove-denied", 1_002);
+
+  assert.equal(first, null);
+  assert.equal(replay, null);
+  assert.equal(clearPendingGitHubAuth(browser), false);
+  assert.equal(
+    deriveAuthInitialization(
+      "https://app.veslo.work/?authCallback=github-new-user&authAttempt=attempt-remove-denied",
+      first
+    ).githubSignupConfirmed,
+    false
+  );
 });
 
 test("invitation bootstrap is the first beforeInteractive head script", () => {

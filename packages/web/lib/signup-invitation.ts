@@ -186,7 +186,7 @@ export function consumePendingGitHubAuth(
   try {
     storage.removeItem(GITHUB_AUTH_PENDING_STORAGE_KEY);
   } catch {
-    // Reading remains useful even if cleanup is denied.
+    return null;
   }
   if (!raw) {
     return null;
@@ -218,15 +218,16 @@ export function consumePendingGitHubAuth(
   }
 }
 
-export function clearPendingGitHubAuth(browser: SessionStorageBrowser): void {
+export function clearPendingGitHubAuth(browser: SessionStorageBrowser): boolean {
   const storage = getBrowserSessionStorage(browser);
   if (!storage) {
-    return;
+    return false;
   }
   try {
     storage.removeItem(GITHUB_AUTH_PENDING_STORAGE_KEY);
+    return true;
   } catch {
-    // Cleanup is best effort when browser storage is unavailable.
+    return false;
   }
 }
 

@@ -1789,7 +1789,17 @@ export function CloudControlPanel() {
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submittedMode = authMode;
-    clearPendingGitHubAuth(window);
+    const pendingContextCleared = clearPendingGitHubAuth(window);
+    if (!pendingContextCleared) {
+      setAuthInfo(getAuthInfoForMode(submittedMode));
+      setAuthError("Authentication could not start securely. Reload the page and try again.");
+      trackPosthogEvent("den_auth_failed", {
+        mode: submittedMode,
+        method: "email",
+        reason: "pending_context_cleanup_failed"
+      });
+      return;
+    }
 
     setAuthBusy(true);
     setAuthError(null);

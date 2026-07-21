@@ -129,6 +129,16 @@ assert.ok(
     !source.includes("window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY"),
   "email auth and callback cleanup must use guarded bounded pending-context helpers",
 );
+const emailHandlerSource = source.slice(
+  source.indexOf("async function handleAuthSubmit"),
+  source.indexOf("async function handleResendVerificationEmail"),
+);
+assert.ok(
+  emailHandlerSource.includes("const pendingContextCleared = clearPendingGitHubAuth(window);") &&
+    emailHandlerSource.includes("if (!pendingContextCleared)") &&
+    emailHandlerSource.indexOf("if (!pendingContextCleared)") < emailHandlerSource.indexOf("setAuthBusy(true)"),
+  "email auth must stop before any request when stale GitHub context cannot be removed",
+);
 assert.ok(
   !source.includes('params.get(DESKTOP_ONBOARDING_PARAM) === "1"') &&
     source.includes("initialization.desktopOnboarding"),
