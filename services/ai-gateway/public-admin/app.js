@@ -1545,6 +1545,18 @@ function formatAdminError(error) {
   return error instanceof Error ? error.message : "unknown_error";
 }
 
+function formatOrganizationDomainError(error) {
+  const code = typeof error?.payload?.error === "string"
+    ? error.payload.error
+    : error instanceof Error ? error.message : "unknown_error";
+  switch (code) {
+    case "domain_verified_member_required":
+      return "Add and verify a member email from this domain before registering it.";
+    default:
+      return code;
+  }
+}
+
 async function bootstrapSession({ refreshVisibleRoute = false } = {}) {
   const activeLoad = refreshVisibleRoute && state.session && state.route
     ? beginRouteDataLoad(state.route)
@@ -3791,7 +3803,7 @@ async function saveOrganizationDomainModal() {
   } catch (error) {
     if (!isCurrentRouteMutation(mutation)) return;
     setDomainModalStatus(
-      `Unable to save domain: ${error instanceof Error ? error.message : "unknown_error"}`,
+      `Unable to save domain: ${formatOrganizationDomainError(error)}`,
       "error",
     );
   } finally {

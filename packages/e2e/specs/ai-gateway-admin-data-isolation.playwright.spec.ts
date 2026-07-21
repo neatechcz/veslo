@@ -752,6 +752,43 @@ test.describe('AI Gateway admin data isolation', () => {
     await expect(page.locator('[data-user-id]')).toHaveCount(0);
   });
 
+  test('verified-member domain conflict keeps the add modal usable and never adds an optimistic row', async ({ page }) => {
+    const harness = await installAdminHarness(page);
+    const domainsPath = `/admin/api/organizations/${ORG_A.id}/domains`;
+    const rejectedDomain = 'unverified-domain.example';
+
+    await openAdmin(page, `/admin/organizations/${ORG_A.id}/domains-invites`);
+    await expect(page.locator('[data-domain-id]')).toHaveCount(1);
+    await page.locator('#organization-domain-add-button').click();
+    await expect(page.locator('#organization-domain-modal')).toHaveAttribute('open', '');
+    await page.locator('#organization-domain-modal-domain').fill(rejectedDomain);
+
+    const rejectedSave = harness.delayNext('POST', domainsPath);
+    await page.locator('#organization-domain-modal-save').click();
+    const request = await rejectedSave.arrived;
+    expect(request.body).toEqual({
+      domain: rejectedDomain,
+      enabled: true,
+      selfSignupEnabled: false,
+    });
+    await expect(page.locator('#organization-domain-modal-save')).toBeDisabled();
+    await expect(page.locator('[data-domain-id]')).toHaveCount(1);
+    await expect(page.locator('#organization-domain-list')).not.toContainText(rejectedDomain);
+
+    rejectedSave.release(json(409, { error: 'domain_verified_member_required' }));
+
+    await expect(page.locator('#organization-domain-modal')).toHaveAttribute('open', '');
+    await expect(page.locator('#organization-domain-modal-status')).toHaveText(
+      'Unable to save domain: Add and verify a member email from this domain before registering it.',
+    );
+    await expect(page.locator('#organization-domain-modal-status')).toHaveAttribute('data-tone', 'error');
+    await expect(page.locator('#organization-domain-modal-save')).toBeEnabled();
+    await expect(page.locator('#organization-domain-modal-domain')).toHaveValue(rejectedDomain);
+    await expect(page.locator('[data-domain-id]')).toHaveCount(1);
+    await expect(page.locator('#organization-domain-list')).not.toContainText(rejectedDomain);
+    expect(requestCount(harness.records, 'GET', domainsPath)).toBe(1);
+  });
+
   test('route-owned dialogs close immediately and late abandoned organization responses cannot restore selected content', async ({ page }) => {
     const harness = await installAdminHarness(page);
     await openAdmin(page, `/admin/organizations/${ORG_A.id}/domains-invites`);
