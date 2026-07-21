@@ -9,7 +9,7 @@ import { maybeAssignDefaultManagedAiAccessForNewUser } from "./managed-ai/signup
 import * as schema from "./db/schema.js"
 import { fireAndForgetAuthEmail, sendResetPasswordAuthEmail, sendVerificationAuthEmail } from "./email/auth-mailer.js"
 import { env, isAuthEmailConfigured } from "./env.js"
-import { ensureDefaultOrg } from "./orgs.js"
+import { ensureSignupOrganization } from "./orgs.js"
 import {
   resolveEmailSignupAccess,
   runSignupAfterUserCreateSideEffects,
@@ -115,7 +115,7 @@ export const auth = betterAuth({
             resolveEnabledOrganizationDomainForEmail,
             createOrActivateOrganizationMembership,
             acceptOrganizationInvite,
-            ensureDefaultOrg,
+            ensureSignupOrganization,
             assignManagedAiAccess: maybeAssignDefaultManagedAiAccessForNewUser,
             cleanupCreatedAuthUser,
           })
