@@ -2,6 +2,7 @@ import { Router } from "express"
 
 import type { OrganizationBillingEntitlement } from "../../billing/organization-billing.js"
 import { pickActiveOrganization } from "../../http/access.js"
+import { respondToSessionPolicyRejection } from "../../http/email-verification.js"
 import {
   findUserOrganization,
   readRequestedOrganizationId,
@@ -43,7 +44,16 @@ export function createProxyRouter(deps: ProxyDependencies) {
       return
     }
 
-    const session = await deps.gatewaySessions.resolveSession(token)
+    let session
+    try {
+      session = await deps.gatewaySessions.resolveSession(token)
+    } catch (error) {
+      if (respondToSessionPolicyRejection(res, error)) {
+        return
+      }
+      next(error)
+      return
+    }
     if (!session) {
       res.status(401).json({ error: "unauthorized" })
       return

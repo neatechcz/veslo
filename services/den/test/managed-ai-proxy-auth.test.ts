@@ -3,6 +3,7 @@ import { once } from "node:events"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
 import express from "express"
+import type { GatewaySessionResolver } from "../src/managed-ai/auth/gateway-session.js"
 
 Object.assign(process.env, {
   DATABASE_URL: "mysql://root:root@127.0.0.1:3306/veslo_den",
@@ -11,25 +12,26 @@ Object.assign(process.env, {
 })
 
 const { createProxyRouter } = await import("../src/managed-ai/http/proxy.js")
+const { SessionPolicyRejectionError } = await import("../src/http/email-verification.js")
 
-function createProxyApp() {
+function createProxyApp(gatewaySessions: GatewaySessionResolver = {
+  async resolveSession(token: string) {
+    assert.equal(token, "gateway-access-token")
+    return {
+      token,
+      user: {
+        id: "user_gateway",
+        email: "gateway@example.test",
+      },
+    }
+  },
+}) {
   const app = express()
   app.use(express.json())
   app.use(
     createProxyRouter({
       denInferenceMode: "legacy_rollback",
-      gatewaySessions: {
-        async resolveSession(token: string) {
-          assert.equal(token, "gateway-access-token")
-          return {
-            token,
-            user: {
-              id: "user_gateway",
-              email: "gateway@example.test",
-            },
-          }
-        },
-      },
+      gatewaySessions,
       credentials: {
         async getCredentialRecordById() {
           return null
@@ -119,6 +121,48 @@ test("provider proxy rejects requests without x-veslo-session-id", async () => {
 
     assert.equal(response.status, 400)
     assert.deepEqual(await response.json(), { error: "missing_session_id" })
+  } finally {
+    server.close()
+    await once(server, "close")
+  }
+})
+
+test("legacy provider proxy preserves an email-verification-required session rejection", async () => {
+  const server = createProxyApp({
+    async resolveSession() {
+      throw new SessionPolicyRejectionError({
+        status: 403,
+        body: {
+          error: "email_verification_required",
+          message: "Verify your email to continue.",
+          email: "user@example.com",
+        },
+      })
+    },
+  }).listen(0, "127.0.0.1")
+  await once(server, "listening")
+
+  try {
+    const { port } = server.address() as AddressInfo
+    const response = await fetch(`http://127.0.0.1:${port}/providers/openai/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer gateway-access-token",
+        "content-type": "application/json",
+        "x-veslo-session-id": "session_auth_1",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    })
+
+    assert.equal(response.status, 403)
+    assert.deepEqual(await response.json(), {
+      error: "email_verification_required",
+      message: "Verify your email to continue.",
+      email: "user@example.com",
+    })
   } finally {
     server.close()
     await once(server, "close")
