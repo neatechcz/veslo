@@ -32,6 +32,7 @@
     "test:pilot:session-render-stability": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-render-stability",
     "test:pilot:session-run-truthfulness": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-run-truthfulness",
     "test:pilot:feedback-youtrack-live": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario feedback-youtrack-live",
+    "test:pilot:email-verification-handoff": "node ../../services/den/scripts/run-email-verification-integration.mjs --pilot",
     "test:pilot:live-admin-codex-roundtrip": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario live-admin-codex-roundtrip",
     "test:pilot:den-managed-openai-anthropic": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario den-managed-openai-anthropic",
     "test:update-baselines": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario visual-regression",

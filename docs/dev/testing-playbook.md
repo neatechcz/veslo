@@ -268,6 +268,39 @@ pnpm test:pilot -- --scenario sidebar-session-retention
 pnpm test:pilot -- --scenario <name-or-path>
 ```
 
+For the email-verification desktop handoff boundary, run the Desktop Test
+Runtime Preflight first, build the Pilot-enabled desktop binary with the E2E
+config shown above, then use the focused command from `packages/e2e`:
+
+```bash
+pnpm test:pilot:email-verification-handoff
+```
+
+The focused command owns a random Docker Compose project with loopback-only
+MySQL, a real DEN process, and a Lettr capture service. It creates one legacy
+unverified session whose desktop transaction remains pending without a code and
+one post-verification transaction with a one-time PKCE handoff. The runner uses
+a fresh signed-out desktop profile, seeds only the verified PKCE proof, and
+delivers the authorized `veslo://auth-complete` URL by launching the actual
+Tauri binary a second time so the native single-instance/deep-link fan-in is
+exercised. That secondary process requires the explicit loopback HTTP(S) DEN
+fixture URL and receives only the isolated harness profile, desktop port, and OS
+launch variables; it does not inherit the primary Pilot socket, live provider
+credentials, updater variables, or user
+profile paths. The harness waits for the secondary process to exit and, on a
+timeout or launch error, terminates and awaits that exact child before reporting
+the delivery failure. The underlying focused Pilot invocation is
+`pnpm test:pilot -- --scenario email-verification-handoff`; use the wrapper so
+the fixture artifact, DEN process, app profile, container, network, and volume
+are lifecycle-owned and cleaned up. This focused selection also sets
+`VESLO_E2E_DISABLE_UPDATER=1`, removes only the exact harness-owned
+`.tmp-veslo-home` and `.tmp-opencode-home` profiles after the app has stopped,
+and audits the random Compose project's container, network, and volume labels
+after `docker compose down`. A cleanup failure fails the command and is reported
+alongside any earlier acceptance failure. The scenario requires the verified email
+to be visible in the desktop UI and to match both WebView auth storage and the
+native persisted auth snapshot.
+
 `test:pilot:global-managed-ai-model-policy` is a focused-only, isolated-profile
 acceptance scenario. It starts a secret-free local fixture that mounts the real
 AI Gateway session, entitlement, user-access, global-model, credential, and

@@ -5,6 +5,10 @@ import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import {
+  assertComposeProjectResourcesAbsent,
+  combineAcceptanceAndCleanupErrors,
+} from "./email-verification-harness-cleanup.mjs"
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const denDir = resolve(scriptDir, "..")
@@ -26,12 +30,17 @@ let interruptedSignal = null
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.once(signal, () => {
     interruptedSignal = signal
-    void teardown().finally(() => {
-      process.exit(signalExitCode(signal))
-    })
+    void teardown()
+      .catch((error) => {
+        console.error(`[email-verification-acceptance] cleanup failed after ${signal}:`, error)
+      })
+      .finally(() => {
+        process.exit(signalExitCode(signal))
+      })
   })
 }
 
+let acceptanceError = null
 try {
   await assertCommandAvailable("docker", ["compose", "version"])
   await writeFile(composeOverride, [
@@ -110,7 +119,7 @@ try {
       ["--dir", denDir, "exec", "tsx", "--test", "test/auth-email-verification.integration.test.ts"],
       { cwd: repoRoot, env: fixtureEnvironment },
     )
-  } else {
+  } else if (mode === "browser") {
     await runOwned(
       "pnpm",
       [
@@ -125,29 +134,100 @@ try {
       ],
       { cwd: repoRoot, env: fixtureEnvironment },
     )
+  } else {
+    const pilotFixturePath = join(tempRoot, "email-verification-handoff-fixture.json")
+    await runOwned(
+      "pnpm",
+      ["--dir", denDir, "exec", "tsx", "test/prepare-email-verification-pilot-fixture.ts"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...fixtureEnvironment,
+          VESLO_TEST_EMAIL_VERIFICATION_PILOT_FIXTURE_PATH: pilotFixturePath,
+        },
+      },
+    )
+    await runOwned(
+      "pnpm",
+      ["--dir", join(repoRoot, "packages/e2e"), "test:pilot", "--", "--scenario", "email-verification-handoff"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...sanitizedEnvironment(),
+          VESLO_TEST_DEN_BASE_URL: denBaseUrl,
+          VESLO_TEST_EMAIL_VERIFICATION_PILOT_FIXTURE_PATH: pilotFixturePath,
+        },
+      },
+    )
   }
-} finally {
+} catch (error) {
+  acceptanceError = error
+}
+
+let cleanupError = null
+try {
   await teardown()
+} catch (error) {
+  cleanupError = error
+}
+const finalError = combineAcceptanceAndCleanupErrors(acceptanceError, cleanupError)
+if (finalError) {
+  throw finalError
 }
 
 async function teardown() {
   if (teardownPromise) return teardownPromise
   teardownPromise = (async () => {
+    const cleanupErrors = []
     for (const child of [...ownedChildren]) {
-      await terminateOwnedChild(child)
+      try {
+        await terminateOwnedChild(child)
+      } catch (error) {
+        cleanupErrors.push(error)
+      }
     }
     if (captureFixture) {
-      await captureFixture.close()
+      try {
+        await captureFixture.close()
+      } catch (error) {
+        cleanupErrors.push(error)
+      }
       captureFixture = undefined
     }
 
-    await runOwned(
-      "docker",
-      composeArgs("down", "--volumes", "--remove-orphans"),
-      { cwd: repoRoot, env: sanitizedEnvironment(), allowFailure: true },
-    ).catch(() => {})
+    try {
+      await runOwned(
+        "docker",
+        composeArgs("down", "--volumes", "--remove-orphans"),
+        { cwd: repoRoot, env: sanitizedEnvironment() },
+      )
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
 
-    await rm(tempRoot, { recursive: true, force: true })
+    try {
+      await assertComposeProjectResourcesAbsent(
+        composeProject,
+        (command, args) => captureOwned(command, args, {
+          cwd: repoRoot,
+          env: sanitizedEnvironment(),
+        }),
+      )
+      console.log(`[email-verification-acceptance] cleanup audit clear for ${composeProject}`)
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+
+    try {
+      await rm(tempRoot, { recursive: true, force: true })
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+
+    if (cleanupErrors.length === 1) throw cleanupErrors[0]
+    if (cleanupErrors.length > 1) {
+      throw new AggregateError(cleanupErrors, "Email verification harness cleanup failed.")
+    }
   })()
   return teardownPromise
 }
@@ -297,8 +377,8 @@ function parsePublishedPort(value) {
 }
 
 function parseMode(args) {
-  if (args.length !== 1 || !["--integration", "--browser"].includes(args[0])) {
-    throw new Error("Usage: run-email-verification-integration.mjs --integration|--browser")
+  if (args.length !== 1 || !["--integration", "--browser", "--pilot"].includes(args[0])) {
+    throw new Error("Usage: run-email-verification-integration.mjs --integration|--browser|--pilot")
   }
   return args[0].slice(2)
 }
@@ -319,10 +399,9 @@ async function captureOwned(command, args, options) {
 }
 
 async function runOwned(command, args, options) {
-  const { allowFailure = false, ...spawnOptions } = options
-  const child = spawnOwned(command, args, { ...spawnOptions, stdio: spawnOptions.stdio ?? "inherit" })
+  const child = spawnOwned(command, args, { ...options, stdio: options.stdio ?? "inherit" })
   const code = await waitForChild(child)
-  if (code !== 0 && !allowFailure && !interruptedSignal) {
+  if (code !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with exit code ${code}`)
   }
   return code

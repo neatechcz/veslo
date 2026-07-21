@@ -40,6 +40,19 @@ test("resolveDesktopAuthSeedFromEnv builds a seed from raw auth env values", () 
   });
 });
 
+test("resolveDesktopAuthSeedFromEnv can create an explicit signed-out isolated profile", () => {
+  assert.deepEqual(
+    resolveDesktopAuthSeedFromEnv({ E2E_DESKTOP_AUTH_SIGNED_OUT: "1" }),
+    {
+      authJson: null,
+      keepSignedIn: false,
+      language: "en",
+      onboardingComplete: true,
+      source: "e2e-signed-out",
+    },
+  );
+});
+
 test("resolveDesktopAuthSeedFromEnv accepts the documented E2E auth env names", () => {
   const seed = resolveDesktopAuthSeedFromEnv({
     E2E_DEN_AUTH_JSON: JSON.stringify({

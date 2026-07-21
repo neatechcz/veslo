@@ -110,6 +110,16 @@ test('runner installs the browser-only Pilot prelude after every ready desktop l
   assert.match(source, /await startApp\(\{[\s\S]*pilotDiagnostics: pilotRunLaunchDiagnostics\(runContext, 2\)[\s\S]*await installPilotBrowserPrelude\(/);
 });
 
+test('email handoff runner cleans exact harness profiles after app stop even on stop failure', () => {
+  const source = readFileSync(new URL('./pilot-runner.ts', import.meta.url), 'utf8');
+
+  assert.match(
+    source,
+    /try \{\s*await stopApp\(\);\s*\} finally \{\s*if \(usesEmailVerificationHandoffFixture\) \{\s*cleanupHarnessOwnedIsolatedProfilePaths\(\{[\s\S]*profileRoot: join\(e2eRoot, '\.tmp-veslo-home'\),[\s\S]*opencodeHome: join\(e2eRoot, '\.tmp-opencode-home'\),/,
+  );
+  assert.match(source, /runContext\.record\('email-verification\.profiles\.cleaned'\)/);
+});
+
 test('canonical live inference observes a cold real response with diagnostic collection grace', () => {
   assert.equal(resolveCanonicalLiveInferenceCommandTimeoutMs({}), 185_000);
   assert.equal(

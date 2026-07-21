@@ -47,6 +47,10 @@ test('e2e package exposes only Tauri Pilot and Playwright scripts', () => {
     packageJson.scripts['test:pilot:feedback-youtrack-live'],
     'node --import=tsx/esm ./helpers/pilot-runner.ts --scenario feedback-youtrack-live',
   );
+  assert.equal(
+    packageJson.scripts['test:pilot:email-verification-handoff'],
+    'node ../../services/den/scripts/run-email-verification-integration.mjs --pilot',
+  );
 
   for (const [name, command] of Object.entries(packageJson.scripts)) {
     assert.doesNotMatch(command, /\bwdio\b|webdriverio|WebDriverIO/i, `${name} still references WDIO`);

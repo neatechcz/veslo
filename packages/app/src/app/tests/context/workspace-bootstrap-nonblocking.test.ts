@@ -57,6 +57,11 @@ test("tauri updater environment detection is scheduled outside the awaited start
     /void updaterEnvironment\(\)[\s\S]*deps\.setUpdateEnv\(env\)[\s\S]*deps\.checkForUpdates\(\{ quiet: true \}\)/s,
     "updater environment and quiet update check should remain in the background updater startup chain",
   );
+  assert.match(
+    updaterStartup,
+    /deps\.setUpdateEnv\(env\);[\s\S]*if \(!env\.supported\) return;/s,
+    "unsupported and explicitly disabled runtimes should not start the updater check path",
+  );
 });
 
 test("bootstrap publishes local workspace shell before workspace config read completes", () => {
