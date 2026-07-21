@@ -121,6 +121,23 @@ In Tauri startup flows, the desktop auth snapshot is allowed to repair stale bro
 
 Desktop auth snapshots can also carry first-run UI metadata such as language and onboarding completion. Those snapshot values only fill missing or invalid browser-stored UI preferences; they must not overwrite a valid local `veslo.language` or `veslo.onboardingComplete` value.
 
+### Hosted Signup Invitation State and Email Config
+
+Hosted signup keeps invitation context in session-scoped browser state:
+
+- `veslo:signup-invite-token` stores the captured invitation token for the current browser session.
+- `veslo:web:pending-github-auth` stores the bounded, single-use GitHub callback correlation record.
+
+Neither value belongs in `localStorage`; their normal browser persistence is `sessionStorage`. During GitHub OAuth, Better Auth also carries the invitation token temporarily in encrypted cookie-backed OAuth state. On the public web surface, an invitation URL that cannot be removed from browser history keeps telemetry disabled; the DEN-hosted onboarding page does not initialize telemetry.
+
+DEN auth email, including organization-invitation email, uses Lettr over HTTPS. A delivery attempt requires these DEN environment values:
+
+- `LETTR_API_KEY` - Lettr API credential.
+- `AUTH_EMAIL_ADDRESS` - sender email address.
+- `AUTH_EMAIL_FROM_NAME` - optional sender display name.
+
+Organization-admin invitation create and resend operations queue email in the background after the invitation change commits. They do not wait for or guarantee delivery: the admin operation can succeed when required mail configuration is absent or Lettr rejects the message, and DEN logs the mailer failure.
+
 ## Veslo Error Monitoring
 
 Veslo can send application errors to a Sentry-compatible service such as the internal Neatech GlitchTip instance. Monitoring is disabled unless a DSN is explicitly configured.
