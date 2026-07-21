@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto"
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import {
   createAutomaticOrganizationTrialService,
   createDrizzleAutomaticOrganizationTrialStore,
@@ -101,6 +101,18 @@ async function findExistingOrganizationId(userId: string) {
   return existing[0]?.orgId ?? null
 }
 
+export async function findExistingActiveOrganizationId(userId: string) {
+  const existing = await db
+    .select({ orgId: OrgMembershipTable.org_id })
+    .from(OrgMembershipTable)
+    .where(and(
+      eq(OrgMembershipTable.user_id, userId),
+      eq(OrgMembershipTable.status, "active"),
+    ))
+    .limit(1)
+  return existing[0]?.orgId ?? null
+}
+
 export const ensureDefaultOrg = createEnsureDefaultOrg({
   createId: randomUUID,
   findExistingOrganizationId,
@@ -127,7 +139,7 @@ export const ensureDefaultOrg = createEnsureDefaultOrg({
 
 export const ensureSignupOrganization = createEnsureSignupOrganization({
   createId: randomUUID,
-  findExistingOrganizationId,
+  findExistingOrganizationId: findExistingActiveOrganizationId,
   createOrganizationMembershipDomainAndTrial: createSignupOrganizationPersistence(db),
 })
 

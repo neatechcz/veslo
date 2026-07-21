@@ -266,62 +266,125 @@ export async function completeSignupAfterUserCreate(input: CompleteSignupAfterUs
   }
 }
 
-export type RunSignupAfterUserCreateSideEffectsInput = CompleteSignupAfterUserCreateInput & {
+export type RunSignupAfterUserCreateSideEffectsInput = Omit<CompleteSignupAfterUserCreateInput, "user"> & {
+  user: CompleteSignupAfterUserCreateInput["user"] & {
+    emailVerified: boolean
+  }
   name: string
-  ensureSignupOrganization(userId: string, name: string, email: string): Promise<unknown>
+  findExistingOrganizationId(userId: string): Promise<string | null>
+  ensureSignupOrganization(userId: string, name: string, email: string): Promise<string>
   assignManagedAiAccess(userId: string): Promise<unknown>
   cleanupCreatedAuthUser(userId: string): Promise<void>
 }
 
-export async function runSignupAfterUserCreateSideEffects(input: RunSignupAfterUserCreateSideEffectsInput) {
-  let signupResult: Awaited<ReturnType<typeof completeSignupAfterUserCreate>>
-  let hasActiveMembership = false
+export type ProvisionVerifiedSignupUserInput = {
+  user: {
+    id: string
+    name: string | null | undefined
+    email: string | null | undefined
+    emailVerified: boolean
+  }
+  createMembershipId(): string
+  findExistingOrganizationId(userId: string): Promise<string | null>
+  resolveEnabledOrganizationDomainForEmail(email: string): Promise<OrganizationAdminResolvedDomain>
+  createOrActivateOrganizationMembership(input: {
+    membershipId: string
+    orgId: string
+    userId: string
+    role: (typeof OrgRole)[number]
+  }): Promise<OrganizationAdminMembershipRecord>
+  ensureSignupOrganization(userId: string, name: string, email: string): Promise<string>
+  assignManagedAiAccess(userId: string): Promise<unknown>
+}
 
-  try {
-    signupResult = await completeSignupAfterUserCreate(input)
-    hasActiveMembership = signupResult.activatedOrganizationMembership
+export async function provisionVerifiedSignupUser(input: ProvisionVerifiedSignupUserInput) {
+  if (!input.user.emailVerified) {
+    return {
+      awaitingEmailVerification: true as const,
+      activatedOrganizationMembership: false,
+      organizationId: null,
+    }
+  }
 
-    if (signupResult.createSignupOrganization) {
-      const email = normalizeInviteEmail(input.user.email)
-      if (!email) {
-        throw new OrganizationAdminRepositoryError("domain_not_allowed")
-      }
+  const email = normalizeInviteEmail(input.user.email)
+  if (!email) {
+    throw new OrganizationAdminRepositoryError("domain_not_allowed")
+  }
 
+  let organizationId = await input.findExistingOrganizationId(input.user.id)
+  if (!organizationId) {
+    const matchingDomain = await resolveAllowedDomain(email, input)
+    if (matchingDomain) {
+      await input.createOrActivateOrganizationMembership({
+        membershipId: input.createMembershipId(),
+        orgId: matchingDomain.orgId,
+        userId: input.user.id,
+        role: "member",
+      })
+      organizationId = matchingDomain.orgId
+    } else {
       try {
-        await input.ensureSignupOrganization(input.user.id, input.name, email)
+        organizationId = await input.ensureSignupOrganization(
+          input.user.id,
+          input.user.name ?? email,
+          email,
+        )
       } catch (error) {
         if (!(error instanceof SignupOrganizationDomainConflictError)) {
           throw error
         }
 
-        const matchingDomain = await resolveAllowedDomain(email, input)
-        if (!matchingDomain) {
+        const winningDomain = await resolveAllowedDomain(email, input)
+        if (!winningDomain) {
           throw new OrganizationAdminRepositoryError("domain_not_allowed")
         }
         await input.createOrActivateOrganizationMembership({
           membershipId: input.createMembershipId(),
-          orgId: matchingDomain.orgId,
+          orgId: winningDomain.orgId,
           userId: input.user.id,
           role: "member",
         })
+        organizationId = winningDomain.orgId
       }
-
-      signupResult = {
-        activatedOrganizationMembership: true,
-        createSignupOrganization: false,
-      }
-      hasActiveMembership = true
     }
+  }
+
+  await input.assignManagedAiAccess(input.user.id)
+  return {
+    awaitingEmailVerification: false as const,
+    activatedOrganizationMembership: true,
+    organizationId,
+  }
+}
+
+export async function runSignupAfterUserCreateSideEffects(input: RunSignupAfterUserCreateSideEffectsInput) {
+  try {
+    const signupResult = await completeSignupAfterUserCreate(input)
+
+    if (!input.user.emailVerified) {
+      return {
+        awaitingEmailVerification: true as const,
+        activatedOrganizationMembership: signupResult.activatedOrganizationMembership,
+        createSignupOrganization: false as const,
+      }
+    }
+
+    return await provisionVerifiedSignupUser({
+      user: {
+        ...input.user,
+        name: input.name,
+      },
+      createMembershipId: input.createMembershipId,
+      findExistingOrganizationId: input.findExistingOrganizationId,
+      resolveEnabledOrganizationDomainForEmail: input.resolveEnabledOrganizationDomainForEmail,
+      createOrActivateOrganizationMembership: input.createOrActivateOrganizationMembership,
+      ensureSignupOrganization: input.ensureSignupOrganization,
+      assignManagedAiAccess: input.assignManagedAiAccess,
+    })
   } catch (error) {
     await input.cleanupCreatedAuthUser(input.user.id)
     throw error
   }
-
-  if (hasActiveMembership) {
-    await input.assignManagedAiAccess(input.user.id)
-  }
-
-  return signupResult
 }
 
 async function resolveAllowedDomain(

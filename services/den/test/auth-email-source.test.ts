@@ -27,6 +27,8 @@ test("auth config wires Better Auth verification and reset callbacks", () => {
   assert.equal(source.includes('disabledPaths: ["/send-verification-email"]'), true)
   assert.equal(source.includes('ctx.path === "/send-verification-email"'), false)
   assert.equal(source.includes("maybeAssignDefaultManagedAiAccessForNewUser"), true)
+  assert.equal(source.includes("afterEmailVerification:"), true)
+  assert.equal(source.includes("provisionVerifiedSignupIdentity"), true)
 })
 
 test("den env exposes auth email provider configuration", () => {
@@ -70,6 +72,18 @@ test("auth user create hook gates before insert, activates organization access, 
   assert.ok(afterHookIndex > beforeHookIndex)
   assert.ok(source.indexOf("authorizeSignupBeforeUserCreate", beforeHookIndex) < source.indexOf("runSignupAfterUserCreateSideEffects", afterHookIndex))
   assert.ok(source.lastIndexOf("runSignupAfterUserCreateSideEffects") < source.lastIndexOf("maybeAssignDefaultManagedAiAccessForNewUser"))
+})
+
+test("auth user creation defers unverified identities, provisions trusted verified identities, and preserves admin provisioning", () => {
+  const afterHookIndex = source.indexOf("after: async (user, context)")
+  assert.ok(afterHookIndex >= 0)
+  const afterHookSource = source.slice(afterHookIndex, source.indexOf("},\n      },", afterHookIndex))
+
+  assert.match(afterHookSource, /isAdminProvisioningSignupRequest\(context\)/)
+  assert.match(afterHookSource, /emailVerified: user\.emailVerified === true/)
+  assert.match(afterHookSource, /findExistingOrganizationId: findExistingActiveOrganizationId/)
+  assert.match(source, /afterEmailVerification: async \(user(?:[^)]*)\)/)
+  assert.match(source, /await provisionVerifiedSignupIdentity/)
 })
 
 test("auth activation cleanup removes only Better Auth rows for the created user", () => {

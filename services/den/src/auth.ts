@@ -10,13 +10,14 @@ import { maybeAssignDefaultManagedAiAccessForNewUser } from "./managed-ai/signup
 import * as schema from "./db/schema.js"
 import { fireAndForgetAuthEmail, sendResetPasswordAuthEmail, sendVerificationAuthEmail } from "./email/auth-mailer.js"
 import { env, isAuthEmailConfigured } from "./env.js"
-import { ensureSignupOrganization } from "./orgs.js"
+import { ensureSignupOrganization, findExistingActiveOrganizationId } from "./orgs.js"
 import {
   resolveEmailSignupAccess,
   runSignupAfterUserCreateSideEffects,
   type SignupAccessError,
 } from "./auth/signup-gate.js"
 import { isAdminProvisioningSignupRequest } from "./auth/admin-provisioning.js"
+import { provisionVerifiedSignupIdentity } from "./auth/verified-signup.js"
 import { normalizeInviteEmail } from "./org-admin/policy.js"
 import {
   acceptOrganizationInvite,
@@ -72,6 +73,19 @@ const authEmailVerification = isAuthEmailConfigured()
       sendOnSignIn: true,
       autoSignInAfterVerification: false,
       sendVerificationEmail: sendVerificationEmailForAuth,
+      afterEmailVerification: async (user: {
+        id: string
+        name?: string | null
+        email?: string | null
+        emailVerified?: boolean
+      }) => {
+        await provisionVerifiedSignupIdentity({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          emailVerified: user.emailVerified === true,
+        })
+      },
     }
   : undefined
 
@@ -114,15 +128,21 @@ export const auth = betterAuth({
           })
         },
         after: async (user, context) => {
+          if (isAdminProvisioningSignupRequest(context)) {
+            return
+          }
+
           const name = user.name ?? user.email ?? "Personal"
           await runSignupAfterUserCreateSideEffects({
             user: {
               id: user.id,
               email: user.email,
+              emailVerified: user.emailVerified === true,
             },
             name,
             inviteToken: readInviteTokenFromAuthContext(context),
             createMembershipId: randomUUID,
+            findExistingOrganizationId: findExistingActiveOrganizationId,
             resolveEnabledOrganizationDomainForEmail,
             createOrActivateOrganizationMembership,
             acceptOrganizationInvite,
