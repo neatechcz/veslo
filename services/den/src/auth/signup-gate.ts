@@ -369,8 +369,45 @@ export async function provisionVerifiedSignupUser(input: ProvisionVerifiedSignup
 }
 
 export async function runSignupAfterUserCreateSideEffects(input: RunSignupAfterUserCreateSideEffectsInput) {
+  let durableSideEffectsStarted = false
+  const createOrActivateOrganizationMembership: typeof input.createOrActivateOrganizationMembership = async (membership) => {
+    durableSideEffectsStarted = true
+    return input.createOrActivateOrganizationMembership(membership)
+  }
+  const acceptOrganizationInvite: typeof input.acceptOrganizationInvite = async (invite) => {
+    durableSideEffectsStarted = true
+    return input.acceptOrganizationInvite(invite)
+  }
+  const findExistingOrganizationId: typeof input.findExistingOrganizationId = async (userId) => {
+    const organizationId = await input.findExistingOrganizationId(userId)
+    if (organizationId) {
+      durableSideEffectsStarted = true
+    }
+    return organizationId
+  }
+  const ensureSignupOrganization: typeof input.ensureSignupOrganization = async (userId, name, email) => {
+    const hadDurableSideEffects = durableSideEffectsStarted
+    durableSideEffectsStarted = true
+    try {
+      return await input.ensureSignupOrganization(userId, name, email)
+    } catch (error) {
+      if (error instanceof SignupOrganizationDomainConflictError) {
+        durableSideEffectsStarted = hadDurableSideEffects
+      }
+      throw error
+    }
+  }
+  const assignManagedAiAccess: typeof input.assignManagedAiAccess = async (userId) => {
+    durableSideEffectsStarted = true
+    return input.assignManagedAiAccess(userId)
+  }
+
   try {
-    const signupResult = await completeSignupAfterUserCreate(input)
+    const signupResult = await completeSignupAfterUserCreate({
+      ...input,
+      createOrActivateOrganizationMembership,
+      acceptOrganizationInvite,
+    })
 
     if (!input.user.emailVerified) {
       return {
@@ -387,14 +424,16 @@ export async function runSignupAfterUserCreateSideEffects(input: RunSignupAfterU
       },
       runWithUserProvisioningLock: input.runWithUserProvisioningLock,
       createMembershipId: input.createMembershipId,
-      findExistingOrganizationId: input.findExistingOrganizationId,
+      findExistingOrganizationId,
       resolveEnabledOrganizationDomainForEmail: input.resolveEnabledOrganizationDomainForEmail,
-      createOrActivateOrganizationMembership: input.createOrActivateOrganizationMembership,
-      ensureSignupOrganization: input.ensureSignupOrganization,
-      assignManagedAiAccess: input.assignManagedAiAccess,
+      createOrActivateOrganizationMembership,
+      ensureSignupOrganization,
+      assignManagedAiAccess,
     })
   } catch (error) {
-    await input.cleanupCreatedAuthUser(input.user.id)
+    if (!durableSideEffectsStarted) {
+      await input.cleanupCreatedAuthUser(input.user.id)
+    }
     throw error
   }
 }

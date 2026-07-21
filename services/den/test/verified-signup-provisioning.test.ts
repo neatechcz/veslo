@@ -354,6 +354,130 @@ test("trusted verified social creation provisions immediately", async () => {
   assert.deepEqual(calls, ["organization-domain-trial", "ai-access"])
 })
 
+test("lock acquisition failure after domain membership activation preserves the auth user for recovery", async () => {
+  const lockError = new Error("signup_user_provisioning_lock_unavailable")
+  const calls: string[] = []
+
+  await assert.rejects(runSignupAfterUserCreateSideEffects({
+    user: {
+      id: "user_domain_lock_failure",
+      email: "member@team.example.com",
+      emailVerified: true,
+    },
+    name: "Domain Member",
+    inviteToken: null,
+    runWithUserProvisioningLock: async () => {
+      calls.push("lock:acquire")
+      throw lockError
+    },
+    createMembershipId: () => "membership_domain_lock_failure",
+    findExistingOrganizationId: async () => "org_team",
+    resolveEnabledOrganizationDomainForEmail: async () => ({
+      id: "domain_team",
+      orgId: "org_team",
+      domain: "team.example.com",
+      enabled: true,
+      selfSignupEnabled: true,
+      organization: { id: "org_team", seatLimit: 10 },
+    }),
+    createOrActivateOrganizationMembership: async (input) => {
+      calls.push("membership:active")
+      return {
+        id: input.membershipId,
+        orgId: input.orgId,
+        userId: input.userId,
+        role: input.role,
+        status: "active",
+        createdAt: new Date("2026-07-21T08:00:00.000Z"),
+      }
+    },
+    acceptOrganizationInvite: async () => {
+      throw new Error("invite should not be accepted")
+    },
+    ensureSignupOrganization: async () => {
+      throw new Error("organization should not be created")
+    },
+    assignManagedAiAccess: async () => {
+      calls.push("ai-access")
+    },
+    cleanupCreatedAuthUser: async () => {
+      calls.push("cleanup")
+    },
+  }), lockError)
+
+  assert.deepEqual(calls, ["membership:active", "lock:acquire"])
+})
+
+test("lock release failure after invite activation preserves the auth user for recovery", async () => {
+  const releaseError = new Error("signup_user_provisioning_lock_release_failed")
+  const calls: string[] = []
+  let activeOrganizationId: string | null = null
+
+  await assert.rejects(runSignupAfterUserCreateSideEffects({
+    user: {
+      id: "user_invite_release_failure",
+      email: "invited@other.example.com",
+      emailVerified: true,
+    },
+    name: "Invited Member",
+    inviteToken: "invite_token",
+    runWithUserProvisioningLock: async (_userId, operation) => {
+      calls.push("lock:acquired")
+      await operation()
+      calls.push("lock:release")
+      throw releaseError
+    },
+    createMembershipId: () => "membership_invite_release_failure",
+    findExistingOrganizationId: async () => activeOrganizationId,
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      throw new OrganizationAdminRepositoryError("domain_not_allowed")
+    },
+    createOrActivateOrganizationMembership: async () => {
+      throw new Error("domain membership should not be activated")
+    },
+    acceptOrganizationInvite: async (input) => {
+      calls.push("invite:accepted")
+      activeOrganizationId = "org_invited"
+      return {
+        invite: {
+          id: "invite_release_failure",
+          orgId: "org_invited",
+          email: input.email,
+          role: "member",
+          status: "accepted",
+          tokenHash: input.tokenHash,
+          invitedByUserId: "admin_1",
+          acceptedByUserId: input.userId,
+          expiresAt: null,
+          acceptedAt: new Date("2026-07-21T08:00:00.000Z"),
+          revokedAt: null,
+          createdAt: new Date("2026-07-20T08:00:00.000Z"),
+          updatedAt: new Date("2026-07-21T08:00:00.000Z"),
+        },
+        membership: {
+          id: "membership_invite_release_failure",
+          orgId: "org_invited",
+          userId: input.userId,
+          role: "member",
+          status: "active",
+          createdAt: new Date("2026-07-21T08:00:00.000Z"),
+        },
+      }
+    },
+    ensureSignupOrganization: async () => {
+      throw new Error("organization should not be created")
+    },
+    assignManagedAiAccess: async () => {
+      calls.push("ai-access")
+    },
+    cleanupCreatedAuthUser: async () => {
+      calls.push("cleanup")
+    },
+  }), releaseError)
+
+  assert.deepEqual(calls, ["invite:accepted", "lock:acquired", "lock:release"])
+})
+
 test("verified provisioning retry does not create duplicate organization domain trial or access", async () => {
   let activeOrganizationId: string | null = null
   const organizations = new Set<string>()

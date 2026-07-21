@@ -626,7 +626,7 @@ test("concurrent conflict never re-enables a disabled or invite-only domain", as
   assert.deepEqual(calls, ["bootstrap", "cleanup:user_loser"])
 })
 
-test("post-create activation failure cleans up the just-created auth user before rethrowing", async () => {
+test("post-create activation failure preserves the auth user because the membership write may be durable", async () => {
   const activationError = new Error("seat activation failed")
   const calls: string[] = []
 
@@ -668,7 +668,45 @@ test("post-create activation failure cleans up the just-created auth user before
     activationError,
   )
 
-  assert.deepEqual(calls, ["activate", "cleanup:user_1"])
+  assert.deepEqual(calls, ["activate"])
+})
+
+test("post-create read-only failure cleans up the just-created auth user", async () => {
+  const lookupError = new Error("domain lookup unavailable")
+  const calls: string[] = []
+
+  await assert.rejects(runSignupAfterUserCreateSideEffects({
+    user: { id: "user_read_failure", email: "user@team.example.com", emailVerified: true },
+    name: "Read Failure",
+    inviteToken: null,
+    runWithUserProvisioningLock: runWithoutConcurrency,
+    createMembershipId: () => "membership_unused",
+    findExistingOrganizationId: async () => null,
+    resolveEnabledOrganizationDomainForEmail: async () => {
+      calls.push("resolve-domain")
+      throw lookupError
+    },
+    createOrActivateOrganizationMembership: async () => {
+      calls.push("membership")
+      throw new Error("membership should not be activated")
+    },
+    acceptOrganizationInvite: async () => {
+      calls.push("invite")
+      throw new Error("invite should not be accepted")
+    },
+    ensureSignupOrganization: async () => {
+      calls.push("organization")
+      throw new Error("organization should not be created")
+    },
+    assignManagedAiAccess: async () => {
+      calls.push("ai-access")
+    },
+    cleanupCreatedAuthUser: async (userId) => {
+      calls.push(`cleanup:${userId}`)
+    },
+  }), lookupError)
+
+  assert.deepEqual(calls, ["resolve-domain", "cleanup:user_read_failure"])
 })
 
 test("post-create managed AI assignment runs after active membership creation succeeds", async () => {
