@@ -6,6 +6,7 @@ import {
 } from "./billing/automatic-organization-trial.js"
 import { SignupOrganizationDomainConflictError } from "./auth/signup-organization.js"
 import { db } from "./db/index.js"
+import { isMySqlDuplicateKeyError } from "./db/mysql-errors.js"
 import { OrgMembershipTable, OrgTable, OrganizationDomainTable } from "./db/schema.js"
 import { normalizeEmailDomain } from "./org-admin/policy.js"
 import { OrganizationAdminRepositoryError } from "./org-admin/repository.js"
@@ -154,7 +155,7 @@ export function createSignupOrganizationPersistence(database: any) {
           self_signup_enabled: true,
         })
       } catch (error) {
-        if (isDuplicateKeyError(error)) {
+        if (isMySqlDuplicateKeyError(error)) {
           throw new SignupOrganizationDomainConflictError(input.domain, { cause: error })
         }
         throw error
@@ -163,26 +164,6 @@ export function createSignupOrganizationPersistence(database: any) {
       await createAutomaticOrganizationTrialService({
         store: createDrizzleAutomaticOrganizationTrialStore(tx),
       }).ensureTrial(input.orgId)
-    })
+    }, { isolationLevel: "serializable" })
   }
-}
-
-function isDuplicateKeyError(error: unknown): boolean {
-  if (!error || typeof error !== "object") {
-    return false
-  }
-
-  const candidate = error as {
-    code?: unknown
-    errno?: unknown
-    sqlState?: unknown
-    message?: unknown
-    cause?: unknown
-  }
-  const message = typeof candidate.message === "string" ? candidate.message.toLowerCase() : ""
-
-  return candidate.code === "ER_DUP_ENTRY" ||
-    candidate.errno === 1062 ||
-    (candidate.sqlState === "23000" && message.includes("duplicate")) ||
-    isDuplicateKeyError(candidate.cause)
 }
