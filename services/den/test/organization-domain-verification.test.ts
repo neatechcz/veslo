@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import { once } from "node:events"
-import { readFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
 import express from "express"
@@ -392,22 +391,201 @@ test("production domain mutations start a serializable outer transaction", async
   assert.deepEqual(transactionOptions, { isolationLevel: "serializable" })
 })
 
-test("production domain evidence reader scopes active verified members and trial sync to the transaction", async () => {
-  const verifierSource = await readFile(
-    new URL("../src/org-admin/domain-verification.ts", import.meta.url),
-    "utf8",
-  )
-  const mutationSource = await readFile(
-    new URL("../src/org-admin/domain-mutations.ts", import.meta.url),
-    "utf8",
+type StoredDomain = {
+  id: string
+  org_id: string
+  domain: string
+  enabled: boolean
+  self_signup_enabled: boolean
+  created_at: Date
+  updated_at: Date
+}
+
+function createRecordingDrizzleDomainDatabase(input: {
+  domains?: StoredDomain[]
+  selectResults: Array<() => StoredDomain[]>
+}) {
+  let domains = structuredClone(input.domains ?? [])
+  let selectIndex = 0
+  const calls: string[] = []
+  const tx = {
+    select() {
+      return {
+        from() {
+          return this
+        },
+        where() {
+          return this
+        },
+        async limit() {
+          calls.push(`select:${selectIndex}`)
+          return structuredClone(input.selectResults[selectIndex++]?.() ?? [])
+        },
+      }
+    },
+    insert() {
+      return {
+        async values(value: Omit<StoredDomain, "created_at" | "updated_at">) {
+          calls.push(`insert:${value.domain}`)
+          const now = new Date("2026-07-21T08:00:00.000Z")
+          domains.push({ ...value, created_at: now, updated_at: now })
+        },
+      }
+    },
+    update() {
+      return {
+        set(update: Partial<StoredDomain>) {
+          return {
+            async where() {
+              calls.push(`update:${String(update.domain ?? "settings")}`)
+              domains = domains.map((entry) => ({ ...entry, ...update }))
+            },
+          }
+        },
+      }
+    },
+  }
+  const database = {
+    async transaction<T>(run: (transaction: typeof tx) => Promise<T>, options: unknown) {
+      assert.deepEqual(options, { isolationLevel: "serializable" })
+      const snapshot = structuredClone(domains)
+      calls.push("outer:begin")
+      try {
+        const result = await run(tx)
+        calls.push("outer:commit")
+        return result
+      } catch (error) {
+        domains = snapshot
+        calls.push("outer:rollback")
+        throw error
+      }
+    },
+  }
+
+  return {
+    database,
+    tx,
+    calls,
+    get domains() {
+      return structuredClone(domains)
+    },
+  }
+}
+
+test("production mutation store composes verification and trial sync with the exact outer transaction", async () => {
+  let harness: ReturnType<typeof createRecordingDrizzleDomainDatabase>
+  harness = createRecordingDrizzleDomainDatabase({
+    selectResults: [
+      () => [],
+      () => harness.domains,
+    ],
+  })
+  const factoryTransactions: unknown[] = []
+  const store = createDrizzleOrganizationDomainMutationStore(harness.database, {
+    createMemberReader(transaction) {
+      factoryTransactions.push(transaction)
+      return {
+        async listMembers() {
+          return [{
+            orgId: "org_1",
+            userId: "user_verified",
+            email: "owner@team.example.com",
+            emailVerified: true,
+            membershipStatus: "active",
+          }]
+        },
+      }
+    },
+    createAutomaticTrialStore(transaction) {
+      factoryTransactions.push(transaction)
+      return {
+        async listOrganizationIds() {
+          return []
+        },
+        async grantOrSyncDomainTrial() {
+          harness.calls.push("trial:sync")
+          return { granted: true }
+        },
+      }
+    },
+  })
+  const service = createOrganizationDomainMutationService({ store })
+
+  await service.create({
+    id: "domain_1",
+    orgId: "org_1",
+    domain: "team.example.com",
+    enabled: true,
+    selfSignupEnabled: false,
+  })
+
+  assert.deepEqual(factoryTransactions, [harness.tx, harness.tx])
+  assert.ok(harness.calls.indexOf("insert:team.example.com") < harness.calls.indexOf("trial:sync"))
+  assert.ok(harness.calls.indexOf("trial:sync") < harness.calls.indexOf("outer:commit"))
+})
+
+test("production mutation store rolls a domain rename back when tx-scoped trial sync fails", async () => {
+  const original: StoredDomain = {
+    id: "domain_1",
+    org_id: "org_1",
+    domain: "old.example.com",
+    enabled: true,
+    self_signup_enabled: false,
+    created_at: new Date("2026-07-21T07:00:00.000Z"),
+    updated_at: new Date("2026-07-21T07:00:00.000Z"),
+  }
+  let harness: ReturnType<typeof createRecordingDrizzleDomainDatabase>
+  harness = createRecordingDrizzleDomainDatabase({
+    domains: [original],
+    selectResults: [
+      () => harness.domains,
+      () => [],
+      () => harness.domains,
+    ],
+  })
+  const factoryTransactions: unknown[] = []
+  const store = createDrizzleOrganizationDomainMutationStore(harness.database, {
+    createMemberReader(transaction) {
+      factoryTransactions.push(transaction)
+      return {
+        async listMembers() {
+          return [{
+            orgId: "org_1",
+            userId: "user_verified",
+            email: "owner@new.example.com",
+            emailVerified: true,
+            membershipStatus: "active",
+          }]
+        },
+      }
+    },
+    createAutomaticTrialStore(transaction) {
+      factoryTransactions.push(transaction)
+      return {
+        async listOrganizationIds() {
+          return []
+        },
+        async grantOrSyncDomainTrial() {
+          harness.calls.push("trial:sync")
+          throw new Error("trial persistence failed")
+        },
+      }
+    },
+  })
+
+  await assert.rejects(
+    createOrganizationDomainMutationService({ store }).update({
+      orgId: "org_1",
+      domainId: "domain_1",
+      domain: "new.example.com",
+    }),
+    /trial persistence failed/,
   )
 
-  assert.match(verifierSource, /innerJoin\(AuthUserTable/)
-  assert.match(verifierSource, /eq\(OrgMembershipTable\.org_id, orgId\)/)
-  assert.match(verifierSource, /eq\(OrgMembershipTable\.status, "active"\)/)
-  assert.match(verifierSource, /eq\(AuthUserTable\.emailVerified, true\)/)
-  assert.match(verifierSource, /orderBy\(asc\(AuthUserTable\.id\)\)/)
-  assert.match(mutationSource, /createDrizzleAutomaticOrganizationTrialStore\(tx\)/)
+  assert.deepEqual(factoryTransactions, [harness.tx, harness.tx])
+  assert.ok(harness.calls.indexOf("update:new.example.com") < harness.calls.indexOf("trial:sync"))
+  assert.equal(harness.calls.at(-1), "outer:rollback")
+  assert.equal(harness.domains[0].domain, "old.example.com")
 })
 
 Object.assign(process.env, {

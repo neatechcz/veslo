@@ -3,9 +3,15 @@ import { once } from "node:events"
 import { readFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
+import express from "express"
 
 import { createApp } from "../src/index.js"
-import { adminFallbackShellHtml, PlatformAdminAllowedPages, PlatformAdminCapabilities } from "../src/http/admin.js"
+import {
+  adminFallbackShellHtml,
+  createDefaultAdminService,
+  PlatformAdminAllowedPages,
+  PlatformAdminCapabilities,
+} from "../src/http/admin.js"
 import type {
   AdminService,
   AdminSessionSnapshot,
@@ -2512,25 +2518,39 @@ test("organization admins can access session, users, and organization gateway ad
 })
 
 test("organization domain verification conflicts pass through the gateway unchanged", async () => {
-  const verificationRequired = () => Object.assign(
-    new Error("domain_verified_member_required"),
-    { status: 409 },
-  )
-  const app = createApp({
-    admin: createAdminServiceStub({
-      async createOrganizationDomain() {
-        throw verificationRequired()
-      },
-      async updateOrganizationDomain() {
-        throw verificationRequired()
-      },
-    }),
+  const denRequests: Array<{ method: string; path: string; authorization: string | undefined }> = []
+  const den = express()
+  den.use(express.json())
+  den.get("/v1/admin/session", (req, res) => {
+    denRequests.push({
+      method: req.method,
+      path: req.path,
+      authorization: req.header("authorization"),
+    })
+    res.json(adminSession())
   })
-  const server = app.listen(0, "127.0.0.1")
-  await once(server, "listening")
+  const rejectDomainVerification = (req: express.Request, res: express.Response) => {
+    denRequests.push({
+      method: req.method,
+      path: req.path,
+      authorization: req.header("authorization"),
+    })
+    res.status(409).json({ error: "domain_verified_member_required" })
+  }
+  den.post("/v1/admin/organizations/:orgId/domains", rejectDomainVerification)
+  den.patch("/v1/admin/organizations/:orgId/domains/:domainId", rejectDomainVerification)
+  const denServer = den.listen(0, "127.0.0.1")
+  await once(denServer, "listening")
+
+  const denPort = (denServer.address() as AddressInfo).port
+  const app = createApp({
+    admin: createDefaultAdminService(`http://127.0.0.1:${denPort}`),
+  })
+  const gatewayServer = app.listen(0, "127.0.0.1")
+  await once(gatewayServer, "listening")
 
   try {
-    const { port } = server.address() as AddressInfo
+    const { port } = gatewayServer.address() as AddressInfo
     const requests = [
       fetch(`http://127.0.0.1:${port}/admin/api/organizations/org_1/domains`, {
         method: "POST",
@@ -2554,9 +2574,28 @@ test("organization domain verification conflicts pass through the gateway unchan
       assert.equal(response.status, 409)
       assert.deepEqual(await response.json(), { error: "domain_verified_member_required" })
     }
+    assert.deepEqual(
+      denRequests
+        .filter((entry) => entry.path.includes("/domains"))
+        .sort((left, right) => left.method.localeCompare(right.method)),
+      [
+        {
+          method: "PATCH",
+          path: "/v1/admin/organizations/org_1/domains/domain_1",
+          authorization: "Bearer admin-token",
+        },
+        {
+          method: "POST",
+          path: "/v1/admin/organizations/org_1/domains",
+          authorization: "Bearer admin-token",
+        },
+      ],
+    )
   } finally {
-    server.close()
-    await once(server, "close")
+    gatewayServer.close()
+    await once(gatewayServer, "close")
+    denServer.close()
+    await once(denServer, "close")
   }
 })
 

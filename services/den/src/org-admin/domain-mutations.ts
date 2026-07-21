@@ -3,12 +3,14 @@ import { and, eq } from "drizzle-orm"
 import {
   createAutomaticOrganizationTrialService,
   createDrizzleAutomaticOrganizationTrialStore,
+  type AutomaticOrganizationTrialStore,
 } from "../billing/automatic-organization-trial.js"
 import { isMySqlDuplicateKeyError } from "../db/mysql-errors.js"
 import { OrganizationDomainTable } from "../db/schema.js"
 import {
   createDrizzleOrganizationDomainMemberReader,
   createOrganizationDomainVerifier,
+  type OrganizationDomainMemberReader,
 } from "./domain-verification.js"
 
 export type OrganizationDomainMutationRecord = {
@@ -130,15 +132,25 @@ export function createOrganizationDomainMutationService(input: {
 
 export type OrganizationDomainMutationService = ReturnType<typeof createOrganizationDomainMutationService>
 
+type DrizzleOrganizationDomainMutationStoreFactories = {
+  createMemberReader?: (transaction: any) => OrganizationDomainMemberReader
+  createAutomaticTrialStore?: (transaction: any) => AutomaticOrganizationTrialStore
+}
+
 export function createDrizzleOrganizationDomainMutationStore(
   database: any,
+  factories: DrizzleOrganizationDomainMutationStoreFactories = {},
 ): OrganizationDomainMutationStore {
+  const createMemberReader = factories.createMemberReader ?? createDrizzleOrganizationDomainMemberReader
+  const createAutomaticTrialStore = factories.createAutomaticTrialStore
+    ?? createDrizzleAutomaticOrganizationTrialStore
+
   return {
     async transaction<T>(run: (scope: OrganizationDomainMutationScope) => Promise<T>) {
       try {
         return await database.transaction(async (tx: any) => {
           const verifier = createOrganizationDomainVerifier(
-            createDrizzleOrganizationDomainMemberReader(tx),
+            createMemberReader(tx),
           )
           const scope: OrganizationDomainMutationScope = {
             async findById(orgId, domainId) {
@@ -189,7 +201,7 @@ export function createDrizzleOrganizationDomainMutationStore(
             },
             async synchronizeTrial(orgId) {
               await createAutomaticOrganizationTrialService({
-                store: createDrizzleAutomaticOrganizationTrialStore(tx),
+                store: createAutomaticTrialStore(tx),
               }).ensureTrial(orgId)
             },
           }
