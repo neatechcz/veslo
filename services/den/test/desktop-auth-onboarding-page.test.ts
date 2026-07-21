@@ -87,6 +87,30 @@ test("desktop onboarding page uses Veslo auth copy", () => {
   assert.equal(onboardingPage.includes("Openwork"), false)
 })
 
+test("desktop email sign-up explains the company email requirement", () => {
+  const companyEmailMessage =
+    "Use your company email to register. Personal email addresses are not supported. If your organization invited you, open the registration link from that invitation."
+
+  assert.equal(
+    onboardingPage.split(companyEmailMessage).length - 1,
+    1,
+    "the approved company-email guidance must have one source of truth",
+  )
+  assert.equal(onboardingPage.includes("function formatEmailSignUpError(data, status)"), true)
+  assert.equal(
+    onboardingPage.includes(
+      '[data?.code, data?.error, data?.message].some((value) => value === "domain_not_allowed")',
+    ),
+    true,
+    "sign-up errors must recognize the stable code in every supported response field",
+  )
+  assert.match(
+    onboardingPage,
+    /if \(mode === "sign-up"\) \{\s+showError\(formatEmailSignUpError\(data, response\.status\)\);\s+\} else \{\s+showError\(data\?\.message \|\| data\?\.error \|\| `Request failed \(\$\{response\.status\}\)`\);\s+\}/,
+    "only the email sign-up failure branch should use the company-email formatter",
+  )
+})
+
 test("desktop onboarding page does not ship the public control-plane demo", () => {
   for (const forbiddenText of [
     "Den Control Plane Demo",

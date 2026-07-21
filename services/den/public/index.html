@@ -272,6 +272,7 @@
         const DESKTOP_AUTH_CONTEXT_STORAGE_KEY = "veslo.desktopAuthContext";
         const RESET_PASSWORD_EMAIL_STORAGE_KEY = "veslo.resetPasswordEmail";
         const DESKTOP_AUTH_CONTEXT_TTL_MS = 15 * 60 * 1000;
+        const COMPANY_EMAIL_REQUIRED_MESSAGE = "Use your company email to register. Personal email addresses are not supported. If your organization invited you, open the registration link from that invitation.";
         const onboardingSessionId = (search.get("sid") || "").trim();
         let onboardingTransactionId = (search.get("tid") || "").trim();
         let onboardingState = (search.get("state") || "").trim();
@@ -524,6 +525,13 @@
         function showError(message) {
           authError = message || "";
           setInlineMessage(errorEl, authError);
+        }
+
+        function formatEmailSignUpError(data, status) {
+          if ([data?.code, data?.error, data?.message].some((value) => value === "domain_not_allowed")) {
+            return COMPANY_EMAIL_REQUIRED_MESSAGE;
+          }
+          return data?.message || data?.error || `Request failed (${status})`;
         }
 
         function updateForgotPasswordUI() {
@@ -909,7 +917,11 @@
             const data = await response.json().catch(() => null);
 
             if (!response.ok) {
-              showError(data?.message || data?.error || `Request failed (${response.status})`);
+              if (mode === "sign-up") {
+                showError(formatEmailSignUpError(data, response.status));
+              } else {
+                showError(data?.message || data?.error || `Request failed (${response.status})`);
+              }
               renderView(false);
               return;
             }
