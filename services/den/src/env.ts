@@ -142,6 +142,17 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
   const parsed = schema.parse(input)
   const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
   const nodeEnv = (input.NODE_ENV ?? "development").toLowerCase()
+  const lettrApiKey = parsed.LETTR_API_KEY?.trim() || undefined
+  const authEmailAddress = parsed.AUTH_EMAIL_ADDRESS?.trim() || undefined
+  const configuredAuthRequireEmailVerification = parsed.DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED?.trim().toLowerCase()
+  if (
+    configuredAuthRequireEmailVerification != null &&
+    configuredAuthRequireEmailVerification !== "true" &&
+    configuredAuthRequireEmailVerification !== "false"
+  ) {
+    throw new Error("DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED must be either 'true' or 'false'.")
+  }
+  const authRequireEmailVerification = nodeEnv === "production" || configuredAuthRequireEmailVerification === "true"
   const endpoints = resolveVesloDeploymentEndpoints(parsed.VESLO_DEPLOYMENT_DOMAIN)
   const betterAuthUrl = parsed.BETTER_AUTH_URL?.trim().replace(/\/+$/, "") || endpoints.apiBaseUrl
   const defaultCorsOrigins =
@@ -166,6 +177,10 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
     "MICROSOFT_TOKEN_SECRET_KEY",
   )
   const microsoftOauthConfigured = Boolean(microsoftClientId || microsoftClientSecret)
+
+  if (authRequireEmailVerification && (!lettrApiKey || !authEmailAddress)) {
+    throw new Error("LETTR_API_KEY and AUTH_EMAIL_ADDRESS are required when email verification is enabled.")
+  }
 
   if (nodeEnv === "production" && (corsOrigins ?? []).includes("*")) {
     throw new Error("CORS_ORIGINS cannot contain '*' in production for DEN")
@@ -197,14 +212,14 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env) {
       clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,
     },
     email: {
-      lettrApiKey: parsed.LETTR_API_KEY?.trim() || undefined,
-      address: parsed.AUTH_EMAIL_ADDRESS?.trim() || undefined,
+      lettrApiKey,
+      address: authEmailAddress,
       fromName: parsed.AUTH_EMAIL_FROM_NAME?.trim() || undefined,
     },
     port: Number(parsed.PORT ?? "8788"),
     corsOrigins: corsOrigins ?? [],
-    desktopAuthRequireEmailVerified:
-      (parsed.DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED ?? "false").toLowerCase() === "true",
+    authRequireEmailVerification,
+    desktopAuthRequireEmailVerified: authRequireEmailVerification,
     provisionerMode: parsed.PROVISIONER_MODE ?? "stub",
     workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
     ownedWorkerManager: {

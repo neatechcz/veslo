@@ -25,6 +25,8 @@ test("den env exposes auth email provider configuration", () => {
   assert.equal(envSource.includes("LETTR_API_KEY"), true)
   assert.equal(envSource.includes("AUTH_EMAIL_ADDRESS"), true)
   assert.equal(envSource.includes("AUTH_EMAIL_FROM_NAME"), true)
+  assert.equal(envSource.includes("authRequireEmailVerification"), true)
+  assert.equal(envSource.includes("desktopAuthRequireEmailVerified: authRequireEmailVerification"), true)
 })
 
 test("auth config gates email callbacks behind explicit auth email configuration", () => {
@@ -78,6 +80,8 @@ test("auth setup docs and sample config include email delivery settings", () => 
   assert.equal(envExampleSource.includes("LETTR_API_KEY="), true)
   assert.equal(envExampleSource.includes("AUTH_EMAIL_ADDRESS="), true)
   assert.equal(envExampleSource.includes("AUTH_EMAIL_FROM_NAME="), true)
+  assert.match(envExampleSource, /# .*local.*email verification/i)
+  assert.equal(envExampleSource.includes("DESKTOP_AUTH_REQUIRE_EMAIL_VERIFIED=false"), true)
   assert.equal(readmeSource.includes("Lettr"), true)
   assert.equal(readmeSource.toLowerCase().includes("blank or unset values disable email verification and password reset delivery"), true)
 })
