@@ -603,6 +603,7 @@ export type AdminServiceDependencies = {
   sessionReadRepository?: AdminSessionReadRepository;
   aiAccessRepository?: AiAccessRepository;
   aiAccessMutation?: AiAccessMutation;
+  automaticUserAiAccess?: import("../access/automatic-user-access.js").AutomaticUserAiAccessService;
   alertRepository?: AlertRepository;
   usageRepository?: UsageRepository;
   codexStatusProvider?: CodexCredentialStatusProvider;

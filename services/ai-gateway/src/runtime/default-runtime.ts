@@ -1,6 +1,10 @@
 import { MySqlAiAccessMutation, MySqlAiAccessRepository } from "../access/mysql-repository.js";
 import { createAutoAssignedCodexCredentialRotationService } from "../access/auto-assignment-rotation.js";
 import type { AiAccessMutation, AiAccessRepository } from "../access/repository.js";
+import {
+  createAutomaticUserAiAccessService,
+  type AutomaticUserAiAccessService,
+} from "../access/automatic-user-access.js";
 import { MySqlAlertRepository } from "../alerts/mysql-repository.js";
 import type { AlertRepository } from "../alerts/repository.js";
 import { MySqlAuditRepository } from "../audit/mysql-repository.js";
@@ -60,6 +64,27 @@ export type DefaultRuntimeOptions = {
   secretKey?: string;
 };
 
+const automaticUserAiAccessByRuntime = new WeakMap<RuntimeState, AutomaticUserAiAccessService>();
+
+function getAutomaticUserAiAccess(runtime: RuntimeState): AutomaticUserAiAccessService {
+  const existing = automaticUserAiAccessByRuntime.get(runtime);
+  if (existing) return existing;
+
+  const codexStatusProvider = createCodexStatusProvider(runtime);
+  const service = createAutomaticUserAiAccessService({
+    aiAccess: runtime.aiAccess,
+    modelPolicy: runtime.modelPolicy,
+    modelCapabilities: createPlatformModelCapabilityVerifier({
+      credentials: runtime.credentials,
+      secrets: runtime.secrets,
+      codexStatusProvider,
+      openAiCompatibleTransport: new OpenAiCompatibleTransport(),
+    }),
+  });
+  automaticUserAiAccessByRuntime.set(runtime, service);
+  return service;
+}
+
 export function createDefaultRuntimeState(options: DefaultRuntimeOptions = {}): RuntimeState {
   const db = options.db ?? createDb(options.databaseUrl ?? env.databaseUrl).db;
   const secretKey = options.secretKey ?? env.secretKey;
@@ -92,6 +117,7 @@ export function createDefaultAdminDependencies(
     sessionReadRepository: new MySqlAdminSessionReadRepository(runtime.db),
     aiAccessRepository: runtime.aiAccess,
     aiAccessMutation: runtime.aiAccessMutation,
+    automaticUserAiAccess: getAutomaticUserAiAccess(runtime),
     alertRepository: runtime.alerts,
     usageRepository: runtime.usage,
     auditRepository: runtime.audit,
@@ -122,6 +148,7 @@ export function createDefaultProxyDependencies(
 
   return {
     aiAccess: runtime.aiAccess,
+    automaticUserAiAccess: getAutomaticUserAiAccess(runtime),
     alertRepository: runtime.alerts,
     autoAssignedCodexCredentialRotation: createAutoAssignedCodexCredentialRotationService({
       aiAccess: runtime.aiAccess,
@@ -203,6 +230,7 @@ export function createDefaultUserCredentialDependencies(
   return {
     sessionResolver: overrides.sessionResolver ?? new DenUserSessionResolver({ denApiBase: env.denApiBase }),
     aiAccess: runtime.aiAccess,
+    automaticUserAiAccess: getAutomaticUserAiAccess(runtime),
     modelPolicy: runtime.modelPolicy,
   };
 }

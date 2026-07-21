@@ -1,6 +1,7 @@
 import { Router, type Request } from "express";
 
 import type { UserAiAccessPolicyRecord } from "../access/repository.js";
+import { AutomaticUserAiAccessInfrastructureError } from "../access/automatic-user-access.js";
 import { readBearerToken } from "../auth/user-session.js";
 import type { GatewaySession } from "../auth/gateway-session.js";
 import { ManagedAiEntitlementLookupError } from "../billing/den-managed-ai-entitlement-resolver.js";
@@ -56,11 +57,17 @@ export function createProxyRouter(deps: ProxyDependencies) {
       return;
     }
 
-    if (deps.aiAccess) {
+    if (deps.automaticUserAiAccess || deps.aiAccess) {
       let aiAccess: UserAiAccessPolicyRecord | null;
       try {
-        aiAccess = await deps.aiAccess.getUserAiAccess(session.user.id);
+        aiAccess = deps.automaticUserAiAccess
+          ? await deps.automaticUserAiAccess.getOrCreateUserAiAccess(session.user.id)
+          : await deps.aiAccess!.getUserAiAccess(session.user.id);
       } catch (error) {
+        if (error instanceof AutomaticUserAiAccessInfrastructureError) {
+          res.status(error.status).json({ error: error.code });
+          return;
+        }
         console.error("gateway_ai_access_lookup_failed", error);
         res.status(502).json({ error: "gateway_ai_access_lookup_failed" });
         return;

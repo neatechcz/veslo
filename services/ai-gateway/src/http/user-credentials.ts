@@ -1,6 +1,7 @@
 import { type NextFunction, type Request, type Response, Router } from "express";
 
 import type { AiAccessRepository, UserAiAccessPolicyRecord } from "../access/repository.js";
+import type { AutomaticUserAiAccessService } from "../access/automatic-user-access.js";
 import { resolveAuthorizedModelRoster } from "../access/authorized-model-roster.js";
 import { readBearerToken, type UserSession, type UserSessionResolver } from "../auth/user-session.js";
 import type { PlatformModelPolicyRepository, PlatformModelRef } from "../model-policy/repository.js";
@@ -10,6 +11,7 @@ import { asyncHandler, jsonErrorHandler } from "./async-handler.js";
 export type UserCredentialDependencies = {
   sessionResolver: UserSessionResolver;
   aiAccess?: AiAccessRepository;
+  automaticUserAiAccess?: AutomaticUserAiAccessService;
   modelPolicy?: PlatformModelPolicyRepository;
 };
 
@@ -52,7 +54,9 @@ export function createUserCredentialsRouter(deps: UserCredentialDependencies) {
 
   const getUserAiAccess = asyncHandler(async (_req: Request, res: Response) => {
     const session = res.locals.userSession as UserSession;
-    let aiAccess = await deps.aiAccess?.getUserAiAccess(session.user.id);
+    let aiAccess = deps.automaticUserAiAccess
+      ? await deps.automaticUserAiAccess.getOrCreateUserAiAccess(session.user.id)
+      : await deps.aiAccess?.getUserAiAccess(session.user.id);
     if (!aiAccess) {
       res.json({ aiAccess: null });
       return;

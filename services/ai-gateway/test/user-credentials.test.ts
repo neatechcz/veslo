@@ -106,6 +106,7 @@ function createUserAiAccessApp(overrides: {
   aiAccess?: UserAiAccessPolicyRecord | null;
   getAiAccess?: (userId: string) => Promise<UserAiAccessPolicyRecord | null>;
   getModelPolicy?: () => Promise<unknown>;
+  getOrCreateAiAccess?: (userId: string) => Promise<UserAiAccessPolicyRecord>;
 } = {}) {
   const session = overrides.session ?? {
     token: "den_token_123",
@@ -137,6 +138,12 @@ function createUserAiAccessApp(overrides: {
           throw new Error("unused");
         },
       },
+      automaticUserAiAccess: overrides.getOrCreateAiAccess
+        ? {
+            getOrCreateUserAiAccess: overrides.getOrCreateAiAccess,
+            async buildEnabledUpdate() { throw new Error("unused"); },
+          }
+        : undefined,
       modelPolicy: overrides.getModelPolicy
         ? { getPolicy: overrides.getModelPolicy }
         : undefined,
@@ -315,13 +322,13 @@ test("GET explicit user AI access requires bearer authentication", async () => {
   }
 });
 
-test("GET explicit user AI access preserves the authenticated null response", async () => {
-  let modelPolicyReads = 0;
+test("GET explicit user AI access aliases lazily return the same server-derived policy", async () => {
+  const initializedUsers: string[] = [];
   const runtime = createUserAiAccessApp({
     aiAccess: null,
-    getModelPolicy: async () => {
-      modelPolicyReads += 1;
-      throw new Error("model policy lookup must not run without an AI access record");
+    getOrCreateAiAccess: async (userId) => {
+      initializedUsers.push(userId);
+      return createAiAccessRecord({ userId, assignmentOrigin: "auto_assigned" });
     },
   });
   const server = runtime.app.listen(0, "127.0.0.1");
@@ -329,13 +336,17 @@ test("GET explicit user AI access preserves the authenticated null response", as
 
   try {
     const { port } = server.address() as AddressInfo;
-    const response = await fetch(`http://127.0.0.1:${port}/api/users/user_123/ai-access`, {
-      headers: runtime.authHeader,
-    });
-
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { aiAccess: null });
-    assert.equal(modelPolicyReads, 0);
+    for (const path of [
+      "/api/me/ai-access",
+      "/api/users/user_123/ai-access",
+      "/ai-gateway/me/ai-access",
+      "/ai-gateway/users/user_123/ai-access",
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, { headers: runtime.authHeader });
+      assert.equal(response.status, 200, path);
+      assert.equal((await response.json()).aiAccess.assignmentOrigin, undefined, path);
+    }
+    assert.deepEqual(initializedUsers, ["user_123", "user_123", "user_123", "user_123"]);
   } finally {
     server.close();
     await once(server, "close");
