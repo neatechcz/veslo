@@ -30,6 +30,10 @@ import type { SerializedEngineState } from "./engine-pool.js";
 import { atomicWriteJson, cleanupStaleTmpFiles, createDebouncedPersister } from "./persistence.js";
 import { EnginePool, type EngineProcess } from "./engine-pool.js";
 import { SharedOpenCodeEngine } from "./shared-opencode-engine.js";
+import {
+  readPublishedSharedSkillViewRevision,
+  requiresSharedSkillViewForProxy,
+} from "./shared-skill-view-policy.js";
 import { resolveOpencodeProxyTarget } from "./opencode-proxy-target.js";
 import { deploymentServiceUrl } from "./deployment-endpoints.js";
 import {
@@ -2710,6 +2714,8 @@ async function startOpencode(options: {
   workspace: string;
   /** Workspace whose effective skill manifest should feed the engine view. */
   skillWorkspace?: string;
+  /** Server-published revision that staging must consume exactly. */
+  skillViewRevision?: string;
   configDir?: string;
   hotReload: OpencodeHotReload;
   bindHost: string;
@@ -2776,6 +2782,7 @@ async function startOpencode(options: {
     workspace: options.skillWorkspace ?? options.workspace,
     stagingRoot: skillStagingRoot,
     requireEffectiveManifest: true,
+    ...(options.skillViewRevision ? { expectedRevision: options.skillViewRevision } : {}),
   });
   options.logger.info(
     "engine skill staging prepared",
@@ -4553,7 +4560,8 @@ async function runRouterDaemon(args: ParsedArgs) {
     config: { maxEngines, idleSuspendMs },
   });
 
-  let sharedSkillWorkspacePath: string | null = null;
+  let sharedSkillView: { workspaceId: string; workspacePath: string; revision?: string } | null = null;
+  let sharedSkillViewQueue: Promise<void> = Promise.resolve();
   const sharedOpenCodeEngine =
     engineTopology.mode === "shared-unsandboxed"
       ? new SharedOpenCodeEngine({
@@ -4589,7 +4597,8 @@ async function runRouterDaemon(args: ParsedArgs) {
               const spawned = await startOpencode({
                 bin: opencodeBinary.bin,
                 workspace: workdir,
-                skillWorkspace: sharedSkillWorkspacePath ?? undefined,
+                skillWorkspace: sharedSkillView?.workspacePath,
+                skillViewRevision: sharedSkillView?.revision,
                 configDir,
                 hotReload: opencodeHotReload,
                 bindHost: opencodeHost,
@@ -4720,23 +4729,79 @@ async function runRouterDaemon(args: ParsedArgs) {
           },
         })
       : null;
-  const prepareSharedSkillWorkspace = async (workspacePath: string, reason: string): Promise<void> => {
-    if (!sharedOpenCodeEngine) return;
-    const nextPath = resolve(workspacePath);
-    const running = sharedOpenCodeEngine.getRunning();
-    if (running && sharedSkillWorkspacePath && sharedSkillWorkspacePath !== nextPath) {
-      const activeRuns = runStore.activeForEngineOwner("shared-unsandboxed");
-      if (activeRuns.length > 0) {
-        throw new Error("shared_engine_skill_view_busy");
+  const ensureSharedSkillView = async (
+    workspaceId: string,
+    workspacePath: string,
+    reason: string,
+    revision?: string,
+    beforeStart?: () => Promise<void>,
+  ): Promise<{
+    engine: EngineProcess;
+    skillView: { workspaceId: string; workspaceRoot: string; revision?: string };
+  }> => {
+    if (!sharedOpenCodeEngine) throw new Error("shared engine is not configured");
+    const task = sharedSkillViewQueue.then(async () => {
+      const nextPath = resolve(workspacePath);
+      // Proxy requests do not all carry a revision header. Reuse the selected
+      // revision for the same workspace instead of treating an omitted header
+      // as a request to erase it and restart the shared engine.
+      const retainedRevision = sharedSkillView?.workspaceId === workspaceId &&
+        sharedSkillView.workspacePath === nextPath
+        ? sharedSkillView.revision
+        : undefined;
+      const nextRevision = revision ?? retainedRevision ?? await readPublishedSharedSkillViewRevision(nextPath);
+      const nextView = { workspaceId, workspacePath: nextPath, ...(nextRevision ? { revision: nextRevision } : {}) };
+      const running = sharedOpenCodeEngine.getRunning();
+      const changed = Boolean(
+        sharedSkillView && (
+          sharedSkillView.workspaceId !== nextView.workspaceId ||
+          sharedSkillView.workspacePath !== nextView.workspacePath ||
+          sharedSkillView.revision !== nextView.revision
+        ),
+      );
+      if (running && changed) {
+        const activeRuns = runStore.activeForEngineOwner("shared-unsandboxed");
+        if (activeRuns.length > 0) {
+          throw new Error("shared_engine_skill_view_busy");
+        }
+        traceRuntime("orchestrator:shared-skill-view:restart", {
+          reason,
+          previousWorkspace: sharedSkillView?.workspacePath ?? null,
+          previousRevision: sharedSkillView?.revision ?? null,
+          nextWorkspace: nextPath,
+          nextRevision: nextRevision ?? null,
+        });
+        await sharedOpenCodeEngine.dispose();
       }
-      traceRuntime("orchestrator:shared-skill-view:restart", {
-        reason,
-        previousWorkspace: sharedSkillWorkspacePath,
-        nextWorkspace: nextPath,
+      sharedSkillView = nextView;
+      sharedOpenCodeEngine.setSkillView({
+        workspaceId: nextView.workspaceId,
+        workspaceRoot: nextView.workspacePath,
+        ...(nextView.revision ? { revision: nextView.revision } : {}),
       });
-      await sharedOpenCodeEngine.dispose();
-    }
-    sharedSkillWorkspacePath = nextPath;
+      await beforeStart?.();
+      return {
+        engine: await sharedOpenCodeEngine.ensureStarted(reason),
+        skillView: {
+          workspaceId: nextView.workspaceId,
+          workspaceRoot: nextView.workspacePath,
+          ...(nextView.revision ? { revision: nextView.revision } : {}),
+        },
+      };
+    });
+    sharedSkillViewQueue = task.then(() => undefined, () => undefined);
+    return task;
+  };
+  const sharedSkillViewMatches = (
+    expected: { workspaceId: string; workspaceRoot: string; revision?: string } | null,
+  ): boolean => {
+    const selected = sharedOpenCodeEngine?.getSkillView();
+    return Boolean(
+      expected && selected &&
+      selected.workspaceId === expected.workspaceId &&
+      selected.workspaceRoot === expected.workspaceRoot &&
+      selected.revision === expected.revision,
+    );
   };
   const sharedMcpRuntimePrimeFlights = createOpenCodeMcpRuntimePrimeFlights();
   const sharedEngineLivenessTimer = sharedOpenCodeEngine
@@ -4851,7 +4916,13 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   const resolveLifecycleRunEngineOwner = (workspaceId: string): RunEngineOwner => {
     if (engineTopology.mode === "shared-unsandboxed") {
-      return runEngineOwnerFromEngine("shared-unsandboxed", sharedOpenCodeEngine?.getRunning());
+      // A shared-view fallback run must not claim the currently running
+      // process before `ensureSharedSkillView()` has selected and validated
+      // its view. Otherwise the just-registered target run appears in
+      // activeForEngineOwner("shared-unsandboxed") and blocks its own idle
+      // switch. The proxy path attaches the concrete owner immediately after
+      // selection and before upstream dispatch.
+      return runEngineOwnerFromEngine("shared-unsandboxed", undefined);
     }
     return runEngineOwnerFromEngine(workspaceId, pool.get(workspaceId));
   };
@@ -5167,58 +5238,12 @@ async function runRouterDaemon(args: ParsedArgs) {
         workspace.lastUsedAt = nowMs();
         await saveRouterState(statePath, state);
         let sharedMcpPrime: { workspaceId: string; workspacePath: string } | null = null;
-        if (
-          workspace.workspaceType === "local" &&
-          workspace.path &&
-          engineTopology.mode === "shared-unsandboxed"
-        ) {
-          try {
-            await prepareSharedSkillWorkspace(workspace.path, `activate ${workspace.id}`);
-          } catch (error) {
-            traceRuntime("orchestrator:activate-shared-skill-view:blocked-active-runs", {
-              workspaceId: workspace.id,
-              error: error instanceof Error ? error.message : String(error),
-            });
-            send(409, {
-              error: "shared_engine_skill_view_busy",
-              message: "Shared engine skill view cannot switch while a run is active",
-            });
-            return;
-          }
-        }
-        if (
-          workspace.workspaceType === "local" &&
-          workspace.path &&
-          engineTopology.mode === "shared-unsandboxed"
-        ) {
-          const configSyncStartedAt = Date.now();
-          try {
-            // A shared engine starts with its own scratch directory. Mirror the
-            // active workspace before it receives the first prompt, otherwise
-            // OpenCode discovers and starts local MCP commands on that prompt's
-            // critical path.
-            await syncWorkspaceOpencodeConfigToConfigDir(
-              workspace.path,
-              join(dataDir, "opencode-config", "shared-unsandboxed"),
-            );
-            sharedMcpPrime = { workspaceId: workspace.id, workspacePath: workspace.path };
-            traceRuntime("orchestrator:activate-shared-config-sync:done", {
-              workspaceId: workspace.id,
-              workspacePath: workspace.path,
-              durationMs: Date.now() - configSyncStartedAt,
-            });
-          } catch (error) {
-            // Activation must retain its existing behavior if this optional
-            // latency warm-up cannot mirror a user-owned config. The prompt
-            // proxy remains the correctness fallback and will sync it itself.
-            traceRuntime("orchestrator:activate-shared-config-sync:error", {
-              workspaceId: workspace.id,
-              workspacePath: workspace.path,
-              durationMs: Date.now() - configSyncStartedAt,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
+        const requestedSkillViewRevisionHeader = req.headers["x-veslo-skill-view-revision"];
+        const requestedSkillViewRevision = (
+          Array.isArray(requestedSkillViewRevisionHeader)
+            ? requestedSkillViewRevisionHeader[0]
+            : requestedSkillViewRevisionHeader
+        )?.trim() || undefined;
         if (workspace.workspaceType === "local" && workspace.path) {
           const ensureStartedAt = Date.now();
           traceRuntime("orchestrator:activate-ensure:start", {
@@ -5226,9 +5251,38 @@ async function runRouterDaemon(args: ParsedArgs) {
             workspacePath: workspace.path,
           });
           try {
-            const ensured =
-              engineTopology.mode === "shared-unsandboxed"
-                ? await sharedOpenCodeEngine!.ensureStarted(`activate ${workspace.id}`)
+            const ensured = engineTopology.mode === "shared-unsandboxed"
+              ? (await ensureSharedSkillView(
+                    workspace.id,
+                    workspace.path,
+                    `activate ${workspace.id}`,
+                    requestedSkillViewRevision,
+                    async () => {
+                      const configSyncStartedAt = Date.now();
+                      try {
+                        // Keep config mirroring in the same transaction as the
+                        // selected skill view. A concurrent workspace cannot
+                        // replace either input between staging and spawn.
+                        await syncWorkspaceOpencodeConfigToConfigDir(
+                          workspace.path,
+                          join(dataDir, "opencode-config", "shared-unsandboxed"),
+                        );
+                        sharedMcpPrime = { workspaceId: workspace.id, workspacePath: workspace.path };
+                        traceRuntime("orchestrator:activate-shared-config-sync:done", {
+                          workspaceId: workspace.id,
+                          workspacePath: workspace.path,
+                          durationMs: Date.now() - configSyncStartedAt,
+                        });
+                      } catch (error) {
+                        traceRuntime("orchestrator:activate-shared-config-sync:error", {
+                          workspaceId: workspace.id,
+                          workspacePath: workspace.path,
+                          durationMs: Date.now() - configSyncStartedAt,
+                          error: error instanceof Error ? error.message : String(error),
+                        });
+                      }
+                    },
+                  )).engine
                 : await pool.ensure({ id: workspace.id, path: workspace.path });
             traceRuntime("orchestrator:activate-ensure:done", {
               workspaceId: workspace.id,
@@ -5241,8 +5295,8 @@ async function runRouterDaemon(args: ParsedArgs) {
               childKind: ensured.childKind ?? "direct",
               durationMs: Date.now() - ensureStartedAt,
             });
-            if (sharedMcpPrime && engineTopology.mode === "shared-unsandboxed") {
-              const prime = sharedMcpPrime;
+            const prime = sharedMcpPrime as { workspaceId: string; workspacePath: string } | null;
+            if (prime && engineTopology.mode === "shared-unsandboxed") {
               const flight = sharedMcpRuntimePrimeFlights.start({
                 workspaceId: prime.workspaceId,
                 baseUrl: ensured.baseUrl,
@@ -5275,6 +5329,17 @@ async function runRouterDaemon(args: ParsedArgs) {
               { workspaceId: workspace.id, error: detail },
               "engine-pool",
             );
+            if (detail === "shared_engine_skill_view_busy") {
+              send(409, {
+                error: "shared_engine_skill_view_busy",
+                message: "Shared engine skill view cannot switch while a run is active",
+              });
+              return;
+            }
+            if (detail.startsWith("skill_view_stale:")) {
+              send(409, { error: "skill_view_stale", message: detail });
+              return;
+            }
             send(502, { error: "engine spawn failed", detail });
             return;
           }
@@ -5470,6 +5535,12 @@ async function runRouterDaemon(args: ParsedArgs) {
         const conversationRunId = (
           Array.isArray(conversationRunHeader) ? conversationRunHeader[0] : conversationRunHeader
         )?.trim() ?? "";
+        const requestedSkillViewRevisionHeader = req.headers["x-veslo-skill-view-revision"];
+        const requestedSkillViewRevision = (
+          Array.isArray(requestedSkillViewRevisionHeader)
+            ? requestedSkillViewRevisionHeader[0]
+            : requestedSkillViewRevisionHeader
+        )?.trim() || undefined;
         const workflowBase = {
           traceId: sendTraceId || null,
           workspaceId: ws.id,
@@ -5479,7 +5550,16 @@ async function runRouterDaemon(args: ParsedArgs) {
           path: url.pathname,
           search: url.search,
         };
+        const restPath = "/" + parts.slice(3).join("/");
+        // In the legacy one-view shared topology an SSE stream is not a
+        // harmless read: it stays attached to the selected engine for its
+        // whole lifetime. Do not attach workspace B's /event stream to an
+        // engine still staged for A and then restart it on B's first prompt.
+        // Other GET/HEAD requests retain their fail-fast, no-spawn behavior.
+        const sharedEventStream = proxyMethod === "GET" && /^\/event\/?$/.test(restPath);
+        const sharedViewRequired = requiresSharedSkillViewForProxy(proxyMethod, restPath);
         let proxyTarget: Awaited<ReturnType<typeof resolveOpencodeProxyTarget>>;
+        let expectedSharedSkillView: { workspaceId: string; workspaceRoot: string; revision?: string } | null = null;
         const ensureStartedAt = Date.now();
         traceRuntime("orchestrator:proxy-ensure:start", {
           traceId: sendTraceId || null,
@@ -5494,11 +5574,16 @@ async function runRouterDaemon(args: ParsedArgs) {
         try {
           if (
             engineTopology.mode === "shared-unsandboxed" &&
-            proxyMethod !== "GET" &&
-            proxyMethod !== "HEAD"
+            sharedViewRequired
           ) {
             try {
-              await prepareSharedSkillWorkspace(ws.path, `proxy ${proxyMethod} ${url.pathname}`);
+              const ensured = await ensureSharedSkillView(
+                ws.id,
+                ws.path,
+                sharedEventStream ? `event stream ${ws.id}` : `proxy ${proxyMethod} ${url.pathname}`,
+                requestedSkillViewRevision,
+              );
+              expectedSharedSkillView = ensured.skillView;
             } catch (error) {
               if (error instanceof Error && error.message === "shared_engine_skill_view_busy") {
                 send(409, {
@@ -5573,6 +5658,18 @@ async function runRouterDaemon(args: ParsedArgs) {
             });
             return;
           }
+          if (
+            engineTopology.mode === "shared-unsandboxed" &&
+            sharedViewRequired &&
+            !sharedSkillViewMatches(expectedSharedSkillView)
+          ) {
+            send(409, {
+              error: "shared_engine_skill_view_stale",
+              message: "Shared engine skill view changed before the request could be dispatched",
+              workspaceId: ws.id,
+            });
+            return;
+          }
           traceRuntime("orchestrator:proxy-ensure:done", {
             traceId: sendTraceId || null,
             workspaceId: ws.id,
@@ -5617,12 +5714,26 @@ async function runRouterDaemon(args: ParsedArgs) {
             error: detail,
           });
           // F2Ú4 — capacity exceeded je 503 (retry-able), spawn/health fail je 502.
+          if (detail === "shared_engine_skill_view_busy") {
+            send(409, {
+              error: "shared_engine_skill_view_busy",
+              message: "Shared engine skill view cannot switch while a run is active",
+            });
+            return;
+          }
+          if (detail.startsWith("skill_view_stale:")) {
+            send(409, {
+              error: "skill_view_stale",
+              message: "Runtime skill view is stale; refresh the workspace skill view and retry",
+              detail,
+            });
+            return;
+          }
           const status = detail.includes("capacity exceeded") ? 503 : 502;
           send(status, { error: "engine spawn failed", detail });
           return;
         }
         const engine = proxyTarget.engine;
-        const restPath = "/" + parts.slice(3).join("/");
         if (conversationRunId && proxyMethod !== "GET" && proxyMethod !== "HEAD") {
           const ownerId = engineTopology.mode === "shared-unsandboxed" ? "shared-unsandboxed" : ws.id;
           const owner = runEngineOwnerFromEngine(ownerId, engine);
@@ -5691,6 +5802,22 @@ async function runRouterDaemon(args: ParsedArgs) {
             configFiles,
             durationMs: Date.now() - syncStartedAt,
           });
+        }
+
+        // Config synchronization awaits filesystem I/O. Re-check after that
+        // await and immediately before proxyToEngine() so a different shared
+        // workspace cannot receive this request through its newly selected view.
+        if (
+          engineTopology.mode === "shared-unsandboxed" &&
+          sharedViewRequired &&
+          !sharedSkillViewMatches(expectedSharedSkillView)
+        ) {
+          send(409, {
+            error: "shared_engine_skill_view_stale",
+            message: "Shared engine skill view changed before the request could be dispatched",
+            workspaceId: ws.id,
+          });
+          return;
         }
 
         if (

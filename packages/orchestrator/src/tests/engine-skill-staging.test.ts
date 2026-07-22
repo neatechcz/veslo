@@ -76,6 +76,21 @@ describe("engine skill staging", () => {
     expect(result.materialized).toEqual(["personal-tool"]);
   });
 
+  test("fails closed when the server revision does not match the manifest", async () => {
+    const input = await fixture();
+    await writeFile(
+      join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+      JSON.stringify({ schemaVersion: 2, workspaceRoot: input.workspace, revision: "published-view", entries: [] }),
+      "utf8",
+    );
+
+    await expect(stageEngineSkillView({
+      ...input,
+      requireEffectiveManifest: true,
+      expectedRevision: "different-view",
+    })).rejects.toThrow("skill_view_stale");
+  });
+
   test("locked policy collisions are physically suppressed from the engine view", async () => {
     const input = await fixture();
     await writeFile(

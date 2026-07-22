@@ -22,6 +22,9 @@ export type SharedOpenCodeEngineSnapshot = {
   startedAt?: string;
   runtimeDirectory: string;
   configDirectory: string;
+  skillWorkspaceId?: string;
+  skillWorkspaceRoot?: string;
+  skillViewRevision?: string;
 };
 
 export type SharedOpenCodeEngineEvent = "spawned" | "suspended" | "crashed";
@@ -56,6 +59,7 @@ export class SharedOpenCodeEngine {
   private startingEngine: EngineProcess | null = null;
   private pending: Promise<EngineProcess> | null = null;
   private lastEngineState: RuntimeEngineState = "absent";
+  private skillView: { workspaceId: string; workspaceRoot: string; revision?: string } | null = null;
   private readonly healthFailureThreshold = 2;
 
   constructor(input: SharedOpenCodeEngineInput) {
@@ -81,6 +85,14 @@ export class SharedOpenCodeEngine {
     }
     engine.lastActivityAt = this.deps.now();
     return engine;
+  }
+
+  setSkillView(view: { workspaceId: string; workspaceRoot: string; revision?: string }): void {
+    this.skillView = view;
+  }
+
+  getSkillView(): { workspaceId: string; workspaceRoot: string; revision?: string } | null {
+    return this.skillView;
   }
 
   async ensureStarted(reason: string): Promise<EngineProcess> {
@@ -123,6 +135,11 @@ export class SharedOpenCodeEngine {
       ...(engine ? { startedAt: new Date(engine.spawnedAt).toISOString() } : {}),
       runtimeDirectory: this.runtimeDirectory,
       configDirectory: this.configDirectory,
+      ...(this.skillView ? {
+        skillWorkspaceId: this.skillView.workspaceId,
+        skillWorkspaceRoot: this.skillView.workspaceRoot,
+        ...(this.skillView.revision ? { skillViewRevision: this.skillView.revision } : {}),
+      } : {}),
     };
   }
 

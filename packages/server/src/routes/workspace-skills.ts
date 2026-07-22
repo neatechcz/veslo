@@ -6,11 +6,13 @@ import { fetchOrgSkillsCatalog } from "../den-catalog.js";
 import { ApiError } from "../errors.js";
 import { requireConfiguredDenCatalogContext } from "../request-headers.js";
 import { workspaceResourceOwner } from "../resource-owner.js";
+import { ensureActiveRuntimeSkillView, invalidateActiveRuntimeSkillView } from "../active-runtime-skill-view.js";
 import {
   emitReloadEvent,
   ensureWritable,
   jsonResponse,
   readJsonBody,
+  readOptionalJsonBody,
   requireApproval,
   requireClientScope,
   resolveWorkspace,
@@ -22,7 +24,6 @@ import { resolveSkillMatch } from "../skill-resolver.js";
 import {
   deleteSkillAtPathRecoverable,
   deleteSkillRecoverable,
-  listActiveWorkspaceSkills,
   listSkills,
   readSkillAtPath,
   readSkillFilesAtPath,
@@ -87,7 +88,11 @@ export function registerWorkspaceSkillRoutes(
           return true;
         });
     }
-    return listActiveWorkspaceSkills(workspace.path, listOptions);
+    return (await ensureActiveRuntimeSkillView(workspace, {
+      disabledSkills,
+      workspaceId: workspace.id,
+      workspaceOwner: ownerForWorkspace(workspace),
+    })).skills;
   };
 
   addRoute(routes, "GET", "/hub/skills", "client", async (ctx) => {
@@ -113,6 +118,30 @@ export function registerWorkspaceSkillRoutes(
     return jsonResponse({ items });
   });
 
+  addRoute(routes, "POST", "/workspace/:id/skills/runtime-view", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
+    const disabledSkills = await listDisabledSkills({
+      dataDir: serverDataDir,
+      workspaceId: workspace.id,
+      includeGlobal: true,
+    });
+    const body = await readOptionalJsonBody(ctx.request);
+    const expectedRevision = typeof body?.expectedRevision === "string" ? body.expectedRevision : undefined;
+    const view = await ensureActiveRuntimeSkillView(workspace, {
+      disabledSkills,
+      workspaceId: workspace.id,
+      workspaceOwner: ownerForWorkspace(workspace),
+      ...(expectedRevision ? { expectedRevision } : {}),
+    });
+    return jsonResponse({
+      ready: true,
+      revision: view.revision,
+      generatedAt: view.generatedAt,
+      activeCount: view.skills.length,
+      items: view.skills,
+    });
+  });
+
   addRoute(routes, "POST", "/workspace/:id/skills/resolve", "client", async (ctx) => {
     const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
     const body = await readJsonBody(ctx.request);
@@ -120,7 +149,7 @@ export function registerWorkspaceSkillRoutes(
     const threshold = typeof body.threshold === "number" ? body.threshold : undefined;
     const ambiguityDelta = typeof body.ambiguityDelta === "number" ? body.ambiguityDelta : undefined;
     const maxCandidates = typeof body.maxCandidates === "number" ? body.maxCandidates : undefined;
-    const skills = await listActiveWorkspaceSkills(workspace.path, {
+    const skills = (await ensureActiveRuntimeSkillView(workspace, {
       disabledSkills: await listDisabledSkills({
         dataDir: serverDataDir,
         workspaceId: workspace.id,
@@ -128,7 +157,7 @@ export function registerWorkspaceSkillRoutes(
       }),
       workspaceId: workspace.id,
       workspaceOwner: ownerForWorkspace(workspace),
-    });
+    })).skills;
     const result = resolveSkillMatch({
       text,
       skills,
@@ -170,6 +199,7 @@ export function registerWorkspaceSkillRoutes(
       overwrite,
       ...(repo ? { repo } : {}),
     });
+    invalidateActiveRuntimeSkillView(workspace);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -297,6 +327,7 @@ export function registerWorkspaceSkillRoutes(
     const result = instancePath
       ? await updateSkillAtPath(workspace.path, { ...skillPayload, path: instancePath })
       : await upsertSkill(workspace.path, skillPayload);
+    invalidateActiveRuntimeSkillView(workspace);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -340,6 +371,7 @@ export function registerWorkspaceSkillRoutes(
     const result = instancePath
       ? await deleteSkillAtPathRecoverable(workspace.path, { name, path: instancePath }, removalJournal)
       : await deleteSkillRecoverable(workspace.path, name, removalJournal);
+    invalidateActiveRuntimeSkillView(workspace);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,

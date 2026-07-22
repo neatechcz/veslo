@@ -1641,6 +1641,24 @@ test("active server config sync records a completed intent after a write", async
   assert.match(String(completedSkip?.payload.scopeHash), /^[0-9a-f]{8}$/);
 });
 
+test("send preflight reuses an unchanged completed active-workspace config verification", async () => {
+  const client = createVesloClient();
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    vesloServerWorkspaceId: () => "ws-active",
+    resolveConversationServerWorkspaceId: () => "ws-active",
+  }));
+
+  await sync.syncActiveWorkspaceManagedAiConfig();
+  await sync.syncManagedAiRuntimeConfigForSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+  });
+
+  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
+  assert.equal(client.patched.length, 1);
+});
+
 test("an intervening active descriptor invalidates an older completed intent", async () => {
   const client = createVesloClient();
   let currentProfile = profile;

@@ -1,4 +1,5 @@
 import { recordAudit } from "../audit.js";
+import { invalidateActiveRuntimeSkillView } from "../active-runtime-skill-view.js";
 import { ApiError } from "../errors.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
 import {
@@ -293,11 +294,13 @@ export function registerSkillRemovalRoutes(
         summary: `Restored skill ${record.name}`,
         timestamp: Date.now(),
       });
+      invalidateActiveRuntimeSkillView(workspace);
       emitReloadEvent(ctx.reloadEvents, workspace, "skills", reloadTrigger);
     } else if (record.scope === "user-global") {
       for (const configuredWorkspace of ctx.config.workspaces) {
         try {
           const resolved = await resolveWorkspace(ctx.config, configuredWorkspace.id);
+          if (resolved.workspaceType === "local") invalidateActiveRuntimeSkillView(resolved);
           emitReloadEvent(ctx.reloadEvents, resolved, "skills", reloadTrigger);
         } catch {
           // Skip workspaces that are no longer authorized for this server.
@@ -391,6 +394,7 @@ export function registerSkillRemovalRoutes(
         action: "removed" as const,
         path: result.path,
       };
+      invalidateActiveRuntimeSkillView(workspace);
       emitReloadEvent(ctx.reloadEvents, workspace, "skills", reloadTrigger);
       return {
         id: item.id,
@@ -424,6 +428,7 @@ export function registerSkillRemovalRoutes(
       for (const configuredWorkspace of ctx.config.workspaces) {
         try {
           const resolved = await resolveWorkspace(ctx.config, configuredWorkspace.id);
+          if (resolved.workspaceType === "local") invalidateActiveRuntimeSkillView(resolved);
           emitReloadEvent(ctx.reloadEvents, resolved, "skills", reloadTrigger);
         } catch {
           // Skip workspaces that are no longer authorized for this server.

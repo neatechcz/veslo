@@ -1,4 +1,5 @@
 import { recordAudit } from "../audit.js";
+import { invalidateActiveRuntimeSkillView } from "../active-runtime-skill-view.js";
 import { ApiError } from "../errors.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
 import {
@@ -85,6 +86,9 @@ export function registerUserGlobalSkillRoutes(
     const description = body.description ? String(body.description) : undefined;
     const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
     const result = await upsertUserGlobalSkill({ name, content, description, enabled }, serverDataDir);
+    for (const workspace of ctx.config.workspaces) {
+      if (workspace.workspaceType === "local") invalidateActiveRuntimeSkillView(workspace);
+    }
 
     await recordAudit(userGlobalSkillStorePath(serverDataDir), {
       id: shortId(),
@@ -119,6 +123,9 @@ export function registerUserGlobalSkillRoutes(
       throw new ApiError(400, "invalid_skill_name", "Skill name is required");
     }
     const result = await deleteUserGlobalSkill(name, serverDataDir);
+    for (const workspace of ctx.config.workspaces) {
+      if (workspace.workspaceType === "local") invalidateActiveRuntimeSkillView(workspace);
+    }
 
     await recordAudit(userGlobalSkillStorePath(serverDataDir), {
       id: shortId(),

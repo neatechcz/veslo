@@ -12,6 +12,7 @@ describe("Workspace skill routes", () => {
     const expectedRoutes: Array<[string, string, Route["auth"]]> = [
       ["GET", "/hub/skills", "client"],
       ["GET", "/workspace/ws_1/skills", "client"],
+      ["POST", "/workspace/ws_1/skills/runtime-view", "client"],
       ["POST", "/workspace/ws_1/skills/resolve", "client"],
       ["POST", "/workspace/ws_1/skills/hub/example-skill", "client"],
       ["GET", "/workspace/ws_1/skills/example-skill", "client"],

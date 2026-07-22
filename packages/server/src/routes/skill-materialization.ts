@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
+import { ensureActiveRuntimeSkillView, invalidateActiveRuntimeSkillView } from "../active-runtime-skill-view.js";
 import { getPlatformManagedPersonalGlobalSkillSet } from "../platform-managed-skills.js";
 import {
   readSkillRegistryRequestInput as skillRegistryRequestInput,
@@ -19,6 +20,8 @@ import {
   resolveWorkspace,
 } from "../route-helpers.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
+import { workspaceResourceOwner } from "../resource-owner.js";
+import { listDisabledSkills } from "../skill-enabled-overrides.js";
 import {
   downloadSkillPackageFromRegistry,
   getWorkspaceSkillSetFromRegistry,
@@ -27,6 +30,7 @@ import {
 } from "../skill-registry-client.js";
 import type { RegistrySkillRolloutPolicy } from "../skill-registry-types.js";
 import {
+  migrateLegacyRegistrySkillProjections,
   materializePersonalGlobalSkillSet,
   materializeWorkspaceSkillSet,
   readSkillMaterializationManifest,
@@ -49,7 +53,6 @@ import {
   materializeUserGlobalSkillsForWorkspace,
   userGlobalMaterializedSkillsRoot,
 } from "../user-skill-store.js";
-import { listActiveWorkspaceSkills } from "../skills.js";
 import { shortId } from "../utils.js";
 import { writeWorkspaceSkillLockfile } from "../workspace-skill-lockfile.js";
 import {
@@ -724,6 +727,37 @@ export function registerSkillMaterializationRoutes(
   dependencies: SkillMaterializationRouteDependencies,
 ): void {
   const { serverDataDir } = dependencies;
+  const publishRuntimeView = async (workspace: WorkspaceInfo): Promise<void> => {
+    invalidateActiveRuntimeSkillView(workspace);
+    await ensureActiveRuntimeSkillView(workspace, {
+      disabledSkills: await listDisabledSkills({
+        dataDir: serverDataDir,
+        workspaceId: workspace.id,
+        includeGlobal: true,
+      }),
+      workspaceId: workspace.id,
+      workspaceOwner: workspaceResourceOwner({
+        workspaceId: workspace.id,
+        root: workspace.path,
+        label: workspace.name,
+      }),
+    });
+  };
+  const migrateLegacyProjectionOrFail = async (workspace: WorkspaceInfo) => {
+    const result = await migrateLegacyRegistrySkillProjections({
+      workspaceRoot: workspace.path,
+      dataDir: serverDataDir,
+    });
+    if (result.conflicts.length > 0) {
+      throw new ApiError(
+        409,
+        "legacy_skill_projection_conflict",
+        "Legacy managed skill projection differs from the registry projection; runtime view was not published",
+        { conflicts: result.conflicts },
+      );
+    }
+    return result;
+  };
 
   addRoute(routes, "GET", "/skills/materialization", "client", async (ctx) => {
     return jsonResponse(await buildGlobalSkillMaterializationStatus(ctx.config));
@@ -775,10 +809,11 @@ export function registerSkillMaterializationRoutes(
         skills: projectionSkills,
         loadPackage: async (skill) => loadPackage({ ...skill, target: "personal-global" }),
       });
+      const legacyProjectionMigration = await migrateLegacyProjectionOrFail(workspace);
       // Materialization must publish the effective runtime manifest before a
       // caller can start an engine for this workspace.
-      await listActiveWorkspaceSkills(workspace.path);
-      workspaceProjections.push({ workspaceId: workspace.id, ...projection });
+      await publishRuntimeView(workspace);
+      workspaceProjections.push({ workspaceId: workspace.id, ...projection, legacyProjectionMigration });
     }
 
     await recordAudit(result.rootDir, {
@@ -949,6 +984,7 @@ export function registerSkillMaterializationRoutes(
         loadPackage: async (skill) => loadPackage({ ...skill, target: "personal-global" }),
       });
     }
+    const legacyProjectionMigration = await migrateLegacyProjectionOrFail(workspace);
     const responseMaterializations = [
       ...workspaceMaterializations,
       ...personalGlobalMaterializations,
@@ -971,7 +1007,7 @@ export function registerSkillMaterializationRoutes(
     // The orchestrator stages from this manifest during process startup. Write
     // it in the same sync transaction so staging cannot observe a missing
     // manifest between materialization and engine launch.
-    await listActiveWorkspaceSkills(workspace.path);
+    await publishRuntimeView(workspace);
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -1018,7 +1054,9 @@ export function registerSkillMaterializationRoutes(
         ...workspaceResult.backupDirs,
         ...personalGlobalResult.backupDirs,
         ...personalGlobalProjectionResult.backupDirs,
+        ...legacyProjectionMigration.backupDirs,
       ],
+      legacyProjectionMigration,
     });
   });
 }

@@ -53,6 +53,7 @@ export type WorkspaceLocalActivationDeps = {
     workspace: WorkspaceInfo,
     options: { reason: string },
   ) => Promise<boolean>;
+  runtimeSkillViewRevision?: (workspaceId: string) => string | null;
   clearDisplayedSessionState: (
     reason:
       | "remote_to_local_workspace_changed"
@@ -333,6 +334,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
         workspaceName: next.displayName?.trim() || next.name?.trim() || null,
         reason: "workspace-attach-local",
         navigate: false,
+        skillViewRevision: deps.runtimeSkillViewRevision?.(next.id) ?? null,
       });
       deps.wsDebug("activate:remote->local:prepareRuntime:done", {
         ok: connectedToLocalHost,
@@ -435,13 +437,26 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
         path: next.path,
         runtime,
       });
-      const ok = await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
+      const prepareRuntime = async () => await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
         workspacePath: next.path,
         workspaceId: next.id,
         workspaceName: next.displayName?.trim() || next.name?.trim() || null,
         reason: runtime === "veslo-orchestrator" ? "workspace-orchestrator-switch" : "workspace-restart",
         navigate: false,
+        skillViewRevision: deps.runtimeSkillViewRevision?.(next.id) ?? null,
       });
+      let ok: boolean;
+      try {
+        ok = await prepareRuntime();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : deps.safeStringify(error);
+        if (!message.includes("skill_view_stale")) throw error;
+        const refreshed = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
+          reason: "skill-view-stale-retry",
+        });
+        if (!refreshed) throw error;
+        ok = await prepareRuntime();
+      }
       if (!ok) {
         deps.setError("Failed to reconnect after worker switch");
         return "failed";

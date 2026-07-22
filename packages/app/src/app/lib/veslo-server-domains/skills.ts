@@ -43,6 +43,7 @@ import type {
   VesloSkillRemovalScope,
   VesloSkillRemovalsResponse,
   VesloSkillResolveResult,
+  VesloRuntimeSkillView,
   VesloUserGlobalSkillStoreContent,
   VesloUserGlobalSkillStoreItem,
   VesloUserGlobalSkillStoreMutationResult,
@@ -154,6 +155,14 @@ export function createSkillsClient(context: SkillsClientContext) {
   const { baseUrl, token, hostToken, requestJson, timeouts } = context;
 
   return {
+    prepareRuntimeView: (workspaceId: string, options?: { expectedRevision?: string }) =>
+      requestJson<VesloRuntimeSkillView>(baseUrl, `${workspacePath(workspaceId)}/skills/runtime-view`, {
+        token,
+        hostToken,
+        method: "POST",
+        ...(options?.expectedRevision ? { body: { expectedRevision: options.expectedRevision } } : {}),
+      }),
+
     list: (workspaceId: string, options?: { includeGlobal?: boolean; includeDisabled?: boolean }) => {
       const queryParams = new URLSearchParams();
       if (options?.includeGlobal) queryParams.set("includeGlobal", "true");

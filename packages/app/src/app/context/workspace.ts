@@ -563,6 +563,7 @@ export function createWorkspaceStore(options: {
   });
   const syncWorkspaceSkillMaterializationBeforeRuntime =
     skillMaterializationGate.syncWorkspaceSkillMaterializationBeforeRuntime;
+  const runtimeSkillViewRevision = skillMaterializationGate.runtimeSkillViewRevision;
 
   const runWorkspaceActivation = async ({
     id,
@@ -641,6 +642,7 @@ export function createWorkspaceStore(options: {
           resolveEngineRuntime,
           localRuntimeLifecycle,
           syncWorkspaceSkillMaterializationBeforeRuntime,
+          runtimeSkillViewRevision,
           clearDisplayedSessionState,
           updateWorkspaceConnectionState,
           setWorkspaceConfig,
@@ -748,6 +750,19 @@ export function createWorkspaceStore(options: {
       setProjectDir(nextRoot);
     });
     options.setEngineReady?.(targetRuntimeReady);
+
+    // Browsing is intentionally non-blocking: prepare the revisioned server
+    // view now, but never start, switch or reload an engine from this path.
+    void syncWorkspaceSkillMaterializationBeforeRuntime(next, { reason: "browse-prefetch" })
+      .then((ready) => {
+        wsDebug("browse:local:runtime-skill-view", { id, ready });
+      })
+      .catch((error) => {
+        wsDebug("browse:local:runtime-skill-view-failed", {
+          id,
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+      });
 
     if (isTauriRuntime()) {
       setWorkspaceConfigLoaded(false);
@@ -1689,6 +1704,7 @@ export function createWorkspaceStore(options: {
     ensureLocalRuntimeReadyForWorkspaceStart: engineStore.ensureLocalRuntimeReadyForWorkspaceStart,
     syncManagedAiRuntimeConfigBeforeRuntime: options.syncManagedAiRuntimeConfigBeforeRuntime,
     syncWorkspaceSkillMaterializationBeforeRuntime,
+    runtimeSkillViewRevision,
     probeWorkspaceApiReady: async ({ workspaceId, workspacePath, reason }) => {
       const entry = options.routing.entry(workspaceId);
       const client = entry?.client ?? options.routing.client(workspaceId);

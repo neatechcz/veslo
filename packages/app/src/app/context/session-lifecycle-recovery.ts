@@ -279,6 +279,33 @@ export function createSessionLifecycleRecoveryController(
     terminalTranscriptRecoveries.delete(key);
   };
 
+  const invalidateTerminalTranscriptRecoveriesForConversation = (input: Pick<
+    SessionLifecycleRecoveryScope,
+    "workspaceId" | "conversationId"
+  >) => {
+    const workspaceId = normalize(input.workspaceId);
+    const conversationId = normalize(input.conversationId);
+    if (!workspaceId || !conversationId) return 0;
+
+    let invalidated = 0;
+    for (const [key, recovery] of terminalTranscriptRecoveries) {
+      if (
+        normalize(recovery.scope.workspaceId) !== workspaceId ||
+        normalize(recovery.scope.conversationId) !== conversationId
+      ) continue;
+      clearTerminalHydrationRecovery(key);
+      invalidated += 1;
+      traceForScope("session-lifecycle-recovery:terminal-transcript-invalidated-by-new-send", recovery.scope, recovery.generation, {
+        outcome: "terminal-transcript-invalidated-by-new-send",
+      });
+      // The terminal response has already been presented. A newer send must
+      // not leave its ownership transition waiting for an obsolete hydration
+      // request that can no longer publish a snapshot.
+      options.onTerminalTranscriptRecoverySettled?.(recovery.scope);
+    }
+    return invalidated;
+  };
+
   const isAcceptedRunVisible = (scope: SessionLifecycleRecoveryScope) => {
     if (options.isAcceptedRunVisible) return options.isAcceptedRunVisible(scope);
     const selectedSessionId = normalize(options.selectedSessionId());
@@ -833,6 +860,7 @@ export function createSessionLifecycleRecoveryController(
   };
 
   return {
+    invalidateTerminalTranscriptRecoveriesForConversation,
     watchQueuedConversationRun(input: AcceptedConversationRunInput) {
       const scope: SessionLifecycleRecoveryScope = {
         ...input,

@@ -126,6 +126,21 @@ describe("SharedOpenCodeEngine", () => {
     });
   });
 
+  test("snapshot exposes the selected skill view identity and revision", () => {
+    const h = harness();
+    h.manager.setSkillView({
+      workspaceId: "workspace-a",
+      workspaceRoot: "/tmp/veslo/workspace-a",
+      revision: "view-a",
+    });
+
+    expect(h.manager.snapshot()).toMatchObject({
+      skillWorkspaceId: "workspace-a",
+      skillWorkspaceRoot: "/tmp/veslo/workspace-a",
+      skillViewRevision: "view-a",
+    });
+  });
+
   test("snapshot reports starting while shared health check is pending", async () => {
     let releaseHealthy!: () => void;
     const healthy = new Promise<void>((resolve) => {

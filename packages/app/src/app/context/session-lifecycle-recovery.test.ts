@@ -1454,6 +1454,70 @@ test("a newer admitted run does not fence late transcript hydration from the old
   assert.equal(controller.activeWatchCount(), 1);
 });
 
+test("a new send invalidates an in-flight terminal transcript recovery for the same conversation", async () => {
+  let resolveRecovery!: (snapshot: {
+    workspaceId: string;
+    sessionId: string;
+    limit: number;
+    messages: [];
+    partsByMessageId: {};
+    source: "sqlite";
+  }) => void;
+  const recovery = new Promise<{
+    workspaceId: string;
+    sessionId: string;
+    limit: number;
+    messages: [];
+    partsByMessageId: {};
+    source: "sqlite";
+  }>((resolve) => {
+    resolveRecovery = resolve;
+  });
+  const hydrated: string[] = [];
+  const settled: string[] = [];
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => ({
+      runId: "run-old",
+      status: "completed",
+      stale: false,
+    }),
+    recoverConversationTranscript: async () => recovery,
+    hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot.sessionId),
+    onTerminalTranscriptRecoverySettled: (scope) => settled.push(scope.runId),
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-a",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-old",
+    clientMessageId: "msg-old",
+  });
+  await waitForAsyncPoll();
+
+  assert.equal(controller.invalidateTerminalTranscriptRecoveriesForConversation({
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+  }), 1);
+  resolveRecovery({
+    workspaceId: "ws-a",
+    sessionId: "ses-a",
+    limit: 140,
+    messages: [],
+    partsByMessageId: {},
+    source: "sqlite",
+  });
+  await waitForAsyncPoll();
+
+  assert.deepEqual(hydrated, []);
+  assert.deepEqual(settled, ["run-old"]);
+});
+
 test("a newer accepted run does not cancel the old exact terminal transcript retry", async () => {
   const timers: Timer[] = [];
   let recoveryAttempts = 0;

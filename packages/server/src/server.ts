@@ -28,6 +28,7 @@ import {
   readSkillAtPath,
   updateSkillAtPath,
 } from "./skills.js";
+import { ensureActiveRuntimeSkillView } from "./active-runtime-skill-view.js";
 import { installHubSkill } from "./skill-hub.js";
 import {
   listSkillRemovals,
@@ -1048,6 +1049,8 @@ async function fetchOpencodeJson(
     timeoutMs?: number;
     sendTraceId?: string | null;
     conversationRunId?: string | null;
+    /** Server-owned assertion about the published runtime skill view. */
+    skillViewRevision?: string | null;
     orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   },
 ) {
@@ -1074,6 +1077,10 @@ async function fetchOpencodeJson(
   const shouldSendConversationRunId = Boolean(conversationRunId && isWorkspaceOpencodeProxyUrl(url, workspace.id));
   if (shouldSendConversationRunId) {
     headers.set(VESLO_CONVERSATION_RUN_ID_HEADER, conversationRunId);
+  }
+  const skillViewRevision = init.skillViewRevision?.trim() ?? "";
+  if (skillViewRevision && isWorkspaceOpencodeProxyUrl(url, workspace.id)) {
+    headers.set("x-veslo-skill-view-revision", skillViewRevision);
   }
 
   const directoryOverride = init.directory?.trim() ?? "";
@@ -1159,6 +1166,24 @@ async function fetchOpencodeJson(
         status: response.status,
         durationMs: Date.now() - requestStartedAt,
       });
+      const localLifecycleBody = isRecordLike(json) ? json : null;
+      const localLifecycleError = localLifecycleBody && typeof localLifecycleBody.error === "string"
+        ? localLifecycleBody.error
+        : null;
+      if (
+        response.status === 409 &&
+        (localLifecycleError === "shared_engine_skill_view_busy" ||
+          localLifecycleError === "shared_engine_skill_view_stale" ||
+          localLifecycleError === "skill_view_stale")
+      ) {
+        throw new ApiError(409, localLifecycleError, typeof localLifecycleBody?.message === "string"
+          ? localLifecycleBody.message
+          : "The local OpenCode runtime rejected the skill view", {
+          status: response.status,
+          body: json ?? text,
+          path,
+        });
+      }
       throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
         status: response.status,
         body: json ?? text,
@@ -4383,6 +4408,21 @@ function createRoutes(
     } = input;
     const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
     const opencodeRunBody = buildConversationRunBody(kind, body);
+    const runtimeSkillView = workspace.workspaceType === "local"
+      ? await ensureActiveRuntimeSkillView(workspace, {
+          disabledSkills: await listDisabledSkills({
+            dataDir: serverDataDir,
+            workspaceId: workspace.id,
+            includeGlobal: true,
+          }),
+          workspaceId: workspace.id,
+          workspaceOwner: workspaceResourceOwner({
+            workspaceId: workspace.id,
+            root: workspace.path,
+            label: workspace.name,
+          }),
+        })
+      : null;
     runTrace.record("server:conversation-run:opencode-submit-body", {
       workspaceId: workspace.id,
       conversationId: target.conversationId,
@@ -4391,6 +4431,7 @@ function createRoutes(
       clientMessageId,
       origin,
       opencodeSessionId: target.opencodeSessionId,
+      skillViewRevision: runtimeSkillView?.revision ?? null,
       body: summarizeConversationRunBodyForTrace(opencodeRunBody),
     });
     return runTrace.step(
@@ -4401,6 +4442,7 @@ function createRoutes(
         body: opencodeRunBody,
         sendTraceId: runTrace.traceId,
         conversationRunId: runId,
+        skillViewRevision: runtimeSkillView?.revision ?? null,
         orchestratorRegistrationScope,
       }),
       {
@@ -4411,6 +4453,7 @@ function createRoutes(
         clientMessageId,
         origin,
         opencodeSessionId: target.opencodeSessionId,
+        skillViewRevision: runtimeSkillView?.revision ?? null,
       },
     );
   };

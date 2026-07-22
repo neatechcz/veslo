@@ -581,6 +581,7 @@ export function createVesloServerClient(options: {
     listPlugins: plugins.list,
     addPlugin: plugins.add,
     removePlugin: plugins.remove,
+    prepareRuntimeSkillView: skills.prepareRuntimeView,
     listSkills: skills.list,
     listDisabledSkills: skills.listDisabled,
     setSkillEnabledState: skills.setEnabledState,

@@ -1,4 +1,5 @@
-import { readdir, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, rename, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { TextDecoder } from "node:util";
@@ -419,12 +420,17 @@ function resolveActiveSkillCandidates(items: SkillItem[]): SkillItem[] {
   return resolved.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-async function writeEffectiveSkillManifest(workspaceRoot: string, skills: SkillItem[]): Promise<void> {
+export async function writeEffectiveSkillManifest(
+  workspaceRoot: string,
+  skills: SkillItem[],
+  revision: string,
+): Promise<void> {
   const path = workspaceEffectiveSkillManifestPath(workspaceRoot);
   const payload = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     workspaceRoot: resolve(workspaceRoot),
+    revision,
     entries: skills.map((item) => ({
       name: item.name,
       path: resolve(item.path),
@@ -432,14 +438,36 @@ async function writeEffectiveSkillManifest(workspaceRoot: string, skills: SkillI
       removalPolicy: item.registry?.removalPolicy ?? "user_removable",
     })),
   };
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
   try {
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  } catch {
-    // Runtime inventory must remain read-only from the API's perspective. The
-    // orchestrator can fall back to an empty view if this local hint cannot be
-    // persisted (for example on a read-only workspace).
+    await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    await rename(temporaryPath, path);
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw new ApiError(503, "skill_manifest_unavailable", "Unable to publish the active runtime skill manifest", {
+      cause: error instanceof Error ? error.message : String(error),
+    });
   }
+}
+
+export async function resolveActiveWorkspaceSkills(
+  workspaceRoot: string,
+  options: Omit<ListSkillsOptions, "includeGlobal" | "globalOwner"> = {},
+): Promise<SkillItem[]> {
+  const candidates = await collectSkillItems(workspaceRoot, {
+    ...options,
+    includeGlobal: false,
+    includeDuplicates: true,
+  });
+  const result = resolveActiveSkillCandidates(candidates);
+  recordSkillAudit("active-runtime-resolution", {
+    workspaceRoot,
+    candidateCount: candidates.length,
+    activeCount: result.length,
+    active: result.map((item) => ({ name: item.name, path: item.path, source: activeSkillClass(item) })),
+  });
+  return result;
 }
 
 /**
@@ -453,19 +481,10 @@ export async function listActiveWorkspaceSkills(
   workspaceRoot: string,
   options: Omit<ListSkillsOptions, "includeGlobal" | "globalOwner"> = {},
 ): Promise<SkillItem[]> {
-  const candidates = await collectSkillItems(workspaceRoot, {
-    ...options,
-    includeGlobal: false,
-    includeDuplicates: true,
-  });
-  const result = resolveActiveSkillCandidates(candidates);
-  await writeEffectiveSkillManifest(workspaceRoot, result);
-  recordSkillAudit("active-runtime-resolution", {
-    workspaceRoot,
-    candidateCount: candidates.length,
-    activeCount: result.length,
-    active: result.map((item) => ({ name: item.name, path: item.path, source: activeSkillClass(item) })),
-  });
+  const result = await resolveActiveWorkspaceSkills(workspaceRoot, options);
+  // Compatibility wrapper for callers that have not moved to the revisioned
+  // active-view service yet. Runtime launch paths must use that service.
+  await writeEffectiveSkillManifest(workspaceRoot, result, "legacy-unrevisioned");
   return result;
 }
 

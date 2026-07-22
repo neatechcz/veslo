@@ -515,6 +515,7 @@ export async function runtimePrepareWorkspace(input: {
   projectDir: string;
   workspaceId?: string | null;
   workspaceName?: string | null;
+  skillViewRevision?: string | null;
   reason?: string | null;
   forceFreshRuntime?: boolean;
   preferSidecar?: boolean;
@@ -528,6 +529,7 @@ export async function runtimePrepareWorkspace(input: {
     projectDir: input.projectDir,
     workspaceId: input.workspaceId ?? null,
     workspaceName: input.workspaceName ?? null,
+    skillViewRevision: input.skillViewRevision ?? null,
     reason: input.reason ?? null,
     forceFreshRuntime: input.forceFreshRuntime ?? false,
     preferSidecar: input.preferSidecar ?? false,
@@ -783,11 +785,13 @@ export async function orchestratorWorkspaceActivate(input: {
   workspacePath: string;
   workspaceId?: string | null;
   name?: string | null;
+  skillViewRevision?: string | null;
 }): Promise<OrchestratorWorkspace> {
   return invoke<OrchestratorWorkspace>("orchestrator_workspace_activate", {
     workspacePath: input.workspacePath,
     workspaceId: input.workspaceId ?? null,
     name: input.name ?? null,
+    skillViewRevision: input.skillViewRevision ?? null,
   });
 }
 

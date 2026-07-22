@@ -633,6 +633,7 @@ pub async fn runtime_prepare_workspace(
     project_dir: String,
     workspace_id: Option<String>,
     workspace_name: Option<String>,
+    skill_view_revision: Option<String>,
     reason: Option<String>,
     force_fresh_runtime: Option<bool>,
     prefer_sidecar: Option<bool>,
@@ -648,6 +649,7 @@ pub async fn runtime_prepare_workspace(
             project_dir,
             workspace_id,
             workspace_name,
+            skill_view_revision,
             reason,
             force_fresh_runtime,
             prefer_sidecar,
@@ -671,6 +673,7 @@ fn runtime_prepare_workspace_blocking(
     project_dir: String,
     workspace_id: Option<String>,
     workspace_name: Option<String>,
+    skill_view_revision: Option<String>,
     reason: Option<String>,
     force_fresh_runtime: Option<bool>,
     prefer_sidecar: Option<bool>,
@@ -707,6 +710,7 @@ fn runtime_prepare_workspace_blocking(
             project_dir.clone(),
             workspace_id.clone(),
             workspace_name.clone(),
+            skill_view_revision.clone(),
         ) {
             Ok(_) => {
                 let engine = engine_info(
@@ -718,6 +722,13 @@ fn runtime_prepare_workspace_blocking(
                 return Ok(workspace_runtime_prepare_result(action, &reason, engine));
             }
             Err(error) => {
+                // A revision mismatch is a deliberate fail-closed response
+                // from the orchestrator. Do not hide it behind a fresh daemon
+                // start: the client must refresh its server-owned skill view
+                // and retry activation with the newly published revision.
+                if error.contains("skill_view_stale") {
+                    return Err(error);
+                }
                 eprintln!(
                     "[runtime_prepare_workspace] orchestrator activate failed, falling back to fresh start: {error}"
                 );
@@ -749,6 +760,7 @@ fn runtime_prepare_workspace_blocking(
             project_dir.clone(),
             workspace_id.clone(),
             workspace_name.clone(),
+            skill_view_revision,
         )?;
         engine_info(
             app.state::<EngineManager>(),

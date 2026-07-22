@@ -9,11 +9,16 @@ import { buildSkillPackageManifest } from "../skill-package-model.js";
 import type { SkillPackageArchive } from "../skill-packages.js";
 import { listSkills } from "../skills.js";
 import {
+  migrateLegacyRegistrySkillProjections,
   materializeSkillPackageToRoot,
   materializeWorkspaceSkillSet,
   readSkillMaterializationManifest,
 } from "../skill-materializer.js";
-import { workspaceManagedSkillsRoot } from "../skill-roots.js";
+import {
+  workspaceManagedSkillsRoot,
+  workspaceRegistryPersonalSkillsRoot,
+  workspaceSkillsRoot,
+} from "../skill-roots.js";
 
 const tempDirs: string[] = [];
 
@@ -215,6 +220,78 @@ test("repairs missing managed entrypoint even when marker fields match", async (
 
   expect(result.backupDirs.length).toBe(1);
   expect(await readFile(join(skillDir, "SKILL.md"), "utf8")).toContain("# Stable");
+});
+
+test("migrates an equivalent legacy registry projection and keeps a recoverable backup", async () => {
+  const workspaceRoot = await tempDir("veslo-materializer-legacy-projection-");
+  const dataDir = await tempDir("veslo-materializer-legacy-projection-data-");
+  const pkg = await archive("policy-tool", "# Policy\n", [archiveFile("examples/example.txt", "same\n")]);
+  const legacyRoot = join(workspaceSkillsRoot(workspaceRoot), "veslo-user");
+  const registryRoot = workspaceRegistryPersonalSkillsRoot(workspaceRoot);
+  const legacySkill = {
+    ...materialization("policy-tool", pkg),
+    source: "platform" as const,
+    target: "personal-global" as const,
+    removalPolicy: "locked" as const,
+  };
+  const registrySkill = { ...legacySkill, target: "workspace" as const };
+
+  await materializeWorkspaceSkillSet({
+    workspaceRoot,
+    rootDir: legacyRoot,
+    dataDir,
+    skills: [legacySkill],
+    loadPackage: async () => pkg,
+  });
+  await materializeWorkspaceSkillSet({
+    workspaceRoot,
+    rootDir: registryRoot,
+    dataDir,
+    skills: [registrySkill],
+    loadPackage: async () => pkg,
+  });
+  const userStoreDir = join(legacyRoot, "actual-user-store");
+  await mkdir(userStoreDir, { recursive: true });
+  await writeFile(join(userStoreDir, ".veslo-user-skill.json"), "{}\n", "utf8");
+
+  const result = await migrateLegacyRegistrySkillProjections({ workspaceRoot, dataDir });
+
+  expect(result.conflicts).toEqual([]);
+  expect(result.migratedSkillNames).toEqual(["policy-tool"]);
+  expect(result.backupDirs).toHaveLength(1);
+  await expect(readFile(join(legacyRoot, "policy-tool", "SKILL.md"), "utf8")).rejects.toThrow();
+  expect(await readFile(join(result.backupDirs[0]!, "SKILL.md"), "utf8")).toContain("# Policy");
+  expect(await readFile(join(userStoreDir, ".veslo-user-skill.json"), "utf8")).toBe("{}\n");
+});
+
+test("does not remove a divergent legacy registry projection", async () => {
+  const workspaceRoot = await tempDir("veslo-materializer-legacy-conflict-");
+  const dataDir = await tempDir("veslo-materializer-legacy-conflict-data-");
+  const pkg = await archive("policy-tool", "# Policy\n");
+  const legacyRoot = join(workspaceSkillsRoot(workspaceRoot), "veslo-user");
+  const registryRoot = workspaceRegistryPersonalSkillsRoot(workspaceRoot);
+  const legacySkill = {
+    ...materialization("policy-tool", pkg),
+    source: "platform" as const,
+    target: "personal-global" as const,
+    removalPolicy: "locked" as const,
+  };
+
+  await materializeWorkspaceSkillSet({ workspaceRoot, rootDir: legacyRoot, dataDir, skills: [legacySkill], loadPackage: async () => pkg });
+  await materializeWorkspaceSkillSet({
+    workspaceRoot,
+    rootDir: registryRoot,
+    dataDir,
+    skills: [{ ...legacySkill, target: "workspace" as const }],
+    loadPackage: async () => pkg,
+  });
+  await writeFile(join(registryRoot, "policy-tool", "SKILL.md"), "changed\n", "utf8");
+
+  const result = await migrateLegacyRegistrySkillProjections({ workspaceRoot, dataDir });
+
+  expect(result.migratedSkillNames).toEqual([]);
+  expect(result.conflicts).toEqual([expect.objectContaining({ name: "policy-tool", reason: "package-content-mismatch" })]);
+  expect(await readFile(join(legacyRoot, "policy-tool", "SKILL.md"), "utf8")).toContain("# Policy");
 });
 
 test("refuses to overwrite an unmanaged skill directory", async () => {

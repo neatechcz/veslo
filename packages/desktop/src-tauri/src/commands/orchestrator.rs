@@ -631,6 +631,7 @@ pub async fn orchestrator_workspace_activate(
     workspace_path: String,
     workspace_id: Option<String>,
     name: Option<String>,
+    skill_view_revision: Option<String>,
 ) -> Result<OrchestratorWorkspace, String> {
     let (base_url, workspace_path, workspace_id, server_workspace_id) =
         resolve_workspace_activation(&app, &manager, &workspace_path, workspace_id)?;
@@ -647,6 +648,7 @@ pub async fn orchestrator_workspace_activate(
             workspace_id.as_deref(),
             server_workspace_id.as_deref(),
             name.as_deref(),
+            skill_view_revision.as_deref(),
         )
     })
     .await
@@ -681,6 +683,7 @@ fn activate_workspace_blocking(
     workspace_id: Option<&str>,
     server_workspace_id: Option<&str>,
     name: Option<&str>,
+    skill_view_revision: Option<&str>,
 ) -> Result<OrchestratorWorkspace, String> {
     let added = register_workspace_with_orchestrator(
         base_url,
@@ -704,11 +707,12 @@ fn activate_workspace_blocking(
         ))
         .build();
     let started = Instant::now();
-    match agent
-        .post(&activate_url)
-        .set("Content-Type", "application/json")
-        .send_string("")
-    {
+    let request = agent.post(&activate_url).set("Content-Type", "application/json");
+    let request = match skill_view_revision.map(str::trim).filter(|revision| !revision.is_empty()) {
+        Some(revision) => request.set("x-veslo-skill-view-revision", revision),
+        None => request,
+    };
+    match request.send_string("") {
         Ok(r) => {
             crate::flow_log!(
                 "[veslo:http] IN  {} ({}ms) {activate_url} (orchestrator.activate)",
@@ -747,6 +751,7 @@ pub fn orchestrator_workspace_activate_blocking(
     workspace_path: String,
     workspace_id: Option<String>,
     name: Option<String>,
+    skill_view_revision: Option<String>,
 ) -> Result<OrchestratorWorkspace, String> {
     let (base_url, workspace_path, workspace_id, server_workspace_id) =
         resolve_workspace_activation(app, manager, &workspace_path, workspace_id)?;
@@ -756,6 +761,7 @@ pub fn orchestrator_workspace_activate_blocking(
         workspace_id.as_deref(),
         server_workspace_id.as_deref(),
         name.as_deref(),
+        skill_view_revision.as_deref(),
     )
 }
 

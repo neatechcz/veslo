@@ -174,6 +174,16 @@ Manual edits inside workspace roots are detected by the fingerprint/TTL path.
 The invalidation service owns this fan-out. Individual UI callers must not
 guess the affected workspace set.
 
+Workspace lifecycle invalidation is also mandatory:
+
+- evict when a workspace is removed or forgotten;
+- evict the old key when its registered root changes;
+- evict the old key when workspace identity, ownership or policy context is
+  replaced during re-registration.
+
+The new registration must start with a fresh `(workspaceId, root)` snapshot;
+the old snapshot must never be reused across those identity boundaries.
+
 ## Phase 0 — Shared-engine staging gate
 
 ### Objective
@@ -433,11 +443,15 @@ Using the existing `.tmp` skill fixture:
   recompute for concurrent list/resolve/submit callers.
 - A ready snapshot means the first send does not perform another active scan.
 - Explicit mutations invalidate the correct workspace snapshot.
+- Workspace removal, root changes and identity/policy re-registration evict the
+  old snapshot key before a new one can be used.
 - Manual workspace edits are detected within the bounded freshness window.
 - A failed recompute leaves the last valid view available to an already running
   engine, while a new start fails closed.
 - An atomic manifest-write failure returns `skill_manifest_unavailable` and
   never publishes a partial revision.
+- The synchronous fallback runs the same materialization, invalidation, ensure,
+  atomic-publish and revision-handshake sequence as the normal path.
 - Shared-engine state exposes requested workspace identity and view revision;
   serialized idle switches restart/reload deterministically and active-run
   switches reject.
@@ -454,7 +468,10 @@ Roll out Phase 0 behind the existing fail-closed staging behavior first. Then
 enable the server snapshot consumers behind a diagnostic flag until route and
 submit parity is verified. Finally enable client browse prefetch.
 
-If the snapshot service fails, the safe fallback is a single synchronous
-recompute for the requested workspace. Do not fall back to raw global roots or
-scratch-workspace discovery. If client prefetch misbehaves, disable only the
-prefetch wrapper; retain the server snapshot and shared-engine manifest gate.
+If the snapshot service fails, the safe fallback is one synchronous
+`ensure materialized -> invalidate -> ensure active view -> atomic publish`
+recompute for the requested workspace. It must use the same service contract,
+single-flight and revision handshake as the normal path; it must not call the
+raw resolver directly. Do not fall back to raw global roots or scratch-workspace
+discovery. If client prefetch misbehaves, disable only the prefetch wrapper;
+retain the server snapshot and shared-engine manifest gate.

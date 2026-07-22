@@ -1,4 +1,5 @@
 import { ApiError } from "../errors.js";
+import { invalidateActiveRuntimeSkillView } from "../active-runtime-skill-view.js";
 import { addRoute, type Route } from "../routing.js";
 import {
   emitReloadEvent,
@@ -81,9 +82,11 @@ export function registerSkillEnabledRoutes(
       path: typeof target.path === "string" ? target.path.trim() || undefined : undefined,
     };
     if (workspace) {
+      invalidateActiveRuntimeSkillView(workspace);
       emitReloadEvent(ctx.reloadEvents, workspace, "skills", reloadTrigger);
     } else if (target.scope === "user-global" || target.scope === "organization" || target.scope === "platform") {
       for (const configuredWorkspace of ctx.config.workspaces) {
+        if (configuredWorkspace.workspaceType === "local") invalidateActiveRuntimeSkillView(configuredWorkspace);
         emitReloadEvent(ctx.reloadEvents, configuredWorkspace, "skills", reloadTrigger);
       }
     }

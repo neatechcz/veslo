@@ -207,16 +207,16 @@ test("workspace registry not configured status skips sync without blocking runti
   assert.deepEqual(debugLabels, ["skills:materialization:skip:not-configured"]);
 });
 
-test("runtime skill preparation resolves the active manifest before launch", () => {
+test("runtime skill preparation uses the revisioned active view before launch", () => {
   assert.match(
     source,
-    /const ensureActiveRuntimeManifest[\s\S]*client\.listSkills\(workspaceId, \{ includeGlobal: false \}\)/s,
-    "runtime startup must publish the active-skill manifest before the orchestrator stages skills",
+    /const ensureActiveRuntimeManifest[\s\S]*client\.prepareRuntimeSkillView\(workspaceId\)/s,
+    "runtime startup must prepare the server-owned active view before the orchestrator stages skills",
   );
 });
 
-test("local-only runtime still resolves active skills before engine startup", async () => {
-  let listed = 0;
+test("local-only runtime still prepares the active view before engine startup", async () => {
+  let prepared = 0;
   const gate = createGate({
     client: {
       getWorkspaceSkillMaterializationStatus: async () => ({
@@ -225,10 +225,9 @@ test("local-only runtime still resolves active skills before engine startup", as
         status: "not-configured",
         reloadRequired: false,
       }),
-      listSkills: async (_workspaceId: string, options: { includeGlobal?: boolean }) => {
-        listed += 1;
-        assert.equal(options.includeGlobal, false);
-        return { items: [{ name: "workspace-only" }] };
+      prepareRuntimeSkillView: async () => {
+        prepared += 1;
+        return { ready: true, revision: "view-1", generatedAt: "2026-07-21T00:00:00.000Z", activeCount: 1, items: [{ name: "workspace-only" }] };
       },
     },
   });
@@ -239,7 +238,7 @@ test("local-only runtime still resolves active skills before engine startup", as
   );
 
   assert.equal(ready, true);
-  assert.equal(listed, 1);
+  assert.equal(prepared, 1);
 });
 
 test("degraded workspace materialization status skips sync without blocking runtime", async () => {

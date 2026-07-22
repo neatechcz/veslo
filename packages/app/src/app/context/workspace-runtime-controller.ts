@@ -80,6 +80,7 @@ export type WorkspaceRuntimeControllerDeps = {
     workspace: WorkspaceInfo,
     options: { reason: string },
   ) => Promise<boolean>;
+  runtimeSkillViewRevision?: (workspaceId: string) => string | null;
   probeWorkspaceApiReady?: (input: {
     workspaceId: string;
     workspacePath: string;
@@ -447,15 +448,33 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           runtime,
           reason: prepareReason,
           forceFreshRuntime,
+          skillViewRevision: deps.runtimeSkillViewRevision?.(workspace.id) ?? null,
         });
-        const ok = await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
+        const prepareRuntime = async () => await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
           workspacePath: workspace.path,
           workspaceId: workspace.id,
           workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
           reason: prepareReason,
           connectMode: "quiet",
           forceFreshRuntime,
+          skillViewRevision: deps.runtimeSkillViewRevision?.(workspace.id) ?? null,
         });
+        let ok: boolean;
+        try {
+          ok = await prepareRuntime();
+        } catch (error) {
+          const detail = messageFromUnknownError(error, deps.safeStringify);
+          if (!detail.includes("skill_view_stale")) throw error;
+          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skill-view-stale", {
+            workspaceId: id,
+            reason: prepareReason,
+          });
+          const refreshed = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
+            reason: "skill-view-stale-retry",
+          });
+          if (!refreshed) throw error;
+          ok = await prepareRuntime();
+        }
         recordSendWorkflowTrace("workspace-runtime", "ensure-engine:prepare-runtime:done", {
           workspaceId: id,
           ok,

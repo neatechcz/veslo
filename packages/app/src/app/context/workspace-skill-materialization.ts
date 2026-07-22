@@ -86,7 +86,10 @@ function skillRegistryErrorTracePayload(error: VesloServerError) {
 export function createWorkspaceSkillMaterializationGate(
   deps: WorkspaceSkillMaterializationGateDeps,
 ) {
-  async function syncWorkspaceSkillMaterializationBeforeRuntime(
+  const runtimePreparationFlights = new Map<string, Promise<boolean>>();
+  const runtimeViewRevisions = new Map<string, string>();
+
+  async function prepareWorkspaceSkillRuntimeView(
     workspace: WorkspaceInfo,
     context?: { reason?: string },
   ) {
@@ -147,12 +150,13 @@ export function createWorkspaceSkillMaterializationGate(
       // starts the process. This is intentionally separate from registry
       // materialization: local-only workspaces need the same guarantee.
       const ensureActiveRuntimeManifest = async (): Promise<void> => {
-        if (typeof client.listSkills !== "function") {
+        if (typeof client.prepareRuntimeSkillView !== "function") {
           trace("active-manifest-unsupported");
           return;
         }
-        const active = await client.listSkills(workspaceId, { includeGlobal: false });
-        trace("active-manifest-ready", { activeCount: active.items.length });
+        const active = await client.prepareRuntimeSkillView(workspaceId);
+        runtimeViewRevisions.set(workspaceId, active.revision);
+        trace("active-manifest-ready", { activeCount: active.activeCount, revision: active.revision });
       };
 
       const status = await client.getWorkspaceSkillMaterializationStatus(workspaceId, materializationAuth);
@@ -317,5 +321,27 @@ export function createWorkspaceSkillMaterializationGate(
     }
   }
 
-  return { syncWorkspaceSkillMaterializationBeforeRuntime };
+  async function syncWorkspaceSkillMaterializationBeforeRuntime(
+    workspace: WorkspaceInfo,
+    context?: { reason?: string },
+  ): Promise<boolean> {
+    const workspaceId = workspace.id?.trim() ?? "";
+    const workspacePath = workspace.path?.trim() ?? "";
+    if (!workspaceId || !workspacePath) return true;
+    const key = `${workspaceId}\u0000${workspacePath}`;
+    const existing = runtimePreparationFlights.get(key);
+    if (existing) return await existing;
+    const flight = prepareWorkspaceSkillRuntimeView(workspace, context);
+    runtimePreparationFlights.set(key, flight);
+    try {
+      return await flight;
+    } finally {
+      if (runtimePreparationFlights.get(key) === flight) runtimePreparationFlights.delete(key);
+    }
+  }
+
+  return {
+    syncWorkspaceSkillMaterializationBeforeRuntime,
+    runtimeSkillViewRevision: (workspaceId: string) => runtimeViewRevisions.get(workspaceId.trim()) ?? null,
+  };
 }

@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 
 import { recordAudit, readAuditEntries, readLastAudit } from "../audit.js";
+import { evictActiveRuntimeSkillView, invalidateActiveRuntimeSkillView } from "../active-runtime-skill-view.js";
 import { ApiError } from "../errors.js";
 import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "../internal-system.js";
 import { updateJsoncTopLevel } from "../jsonc.js";
@@ -146,6 +147,7 @@ export function registerWorkspaceManagementRoutes(
         nextWorkspace.opencodeUsername !== existing.opencodeUsername ||
         nextWorkspace.opencodePassword !== existing.opencodePassword;
       if (changed && (baseUrl || directory || opencodeUsername || opencodePassword)) {
+        invalidateActiveRuntimeSkillView(existing);
         ctx.config.workspaces = ctx.config.workspaces.map((entry) =>
           entry.id === id ? nextWorkspace : entry,
         );
@@ -294,6 +296,7 @@ export function registerWorkspaceManagementRoutes(
     const deleted = before !== ctx.config.workspaces.length;
 
     if (deleted) {
+      evictActiveRuntimeSkillView(workspace.id, workspace.path);
       ctx.config.authorizedRoots = ctx.config.authorizedRoots.filter((root) => resolve(root) !== resolve(workspace.path));
       ctx.automationRunner.removeWorkspace(workspace.id);
     }

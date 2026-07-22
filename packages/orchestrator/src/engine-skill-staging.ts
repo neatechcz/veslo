@@ -16,8 +16,9 @@ type Candidate = {
 };
 
 type EffectiveSkillManifest = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   workspaceRoot: string;
+  revision?: string;
   entries: Array<{
     name: string;
     path: string;
@@ -61,7 +62,7 @@ async function cleanupStagingGenerations(stagingRoot: string, currentGeneration:
 async function readEffectiveManifest(workspace: string): Promise<EffectiveSkillManifest | null> {
   try {
     const parsed = JSON.parse(await readFile(join(workspace, ".opencode", "veslo.runtime.skills.json"), "utf8")) as EffectiveSkillManifest;
-    if (parsed.schemaVersion !== 1 || resolve(parsed.workspaceRoot) !== workspace || !Array.isArray(parsed.entries)) return null;
+    if ((parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) || resolve(parsed.workspaceRoot) !== workspace || !Array.isArray(parsed.entries)) return null;
     return parsed;
   } catch {
     return null;
@@ -204,6 +205,8 @@ export async function stageEngineSkillView(input: {
   stagingRoot: string;
   /** Runtime launches must consume the server's effective resolver output. */
   requireEffectiveManifest?: boolean;
+  /** Revision promised by the server for this launch. */
+  expectedRevision?: string;
 }): Promise<EngineSkillStagingResult> {
   const workspace = resolve(input.workspace);
   const stagingRoot = resolve(input.stagingRoot);
@@ -219,6 +222,9 @@ export async function stageEngineSkillView(input: {
     join(workspace, ".claude", "skills"),
   ];
   const manifest = await readEffectiveManifest(workspace);
+  if (input.expectedRevision && manifest?.revision !== input.expectedRevision) {
+    throw new Error(`skill_view_stale: expected ${input.expectedRevision}, received ${manifest?.revision ?? "none"}`);
+  }
   const source = manifest
     ? "effective-manifest"
     : input.requireEffectiveManifest

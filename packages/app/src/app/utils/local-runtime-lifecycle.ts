@@ -30,6 +30,7 @@ export type LocalRuntimeReconnectOptions = {
   navigate?: boolean;
   quiet?: boolean;
   forceFreshRuntime?: boolean;
+  skillViewRevision?: string | null;
 };
 
 export interface LocalRuntimeLifecycleDeps {
@@ -50,6 +51,7 @@ export interface LocalRuntimeLifecycleDeps {
     workspaceName?: string | null;
     reason?: string | null;
     forceFreshRuntime?: boolean;
+    skillViewRevision?: string | null;
   }) => Promise<WorkspaceRuntimePrepareResult>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<unknown>;
   connectToServer: (
@@ -205,6 +207,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       workspaceName?: string | null;
       reason?: string | null;
       forceFreshRuntime?: boolean;
+      skillViewRevision?: string | null;
     },
     options: LocalRuntimeReconnectOptions,
     timeoutMs: number,
@@ -418,6 +421,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
         workspaceName: options.workspaceName?.trim() || null,
         reason: options.reason,
         forceFreshRuntime: options.forceFreshRuntime === true,
+        skillViewRevision: options.skillViewRevision ?? null,
       }, options, timeoutMs, releaseOnce);
 
       if (result.engine.runtime === "veslo-orchestrator") {

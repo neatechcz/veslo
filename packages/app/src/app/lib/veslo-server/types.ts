@@ -159,6 +159,14 @@ export type VesloWorkspaceList = {
   activeId?: string | null;
 };
 
+export type VesloRuntimeSkillView = {
+  ready: boolean;
+  revision: string;
+  generatedAt: string;
+  activeCount: number;
+  items: VesloSkillItem[];
+};
+
 export type VesloResourceOwner = {
   kind: "workspace" | "user" | "organization" | "platform";
   id: string;

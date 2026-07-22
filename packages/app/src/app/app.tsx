@@ -1106,6 +1106,12 @@ export default function App() {
     client,
     routing: runtimeOwnedRouting,
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
+    isSharedEngineSingleViewFallback: () => {
+      const topology = orchestratorStatusState()?.engineTopology?.trim();
+      if (topology) return topology === "shared-unsandboxed";
+      return [...(orchestratorStatusState()?.engines ?? []), ...orchestratorEnginesState()]
+        .some((engine) => engine?.workspaceId?.trim() === "shared-unsandboxed");
+    },
     onConversationRunBecameActive: (scope) => {
       const input = {
         workspaceId: scope.workspaceId,

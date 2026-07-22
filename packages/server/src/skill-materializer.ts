@@ -12,6 +12,8 @@ import {
   SKILL_ENTRYPOINT,
   personalGlobalManagedSkillsRoot,
   workspaceManagedSkillsRoot,
+  workspaceRegistryPersonalSkillsRoot,
+  workspaceSkillsRoot,
 } from "./skill-roots.js";
 import type {
   ManagedSkillSource,
@@ -65,8 +67,22 @@ export type MaterializePersonalGlobalSkillSetInput = Omit<MaterializeSkillSetInp
   unmanagedSkillRoots?: string[];
 };
 
+export type LegacyRegistryProjectionMigrationConflict = {
+  name: string;
+  legacyPath: string;
+  registryPath: string | null;
+  reason: "missing-registry-projection" | "invalid-managed-marker" | "managed-metadata-mismatch" | "package-content-mismatch";
+};
+
+export type LegacyRegistryProjectionMigrationResult = {
+  migratedSkillNames: string[];
+  backupDirs: string[];
+  conflicts: LegacyRegistryProjectionMigrationConflict[];
+};
+
 const ROOT_MARKER_FILE = ".veslo-materialization.json";
 const SKILL_MARKER_FILE = ".veslo-managed.json";
+const USER_STORE_MARKER_FILE = ".veslo-user-skill.json";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 const MANAGED_SKILL_SOURCES = new Set<ManagedSkillSource>(["personal", "workspace", "organization", "platform"]);
 const REMOVAL_POLICIES = new Set<WorkspaceSkillRolloutRemovalPolicy>(["user_removable", "admin_removable", "locked"]);
@@ -201,6 +217,147 @@ const readSkillMarker = async (skillDir: string): Promise<SkillMaterializationMa
   if (!(await exists(path))) return null;
   return validateManifestEntry(JSON.parse(await readFile(path, "utf8")));
 };
+
+const managedProjectionMetadataMatches = (
+  legacy: SkillMaterializationManifestEntry,
+  registry: SkillMaterializationManifestEntry,
+): boolean =>
+  legacy.installationId === registry.installationId &&
+  legacy.skillId === registry.skillId &&
+  legacy.name === registry.name &&
+  legacy.versionId === registry.versionId &&
+  legacy.packageSha256 === registry.packageSha256 &&
+  legacy.source === registry.source &&
+  legacy.removalPolicy === registry.removalPolicy;
+
+const directoryContentDigest = async (rootDir: string): Promise<string> => {
+  const hash = createHash("sha256");
+  const visit = async (currentDir: string, relativeDir: string): Promise<void> => {
+    const entries = await readdir(currentDir, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      // Ownership metadata is allowed to differ because the old projection's
+      // target differs from the registry projection. The package bytes must
+      // nevertheless match exactly before we remove anything.
+      if (entry.name === SKILL_MARKER_FILE || entry.name === USER_STORE_MARKER_FILE) continue;
+      const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+      const path = join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        hash.update(`d:${relativePath}\0`);
+        await visit(path, relativePath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      hash.update(`f:${relativePath}\0`);
+      hash.update(await readFile(path));
+      hash.update("\0");
+    }
+  };
+  await visit(rootDir, "");
+  return hash.digest("hex");
+};
+
+/**
+ * One-time ownership migration for old registry/platform projections written
+ * below `veslo-user` before the registry root existed. User-store entries are
+ * explicitly out of scope. A legacy managed directory is removed only after
+ * an equivalent registry projection has been materialized and its package
+ * bytes match; divergent artifacts remain in place and are reported so the
+ * caller can fail runtime publication closed.
+ */
+export async function migrateLegacyRegistrySkillProjections(input: {
+  workspaceRoot: string;
+  dataDir?: string;
+}): Promise<LegacyRegistryProjectionMigrationResult> {
+  const workspaceRoot = input.workspaceRoot.trim();
+  const legacyRoot = join(workspaceSkillsRoot(workspaceRoot), "veslo-user");
+  const registryRoot = workspaceRegistryPersonalSkillsRoot(workspaceRoot);
+  const migratedSkillNames: string[] = [];
+  const backupDirs: string[] = [];
+  const conflicts: LegacyRegistryProjectionMigrationConflict[] = [];
+  let entries: Dirent[];
+  try {
+    entries = await readdir(legacyRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { migratedSkillNames, backupDirs, conflicts };
+    }
+    throw error;
+  }
+
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory()) continue;
+    const legacyDir = join(legacyRoot, entry.name);
+    // A real user-store materialization is never a migration candidate, even
+    // when an older tool also left managed metadata beside it.
+    if (await exists(join(legacyDir, USER_STORE_MARKER_FILE))) continue;
+    if (!(await exists(join(legacyDir, SKILL_MARKER_FILE)))) continue;
+    const registryDir = join(registryRoot, entry.name);
+    if (!(await exists(registryDir))) {
+      conflicts.push({
+        name: entry.name,
+        legacyPath: legacyDir,
+        registryPath: null,
+        reason: "missing-registry-projection",
+      });
+      continue;
+    }
+
+    let legacyMarker: SkillMaterializationManifestEntry | null = null;
+    let registryMarker: SkillMaterializationManifestEntry | null = null;
+    try {
+      [legacyMarker, registryMarker] = await Promise.all([readSkillMarker(legacyDir), readSkillMarker(registryDir)]);
+    } catch {
+      conflicts.push({
+        name: entry.name,
+        legacyPath: legacyDir,
+        registryPath: registryDir,
+        reason: "invalid-managed-marker",
+      });
+      continue;
+    }
+    if (!legacyMarker || !registryMarker) {
+      conflicts.push({
+        name: entry.name,
+        legacyPath: legacyDir,
+        registryPath: registryDir,
+        reason: "invalid-managed-marker",
+      });
+      continue;
+    }
+    if (!managedProjectionMetadataMatches(legacyMarker, registryMarker)) {
+      conflicts.push({
+        name: entry.name,
+        legacyPath: legacyDir,
+        registryPath: registryDir,
+        reason: "managed-metadata-mismatch",
+      });
+      continue;
+    }
+    const [legacyDigest, registryDigest] = await Promise.all([
+      directoryContentDigest(legacyDir),
+      directoryContentDigest(registryDir),
+    ]);
+    if (legacyDigest !== registryDigest) {
+      conflicts.push({
+        name: entry.name,
+        legacyPath: legacyDir,
+        registryPath: registryDir,
+        reason: "package-content-mismatch",
+      });
+      continue;
+    }
+    const backupDir = await createBackup(legacyDir, `legacy-projection-${entry.name}`, input.dataDir);
+    if (backupDir) backupDirs.push(backupDir);
+    await rm(legacyDir, { recursive: true, force: true });
+    migratedSkillNames.push(entry.name);
+  }
+
+  return {
+    migratedSkillNames: migratedSkillNames.sort(),
+    backupDirs: backupDirs.sort(),
+    conflicts: conflicts.sort((left, right) => left.name.localeCompare(right.name)),
+  };
+}
 
 const writeSkillMarker = async (skillDir: string, entry: SkillMaterializationManifestEntry): Promise<void> => {
   await writeFile(

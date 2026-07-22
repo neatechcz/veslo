@@ -244,6 +244,13 @@ export type SessionEventStreamControllerDeps = {
   withTimeout: <T>(promise: Promise<T>, ms: number, label: string) => Promise<T>;
   isWorkspaceRuntimeReady: (workspaceId?: string | null) => boolean;
   isActiveWorkspaceRuntimeReady: () => boolean;
+  /**
+   * The shared unsandboxed fallback has one process-level skill view.  It must
+   * therefore own only the active workspace's event stream; keeping an old
+   * workspace stream alive makes its reconnect path switch the shared engine
+   * back to that old workspace.
+   */
+  isSharedEngineSingleViewFallback?: () => boolean;
   recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
 };
 
@@ -1677,7 +1684,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     };
 
     createEffect(() => {
-      const entryIds = deps.routing.entryIds();
+      const activeWorkspaceId = deps.routing.activeWorkspaceId().trim();
+      const entryIds = deps.isSharedEngineSingleViewFallback?.()
+        ? (activeWorkspaceId ? [activeWorkspaceId] : [])
+        : deps.routing.entryIds();
 
       const targets: SseTargetDescriptor[] = [];
       for (const wsId of entryIds) {

@@ -229,6 +229,7 @@ export function createSessionStore(options: {
    */
   engineReady?: () => boolean;
   isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
+  isSharedEngineSingleViewFallback?: () => boolean;
   recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
   shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
   onSessionBusyChange?: (sessionId: string, busy: boolean, workspaceId?: string) => void;
@@ -1188,6 +1189,7 @@ export function createSessionStore(options: {
     withTimeout,
     isWorkspaceRuntimeReady,
     isActiveWorkspaceRuntimeReady,
+    isSharedEngineSingleViewFallback: options.isSharedEngineSingleViewFallback,
     recoverWorkspaceRuntimeForEventStream: options.recoverWorkspaceRuntimeForEventStream,
   });
   eventStreamController.startEventStreams();
@@ -1257,7 +1259,10 @@ export function createSessionStore(options: {
       opencodeSessionId?: string | null;
       directory?: string | null;
       clientMessageId: string;
-    }) => conversationRunOwnership.armProvisional(input),
+    }) => {
+      lifecycleRecoveryController?.invalidateTerminalTranscriptRecoveriesForConversation(input);
+      return conversationRunOwnership.armProvisional(input);
+    },
     disposeConversationRunProvisional: (input: {
       sessionId: string;
       workspaceId: string;

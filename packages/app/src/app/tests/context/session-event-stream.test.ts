@@ -103,6 +103,7 @@ function makeController(options: {
   client?: () => any;
   recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
   isWorkspaceRuntimeReady?: (workspaceId?: string | null) => boolean;
+  isSharedEngineSingleViewFallback?: () => boolean;
   onReconnectState?: (state: ReconnectState) => void;
   onReconnectNotice?: (notice: "reconnecting" | "reconnected") => void;
   sessionErrorTurns?: Array<{ sessionID: string; text: string }>;
@@ -203,6 +204,7 @@ function makeController(options: {
     withTimeout: async (promise) => promise,
     isWorkspaceRuntimeReady: options.isWorkspaceRuntimeReady ?? (() => true),
     isActiveWorkspaceRuntimeReady: () => true,
+    isSharedEngineSingleViewFallback: options.isSharedEngineSingleViewFallback,
     recoverWorkspaceRuntimeForEventStream: options.recoverWorkspaceRuntimeForEventStream,
   });
 
@@ -1339,6 +1341,59 @@ test("reactive SSE routing dedupes unchanged targets and aborts on owner disposa
       setEntryIds([]);
       await tick(2);
       assert.equal(signals.length, 1, "disposed routing owner must not subscribe again");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("shared single-view fallback keeps an event stream only for the active workspace", reactivityTestOptions, async () => {
+  const [activeWorkspaceId, setActiveWorkspaceId] = createSignal("ws-a");
+  const signalsByWorkspace = new Map<string, AbortSignal[]>();
+  const clients = new Map(["ws-a", "ws-b"].map((workspaceId) => [workspaceId, {
+    event: {
+      subscribe: (_input?: unknown, options?: { signal?: AbortSignal }) => {
+        const signals = signalsByWorkspace.get(workspaceId) ?? [];
+        signals.push(options?.signal ?? new AbortController().signal);
+        signalsByWorkspace.set(workspaceId, signals);
+        return Promise.resolve({
+          stream: (async function* () {
+            await new Promise<void>(() => {});
+          })(),
+          close: async () => {},
+        });
+      },
+    },
+  }]));
+  const routing = {
+    activeWorkspaceId,
+    active: () => null,
+    client: (workspaceId?: string) => workspaceId ? clients.get(workspaceId) ?? null : null,
+    entry: (workspaceId?: string) => workspaceId ? {
+      client: clients.get(workspaceId),
+      baseUrl: `http://127.0.0.1:8787/workspace/${workspaceId}/opencode`,
+      directory: `/repo/${workspaceId}`,
+    } : null,
+    entryIds: () => ["ws-a", "ws-b"],
+    release: () => {},
+  };
+
+  await createRoot(async (dispose) => {
+    try {
+      const { controller } = makeController({
+        routing,
+        isWorkspaceRuntimeReady: () => true,
+        isSharedEngineSingleViewFallback: () => true,
+      });
+      controller.startEventStreams();
+      await tick(4);
+      assert.equal(signalsByWorkspace.get("ws-a")?.length, 1);
+      assert.equal(signalsByWorkspace.get("ws-b")?.length ?? 0, 0);
+
+      setActiveWorkspaceId("ws-b");
+      await tick(4);
+      assert.equal(signalsByWorkspace.get("ws-a")?.[0]?.aborted, true);
+      assert.equal(signalsByWorkspace.get("ws-b")?.length, 1);
     } finally {
       dispose();
     }
