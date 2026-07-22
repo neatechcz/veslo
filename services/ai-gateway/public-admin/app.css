@@ -1520,14 +1520,20 @@ tr.row-muted strong {
 }
 
 .modal-shell {
-  width: min(760px, calc(100vw - 32px));
+  --modal-preferred-width: 760px;
+  width: min(var(--modal-preferred-width), calc(100vw - 32px));
   max-height: calc(100vh - 32px);
   max-height: calc(100dvh - 32px);
   padding: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 0;
   background: transparent;
   color: var(--text);
+}
+
+.modal-shell-wide {
+  --modal-preferred-width: 920px;
 }
 
 .modal-shell::backdrop {
@@ -1536,16 +1542,14 @@ tr.row-muted strong {
 
 .modal-card {
   display: grid;
+  width: 100%;
+  min-width: 0;
   gap: 16px;
   padding: 22px;
   border: 1px solid var(--line-2);
   border-radius: 6px;
   background: var(--bg-panel);
   box-shadow: 0 30px 70px -30px rgba(10, 14, 20, 0.45);
-}
-
-.modal-card-wide {
-  width: min(920px, calc(100vw - 32px));
 }
 
 .modal-head {
@@ -1636,7 +1640,6 @@ tr.row-muted strong {
   .alerts-layout,
   .audit-layout,
   .credential-create-grid,
-  .user-editor,
   .split-layout,
   .model-policy-discovery,
   .login-panel {
@@ -1649,6 +1652,10 @@ tr.row-muted strong {
 }
 
 @media (max-width: 760px) {
+  .user-editor {
+    grid-template-columns: 1fr;
+  }
+
   .topbar,
   .section-head,
   .modal-head,
