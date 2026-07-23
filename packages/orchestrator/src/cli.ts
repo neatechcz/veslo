@@ -54,6 +54,7 @@ import {
   type RunProbeResult,
 } from "./run-registry.js";
 import { createRunActivityProbe } from "./run-activity-probe.js";
+import { createEngineLossNotifier } from "./engine-loss-notifier.js";
 import {
   hostDirectoryToEngineDirectory,
   resolveEnginePathMappingBackend,
@@ -4219,6 +4220,16 @@ async function runRouterDaemon(args: ParsedArgs) {
   const lifecycleToken =
     readFlag(args.flags, "lifecycle-token") ??
     process.env.VESLO_ORCHESTRATOR_LIFECYCLE_TOKEN;
+  const engineLossCallbackUrl =
+    process.env.VESLO_ENGINE_LOSS_CALLBACK_URL?.trim() ||
+    process.env.VESLO_SERVER_URL?.trim() ||
+    "";
+  const engineLossNotifier = engineLossCallbackUrl && lifecycleToken
+    ? createEngineLossNotifier({
+        baseUrl: engineLossCallbackUrl,
+        token: lifecycleToken,
+      })
+    : null;
   logger.info("Daemon starting", { runId, logFormat, host, port }, "veslo-orchestrator");
 
   const sidecar = resolveSidecarConfig(args.flags, cliVersion);
@@ -4296,12 +4307,12 @@ async function runRouterDaemon(args: ParsedArgs) {
   });
 
   const runEngineOwnerFromEngine = (
-    engineOwnerId: string,
-    engine: Pick<EngineProcess, "pid" | "spawnedAt" | "baseUrl"> | null | undefined,
+    engine: Pick<EngineProcess, "workspaceId" | "engineOwnerId" | "pid" | "spawnedAt" | "baseUrl"> | null | undefined,
   ): RunEngineOwner =>
     engine
       ? {
-          engineOwnerId,
+          engineSlotId: engine.workspaceId,
+          engineOwnerId: engine.engineOwnerId,
           enginePid: engine.pid || null,
           engineStartedAt: engine.spawnedAt || null,
           engineBaseUrl: engine.baseUrl || null,
@@ -4314,7 +4325,12 @@ async function runRouterDaemon(args: ParsedArgs) {
     event: string;
     owner: RunEngineOwner;
   }): void => {
-    if (!input.owner.engineOwnerId) return;
+    if (
+      !input.owner.engineOwnerId ||
+      input.owner.enginePid === null ||
+      input.owner.engineStartedAt === null ||
+      !input.owner.engineBaseUrl
+    ) return;
     const registry = runRegistryForEngineCleanup;
     if (!registry) return;
     const terminalized = registry.markEngineLost({
@@ -4348,6 +4364,40 @@ async function runRouterDaemon(args: ParsedArgs) {
       conversations: terminalized.map((record) => record.conversationId),
       statuses: terminalized.map((record) => record.status),
     });
+    if (engineLossNotifier) {
+      void engineLossNotifier({
+        eventId: randomUUID(),
+        workspaceId: input.workspaceId,
+        engineSlotId: input.owner.engineSlotId ?? input.workspaceId,
+        engineOwnerId: input.owner.engineOwnerId,
+        enginePid: input.owner.enginePid,
+        engineStartedAt: input.owner.engineStartedAt,
+        engineBaseUrl: input.owner.engineBaseUrl,
+        event: input.event,
+        runIds: terminalized.map((record) => record.runId),
+        reason: `${input.source} ${input.event}`,
+      }).then((delivery) => {
+        traceRuntime("orchestrator:run-lifecycle:engine-loss-notification", {
+          workspaceId: input.workspaceId,
+          engineOwnerId: input.owner.engineOwnerId,
+          event: input.event,
+          runIds: terminalized.map((record) => record.runId),
+          delivered: delivery.delivered,
+          attempts: delivery.attempts,
+        });
+      }).catch((error) => {
+        logger.warn(
+          "engine loss notification failed",
+          {
+            workspaceId: input.workspaceId,
+            engineOwnerId: input.owner.engineOwnerId,
+            event: input.event,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "veslo-orchestrator",
+        );
+      });
+    }
   };
 
   // Engines whose workspace has an active run created within this window are
@@ -4549,7 +4599,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             source: "engine-pool",
             workspaceId,
             event,
-            owner: runEngineOwnerFromEngine(workspaceId, pool.get(workspaceId)),
+            owner: runEngineOwnerFromEngine(pool.get(workspaceId)),
           });
         }
         persistEngines();
@@ -4721,7 +4771,7 @@ async function runRouterDaemon(args: ParsedArgs) {
                   source: "shared-opencode-engine",
                   workspaceId: "shared-unsandboxed",
                   event,
-                  owner: runEngineOwnerFromEngine("shared-unsandboxed", engine),
+                  owner: runEngineOwnerFromEngine(engine),
                 });
               }
               persistEngines();
@@ -4922,9 +4972,9 @@ async function runRouterDaemon(args: ParsedArgs) {
       // activeForEngineOwner("shared-unsandboxed") and blocks its own idle
       // switch. The proxy path attaches the concrete owner immediately after
       // selection and before upstream dispatch.
-      return runEngineOwnerFromEngine("shared-unsandboxed", undefined);
+      return runEngineOwnerFromEngine(undefined);
     }
-    return runEngineOwnerFromEngine(workspaceId, pool.get(workspaceId));
+    return runEngineOwnerFromEngine(pool.get(workspaceId));
   };
 
   persistEngines = (): void => {
@@ -5090,6 +5140,29 @@ async function runRouterDaemon(args: ParsedArgs) {
             ok: true,
             sharedEngine: sharedOpenCodeEngine?.snapshot() ?? null,
           });
+          return;
+        }
+        const pooledKillMatch = url.pathname.match(/^\/e2e\/workspace\/([^/]+)\/kill-child$/);
+        if (req.method === "POST" && pooledKillMatch) {
+          const workspaceId = decodeURIComponent(pooledKillMatch[1] ?? "");
+          const engine = pool.get(workspaceId);
+          if (!engine) {
+            send(404, { error: "workspace engine not running", workspaceId });
+            return;
+          }
+          const before = {
+            workspaceId: engine.workspaceId,
+            engineOwnerId: engine.engineOwnerId,
+            pid: engine.pid,
+            state: engine.state,
+          };
+          try {
+            engine.child.kill("SIGKILL");
+          } catch (error) {
+            send(500, { error: "engine kill failed", detail: error instanceof Error ? error.message : String(error) });
+            return;
+          }
+          send(202, { ok: true, workspaceId, before });
           return;
         }
         send(404, { error: "not found" });
@@ -5393,7 +5466,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               workspaceId: workspace.id,
               conversationId: bodyString(body, "conversationId"),
               runId: bodyString(body, "runId"),
-              engineSessionId: bodyString(body, "engineSessionId"),
+              engineSessionId: bodyString(body, "opencodeSessionId"),
               clientMessageId: bodyString(body, "clientMessageId") || null,
               origin: bodyString(body, "origin") || null,
               directory: bodyString(body, "directory"),
@@ -5734,9 +5807,9 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
         const engine = proxyTarget.engine;
+        const engineOwnerResponseHeaders: Record<string, string> = {};
         if (conversationRunId && proxyMethod !== "GET" && proxyMethod !== "HEAD") {
-          const ownerId = engineTopology.mode === "shared-unsandboxed" ? "shared-unsandboxed" : ws.id;
-          const owner = runEngineOwnerFromEngine(ownerId, engine);
+          const owner = runEngineOwnerFromEngine(engine);
           try {
             const attached = runRegistry.attachEngineOwner(ws.id, conversationRunId, owner);
             traceRuntime("orchestrator:run-lifecycle:engine-owner-attached", {
@@ -5758,6 +5831,28 @@ async function runRouterDaemon(args: ParsedArgs) {
               engineStartedAt: owner.engineStartedAt,
               engineBaseUrl: owner.engineBaseUrl,
             });
+            if (!attached) {
+              send(409, {
+                error: "owner_attach_failed",
+                message: "The run could not be attached to the selected engine generation",
+                workspaceId: ws.id,
+                runId: conversationRunId,
+                engineOwnerId: owner.engineOwnerId,
+              });
+              return;
+            }
+            if (
+              owner.engineOwnerId &&
+              owner.enginePid !== null &&
+              owner.engineStartedAt !== null &&
+              owner.engineBaseUrl
+            ) {
+              engineOwnerResponseHeaders["x-veslo-engine-slot-id"] = owner.engineSlotId ?? ws.id;
+              engineOwnerResponseHeaders["x-veslo-engine-owner-id"] = owner.engineOwnerId;
+              engineOwnerResponseHeaders["x-veslo-engine-pid"] = String(owner.enginePid);
+              engineOwnerResponseHeaders["x-veslo-engine-started-at"] = String(owner.engineStartedAt);
+              engineOwnerResponseHeaders["x-veslo-engine-base-url"] = owner.engineBaseUrl;
+            }
           } catch (err) {
             const detail = err instanceof Error ? err.message : String(err);
             logger.warn(
@@ -5775,6 +5870,14 @@ async function runRouterDaemon(args: ParsedArgs) {
               runId: conversationRunId,
               error: detail,
             });
+            send(409, {
+              error: "owner_attach_failed",
+              message: "The run could not be attached to the selected engine generation",
+              workspaceId: ws.id,
+              runId: conversationRunId,
+              detail,
+            });
+            return;
           }
         }
         if (proxyMethod !== "GET" && proxyMethod !== "HEAD") {
@@ -5925,6 +6028,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           targetBaseUrl: engine.baseUrl,
           targetPath: restPath,
           targetSearch,
+          responseHeaders: engineOwnerResponseHeaders,
           sandboxBackend: pathMapping.backend,
           rewriteEnginePaths,
           engineDirectory,
@@ -5958,12 +6062,45 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
 
+        const rewriteJsonResponse = (value: unknown): unknown => {
+          const rewritten = rewriteEnginePaths
+            ? rewriteDirectoryFieldsForHost(value, pathMapping)
+            : value;
+          if (restPath !== "/event" || !rewritten || typeof rewritten !== "object" || Array.isArray(rewritten)) {
+            return rewritten;
+          }
+          const event = rewritten as Record<string, unknown>;
+          if (event.type !== "session.created" || !event.properties || typeof event.properties !== "object") {
+            return rewritten;
+          }
+          const properties = event.properties as Record<string, unknown>;
+          const info = properties.info;
+          if (!info || typeof info !== "object" || Array.isArray(info)) return rewritten;
+          const rawSessionID = (info as Record<string, unknown>).id;
+          const sessionID = typeof rawSessionID === "string"
+            ? rawSessionID.trim()
+            : "";
+          if (!sessionID) return rewritten;
+          return {
+            ...event,
+            properties: {
+              ...properties,
+              vesloBinding: {
+                workspaceId: ws.id,
+                opencodeSessionId: sessionID,
+                revision: engine.engineOwnerId,
+              },
+            },
+          };
+        };
+
         proxyToEngine({
           clientReq: req,
           clientRes: res,
           targetBaseUrl: engine.baseUrl,
           targetPath: restPath,
           targetSearch,
+          responseHeaders: engineOwnerResponseHeaders,
           headersTimeoutMs: opencodeProxyHeadersTimeoutMs,
           injectHeaders,
           stripIncomingHeaders: [
@@ -5979,8 +6116,8 @@ async function runRouterDaemon(args: ParsedArgs) {
           // Windows paths too, while response rewriting is WSL-only because it
           // converts engine `/workspace` paths back to host paths.
           rewriteJsonBody: (value) => rewriteDirectoryFieldsForEngine(value, pathMapping),
-          rewriteJsonResponse: rewriteEnginePaths
-            ? (value) => rewriteDirectoryFieldsForHost(value, pathMapping)
+          rewriteJsonResponse: rewriteEnginePaths || restPath === "/event"
+            ? rewriteJsonResponse
             : undefined,
           onSuccess: () => {
             finishUpstreamTrace("orchestrator:proxy-upstream:done", {

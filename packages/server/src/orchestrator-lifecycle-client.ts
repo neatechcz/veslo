@@ -14,6 +14,12 @@ export type LifecycleRunStatusResult = {
   runId: string;
   status: LifecycleRunStatus;
   stale: boolean;
+  engineSlotId?: string | null;
+  engineOwnerId?: string | null;
+  engineOwnerState?: "pending" | "attached" | "lost" | null;
+  enginePid?: number | null;
+  engineStartedAt?: number | null;
+  engineBaseUrl?: string | null;
   error?: string | null;
   clientMessageId?: string | null;
   origin?: string | null;
@@ -94,7 +100,7 @@ export type OrchestratorLifecycleClient = {
     workspaceId: string;
     conversationId: string;
     runId: string;
-    engineSessionId: string;
+    opencodeSessionId: string;
     clientMessageId?: string | null;
     origin?: string | null;
     directory: string;
@@ -204,6 +210,21 @@ export function createOrchestratorLifecycleClient(options: {
       status: record.status as LifecycleRunStatus,
       stale: record.stale === true,
     };
+    if (typeof record.engineSlotId === "string") result.engineSlotId = record.engineSlotId;
+    else if (record.engineSlotId === null) result.engineSlotId = null;
+    if (typeof record.engineOwnerId === "string") result.engineOwnerId = record.engineOwnerId;
+    else if (record.engineOwnerId === null) result.engineOwnerId = null;
+    if (record.engineOwnerState === "pending" || record.engineOwnerState === "attached" || record.engineOwnerState === "lost") {
+      result.engineOwnerState = record.engineOwnerState;
+    } else if (record.engineOwnerState === null) {
+      result.engineOwnerState = null;
+    }
+    if (typeof record.enginePid === "number" && Number.isFinite(record.enginePid)) result.enginePid = record.enginePid;
+    else if (record.enginePid === null) result.enginePid = null;
+    if (typeof record.engineStartedAt === "number" && Number.isFinite(record.engineStartedAt)) result.engineStartedAt = record.engineStartedAt;
+    else if (record.engineStartedAt === null) result.engineStartedAt = null;
+    if (typeof record.engineBaseUrl === "string") result.engineBaseUrl = record.engineBaseUrl;
+    else if (record.engineBaseUrl === null) result.engineBaseUrl = null;
     if ("error" in record) result.error = typeof record.error === "string" ? record.error : null;
     if (typeof record.clientMessageId === "string") result.clientMessageId = record.clientMessageId;
     else if (record.clientMessageId === null) result.clientMessageId = null;
@@ -242,7 +263,7 @@ export function createOrchestratorLifecycleClient(options: {
       return parseLifecycleRunPayload(path, await post(path, {
         conversationId: input.conversationId,
         runId: input.runId,
-        engineSessionId: input.engineSessionId,
+        opencodeSessionId: input.opencodeSessionId,
         ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
         ...(input.origin ? { origin: input.origin } : {}),
         directory: input.directory,

@@ -279,11 +279,13 @@ mean security isolation.
 
 When Windows WSL2 sandbox launch fails because WSL, the managed `VesloSandbox`
 distro, bubblewrap, or workspace mountability is unavailable, Veslo falls back
-to a direct host engine. Without an explicit runtime preference, that fallback
-remains per-workspace by default. It does not enable the shared unsandboxed
-engine unless both `VESLO_DISABLE_SANDBOX=1` and
+to a direct host engine. The normal topology remains pooled-per-workspace:
+every workspace owns one engine slot and all conversations in that workspace
+share that slot. The process-wide `shared-unsandboxed` engine is only a
+development/diagnostic override when both `VESLO_DISABLE_SANDBOX=1` and
 `VESLO_SHARED_OPENCODE_ENGINE=1` are explicitly configured. Fresh desktop
-profiles on Windows and macOS now set that preference by default.
+profiles and legacy implicit shared preferences migrate to the pooled topology;
+an explicit override is recorded as `topologySource=explicit-diagnostic`.
 
 ### With Sandbox
 
@@ -316,9 +318,16 @@ Do not build a separate conversation model only for sandboxed execution.
    id from the workspace and `clientMessageId`. The derived id is distinct from
    the raw client id; run and queue ids remain separate.
 9. The orchestrator resolves the execution target.
-10. OpenCode receives the request for the bound session and directory. Veslo
+10. Before dispatch, the orchestrator creates or selects one process generation
+    and atomically attaches its owner tuple (`engineOwnerId`, PID, start time,
+    base URL) to the server reservation. A pending or stale owner is fail-closed
+    and cannot reach OpenCode.
+11. OpenCode receives the request for the bound session and directory. Veslo
     keeps its client admission identity out of the OpenCode request body.
-11. Events and transcript data are mirrored back to the conversation and run.
+12. Engine-loss callbacks carry the same owner tuple; the server only releases
+    reservations whose generation matches exactly. A callback racing owner
+    persistence is held briefly and reconciled when the response headers arrive.
+13. Events and transcript data are mirrored back to the conversation and run.
 
 Passive transcript snapshots may fill gaps after selection, prefetch, or recovery,
 but they must not erase non-empty message parts already observed through the live

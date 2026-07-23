@@ -8,6 +8,61 @@ Do not use `packages/web` or UI-only web servers as the runtime under test. Do n
 
 When creating tests, always prefer E2E tests. Add lower-level tests only when an E2E test cannot cover the behavior reliably or when they provide useful support around a primary E2E path.
 
+## Headless Shared-Engine Runtime Oracle
+
+The one-workspace/many-conversations contract has a deterministic, non-desktop
+runtime gate. Use it when changing workspace engine ownership, lifecycle
+identity, queue admission, or generation recovery:
+
+```bash
+pnpm --filter veslo-server build:bin
+pnpm --filter veslo-orchestrator build
+node packages/orchestrator/scripts/workspace-one-engine-many-conversations.integration.mjs
+```
+
+The oracle must run against the freshly compiled server binary and records a
+JSON artifact under `.tmp/runtime-oracle/`. A passing artifact contains ten
+distinct conversation/session/run identities on one workspace engine slot,
+workspace-wide owner identity, independent abort behavior, and a new owner
+generation after engine loss. This gate is intentionally headless and does not
+depend on a desktop test driver.
+
+For the full service-chain proof, including the real compiled Veslo server,
+compiled orchestrator, shipped OpenCode sidecar, and HTTP callback path, run:
+
+```bash
+pnpm --filter veslo-server build:bin
+pnpm --filter veslo-orchestrator build
+node packages/orchestrator/scripts/veslo-server-orchestrator-opencode.integration.mjs
+```
+
+This scenario starts an isolated loopback deterministic provider and then
+drives the real server API without the UI. It creates ten conversations,
+submits concurrent runs, observes one attached engine generation, exercises
+queue admission and abort isolation, kills the actual OpenCode child, verifies
+engine-loss reconciliation and replacement generation, and submits a recovery
+run through the replacement. It also checks the authenticated and malformed
+engine-loss HTTP contracts. It writes a redacted JSON artifact and service logs
+under `.tmp/runtime-oracle/`. The scenario uses `VESLO_DISABLE_SANDBOX=1` for
+the ephemeral local process; sandbox isolation remains a separate deployment
+verification concern.
+
+For the shipped OpenCode compatibility contract, run the bundled binary gates
+separately:
+
+```bash
+node packages/orchestrator/scripts/opencode-workspace-concurrency.integration.mjs
+node packages/orchestrator/scripts/opencode-directory-scoped-skills.integration.mjs
+```
+
+These gates create ten sessions, submit ten concurrent `prompt_async` requests
+through a local deterministic provider, verify session reads and event-stream
+availability, restart the same OpenCode process with the same state/config
+roots, and confirm that all ten session IDs remain addressable. The skill gate
+also records the shipped binary's directory-scoped hot-update behavior; for
+OpenCode 1.17.13 the safe Veslo fallback remains required. Neither command
+launches Tauri Pilot.
+
 ## Desktop Test Runtime Preflight
 
 Veslo desktop is single-tenant in development. Before any test that launches or depends on the desktop runtime, the agent must ensure it is not starting a second app instance.

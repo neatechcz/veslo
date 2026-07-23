@@ -18,6 +18,7 @@ type RunRecord = {
   kind: RunKind;
   status: "submitted" | "running" | "blocked" | "completed" | "failed" | "aborted";
   abortRequested: boolean;
+  engineOwnerState: "pending" | "attached" | "lost";
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
@@ -270,7 +271,7 @@ describe("stale active run integration", () => {
               workspaceId: "ws_1",
               conversationId: typeof body?.conversationId === "string" ? body.conversationId : "",
               runId: typeof body?.runId === "string" ? body.runId : "",
-              engineSessionId: typeof body?.engineSessionId === "string" ? body.engineSessionId : "",
+              engineSessionId: typeof body?.opencodeSessionId === "string" ? body.opencodeSessionId : "",
               directory: typeof body?.directory === "string" ? body.directory : "",
               kind,
             });
@@ -341,6 +342,7 @@ describe("stale active run integration", () => {
       kind: "prompt",
       status: "running",
       abortRequested: false,
+      engineOwnerState: "pending",
       createdAt: Date.now() - 60_000 - index,
       startedAt: Date.now() - 60_000 - index,
       completedAt: null,

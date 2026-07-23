@@ -323,7 +323,7 @@ test("background events update scoped runtime state without mutating active mess
   });
 });
 
-test("foreground stream accepts message and part events before session list hydration", async () => {
+test("foreground stream rejects message and part events before binding hydration", async () => {
   await createRoot(async (dispose) => {
     try {
       const observed: string[] = [];
@@ -350,10 +350,10 @@ test("foreground stream accepts message and part events before session list hydr
         "ws-a",
       );
 
-      assert.equal(workspaceSessionIds.has("sess-late"), true);
-      assert.deepEqual(store.messages["sess-late"].map((message) => message.id), ["msg-late"]);
-      assert.equal(store.parts["msg-late"]?.find((part) => part.id === "part-late")?.text, "late text");
-      assert.deepEqual(observed, ["sess-late"]);
+      assert.equal(workspaceSessionIds.has("sess-late"), false);
+      assert.equal(store.messages["sess-late"], undefined);
+      assert.equal(store.parts["msg-late"], undefined);
+      assert.deepEqual(observed, []);
       assert.deepEqual(transcriptIngest, []);
     } finally {
       dispose();
@@ -1394,6 +1394,40 @@ test("shared single-view fallback keeps an event stream only for the active work
       await tick(4);
       assert.equal(signalsByWorkspace.get("ws-a")?.[0]?.aborted, true);
       assert.equal(signalsByWorkspace.get("ws-b")?.length, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("session.created requires a server binding authorization envelope", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, store, workspaceSessionIds } = makeController({
+        activeWorkspaceId: "ws-a",
+      });
+      const info = { id: "sess-created", directory: "/repo" };
+
+      await controller.applyEvent({
+        type: "session.created",
+        properties: { info },
+      } as OpencodeEvent, "ws-a");
+      assert.equal(workspaceSessionIds.has("sess-created"), false);
+      assert.equal(store.sessions.some((session) => session.id === "sess-created"), false);
+
+      await controller.applyEvent({
+        type: "session.created",
+        properties: {
+          info,
+          vesloBinding: {
+            workspaceId: "ws-a",
+            opencodeSessionId: "sess-created",
+            revision: "rev-1",
+          },
+        },
+      } as OpencodeEvent, "ws-a");
+      assert.equal(workspaceSessionIds.has("sess-created"), true);
+      assert.equal(store.sessions.some((session) => session.id === "sess-created"), true);
     } finally {
       dispose();
     }

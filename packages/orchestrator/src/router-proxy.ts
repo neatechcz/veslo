@@ -12,6 +12,7 @@ export type ProxyToEngineOptions = {
   targetPath: string;
   targetSearch?: string;
   injectHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
   stripIncomingHeaders?: string[];
   rewriteJsonBody?: (value: unknown) => unknown;
   rewriteJsonResponse?: (value: unknown) => unknown;
@@ -222,6 +223,9 @@ export function proxyToEngine(opts: ProxyToEngineOptions): void {
         if (v === undefined) continue;
         if (HOP_BY_HOP_RESPONSE_HEADERS.has(k.toLowerCase())) continue;
         if ((rewriteResponse || rewriteEventStream) && k.toLowerCase() === "content-length") continue;
+        opts.clientRes.setHeader(k, v);
+      }
+      for (const [k, v] of Object.entries(opts.responseHeaders ?? {})) {
         opts.clientRes.setHeader(k, v);
       }
       if (rewriteResponse) {

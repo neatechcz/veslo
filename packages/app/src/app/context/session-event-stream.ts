@@ -406,10 +406,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       deps.workspaceSessionIds.add(sessionID);
       return true;
     }
-    if (sessionID === deps.selectedSessionId()) {
-      deps.workspaceSessionIds.add(sessionID);
-      return true;
-    }
     return false;
   };
 
@@ -417,12 +413,21 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     const normalizedSessionId = sessionID.trim();
     if (!normalizedSessionId) return false;
     if (isKnownSessionId(normalizedSessionId)) return true;
-    const activeWsId = deps.routing.activeWorkspaceId();
-    if (sourceWsId && activeWsId && sourceWsId === activeWsId) {
-      deps.workspaceSessionIds.add(normalizedSessionId);
-      return true;
-    }
     return false;
+  };
+
+  const hasAuthorizedSessionBinding = (
+    record: Record<string, unknown>,
+    sessionID: string,
+    sourceWsId: string,
+  ): boolean => {
+    const binding = record.vesloBinding;
+    if (!binding || typeof binding !== "object" || Array.isArray(binding)) return false;
+    const authorization = binding as Record<string, unknown>;
+    return authorization.workspaceId === sourceWsId &&
+      authorization.opencodeSessionId === sessionID &&
+      typeof authorization.revision === "string" &&
+      authorization.revision.trim().length > 0;
   };
 
   const applyBackgroundWorkspaceEvent = (event: OpencodeEvent, workspaceId: string) => {
@@ -574,6 +579,17 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = deps.applySessionDirectoryOverride(record.info as Session);
+          const known = isKnownSessionId(info.id);
+          if (!known && (
+            event.type !== "session.created" ||
+            !hasAuthorizedSessionBinding(record, info.id, sourceWsId)
+          )) {
+            deps.sessionWarn(`${event.type}:ignored:unauthorized-session`, {
+              sessionID: info.id,
+              workspaceId: sourceWsId,
+            });
+            return;
+          }
           const root = normalizeDirectoryPath(deps.activeWorkspaceRoot());
           const sessionDir = deps.resolveSessionDirectory(info);
           if (root && sessionDir && !sessionDirectoryMatchesRoot(sessionDir, root)) {

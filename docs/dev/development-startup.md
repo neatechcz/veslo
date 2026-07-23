@@ -11,6 +11,40 @@ Use this guide whenever someone asks to start Veslo during development (for exam
 - Never launch a previously built desktop app as a substitute for development startup. Always run a new build from current sources before starting.
 - Veslo desktop is single-tenant during development and testing. Agents must clear internally started dev/test runtime instances before launching another runtime.
 
+## Workspace Engine Topology
+
+The normal local topology is pooled-per-workspace: each canonical workspace owns
+one engine slot, and all conversations in that workspace share the slot while
+keeping independent conversation, OpenCode session, and run identities. A
+process-wide shared-unsandboxed engine is diagnostic-only and must be selected
+explicitly; it is not the fresh-profile default.
+
+For headless verification of this contract, rebuild the compiled server before
+starting the orchestrator-backed oracle:
+
+```bash
+pnpm --filter veslo-server build:bin
+pnpm --filter veslo-orchestrator build
+node packages/orchestrator/scripts/workspace-one-engine-many-conversations.integration.mjs
+```
+
+The oracle uses an isolated workspace and deterministic provider fixture. It
+proves ten concurrent conversation/session/run bindings, abort isolation, and
+generation-fenced engine-loss reconciliation without launching a desktop test
+driver. Its JSON artifact is written under `.tmp/runtime-oracle/`.
+
+To verify the shipped OpenCode binary independently of the desktop runtime,
+also run:
+
+```bash
+node packages/orchestrator/scripts/opencode-workspace-concurrency.integration.mjs
+node packages/orchestrator/scripts/opencode-directory-scoped-skills.integration.mjs
+```
+
+These are non-Tauri compatibility gates for concurrent prompts, restart-stable
+session IDs, workspace/directory skill isolation, and the documented hot-update
+fallback.
+
 ## Standard Dev Startup (Fresh Build Required, No Exceptions)
 
 Run from repository root.

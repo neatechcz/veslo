@@ -4731,7 +4731,7 @@ describe("conversation routes", () => {
     const registerRequest = orchestratorRequests.find((entry) => entry.pathname === "/workspace/ws_1/runs/register");
     expect(registerRequest?.token).toBe("lifecycle-token");
     expect(registerRequest?.body?.kind).toBe("prompt");
-    expect(registerRequest?.body?.engineSessionId).toBe("sess-created");
+    expect(registerRequest?.body?.opencodeSessionId).toBe("sess-created");
     const submitRequest = engineRequests.find((entry) =>
       entry.pathname === "/workspace/ws_1/opencode/session/sess-created/prompt_async"
     );
@@ -5192,7 +5192,7 @@ describe("conversation routes", () => {
           registeredRuns.push({
             runId: typeof body?.runId === "string" ? body.runId : "",
             conversationId: typeof body?.conversationId === "string" ? body.conversationId : "",
-            sessionId: typeof body?.engineSessionId === "string" ? body.engineSessionId : "",
+            sessionId: typeof body?.opencodeSessionId === "string" ? body.opencodeSessionId : "",
           });
           return Response.json({ ok: true, ...body, workspaceId: "ws_1", status: "running", stale: false });
         }

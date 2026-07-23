@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 
 import { createConversationRunQueueStore } from "../conversation-run-queue-store.js";
 
@@ -73,6 +74,92 @@ describe("conversation run queue store", () => {
     ).toThrow("clientMessageId was already used for a different queued run request");
 
     expect(store.nextPending("ws-a", "conv-a")?.reservedRunId).toBe("run-a");
+  });
+
+  test("workspace-wide idempotency conflicts when the same key targets another conversation", async () => {
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 1_600 });
+    const input = {
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: "run-a",
+      clientMessageId: "msg-cross-conversation",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+    };
+
+    const first = store.enqueue(input);
+    expect(() => store.enqueue({
+      ...input,
+      conversationId: "conv-b",
+      opencodeSessionId: "sess-b",
+      reservedRunId: "run-b",
+    })).toThrow("clientMessageId was already used for a different queued run request");
+    expect(() => store.enqueue({
+      ...input,
+      conversationId: "conv-b",
+      opencodeSessionId: "sess-b",
+      reservedRunId: "run-c",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "different" }] }),
+    })).toThrow("clientMessageId was already used for a different queued run request");
+    expect(first.item.conversationId).toBe("conv-a");
+  });
+
+  test("legacy duplicate migration conflicts only pre-handoff rows and preserves submitted handoff evidence", async () => {
+    const dataDir = await tempDataDir();
+    const dbPath = join(dataDir, "conversations", "run-queue.sqlite");
+    await mkdir(join(dataDir, "conversations"), { recursive: true });
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE conversation_run_queue (
+        queue_item_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        opencode_session_id TEXT NOT NULL,
+        directory TEXT NOT NULL,
+        reserved_run_id TEXT NOT NULL,
+        client_message_id TEXT,
+        origin TEXT,
+        kind TEXT NOT NULL,
+        body_json TEXT NOT NULL,
+        request_hash TEXT,
+        state TEXT NOT NULL,
+        active_run_id TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        started_at INTEGER,
+        submitted_at INTEGER,
+        completed_at INTEGER,
+        error TEXT
+      );
+      CREATE UNIQUE INDEX conversation_run_queue_client_message_uidx
+        ON conversation_run_queue (workspace_id, conversation_id, client_message_id)
+        WHERE client_message_id IS NOT NULL AND client_message_id <> '';
+    `);
+    const insert = db.query(`
+      INSERT INTO conversation_run_queue (
+        queue_item_id, workspace_id, conversation_id, opencode_session_id,
+        directory, reserved_run_id, client_message_id, origin, kind, body_json,
+        request_hash, state, active_run_id, attempts, created_at, updated_at,
+        started_at, submitted_at, completed_at, error
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'prompt_async', ?, NULL, ?, NULL, 0, ?, ?, NULL, NULL, NULL, NULL)
+    `);
+    const body = JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] });
+    insert.run("queue-b", "ws-a", "conv-b", "sess-b", "/tmp/workspace-a", "run-b", "msg-legacy", body, "submitted", 1_000, 1_000);
+    insert.run("queue-a", "ws-a", "conv-a", "sess-a", "/tmp/workspace-a", "run-a", "msg-legacy", body, "pending", 1_001, 1_001);
+    db.close();
+
+    const store = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    const pending = store.getForConversation("ws-a", "conv-a", "queue-a");
+    const submitted = store.getForConversation("ws-a", "conv-b", "queue-b");
+
+    expect(pending?.state).toBe("conflict");
+    expect(pending?.idempotencyConflictClientMessageId).toBe("msg-legacy");
+    expect(submitted?.state).toBe("submitted");
+    expect(submitted?.idempotencyConflictClientMessageId).toBeNull();
+    expect(submitted?.clientMessageId).toBe("msg-legacy");
   });
 
   test("recovers starting rows so startup can drain them again", async () => {
@@ -321,5 +408,41 @@ describe("conversation run queue store", () => {
     expect(restarted.releaseWorkspaceRun("ws-a", "run-a")).toBe(true);
     expect(restarted.releaseWorkspaceRun("ws-a", "run-a")).toBe(false);
     expect(restarted.listWorkspaceRunReservations()).toEqual([]);
+  });
+
+  test("persists the exact engine generation owner and rejects a stale replacement", async () => {
+    const dataDir = await tempDataDir();
+    const store = createConversationRunQueueStore({ dataDir, now: () => 2_000 });
+    store.reserveWorkspaceRun({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-a",
+    });
+    const owner = {
+      engineSlotId: "ws-a",
+      engineOwnerId: "generation-1",
+      enginePid: 101,
+      engineStartedAt: 1_000,
+      engineBaseUrl: "http://127.0.0.1:4101",
+    };
+    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", owner)).toEqual(
+      expect.objectContaining(owner),
+    );
+    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
+      ...owner,
+      engineOwnerId: "generation-2",
+      enginePid: 202,
+      engineStartedAt: 2_000,
+      engineBaseUrl: "http://127.0.0.1:4202",
+    })).toBeNull();
+    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
+      ...owner,
+      engineSlotId: "other-slot",
+    })).toBeNull();
+
+    const restarted = createConversationRunQueueStore({ dataDir, now: () => 3_000 });
+    expect(restarted.listWorkspaceRunReservations()).toEqual([
+      expect.objectContaining(owner),
+    ]);
   });
 });

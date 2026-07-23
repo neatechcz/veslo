@@ -707,8 +707,13 @@ fn activate_workspace_blocking(
         ))
         .build();
     let started = Instant::now();
-    let request = agent.post(&activate_url).set("Content-Type", "application/json");
-    let request = match skill_view_revision.map(str::trim).filter(|revision| !revision.is_empty()) {
+    let request = agent
+        .post(&activate_url)
+        .set("Content-Type", "application/json");
+    let request = match skill_view_revision
+        .map(str::trim)
+        .filter(|revision| !revision.is_empty())
+    {
         Some(revision) => request.set("x-veslo-skill-view-revision", revision),
         None => request,
     };

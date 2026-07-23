@@ -5,18 +5,22 @@ use tauri::{AppHandle, Manager};
 
 const RUNTIME_PREFERENCES_FILE: &str = "runtime-preferences.json";
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopRuntimePreferences {
     pub shared_unsandboxed_engine: bool,
+    #[serde(default = "default_topology_source")]
+    pub topology_source: String,
     pub support_diagnostics: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct PersistedRuntimePreferences {
     #[serde(default)]
     shared_unsandboxed_engine: Option<bool>,
+    #[serde(default)]
+    topology_source: Option<String>,
     #[serde(default)]
     support_diagnostics: Option<bool>,
 }
@@ -24,39 +28,66 @@ struct PersistedRuntimePreferences {
 impl Default for DesktopRuntimePreferences {
     fn default() -> Self {
         Self {
-            shared_unsandboxed_engine: default_shared_unsandboxed_engine_enabled(),
+            shared_unsandboxed_engine: false,
+            topology_source: default_topology_source(),
             support_diagnostics: false,
         }
     }
 }
 
-fn default_shared_unsandboxed_engine_enabled() -> bool {
-    cfg!(any(windows, target_os = "macos"))
-}
-
 fn default_shared_unsandboxed_engine_override() -> Option<bool> {
-    if default_shared_unsandboxed_engine_enabled() {
-        Some(true)
-    } else {
-        None
-    }
+    Some(false)
 }
 
-fn resolve_shared_unsandboxed_engine_override(persisted: Option<bool>) -> Option<bool> {
-    // Windows WSL2 is no longer a supported desktop runtime path. Old desktop
-    // configs may explicitly contain `false`, which formerly re-enabled the
-    // WSL sandbox backend. Treat that stale value as the current safe default.
-    if cfg!(windows) {
-        return Some(true);
+fn default_topology_source() -> String {
+    "default".to_string()
+}
+
+fn resolve_shared_unsandboxed_engine_override(
+    persisted: Option<&PersistedRuntimePreferences>,
+) -> (Option<bool>, String) {
+    let Some(persisted) = persisted else {
+        let enabled = shared_unsandboxed_engine_from_env();
+        return (
+            if enabled {
+                Some(true)
+            } else {
+                default_shared_unsandboxed_engine_override()
+            },
+            if enabled {
+                "explicit-diagnostic".to_string()
+            } else {
+                default_topology_source()
+            },
+        );
+    };
+    let source = persisted
+        .topology_source
+        .clone()
+        .filter(|value| {
+            matches!(
+                value.as_str(),
+                "default" | "migrated" | "explicit-diagnostic"
+            )
+        })
+        .unwrap_or_else(|| "migrated".to_string());
+    if source == "explicit-diagnostic" {
+        (
+            Some(persisted.shared_unsandboxed_engine.unwrap_or(false)),
+            source,
+        )
+    } else {
+        (Some(false), source)
     }
-    persisted.or_else(default_shared_unsandboxed_engine_override)
 }
 
 fn normalize_runtime_preferences(
     mut preferences: DesktopRuntimePreferences,
 ) -> DesktopRuntimePreferences {
-    if cfg!(windows) {
-        preferences.shared_unsandboxed_engine = true;
+    if preferences.shared_unsandboxed_engine {
+        preferences.topology_source = "explicit-diagnostic".to_string();
+    } else if !matches!(preferences.topology_source.as_str(), "default" | "migrated") {
+        preferences.topology_source = "migrated".to_string();
     }
     preferences
 }
@@ -118,10 +149,8 @@ fn read_persisted_runtime_preferences(
 }
 
 pub fn read_shared_unsandboxed_engine_override(app: &AppHandle) -> Result<Option<bool>, String> {
-    Ok(resolve_shared_unsandboxed_engine_override(
-        read_persisted_runtime_preferences(app)?
-            .and_then(|preferences| preferences.shared_unsandboxed_engine),
-    ))
+    let persisted = read_persisted_runtime_preferences(app)?;
+    Ok(resolve_shared_unsandboxed_engine_override(persisted.as_ref()).0)
 }
 
 pub fn read_support_diagnostics_override(app: &AppHandle) -> Result<Option<bool>, String> {
@@ -131,13 +160,11 @@ pub fn read_support_diagnostics_override(app: &AppHandle) -> Result<Option<bool>
 
 pub fn read_runtime_preferences(app: &AppHandle) -> Result<DesktopRuntimePreferences, String> {
     let persisted = read_persisted_runtime_preferences(app)?;
+    let (shared_unsandboxed_engine, topology_source) =
+        resolve_shared_unsandboxed_engine_override(persisted.as_ref());
     Ok(DesktopRuntimePreferences {
-        shared_unsandboxed_engine: resolve_shared_unsandboxed_engine_override(
-            persisted
-                .as_ref()
-                .and_then(|preferences| preferences.shared_unsandboxed_engine),
-        )
-        .unwrap_or_else(shared_unsandboxed_engine_from_env),
+        shared_unsandboxed_engine: shared_unsandboxed_engine.unwrap_or(false),
+        topology_source,
         support_diagnostics: persisted
             .and_then(|preferences| preferences.support_diagnostics)
             .unwrap_or_else(support_diagnostics_from_env),
@@ -157,6 +184,7 @@ pub fn write_runtime_preferences(
 
     let persisted = PersistedRuntimePreferences {
         shared_unsandboxed_engine: Some(preferences.shared_unsandboxed_engine),
+        topology_source: Some(preferences.topology_source.clone()),
         support_diagnostics: Some(preferences.support_diagnostics),
     };
     let payload = serde_json::to_string_pretty(&persisted).map_err(|e| e.to_string())?;
@@ -167,11 +195,6 @@ pub fn write_runtime_preferences(
 }
 
 pub fn shared_unsandboxed_engine_env_overrides(preference: Option<bool>) -> Vec<(String, String)> {
-    let preference = if cfg!(windows) {
-        Some(true)
-    } else {
-        preference
-    };
     match preference {
         Some(true) => vec![
             ("VESLO_DISABLE_SANDBOX".to_string(), "1".to_string()),
@@ -319,55 +342,52 @@ mod tests {
         pilot_diagnostics_dir_from_value, resolve_shared_unsandboxed_engine_override,
         runtime_diagnostics_env_overrides_for_dir, runtime_diagnostics_env_overrides_from_override,
         runtime_preferences_path_for_dir, shared_unsandboxed_engine_env_overrides,
-        DesktopRuntimePreferences,
+        DesktopRuntimePreferences, PersistedRuntimePreferences,
     };
     use std::path::PathBuf;
 
     #[test]
     fn default_runtime_preference_uses_desktop_shared_engine_policy() {
+        assert!(!DesktopRuntimePreferences::default().shared_unsandboxed_engine);
         assert_eq!(
-            DesktopRuntimePreferences::default().shared_unsandboxed_engine,
-            cfg!(any(windows, target_os = "macos"))
+            DesktopRuntimePreferences::default().topology_source,
+            "default"
         );
         assert!(!DesktopRuntimePreferences::default().support_diagnostics);
-        assert_eq!(
-            default_shared_unsandboxed_engine_override(),
-            if cfg!(any(windows, target_os = "macos")) {
-                Some(true)
-            } else {
-                None
-            }
-        );
+        assert_eq!(default_shared_unsandboxed_engine_override(), Some(false));
         assert_eq!(
             resolve_shared_unsandboxed_engine_override(None),
-            if cfg!(any(windows, target_os = "macos")) {
-                Some(true)
-            } else {
-                None
-            }
+            (Some(false), "default".to_string())
         );
     }
 
     #[test]
-    fn legacy_windows_sandbox_preference_is_not_honored_on_windows() {
+    fn legacy_shared_preference_is_migrated_to_pooled_topology() {
+        let legacy_true = PersistedRuntimePreferences {
+            shared_unsandboxed_engine: Some(true),
+            topology_source: None,
+            support_diagnostics: None,
+        };
+        let legacy_false = PersistedRuntimePreferences {
+            shared_unsandboxed_engine: Some(false),
+            topology_source: None,
+            support_diagnostics: None,
+        };
         assert_eq!(
-            resolve_shared_unsandboxed_engine_override(Some(true)),
-            Some(true)
+            resolve_shared_unsandboxed_engine_override(Some(&legacy_true)),
+            (Some(false), "migrated".to_string())
         );
         assert_eq!(
-            resolve_shared_unsandboxed_engine_override(Some(false)),
-            if cfg!(windows) {
-                Some(true)
-            } else {
-                Some(false)
-            }
+            resolve_shared_unsandboxed_engine_override(Some(&legacy_false)),
+            (Some(false), "migrated".to_string())
         );
 
         let normalized = normalize_runtime_preferences(DesktopRuntimePreferences {
             shared_unsandboxed_engine: false,
+            topology_source: "migrated".to_string(),
             support_diagnostics: true,
         });
-        assert_eq!(normalized.shared_unsandboxed_engine, cfg!(windows));
+        assert!(!normalized.shared_unsandboxed_engine);
         assert!(normalized.support_diagnostics);
     }
 
@@ -386,7 +406,7 @@ mod tests {
     #[test]
     fn legacy_false_preference_cannot_reenable_windows_wsl2() {
         let env = shared_unsandboxed_engine_env_overrides(Some(false));
-        let expected = if cfg!(windows) { "1" } else { "0" };
+        let expected = "0";
 
         assert!(env
             .iter()
@@ -400,16 +420,7 @@ mod tests {
     fn missing_preference_does_not_override_parent_env() {
         let env = shared_unsandboxed_engine_env_overrides(None);
 
-        if cfg!(windows) {
-            assert!(env
-                .iter()
-                .any(|(key, value)| key == "VESLO_DISABLE_SANDBOX" && value == "1"));
-            assert!(env
-                .iter()
-                .any(|(key, value)| { key == "VESLO_SHARED_OPENCODE_ENGINE" && value == "1" }));
-        } else {
-            assert!(env.is_empty());
-        }
+        assert!(env.is_empty());
     }
 
     #[test]

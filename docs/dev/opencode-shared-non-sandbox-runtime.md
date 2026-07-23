@@ -1,15 +1,17 @@
 # Shared OpenCode Engine in Non-Sandbox Mode
 
-Veslo can run one OpenCode engine for multiple local workspaces, but only when
-sandboxing is explicitly disabled. This is an operational mode for trusted local
-workspaces, not a sandbox replacement.
+Veslo retains an explicitly opt-in shared non-sandbox compatibility mode for
+trusted local workspaces. It is not the normal desktop topology and is not a
+sandbox replacement.
 
 ## Enable
 
-Fresh desktop profiles on Windows and macOS enable this mode by default through
-the desktop runtime preference. Turning the Settings switch off persists
-`sharedUnsandboxedEngine=false`, which emits `VESLO_DISABLE_SANDBOX=0` and
-`VESLO_SHARED_OPENCODE_ENGINE=0` for managed local processes.
+Fresh desktop profiles use the normal pooled-per-workspace engine topology.
+Existing profiles with `sharedUnsandboxedEngine=true` keep that explicit
+compatibility choice until it is disabled. Turning the Settings switch off
+persists `sharedUnsandboxedEngine=false`, which emits
+`VESLO_DISABLE_SANDBOX=0` and `VESLO_SHARED_OPENCODE_ENGINE=0` for managed
+local processes.
 
 For bare orchestrator/server processes, enable it explicitly:
 
@@ -30,8 +32,8 @@ The CLI flag still requires `VESLO_DISABLE_SANDBOX=1`.
 
 ## Safety Contract
 
-- Bare orchestrator default mode remains `pooled-per-workspace`; desktop
-  Windows/macOS runtime config defaults to `shared-unsandboxed`.
+- Bare orchestrator and fresh desktop default mode is
+  `pooled-per-workspace`; `shared-unsandboxed` is explicit compatibility mode.
 - `VESLO_SHARED_OPENCODE_ENGINE=1` without `VESLO_DISABLE_SANDBOX=1` is a
   configuration error.
 - WSL sandbox and other sandbox backends cannot use the shared engine.
@@ -88,9 +90,9 @@ Expected fields:
 }
 ```
 
-In bare orchestrator default mode, `engineTopology` is `pooled-per-workspace`
-and workspace engines continue to appear in `engines`. In the desktop
-Windows/macOS default config, expect `shared-unsandboxed`.
+In the default mode, `engineTopology` is `pooled-per-workspace` and workspace
+engines continue to appear in `engines`. Only an explicit compatibility
+configuration should report `shared-unsandboxed`.
 
 ## Disable
 

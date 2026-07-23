@@ -29,7 +29,7 @@ describe("orchestrator lifecycle client", () => {
       workspaceId: "ws-a",
       conversationId: "conv-a",
       runId: "run-a",
-      engineSessionId: "sess-a",
+      opencodeSessionId: "sess-a",
       directory: "/tmp/workspace-a",
       kind: "prompt",
     });
@@ -37,6 +37,9 @@ describe("orchestrator lifecycle client", () => {
     expect(calls[0]?.url).toBe("http://127.0.0.1:1234/workspace/ws-a/runs/register");
     expect(calls[0]?.init?.method).toBe("POST");
     expect((calls[0]?.init?.headers as Record<string, string>)[ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER]).toBe("secret-token");
+    const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
+    expect(body.opencodeSessionId).toBe("sess-a");
+    expect(body.engineSessionId).toBeUndefined();
     expect(result).toMatchObject({ runId: "run-a", status: "active" });
   });
 
@@ -53,7 +56,7 @@ describe("orchestrator lifecycle client", () => {
       workspaceId: "ws-a",
       conversationId: "conv-a",
       runId: "run-b",
-      engineSessionId: "sess-a",
+      opencodeSessionId: "sess-a",
       directory: "/tmp/workspace-a",
       kind: "prompt",
     })).rejects.toThrow(RunAlreadyActiveError);
@@ -98,7 +101,7 @@ describe("orchestrator lifecycle client", () => {
       workspaceId: "ws-a",
       conversationId: "conv-a",
       runId: "run-a",
-      engineSessionId: "sess-a",
+      opencodeSessionId: "sess-a",
       directory: "/tmp/workspace-a",
       kind: "prompt",
     })).rejects.toThrow(OrchestratorLifecycleTimeoutError);

@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 import type {
   EngineProcess,
@@ -198,6 +199,7 @@ export class SharedOpenCodeEngine {
       const pid = spawned.child.pid ?? 0;
       const engine: EngineProcess = {
         workspaceId: this.workspaceId,
+        engineOwnerId: randomUUID(),
         pid,
         port,
         baseUrl: spawned.baseUrl,

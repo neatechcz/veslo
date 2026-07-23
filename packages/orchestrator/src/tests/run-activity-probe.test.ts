@@ -510,6 +510,8 @@ describe("run activity probe with registry reconciliation", () => {
       startedAt: 1_000,
       completedAt: null,
       error: null,
+      engineSlotId: null,
+      engineOwnerState: "pending",
       activityKind: null,
       waitReason: null,
       lastUsefulProgressAt: 1_000,

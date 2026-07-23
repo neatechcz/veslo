@@ -7,6 +7,7 @@ import type { EngineProcess, EngineState } from "../engine-pool.js";
 function engine(workspaceId: string, baseUrl: string, state: EngineState = "ready"): EngineProcess {
   return {
     workspaceId,
+    engineOwnerId: `owner-${workspaceId}`,
     pid: Math.floor(Math.random() * 10000) + 1000,
     port: Number(baseUrl.split(":").pop()) || 0,
     baseUrl,

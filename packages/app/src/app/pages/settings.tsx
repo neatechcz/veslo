@@ -1794,6 +1794,14 @@ export default function SettingsView(props: SettingsViewProps) {
                     }`} />
                   </button>
                 </div>
+                <Show when={runtimePreferences()}>
+                  {(preferences) => (
+                    <div class="rounded-lg border border-gray-6/60 bg-gray-1 px-3 py-2 text-[11px] text-gray-8">
+                      Engine topology: {preferences().sharedUnsandboxedEngine ? "shared-unsandboxed" : "pooled-per-workspace"}
+                      {preferences().topologySource ? ` (${preferences().topologySource})` : ""}
+                    </div>
+                  )}
+                </Show>
                 <div class="text-[11px] text-gray-8">The setting is off by default, writes to the app log folder, and applies to new local services after a Veslo restart.</div>
                 <Show when={supportDiagnosticsStatus()}>
                   {(status) => <div class="text-xs text-green-11">{status()}</div>}

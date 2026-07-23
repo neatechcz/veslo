@@ -244,13 +244,17 @@ import { createConversationBindingStore } from "./conversation-binding-store.js"
 import { createConversationTranscriptStore } from "./conversation-transcript-store.js";
 import { createTranscriptIngestCoordinator } from "./conversation-transcript-ingest-coordinator.js";
 import { createConversationService } from "./conversation-service.js";
-import { createConversationRunQueueStore } from "./conversation-run-queue-store.js";
+import {
+  createConversationRunQueueStore,
+  type ConversationWorkspaceRunEngineOwner,
+} from "./conversation-run-queue-store.js";
 import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
 import { createConversationSubmitService } from "./conversation-submit-service.js";
 import { createConversationSubmitSkillCommandResolver } from "./conversation-submit-skill-command-resolution.js";
 import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
 import {
   createOrchestratorLifecycleClient,
+  ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER,
   type OrchestratorLifecycleClient,
   OrchestratorLifecycleRequestError,
 } from "./orchestrator-lifecycle-client.js";
@@ -914,6 +918,64 @@ export function startServer(config: ServerConfig) {
         }
       }
 
+      if (url.pathname === "/internal/orchestrator/engine-loss" && request.method === "POST") {
+        authMode = "host";
+        try {
+          const lifecycleToken = config.orchestratorLifecycleToken?.trim();
+          if (!lifecycleToken || request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== lifecycleToken) {
+            return finalize(jsonResponse({ code: "unauthorized", message: "Invalid orchestrator lifecycle token" }, 401));
+          }
+          const body = await readJsonBody(request, {
+            maxBytes: 512 * 1024,
+            label: "engine loss notification",
+          });
+          if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return finalize(jsonResponse({ code: "invalid_request", message: "Engine loss payload must be an object" }, 400));
+          }
+          const payload = body as Record<string, unknown>;
+          const eventId = typeof payload.eventId === "string" ? payload.eventId.trim() : "";
+          const workspaceId = typeof payload.workspaceId === "string" ? payload.workspaceId.trim() : "";
+          const engineSlotId = typeof payload.engineSlotId === "string" ? payload.engineSlotId.trim() : "";
+          const engineOwnerId = typeof payload.engineOwnerId === "string" ? payload.engineOwnerId.trim() : "";
+          const enginePid = typeof payload.enginePid === "number" && Number.isSafeInteger(payload.enginePid)
+            ? payload.enginePid
+            : null;
+          const engineStartedAt = typeof payload.engineStartedAt === "number" && Number.isSafeInteger(payload.engineStartedAt)
+            ? payload.engineStartedAt
+            : null;
+          const engineBaseUrl = typeof payload.engineBaseUrl === "string" ? payload.engineBaseUrl.trim() : "";
+          const reason = typeof payload.reason === "string" ? payload.reason.trim() : "";
+          const runIds = Array.isArray(payload.runIds)
+            ? payload.runIds.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean)
+            : [];
+          if (!eventId || !workspaceId || !engineSlotId || !engineOwnerId || enginePid === null || enginePid <= 0 || engineStartedAt === null || engineStartedAt <= 0 || !engineBaseUrl || !reason || runIds.length === 0) {
+            return finalize(jsonResponse({
+              code: "invalid_request",
+              message: "eventId, workspaceId, engineSlotId, engineOwnerId, enginePid, engineStartedAt, engineBaseUrl, reason, and runIds are required",
+            }, 400));
+          }
+          const result = conversationRunLifecycleController.notifyEngineLoss({
+            eventId,
+            workspaceId,
+            engineSlotId,
+            engineOwnerId,
+            enginePid,
+            engineStartedAt,
+            engineBaseUrl,
+            runIds,
+            reason,
+          });
+          return finalize(jsonResponse({ ok: true, schema: "veslo-engine-loss/v1", ...result }, 200));
+        } catch (error) {
+          const apiError = error instanceof ApiError
+            ? error
+            : new ApiError(500, "internal_error", "Unexpected engine loss notification error");
+          errorMessage = apiError.message;
+          errorDetails = apiError.details;
+          return finalize(jsonResponse(formatError(apiError), apiError.status));
+        }
+      }
+
       const route = matchRoute(routes, request.method, url.pathname);
       if (!route) {
         errorMessage = "not_found";
@@ -1049,6 +1111,7 @@ async function fetchOpencodeJson(
     timeoutMs?: number;
     sendTraceId?: string | null;
     conversationRunId?: string | null;
+    captureEngineOwner?: (owner: ConversationWorkspaceRunEngineOwner) => void;
     /** Server-owned assertion about the published runtime skill view. */
     skillViewRevision?: string | null;
     orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
@@ -1128,6 +1191,32 @@ async function fetchOpencodeJson(
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
       signal: controller.signal,
     });
+
+    const engineSlotId = response.headers.get("x-veslo-engine-slot-id")?.trim() ?? "";
+    const engineOwnerId = response.headers.get("x-veslo-engine-owner-id")?.trim() ?? "";
+    const enginePidRaw = response.headers.get("x-veslo-engine-pid")?.trim() ?? "";
+    const engineStartedAtRaw = response.headers.get("x-veslo-engine-started-at")?.trim() ?? "";
+    const engineBaseUrl = response.headers.get("x-veslo-engine-base-url")?.trim() ?? "";
+    const enginePid = Number.parseInt(enginePidRaw, 10);
+    const engineStartedAt = Number.parseInt(engineStartedAtRaw, 10);
+    if (
+      response.ok &&
+      engineSlotId &&
+      engineOwnerId &&
+      Number.isSafeInteger(enginePid) &&
+      enginePid > 0 &&
+      Number.isSafeInteger(engineStartedAt) &&
+      engineStartedAt > 0 &&
+      engineBaseUrl
+    ) {
+      init.captureEngineOwner?.({
+        engineSlotId,
+        engineOwnerId,
+        enginePid,
+        engineStartedAt,
+        engineBaseUrl,
+      });
+    }
 
     let text = "";
     try {
@@ -1260,6 +1349,21 @@ function shouldRetryOpenCodeViaOrchestrator(error: unknown): boolean {
     text.includes("failed to fetch") ||
     text.includes("fetch failed") ||
     text.includes("error sending request")
+  );
+}
+
+function shouldRetryConversationSubmitAfterTransport(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.code !== "opencode_request_failed") return false;
+  const details = isRecordLike(error.details) ? error.details : {};
+  if (typeof details.status === "number") return false;
+  const text = detailsText(error.details).toLowerCase();
+  return (
+    text.includes("socket connection was closed") ||
+    text.includes("socket closed") ||
+    text.includes("connection closed unexpectedly") ||
+    text.includes("connection reset") ||
+    text.includes("econnreset") ||
+    text.includes("networkerror")
   );
 }
 
@@ -4394,6 +4498,7 @@ function createRoutes(
     clientMessageId: string | null;
     origin: string | null;
     orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
+    captureEngineOwner?: (owner: ConversationWorkspaceRunEngineOwner) => void;
   }) => {
     const {
       runTrace,
@@ -4405,6 +4510,7 @@ function createRoutes(
       clientMessageId,
       origin,
       orchestratorRegistrationScope,
+      captureEngineOwner,
     } = input;
     const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
     const opencodeRunBody = buildConversationRunBody(kind, body);
@@ -4434,9 +4540,11 @@ function createRoutes(
       skillViewRevision: runtimeSkillView?.revision ?? null,
       body: summarizeConversationRunBodyForTrace(opencodeRunBody),
     });
-    return runTrace.step(
-      "server:conversation-run:opencode-submit",
-      () => fetchOpencodeJsonWithOrchestratorFallback(config, { ...workspace, directory: target.directory }, path, {
+    const submitUpstream = () => fetchOpencodeJsonWithOrchestratorFallback(
+      config,
+      { ...workspace, directory: target.directory },
+      path,
+      {
         method: "POST",
         timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
         body: opencodeRunBody,
@@ -4444,7 +4552,27 @@ function createRoutes(
         conversationRunId: runId,
         skillViewRevision: runtimeSkillView?.revision ?? null,
         orchestratorRegistrationScope,
-      }),
+        captureEngineOwner,
+      },
+    );
+    return runTrace.step(
+      "server:conversation-run:opencode-submit",
+      async () => {
+        try {
+          return await submitUpstream();
+        } catch (error) {
+          if (!shouldRetryConversationSubmitAfterTransport(error)) throw error;
+          runTrace.record("server:conversation-run:opencode-submit-transport-retry", {
+            workspaceId: workspace.id,
+            conversationId: target.conversationId,
+            runId,
+            kind,
+            opencodeSessionId: target.opencodeSessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return await submitUpstream();
+        }
+      },
       {
         workspaceId: workspace.id,
         conversationId: target.conversationId,

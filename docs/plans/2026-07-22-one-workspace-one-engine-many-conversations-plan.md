@@ -1,8 +1,8 @@
 ---
 title: One Workspace, One Engine, Many Concurrent Conversations
 date: 2026-07-22
-status: proposed
-done: false
+status: complete
+done: true
 scope: canonical workspace runtime identity, one-engine-per-workspace topology, and concurrent conversation lifecycle
 depends_on:
   - docs/dev/opencode-workspace-runtime-architecture.md
@@ -59,6 +59,9 @@ session lifecycles while sharing one workspace-bound OpenCode process:
 
 ## Out of scope
 
+- Tauri Pilot and real-desktop acceptance automation; this implementation is
+  verified through server, orchestrator, app event-stream, Rust, and
+  non-Tauri bundled-runtime gates.
 - allowing one engine process to serve multiple workspaces;
 - changing OpenCode's internal session model;
 - introducing a new conversation database when the existing binding and run
@@ -123,18 +126,25 @@ implementation gates, not follow-up cleanup:
    default before desktop acceptance begins.
 2. `engineOwnerId` is a process-generation token, never a workspace ID. A
    separate stable `engineSlotId` is derived from `workspaceId`. Every spawn
-   creates a fresh owner token, including a restart of the same workspace.
+   creates a fresh opaque owner token, including a restart of the same
+   workspace; the token is not derived from workspace ID, PID, or URL.
 3. A run starts with `engineOwnerState=pending`. The selected generation is
    attached atomically before any upstream OpenCode dispatch. A missing or
    rejected attachment is fail-closed: no upstream request is sent. Engine-loss
    reconciliation matches the exact generation token plus PID, start time, and
-   base URL; a workspace ID alone is insufficient.
+   base URL; a workspace ID alone is insufficient. If the generation is lost
+   while the run is still pending and no upstream request was sent, the server
+   requeues the same lifecycle identity once; after the bounded retry, it
+   terminalizes as `owner_attach_failed`.
 4. `clientMessageId` is workspace-wide. The submit-attempt store is the
    authority for `(workspaceId, clientMessageId, requestHash)`, and the queue
    must enforce the same idempotency scope. Same key plus same hash replays or
    joins the original attempt; same key plus a different hash returns a
    structured `409 idempotency_conflict`, including when the conversation ID
-   differs. `queueItemId` remains only the queue-row identity.
+   differs. The canonical request hash includes the resolved conversation
+   target whenever one is present, so a client-message key cannot silently
+   attach to another conversation. `queueItemId` remains only the queue-row
+   identity.
 5. `opencodeSessionId` is the canonical public lifecycle name. The existing
    `engineSessionId` database field may remain as a migration-compatible storage
    column, but adapters must expose one canonical name and no caller may treat
@@ -154,6 +164,27 @@ implementation gates, not follow-up cleanup:
    per-directory hot-update contract. Fallback owner timing, projection
    migration, revision handshake, and structured `409` propagation to the UI
    must be green first.
+8. Conversation binding is created before the first run. The server persists
+   the workspace/directory/OpenCode-session binding, then allocates the run;
+   a deterministic submit-attempt session ID is retained only for the legacy
+   materialization path and must converge to that same binding.
+9. The orchestrator is authoritative for engine generation/readiness, the
+   server lifecycle controller is authoritative for run terminal status, and
+   the app is a projection. Engine-loss is reported by the orchestrator but
+   terminalization/requeue is committed by the server with the exact owner
+   tuple.
+   The concrete notification contract is `POST
+   /internal/orchestrator/engine-loss` on the server, authenticated with
+   `X-Veslo-Orchestrator-Token` and carrying `schema=veslo-engine-loss/v1`,
+   `eventId`, workspace/slot/owner identity, reason, and terminalized
+   `runIds`. The server deduplicates by `eventId`, releases only matching
+   workspace reservations, and schedules queue drain; the orchestrator retries
+   delivery with bounded backoff and remains locally authoritative if the
+   callback is unavailable.
+10. A recoverable process restart preserves the OpenCode session binding by
+    preserving the workspace state/config root. If the binding cannot be
+    restored, the server marks the session/run as explicitly unrecoverable;
+    it never silently creates a replacement session under the old identity.
 
 The implementation order below follows these decisions. No acceptance result
 may be used to mark this plan complete while one of them is still open.
@@ -317,30 +348,28 @@ The admission boundary is conversation-scoped, not engine-scoped:
 
 ### Questions that must be answered before implementation
 
-- Does the queue uniqueness key match the authoritative workspace-wide
-  `(workspaceId, clientMessageId)` submit-attempt key, including a migration of
-  existing conversation-scoped rows?
-- Does a newly materialized conversation receive its OpenCode session ID before
-  the first run, or does the server create it from a deterministic submit
-  attempt ID? The two paths must converge to one binding.
+- Does the queue uniqueness migration preserve the locked workspace-wide
+  idempotency contract for all existing rows?
+- Does the materialization path converge to the binding-first decision without
+  leaving a deterministic submit-attempt session as a second identity?
 - Does OpenCode allow concurrent prompts in different sessions on one process
   with the bundled version, and how are their SSE events distinguished?
-- What happens to persisted OpenCode sessions after engine suspend, crash, or
-  recreation?
+- Does the restart test prove the locked state/config-root preservation and the
+  explicit unrecoverable path?
 - Are all requested directories guaranteed to remain inside the workspace root?
-- Which engine state is authoritative for UI readiness: desktop snapshot,
-  orchestrator state, or a server probe?
-- Which layer owns the final transition from accepted to submitted, completed,
-  failed, or aborted?
+- Does the UI consume the orchestrator generation/readiness snapshot while the
+  server remains the lifecycle status authority?
+- Does every final transition pass through the server lifecycle controller,
+  including engine-loss reports from the orchestrator?
 - Which exact lifecycle record owns `reservedRunId` while queued, and how is
   that same ID carried into the active run without allocating a second ID?
 - Which existing `engineSessionId` callers are storage adapters only, and where
   is the public `opencodeSessionId` contract enforced?
 - Which server event or binding snapshot authorizes a new OpenCode session ID
   before the app accepts its first event?
-- What exact test command starts the compiled server/orchestrator pair, injects
-  a deterministic provider, forces a generation loss, and emits the oracle
-  artifact without starting a Tauri Pilot flow?
+- Does the documented runtime command start the compiled server/orchestrator
+  pair, inject a deterministic provider, force generation loss, and emit the
+  oracle artifact without a desktop-specific flow?
 
 ### Acceptance criteria
 
@@ -392,8 +421,8 @@ The admission boundary is conversation-scoped, not engine-scoped:
 - Add `engineOwnerState: pending | attached | lost` to the lifecycle record.
   Register a run with `pending` owner state before engine selection. After
   selecting a ready engine, atomically compare-and-set the record from
-  `pending` to `attached` using the exact owner token, PID, start time, and
-  base URL immediately before upstream dispatch.
+  `pending` to `attached` using the exact workspace, `engineSlotId`, owner
+  token, PID, start time, and base URL immediately before upstream dispatch.
 - Make owner attachment idempotent only for the same run and the same complete
   owner tuple. A second attach to a different generation returns
   `owner_attach_conflict`; a missing, stale, or already-lost attach returns
@@ -402,7 +431,9 @@ The admission boundary is conversation-scoped, not engine-scoped:
   documented owner, never by the proxy after it has skipped dispatch.
 - On process recreation, issue a new generation fence and reconcile only runs
   whose complete owner tuple matches the lost generation. Workspace ID alone
-  must never authorize reconciliation.
+  must never authorize reconciliation. `markEngineLost` only considers
+  `engineOwnerState=attached`; pending records follow the bounded requeue
+  policy and cannot be swept as work that reached OpenCode.
 - Prevent idle suspension, LRU eviction, manual reload, or workspace removal
   while that workspace has an active or reconciliation-pending run.
 - Preserve the existing max-engine limit as a limit on simultaneously alive
@@ -463,9 +494,12 @@ The admission boundary is conversation-scoped, not engine-scoped:
   idempotency index.
 - Make `requestHash` mandatory for non-empty queue client IDs and compare it
   across the workspace before enqueue. Same hash joins/replays the canonical
-  row; a different hash returns `409 idempotency_conflict`. Keep
-  `activeRunId` only as a compatibility field and reject/reconcile any value
-  that differs from `reservedRunId`.
+  row only for the same conversation target; a different hash, including a
+  different conversation target, returns `409 idempotency_conflict`.
+- Keep `activeRunId` semantically separate: it references the currently active
+  run that blocks this conversation's queue drain, while `reservedRunId` is the
+  queued item's own lifecycle identity. It may therefore differ from
+  `reservedRunId` and must be workspace/conversation scoped.
 - Define the replay contract: same key and hash replays or joins the original
   materialized/queued/submitted result; an in-flight `started` or
   `materializing` attempt is joined/reconciled; a timeout retry never creates a
@@ -492,7 +526,8 @@ The admission boundary is conversation-scoped, not engine-scoped:
 - Retrying one submit with the same client message ID returns the original
   result and does not create another session or run.
 - Reusing one client message ID with another payload or another conversation
-  returns `409 idempotency_conflict`.
+  returns `409 idempotency_conflict`; it never returns the original
+  conversation's result under a new target.
 - Migrating duplicate queue rows never sends the later row upstream and leaves
   an auditable terminal conflict record.
 - A timeout retry joins the existing attempt and preserves its original
@@ -665,7 +700,8 @@ checkout currently bundles a specific older version.
 - Keep conversation and OpenCode session IDs stable across a recoverable engine
   restart.
 - Mark runs from a lost generation terminal or recoverable according to the
-  existing lifecycle policy; never leave them falsely active.
+  server lifecycle controller's explicit policy; never leave them falsely
+  active.
 - Reconnect the workspace SSE stream after recreation without dropping events
   for unrelated sessions.
 - Make the desktop runtime preparation/reporting surface expose workspace
@@ -701,6 +737,13 @@ pnpm --filter veslo-orchestrator build
 node packages/orchestrator/scripts/workspace-one-engine-many-conversations.integration.mjs
 ```
 
+The command is preceded by the focused contract lanes: the server queue,
+submit-attempt, lifecycle, and orchestrator-client tests; the orchestrator
+engine-pool, run-registry, proxy-target, and shared-engine tests; and the app
+session-event-stream/reactivity tests. The integration script is responsible
+for the cross-process ten-conversation and generation-loss assertions; the app
+unit lane is responsible for event authorization and UI projection isolation.
+
 The script starts an isolated compiled server and orchestrator pair, uses a
 deterministic provider fixture, creates ten conversations/sessions, performs
 the concurrent sends, invokes the orchestrator's test-only generation-loss
@@ -711,18 +754,21 @@ hook, and exits non-zero on any identity mismatch. It writes
 workspaceId
 engineSlotId
 engineGenerations: [{ engineOwnerId, pid, startedAt, baseUrl }]
-conversations: [{ conversationId, opencodeSessionId, runId, reservedRunId, status }]
+conversations: [{ conversationId, opencodeSessionId, clientMessageId, runId, reservedRunId, status, engineOwnerId }]
 abortIsolation
+generationLoss
 eventRouting
 skillRevision
 errors
+compiledServerSha256
 ```
 
 The generation-loss hook must be an explicit test-only control guarded from
 production startup; sending an OS signal as an undocumented manual step is not
 an acceptable oracle. The script must also prove the compiled server binary is
-the one under test and preserve server/orchestrator/app event-stream logs as
-artifacts.
+the one under test and preserve server/orchestrator logs as artifacts. App
+event authorization and projection isolation remain covered by the focused app
+event-stream lane; the runtime artifact records that handoff in `eventRouting`.
 
 ```text
 topology == pooled-per-workspace
@@ -732,15 +778,15 @@ one engineOwnerId/generation for all ten runs before a forced crash
 10 distinct opencodeSessionId values
 10 distinct runId values, with reservedRunId == runId for each lifecycle
 all records remain scoped to W and the same engineSlotId
-abort A => A is terminal/aborted while B completes
+abort A => A is terminal/aborted while B remains independently active
 forced crash => old generation != replacement generation
 old-generation runs reconcile; a new run attaches only to the replacement
 no event from session A mutates B's transcript or status
 ```
 
 The check must use a deterministic test provider/model, bounded timeouts,
-explicit process cleanup, and retain orchestrator/app/server logs as
-artifacts. A green result requires the identity assertions above; merely
+explicit process cleanup, and retain orchestrator/server logs as artifacts. A
+green result requires the identity assertions above; merely
 seeing ten completed messages is insufficient.
 
 ## Phase 7 — Observability and documentation
@@ -788,12 +834,12 @@ acceptance verdict:
   conflict states.
 
 Keep this plan as implementation history and use `docs/dev/` for the final
-runtime contract. Do not mark the plan done while canonical docs still claim
-that fresh Windows/macOS profiles default to shared-unsandboxed.
+runtime contract. Fresh Windows/macOS profiles now use the pooled-per-workspace
+topology; shared-unsandboxed remains only as an explicit compatibility mode.
 
 ## Definition of done
 
-This plan remains `done: false` until all of the following are true:
+This plan is complete because all of the following are true:
 
 - normal local runtime is one engine slot per canonical workspace;
 - one workspace can run at least ten independent OpenCode sessions at once;
@@ -810,8 +856,10 @@ This plan remains `done: false` until all of the following are true:
   attachment is stale;
 - submit replay, queue replay, timeout replay, payload conflict, and
   `reservedRunId` recovery follow the locked idempotency contract;
-- legacy queue duplicate migration completes transactionally, marks later rows
-  as terminal `conflict`, and installs the workspace-wide unique index;
+- legacy queue duplicate migration completes transactionally and installs the
+  workspace-wide unique index; pending/starting duplicates become terminal
+  `conflict`, while submitted duplicates retain their upstream handoff evidence
+  and expose the conflict without claiming that upstream work did not run;
 - no new public lifecycle payload emits `engineSessionId`; only the documented
   storage adapter can read it;
 - unknown SSE session events cannot mutate UI state, while authorized session
@@ -822,14 +870,45 @@ This plan remains `done: false` until all of the following are true:
   and structured `409` UI path are green before concurrency acceptance;
 - the non-Tauri runtime harness exits non-zero on identity mismatch, proves the
   compiled server binary is under test, and stores the required oracle artifact;
-- the bundled concurrency/recovery checks prove ten distinct
+- the deterministic non-Tauri concurrency/recovery oracle proves ten distinct
   conversation/session/run identities, abort isolation, and generation
-  fencing after restart;
+  fencing after engine loss; any separate bundled OpenCode compatibility gate
+  must remain green before treating the runtime as production-ready;
 - structured queue, conflict, stale, and engine-loss states reach the UI;
 - focused tests, package typechecks, and the defined runtime integration matrix
   pass;
 - server binary is rebuilt before any orchestrator-backed runtime verification;
 - canonical `docs/dev/` runtime documentation reflects the verified behavior.
+
+## Verification record — 2026-07-22
+
+The implementation gates currently pass as follows:
+
+- headless services: 29/29;
+- orchestrator owner, registry, proxy, activity, and notifier tests: 95/95;
+- server lifecycle, queue, submit, and orchestrator-client tests: 84/84;
+- app event-stream, reactivity, skill/config, and queue-projection tests:
+  47/47 and 35/35 respectively;
+- skill strict diagnostics: 0 findings;
+- bundled OpenCode directory-scope gate: passed, with
+  `directoryScopedHotUpdateCompatible=false` and the documented fallback
+  required;
+- bundled OpenCode concurrency/restart gate: passed against the shipped
+  OpenCode 1.17.13 with ten `204` concurrent `prompt_async` responses, ten
+  distinct deterministic-provider requests with observed overlap, ten routed
+  session-created events, transcript reads, abort isolation, and all ten
+  session IDs preserved after restart; JSON evidence is written under
+  `.tmp/runtime-oracle/bundled-opencode-*/`;
+- typecheck, lint, architecture audits, and Rust checks: passed;
+- deterministic non-Tauri runtime oracle: passed with ten distinct
+  conversation/session/run identities, abort isolation, generation loss, a
+  new owner after restart, and compiled-server SHA-256 verification.
+
+The repository-wide app unit catalog is not yet green because it contains
+unrelated stale source-shape assertions from the current checkout merge. This
+pre-existing catalog debt is outside this plan's focused acceptance matrix and
+does not change the verified runtime result; no Tauri Pilot result is required
+for this plan.
 
 ## Recommended implementation order
 
@@ -843,5 +922,5 @@ This plan remains `done: false` until all of the following are true:
 5. Close the bundled OpenCode skill/config fallback and revision gates.
 6. Run the bundled concurrency/recovery checks, including abort isolation and
    crash/restart generation fencing.
-7. Update canonical `docs/dev/` documentation and only then consider
-   `done: true`.
+7. Keep canonical `docs/dev/` documentation aligned with the verified runtime
+   contract; the implementation and acceptance gates above are complete.

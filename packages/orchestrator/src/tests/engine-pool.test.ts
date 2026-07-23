@@ -186,6 +186,8 @@ describe("EnginePool", () => {
       const engine = await h.pool.ensure({ id: "a", path: "/tmp/a" });
       expect(engine.state).toBe("ready");
       expect(engine.workspaceId).toBe("a");
+      expect(engine.engineOwnerId).not.toBe("a");
+      expect(engine.engineOwnerId).toMatch(/^[0-9a-f-]{36}$/);
       expect(engine.pid).toBeGreaterThan(0);
       expect(engine.baseUrl).toMatch(/^http:\/\//);
       expect(engine.workdir).toBe("/tmp/a");
@@ -275,6 +277,22 @@ describe("EnginePool", () => {
       expect(second.pid).not.toBe(firstPid);
       expect(second.state).toBe("ready");
       expect(h.counters.spawns).toBe(2);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("engine recreation creates a new process-generation owner", async () => {
+    const h = harness();
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      const firstOwnerId = first.engineOwnerId;
+      await h.pool.suspend("a", "test-generation-transition");
+      const second = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+
+      expect(second.workspaceId).toBe("a");
+      expect(second.engineOwnerId).not.toBe(firstOwnerId);
+      expect(second.engineOwnerId).not.toBe("a");
     } finally {
       await h.cleanup();
     }

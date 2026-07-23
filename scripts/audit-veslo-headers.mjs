@@ -108,6 +108,11 @@ const allowRules = [
     reason: "orchestrator router and lifecycle header boundary",
   },
   {
+    path: "packages/orchestrator/src/engine-loss-notifier.ts",
+    reason: "orchestrator engine-loss callback auth boundary",
+    tokens: ["X-Veslo-Orchestrator-Token"],
+  },
+  {
     path: "packages/server/src/den-catalog.ts",
     reason: "Den catalog connector protocol boundary",
     tokens: ["x-veslo-den-token", "x-veslo-connector-token", "x-veslo-connector"],
@@ -130,7 +135,16 @@ const allowRules = [
   {
     path: "packages/server/src/server.ts",
     reason: "server OpenCode proxy/run correlation boundary",
-    tokens: ["x-veslo-conversation-run-id", "x-veslo-request-id"],
+    tokens: [
+      "x-veslo-conversation-run-id",
+      "x-veslo-request-id",
+      "x-veslo-skill-view-revision",
+    ],
+  },
+  {
+    path: "packages/desktop/src-tauri/src/commands/orchestrator.rs",
+    reason: "desktop orchestrator skill-view revision boundary",
+    tokens: ["x-veslo-skill-view-revision"],
   },
   {
     path: "packages/server/src/skill-registry-client.ts",

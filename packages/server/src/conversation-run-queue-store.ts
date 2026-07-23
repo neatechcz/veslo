@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Database } from "bun:sqlite";
 
-export type ConversationRunQueueState = "pending" | "starting" | "submitted" | "failed" | "cancelled";
+export type ConversationRunQueueState = "pending" | "starting" | "submitted" | "failed" | "cancelled" | "conflict";
 export type ConversationRunQueueReadableState = Extract<ConversationRunQueueState, "pending" | "starting" | "failed">;
 
 export type ConversationRunQueueCursor = {
@@ -44,6 +44,7 @@ export type ConversationRunQueueItem = {
   submittedAt: number | null;
   completedAt: number | null;
   error: string | null;
+  idempotencyConflictClientMessageId: string | null;
 };
 
 export type ConversationWorkspaceRunReservation = {
@@ -51,8 +52,21 @@ export type ConversationWorkspaceRunReservation = {
   conversationId: string;
   runId: string;
   state: "starting" | "active";
+  engineSlotId: string | null;
+  engineOwnerId: string | null;
+  enginePid: number | null;
+  engineStartedAt: number | null;
+  engineBaseUrl: string | null;
   createdAt: number;
   updatedAt: number;
+};
+
+export type ConversationWorkspaceRunEngineOwner = {
+  engineSlotId: string;
+  engineOwnerId: string;
+  enginePid: number;
+  engineStartedAt: number;
+  engineBaseUrl: string;
 };
 
 export type ConversationRunQueueStore = {
@@ -98,6 +112,11 @@ export type ConversationRunQueueStore = {
     runId: string;
     state?: ConversationWorkspaceRunReservation["state"];
   }): ConversationWorkspaceRunReservation;
+  attachWorkspaceRunEngineOwner(
+    workspaceId: string,
+    runId: string,
+    owner: ConversationWorkspaceRunEngineOwner,
+  ): ConversationWorkspaceRunReservation | null;
   activateWorkspaceRun(workspaceId: string, runId: string): ConversationWorkspaceRunReservation | null;
   releaseWorkspaceRun(workspaceId: string, runId: string): boolean;
   listWorkspaceRunReservations(): ConversationWorkspaceRunReservation[];
@@ -124,6 +143,7 @@ type QueueRow = {
   submitted_at: number | null;
   completed_at: number | null;
   error: string | null;
+  idempotency_conflict_client_message_id: string | null;
 };
 
 type WorkspaceRunReservationRow = {
@@ -131,6 +151,11 @@ type WorkspaceRunReservationRow = {
   conversation_id: string;
   run_id: string;
   state: string;
+  engine_slot_id: string | null;
+  engine_owner_id: string | null;
+  engine_pid: number | null;
+  engine_started_at: number | null;
+  engine_base_url: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -187,20 +212,23 @@ function createDatabase(dbPath: string): Database {
       started_at INTEGER,
       submitted_at INTEGER,
       completed_at INTEGER,
-      error TEXT
+      error TEXT,
+      idempotency_conflict_client_message_id TEXT
     );
     CREATE INDEX IF NOT EXISTS conversation_run_queue_pending_idx
       ON conversation_run_queue (workspace_id, conversation_id, state, created_at, queue_item_id);
     CREATE INDEX IF NOT EXISTS conversation_run_queue_reserved_run_idx
       ON conversation_run_queue (workspace_id, conversation_id, reserved_run_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS conversation_run_queue_client_message_uidx
-      ON conversation_run_queue (workspace_id, conversation_id, client_message_id)
-      WHERE client_message_id IS NOT NULL AND client_message_id <> '';
     CREATE TABLE IF NOT EXISTS conversation_workspace_run_reservation (
       workspace_id TEXT NOT NULL,
       conversation_id TEXT NOT NULL,
       run_id TEXT NOT NULL,
       state TEXT NOT NULL,
+      engine_slot_id TEXT,
+      engine_owner_id TEXT,
+      engine_pid INTEGER,
+      engine_started_at INTEGER,
+      engine_base_url TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (workspace_id, run_id)
@@ -213,27 +241,94 @@ function createDatabase(dbPath: string): Database {
 }
 
 function ensureQueueSchema(db: Database): void {
+  db.exec("DROP INDEX IF EXISTS conversation_run_queue_client_message_uidx");
   const columns = db.query<{ name: string }, []>("PRAGMA table_info(conversation_run_queue)").all();
   if (!columns.some((column) => column.name === "request_hash")) {
     db.exec("ALTER TABLE conversation_run_queue ADD COLUMN request_hash TEXT");
   }
+  if (!columns.some((column) => column.name === "idempotency_conflict_client_message_id")) {
+    db.exec("ALTER TABLE conversation_run_queue ADD COLUMN idempotency_conflict_client_message_id TEXT");
+  }
+  const reservationColumns = db.query<{ name: string }, []>(
+    "PRAGMA table_info(conversation_workspace_run_reservation)",
+  ).all();
+  const addReservationColumn = (name: string, definition: string) => {
+    if (!reservationColumns.some((column) => column.name === name)) {
+      db.exec(`ALTER TABLE conversation_workspace_run_reservation ADD COLUMN ${name} ${definition}`);
+    }
+  };
+  addReservationColumn("engine_slot_id", "TEXT");
+  addReservationColumn("engine_owner_id", "TEXT");
+  addReservationColumn("engine_pid", "INTEGER");
+  addReservationColumn("engine_started_at", "INTEGER");
+  addReservationColumn("engine_base_url", "TEXT");
   const legacyRows = db.query<QueueRow, []>(
     `SELECT * FROM conversation_run_queue
      WHERE request_hash IS NULL OR request_hash = ''`,
   ).all();
-  if (legacyRows.length === 0) return;
   const update = db.query(`UPDATE conversation_run_queue SET request_hash = ?1 WHERE queue_item_id = ?2`);
+  if (legacyRows.length > 0) {
+    db.transaction(() => {
+      for (const row of legacyRows) {
+        update.run(queueRequestHash({
+          conversationId: row.conversation_id,
+          opencodeSessionId: row.opencode_session_id,
+          directory: row.directory,
+          kind: row.kind,
+          bodyJson: row.body_json,
+          origin: row.origin,
+        }), row.queue_item_id);
+      }
+    })();
+  }
+
+  const duplicateGroups = db.query<{ workspace_id: string; client_message_id: string }, []>(
+    `SELECT workspace_id, client_message_id
+     FROM conversation_run_queue
+     WHERE client_message_id IS NOT NULL AND client_message_id <> ''
+     GROUP BY workspace_id, client_message_id
+     HAVING COUNT(*) > 1`,
+  ).all();
+  const duplicateRows = db.query<QueueRow, [string, string]>(
+    `SELECT * FROM conversation_run_queue
+     WHERE workspace_id = ?1 AND client_message_id = ?2
+     ORDER BY created_at ASC, queue_item_id ASC`,
+  );
+  const markPendingConflict = db.query(
+    `UPDATE conversation_run_queue
+     SET state = 'conflict', error = ?1, active_run_id = NULL,
+         idempotency_conflict_client_message_id = client_message_id,
+         client_message_id = NULL, updated_at = updated_at
+     WHERE queue_item_id = ?2`,
+  );
+  const detachSubmittedConflict = db.query(
+    `UPDATE conversation_run_queue
+     SET error = ?1,
+         idempotency_conflict_client_message_id = client_message_id,
+         client_message_id = NULL, updated_at = updated_at
+     WHERE queue_item_id = ?2`,
+  );
   db.transaction(() => {
-    for (const row of legacyRows) {
-      update.run(queueRequestHash({
-        opencodeSessionId: row.opencode_session_id,
-        directory: row.directory,
-        kind: row.kind,
-        bodyJson: row.body_json,
-        origin: row.origin,
-      }), row.queue_item_id);
+    for (const group of duplicateGroups) {
+      const rows = duplicateRows.all(group.workspace_id, group.client_message_id);
+      const canonical = rows[0];
+      if (!canonical) continue;
+      for (const duplicate of rows.slice(1)) {
+        const detail = `idempotency_conflict:migrated_duplicate_of:${canonical.queue_item_id}`;
+        if (duplicate.state === "submitted") {
+          detachSubmittedConflict.run(detail, duplicate.queue_item_id);
+        } else {
+          markPendingConflict.run(detail, duplicate.queue_item_id);
+        }
+      }
     }
   })();
+
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS conversation_run_queue_client_message_uidx
+      ON conversation_run_queue (workspace_id, client_message_id)
+      WHERE client_message_id IS NOT NULL AND client_message_id <> '';
+  `);
 }
 
 function rowToItem(row: QueueRow): ConversationRunQueueItem {
@@ -257,6 +352,7 @@ function rowToItem(row: QueueRow): ConversationRunQueueItem {
     submittedAt: row.submitted_at === null ? null : Number(row.submitted_at),
     completedAt: row.completed_at === null ? null : Number(row.completed_at),
     error: row.error,
+    idempotencyConflictClientMessageId: row.idempotency_conflict_client_message_id ?? null,
   };
 }
 
@@ -273,12 +369,20 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
     conversationId: row.conversation_id,
     runId: row.run_id,
     state: row.state === "active" ? "active" : "starting",
+    engineSlotId: row.engine_slot_id?.trim() || null,
+    engineOwnerId: row.engine_owner_id?.trim() || null,
+    enginePid: typeof row.engine_pid === "number" && Number.isFinite(row.engine_pid) ? row.engine_pid : null,
+    engineStartedAt: typeof row.engine_started_at === "number" && Number.isFinite(row.engine_started_at)
+      ? row.engine_started_at
+      : null,
+    engineBaseUrl: row.engine_base_url?.trim() || null,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
 }
 
 function queueRequestHash(input: {
+  conversationId: string;
   opencodeSessionId: string;
   directory: string;
   kind: string;
@@ -286,6 +390,7 @@ function queueRequestHash(input: {
   origin?: string | null;
 }): string {
   return createHash("sha256").update(JSON.stringify({
+    conversationId: normalizeText(input.conversationId),
     opencodeSessionId: normalizeText(input.opencodeSessionId),
     directory: normalizeText(input.directory),
     kind: normalizeText(input.kind),
@@ -296,6 +401,7 @@ function queueRequestHash(input: {
 
 function rowRequestHash(row: QueueRow): string {
   return row.request_hash || queueRequestHash({
+    conversationId: row.conversation_id,
     opencodeSessionId: row.opencode_session_id,
     directory: row.directory,
     kind: row.kind,
@@ -346,6 +452,7 @@ export function createConversationRunQueueStore(options?: {
           throw new Error("workspaceId, conversationId, opencodeSessionId, directory, reservedRunId, kind, and bodyJson are required");
         }
         const requestHash = queueRequestHash({
+          conversationId,
           opencodeSessionId,
           directory,
           kind,
@@ -355,11 +462,11 @@ export function createConversationRunQueueStore(options?: {
 
         const clientMessageId = normalizeText(input.clientMessageId) || null;
         if (clientMessageId) {
-          const existing = db.query<QueueRow, [string, string, string]>(
+          const existing = db.query<QueueRow, [string, string]>(
             `SELECT * FROM conversation_run_queue
-             WHERE workspace_id = ?1 AND conversation_id = ?2 AND client_message_id = ?3
+             WHERE workspace_id = ?1 AND client_message_id = ?2
              LIMIT 1`,
-          ).get(workspaceId, conversationId, clientMessageId);
+          ).get(workspaceId, clientMessageId);
           if (existing) {
             if (rowRequestHash(existing) !== requestHash) {
               throw new ConversationRunQueueConflictError();
@@ -646,6 +753,54 @@ export function createConversationRunQueueStore(options?: {
         ).get(workspaceId, runId);
         if (!row) throw new Error("failed to reserve workspace conversation run");
         return reservationRowToItem(row);
+      });
+    },
+
+    attachWorkspaceRunEngineOwner(workspaceId, runId, owner) {
+      return withDb((db) => {
+        const normalizedWorkspaceId = normalizeText(workspaceId);
+        const normalizedRunId = normalizeText(runId);
+        const normalizedSlotId = normalizeText(owner.engineSlotId);
+        const normalizedOwnerId = normalizeText(owner.engineOwnerId);
+        const normalizedBaseUrl = normalizeText(owner.engineBaseUrl);
+        if (!normalizedWorkspaceId || !normalizedRunId || !normalizedSlotId || !normalizedOwnerId || !normalizedBaseUrl) return null;
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_workspace_run_reservation
+           SET engine_slot_id = ?3,
+               engine_owner_id = ?4,
+               engine_pid = ?5,
+               engine_started_at = ?6,
+               engine_base_url = ?7,
+               updated_at = ?8
+           WHERE workspace_id = ?1
+             AND run_id = ?2
+             AND (
+               engine_owner_id IS NULL
+             OR (
+                 engine_slot_id = ?3
+                 AND engine_owner_id = ?4
+                 AND engine_pid = ?5
+                 AND engine_started_at = ?6
+                 AND engine_base_url = ?7
+               )
+             )`,
+        ).run(
+          normalizedWorkspaceId,
+          normalizedRunId,
+          normalizedSlotId,
+          normalizedOwnerId,
+          owner.enginePid,
+          owner.engineStartedAt,
+          normalizedBaseUrl,
+          timestamp,
+        );
+        if (result.changes !== 1) return null;
+        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
+          `SELECT * FROM conversation_workspace_run_reservation
+           WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
+        ).get(normalizedWorkspaceId, normalizedRunId);
+        return row ? reservationRowToItem(row) : null;
       });
     },
 

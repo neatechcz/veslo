@@ -1,6 +1,7 @@
 import {
   ConversationRunQueueConflictError,
   type ConversationRunQueueStore,
+  type ConversationWorkspaceRunEngineOwner,
   type ConversationWorkspaceRunReservation,
 } from "./conversation-run-queue-store.js";
 import { ApiError } from "./errors.js";
@@ -50,6 +51,7 @@ export type ConversationRunLifecycleSubmitOpenCodeInput = {
   clientMessageId: string | null;
   origin: string | null;
   orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
+  captureEngineOwner?: (owner: ConversationWorkspaceRunEngineOwner) => void;
 };
 
 export type ConversationRunLifecycleSubmitOpenCodePort = (
@@ -165,6 +167,26 @@ export type ConversationRunLifecycleAbortResult = {
   abortedGatewayRequestCount: number;
 };
 
+export type ConversationRunEngineLossNotification = {
+  eventId: string;
+  workspaceId: string;
+  engineSlotId: string;
+  engineOwnerId: string;
+  enginePid: number;
+  engineStartedAt: number;
+  engineBaseUrl: string;
+  runIds: string[];
+  reason: string;
+};
+
+export type ConversationRunEngineLossResult = {
+  eventId: string;
+  acceptedRunIds: string[];
+  ignoredRunIds: string[];
+  drainedConversations: string[];
+  duplicate: boolean;
+};
+
 export type ConversationRunLifecycleControllerOptions = {
   lifecycleClient?: OrchestratorLifecycleClient | null;
   queueStore?: ConversationRunQueueStore | null;
@@ -225,6 +247,7 @@ export type ConversationRunLifecycleController = {
   scheduleLifecycleReconcile(input: ConversationRunLifecycleScheduleReconcileInput): void;
   reconcileConversationRunLifecycle(input: ConversationRunLifecycleScheduleReconcileInput): Promise<void>;
   abortRun(input: ConversationRunLifecycleAbortInput): Promise<ConversationRunLifecycleAbortResult>;
+  notifyEngineLoss(input: ConversationRunEngineLossNotification): ConversationRunEngineLossResult;
   reloadWorkspaceEngineIfIdle(input: {
     workspaceId: string;
     reload: () => Promise<void>;
@@ -395,6 +418,8 @@ export function createConversationRunLifecycleController(
   const workspaceExecutionGateTails = new Map<string, Promise<void>>();
   const workspaceRunReservations = new Map<string, Map<string, ConversationWorkspaceRunReservation>>();
   const workspaceReconciliationPending = new Set<string>();
+  const engineLossEvents = new Map<string, ConversationRunEngineLossResult>();
+  const pendingEngineLosses = new Map<string, ConversationRunEngineLossNotification>();
   let started = false;
   let diagnosticsRuns = 0;
 
@@ -454,6 +479,11 @@ export function createConversationRunLifecycleController(
       conversationId: input.target.conversationId,
       runId,
       state: "starting" as const,
+      engineSlotId: null,
+      engineOwnerId: null,
+      enginePid: null,
+      engineStartedAt: null,
+      engineBaseUrl: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -481,6 +511,44 @@ export function createConversationRunLifecycleController(
     }
   };
 
+  const ownerMatches = (
+    reservation: ConversationWorkspaceRunReservation,
+    notification: ConversationRunEngineLossNotification,
+  ): boolean => reservation.engineOwnerId === notification.engineOwnerId &&
+    reservation.enginePid === notification.enginePid &&
+    reservation.engineStartedAt === notification.engineStartedAt &&
+    reservation.engineBaseUrl === notification.engineBaseUrl &&
+    reservation.engineSlotId === notification.engineSlotId;
+
+  const attachReservedRunEngineOwner = (
+    workspaceIdRaw: string,
+    runIdRaw: string,
+    owner: ConversationWorkspaceRunEngineOwner,
+  ): boolean => {
+    const workspaceId = normalizeWorkspaceExecutionKey(workspaceIdRaw);
+    const runId = runIdRaw.trim();
+    if (!workspaceId || !runId) return false;
+    const reservations = reservationsForWorkspace(workspaceId);
+    const current = reservations.get(runId);
+    if (!current) return false;
+    const pendingKey = `${workspaceId}\0${runId}`;
+    const pendingLoss = pendingEngineLosses.get(pendingKey);
+    if (pendingLoss && ownerMatches({ ...current, ...owner }, pendingLoss)) {
+      pendingEngineLosses.delete(pendingKey);
+      releaseRun(workspaceId, runId, "engine-loss-before-owner-persisted");
+      scheduleQueueDrain(workspaceId, current.conversationId, 0);
+      return false;
+    }
+    const attached = options.queueStore?.attachWorkspaceRunEngineOwner(workspaceId, runId, owner) ?? {
+      ...current,
+      ...owner,
+      updatedAt: Date.now(),
+    };
+    if (!attached) return false;
+    reservations.set(runId, attached);
+    return true;
+  };
+
   const releaseRun = (workspaceIdRaw: string, runIdRaw: string, reason: string) => {
     const workspaceId = normalizeWorkspaceExecutionKey(workspaceIdRaw);
     const runId = runIdRaw.trim();
@@ -494,6 +562,69 @@ export function createConversationRunLifecycleController(
     const persisted = options.queueStore?.releaseWorkspaceRun(workspaceId, runId) ?? false;
     void reason;
     return existed || persisted;
+  };
+
+  const notifyEngineLoss = (input: ConversationRunEngineLossNotification): ConversationRunEngineLossResult => {
+    const eventId = input.eventId.trim();
+    const workspaceId = normalizeWorkspaceExecutionKey(input.workspaceId);
+    const cached = eventId ? engineLossEvents.get(eventId) : undefined;
+    if (cached) return { ...cached, duplicate: true };
+
+    const acceptedRunIds: string[] = [];
+    const ignoredRunIds: string[] = [];
+    const drainedConversations = new Set<string>();
+    const reservations = workspaceRunReservations.get(workspaceId);
+    const runIds = [...new Set(input.runIds.map((runId) => runId.trim()).filter(Boolean))];
+    for (const runId of runIds) {
+      const reservation = reservations?.get(runId);
+      if (!reservation) {
+        ignoredRunIds.push(runId);
+        continue;
+      }
+      if (!reservation.engineOwnerId) {
+        pendingEngineLosses.set(`${workspaceId}\0${runId}`, input);
+        ignoredRunIds.push(runId);
+        continue;
+      }
+      if (!ownerMatches(reservation, input)) {
+        ignoredRunIds.push(runId);
+        continue;
+      }
+      if (releaseRun(workspaceId, runId, "engine-loss-notification")) {
+        acceptedRunIds.push(runId);
+        drainedConversations.add(reservation.conversationId);
+      } else {
+        ignoredRunIds.push(runId);
+      }
+    }
+    for (const conversationId of drainedConversations) {
+      scheduleQueueDrain(workspaceId, conversationId, 0);
+    }
+    const result: ConversationRunEngineLossResult = {
+      eventId,
+      acceptedRunIds,
+      ignoredRunIds,
+      drainedConversations: [...drainedConversations].sort(),
+      duplicate: false,
+    };
+    if (eventId) {
+      engineLossEvents.set(eventId, result);
+      if (engineLossEvents.size > 1024) {
+        const oldest = engineLossEvents.keys().next().value;
+        if (typeof oldest === "string") engineLossEvents.delete(oldest);
+      }
+    }
+    recordTrace("server:conversation-run:engine-loss-notified", {
+      eventId: eventId || null,
+      workspaceId,
+      engineSlotId: input.engineSlotId ?? null,
+      engineOwnerId: input.engineOwnerId.trim() || null,
+      reason: input.reason,
+      acceptedRunIds,
+      ignoredRunIds,
+      drainedConversations: [...drainedConversations],
+    });
+    return result;
   };
 
   for (const reservation of options.queueStore?.listWorkspaceRunReservations?.() ?? []) {
@@ -789,6 +920,20 @@ export function createConversationRunLifecycleController(
         clientMessageId: input.clientMessageId,
         origin: input.origin,
         orchestratorRegistrationScope: input.orchestratorRegistrationScope ?? null,
+        captureEngineOwner: (owner) => {
+          if (!attachReservedRunEngineOwner(input.workspace.id, input.runId, owner)) {
+            input.runTrace.record("server:conversation-run:engine-owner-persist-failed", {
+              workspaceId: input.workspace.id,
+              conversationId: input.target.conversationId,
+              runId: input.runId,
+              engineSlotId: owner.engineSlotId,
+              engineOwnerId: owner.engineOwnerId,
+              enginePid: owner.enginePid,
+              engineStartedAt: owner.engineStartedAt,
+              engineBaseUrl: owner.engineBaseUrl,
+            });
+          }
+        },
       });
     } catch (error) {
       await markLifecycleFailed(
@@ -1211,7 +1356,7 @@ export function createConversationRunLifecycleController(
                 workspaceId: workspace.id,
                 conversationId: queuedItem.conversationId,
                 runId: queuedItem.reservedRunId,
-                engineSessionId: queuedItem.opencodeSessionId,
+                opencodeSessionId: queuedItem.opencodeSessionId,
                 clientMessageId: queuedItem.clientMessageId,
                 origin: queuedItem.origin,
                 directory: queuedItem.directory,
@@ -1221,7 +1366,7 @@ export function createConversationRunLifecycleController(
                 workspaceId: workspace.id,
                 conversationId: queuedItem.conversationId,
                 runId: queuedItem.reservedRunId,
-                engineSessionId: queuedItem.opencodeSessionId,
+                opencodeSessionId: queuedItem.opencodeSessionId,
                 queueItemId: queuedItem.queueItemId,
               },
             );
@@ -1430,6 +1575,7 @@ export function createConversationRunLifecycleController(
   };
 
   return {
+    notifyEngineLoss,
     async submitRun(input) {
       return withWorkspaceExecutionGate(input.workspace.id, async () => {
       const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
@@ -1488,7 +1634,7 @@ export function createConversationRunLifecycleController(
               workspaceId: input.workspace.id,
               conversationId: input.target.conversationId,
               runId: input.runId,
-              engineSessionId: input.target.opencodeSessionId,
+              opencodeSessionId: input.target.opencodeSessionId,
               clientMessageId: input.clientMessageId,
               origin: input.origin,
               directory: input.target.directory,
@@ -1498,7 +1644,7 @@ export function createConversationRunLifecycleController(
               workspaceId: input.workspace.id,
               conversationId: input.target.conversationId,
               runId: input.runId,
-              engineSessionId: input.target.opencodeSessionId,
+              opencodeSessionId: input.target.opencodeSessionId,
               kind: lifecycleRunKind(input.kind),
             },
           );

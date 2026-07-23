@@ -8,6 +8,7 @@ packages/*/dist/
 tmp/
 .tmp/
 **/.tmp/
+openwork-dev
 
 # Local git worktrees
 _worktrees/

@@ -937,6 +937,7 @@ export type DesktopSandboxEnvironment = {
 
 export type DesktopRuntimePreferences = {
   sharedUnsandboxedEngine: boolean;
+  topologySource?: "default" | "migrated" | "explicit-diagnostic";
   supportDiagnostics: boolean;
 };
 

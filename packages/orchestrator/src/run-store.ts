@@ -12,11 +12,14 @@ export type RunWaitReason =
   | "session_idle"
   | "engine_unreachable"
   | "none";
+export type RunEngineOwnerState = "pending" | "attached" | "lost";
 
 export const ACTIVE_RUN_STATUSES = ["submitted", "running", "blocked"] as const satisfies readonly RunStatus[];
 
 export type RunEngineOwner = {
+  engineSlotId?: string | null;
   engineOwnerId: string | null;
+  engineOwnerState?: RunEngineOwnerState;
   enginePid: number | null;
   engineStartedAt: number | null;
   engineBaseUrl: string | null;
@@ -37,12 +40,18 @@ export type RunRecord = {
   startedAt: number | null;
   completedAt: number | null;
   error: string | null;
+  engineSlotId: string | null;
+  engineOwnerState: RunEngineOwnerState;
+  engineOwnerId: string | null;
+  enginePid: number | null;
+  engineStartedAt: number | null;
+  engineBaseUrl: string | null;
   activityKind: RunActivityKind | null;
   waitReason: RunWaitReason | null;
   lastUsefulProgressAt: number | null;
   retrySince: number | null;
   lastProgressSignature: string | null;
-} & RunEngineOwner;
+};
 
 export type RunStore = {
   insert(record: RunRecord): void;
@@ -90,6 +99,8 @@ type RunRow = {
   completed_at: number | null;
   error: string | null;
   engine_owner_id: string | null;
+  engine_slot_id: string | null;
+  engine_owner_state: string | null;
   engine_pid: number | null;
   engine_started_at: number | null;
   engine_base_url: string | null;
@@ -127,6 +138,12 @@ function rowToRecord(row: RunRow): RunRecord {
     startedAt: row.started_at === null ? null : Number(row.started_at),
     completedAt: row.completed_at === null ? null : Number(row.completed_at),
     error: row.error,
+    engineSlotId: row.engine_slot_id ?? null,
+    engineOwnerState: row.engine_owner_state === "attached" || row.engine_owner_state === "lost"
+      ? row.engine_owner_state
+      : row.engine_owner_id
+        ? "attached"
+        : "pending",
     engineOwnerId: row.engine_owner_id ?? null,
     enginePid: row.engine_pid === null || row.engine_pid === undefined ? null : Number(row.engine_pid),
     engineStartedAt: row.engine_started_at === null || row.engine_started_at === undefined
@@ -172,7 +189,9 @@ function openDb(dbPath: string): Database {
       started_at INTEGER,
       completed_at INTEGER,
       error TEXT,
+      engine_slot_id TEXT,
       engine_owner_id TEXT,
+      engine_owner_state TEXT NOT NULL DEFAULT 'pending',
       engine_pid INTEGER,
       engine_started_at INTEGER,
       engine_base_url TEXT,
@@ -193,7 +212,9 @@ function openDb(dbPath: string): Database {
   `);
   ensureColumn(db, "conversation_run", "client_message_id", "client_message_id TEXT");
   ensureColumn(db, "conversation_run", "origin", "origin TEXT");
+  ensureColumn(db, "conversation_run", "engine_slot_id", "engine_slot_id TEXT");
   ensureColumn(db, "conversation_run", "engine_owner_id", "engine_owner_id TEXT");
+  ensureColumn(db, "conversation_run", "engine_owner_state", "engine_owner_state TEXT NOT NULL DEFAULT 'pending'");
   ensureColumn(db, "conversation_run", "engine_pid", "engine_pid INTEGER");
   ensureColumn(db, "conversation_run", "engine_started_at", "engine_started_at INTEGER");
   ensureColumn(db, "conversation_run", "engine_base_url", "engine_base_url TEXT");
@@ -247,7 +268,9 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             started_at,
             completed_at,
             error,
+            engine_slot_id,
             engine_owner_id,
+            engine_owner_state,
             engine_pid,
             engine_started_at,
             engine_base_url,
@@ -256,7 +279,7 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             last_useful_progress_at,
             retry_since,
             last_progress_signature
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
           `,
         ).run(
           record.workspaceId,
@@ -273,7 +296,9 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           record.startedAt,
           record.completedAt,
           record.error,
+          record.engineSlotId,
           record.engineOwnerId,
+          record.engineOwnerState,
           record.enginePid,
           record.engineStartedAt,
           record.engineBaseUrl,
@@ -305,15 +330,17 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             started_at = ?12,
             completed_at = ?13,
             error = ?14,
-            engine_owner_id = ?15,
-            engine_pid = ?16,
-            engine_started_at = ?17,
-            engine_base_url = ?18,
-            activity_kind = ?19,
-            wait_reason = ?20,
-            last_useful_progress_at = ?21,
-            retry_since = ?22,
-            last_progress_signature = ?23
+            engine_slot_id = ?15,
+            engine_owner_id = ?16,
+            engine_owner_state = ?17,
+            engine_pid = ?18,
+            engine_started_at = ?19,
+            engine_base_url = ?20,
+            activity_kind = ?21,
+            wait_reason = ?22,
+            last_useful_progress_at = ?23,
+            retry_since = ?24,
+            last_progress_signature = ?25
            WHERE workspace_id = ?1 AND run_id = ?2`,
         ).run(
           workspaceId,
@@ -330,7 +357,9 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           next.startedAt,
           next.completedAt,
           next.error,
+          next.engineSlotId,
           next.engineOwnerId,
+          next.engineOwnerState,
           next.enginePid,
           next.engineStartedAt,
           next.engineBaseUrl,
@@ -379,6 +408,7 @@ export function createRunStore(options: { dbPath: string }): RunStore {
         const row = db.query<RunRow, [string]>(
           `SELECT * FROM conversation_run
            WHERE engine_owner_id = ?1
+             AND engine_owner_state = 'attached'
              AND status IN (${ACTIVE_RUN_STATUS_SQL_LIST})
            ORDER BY created_at ASC`,
         ).all(engineOwnerId);

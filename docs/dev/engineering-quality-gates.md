@@ -27,6 +27,52 @@ full Tauri Pilot suite. A failed subcommand is itself the reproduction command;
 do not replace it with an `--if-present`, `continue-on-error`, or auto-fix
 wrapper.
 
+## Workspace Engine Concurrency Gate
+
+For changes to the pooled workspace engine, lifecycle ownership, queue
+idempotency, or generation recovery, run the deterministic headless oracle:
+
+```bash
+pnpm --filter veslo-server build:bin
+pnpm --filter veslo-orchestrator build
+node packages/orchestrator/scripts/workspace-one-engine-many-conversations.integration.mjs
+```
+
+The oracle is separate from the desktop lanes. It verifies the compiled server
+binary, one engine slot per workspace, ten independent conversation/session/run
+identities, abort isolation, and engine-loss reconciliation to a new generation.
+The generated JSON artifact under `.tmp/runtime-oracle/` is the review evidence.
+
+For the stronger full-chain service proof, run the actual server, orchestrator,
+and shipped OpenCode sidecar together:
+
+```bash
+pnpm --filter veslo-server build:bin
+pnpm --filter veslo-orchestrator build
+node packages/orchestrator/scripts/veslo-server-orchestrator-opencode.integration.mjs
+```
+
+This headless scenario uses only a loopback deterministic provider. It validates
+real HTTP submit and queue routes, ten distinct lifecycle identities on one
+workspace owner generation, abort isolation, authenticated engine-loss
+notification, server terminalization, replacement generation, and recovery
+through the replacement. It does not use Tauri Pilot or the UI. The test
+intentionally runs its ephemeral OpenCode child with `VESLO_DISABLE_SANDBOX=1`;
+this is not a claim that production sandbox isolation has been verified.
+
+Run the bundled OpenCode compatibility gates as a separate non-desktop lane:
+
+```bash
+node packages/orchestrator/scripts/opencode-workspace-concurrency.integration.mjs
+node packages/orchestrator/scripts/opencode-directory-scoped-skills.integration.mjs
+```
+
+The first gate uses the shipped OpenCode binary with a local deterministic
+provider and verifies ten concurrent prompts plus restart-preserved session
+IDs. The second verifies directory-scoped skill isolation and records whether
+the shipped binary supports safe hot updates. These commands do not use Tauri
+Pilot.
+
 ## Required Headless Service Gate
 
 ```bash

@@ -116,7 +116,9 @@ const noProgressSecondsForRecord = (record: RunRecord, nowMs: number): number | 
 
 function normalizeEngineOwner(input: Partial<RunEngineOwner>): RunEngineOwner {
   return {
+    engineSlotId: normalizeNullableText(input.engineSlotId),
     engineOwnerId: normalizeNullableText(input.engineOwnerId),
+    engineOwnerState: input.engineOwnerState === "lost" ? "lost" : input.engineOwnerId ? "attached" : "pending",
     enginePid: normalizePositiveNumber(input.enginePid),
     engineStartedAt: normalizePositiveNumber(input.engineStartedAt),
     engineBaseUrl: normalizeNullableText(input.engineBaseUrl),
@@ -124,6 +126,8 @@ function normalizeEngineOwner(input: Partial<RunEngineOwner>): RunEngineOwner {
 }
 
 function runMatchesEngineOwner(record: RunRecord, engine: RunEngineOwner): boolean {
+  if (record.engineOwnerState !== "attached") return false;
+  if (engine.engineSlotId && record.engineSlotId !== engine.engineSlotId) return false;
   if (!engine.engineOwnerId || record.engineOwnerId !== engine.engineOwnerId) return false;
   if (engine.enginePid !== null && record.enginePid !== engine.enginePid) return false;
   if (engine.engineStartedAt !== null && record.engineStartedAt !== engine.engineStartedAt) return false;
@@ -246,7 +250,6 @@ export function createRunRegistry(deps: {
       }
 
       const timestamp = now();
-      const engineOwner = normalizeEngineOwner(input);
       const record: RunRecord = {
         workspaceId,
         conversationId,
@@ -262,12 +265,17 @@ export function createRunRegistry(deps: {
         startedAt: timestamp,
         completedAt: null,
         error: null,
+        engineSlotId: null,
+        engineOwnerState: "pending",
+        engineOwnerId: null,
+        enginePid: null,
+        engineStartedAt: null,
+        engineBaseUrl: null,
         activityKind: null,
         waitReason: null,
         lastUsefulProgressAt: timestamp,
         retrySince: null,
         lastProgressSignature: null,
-        ...engineOwner,
       };
       try {
         deps.store.insert(record);
@@ -319,7 +327,19 @@ export function createRunRegistry(deps: {
       const record = deps.store.get(normalizedWorkspaceId, normalizedRunId);
       if (!record || !isActiveRunStatus(record.status)) return null;
 
-      return deps.store.update(normalizedWorkspaceId, normalizedRunId, engineOwner);
+      if (record.engineOwnerState === "attached") {
+        return runMatchesEngineOwner(record, engineOwner) ? record : null;
+      }
+      if (record.engineOwnerState !== "pending" || engineOwner.engineOwnerState === "lost") return null;
+
+      return deps.store.update(normalizedWorkspaceId, normalizedRunId, {
+        engineSlotId: engineOwner.engineSlotId ?? null,
+        engineOwnerState: "attached",
+        engineOwnerId: engineOwner.engineOwnerId,
+        enginePid: engineOwner.enginePid,
+        engineStartedAt: engineOwner.engineStartedAt,
+        engineBaseUrl: engineOwner.engineBaseUrl,
+      });
     },
 
     markEngineLost(input) {
@@ -338,6 +358,7 @@ export function createRunRegistry(deps: {
               activityKind: "idle",
               waitReason: "none",
               retrySince: null,
+              engineOwnerState: "lost",
             }
           : {
               status: "failed",
@@ -346,6 +367,7 @@ export function createRunRegistry(deps: {
               activityKind: "idle",
               waitReason: "none",
               retrySince: null,
+              engineOwnerState: "lost",
             });
         if (next) terminalized.push(next);
       }

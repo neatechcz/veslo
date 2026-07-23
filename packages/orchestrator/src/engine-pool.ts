@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 
 // Workflow diagnostic toggle — see dev-specific-docs/logging-workflow-milestones--claude.md
@@ -62,6 +63,8 @@ export type EngineSpawnResult = {
 
 export type EngineProcess = {
   workspaceId: string;
+  /** Opaque identity of this process generation; never a workspace ID. */
+  engineOwnerId: string;
   pid: number;
   port: number;
   baseUrl: string;
@@ -87,6 +90,8 @@ export type EngineProcess = {
 
 export type SerializedEngineState = {
   workspaceId: string;
+  /** Opaque identity of this process generation; never a workspace ID. */
+  engineOwnerId: string;
   pid: number;
   port: number;
   baseUrl: string;
@@ -330,6 +335,7 @@ export class EnginePool {
   snapshot(): SerializedEngineState[] {
     return Array.from(this.engines.values()).map((engine) => ({
       workspaceId: engine.workspaceId,
+      engineOwnerId: engine.engineOwnerId,
       pid: engine.pid,
       port: engine.port,
       baseUrl: engine.baseUrl,
@@ -698,6 +704,7 @@ export class EnginePool {
     const existing = this.engines.get(workspace.id);
     const engine: EngineProcess = {
       workspaceId: workspace.id,
+      engineOwnerId: randomUUID(),
       pid: child.pid ?? 0,
       port,
       baseUrl,

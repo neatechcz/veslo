@@ -215,6 +215,14 @@ describe("run registry", () => {
       engineBaseUrl: "http://127.0.0.1:5001",
       engineOwnerId: "ws-a",
     });
+    registry.attachEngineOwner("ws-a", "run-a", engineOwner);
+    registry.attachEngineOwner("ws-a", "run-b", engineOwner);
+    registry.attachEngineOwner("ws-a", "run-c", {
+      engineOwnerId: "ws-a",
+      enginePid: 99,
+      engineStartedAt: 8_000,
+      engineBaseUrl: "http://127.0.0.1:5001",
+    });
     registry.markAbortRequested("ws-a", "run-b");
 
     const terminalized = registry.markEngineLost({
@@ -308,6 +316,22 @@ describe("run registry", () => {
 
     expect(attached).toBeNull();
     expect((await registry.get("ws-a", "run-a"))?.record.engineOwnerId).toBeNull();
+  });
+
+  test("engine loss ignores pending runs that never reached OpenCode", async () => {
+    const { registry } = createRegistry(() => ({ active: true }));
+    await registry.register(input);
+
+    const terminalized = registry.markEngineLost({
+      engineOwnerId: "generation-a",
+      enginePid: 42,
+      engineStartedAt: 7_000,
+      engineBaseUrl: "http://127.0.0.1:5000",
+      error: "engine process lost",
+    });
+
+    expect(terminalized).toEqual([]);
+    expect((await registry.get("ws-a", "run-a"))?.record.engineOwnerState).toBe("pending");
   });
 
   test("unreachable probe keeps last status stale", async () => {

@@ -6,6 +6,7 @@ import { afterEach, expect, test } from "bun:test";
 import {
   createConversationRunLifecycleController,
   type ConversationRunLifecycleController,
+  type ConversationRunEngineLossResult,
   type ConversationRunLifecycleSubmitInput,
   type ConversationRunLifecycleSnapshot,
 } from "../conversation-run-lifecycle-controller.js";
@@ -19,6 +20,7 @@ import {
 import type {
   ConversationRunQueueItem,
   ConversationRunQueueStore,
+  ConversationWorkspaceRunEngineOwner,
   ConversationWorkspaceRunReservation,
 } from "../conversation-run-queue-store.js";
 import {
@@ -117,14 +119,14 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     workspaceId: string;
     conversationId: string;
     runId: string;
-    engineSessionId: string;
+    opencodeSessionId: string;
     clientMessageId?: string | null;
     origin?: string | null;
     directory: string;
     kind: string;
   }): Promise<LifecycleRunStatusResult | null> {
     this.calls.push(
-      `register:${input.workspaceId}:${input.conversationId}:${input.runId}:${input.engineSessionId}:${input.kind}`,
+      `register:${input.workspaceId}:${input.conversationId}:${input.runId}:${input.opencodeSessionId}:${input.kind}`,
     );
     if (this.registerError) throw this.registerError;
     return this.registerResult ?? {
@@ -200,6 +202,7 @@ class QueueHarness implements ConversationRunQueueStore {
       submittedAt: null,
       completedAt: null,
       error: null,
+      idempotencyConflictClientMessageId: null,
     };
     this.items.push(item);
     return {
@@ -321,9 +324,35 @@ class QueueHarness implements ConversationRunQueueStore {
       conversationId: input.conversationId,
       runId: input.runId,
       state: input.state ?? "starting",
+      engineSlotId: previous?.engineSlotId ?? null,
+      engineOwnerId: previous?.engineOwnerId ?? null,
+      enginePid: previous?.enginePid ?? null,
+      engineStartedAt: previous?.engineStartedAt ?? null,
+      engineBaseUrl: previous?.engineBaseUrl ?? null,
       createdAt: previous?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
+    this.reservations.set(key, reservation);
+    return reservation;
+  }
+
+  attachWorkspaceRunEngineOwner(
+    workspaceId: string,
+    runId: string,
+    owner: ConversationWorkspaceRunEngineOwner,
+  ) {
+    const key = `${workspaceId}\0${runId}`;
+    const previous = this.reservations.get(key);
+    if (!previous) return null;
+    if (
+      previous.engineOwnerId &&
+      (previous.engineSlotId !== owner.engineSlotId ||
+        previous.engineOwnerId !== owner.engineOwnerId ||
+        previous.enginePid !== owner.enginePid ||
+        previous.engineStartedAt !== owner.engineStartedAt ||
+        previous.engineBaseUrl !== owner.engineBaseUrl)
+    ) return null;
+    const reservation = { ...previous, ...owner, updatedAt: Date.now() };
     this.reservations.set(key, reservation);
     return reservation;
   }
@@ -390,6 +419,7 @@ function submitInput(overrides: Partial<ConversationRunLifecycleSubmitInput> = {
 function controllerHarness(options?: {
   ingestTerminalTranscript?: (input: { runId: string }) => Promise<void>;
   withLifecycle?: boolean;
+  submitEngineOwner?: ConversationWorkspaceRunEngineOwner | null;
 }) {
   const lifecycle = new LifecycleHarness();
   const queue = new QueueHarness();
@@ -406,6 +436,8 @@ function controllerHarness(options?: {
     submitError: null as unknown,
     abortError: null as unknown,
     providerStartResult: { started: true, timeoutMs: 25 },
+    submitEngineOwner: options?.submitEngineOwner ?? null,
+    beforeCaptureEngineOwner: null as (() => void) | null,
   };
   const submitCalls: unknown[] = [];
   const activeGatewayCalls: Array<{ kind: "register" | "unregister"; input: unknown }> = [];
@@ -435,6 +467,8 @@ function controllerHarness(options?: {
     submitOpenCode: async (input) => {
       submitCalls.push(input);
       if (behavior.submitError) throw behavior.submitError;
+      behavior.beforeCaptureEngineOwner?.();
+      if (behavior.submitEngineOwner) input.captureEngineOwner?.(behavior.submitEngineOwner);
       return { accepted: true };
     },
     aiGatewayActiveRun: {
@@ -627,6 +661,240 @@ test("controller shell records explicit ports without invoking behavior", () => 
   expect(providerWatchCalls).toEqual([]);
 });
 
+test("engine-loss notification releases only matching workspace reservations and is idempotent", () => {
+  const queue = new QueueHarness();
+  queue.reserveWorkspaceRun({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-a",
+    state: "active",
+  });
+  queue.reserveWorkspaceRun({
+    workspaceId: "ws_1",
+    conversationId: "conv-b",
+    runId: "run-b",
+    state: "active",
+  });
+  queue.attachWorkspaceRunEngineOwner("ws_1", "run-a", {
+    engineSlotId: "ws_1",
+    engineOwnerId: "generation-1",
+    enginePid: 101,
+    engineStartedAt: 1_000,
+    engineBaseUrl: "http://127.0.0.1:4101",
+  });
+  const timers = new TimerHarness();
+  const controller = createConversationRunLifecycleController({
+    queueStore: queue,
+    timers: timers.port,
+    queueDrainPollMs: 1_500,
+  });
+
+  const notification = {
+    eventId: "loss-event-1",
+    workspaceId: "ws_1",
+    engineSlotId: "ws_1",
+    engineOwnerId: "generation-1",
+    enginePid: 101,
+    engineStartedAt: 1_000,
+    engineBaseUrl: "http://127.0.0.1:4101",
+    runIds: ["run-a", "run-a", "missing-run"],
+    reason: "engine exited",
+  };
+  const first = controller.notifyEngineLoss(notification);
+  const duplicate = controller.notifyEngineLoss(notification);
+
+  expect(first).toEqual({
+    eventId: "loss-event-1",
+    acceptedRunIds: ["run-a"],
+    ignoredRunIds: ["missing-run"],
+    drainedConversations: ["conv-a"],
+    duplicate: false,
+  });
+  expect(duplicate).toEqual({ ...first, duplicate: true });
+  expect(queue.reservations.has("ws_1\0run-a")).toBe(false);
+  expect(queue.reservations.has("ws_1\0run-b")).toBe(true);
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+});
+
+test("engine-loss ignores a stale generation after the reservation was attached", () => {
+  const queue = new QueueHarness();
+  queue.reserveWorkspaceRun({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-a",
+    state: "active",
+  });
+  queue.attachWorkspaceRunEngineOwner("ws_1", "run-a", {
+    engineSlotId: "ws_1",
+    engineOwnerId: "generation-2",
+    enginePid: 202,
+    engineStartedAt: 2_000,
+    engineBaseUrl: "http://127.0.0.1:4202",
+  });
+  const controller = createConversationRunLifecycleController({
+    queueStore: queue,
+    timers: new TimerHarness().port,
+    queueDrainPollMs: 1_500,
+  });
+
+  const stale = controller.notifyEngineLoss({
+    eventId: "loss-stale",
+    workspaceId: "ws_1",
+    engineSlotId: "ws_1",
+    engineOwnerId: "generation-1",
+    enginePid: 101,
+    engineStartedAt: 1_000,
+    engineBaseUrl: "http://127.0.0.1:4101",
+    runIds: ["run-a"],
+    reason: "old engine exited",
+  });
+
+  expect(stale.acceptedRunIds).toEqual([]);
+  expect(stale.ignoredRunIds).toEqual(["run-a"]);
+  expect(queue.reservations.has("ws_1\0run-a")).toBe(true);
+});
+
+test("multi-step owner loss releases one run and drains the next run onto the new generation", async () => {
+  const firstOwner: ConversationWorkspaceRunEngineOwner = {
+    engineSlotId: "ws_1",
+    engineOwnerId: "generation-1",
+    enginePid: 101,
+    engineStartedAt: 1_000,
+    engineBaseUrl: "http://127.0.0.1:4101",
+  };
+  const secondOwner: ConversationWorkspaceRunEngineOwner = {
+    engineSlotId: "ws_1",
+    engineOwnerId: "generation-2",
+    enginePid: 202,
+    engineStartedAt: 2_000,
+    engineBaseUrl: "http://127.0.0.1:4202",
+  };
+  const harness = controllerHarness({ submitEngineOwner: firstOwner });
+  const { controller, queue, behavior, submitCalls, timers } = harness;
+
+  await controller.submitRun(submitInput({ runId: "run-a" }));
+  enqueuePendingRun(queue, {
+    conversationId: "conv-a",
+    reservedRunId: "run-b",
+    clientMessageId: "msg-b",
+  });
+
+  expect(queue.reservations.get("ws_1\0run-a")).toEqual(
+    expect.objectContaining({ state: "active", ...firstOwner }),
+  );
+
+  const staleLoss = controller.notifyEngineLoss({
+    eventId: "loss-stale-before-restart",
+    workspaceId: "ws_1",
+    engineSlotId: "ws_1",
+    engineOwnerId: "generation-0",
+    enginePid: 99,
+    engineStartedAt: 900,
+    engineBaseUrl: "http://127.0.0.1:4099",
+    runIds: ["run-a"],
+    reason: "stale callback",
+  });
+  expect(staleLoss.acceptedRunIds).toEqual([]);
+  expect(queue.reservations.has("ws_1\0run-a")).toBe(true);
+
+  const currentLoss = controller.notifyEngineLoss({
+    eventId: "loss-generation-1",
+    workspaceId: "ws_1",
+    engineSlotId: "ws_1",
+    engineOwnerId: firstOwner.engineOwnerId,
+    enginePid: firstOwner.enginePid,
+    engineStartedAt: firstOwner.engineStartedAt,
+    engineBaseUrl: firstOwner.engineBaseUrl,
+    runIds: ["run-a"],
+    reason: "generation-1 exited",
+  });
+  expect(currentLoss.acceptedRunIds).toEqual(["run-a"]);
+  expect(queue.reservations.has("ws_1\0run-a")).toBe(false);
+
+  behavior.submitEngineOwner = secondOwner;
+  const drainTimer = timers.activeTimers().find((timer) => timer.delayMs === 0);
+  expect(drainTimer).toBeDefined();
+  timers.fire(drainTimer!.id);
+  for (let index = 0; index < 8; index += 1) await flushMicrotasks();
+
+  expect(queue.items.find((item) => item.reservedRunId === "run-b")?.state).toBe("submitted");
+  expect(submitCalls.map((call) => (call as { runId: string }).runId)).toEqual(["run-a", "run-b"]);
+  expect(queue.reservations.get("ws_1\0run-b")).toEqual(
+    expect.objectContaining({ state: "active", ...secondOwner }),
+  );
+
+  const staleSecondLoss = controller.notifyEngineLoss({
+    eventId: "loss-stale-after-restart",
+    workspaceId: "ws_1",
+    engineSlotId: "ws_1",
+    engineOwnerId: firstOwner.engineOwnerId,
+    enginePid: firstOwner.enginePid,
+    engineStartedAt: firstOwner.engineStartedAt,
+    engineBaseUrl: firstOwner.engineBaseUrl,
+    runIds: ["run-b"],
+    reason: "old generation callback",
+  });
+  expect(staleSecondLoss.acceptedRunIds).toEqual([]);
+  expect(queue.reservations.has("ws_1\0run-b")).toBe(true);
+
+  const secondLoss = controller.notifyEngineLoss({
+    eventId: "loss-generation-2",
+    workspaceId: "ws_1",
+    engineSlotId: "ws_1",
+    engineOwnerId: secondOwner.engineOwnerId,
+    enginePid: secondOwner.enginePid,
+    engineStartedAt: secondOwner.engineStartedAt,
+    engineBaseUrl: secondOwner.engineBaseUrl,
+    runIds: ["run-b"],
+    reason: "generation-2 exited",
+  });
+  expect(secondLoss.acceptedRunIds).toEqual(["run-b"]);
+  expect(queue.reservations.has("ws_1\0run-b")).toBe(false);
+});
+
+test("multi-step owner-loss race is reconciled when the response owner arrives after the loss callback", async () => {
+  const owner: ConversationWorkspaceRunEngineOwner = {
+    engineSlotId: "ws_1",
+    engineOwnerId: "generation-race",
+    enginePid: 303,
+    engineStartedAt: 3_000,
+    engineBaseUrl: "http://127.0.0.1:4303",
+  };
+  const harness = controllerHarness({ submitEngineOwner: owner });
+  const { controller, queue, behavior, timers, submitCalls } = harness;
+  let lossResult: ConversationRunEngineLossResult | null = null;
+  behavior.beforeCaptureEngineOwner = () => {
+    lossResult = controller.notifyEngineLoss({
+      eventId: "loss-before-owner-capture",
+      workspaceId: "ws_1",
+      engineSlotId: owner.engineSlotId,
+      engineOwnerId: owner.engineOwnerId,
+      enginePid: owner.enginePid,
+      engineStartedAt: owner.engineStartedAt,
+      engineBaseUrl: owner.engineBaseUrl,
+      runIds: ["run-race"],
+      reason: "engine exited before response headers were persisted",
+    });
+  };
+
+  await controller.submitRun(submitInput({ runId: "run-race" }));
+
+  expect(lossResult).toMatchObject({
+    acceptedRunIds: [],
+    ignoredRunIds: ["run-race"],
+    duplicate: false,
+  });
+  expect(queue.reservations.has("ws_1\0run-race")).toBe(false);
+  expect(timers.activeTimers().some((timer) => timer.delayMs === 0)).toBe(true);
+  const submitTrace = (submitCalls[0] as {
+    runTrace: { entries: Array<Record<string, unknown>> };
+  }).runTrace;
+  expect(submitTrace.entries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:engine-owner-persist-failed",
+    runId: "run-race",
+  }));
+});
+
 test("server stop calls the lifecycle controller stop hook", async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-lifecycle-controller-workspace-"));
   const dataDir = await mkdtemp(join(tmpdir(), "veslo-lifecycle-controller-data-"));
@@ -645,6 +913,13 @@ test("server stop calls the lifecycle controller stop hook", async () => {
   let startCalls = 0;
   let stopCalls = 0;
   const fakeController: ConversationRunLifecycleController = {
+    notifyEngineLoss: () => ({
+      eventId: "",
+      acceptedRunIds: [],
+      ignoredRunIds: [],
+      drainedConversations: [],
+      duplicate: false,
+    }),
     submitRun: async () => {
       throw new Error("submitRun should not be called by the shutdown fixture");
     },
