@@ -23,3 +23,14 @@ test("settings keeps the diagnostic capture card visible for unavailable and act
   assert.match(source, /Retrying\.\.\./);
   assert.match(source, /refreshUserCapture\(\{ force: true \}\)/);
 });
+
+test("settings places the diagnostic capture card in general settings", () => {
+  const generalStart = source.indexOf('<Match when={activeTab() === "general"}>');
+  const advancedStart = source.indexOf('<Match when={activeTab() === "advanced"}>');
+  const captureStart = source.indexOf("<div data-user-diagnostic-capture class=");
+
+  assert.ok(generalStart >= 0);
+  assert.ok(advancedStart > generalStart);
+  assert.ok(captureStart > generalStart);
+  assert.ok(captureStart < advancedStart);
+});

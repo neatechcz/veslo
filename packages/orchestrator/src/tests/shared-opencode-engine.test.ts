@@ -78,6 +78,17 @@ describe("SharedOpenCodeEngine", () => {
     expect(h.counts().spawns).toBe(1);
   });
 
+  test("ensureStartedWithStatus distinguishes a new shared process from reuse", async () => {
+    const h = harness();
+
+    const first = await h.manager.ensureStartedWithStatus("workspace-a prompt");
+    const second = await h.manager.ensureStartedWithStatus("workspace-b prompt");
+
+    expect(first.spawned).toBe(true);
+    expect(second.spawned).toBe(false);
+    expect(second.engine).toBe(first.engine);
+  });
+
   test("coalesces concurrent starts into a single spawn", async () => {
     const h = harness();
 

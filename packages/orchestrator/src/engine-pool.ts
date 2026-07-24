@@ -43,6 +43,11 @@ export type EngineWorkspace = {
   legacyWorkspaceIds?: string[];
 };
 
+export type EngineEnsureResult = {
+  engine: EngineProcess;
+  spawned: boolean;
+};
+
 export type EngineSpawnContext = {
   workspaceId: string;
   workdir: string;
@@ -359,11 +364,19 @@ export class EnginePool {
   }
 
   async ensure(workspace: EngineWorkspace): Promise<EngineProcess> {
+    return (await this.ensureWithStatus(workspace)).engine;
+  }
+
+  /**
+   * Resolves an engine and reports whether this caller created its process.
+   * A caller that joins an in-flight start is a reuse, not a second spawn.
+   */
+  async ensureWithStatus(workspace: EngineWorkspace): Promise<EngineEnsureResult> {
     const inflight = this.pending.get(workspace.id);
     if (inflight) {
       this.deps.log?.("engine ensure pending reuse", { workspaceId: workspace.id });
       writeSpawnDiag("ensure-pending-reuse", { workspaceId: workspace.id });
-      return inflight;
+      return { engine: await inflight, spawned: false };
     }
 
     const existing = this.engines.get(workspace.id);
@@ -389,7 +402,7 @@ export class EnginePool {
           baseUrl: existing.baseUrl,
           childKind: existing.childKind,
         });
-        return existing;
+        return { engine: existing, spawned: false };
       }
       this.deps.log?.("engine ensure stale respawn", {
         workspaceId: workspace.id,
@@ -433,7 +446,7 @@ export class EnginePool {
       this.pending.delete(workspace.id);
     });
     this.pending.set(workspace.id, promise);
-    return promise;
+    return { engine: await promise, spawned: true };
   }
 
   async suspend(workspaceId: string, reason = "unspecified"): Promise<void> {

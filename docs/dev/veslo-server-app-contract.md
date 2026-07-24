@@ -371,7 +371,11 @@ Common app flows:
 - `PATCH /workspace/:id/config`
   Update workspace-scoped Veslo config such as reload settings.
 - `POST /workspace/:id/engine/reload`
-  Ask the engine to reread config for a workspace.
+  Ask the engine to reread config for a workspace. A request with `ifIdle: true`
+  is non-spawning: if that workspace has no ready engine, the server reports a
+  successful skipped reload and the persisted config is applied on its first
+  real engine start. Background config healing must not use another workspace's
+  active engine as evidence that this workspace is running.
 
 Use workspace-scoped URLs whenever possible, including the mounted `/w/:id/...` forms.
 

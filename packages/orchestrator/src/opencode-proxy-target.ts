@@ -1,4 +1,4 @@
-import type { EngineProcess, EngineWorkspace } from "./engine-pool.js";
+import type { EngineEnsureResult, EngineProcess, EngineWorkspace } from "./engine-pool.js";
 import { usesSharedOpenCodeEngine, type EngineTopologyMode } from "./engine-topology.js";
 import type { SharedOpenCodeEngine } from "./shared-opencode-engine.js";
 import type { RuntimeEngineState } from "./runtime-engine-state.js";
@@ -8,12 +8,15 @@ export type PooledOpenCodeEngine = {
   get?: (workspaceId: string) => EngineProcess | undefined;
   getRunning: (workspaceId: string) => EngineProcess | null;
   ensure: (workspace: EngineWorkspace) => Promise<EngineProcess>;
+  ensureWithStatus?: (workspace: EngineWorkspace) => Promise<EngineEnsureResult>;
 };
 
 export type SharedOpenCodeEngineLike = Pick<
   SharedOpenCodeEngine,
   "getRunning" | "ensureStarted" | "snapshot"
->;
+> & {
+  ensureStartedWithStatus?: (reason: string) => Promise<{ engine: EngineProcess; spawned: boolean }>;
+};
 
 export type OpenCodeProxyTarget = {
   engine: EngineProcess | null;
@@ -71,13 +74,19 @@ export async function resolveOpencodeProxyTarget(input: {
         unavailableReason: engine ? undefined : unavailableReasonForEngineState(engineState),
       };
     }
-    const engine = await input.sharedEngine.ensureStarted(`proxy ${method} ${input.workspaceId}`);
+    const runningBeforeEnsure = input.sharedEngine.getRunning();
+    const ensured = input.sharedEngine.ensureStartedWithStatus
+      ? await input.sharedEngine.ensureStartedWithStatus(`proxy ${method} ${input.workspaceId}`)
+      : {
+          engine: await input.sharedEngine.ensureStarted(`proxy ${method} ${input.workspaceId}`),
+          spawned: runningBeforeEnsure === null,
+        };
     return {
-      engine,
+      engine: ensured.engine,
       engineKind: "shared",
       directory: input.workspacePath,
-      spawnedByRequest: true,
-      engineState: runtimeEngineStateFromEngineState(engine.state),
+      spawnedByRequest: ensured.spawned,
+      engineState: runtimeEngineStateFromEngineState(ensured.engine.state),
     };
   }
 
@@ -95,15 +104,24 @@ export async function resolveOpencodeProxyTarget(input: {
     };
   }
 
-  const engine = await input.pooledEngine.ensure({
-    id: input.workspaceId,
-    path: input.workspacePath,
-  });
+  const runningBeforeEnsure = input.pooledEngine.getRunning(input.workspaceId);
+  const ensured = input.pooledEngine.ensureWithStatus
+    ? await input.pooledEngine.ensureWithStatus({
+        id: input.workspaceId,
+        path: input.workspacePath,
+      })
+    : {
+        engine: await input.pooledEngine.ensure({
+          id: input.workspaceId,
+          path: input.workspacePath,
+        }),
+        spawned: runningBeforeEnsure === null && !input.pooledEngine.get?.(input.workspaceId),
+      };
   return {
-    engine,
+    engine: ensured.engine,
     engineKind: "pooled",
     directory: input.workspacePath,
-    spawnedByRequest: true,
-    engineState: runtimeEngineStateFromEngineState(engine.state),
+    spawnedByRequest: ensured.spawned,
+    engineState: runtimeEngineStateFromEngineState(ensured.engine.state),
   };
 }

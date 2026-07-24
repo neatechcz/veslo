@@ -1268,6 +1268,63 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
             </Show>
 
+            <Show when={isTauriRuntime()}>
+              <div data-user-diagnostic-capture class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium text-gray-12">Send a diagnostic capture</div>
+                    <div class="text-xs text-gray-10">Sends a redacted, capped two-minute capture directly to Veslo support for the signed-in account. It stops automatically after 2 MiB.</div>
+                  </div>
+                  <Button
+                    data-user-diagnostic-capture-start
+                    variant="outline"
+                    class="shrink-0"
+                    disabled={
+                      props.busy ||
+                      userCaptureBusy() ||
+                      userCaptureStatusBusy() ||
+                      !userCapture()?.available ||
+                      !userCapture()?.canStart ||
+                      userCapture()?.state === "active"
+                    }
+                    onClick={() => void startUserCapture()}
+                  >
+                    {userCaptureStatusBusy()
+                      ? "Checking…"
+                      : userCaptureBusy()
+                        ? "Starting…"
+                        : userCapture()?.state === "active"
+                          ? "Capturing"
+                          : "Start 2-minute capture"}
+                  </Button>
+                </div>
+                <Show when={userCaptureLoadError()}>
+                  {(error) => (
+                    <div data-user-diagnostic-capture-unavailable class="flex items-start justify-between gap-3 rounded-xl bg-red-2/20 border border-red-7/35 p-3">
+                      <div class="min-w-0">
+                        <div class="text-xs text-gray-10">Veslo could not read the native diagnostic capture status.</div>
+                        <div class="mt-1 text-xs text-red-11">{error()}</div>
+                      </div>
+                      <Button variant="outline" class="shrink-0" disabled={userCaptureBusy() || userCaptureStatusBusy()} onClick={() => void refreshUserCapture({ force: true })}>
+                        {userCaptureStatusBusy() ? "Retrying..." : "Retry"}
+                      </Button>
+                    </div>
+                  )}
+                </Show>
+                <Show when={userCaptureUnavailableReason()}>
+                  {(reason) => <div data-user-diagnostic-capture-unavailable class="rounded-xl bg-amber-2/20 border border-amber-7/35 p-3 text-xs text-gray-10">{reason()}</div>}
+                </Show>
+                <Show when={userCapture()?.captureId}>
+                  <div class="text-[11px] text-gray-8">
+                    {userCapture()?.state === "active"
+                      ? `Capture in progress: ${userCapture()?.capturedEvents ?? 0} events, ${formatBytes(userCapture()?.capturedBytes ?? 0)}.`
+                      : `Capture ${userCapture()?.state ?? "idle"}: ${userCapture()?.acceptedEvents ?? 0} delivered, ${userCapture()?.pendingEvents ?? 0} pending.`}
+                  </div>
+                </Show>
+                <Show when={userCaptureError()}>{(error) => <div class="text-xs text-red-11">{error()}</div>}</Show>
+              </div>
+            </Show>
+
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
               <div>
                 <div class="text-sm font-medium text-gray-12">{translate("settings.appearance_title")}</div>
@@ -1645,60 +1702,6 @@ export default function SettingsView(props: SettingsViewProps) {
             </div>
 
             <Show when={isTauriRuntime()}>
-              <div data-user-diagnostic-capture class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-                <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <div class="text-sm font-medium text-gray-12">Send a diagnostic capture</div>
-                    <div class="text-xs text-gray-10">Sends a redacted, capped two-minute capture directly to Veslo support for the signed-in account. It stops automatically after 2 MiB.</div>
-                  </div>
-                  <Button
-                    data-user-diagnostic-capture-start
-                    variant="outline"
-                    class="shrink-0"
-                    disabled={
-                      props.busy ||
-                      userCaptureBusy() ||
-                      userCaptureStatusBusy() ||
-                      !userCapture()?.available ||
-                      !userCapture()?.canStart ||
-                      userCapture()?.state === "active"
-                    }
-                    onClick={() => void startUserCapture()}
-                  >
-                    {userCaptureStatusBusy()
-                      ? "Checking…"
-                      : userCaptureBusy()
-                        ? "Starting…"
-                        : userCapture()?.state === "active"
-                          ? "Capturing"
-                          : "Start 2-minute capture"}
-                  </Button>
-                </div>
-                <Show when={userCaptureLoadError()}>
-                  {(error) => (
-                    <div data-user-diagnostic-capture-unavailable class="flex items-start justify-between gap-3 rounded-xl bg-red-2/20 border border-red-7/35 p-3">
-                      <div class="min-w-0">
-                        <div class="text-xs text-gray-10">Veslo could not read the native diagnostic capture status.</div>
-                        <div class="mt-1 text-xs text-red-11">{error()}</div>
-                      </div>
-                      <Button variant="outline" class="shrink-0" disabled={userCaptureBusy() || userCaptureStatusBusy()} onClick={() => void refreshUserCapture({ force: true })}>
-                        {userCaptureStatusBusy() ? "Retrying..." : "Retry"}
-                      </Button>
-                    </div>
-                  )}
-                </Show>
-                <Show when={userCaptureUnavailableReason()}>
-                  {(reason) => <div data-user-diagnostic-capture-unavailable class="rounded-xl bg-amber-2/20 border border-amber-7/35 p-3 text-xs text-gray-10">{reason()}</div>}
-                </Show>
-                <Show when={userCapture()?.captureId}>
-                  <div class="text-[11px] text-gray-8">
-                    {userCapture()?.state === "active"
-                      ? `Capture in progress: ${userCapture()?.capturedEvents ?? 0} events, ${formatBytes(userCapture()?.capturedBytes ?? 0)}.`
-                      : `Capture ${userCapture()?.state ?? "idle"}: ${userCapture()?.acceptedEvents ?? 0} delivered, ${userCapture()?.pendingEvents ?? 0} pending.`}
-                  </div>
-                </Show>
-                <Show when={userCaptureError()}>{(error) => <div class="text-xs text-red-11">{error()}</div>}</Show>
-              </div>
               <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                 <div>
                   <div class="text-sm font-medium text-gray-12">{translate("settings.appearance_title")}</div>

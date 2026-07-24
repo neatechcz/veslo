@@ -211,6 +211,19 @@ describe("EnginePool", () => {
     }
   });
 
+  test("ensureWithStatus distinguishes a new process from reuse", async () => {
+    const h = harness();
+    try {
+      const first = await h.pool.ensureWithStatus({ id: "a", path: "/tmp/a" });
+      const second = await h.pool.ensureWithStatus({ id: "a", path: "/tmp/a" });
+      expect(first.spawned).toBe(true);
+      expect(second.spawned).toBe(false);
+      expect(second.engine).toBe(first.engine);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
   test("concurrent ensure calls share single spawn", async () => {
     const h = harness();
     try {
@@ -293,6 +306,23 @@ describe("EnginePool", () => {
       expect(second.workspaceId).toBe("a");
       expect(second.engineOwnerId).not.toBe(firstOwnerId);
       expect(second.engineOwnerId).not.toBe("a");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("ensureWithStatus marks only the request that starts a shared pending spawn", async () => {
+    const h = harness();
+    try {
+      const [a, b, c] = await Promise.all([
+        h.pool.ensureWithStatus({ id: "x", path: "/tmp/x" }),
+        h.pool.ensureWithStatus({ id: "x", path: "/tmp/x" }),
+        h.pool.ensureWithStatus({ id: "x", path: "/tmp/x" }),
+      ]);
+      expect(a.spawned).toBe(true);
+      expect(b.spawned).toBe(false);
+      expect(c.spawned).toBe(false);
+      expect(h.counters.spawns).toBe(1);
     } finally {
       await h.cleanup();
     }

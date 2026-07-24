@@ -187,11 +187,11 @@ test("desktop diagnostics ingest accepts a capture event above the desktop batch
       source: "engine",
       stream: "stderr",
       captureId,
-      payload: { line: "x".repeat(225 * 1024) },
+      payload: { line: "x".repeat(513 * 1024) },
     })],
   }))
 
-  assert.ok(Buffer.byteLength(body, "utf8") > 224 * 1024)
+  assert.ok(Buffer.byteLength(body, "utf8") > 512 * 1024)
   assert.ok(Buffer.byteLength(body, "utf8") < 2 * 1024 * 1024)
 
   try {
@@ -204,7 +204,36 @@ test("desktop diagnostics ingest accepts a capture event above the desktop batch
     assert.equal(response.status, 202)
     assert.equal(store.events.length, 1)
     assert.equal(store.events[0]?.captureId, captureId)
-    assert.ok(store.events[0]?.payloadBytes > 224 * 1024)
+    assert.ok(store.events[0]?.payloadBytes > 512 * 1024)
+  } finally {
+    await server.close()
+  }
+})
+
+test("desktop diagnostics ingest accepts the 1000-event batch boundary", async () => {
+  const { service, store } = createService()
+  const server = await startServer({ service, authorize: async () => authorize() })
+  const events = Array.from({ length: 1_000 }, (_, index) => makeEvent({
+    id: `capture-event-${index}`,
+    source: "engine",
+    stream: "stderr",
+    captureId: "a34c2c9a-4196-4f32-8e8f-f7bfc5e56f2d",
+    sequenceNo: index,
+    payload: { line: `engine line ${index}` },
+  }))
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/desktop-diagnostics`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(makeEnvelope({
+        batchId: "capture:a34c2c9a-4196-4f32-8e8f-f7bfc5e56f2d:1000",
+        events,
+      })),
+    })
+
+    assert.equal(response.status, 202)
+    assert.equal(store.events.length, 1_000)
   } finally {
     await server.close()
   }

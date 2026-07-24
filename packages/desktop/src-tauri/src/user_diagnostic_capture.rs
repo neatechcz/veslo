@@ -11,8 +11,8 @@ const JOURNAL_FILE: &str = "user-diagnostic-captures.json";
 const CAPTURE_DURATION_MS: u64 = 120_000;
 const CAPTURE_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const CAPTURE_RETENTION_MS: u64 = 24 * 60 * 60 * 1000;
-const MAX_BATCH_BYTES: usize = 224 * 1024;
-const MAX_BATCH_EVENTS: usize = 500;
+const MAX_BATCH_BYTES: usize = 512 * 1024;
+const MAX_BATCH_EVENTS: usize = 1_000;
 const MAX_RETRY_DELAY_MS: u64 = 5 * 60 * 1000;
 const PRODUCTION_DEN_API_BASE: &str = "https://api.veslo.work";
 
@@ -918,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_batches_keep_the_500_event_boundary_normal() {
+    fn prepared_batches_keep_the_1000_event_boundary_normal() {
         let capture_id = "capture-1";
         let events = (0..=MAX_BATCH_EVENTS)
             .map(|index| queued_event(&format!("event-{index}"), capture_id, "x".to_string()))

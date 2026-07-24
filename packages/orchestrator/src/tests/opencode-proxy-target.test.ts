@@ -64,7 +64,7 @@ describe("resolveOpencodeProxyTarget", () => {
     expect(ensureCalls).toBe(0);
   });
 
-  test("POST in shared mode starts one shared engine with workspace directory", async () => {
+  test("POST in shared mode reports reuse when the shared engine already runs", async () => {
     let ensureCalls = 0;
     const shared = engine("shared-unsandboxed", "http://127.0.0.1:6001");
 
@@ -102,7 +102,7 @@ describe("resolveOpencodeProxyTarget", () => {
     expect(target.engine).toBe(shared);
     expect(target.engineKind).toBe("shared");
     expect(target.directory).toBe("/repo/a");
-    expect(target.spawnedByRequest).toBe(true);
+    expect(target.spawnedByRequest).toBe(false);
     expect(target.engineState).toBe("ready");
     expect(ensureCalls).toBe(1);
   });
@@ -173,8 +173,38 @@ describe("resolveOpencodeProxyTarget", () => {
     expect(ensureCalls).toBe(0);
   });
 
-  test("pooled mode uses the workspace engine", async () => {
+  test("pooled mode reports reuse when ensure reuses the workspace engine", async () => {
     let ensureWorkspaceId = "";
+    const pooled = engine("ws-a", "http://127.0.0.1:5001");
+
+    const target = await resolveOpencodeProxyTarget({
+      topology: "pooled-per-workspace",
+      method: "POST",
+      workspaceId: "ws-a",
+      workspacePath: "/repo/a",
+      pooledEngine: {
+        get: () => pooled,
+        getRunning: () => pooled,
+        ensure: async (workspace) => {
+          ensureWorkspaceId = workspace.id;
+          return pooled;
+        },
+        ensureWithStatus: async (workspace) => {
+          ensureWorkspaceId = workspace.id;
+          return { engine: pooled, spawned: false };
+        },
+      },
+    });
+
+    expect(target.engine).toBe(pooled);
+    expect(target.engineKind).toBe("pooled");
+    expect(target.directory).toBe("/repo/a");
+    expect(target.spawnedByRequest).toBe(false);
+    expect(target.engineState).toBe("ready");
+    expect(ensureWorkspaceId).toBe("ws-a");
+  });
+
+  test("pooled mode reports a process created by this request", async () => {
     const pooled = engine("ws-a", "http://127.0.0.1:5001");
 
     const target = await resolveOpencodeProxyTarget({
@@ -185,19 +215,12 @@ describe("resolveOpencodeProxyTarget", () => {
       pooledEngine: {
         get: () => undefined,
         getRunning: () => null,
-        ensure: async (workspace) => {
-          ensureWorkspaceId = workspace.id;
-          return pooled;
-        },
+        ensure: async () => pooled,
+        ensureWithStatus: async () => ({ engine: pooled, spawned: true }),
       },
     });
 
-    expect(target.engine).toBe(pooled);
-    expect(target.engineKind).toBe("pooled");
-    expect(target.directory).toBe("/repo/a");
     expect(target.spawnedByRequest).toBe(true);
-    expect(target.engineState).toBe("ready");
-    expect(ensureWorkspaceId).toBe("ws-a");
   });
 
   test("GET in pooled mode reports spawning as starting without ensuring", async () => {

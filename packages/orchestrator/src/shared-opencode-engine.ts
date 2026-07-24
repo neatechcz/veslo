@@ -102,17 +102,25 @@ export class SharedOpenCodeEngine {
   }
 
   async ensureStarted(reason: string): Promise<EngineProcess> {
+    return (await this.ensureStartedWithStatus(reason)).engine;
+  }
+
+  /**
+   * Resolves the shared engine and reports whether this caller created it.
+   * Joining the existing start promise is intentionally reported as reuse.
+   */
+  async ensureStartedWithStatus(reason: string): Promise<{ engine: EngineProcess; spawned: boolean }> {
     const running = this.getRunning();
-    if (running) return running;
+    if (running) return { engine: running, spawned: false };
 
     if (this.pending) {
       this.deps.log?.("shared opencode ensure pending reuse", { reason });
-      return this.pending;
+      return { engine: await this.pending, spawned: false };
     }
 
     this.pending = this.spawn(reason);
     try {
-      return await this.pending;
+      return { engine: await this.pending, spawned: true };
     } finally {
       this.pending = null;
     }
