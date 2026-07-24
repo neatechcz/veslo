@@ -222,7 +222,7 @@ test("failed first-send run reset uses the handoff-aware key in every failure br
   const rejectedFailure = flowSendImmediateSource.slice(rejectedStart, acceptedStart);
   assert.match(
     rejectedFailure,
-    /markMatchingPendingSubmitFailed\(errorMessage\);[\s\S]*deps\.runState\.resetRunState\(runStateSessionKeyForHandoffFailure\(\), "send-rejected"\);/,
+    /markMatchingPendingSubmitFailed\(\s*errorMessage,\s*failurePresentation\.specific \? submitResult\.code : null,?\s*\);[\s\S]*deps\.runState\.resetRunState\(runStateSessionKeyForHandoffFailure\(\), "send-rejected"\);/,
     "rejected sends should reset the pending or materialized handoff run key",
   );
 
@@ -439,7 +439,10 @@ test("failed first-send optimistic drafts keep the captured pending instance sel
   assert.notEqual(rejectedStart, -1, "rejected send branch should exist");
   assert.notEqual(acceptedStart, -1, "accepted handoff branch should follow rejected send branch");
   const rejectedFailure = flowSendImmediateSource.slice(rejectedStart, acceptedStart);
-  assert.match(rejectedFailure, /markMatchingPendingSubmitFailed\(errorMessage\);/);
+  assert.match(
+    rejectedFailure,
+    /markMatchingPendingSubmitFailed\(\s*errorMessage,\s*failurePresentation\.specific \? submitResult\.code : null,?\s*\);/,
+  );
   assert.match(rejectedFailure, /finishPendingSessionHandoffFailure\(\);/);
   assert.doesNotMatch(rejectedFailure, /setPendingQueueKeyAwaitingSessionId\(null\);/);
 

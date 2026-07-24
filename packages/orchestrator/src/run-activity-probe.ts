@@ -2,6 +2,8 @@ import { deriveConversationRunOpenCodeMessageId } from "./conversation-run-messa
 import type { RunProbeResult } from "./run-registry.js";
 
 export const RUN_ACTIVITY_PROBE_TIMEOUT_MS = 4_000;
+export const OPENCODE_SESSION_IDLE_BEFORE_ASSISTANT_COMPLETED =
+  "opencode_session_idle_before_assistant_completed";
 
 export type RunActivityProbeRecord = {
   workspaceId: string;
@@ -9,6 +11,7 @@ export type RunActivityProbeRecord = {
   directory: string;
   createdAt?: number | null;
   clientMessageId?: string | null;
+  opencodeMessageId?: string | null;
   kind?: string | null;
   abortRequested?: boolean;
 };
@@ -204,10 +207,28 @@ function messageProgressSignature(messages: unknown[], latestInfo: RecordLike, l
 
 export function deriveRunActivityFromSessionMessages(
   payload: unknown,
-  options?: { expectedUserMessageId?: string | null; abortRequested?: boolean },
+  options?: {
+    expectedUserMessageId?: string | null;
+    abortRequested?: boolean;
+    sessionInactiveObserved?: boolean;
+  },
 ): RunProbeResult {
   const messages = readMessages(payload);
+  const expectedUserMessageId = options?.expectedUserMessageId?.trim() || "";
+  const inactiveExactRunCandidate = (progressSignature: string): RunProbeResult => ({
+    active: false,
+    terminalCandidate: true,
+    terminalStatus: "failed",
+    terminalError: OPENCODE_SESSION_IDLE_BEFORE_ASSISTANT_COMPLETED,
+    activityKind: "idle",
+    waitReason: "session_idle",
+    progressSignature: `inactive-session:${progressSignature}`,
+  });
+
   if (!messages.length) {
+    if (expectedUserMessageId && options?.sessionInactiveObserved) {
+      return inactiveExactRunCandidate(`expected-user:${expectedUserMessageId}:messages-empty`);
+    }
     return {
       active: true,
       activityKind: "unknown",
@@ -216,7 +237,6 @@ export function deriveRunActivityFromSessionMessages(
     };
   }
 
-  const expectedUserMessageId = options?.expectedUserMessageId?.trim() || "";
   let latestMessage = messages[messages.length - 1];
   if (expectedUserMessageId) {
     const exactUserIndex = messages.findIndex((message) => {
@@ -224,6 +244,9 @@ export function deriveRunActivityFromSessionMessages(
       return Boolean(info && readString(info.role) === "user" && messageIdentity(info) === expectedUserMessageId);
     });
     if (exactUserIndex < 0) {
+      if (options?.sessionInactiveObserved) {
+        return inactiveExactRunCandidate(`expected-user:${expectedUserMessageId}:missing`);
+      }
       return {
         active: true,
         activityKind: "unknown",
@@ -240,6 +263,9 @@ export function deriveRunActivityFromSessionMessages(
       );
     });
     if (!exactAssistants.length) {
+      if (options?.sessionInactiveObserved) {
+        return inactiveExactRunCandidate(`expected-user:${expectedUserMessageId}:assistant-missing`);
+      }
       return {
         active: true,
         activityKind: "unknown",
@@ -290,6 +316,7 @@ export function deriveRunActivityFromSessionMessages(
     return {
       active: false,
       terminalCandidate: true,
+      terminalConfirmed: Boolean(expectedUserMessageId),
       ...assistantTerminalOutcome(latestInfo, options?.abortRequested === true),
       activityKind: "idle",
       waitReason: "session_idle",
@@ -303,12 +330,19 @@ export function deriveRunActivityFromSessionMessages(
     textPartLength(part) > 0
   );
   if (hasAssistantOutput) {
+    if (expectedUserMessageId && options?.sessionInactiveObserved) {
+      return inactiveExactRunCandidate(progressSignature);
+    }
     return {
       active: true,
       activityKind: "assistant_output",
       waitReason: "assistant_message_open",
       progressSignature,
     };
+  }
+
+  if (expectedUserMessageId && options?.sessionInactiveObserved) {
+    return inactiveExactRunCandidate(progressSignature);
   }
 
   return {
@@ -332,6 +366,13 @@ function mergeRetryStatusWithMessages(messages: RunProbeResult): RunProbeResult 
   };
 }
 
+function sessionInactiveIsObserved(payload: unknown, engineSessionId: string): boolean {
+  if (!isRecord(payload)) return false;
+  if (!Object.prototype.hasOwnProperty.call(payload, engineSessionId)) return true;
+  const status = payload[engineSessionId];
+  return isRecord(status) && readString(status.type) === "idle";
+}
+
 function latestMessageCreatedAt(payload: unknown): number | null {
   const messages = readMessages(payload);
   const latest = messages[messages.length - 1];
@@ -343,11 +384,11 @@ function latestMessageCreatedAt(payload: unknown): number | null {
 
 function terminalEvidenceIsPostAdmission(
   payload: unknown,
-  record: Pick<RunActivityProbeRecord, "workspaceId" | "engineSessionId" | "createdAt" | "clientMessageId" | "kind">,
+  record: Pick<RunActivityProbeRecord, "workspaceId" | "engineSessionId" | "createdAt" | "clientMessageId" | "opencodeMessageId" | "kind">,
 ): boolean {
   const messages = readMessages(payload);
   if (record.kind === "prompt" && record.clientMessageId?.trim()) {
-    const expectedId = deriveConversationRunOpenCodeMessageId({
+    const expectedId = record.opencodeMessageId?.trim() || deriveConversationRunOpenCodeMessageId({
       workspaceId: record.workspaceId,
       engineSessionId: record.engineSessionId,
       clientMessageId: record.clientMessageId,
@@ -371,6 +412,7 @@ function terminalEvidenceIsPostAdmission(
 
 function expectedUserMessageIdForRecord(record: RunActivityProbeRecord): string | null {
   if (record.kind !== "prompt" || !record.clientMessageId?.trim()) return null;
+  if (record.opencodeMessageId?.trim()) return record.opencodeMessageId.trim();
   return deriveConversationRunOpenCodeMessageId({
     workspaceId: record.workspaceId,
     engineSessionId: record.engineSessionId,
@@ -420,46 +462,11 @@ export function createRunActivityProbe<Engine>(deps: {
 
     try {
       const status = await fetchJson(engine, record, "/session/status");
+      let statusActivity: RunProbeResult | null = null;
+      let sessionInactiveObserved = false;
       if (status.ok) {
-        const activity = deriveRunActivityFromSessionStatus(status.payload, record.engineSessionId);
-        if (activity && !("unreachable" in activity)) {
-          const messages = await fetchJson(
-            engine,
-            record,
-            `/session/${encodeURIComponent(record.engineSessionId)}/message`,
-          );
-          if (messages.status === 404) return { unreachable: true };
-          if (!messages.ok) return { unreachable: true };
-          const messageActivity = deriveRunActivityFromSessionMessages(messages.payload, {
-            expectedUserMessageId: expectedUserMessageIdForRecord(record),
-            abortRequested: record.abortRequested === true,
-          });
-          if ("unreachable" in messageActivity) return messageActivity;
-          if (!messageActivity.active && !terminalEvidenceIsPostAdmission(messages.payload, record)) {
-            return {
-              active: true,
-              activityKind: "unknown",
-              waitReason: "assistant_message_open",
-              progressSignature: `pre-admission:${messageActivity.progressSignature ?? "terminal"}`,
-            };
-          }
-          // OpenCode can leave /session/status at busy briefly after it has written a
-          // terminal assistant message. For one server-owned run, explicit transcript
-          // completion is stronger evidence than that stale status; otherwise the UI
-          // keeps rendering a second "responding" state beneath the completed reply.
-          if (!messageActivity.active) {
-            return messageActivity;
-          }
-          if (expectedUserMessageIdForRecord(record) && activity.activityKind === "idle") {
-            return messageActivity;
-          }
-          if (activity.activityKind === "model_retry") {
-            return mergeRetryStatusWithMessages(messageActivity);
-          }
-          return messageActivity.activityKind === "local_tool" || messageActivity.activityKind === "assistant_output"
-            ? messageActivity
-            : activity;
-        }
+        statusActivity = deriveRunActivityFromSessionStatus(status.payload, record.engineSessionId);
+        sessionInactiveObserved = sessionInactiveIsObserved(status.payload, record.engineSessionId);
       } else if (status.status !== 404) {
         return { unreachable: true };
       }
@@ -474,15 +481,31 @@ export function createRunActivityProbe<Engine>(deps: {
       const messageActivity = deriveRunActivityFromSessionMessages(messages.payload, {
         expectedUserMessageId: expectedUserMessageIdForRecord(record),
         abortRequested: record.abortRequested === true,
+        sessionInactiveObserved,
       });
       if ("unreachable" in messageActivity) return messageActivity;
-      if (!messageActivity.active && !terminalEvidenceIsPostAdmission(messages.payload, record)) {
+      if (
+        !messageActivity.active &&
+        messageActivity.terminalError !== OPENCODE_SESSION_IDLE_BEFORE_ASSISTANT_COMPLETED &&
+        !terminalEvidenceIsPostAdmission(messages.payload, record)
+      ) {
         return {
           active: true,
           activityKind: "unknown",
           waitReason: "assistant_message_open",
           progressSignature: `pre-admission:${messageActivity.progressSignature ?? "terminal"}`,
         };
+      }
+      if (statusActivity && !("unreachable" in statusActivity)) {
+        // OpenCode can leave /session/status at busy briefly after it has written a
+        // terminal assistant message. Exact transcript completion is stronger evidence.
+        if (!messageActivity.active) return messageActivity;
+        if (statusActivity.activityKind === "model_retry") {
+          return mergeRetryStatusWithMessages(messageActivity);
+        }
+        return messageActivity.activityKind === "local_tool" || messageActivity.activityKind === "assistant_output"
+          ? messageActivity
+          : statusActivity;
       }
       return messageActivity;
     } catch {

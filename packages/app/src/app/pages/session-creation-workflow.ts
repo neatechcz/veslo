@@ -83,6 +83,13 @@ export type SessionCreationResult = {
   transition: SessionCreationTransitionRecommendation;
 };
 
+class SubmitStoppedSessionMaterializationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SubmitStoppedSessionMaterializationError";
+  }
+}
+
 export type SessionCreationWorkflowOptions = {
   activeSendTraceId: () => string | null | undefined;
   addOpencodeCacheHint: (message: string) => string;
@@ -196,7 +203,7 @@ export function createSessionCreationWorkflow(
     const materialized = result.materializedSession;
     if (!materialized || typeof materialized !== "object" || Array.isArray(materialized)) {
       if (result.status === "blocked" || result.status === "failed") {
-        throw new Error(result.message);
+        throw new SubmitStoppedSessionMaterializationError(result.message);
       }
       throw new Error("Conversation submit did not return a materialized session.");
     }
@@ -524,6 +531,9 @@ export function createSessionCreationWorkflow(
         try {
           return { session: await createViaVeslo(false), retried: false };
         } catch (firstError) {
+          if (firstError instanceof SubmitStoppedSessionMaterializationError) {
+            throw firstError;
+          }
           const recovered = await recoverRuntimeBeforeCreateRetry(firstError);
           if (!recovered) {
             throw firstError;
@@ -635,6 +645,10 @@ export function createSessionCreationWorkflow(
         runId,
         error: error instanceof Error ? error.message : deps.safeStringify(error),
       });
+      if (error instanceof SubmitStoppedSessionMaterializationError) {
+        deps.recordSendTrace("createSessionAndOpen:submit-stopped-materialization", tracePayload);
+        return undefined;
+      }
       if (deps.isWorkspaceClientStaleError(error)) {
         deps.recordSendTrace("createSessionAndOpen:stale-client", {
           ...(tracePayload ?? {}),

@@ -967,6 +967,10 @@ export async function startUserDiagnosticCapture(): Promise<UserDiagnosticCaptur
   return invoke<UserDiagnosticCaptureStatus>("start_user_diagnostic_capture");
 }
 
+export async function stopUserDiagnosticCapture(): Promise<UserDiagnosticCaptureStatus> {
+  return invoke<UserDiagnosticCaptureStatus>("stop_user_diagnostic_capture");
+}
+
 export async function engineInstall(): Promise<ExecResult> {
   return invoke<ExecResult>("engine_install");
 }

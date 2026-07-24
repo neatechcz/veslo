@@ -192,6 +192,34 @@ describe("run activity probe payload parsing", () => {
     ])).toMatchObject({ active: true, activityKind: "unknown", waitReason: "assistant_message_open" });
   });
 
+  test("exact terminal assistant is definitive for the admitted run", () => {
+    expect(deriveRunActivityFromSessionMessages([
+      user("msg-admitted"),
+      assistant({ parentID: "msg-admitted", finish: "stop" }),
+    ], { expectedUserMessageId: "msg-admitted" })).toMatchObject({
+      active: false,
+      terminalCandidate: true,
+      terminalConfirmed: true,
+      terminalStatus: "completed",
+    });
+  });
+
+  test("inactive OpenCode session turns an unfinished exact run into a stable failure candidate", () => {
+    expect(deriveRunActivityFromSessionMessages([
+      user("msg-admitted"),
+      assistant({ parentID: "msg-admitted" }),
+    ], {
+      expectedUserMessageId: "msg-admitted",
+      sessionInactiveObserved: true,
+    })).toMatchObject({
+      active: false,
+      terminalCandidate: true,
+      terminalStatus: "failed",
+      terminalError: "opencode_session_idle_before_assistant_completed",
+      waitReason: "session_idle",
+    });
+  });
+
   test("newer user message after a completed assistant means the current run is active", () => {
     expect(deriveRunActivityFromSessionMessages([
       assistant({ id: "msg-old-assistant", completed: 2_000 }),
@@ -339,13 +367,15 @@ describe("run activity probe HTTP behavior", () => {
     });
   });
 
-  test("uses the deterministic admission message id instead of an older terminal assistant", async () => {
+  test("uses the persisted exact admission message id instead of a legacy-derived or older assistant", async () => {
     const clientMessageId = "client-current";
-    const admissionMessageId = deriveConversationRunOpenCodeMessageId({
+    const legacyAdmissionMessageId = deriveConversationRunOpenCodeMessageId({
       workspaceId: record.workspaceId,
       engineSessionId: record.engineSessionId,
       clientMessageId,
     });
+    const admissionMessageId = "msg_f946e8a160003a693ab36fcd8e";
+    expect(admissionMessageId).not.toBe(legacyAdmissionMessageId);
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),
       buildEngineRequest: (_engine, input) => ({
@@ -367,14 +397,16 @@ describe("run activity probe HTTP behavior", () => {
       ...record,
       kind: "prompt",
       clientMessageId,
+      opencodeMessageId: admissionMessageId,
     })).resolves.toMatchObject({
       active: false,
       terminalCandidate: true,
+      terminalConfirmed: true,
       progressSignature: expect.stringContaining("msg-current-assistant"),
     });
   });
 
-  test("keeps the current run active when only a stale assistant error exists", async () => {
+  test("idle status with no exact admitted message becomes an orphan candidate", async () => {
     const clientMessageId = "client-after-stale-error";
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),
@@ -396,6 +428,69 @@ describe("run activity probe HTTP behavior", () => {
     });
 
     await expect(probe({ ...record, kind: "prompt", clientMessageId })).resolves.toMatchObject({
+      active: false,
+      terminalCandidate: true,
+      terminalStatus: "failed",
+      terminalError: "opencode_session_idle_before_assistant_completed",
+      waitReason: "session_idle",
+    });
+  });
+
+  test("missing session status entry is authoritative inactive evidence for an unfinished exact run", async () => {
+    const admissionMessageId = "msg_f946e8a160003a693ab36fcd8e";
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        if (String(input).endsWith("/session/status")) return Response.json({});
+        return Response.json([
+          user(admissionMessageId),
+          assistant({ parentID: admissionMessageId }),
+        ]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe({
+      ...record,
+      kind: "prompt",
+      clientMessageId: "client-current",
+      opencodeMessageId: admissionMessageId,
+    })).resolves.toMatchObject({
+      active: false,
+      terminalCandidate: true,
+      terminalStatus: "failed",
+      terminalError: "opencode_session_idle_before_assistant_completed",
+    });
+  });
+
+  test("busy session keeps the same unfinished exact run active", async () => {
+    const admissionMessageId = "msg_f946e8a160003a693ab36fcd8e";
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        if (String(input).endsWith("/session/status")) {
+          return Response.json({ "sess-a": { type: "busy" } });
+        }
+        return Response.json([
+          user(admissionMessageId),
+          assistant({ parentID: admissionMessageId }),
+        ]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe({
+      ...record,
+      kind: "prompt",
+      clientMessageId: "client-current",
+      opencodeMessageId: admissionMessageId,
+    })).resolves.toMatchObject({
       active: true,
       waitReason: "assistant_message_open",
     });

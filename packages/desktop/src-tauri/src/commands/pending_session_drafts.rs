@@ -459,12 +459,23 @@ fn delete_pending_session_draft(root: &Path, draft_id: &str) -> Result<bool, Str
     Ok(true)
 }
 
+fn resolve_pending_session_drafts_root(
+    app_data_override: Option<PathBuf>,
+    app_data_dir: Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
+    app_data_override
+        .map(Ok)
+        .unwrap_or(app_data_dir)
+        .map(|root| root.join("pending-session-drafts"))
+}
+
 fn pending_session_drafts_root(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?
-        .join("pending-session-drafts"))
+    resolve_pending_session_drafts_root(
+        crate::paths::app_data_dir_override(),
+        app.path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to resolve app data dir: {e}")),
+    )
 }
 
 fn draft_dir(root: &Path, draft_id: &str) -> PathBuf {
@@ -780,11 +791,12 @@ mod tests {
         attachment_file_path, delete_pending_session_draft, get_pending_session_draft,
         latest_pending_session_draft_backup_dirs, list_pending_session_drafts,
         put_pending_session_draft, put_pending_session_draft_with_commit_hook,
-        put_pending_session_draft_with_commit_hooks, PendingSessionDraftAttachmentInput,
-        PendingSessionDraftAttachmentMetadata, PendingSessionDraftAttachmentPayload,
-        PendingSessionDraftComposerInput, PendingSessionDraftComposerMetadata,
-        PendingSessionDraftComposerPayload, PendingSessionDraftGetResult,
-        PendingSessionDraftPutInput, PendingSessionDraftRecord, PendingSessionDraftSummary,
+        put_pending_session_draft_with_commit_hooks, resolve_pending_session_drafts_root,
+        PendingSessionDraftAttachmentInput, PendingSessionDraftAttachmentMetadata,
+        PendingSessionDraftAttachmentPayload, PendingSessionDraftComposerInput,
+        PendingSessionDraftComposerMetadata, PendingSessionDraftComposerPayload,
+        PendingSessionDraftGetResult, PendingSessionDraftPutInput, PendingSessionDraftRecord,
+        PendingSessionDraftSummary,
     };
     use serde_json::json;
     use std::fs;
@@ -814,6 +826,27 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn app_data_override_owns_pending_draft_storage_when_tauri_path_is_unavailable() {
+        let root = PathBuf::from("isolated-app-data");
+        let resolved = resolve_pending_session_drafts_root(
+            Some(root.clone()),
+            Err("tauri app data unavailable".to_string()),
+        )
+        .expect("the explicit app data override should be authoritative");
+
+        assert_eq!(resolved, root.join("pending-session-drafts"));
+    }
+
+    #[test]
+    fn tauri_app_data_remains_the_default_pending_draft_storage() {
+        let root = PathBuf::from("tauri-app-data");
+        let resolved = resolve_pending_session_drafts_root(None, Ok(root.clone()))
+            .expect("the Tauri app data path should remain the default");
+
+        assert_eq!(resolved, root.join("pending-session-drafts"));
     }
 
     fn sample_put_input() -> PendingSessionDraftPutInput {

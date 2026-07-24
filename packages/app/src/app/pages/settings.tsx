@@ -28,6 +28,7 @@ import {
   desktopRuntimePreferencesRead,
   desktopRuntimePreferencesWrite,
   startUserDiagnosticCapture,
+  stopUserDiagnosticCapture,
   userDiagnosticCaptureStatus,
   engineRestart,
   opencodeRouterRestart,
@@ -522,6 +523,20 @@ export default function SettingsView(props: SettingsViewProps) {
     setUserCaptureError(null);
     try {
       setUserCapture(await startUserDiagnosticCapture());
+    } catch (error) {
+      setUserCaptureError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setUserCaptureBusy(false);
+    }
+  };
+
+  const stopUserCapture = async () => {
+    const capture = userCapture();
+    if (props.busy || userCaptureBusy() || userCaptureStatusBusy() || capture?.state !== "active") return;
+    setUserCaptureBusy(true);
+    setUserCaptureError(null);
+    try {
+      setUserCapture(await stopUserDiagnosticCapture());
     } catch (error) {
       setUserCaptureError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1297,6 +1312,17 @@ export default function SettingsView(props: SettingsViewProps) {
                           ? "Capturing"
                           : "Start 2-minute capture"}
                   </Button>
+                  <Show when={userCapture()?.state === "active"}>
+                    <Button
+                      data-user-diagnostic-capture-stop
+                      variant="outline"
+                      class="shrink-0 border-red-7/60 text-red-11 hover:bg-red-2/30"
+                      disabled={props.busy || userCaptureBusy() || userCaptureStatusBusy()}
+                      onClick={() => void stopUserCapture()}
+                    >
+                      {userCaptureBusy() ? "Stopping…" : "Stop capture"}
+                    </Button>
+                  </Show>
                 </div>
                 <Show when={userCaptureLoadError()}>
                   {(error) => (

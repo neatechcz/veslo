@@ -1438,11 +1438,11 @@ export function createManagedAiRuntimeConfigSync(
       // suppress the cancellation signal for an in-flight newer config write.
       lastSuccessfulActiveIntentByScope.delete(intent.scopeKey);
     }
-    // Only the background owner participates in cross-flight stale detection.
-    // A send preflight has an explicit, already-resolved target, but it may
-    // reuse an already completed active-workspace verification with the exact
-    // same intent. Re-reading the server config here made every second send
-    // wait on an unrelated config GET despite an unchanged descriptor.
+    // Only the background owner participates in cross-flight stale detection
+    // and completed-intent reuse. A send preflight has an explicit,
+    // already-resolved server target and must perform its own freshness read;
+    // it may also need to acknowledge a reload deferred by the background
+    // owner while a previous run was active.
     if (reason === "active-workspace") {
       latestManagedAiConfigSyncFingerprintByScope.set(intent.scopeKey, intent.fingerprint);
     }
@@ -1456,7 +1456,7 @@ export function createManagedAiRuntimeConfigSync(
       return outcome;
     }
     if (
-      (reason === "active-workspace" || reason === "send-preflight") &&
+      reason === "active-workspace" &&
       intent.authority.kind !== "pending" &&
       lastSuccessfulActiveIntentByScope.get(intent.scopeKey) === intent.fingerprint
     ) {

@@ -156,6 +156,7 @@ import ProtoV1UxView from "./pages/proto-v1-ux";
 import {
   createEmptyComposerDraft,
   clearSessionComposerDraftIfRevision,
+  clearSessionComposerDraftIfMatches,
   deleteSessionComposerDraft,
   getSessionComposerDraft,
   getSessionComposerDraftRevision,
@@ -1762,6 +1763,21 @@ export default function App() {
         storageKeyKind: composerDraftStorageKeyKind(storageKey),
         expectedRevision: revision,
         actualRevision,
+        applied: result.cleared,
+        writeId: result.cleared ? ++composerDraftWriteId : null,
+      });
+      return result.state;
+    });
+    return cleared;
+  };
+  const clearComposerDraftIfMatches = (storageKey: string, expectedDraft: ComposerDraft) => {
+    let cleared = false;
+    setComposerDraftBySessionId((current) => {
+      const result = clearSessionComposerDraftIfMatches(current, { storageKey }, expectedDraft);
+      cleared = result.cleared;
+      uiEffectTrace.record("composer-draft:snapshot-clear", {
+        owner: "attachment-submit-failure",
+        storageKeyKind: composerDraftStorageKeyKind(storageKey),
         applied: result.cleared,
         writeId: result.cleared ? ++composerDraftWriteId : null,
       });
@@ -5134,6 +5150,7 @@ export default function App() {
     setComposerDraftForStorageKey,
     captureComposerDraftRevision,
     clearComposerDraftIfRevision,
+    clearComposerDraftIfMatches,
     activePermissionMemo,
     permissionReplyBusy,
     respondPermissionForAppViewProps,

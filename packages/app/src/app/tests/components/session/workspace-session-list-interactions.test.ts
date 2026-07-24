@@ -450,12 +450,12 @@ test("recent and by-project session lists use accessor-backed animated session t
 test("by-project project contents use the animated project collapse region", () => {
   assert.match(
     source,
-    /<AnimatedCollapse\s+open=\{!drawerCollapsed\(\)\}\s+region="project"[\s\S]*innerClass="pl-5 pt-0\.5 space-y-0"/,
+    /<AnimatedCollapse\s+open=\{!drawerCollapsed\(\)\}\s+region="project"[\s\S]*innerClass="pl-4 pt-0\.5 space-y-0"/,
   );
 
   assert.doesNotMatch(
     source,
-    /<Show when=\{!drawerCollapsed\(\)\}>\s*<div class="pl-5 pt-0\.5 space-y-0">/,
+    /<Show when=\{!drawerCollapsed\(\)\}>\s*<div class="pl-4 pt-0\.5 space-y-0">/,
     "project collapse should not instantly unmount project rows",
   );
 });

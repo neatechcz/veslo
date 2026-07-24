@@ -12,6 +12,10 @@ test("settings keeps the diagnostic capture card visible for unavailable and act
   assert.match(source, /recordBootstrapDiagnostic\("user-diagnostic-capture:status-unavailable", \{ message \}\)/);
   assert.match(source, /data-user-diagnostic-capture-unavailable/);
   assert.match(source, /const userCaptureUnavailableReason = \(\) =>/);
+  assert.match(source, /const stopUserCapture = async \(\) =>/);
+  assert.match(source, /stopUserDiagnosticCapture\(\)/);
+  assert.match(source, /data-user-diagnostic-capture-stop/);
+  assert.match(source, /Stop capture/);
   assert.match(source, /This Veslo release does not include diagnostic capture\./);
   assert.match(source, /Sign in to Veslo and wait for the account connection to finish/);
   assert.match(source, /<Show when=\{userCaptureUnavailableReason\(\)\}>/);

@@ -93,17 +93,6 @@ fn remove_legacy_scheduler_plugin(config: &mut serde_json::Value) -> bool {
     changed
 }
 
-fn has_chrome_mcp_alias(mcp_obj: &serde_json::Map<String, serde_json::Value>) -> bool {
-    mcp_obj.contains_key("chrome-devtools") || mcp_obj.contains_key("control-chrome")
-}
-
-fn chrome_mcp_installed_config() -> serde_json::Value {
-    serde_json::json!({
-      "type": "local",
-      "command": ["chrome-devtools-mcp", "--isolated"]
-    })
-}
-
 fn is_legacy_chrome_mcp_command(config: &serde_json::Value) -> bool {
     if config.get("type").and_then(|value| value.as_str()) != Some("local") {
         return false;
@@ -126,11 +115,39 @@ fn migrate_legacy_chrome_mcp_commands(
             continue;
         };
         if is_legacy_chrome_mcp_command(config) {
-            *config = chrome_mcp_installed_config();
+            let Some(config_obj) = config.as_object_mut() else {
+                continue;
+            };
+            config_obj.insert(
+                "command".to_string(),
+                serde_json::json!(["chrome-devtools-mcp", "--isolated"]),
+            );
+            config_obj
+                .entry("enabled".to_string())
+                .or_insert(serde_json::Value::Bool(true));
             changed = true;
         }
     }
     changed
+}
+
+fn remove_legacy_implicit_chrome_mcp(
+    mcp_obj: &mut serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    let should_remove = mcp_obj.get("chrome-devtools").is_some_and(|config| {
+        let Some(command) = config.get("command").and_then(|value| value.as_array()) else {
+            return false;
+        };
+        let parts: Vec<&str> = command.iter().filter_map(|value| value.as_str()).collect();
+        config.get("enabled").is_none()
+            && config.get("type").and_then(|value| value.as_str()) == Some("local")
+            && parts.len() == command.len()
+            && parts.as_slice() == ["chrome-devtools-mcp", "--isolated"]
+    });
+    if should_remove {
+        mcp_obj.remove("chrome-devtools");
+    }
+    should_remove
 }
 
 fn seed_veslo_agent(agent_root: &PathBuf) -> Result<(), String> {
@@ -672,8 +689,6 @@ pub fn ensure_workspace_files(
     // routes, so new workspaces should not auto-install that plugin.
     let required_plugins: Vec<&str> = vec![];
 
-    let should_seed_chrome_mcp = true;
-
     if !required_plugins.is_empty() {
         let plugins_value = config
             .get("plugin")
@@ -704,25 +719,18 @@ pub fn ensure_workspace_files(
     }
 
     if let Some(obj) = config.as_object_mut() {
-        if should_seed_chrome_mcp || obj.get("mcp").and_then(|value| value.as_object()).is_some() {
-            let mcp_value = obj
-                .get("mcp")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}));
-
-            let mut mcp_obj = match mcp_value {
-                serde_json::Value::Object(map) => map,
-                _ => serde_json::Map::new(),
-            };
-
-            if migrate_legacy_chrome_mcp_commands(&mut mcp_obj) {
-                config_changed = true;
-            } else if should_seed_chrome_mcp && !has_chrome_mcp_alias(&mcp_obj) {
-                mcp_obj.insert("chrome-devtools".to_string(), chrome_mcp_installed_config());
+        let mut remove_empty_mcp = false;
+        if let Some(mcp_obj) = obj.get_mut("mcp").and_then(|value| value.as_object_mut()) {
+            if migrate_legacy_chrome_mcp_commands(mcp_obj) {
                 config_changed = true;
             }
-
-            obj.insert("mcp".to_string(), serde_json::Value::Object(mcp_obj));
+            if remove_legacy_implicit_chrome_mcp(mcp_obj) {
+                config_changed = true;
+                remove_empty_mcp = mcp_obj.is_empty();
+            }
+        }
+        if remove_empty_mcp {
+            obj.remove("mcp");
         }
     }
 
@@ -764,39 +772,6 @@ mod tests {
         let root = std::env::temp_dir().join(format!("veslo-workspace-files-{name}-{unique}"));
         fs::create_dir_all(&root).expect("create temp workspace root");
         root
-    }
-
-    #[test]
-    fn has_chrome_mcp_alias_matches_chrome_devtools_key() {
-        let mut mcp = serde_json::Map::new();
-        mcp.insert(
-            "chrome-devtools".to_string(),
-            serde_json::json!({ "type": "local" }),
-        );
-
-        assert!(has_chrome_mcp_alias(&mcp));
-    }
-
-    #[test]
-    fn has_chrome_mcp_alias_matches_control_chrome_key() {
-        let mut mcp = serde_json::Map::new();
-        mcp.insert(
-            "control-chrome".to_string(),
-            serde_json::json!({ "type": "local" }),
-        );
-
-        assert!(has_chrome_mcp_alias(&mcp));
-    }
-
-    #[test]
-    fn has_chrome_mcp_alias_is_false_without_known_aliases() {
-        let mut mcp = serde_json::Map::new();
-        mcp.insert(
-            "context7".to_string(),
-            serde_json::json!({ "type": "remote" }),
-        );
-
-        assert!(!has_chrome_mcp_alias(&mcp));
     }
 
     #[test]
@@ -1049,7 +1024,7 @@ Use this guide for the team's custom process.
     }
 
     #[test]
-    fn ensure_workspace_files_seeds_chrome_without_scheduler_for_automation_presets() {
+    fn ensure_workspace_files_does_not_seed_chrome_or_scheduler_for_automation_presets() {
         let root = temp_workspace_root("automation");
         let root_str = root.to_string_lossy().to_string();
 
@@ -1060,27 +1035,88 @@ Use this guide for the team's custom process.
             fs::read_to_string(root.join("opencode.jsonc")).expect("read generated config");
         let config: serde_json::Value =
             serde_json::from_str(&config_raw).expect("parse generated config");
-        let command = config
-            .get("mcp")
-            .and_then(|value| value.get("chrome-devtools"))
-            .and_then(|value| value.get("command"))
-            .and_then(|value| value.as_array())
-            .cloned()
-            .expect("chrome-devtools command array");
-
-        assert_eq!(
-            command,
-            vec![
-                serde_json::Value::String("chrome-devtools-mcp".to_string()),
-                serde_json::Value::String("--isolated".to_string()),
-            ]
-        );
+        assert!(config.get("mcp").is_none());
         let plugins = config
             .get("plugin")
             .and_then(|value| value.as_array())
             .cloned()
             .unwrap_or_default();
         assert!(!plugins.contains(&serde_json::Value::String("opencode-scheduler".to_string())));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ensure_workspace_files_removes_only_the_legacy_implicit_chrome_seed() {
+        let root = temp_workspace_root("implicit-chrome-seed");
+        let config_path = root.join("opencode.jsonc");
+        fs::write(
+            &config_path,
+            r#"{
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": ["chrome-devtools-mcp", "--isolated"]
+    },
+    "custom": {
+      "type": "remote",
+      "url": "https://mcp.example/custom"
+    }
+  }
+}"#,
+        )
+        .expect("write existing config");
+
+        let root_str = root.to_string_lossy().to_string();
+        ensure_workspace_files(&root_str, "minimal", None, None, None)
+            .expect("migrate workspace files");
+
+        let config_raw = fs::read_to_string(&config_path).expect("read updated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse updated config");
+        let mcp = config
+            .get("mcp")
+            .and_then(|value| value.as_object())
+            .expect("custom mcp remains");
+        assert!(!mcp.contains_key("chrome-devtools"));
+        assert!(mcp.contains_key("custom"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn ensure_workspace_files_preserves_explicitly_enabled_chrome() {
+        let root = temp_workspace_root("explicit-chrome");
+        let config_path = root.join("opencode.jsonc");
+        fs::write(
+            &config_path,
+            r#"{
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "command": ["chrome-devtools-mcp", "--isolated"],
+      "enabled": true
+    }
+  }
+}"#,
+        )
+        .expect("write existing config");
+
+        let root_str = root.to_string_lossy().to_string();
+        ensure_workspace_files(&root_str, "minimal", None, None, None)
+            .expect("preserve workspace files");
+
+        let config_raw = fs::read_to_string(&config_path).expect("read updated config");
+        let config: serde_json::Value =
+            serde_json::from_str(&config_raw).expect("parse updated config");
+        assert_eq!(
+            config
+                .get("mcp")
+                .and_then(|value| value.get("chrome-devtools"))
+                .and_then(|value| value.get("enabled"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
 
         fs::remove_dir_all(root).ok();
     }
@@ -1124,7 +1160,6 @@ Use this guide for the team's custom process.
                 .expect("control-chrome command"),
             vec![serde_json::Value::String("existing".to_string())]
         );
-
         fs::remove_dir_all(root).ok();
     }
 
@@ -1170,6 +1205,12 @@ Use this guide for the team's custom process.
                 serde_json::Value::String("chrome-devtools-mcp".to_string()),
                 serde_json::Value::String("--isolated".to_string()),
             ]
+        );
+        assert_eq!(
+            mcp.get("control-chrome")
+                .and_then(|value| value.get("enabled"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
         );
 
         fs::remove_dir_all(root).ok();

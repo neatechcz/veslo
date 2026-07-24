@@ -164,6 +164,25 @@ export const clearSessionComposerDraftIfRevision = (
 };
 
 /**
+ * Clear a transferred draft that a remounted Composer echoed after the first
+ * revision-owned clear. Exact snapshot matching keeps every newer edit safe.
+ */
+export const clearSessionComposerDraftIfMatches = (
+  draftsByStorageKey: ComposerDraftStateByStorageKey,
+  target: ComposerDraftStorageTarget,
+  expectedDraft: ComposerDraft,
+): { cleared: boolean; state: ComposerDraftStateByStorageKey } => {
+  const key = resolveDraftStorageKey(target);
+  const previous = draftsByStorageKey[key] as ComposerDraftStateByStorageKey[string] | undefined;
+  if (!previous || !draftsEqual(previous.draft, expectedDraft)) {
+    return { cleared: false, state: draftsByStorageKey };
+  }
+  const entry = nextEntry(previous, createEmptyComposerDraft()) as ComposerDraftStateByStorageKey[string] | undefined;
+  if (!entry) return { cleared: false, state: draftsByStorageKey };
+  return { cleared: true, state: { ...draftsByStorageKey, [key]: entry } };
+};
+
+/**
  * Move the global unpublished bucket before the real session is selected.
  * The moved entry keeps its revision: a conditional clear captured against the
  * old pending key will then fail safely because that key no longer exists.

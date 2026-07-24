@@ -51,8 +51,8 @@ test("folder access consent modal renders stable test hooks for the consent work
 test("folder access consent modal surfaces request details before opening the picker", () => {
   assert.match(source, /props\.requestedPath/);
   assert.match(source, /props\.pickerStartPath/);
-  assert.match(source, /props\.accessMode === "read"/);
-  assert.match(source, /props\.duration === "workspace"/);
+  assert.match(source, /const accessLabel = \(\) => translate\("folder_access\.access_read_only"\)/);
+  assert.match(source, /const durationLabel = \(\) => translate\("folder_access\.duration_workspace"\)/);
   assert.match(source, /<ModalError[\s\S]*props\.error/);
   assert.match(source, /onClick=\{props\.onChooseFolder\}/);
   assert.match(source, /onClick=\{props\.onCancel\}/);

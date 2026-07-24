@@ -12,6 +12,7 @@ import { currentLocale, t, useTranslate } from "../../../i18n";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
 import { createComposerDraftHandoffController } from "./composer-draft-handoff";
+import { resolveComposerAttachmentFailureCleanup } from "./composer-attachment-failure-cleanup";
 import { findMentionTrigger } from "./composer-mention-trigger";
 import { uiEffectTrace } from "../../lib/ui-effect-trace";
 
@@ -713,6 +714,8 @@ export default function Composer(props: ComposerProps) {
   createEffect(() => {
     if (!editorRef) return;
     const value = props.prompt;
+    const parentDraftRevision = props.draftRevision;
+    const externalAttachments = props.initialDraft.attachments ?? [];
     const current = readEditorText(editorRef);
     const parentConditionalClearAuthorizesPromptSync = Boolean(
       pendingParentConditionalClear
@@ -727,7 +730,21 @@ export default function Composer(props: ComposerProps) {
       currentLength: current.length,
       equal: value === current,
       parentConditionalClearAuthorizesPromptSync,
+      parentDraftRevision,
     });
+
+    // Attachment-only drafts can keep the same empty prompt across a parent
+    // clear. Observe the parent revision explicitly and reconcile attachments
+    // without subscribing this effect to local attachment edits.
+    const currentAttachments = untrack(() => attachments());
+    const attachmentsMatch =
+      currentAttachments.length === externalAttachments.length
+      && currentAttachments.every(
+        (attachment, index) => JSON.stringify(attachment) === JSON.stringify(externalAttachments[index]),
+      );
+    if (!attachmentsMatch) {
+      setAttachments(externalAttachments.map((attachment) => ({ ...attachment })));
+    }
 
     // Robust Echo Cancellation:
     // If the incoming value matches ANY recently emitted text, it's a stale echo or confirmation.
@@ -1298,6 +1315,33 @@ export default function Composer(props: ComposerProps) {
           submittedStorageRevision,
         )),
       );
+      if (editorRef && props.draftStorageKey === submittedStorage.storageKey) {
+        const currentParts = buildPartsFromEditor(editorRef, pasteTextById);
+        const currentText = normalizeText(partsToText(currentParts));
+        const currentDraft: ComposerDraft = {
+          mode: mode(),
+          parts: currentParts,
+          attachments: attachments(),
+          text: currentText,
+          resolvedText: normalizeText(partsToResolvedText(currentParts)),
+        };
+        const attachmentFailureCleanup = resolveComposerAttachmentFailureCleanup({
+          current: currentDraft,
+          submitted: submittedDraft,
+          errorCode: sendResult.code,
+          transferAcknowledged: submittedRevision.transferAcknowledged,
+        });
+        if (attachmentFailureCleanup.kind === "replace") {
+          const cleanedDraft = attachmentFailureCleanup.draft;
+          draftHandoffController.markDraftChanged();
+          setMode(cleanedDraft.mode);
+          renderParts(cleanedDraft.parts, false);
+          setDraftText(cleanedDraft.text);
+          setAttachments(cleanedDraft.attachments);
+          if (cleanedDraft.parts.length === 0) pasteTextById.clear();
+          props.onDraftChange(submittedStorage.storageKey, cleanedDraft);
+        }
+      }
     } catch (error) {
       recordSendTrace("sendDraft:onSend:error", {
         sendTraceId: options.sendTraceId,
@@ -2091,7 +2135,11 @@ export default function Composer(props: ComposerProps) {
 
             <div class="relative">
               <Show when={props.toast}>
-                <div class="absolute bottom-full right-0 mb-2 z-30 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs text-gray-11 shadow-lg backdrop-blur-md">
+                <div
+                  class="absolute bottom-full right-0 mb-2 z-30 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs text-gray-11 shadow-lg backdrop-blur-md"
+                  data-testid="session-composer-toast"
+                  role="alert"
+                >
                   <span>{props.toast}</span>
                 </div>
               </Show>

@@ -367,7 +367,7 @@ impl UserDiagnosticCapture {
         self.append_serialized_unlocked(record, &serialized)
     }
 
-    fn finalize_expired_locked(&self) {
+    fn finish_active_locked(&self, terminal_reason: &str) {
         let record = {
             let Ok(mut journal) = self.journal.lock() else {
                 return;
@@ -375,11 +375,11 @@ impl UserDiagnosticCapture {
             let Some(record) = journal.latest.as_mut() else {
                 return;
             };
-            if record.state != "active" || now_ms() < record.ends_at {
+            if record.state != "active" {
                 return;
             }
             record.state = "finished".to_string();
-            record.terminal_reason = Some("time_limit".to_string());
+            record.terminal_reason = Some(terminal_reason.to_string());
             record.clone()
         };
         if self.append_summary_unlocked(&record).is_ok() {
@@ -388,6 +388,18 @@ impl UserDiagnosticCapture {
             self.mark_undeliverable(&record.capture_id, "summary_write_failed");
         }
         let _ = self.persist();
+    }
+
+    fn finalize_expired_locked(&self) {
+        let expired = self
+            .journal
+            .lock()
+            .ok()
+            .and_then(|journal| journal.latest.clone())
+            .is_some_and(|record| record.state == "active" && now_ms() >= record.ends_at);
+        if expired {
+            self.finish_active_locked("time_limit");
+        }
     }
 
     fn finalize_expired(&self) {
@@ -472,6 +484,14 @@ impl UserDiagnosticCapture {
                     && !context.org_id.trim().is_empty()
                     && is_production_den_api_base(&context.den_api_base)
             })
+    }
+
+    pub fn stop(&self) -> UserDiagnosticCaptureStatus {
+        if let Ok(_queue) = self.queue_lock.lock() {
+            self.finalize_expired_locked();
+            self.finish_active_locked("user_stopped");
+        }
+        self.status()
     }
 
     pub fn observe(
@@ -1040,6 +1060,29 @@ mod tests {
         assert!(!raw.contains("must not queue"));
         assert_eq!(capture.status().captured_events, 1);
         assert_eq!(capture.status().pending_events, 2);
+    }
+
+    #[test]
+    fn stop_finishes_capture_with_user_stopped_summary() {
+        let dir = tempdir().unwrap();
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+        let started = capture.start(&context()).unwrap();
+        let capture_id = started.capture_id.unwrap();
+        capture.observe("engine", "stderr", "before stop", 1, |value| {
+            value.to_string()
+        });
+
+        let stopped = capture.stop();
+        assert_eq!(stopped.state, "finished");
+        assert_eq!(stopped.terminal_reason.as_deref(), Some("user_stopped"));
+        assert_eq!(stopped.captured_events, 1);
+
+        let raw = fs::read_to_string(queue_path(dir.path(), &capture_id)).unwrap();
+        assert!(raw.contains("\"state\":\"finished\""));
+        assert!(raw.contains("\"terminalReason\":\"user_stopped\""));
     }
 
     #[test]

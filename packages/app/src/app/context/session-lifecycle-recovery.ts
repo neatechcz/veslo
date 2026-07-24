@@ -262,6 +262,39 @@ export function createSessionLifecycleRecoveryController(
     });
   };
 
+  const latestProbeSelectionIsCurrent = (
+    sessionId: string,
+    selectionVersion: number | undefined,
+  ) => {
+    if (normalize(options.selectedSessionId()) !== sessionId) return false;
+    if (selectionVersion === undefined || !options.currentSelectionVersion) return true;
+    return options.currentSelectionVersion() === selectionVersion;
+  };
+
+  const latestProbeErrorDetails = (error: unknown) => {
+    if (error instanceof Error) {
+      const candidate = error as Error & {
+        code?: unknown;
+        status?: unknown;
+        statusCode?: unknown;
+      };
+      return {
+        errorType: error.name,
+        errorMessage: error.message.slice(0, 300),
+        errorCode: typeof candidate.code === "string" ? candidate.code : null,
+        errorStatus: typeof candidate.status === "number"
+          ? candidate.status
+          : typeof candidate.statusCode === "number" ? candidate.statusCode : null,
+      };
+    }
+    return {
+      errorType: "unknown",
+      errorMessage: String(error).slice(0, 300),
+      errorCode: null,
+      errorStatus: null,
+    };
+  };
+
   const clearWatch = (key: string, clearOptions: { clearDiagnostic?: boolean } = {}) => {
     const watch = watches.get(key);
     if (!watch) return;
@@ -365,9 +398,19 @@ export function createSessionLifecycleRecoveryController(
     terminalResult?: SessionLifecycleRecoveryStatus,
   ) => {
     const key = recoveryKey(scope);
+    const releaseLatestProbeScope = (afterCurrentTurn = false) => {
+      if (source !== "latest-probe") return;
+      const release = () => latestProbeScopes.delete(conversationKey(scope));
+      if (afterCurrentTurn) {
+        setTimer(release, 0);
+      } else {
+        release();
+      }
+    };
     const existingTerminalRecovery = key ? terminalTranscriptRecoveries.get(key) : undefined;
     const ownsPresentation = !options.isConversationRunActive || options.isConversationRunActive(scope);
     if (!ownsPresentation && !existingTerminalRecovery) {
+      releaseLatestProbeScope(true);
       traceForScope("session-lifecycle-recovery:terminal-non-owner", scope, generation, {
         status,
         outcome: "terminal-non-owner-ignored-for-presentation",
@@ -486,10 +529,11 @@ export function createSessionLifecycleRecoveryController(
             recovery.generation !== generation
           ) {
             recovery.inFlight = false;
+            releaseLatestProbeScope(true);
             return;
           }
           if (!snapshot) {
-            latestProbeScopes.delete(conversationKey(scope));
+            releaseLatestProbeScope();
             traceForScope("session-lifecycle-recovery:terminal-transcript-unavailable", scope, generation, {
               transcriptSessionId,
               outcome: "terminal-transcript-unavailable",
@@ -518,6 +562,7 @@ export function createSessionLifecycleRecoveryController(
               outcome: "terminal-transcript-discarded",
               reason: selectionStillOwnsSnapshot ? "projection-rejected" : "selection-changed",
             });
+            releaseLatestProbeScope(true);
             options.onTerminalTranscriptRecoverySettled?.(scope);
             return;
           }
@@ -526,6 +571,7 @@ export function createSessionLifecycleRecoveryController(
           traceForScope("session-lifecycle-recovery:terminal-transcript-hydrated", scope, generation, {
             outcome: "terminal-transcript-hydrated",
           });
+          releaseLatestProbeScope(true);
           options.onTerminalTranscriptRecoverySettled?.(scope);
         }).catch((error) => {
           const currentRecovery = terminalTranscriptRecoveries.get(key);
@@ -535,9 +581,10 @@ export function createSessionLifecycleRecoveryController(
             recovery.generation !== generation
           ) {
             recovery.inFlight = false;
+            releaseLatestProbeScope();
             return;
           }
-          latestProbeScopes.delete(conversationKey(scope));
+          releaseLatestProbeScope();
           traceForScope("session-lifecycle-recovery:terminal-transcript-error", scope, generation, {
             transcriptSessionId,
             outcome: "terminal-transcript-error",
@@ -547,6 +594,7 @@ export function createSessionLifecycleRecoveryController(
         });
       }
     } else {
+      releaseLatestProbeScope(true);
       options.onTerminalTranscriptRecoverySettled?.(scope);
     }
 
@@ -770,11 +818,12 @@ export function createSessionLifecycleRecoveryController(
 
     for (const [key, scope] of desired) {
       const existing = watches.get(key);
-      if (existing) {
+      if (existing || exhaustedWatches.has(key)) {
         // An accepted run owns the exact submit scope for its whole lifetime.
         // Status aliases (OpenCode session id vs. durable conversation id) can
         // resolve to the same key here, but must never retarget recovery or
-        // break its trace correlation.
+        // break its trace correlation. An exhausted watch is also intentionally
+        // left alone until an explicit recovery action resumes it.
         continue;
       }
       watches.set(key, {
@@ -797,6 +846,7 @@ export function createSessionLifecycleRecoveryController(
   const probeSelectedConversationLatestRun = async (): Promise<boolean> => {
     const sessionId = normalize(options.selectedSessionId());
     if (!sessionId) return false;
+    const selectionVersion = options.currentSelectionVersion?.();
     const scope = options.resolveConversationRunForSession(sessionId, null, { allowLatest: true });
     if (!scope || scope.runId !== "latest") return false;
     const scopeKey = `${normalize(scope.workspaceId)}\0${normalize(scope.conversationId)}`;
@@ -804,6 +854,16 @@ export function createSessionLifecycleRecoveryController(
     latestProbeScopes.add(scopeKey);
     try {
       const status = await options.readConversationRunStatus(scope);
+      if (!latestProbeSelectionIsCurrent(sessionId, selectionVersion)) {
+        latestProbeScopes.delete(scopeKey);
+        traceForScope("session-lifecycle-recovery:latest-probe-discarded", scope, 1, {
+          outcome: "selection-changed",
+          selectionVersion,
+          currentSelectionVersion: options.currentSelectionVersion?.() ?? null,
+          currentSessionId: normalize(options.selectedSessionId()) || null,
+        });
+        return true;
+      }
       if (!status) {
         latestProbeScopes.delete(scopeKey);
         return true;
@@ -811,13 +871,21 @@ export function createSessionLifecycleRecoveryController(
       const runId = normalize(status.runId);
       if (!runId) return true;
       const resolvedScope = { ...scope, runId };
+      const key = recoveryKey(resolvedScope);
       const terminal = status.stale !== true && TERMINAL_LIFECYCLE_STATUSES.has(status.status);
       options.onConversationRunStatus?.(resolvedScope, status);
       if (terminal) {
+        if (key && settledRunKeys.has(key)) {
+          latestProbeScopes.delete(scopeKey);
+          traceForScope("session-lifecycle-recovery:latest-probe-skipped", resolvedScope, 1, {
+            outcome: "exact-run-already-settled",
+          });
+          return true;
+        }
+        if (key) settledRunKeys.add(key);
         recoverTerminalRun(resolvedScope, status.status, "latest-probe", false, 1, status);
         return true;
       }
-      const key = recoveryKey(resolvedScope);
       if (key && !watches.has(key)) {
         watches.set(key, {
           scope: resolvedScope,
@@ -834,9 +902,21 @@ export function createSessionLifecycleRecoveryController(
       return true;
     } catch (error) {
       latestProbeScopes.delete(scopeKey);
+      const errorDetails = latestProbeErrorDetails(error);
+      if (!latestProbeSelectionIsCurrent(sessionId, selectionVersion)) {
+        traceForScope("session-lifecycle-recovery:latest-probe-discarded", scope, 1, {
+          outcome: "selection-changed-during-error",
+          selectionVersion,
+          currentSelectionVersion: options.currentSelectionVersion?.() ?? null,
+          currentSessionId: normalize(options.selectedSessionId()) || null,
+          ...errorDetails,
+        });
+        return true;
+      }
       traceForScope("session-lifecycle-recovery:latest-probe-error", scope, 1, {
         outcome: "latest-probe-http-error",
-        errorType: error instanceof Error ? error.name : "unknown",
+        ...errorDetails,
+        selectionVersion,
       });
       return true;
     }
@@ -1142,6 +1222,7 @@ export function createSessionLifecycleRecoveryController(
       disposed = true;
       for (const key of [...watches.keys()]) clearWatch(key);
       exhaustedWatches.clear();
+      latestProbeScopes.clear();
       admittedRunKeys.clear();
       settledRunKeys.clear();
       for (const key of [...terminalTranscriptRecoveries.keys()]) clearTerminalHydrationRecovery(key);

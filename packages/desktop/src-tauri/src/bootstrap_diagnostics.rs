@@ -69,3 +69,11 @@ pub fn start_user_diagnostic_capture(
         .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
     forwarder.inner().as_ref().start_user_diagnostic_capture()
 }
+
+#[tauri::command]
+pub fn stop_user_diagnostic_capture(app: AppHandle) -> Result<UserDiagnosticCaptureStatus, String> {
+    let forwarder = app
+        .try_state::<Arc<DebugLogsForwarder>>()
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
+    Ok(forwarder.inner().as_ref().stop_user_diagnostic_capture())
+}

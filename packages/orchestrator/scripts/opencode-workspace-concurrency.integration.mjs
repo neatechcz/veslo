@@ -213,8 +213,9 @@ try {
   }));
   assert.deepEqual(scopedReads.map((item) => item.id).sort(), [...sessions].sort());
 
+  const promptTimestamp = (BigInt(Date.now()) * 0x1000n) & 0xffffffffffffn;
   const promptMessageIds = sessions.map((_, index) =>
-    `msg_veslo_v1_${String(index + 1).padStart(32, "0")}`,
+    `msg_${promptTimestamp.toString(16).padStart(12, "0")}${String(index + 1).padStart(14, "0")}`,
   );
   const prompts = await Promise.all(sessions.map((id, index) => requestJson(first.baseUrl, `/session/${encodeURIComponent(id)}/prompt_async?directory=${encodeURIComponent(workspace)}`, {
     method: "POST",

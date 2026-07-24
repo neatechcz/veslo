@@ -87,6 +87,10 @@ The composer supports:
 
 Files pasted, dropped, or selected into the composer are inlined as attachment data only while they fit the 8 MB inline limit. When an oversized pasted or dropped file exposes a local path, the composer inserts a file reference instead and shows a toast with the file size and inline limit. On desktop macOS, pasted Finder files also consult the native pasteboard for file paths because WebKit can expose the file blob without the local path.
 
+For model delivery, non-image files are staged inside the selected workspace and sent to OpenCode as path references, not as raw binary prompt parts. This also applies when the attachment is the first message of a new chat. Images remain inline when the selected model supports vision.
+
+MSG email files are recognized but are not parsed by the current Veslo runtime. A valid MSG produces a visible error naming the file and asks the user to export it as EML, PDF, or TXT. A malformed MSG reports that the file could not be read. Either result is terminal before a model run begins and uses one editable failed user row. For a rejected first message, that row remains local and no server conversation is created. The rejected attachment is removed from the active Composer, and a subsequent text-only message can be sent normally. Veslo does not silently rewrite attachment history created by older releases; if an old chat remains affected, start a new chat and attach a supported export.
+
 Mentions are token-scoped composer input. A file mention opens only when `@` starts the current token, such as at the beginning of the draft or after whitespace; `@` characters embedded in URLs or email addresses remain plain text.
 
 Current keyboard behavior:
@@ -126,6 +130,15 @@ truth. OpenCode SSE `session.error` and `session.idle` observations are immediat
 signals: they can refresh local activity presentation and trigger a durable run-status read, but
 they cannot by themselves turn an admitted run into a failed terminal outcome.
 
+For prompt runs, the lifecycle stores the exact OpenCode admission message id. A terminal assistant
+whose `parentID` matches that id is definitive post-admission evidence and terminalizes the durable
+run on the first reconciliation read; it does not wait for a second polling interval. OpenCode 1.17.13
+omits inactive sessions from `/session/status`. When that authoritative inactive state is paired with
+an unfinished exact admitted assistant, reconciliation records a failure candidate and requires the
+same evidence twice before releasing the run, so a short status/transcript race cannot create a false
+failure while an orphaned run cannot remain active forever. A reported `busy` session continues to
+own long-running model, tool, and assistant work without an arbitrary wall-clock timeout.
+
 The visible run indicator, Stop control, and Escape stop shortcut use the same session-scoped
 projection. A non-stale lifecycle `running` result stays active even if a transient SSE observation
 has already made the engine session look idle. Failed, completed, and aborted lifecycle results have
@@ -148,12 +161,15 @@ truth. Render replacement and durable cleanup are deliberately separate: the pro
 the echo in the same render that includes its canonical row, while pending state is removed only after
 confirmed canonical adoption, never merely because the server accepted the run.
 
-`clientMessageId` is used for server admission and idempotency; it is not
-forwarded as an OpenCode message id. Pending transcript adoption requires one
-scoped, post-baseline user candidate. Explicit compatible client metadata wins;
-otherwise the app uses a bounded text/mode/file fingerprint. Ambiguous matches
-remain visible rather than being guessed. Bounded catch-up is reserved for a
-missing assistant response, and only a failure known before admission is
+`clientMessageId` is used for server admission and idempotency; it is never
+forwarded verbatim as an OpenCode message id. At actual prompt admission the
+server allocates a separate OpenCode-compatible ascending `messageID`, forwards
+it once, and persists that exact identity with the orchestrator run. Queued
+prompts allocate it only when dequeued. Pending transcript adoption requires
+one scoped, post-baseline user candidate. Explicit compatible client metadata
+wins; otherwise the app uses a bounded text/mode/file fingerprint. Ambiguous
+matches remain visible rather than being guessed. Bounded catch-up is reserved
+for a missing assistant response, and only a failure known before admission is
 editable.
 
 If an existing-conversation server-submit transport loses its response, Veslo replays the same

@@ -108,15 +108,15 @@ test("left sidebar session list uses tighter vertical spacing", () => {
 
   assert.match(
     source,
-    /innerClass="pl-5 pt-0\.5 space-y-0"/,
+    /innerClass="pl-4 pt-0\.5 space-y-0"/,
     "project session rows should use the same zero-gap stack",
   );
 });
 
-test("by-project session rows reserve right space and swap time for three-dot menu on hover", () => {
+test("by-project session rows reserve right space and swap time for the row action on hover", () => {
   assert.match(
     source,
-    /class=\{sessionRowClass\(isSelected\(\), "gap-2 pr-12"\)\}/,
+    /class=\{sessionRowClass\(isSelected\(\), "pr-12"\)\}/,
     "by-project rows should reserve a right column so timestamp and menu never overlap labels",
   );
 
@@ -220,7 +220,7 @@ test("session hover archive action stays hidden while another session is pending
 test("recent rows keep metadata tucked closer to the title line without a branch toggle button", () => {
   assert.match(
     source,
-    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-12 truncate"[\s\S]*<span class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
+    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[12\.5px\] text-gray-12 truncate"[\s\S]*<span class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
     "recent rows should keep the label and metadata stack tight even after removing the branch toggle button",
   );
 
@@ -232,13 +232,13 @@ test("recent rows keep metadata tucked closer to the title line without a branch
 
   assert.doesNotMatch(
     source,
-    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate font-medium"[\s\S]*<span class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
+    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[12\.5px\] text-gray-11 truncate font-medium"[\s\S]*<span class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
     "recent row titles should no longer force a medium font weight",
   );
 
   assert.doesNotMatch(
     source,
-    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[13px\] text-gray-11 truncate"[\s\S]*<span class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
+    /<span class="relative min-w-0 flex-1">[\s\S]*<span class="flex items-center gap-1\.5 min-w-0">[\s\S]*<span[\s\S]*class="text-\[12\.5px\] text-gray-11 truncate"[\s\S]*<span class="mt-px flex items-center gap-1 text-\[11px\] text-gray-10 min-w-0">/s,
     "recent row titles should no longer use the muted gray-11 text tone",
   );
 

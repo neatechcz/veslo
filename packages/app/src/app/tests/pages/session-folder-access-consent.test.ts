@@ -38,7 +38,7 @@ test("app passes a workspace config refresh callback into the session view", () 
   assert.match(appSource, /workspaceStore\.setAuthorizedDirs\(roots\.length \? roots : \[targetPath\]\)/);
   assert.match(appSource, /const reloadWorkspaceEngineAndResume = async \(workspaceId\?: string\)/);
   assert.match(appSource, /workspaceStore\.activateWorkspace\(targetWorkspaceId/);
-  assert.match(viewPropsSource, /refreshWorkspaceConfig: refreshWorkspaceConfigForPath/);
+  assert.match(viewPropsSource, /get refreshWorkspaceConfig\(\) \{\s*return refreshWorkspaceConfigForPath;\s*\}/);
 });
 
 test("app exposes a guarded E2E-only folder access permission injection hook", () => {
@@ -59,6 +59,6 @@ test("app consumes synthetic E2E folder access permissions without calling the l
   assert.match(appSource, /__vesloE2ELastFolderAccessPermissionReply = \{ requestID: requestId, reply \}/);
   assert.match(appSource, /await respondPermission\(requestID, reply\)/);
   assert.match(appSource, /const respondPermissionForAppViewProps = respondPermissionForSessionView/);
-  assert.match(viewPropsSource, /respondPermission: respondPermissionForAppViewProps/);
+  assert.match(viewPropsSource, /get respondPermission\(\) \{\s*return respondPermissionForAppViewProps;\s*\}/);
   assert.match(appSource, /await respondPermissionForSessionView\(requestID, reply\)/);
 });

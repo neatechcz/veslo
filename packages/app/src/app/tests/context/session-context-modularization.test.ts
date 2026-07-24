@@ -22,6 +22,10 @@ const allowedSessionContextModules = new Set([
   "session-lifecycle-recovery.ts",
   "session-route-sync.ts",
   "session-sidebar-decorations.ts",
+  // Durable transcript projection owners introduced by the exact-run and
+  // renderer diagnostic work.
+  "session-transcript-write-diagnostics.ts",
+  "session-visible-messages.ts",
   // Planned by the session-flow background ownership plan, not the earlier
   // session-store modularization plan.
   "session-flow-facade.ts",

@@ -107,6 +107,7 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
   registerResult: LifecycleRunStatusResult | null = null;
   markFailedError: unknown = null;
   readonly calls: string[] = [];
+  readonly registerInputs: Array<Parameters<OrchestratorLifecycleClient["register"]>[0]> = [];
 
   async active(workspaceId: string, conversationId: string): Promise<LifecycleRunStatusResult | null> {
     this.calls.push(`active:${workspaceId}:${conversationId}`);
@@ -115,16 +116,10 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     return this.activeResult;
   }
 
-  async register(input: {
-    workspaceId: string;
-    conversationId: string;
-    runId: string;
-    opencodeSessionId: string;
-    clientMessageId?: string | null;
-    origin?: string | null;
-    directory: string;
-    kind: string;
-  }): Promise<LifecycleRunStatusResult | null> {
+  async register(
+    input: Parameters<OrchestratorLifecycleClient["register"]>[0],
+  ): Promise<LifecycleRunStatusResult | null> {
+    this.registerInputs.push(input);
     this.calls.push(
       `register:${input.workspaceId}:${input.conversationId}:${input.runId}:${input.opencodeSessionId}:${input.kind}`,
     );
@@ -157,6 +152,10 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     return this.statusResult;
   }
 }
+
+type SubmittedOpenCodeCall = {
+  opencodeMessageId?: string | null;
+};
 
 class QueueHarness implements ConversationRunQueueStore {
   private nextId = 1;
@@ -1006,6 +1005,9 @@ test("submitRun registers inactive local runs before submitting", async () => {
   expect(queue.items).toEqual([]);
   expect(drainCalls).toEqual([]);
   expect(submitCalls).toHaveLength(1);
+  const submittedMessageId = (submitCalls[0] as SubmittedOpenCodeCall).opencodeMessageId;
+  expect(submittedMessageId).toMatch(/^msg_[0-9a-f]{26}$/);
+  expect(lifecycle.registerInputs[0]?.opencodeMessageId).toBe(submittedMessageId);
 });
 
 test("submitRun queues immediately for server-queue-only policy", async () => {
@@ -1022,6 +1024,7 @@ test("submitRun queues immediately for server-queue-only policy", async () => {
   expect(result.payload.activeRunId).toBe(null);
   expect(lifecycle.calls).toEqual([]);
   expect(queue.enqueueCalls[0]?.activeRunId).toBe(null);
+  expect(JSON.parse(queue.enqueueCalls[0]?.bodyJson ?? "{}").opencodeMessageId).toBeUndefined();
   expect(submitCalls).toEqual([]);
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
 });
@@ -1528,7 +1531,32 @@ test("lifecycle reconcile fails stale active runs after poll budget exhaustion a
 
   expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-stale");
   expect(lifecycle.calls).toContain(
-    "markFailed:ws_1:run-stale:run lifecycle reconcile exhausted after stale/no-progress active status",
+    "markFailed:ws_1:run-stale:run lifecycle reconcile exhausted while active status remained unresolved",
+  );
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+});
+
+test("lifecycle reconcile finalizes unresolved non-stale active runs after poll budget exhaustion", async () => {
+  const { controller, lifecycle, timers, workspaces } = controllerHarness();
+  lifecycle.statusResult = {
+    runId: "run-active",
+    status: "running",
+    stale: false,
+    activityKind: "unknown",
+    waitReason: "assistant_message_open",
+    noProgressSeconds: null,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-active",
+    reason: "accepted",
+    attempt: 2,
+  });
+
+  expect(lifecycle.calls).toContain(
+    "markFailed:ws_1:run-active:run lifecycle reconcile exhausted while active status remained unresolved",
   );
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
@@ -1576,6 +1604,9 @@ test("queue drain submits the next pending item after terminal latest lifecycle"
 
   expect(queue.items[0]?.state).toBe("submitted");
   expect(submitCalls).toHaveLength(1);
+  const submittedMessageId = (submitCalls[0] as SubmittedOpenCodeCall).opencodeMessageId;
+  expect(submittedMessageId).toMatch(/^msg_[0-9a-f]{26}$/);
+  expect(lifecycle.registerInputs[0]?.opencodeMessageId).toBe(submittedMessageId);
   expect(lifecycle.calls).toEqual([
     "status:ws_1:conv-a:latest",
     "register:ws_1:conv-a:run-queued:sess-a:prompt",
@@ -1653,6 +1684,30 @@ test("queue drain marks pending items failed when accepted submit fails", async 
 
   expect(queue.items[0]?.state).toBe("failed");
   expect(queue.items[0]?.error).toBe("accepted submit failed");
+});
+
+test("queue drain reuses one OpenCode message id when the same queued run is retried", async () => {
+  const { controller, lifecycle, queue, behavior, submitCalls } = controllerHarness();
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = null;
+  behavior.submitError = new Error("first queued submit failed");
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  const firstMessageId = (submitCalls[0] as SubmittedOpenCodeCall).opencodeMessageId;
+  expect(firstMessageId).toMatch(/^msg_[0-9a-f]{26}$/);
+  expect(queue.items[0]?.state).toBe("failed");
+
+  queue.items[0]!.state = "pending";
+  behavior.submitError = null;
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  const secondMessageId = (submitCalls[1] as SubmittedOpenCodeCall).opencodeMessageId;
+  expect(secondMessageId).toBe(firstMessageId);
+  expect(lifecycle.registerInputs.map((input) => input.opencodeMessageId)).toEqual([
+    firstMessageId,
+    secondMessageId,
+  ]);
 });
 
 test("stop clears queued drain and lifecycle reconcile timers", () => {

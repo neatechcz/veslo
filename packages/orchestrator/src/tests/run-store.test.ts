@@ -86,15 +86,17 @@ describe("run store", () => {
     }))).toThrow();
   });
 
-  test("persists client message id and origin across updates", async () => {
+  test("persists client, exact OpenCode message, and origin identities across updates", async () => {
     const store = await createTempStore();
     store.insert(record({
       clientMessageId: "msg-a",
+      opencodeMessageId: "msg_f946e8a160003a693ab36fcd8e",
       origin: "composer",
     }));
 
     expect(store.get("ws-a", "run-a")).toMatchObject({
       clientMessageId: "msg-a",
+      opencodeMessageId: "msg_f946e8a160003a693ab36fcd8e",
       origin: "composer",
     });
 
@@ -105,6 +107,7 @@ describe("run store", () => {
 
     expect(store.get("ws-a", "run-a")).toMatchObject({
       clientMessageId: "msg-a",
+      opencodeMessageId: "msg_f946e8a160003a693ab36fcd8e",
       origin: "composer",
       status: "blocked",
     });

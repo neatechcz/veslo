@@ -532,6 +532,13 @@ impl DebugLogsForwarder {
         Ok(self.user_diagnostic_capture_status())
     }
 
+    pub fn stop_user_diagnostic_capture(&self) -> UserDiagnosticCaptureStatus {
+        self.user_capture.stop();
+        self.user_capture
+            .flush(self.user_capture_context_snapshot());
+        self.user_diagnostic_capture_status()
+    }
+
     pub fn user_diagnostic_capture_status(&self) -> UserDiagnosticCaptureStatus {
         let context = self.user_capture_context_snapshot();
         let mut status = self.user_capture.status();

@@ -836,6 +836,118 @@ test("session lifecycle recovery keeps polling stale backend statuses", async ()
   assert.equal(controller.activeWatchCount(), 0);
 });
 
+test("reconcile does not re-arm an exhausted watch without explicit recovery", async () => {
+  const timers: Timer[] = [];
+  const statuses = { "ws-a\0ses-a": "running" };
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => statuses,
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: (sessionId, workspaceIdHint) => ({
+      sessionId,
+      workspaceId: workspaceIdHint || "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: sessionId,
+      runId: "run-a",
+    }),
+    readConversationRunStatus: async () => ({ runId: "run-a", status: "running", stale: false }),
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    initialDelayMs: 1,
+    pollMs: 1,
+    maxAttempts: 1,
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as Timer).cleared = true;
+    },
+  });
+
+  controller.reconcile();
+  timers.shift()?.callback();
+  await waitForAsyncPoll();
+
+  assert.equal(controller.activeWatchCount(), 0);
+  assert.equal(timers.length, 0);
+
+  controller.reconcile();
+  assert.equal(controller.activeWatchCount(), 0);
+  assert.equal(timers.length, 0);
+
+  assert.equal(controller.resumeExhaustedWatches("ws-a"), 1);
+  assert.equal(controller.activeWatchCount(), 1);
+});
+
+test("latest-run probe guard is released after a successful probe", async () => {
+  let reads = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: () => ({
+      sessionId: "ses-a",
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "ses-a",
+      runId: "latest",
+    }),
+    readConversationRunStatus: async () => {
+      reads += 1;
+      return { runId: `run-${reads}`, status: "completed", stale: false };
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+  });
+
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(await controller.probeSelectedConversationLatestRun(), false);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(reads, 2);
+});
+
+test("latest-run probe cannot publish or report an error after selection changes", async () => {
+  let selectedSessionId = "ses-a";
+  let selectionVersion = 1;
+  let rejectStatus!: (error: Error) => void;
+  const statusPromise = new Promise<SessionLifecycleRecoveryStatus | null>((_resolve, reject) => {
+    rejectStatus = reject;
+  });
+  const traces: Array<{ event: string; payload?: Record<string, unknown> }> = [];
+  let published = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => selectedSessionId,
+    currentSelectionVersion: () => selectionVersion,
+    resolveConversationRunForSession: () => ({
+      sessionId: "ses-a",
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "latest",
+    }),
+    readConversationRunStatus: async () => statusPromise,
+    onConversationRunStatus: () => {
+      published += 1;
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    trace: (event, payload) => traces.push({ event, payload }),
+  });
+
+  const probe = controller.probeSelectedConversationLatestRun();
+  selectedSessionId = "ses-b";
+  selectionVersion = 2;
+  rejectStatus(new Error("status request aborted after selection change"));
+
+  assert.equal(await probe, true);
+  assert.equal(published, 0);
+  const discarded = traces.find((entry) => entry.event === "session-lifecycle-recovery:latest-probe-discarded");
+  assert.equal(discarded?.payload?.outcome, "selection-changed-during-error");
+  assert.equal(discarded?.payload?.errorMessage, "status request aborted after selection change");
+  assert.equal(traces.some((entry) => entry.event === "session-lifecycle-recovery:latest-probe-error"), false);
+});
+
 test("session lifecycle recovery reports active no-progress diagnostics", async () => {
   const timers: Timer[] = [];
   const diagnostics: Array<{
@@ -1075,6 +1187,84 @@ test("selected exact conversation probes latest once after reload and restores d
     directory: undefined,
     expectedRunId: "run-failed",
   }]);
+});
+
+test("latest-run probe guard is released after terminal transcript hydration settles", async () => {
+  let reads = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: (_sessionId, _workspaceIdHint, options) => options?.allowLatest
+      ? {
+          sessionId: "ses-a",
+          workspaceId: "ws-a",
+          conversationId: "conv-a",
+          opencodeSessionId: "ses-a",
+          runId: "latest",
+        }
+      : null,
+    readConversationRunStatus: async () => {
+      reads += 1;
+      return { runId: `run-${reads}`, status: "completed", stale: false };
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    recoverConversationTranscript: async () => ({
+      workspaceId: "ws-a",
+      sessionId: "ses-a",
+      limit: 140,
+      messages: [],
+      partsByMessageId: {},
+      source: "sqlite",
+    }),
+  });
+
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(await controller.probeSelectedConversationLatestRun(), false);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(reads, 2);
+});
+
+test("latest-run probe does not re-project the same settled terminal run", async () => {
+  let reads = 0;
+  let recoveries = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-a",
+    resolveConversationRunForSession: (_sessionId, _workspaceIdHint, options) => options?.allowLatest
+      ? {
+          sessionId: "ses-a",
+          workspaceId: "ws-a",
+          conversationId: "conv-a",
+          opencodeSessionId: "ses-a",
+          runId: "latest",
+        }
+      : null,
+    readConversationRunStatus: async () => {
+      reads += 1;
+      return { runId: "run-a", status: "completed", stale: false };
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    recoverConversationTranscript: async () => {
+      recoveries += 1;
+      return {
+        workspaceId: "ws-a",
+        sessionId: "ses-a",
+        limit: 140,
+        messages: [],
+        partsByMessageId: {},
+        source: "sqlite",
+      };
+    },
+  });
+
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(await controller.probeSelectedConversationLatestRun(), true);
+  assert.equal(reads, 2);
+  assert.equal(recoveries, 1);
 });
 
 test("terminal lifecycle truth remains available after its watch is released", async () => {

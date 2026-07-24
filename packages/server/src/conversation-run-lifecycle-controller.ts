@@ -12,6 +12,7 @@ import {
   type LifecycleRunStatusResult,
   type OrchestratorLifecycleClient,
 } from "./orchestrator-lifecycle-client.js";
+import { createConversationRunOpenCodeMessageId } from "./conversation-run-message-id.js";
 import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
 import type { WorkspaceInfo } from "./types.js";
 
@@ -49,6 +50,7 @@ export type ConversationRunLifecycleSubmitOpenCodeInput = {
   kind: ConversationRunLifecycleKind;
   body: Record<string, unknown>;
   clientMessageId: string | null;
+  opencodeMessageId?: string | null;
   origin: string | null;
   orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   captureEngineOwner?: (owner: ConversationWorkspaceRunEngineOwner) => void;
@@ -143,6 +145,7 @@ export type ConversationRunLifecycleSubmitInput = {
   kind: ConversationRunLifecycleKind;
   body: Record<string, unknown>;
   clientMessageId: string | null;
+  opencodeMessageId?: string | null;
   origin: string | null;
   orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   submitQueuePolicy?: ConversationRunLifecycleSubmitQueuePolicy;
@@ -259,6 +262,24 @@ export type ConversationRunLifecycleController = {
 
 const ACTIVE_LIFECYCLE_STATUSES = new Set<LifecycleRunStatus>(["submitted", "running", "blocked"]);
 
+function withOpenCodeAdmissionMessageId(
+  input: ConversationRunLifecycleSubmitInput,
+  timestamp = Date.now(),
+): ConversationRunLifecycleSubmitInput {
+  if (input.kind !== "prompt_async" || !input.clientMessageId?.trim()) return input;
+  if (input.opencodeMessageId?.trim()) return input;
+  return {
+    ...input,
+    opencodeMessageId: createConversationRunOpenCodeMessageId({
+      workspaceId: input.workspace.id,
+      engineSessionId: input.target.opencodeSessionId,
+      clientMessageId: input.clientMessageId,
+      runId: input.runId,
+      timestamp,
+    }),
+  };
+}
+
 function lifecycleRunKind(kind: ConversationRunLifecycleKind) {
   return kind === "prompt_async" ? "prompt" : kind;
 }
@@ -369,21 +390,10 @@ function lifecycleStatusTraceFields(
   };
 }
 
-function lifecycleNoProgressThresholdSeconds(maxAttempts: number, pollMs: number): number {
-  return Math.max(60, Math.ceil((Math.max(1, maxAttempts) * Math.max(1, pollMs)) / 1000));
-}
-
-function shouldFailStaleActiveLifecycleRun(
+function shouldFinalizeExhaustedActiveLifecycleRun(
   status: LifecycleRunStatusResult | null | undefined,
-  maxAttempts: number,
-  pollMs: number,
 ): boolean {
-  if (!status || !isActiveLifecycleStatus(status.status)) return false;
-  if (status.stale === true) return true;
-  const noProgressSeconds = status.noProgressSeconds;
-  return typeof noProgressSeconds === "number" &&
-    Number.isFinite(noProgressSeconds) &&
-    noProgressSeconds >= lifecycleNoProgressThresholdSeconds(maxAttempts, pollMs);
+  return Boolean(status && isActiveLifecycleStatus(status.status));
 }
 
 function createNoopRunTrace(): ConversationRunLifecycleTracer {
@@ -918,6 +928,7 @@ export function createConversationRunLifecycleController(
         kind: input.kind,
         body: input.body,
         clientMessageId: input.clientMessageId,
+        opencodeMessageId: input.opencodeMessageId ?? null,
         origin: input.origin,
         orchestratorRegistrationScope: input.orchestratorRegistrationScope ?? null,
         captureEngineOwner: (owner) => {
@@ -1085,13 +1096,13 @@ export function createConversationRunLifecycleController(
           stale: status?.stale ?? null,
           ...lifecycleStatusTraceFields(status),
         });
-        if (shouldFailStaleActiveLifecycleRun(status, maxAttempts, pollMs)) {
+        if (shouldFinalizeExhaustedActiveLifecycleRun(status)) {
           await lifecycleOwner.markFailed(
             input.workspace.id,
             status?.runId?.trim() || runId,
-            "run lifecycle reconcile exhausted after stale/no-progress active status",
+            "run lifecycle reconcile exhausted while active status remained unresolved",
           ).then(() => {
-            recordTrace("server:conversation-run:lifecycle-reconcile-stale-failed", {
+            recordTrace("server:conversation-run:lifecycle-reconcile-exhausted-failed", {
               workspaceId: input.workspace.id,
               conversationId,
               runId: status?.runId?.trim() || runId,
@@ -1102,7 +1113,7 @@ export function createConversationRunLifecycleController(
               ...lifecycleStatusTraceFields(status),
             });
             unregisterScheduledAiGatewayRun(input);
-            releaseRun(input.workspace.id, status?.runId?.trim() || runId, "stale-reconcile-failed");
+            releaseRun(input.workspace.id, status?.runId?.trim() || runId, "unresolved-reconcile-failed");
             scheduleQueueDrain(input.workspace.id, conversationId, 0);
           }).catch((error) => {
             recordTrace("server:conversation-run:lifecycle-mark-failed-error", {
@@ -1346,6 +1357,19 @@ export function createConversationRunLifecycleController(
       if (!queuedItem || !queuedRunTrace) {
         throw new Error("queue drain lost its claimed item or trace");
       }
+      const queuedSubmitInput = withOpenCodeAdmissionMessageId({
+        runTrace: queuedRunTrace,
+        workspace,
+        target,
+        runId: queuedItem.reservedRunId,
+        kind,
+        body,
+        clientMessageId: queuedItem.clientMessageId,
+        origin: queuedItem.origin,
+        expectAiGatewayStart,
+        runtimeAuthorizationActorTokenHash,
+        runtimeAuthorizationOrgId,
+      }, queuedItem.createdAt);
 
       if (lifecycleOwner) {
         try {
@@ -1358,6 +1382,7 @@ export function createConversationRunLifecycleController(
                 runId: queuedItem.reservedRunId,
                 opencodeSessionId: queuedItem.opencodeSessionId,
                 clientMessageId: queuedItem.clientMessageId,
+                opencodeMessageId: queuedSubmitInput.opencodeMessageId ?? null,
                 origin: queuedItem.origin,
                 directory: queuedItem.directory,
                 kind: lifecycleRunKind(kind),
@@ -1370,12 +1395,7 @@ export function createConversationRunLifecycleController(
                 queueItemId: queuedItem.queueItemId,
               },
             );
-            reserveStarting({
-              runTrace: queuedRunTrace,
-              workspace,
-              target,
-              runId: queuedItem.reservedRunId,
-            });
+            reserveStarting(queuedSubmitInput);
           });
         } catch (error) {
           if (error instanceof RunAlreadyActiveError) {
@@ -1408,28 +1428,11 @@ export function createConversationRunLifecycleController(
         }
       } else {
         await withWorkspaceExecutionGate(workspace.id, async () => {
-          reserveStarting({
-            runTrace: queuedRunTrace,
-            workspace,
-            target,
-            runId: queuedItem.reservedRunId,
-          });
+          reserveStarting(queuedSubmitInput);
         });
       }
 
-      await submitAcceptedRun({
-        runTrace: queuedRunTrace,
-        workspace,
-        target,
-        runId: queuedItem.reservedRunId,
-        kind,
-        body,
-        clientMessageId: queuedItem.clientMessageId,
-        origin: queuedItem.origin,
-        expectAiGatewayStart,
-        runtimeAuthorizationActorTokenHash,
-        runtimeAuthorizationOrgId,
-      }, lifecycleOwner);
+      await submitAcceptedRun(queuedSubmitInput, lifecycleOwner);
       const submitted = options.queueStore.markSubmitted(item.queueItemId);
       if (!submitted) {
         runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
@@ -1578,6 +1581,7 @@ export function createConversationRunLifecycleController(
     notifyEngineLoss,
     async submitRun(input) {
       return withWorkspaceExecutionGate(input.workspace.id, async () => {
+      let admittedInput = input;
       const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
       input.runTrace.record("server:conversation-run:lifecycle-owner", {
         workspaceId: input.workspace.id,
@@ -1628,6 +1632,7 @@ export function createConversationRunLifecycleController(
           });
         }
         try {
+          admittedInput = withOpenCodeAdmissionMessageId(input);
           const registered = await input.runTrace.step(
             "server:conversation-run:lifecycle-register",
             () => lifecycleOwner.register({
@@ -1636,6 +1641,7 @@ export function createConversationRunLifecycleController(
               runId: input.runId,
               opencodeSessionId: input.target.opencodeSessionId,
               clientMessageId: input.clientMessageId,
+              opencodeMessageId: admittedInput.opencodeMessageId ?? null,
               origin: input.origin,
               directory: input.target.directory,
               kind: lifecycleRunKind(input.kind),
@@ -1699,8 +1705,9 @@ export function createConversationRunLifecycleController(
       if (!options.submitOpenCode) {
         throw new Error("OpenCode submit port is required for admitted conversation runs");
       }
-      reserveStarting(input);
-      const upstream = await submitAcceptedRun(input, lifecycleOwner);
+      admittedInput = withOpenCodeAdmissionMessageId(admittedInput);
+      reserveStarting(admittedInput);
+      const upstream = await submitAcceptedRun(admittedInput, lifecycleOwner);
       input.runTrace.record("server:conversation-run:submitted", {
         workspaceId: input.workspace.id,
         conversationId: input.target.conversationId,

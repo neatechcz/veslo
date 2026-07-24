@@ -264,7 +264,7 @@ Den accepts uploaded debug-log batches from `veslo-server` at `POST /v1/internal
 
 Den also accepts the desktop fallback stream at `POST /v1/desktop-diagnostics`. That route uses the signed-in user's Better Auth bearer token and verifies org membership before ingesting into the same encrypted debug-log store. It accepts only desktop-owned diagnostics lanes (`Veslo bootstrap` diagnostic events and `veslo-server-shell` stdout/stderr), and it rejects arbitrary debug-log sources.
 
-Production installers and debug Tauri runtimes expose a user-started **Send a diagnostic capture** control in Settings. It creates a native-owned, redacted capture for at most 120 seconds and 2 MiB of fully serialized log events. Direct upload batches contain up to 1,000 events or 512 KiB of the serialized request body, whichever limit is reached first; the 2 MiB total capture budget remains unchanged. Capture events use a UUID `captureId`, are queued separately from the normal desktop spool, bypass local `/debug-logs`, and use a stable direct-to-Den idempotency key. Queue reads, writes and rewrites are serialized; corrupt or missing capture queues become terminal `undeliverable` states rather than being silently discarded. The journal binds the queue to the user/org that started it and reports `uploaded` only after all queued capture events (including the final summary) have been accepted. Client failures use persisted backoff, while a server validation rejection is terminal. If the account changes, the process restarts, the byte cap is hit, or the 24-hour queue retention expires, the terminal journal state records the reason instead of retrying under a different identity. Debug builds are available for team-assisted diagnosis; release builds are compile-time gated by `VESLO_USER_DIAGNOSTIC_CAPTURE` **and** an exact `VESLO_DEPLOYMENT_DOMAIN=veslo.work`, with either missing or mismatched input failing closed. Every capture still requires a signed-in user and `https://api.veslo.work`.
+Production installers and debug Tauri runtimes expose a user-started **Send a diagnostic capture** control in Settings. It creates a native-owned, redacted capture for at most 120 seconds and 2 MiB of fully serialized log events; the active capture can also be stopped early with the **Stop capture** action. Direct upload batches contain up to 1,000 events or 512 KiB of the serialized request body, whichever limit is reached first; the 2 MiB total capture budget remains unchanged. Capture events use a UUID `captureId`, are queued separately from the normal desktop spool, bypass local `/debug-logs`, and use a stable direct-to-Den idempotency key. Queue reads, writes and rewrites are serialized; corrupt or missing capture queues become terminal `undeliverable` states rather than being silently discarded. The journal binds the queue to the user/org that started it and reports `uploaded` only after all queued capture events (including the final summary) have been accepted. Client failures use persisted backoff, while a server validation rejection is terminal. If the account changes, the process restarts, the byte cap is hit, or the 24-hour queue retention expires, the terminal journal state records the reason instead of retrying under a different identity. Debug builds are available for team-assisted diagnosis; release builds are compile-time gated by `VESLO_USER_DIAGNOSTIC_CAPTURE` **and** an exact `VESLO_DEPLOYMENT_DOMAIN=veslo.work`, with either missing or mismatched input failing closed. Every capture still requires a signed-in user and `https://api.veslo.work`.
 
 Environment variables:
 
@@ -515,11 +515,14 @@ user, and connector. The SharePoint platform connector is read-only and local
 OpenCode config only represents runtime installation, not Microsoft grant
 ownership.
 
-Desktop workspace provisioning seeds the default Chrome MCP as a local command
-using `chrome-devtools-mcp --isolated`. Existing `chrome-devtools` or
-`control-chrome` aliases are not duplicated. Known legacy aliases that still use
+Desktop workspace provisioning does not enable Chrome MCP by default. Control
+Chrome is installed only through the explicit Napojení quick-connect action,
+which writes `chrome-devtools-mcp --isolated` with `enabled: true`. Provisioning
+removes the exact legacy `chrome-devtools` entry that older Veslo releases
+implicitly seeded without an `enabled` marker, while preserving explicitly
+enabled, aliased, and custom entries. Known legacy aliases that still use
 `npx -y chrome-devtools-mcp@latest --isolated` or the equivalent `npm exec`
-shape are migrated to the packaged sidecar command.
+shape are migrated to the packaged sidecar command and marked enabled.
 
 ## Skills Inventory
 

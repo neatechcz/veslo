@@ -141,6 +141,21 @@ The `tauri-pilot` launcher waits for the Tauri process it started to exit during
 
 WebdriverIO is no longer part of the Veslo desktop E2E surface. Desktop E2E coverage lives in `packages/e2e/pilot-scenarios` or focused `*.pilot.ts` scripts, and the default `packages/e2e` `test` script runs the Tauri Pilot `current-gate` suite.
 
+### Focused VSLO-281 attachment gate
+
+The MSG regression uses the real Tauri app, compiled Veslo server, actual
+Composer file input, and deterministic OpenCode/lifecycle fixture. It covers an
+unsupported MSG as both the first message of a new chat and in an existing
+chat, verifies that no Veslo conversation, OpenCode prompt, or run is admitted,
+and then proves a visible text-only recovery response in the same chat.
+
+Run the desktop preflight above, then:
+
+```bash
+pnpm --filter @neatech/veslo-e2e run build:desktop:e2e
+pnpm --filter @neatech/veslo-e2e run test:pilot:vslo-281-msg-attachment
+```
+
 ## Fast Checks by Surface
 
 ### App-only documentation or copy changes

@@ -1658,7 +1658,7 @@ test("active server config sync records a completed intent after a write", async
   assert.match(String(completedSkip?.payload.scopeHash), /^[0-9a-f]{8}$/);
 });
 
-test("send preflight reuses an unchanged completed active-workspace config verification", async () => {
+test("send preflight freshly verifies an unchanged active-workspace config without rewriting it", async () => {
   const client = createVesloClient();
   const sync = createManagedAiRuntimeConfigSync(createOptions({
     vesloServerClient: () => client,
@@ -1672,7 +1672,7 @@ test("send preflight reuses an unchanged completed active-workspace config verif
     workspaceRoot: "/repo",
   });
 
-  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
+  assert.deepEqual(client.getConfigCalls, ["ws-active", "ws-active"]);
   assert.equal(client.patched.length, 1);
 });
 

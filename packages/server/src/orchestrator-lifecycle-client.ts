@@ -22,6 +22,7 @@ export type LifecycleRunStatusResult = {
   engineBaseUrl?: string | null;
   error?: string | null;
   clientMessageId?: string | null;
+  opencodeMessageId?: string | null;
   origin?: string | null;
   activityKind?: LifecycleRunActivityKind | null;
   waitReason?: LifecycleRunWaitReason | null;
@@ -102,6 +103,7 @@ export type OrchestratorLifecycleClient = {
     runId: string;
     opencodeSessionId: string;
     clientMessageId?: string | null;
+    opencodeMessageId?: string | null;
     origin?: string | null;
     directory: string;
     kind: string;
@@ -228,6 +230,8 @@ export function createOrchestratorLifecycleClient(options: {
     if ("error" in record) result.error = typeof record.error === "string" ? record.error : null;
     if (typeof record.clientMessageId === "string") result.clientMessageId = record.clientMessageId;
     else if (record.clientMessageId === null) result.clientMessageId = null;
+    if (typeof record.opencodeMessageId === "string") result.opencodeMessageId = record.opencodeMessageId;
+    else if (record.opencodeMessageId === null) result.opencodeMessageId = null;
     if (typeof record.origin === "string") result.origin = record.origin;
     else if (record.origin === null) result.origin = null;
     const activityKind = optionalActivityKind(record.activityKind);
@@ -265,6 +269,7 @@ export function createOrchestratorLifecycleClient(options: {
         runId: input.runId,
         opencodeSessionId: input.opencodeSessionId,
         ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+        ...(input.opencodeMessageId ? { opencodeMessageId: input.opencodeMessageId } : {}),
         ...(input.origin ? { origin: input.origin } : {}),
         directory: input.directory,
         kind: input.kind,

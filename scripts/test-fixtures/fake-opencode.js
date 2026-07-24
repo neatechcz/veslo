@@ -85,6 +85,7 @@ function summarizeBody(body) {
   const parts = Array.isArray(body?.parts) ? body.parts : [];
   return {
     bodyKeys: Object.keys(body ?? {}).sort(),
+    messageID: typeof body?.messageID === "string" ? body.messageID : null,
     partCount: parts.length,
     partTypes: parts.map((part) => typeof part?.type === "string" ? part.type : "unknown"),
   };

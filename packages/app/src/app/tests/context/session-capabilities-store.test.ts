@@ -223,12 +223,6 @@ test("session capabilities store loads remote Veslo workspace skills and MCP ent
             return {
               items: [
                 {
-                  name: "global-remote",
-                  path: "/global/SKILL.md",
-                  description: "Global remote",
-                  scope: "global",
-                },
-                {
                   name: "workspace-remote",
                   path: "/workspace/SKILL.md",
                   description: "Workspace remote",
@@ -258,9 +252,8 @@ test("session capabilities store loads remote Veslo workspace skills and MCP ent
       await effects.flush();
 
       assert.equal(store.sessionCapabilitiesStatus(), "ready");
-      assert.deepEqual(calls, ["skills:server-ws:true", "mcp:server-ws"]);
+      assert.deepEqual(calls, ["skills:server-ws:false", "mcp:server-ws"]);
       assert.deepEqual(store.sessionCapabilities()?.skills.map((row) => `${row.name}:${row.scope}`), [
-        "global-remote:global",
         "workspace-remote:workspace",
       ]);
       assert.deepEqual(store.sessionCapabilities()?.mcp.map((row) => `${row.name}:${row.type}`), [

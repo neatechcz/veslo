@@ -185,7 +185,7 @@ const openPendingDraftFromDirectorySelection = () => {
 test("app passes active pending draft key into session view props", () => {
   assert.match(
     appViewPropsSource,
-    /activePendingDraftKey: activePendingDraftKey\(\),/,
+    /get activePendingDraftKey\(\) \{\s*return activePendingDraftKey\(\);\s*\}/,
     "session props should pass the active pending draft key into SessionView",
   );
 });

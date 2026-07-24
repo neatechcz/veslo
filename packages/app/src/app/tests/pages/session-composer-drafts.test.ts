@@ -18,6 +18,7 @@ import {
 import {
   createEmptyComposerDraft,
   clearSessionComposerDraftIfRevision,
+  clearSessionComposerDraftIfMatches,
   deleteSessionComposerDraft,
   getSessionComposerDraft,
   getSessionComposerDraftRevision,
@@ -160,6 +161,29 @@ test("preserves entry identity for a semantic no-op and rejects a stale conditio
   );
   assert.equal(currentClear.cleared, true);
   assert.equal(getSessionComposerDraft(currentClear.state, "session-a").text, "");
+});
+
+test("snapshot clear removes only an unchanged transferred draft", () => {
+  const submitted = withText("Use this email", {
+    attachments: [{
+      id: "msg-attachment",
+      name: "mail.msg",
+      mimeType: "application/octet-stream",
+      size: 512,
+      kind: "file",
+      dataUrl: "data:application/octet-stream;base64,0M8R4KGxGuE=",
+    }],
+  });
+  const initial = setSessionComposerDraft({}, "session-a", submitted);
+  const cleared = clearSessionComposerDraftIfMatches(initial, "session-a", submitted);
+  assert.equal(cleared.cleared, true);
+  assert.equal(getSessionComposerDraft(cleared.state, "session-a").text, "");
+
+  const newer = setSessionComposerDraft(initial, "session-a", withText("follow-up"));
+  const protectedNewer = clearSessionComposerDraftIfMatches(newer, "session-a", submitted);
+  assert.equal(protectedNewer.cleared, false);
+  assert.strictEqual(protectedNewer.state, newer);
+  assert.equal(getSessionComposerDraft(protectedNewer.state, "session-a").text, "follow-up");
 });
 
 test("materializing a pending session moves its follow-up composer draft into the real session", () => {

@@ -302,12 +302,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       forgetTextDeltaPart(sourceWsId, sessionID, part.id);
     }
   };
-  const forgetTextDeltaSession = (sourceWsId: string, sessionID: string) => {
-    const prefix = `${sseConnectionKey(sourceWsId)}\u0000${sessionID}\u0000`;
-    for (const key of Array.from(seenTextDeltaEventIdsByPart.keys())) {
-      if (key.startsWith(prefix)) seenTextDeltaEventIdsByPart.delete(key);
-    }
-  };
   const inspectTextDelta = (
     sourceWsId: string,
     sessionID: string,
@@ -1810,7 +1804,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   return {
     applyBackgroundWorkspaceEvent,
     applyEvent,
-    clearTextDeltaReplayStateForTerminalSnapshot: forgetTextDeltaSession,
     setupSseStream,
     startEventStreams,
   };

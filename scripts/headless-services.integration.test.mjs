@@ -341,7 +341,8 @@ test("headless services submit the first message once through the real dev topol
     assert.equal(sessions[0]?.directory, runtime.workspace);
     assert.equal(prompts[0]?.directory, runtime.workspace);
     assert.equal(prompts[0]?.traceId, "service-gate-first-submit");
-    assert.deepEqual(prompts[0]?.bodyKeys, ["parts"]);
+    assert.deepEqual(prompts[0]?.bodyKeys, ["messageID", "parts"]);
+    assert.match(prompts[0]?.messageID ?? "", /^msg_[0-9a-f]{26}$/);
     assert.equal(prompts[0]?.partCount, 1);
     assert.deepEqual(prompts[0]?.partTypes, ["text"]);
     assertAuthenticatedFakeRequests(requests);
@@ -521,7 +522,7 @@ test("headless services expose daemon run state only to the real lifecycle token
     assert.equal(run?.runId, submitted.body.runId);
     assert.equal(run?.conversationId, submitted.body.conversationId);
     assert.equal(run?.engineSessionId, submitted.body.opencodeSessionId);
-    assert.equal(run?.status, "completed");
+    assert.equal(run?.status, "running");
     preserve = false;
   } catch (error) {
     throw preservedRuntimeError(runtime, error);

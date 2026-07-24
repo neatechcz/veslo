@@ -18,7 +18,6 @@ import type {
   DisabledSkillTarget,
 } from "./types.js";
 import { ApprovalService } from "./approvals.js";
-import { deriveConversationRunOpenCodeMessageId } from "./conversation-run-message-id.js";
 import {
   deleteGlobalSkillRecoverable,
   deleteSkillAtPathRecoverable,
@@ -4502,6 +4501,7 @@ function createRoutes(
     kind: "prompt_async" | "command" | "shell" | "summarize";
     body: Record<string, unknown>;
     clientMessageId: string | null;
+    opencodeMessageId?: string | null;
     origin: string | null;
     orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
     captureEngineOwner?: (owner: ConversationWorkspaceRunEngineOwner) => void;
@@ -4521,13 +4521,9 @@ function createRoutes(
     const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
     const opencodeRunBody = buildConversationRunBody(kind, {
       ...body,
-      ...(kind === "prompt_async" && clientMessageId
+      ...(kind === "prompt_async" && input.opencodeMessageId
         ? {
-            messageID: deriveConversationRunOpenCodeMessageId({
-              workspaceId: workspace.id,
-              engineSessionId: target.opencodeSessionId,
-              clientMessageId,
-            }),
+            messageID: input.opencodeMessageId,
           }
         : {}),
     });

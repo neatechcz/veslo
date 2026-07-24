@@ -492,6 +492,38 @@ runtime readiness may have changed. If a failed first-session submit already
 materialized a Veslo conversation/OpenCode session, a retry reuses that stored
 target rather than creating a second conversation.
 
+### Attachment Submission and Transport
+
+Conversation submit is the authority for attachment normalization. It resolves
+the authenticated workspace before materializing a conversation or reserving a
+run. A raw non-image attachment without a reusable validated path is staged
+atomically under the workspace with a deterministic submit/attachment identity.
+Replay reuses the staged result. Path validation rejects traversal, symlinks,
+non-regular files, and references outside the selected workspace.
+
+After successful staging, OpenCode receives only the workspace-relative path in
+text plus safe display metadata. The original non-image data URL, base64 bytes,
+`file://` URL, and original-file `FilePart` are removed even when an older client
+sends both bytes and a path. Images are the only inline-media exception.
+Attachment limits are enforced before staging: at most 16 files, 8 MiB per
+file, 32 MiB total attachment bytes, and 48 MiB for the encoded submit body.
+
+Known attachment errors are typed pre-admission results and do not create an
+OpenCode session, prompt, conversation run, or durable queue item. A CFB-backed
+MSG is recognized explicitly. Because this release has no MSG parser, a valid
+MSG returns `attachment_format_unsupported` with EML, PDF, and TXT as recovery
+formats; a malformed MSG returns `attachment_processing_failed`. A generic
+`application/octet-stream` MIME value is not itself an unsupported-format
+decision.
+
+The app localizes the safe code and details and renders one owner: an editable
+failed optimistic user row, including a local-only row before first-chat
+materialization. A Composer alert is only the fallback when no optimistic row
+was created. Runtime rejection after admission is different: lifecycle owns a
+terminal `failed` run and the UI renders one safe attachment-runtime error.
+Historical transcript parts are never deleted or rewritten automatically;
+legacy recovery is a new chat or a newly attached supported representation.
+
 Conversation run lifecycle orchestration is a server-owned control-plane
 concern. The app talks to the conversation routes and should not duplicate
 server decisions about active lifecycle locks, durable queued sends, OpenCode

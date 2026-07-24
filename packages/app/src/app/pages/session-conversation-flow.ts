@@ -373,6 +373,12 @@ export const resolvePendingSessionHandoffFailureAction = ({
   };
 };
 
+export const submitFailureHasTimelineOwner = (input: {
+  showOptimisticSubmit: boolean;
+  pendingSubmitMatched: boolean;
+}): boolean =>
+  input.showOptimisticSubmit && input.pendingSubmitMatched;
+
 export type PendingSessionHandoffMaterializationInput = {
   pendingSessionBaseKeyBeforeHandoff: string | null;
   pendingSessionKeyBeforeHandoff: string | null;
@@ -465,6 +471,7 @@ export type MarkMatchingPendingSubmittedDraftFailedResult = {
   draftsBySessionKey: PendingSubmittedDraftBySessionKey;
   materializedSessionIdToRestore: string | null;
   materializedSessionIdForRunStateReset: string | null;
+  matched: boolean;
 };
 
 export const markMatchingPendingSubmittedDraftFailed = ({
@@ -487,6 +494,7 @@ export const markMatchingPendingSubmittedDraftFailed = ({
       draftsBySessionKey,
       materializedSessionIdToRestore: null,
       materializedSessionIdForRunStateReset: null,
+      matched: false,
     };
   }
 
@@ -497,6 +505,7 @@ export const markMatchingPendingSubmittedDraftFailed = ({
       draftsBySessionKey: setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, failed),
       materializedSessionIdToRestore: null,
       materializedSessionIdForRunStateReset: null,
+      matched: true,
     };
   }
 
@@ -507,6 +516,7 @@ export const markMatchingPendingSubmittedDraftFailed = ({
       draftsBySessionKey: setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, failed),
       materializedSessionIdToRestore,
       materializedSessionIdForRunStateReset: current.sessionId,
+      matched: true,
     };
   }
 
@@ -522,6 +532,7 @@ export const markMatchingPendingSubmittedDraftFailed = ({
     ),
     materializedSessionIdToRestore,
     materializedSessionIdForRunStateReset: null,
+    matched: true,
   };
 };
 
@@ -559,6 +570,7 @@ export const markMatchingPendingSubmittedDraftOutcomeUnknown = ({
       draftsBySessionKey,
       materializedSessionIdToRestore: null,
       materializedSessionIdForRunStateReset: null,
+      matched: false,
     };
   }
 
@@ -569,6 +581,7 @@ export const markMatchingPendingSubmittedDraftOutcomeUnknown = ({
       draftsBySessionKey: setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, unknown),
       materializedSessionIdToRestore: current.sessionId || materializedSessionIdFromHandoff || null,
       materializedSessionIdForRunStateReset: current.sessionId || null,
+      matched: true,
     };
   }
 
@@ -584,6 +597,7 @@ export const markMatchingPendingSubmittedDraftOutcomeUnknown = ({
     ),
     materializedSessionIdToRestore: materializedSessionIdFromHandoff,
     materializedSessionIdForRunStateReset: null,
+    matched: true,
   };
 };
 
@@ -1298,6 +1312,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       };
       const markMatchingPendingSubmitFailed = (errorMessage: string, errorCode?: string | null) => {
         let materializedSessionIdToRestore: string | null = null;
+        let matched = false;
         deps.pendingSubmitted.updatePendingSubmittedDrafts((draftsBySessionKey) => {
           const result = markMatchingPendingSubmittedDraftFailed({
             draftsBySessionKey,
@@ -1308,6 +1323,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             errorMessage,
             errorCode,
           });
+          matched = result.matched;
           materializedSessionIdToRestore = result.materializedSessionIdToRestore;
           if (result.materializedSessionIdForRunStateReset) {
             materializedSessionIdForRunStateReset = result.materializedSessionIdForRunStateReset;
@@ -1321,9 +1337,11 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             materializedPendingSessionTarget.current?.sessionKey,
           );
         }
+        return matched;
       };
       const markMatchingPendingSubmitOutcomeUnknown = (errorMessage: string) => {
         let materializedSessionIdToRestore: string | null = null;
+        let matched = false;
         deps.pendingSubmitted.updatePendingSubmittedDrafts((draftsBySessionKey) => {
           const result = markMatchingPendingSubmittedDraftOutcomeUnknown({
             draftsBySessionKey,
@@ -1333,6 +1351,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             materializedSessionIdFromHandoff,
             errorMessage,
           });
+          matched = result.matched;
           materializedSessionIdToRestore = result.materializedSessionIdToRestore;
           if (result.materializedSessionIdForRunStateReset) {
             materializedSessionIdForRunStateReset = result.materializedSessionIdForRunStateReset;
@@ -1346,6 +1365,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             materializedPendingSessionTarget.current?.sessionKey,
           );
         }
+        return matched;
       };
       const finishPendingSessionHandoffFailure = () => {
         const action = resolvePendingSessionHandoffFailureAction({
@@ -1609,20 +1629,30 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             : submitResult.message ??
               deps.runtime.error() ??
               deps.feedback.tr("session.connect_server_to_attach");
+          let pendingSubmitMatched = false;
           if (showOptimisticSubmit) {
             if (submitResult.code === "server_submit_outcome_unknown") {
-              markMatchingPendingSubmitOutcomeUnknown(errorMessage);
+              pendingSubmitMatched = markMatchingPendingSubmitOutcomeUnknown(errorMessage);
             } else {
-              markMatchingPendingSubmitFailed(errorMessage, failurePresentation.specific ? submitResult.code : null);
+              pendingSubmitMatched = markMatchingPendingSubmitFailed(
+                errorMessage,
+                failurePresentation.specific ? submitResult.code : null,
+              );
             }
             deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "send-rejected");
           }
           finishPendingSessionHandoffFailure();
-          deps.feedback.setToastMessage(
-            errorMessage,
-          );
-          settlePendingSessionMaterializationFlight(submitResult);
-          return submitResult;
+          if (!submitFailureHasTimelineOwner({
+            showOptimisticSubmit,
+            pendingSubmitMatched,
+          })) {
+            deps.feedback.setToastMessage(errorMessage);
+          }
+          const composerResult = failurePresentation.specific && pendingSubmitMatched
+            ? { ...submitResult, draftDisposition: "clear" as const }
+            : submitResult;
+          settlePendingSessionMaterializationFlight(composerResult);
+          return composerResult;
         }
         deps.trace.markTempRuntimeUiRenderSource(
           "SessionConversationFlow.sendPromptImmediate:accepted",

@@ -255,15 +255,20 @@ workspace-directory/session scope are readable. A stale or empty local
 `.opencode/opencode.db` therefore cannot shadow the valid global database.
 
 The orchestrator treats `session_idle`, missing engine state, and a session or
-message `404` as observations rather than successful terminality. Fresh
-`prompt_async` admissions carry a deterministic OpenCode `messageID` derived
-from the exact workspace, OpenCode session, and Veslo `clientMessageId`; the
-run probe uses that identity to reject older terminal messages. A run becomes
-successfully terminal only after stable post-admission terminal assistant
-evidence from the exact OpenCode session. The app keeps live SSE projection and
-terminal hydration under the existing ID-based store and terminal-delivery
-owner; repeat hydration for one exact run is coalesced, while distinct
-canonical message/part ids are never removed by text comparison.
+message `404` as observations rather than successful terminality. A fresh
+`prompt_async` run receives a separate OpenCode-compatible ascending
+`messageID` only when it is actually admitted; queued work receives that id at
+dequeue, not when it first enters the queue. The same exact id is forwarded to
+OpenCode and persisted with the orchestrator run so lifecycle probes can reject
+older terminal messages after restart. It must not use a namespace-style id:
+OpenCode 1.17.x compares message ids lexicographically when deciding whether a
+terminal assistant turn is newer, and a non-ascending caller id can re-enter
+the model loop after `finish=stop`. A run becomes successfully terminal only
+after stable post-admission terminal assistant evidence from the exact OpenCode
+session. The app keeps live SSE projection and terminal hydration under the
+existing ID-based store and terminal-delivery owner; repeat hydration for one
+exact run is coalesced, while distinct canonical message/part ids are never
+removed by text comparison.
 
 ### Desktop Shell
 

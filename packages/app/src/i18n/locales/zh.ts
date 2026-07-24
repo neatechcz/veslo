@@ -248,6 +248,7 @@ export default {
   "session.attachment_total_size_exceeded": "附件总大小过大。请移除部分文件后重试。",
   "session.attachment_limit_exceeded": "附件数量过多。一次最多附加 {maxAttachments} 个文件。",
   "session.attachment_runtime_rejected_generic": "Veslo 无法处理此运行中的附件。请移除该文件，或以受支持的格式重新附加。您可以继续使用此聊天。",
+  "session.runtime_stopped_before_response": "本地 AI 运行时在完成回复前停止了。请重试该消息；如果问题再次发生，请重新启动工作区运行时。",
   "session.pending_submit_local_runtime_failed": "Local runtime failed",
   "session.permission_required": "需要权限",
   "session.permission_description": "OpenCode 正在请求权限以继续。",

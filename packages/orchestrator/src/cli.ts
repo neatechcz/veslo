@@ -5676,6 +5676,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               runId: bodyString(body, "runId"),
               engineSessionId: bodyString(body, "opencodeSessionId"),
               clientMessageId: bodyString(body, "clientMessageId") || null,
+              opencodeMessageId: bodyString(body, "opencodeMessageId") || null,
               origin: bodyString(body, "origin") || null,
               directory: bodyString(body, "directory"),
               kind,

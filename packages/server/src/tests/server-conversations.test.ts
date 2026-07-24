@@ -6,12 +6,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER } from "../orchestrator-lifecycle-client.js";
 import { createConversationRunQueueStore } from "../conversation-run-queue-store.js";
-import { deriveConversationRunOpenCodeMessageId } from "../conversation-run-message-id.js";
 import { startServer } from "../server.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
 const tempDirs: string[] = [];
 const envRestores: Array<() => void> = [];
+
+const expectOpenCodeAdmissionMessageId = (value: unknown) => {
+  expect(typeof value).toBe("string");
+  expect(value as string).toMatch(/^msg_[0-9a-f]{26}$/);
+  expect(value as string).not.toMatch(/^msg_veslo_/);
+};
 
 const removeTempDir = async (dir: string) => {
   const attempts = process.platform === "win32" ? 6 : 1;
@@ -584,11 +589,7 @@ describe("conversation routes", () => {
     });
     expect(upstreamRequests[1]?.path).toBe(`/session/${firstPayload.opencodeSessionId}/prompt_async`);
     expect(upstreamRequests[1]?.traceId).toBe("submit-materialize-trace");
-    expect(upstreamRequests[1]?.body?.messageID).toBe(deriveConversationRunOpenCodeMessageId({
-      workspaceId: "ws_1",
-      engineSessionId: firstPayload.opencodeSessionId ?? "",
-      clientMessageId: "msg-submit-materialize",
-    }));
+    expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
     expect(upstreamRequests[1]?.body?.parts).toEqual([{ type: "text", text: "Create from submit" }]);
 
     const retryResponse = await submit();
@@ -930,11 +931,7 @@ describe("conversation routes", () => {
       "/session/sess-submit-slow/prompt_async",
     ]);
     expect(upstreamRequests.every((entry) => entry.traceId === "submit-slow-trace")).toBe(true);
-    expect(upstreamRequests[1]?.body?.messageID).toBe(deriveConversationRunOpenCodeMessageId({
-      workspaceId: "ws_1",
-      engineSessionId: "sess-submit-slow",
-      clientMessageId: "msg-submit-slow",
-    }));
+    expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
   });
 
   test("POST /workspace/:id/conversations/submit resolves implicit skills from a large workspace inventory with MCP config present", async () => {
@@ -1208,11 +1205,7 @@ describe("conversation routes", () => {
     expect(upstreamRequests[1]?.body).toMatchObject({
       parts: [{ type: "text", text: "Please use company research skill for this website" }],
     });
-    expect(upstreamRequests[1]?.body?.messageID).toBe(deriveConversationRunOpenCodeMessageId({
-      workspaceId: "ws_1",
-      engineSessionId: "sess-ambiguous-skills",
-      clientMessageId: "msg-submit-ambiguous-skills",
-    }));
+    expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
     expect(upstreamRequests[1]?.body?.command).toBeUndefined();
   });
 
@@ -1293,11 +1286,7 @@ describe("conversation routes", () => {
     expect(upstreamRequests[1]?.body).toMatchObject({
       parts: [{ type: "text", text: "Please inspect this repository" }],
     });
-    expect(upstreamRequests[1]?.body?.messageID).toBe(deriveConversationRunOpenCodeMessageId({
-      workspaceId: "ws_1",
-      engineSessionId: "sess-no-skills",
-      clientMessageId: "msg-submit-no-skills",
-    }));
+    expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
     expect(upstreamRequests[1]?.body?.command).toBeUndefined();
   });
 
@@ -1721,11 +1710,7 @@ describe("conversation routes", () => {
     expect(upstreamRequests[1]?.body?.parts).toEqual([
       { type: "text", text: "Submit existing run\nAttached workspace file: sessions/sess-submit-existing/brief.txt" },
     ]);
-    expect(upstreamRequests[1]?.body?.messageID).toBe(deriveConversationRunOpenCodeMessageId({
-      workspaceId: "ws_1",
-      engineSessionId: "sess-submit-existing",
-      clientMessageId: "msg-submit-existing-run",
-    }));
+    expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
     expect(upstreamRequests[1]?.body?.model).toEqual({ providerID: "openai", modelID: "gpt-5.5" });
     expect(upstreamRequests[1]?.body?.agent).toBe("build");
     expect(upstreamRequests[1]?.body?.variant).toBe("xhigh");
@@ -1824,11 +1809,7 @@ describe("conversation routes", () => {
       `/session/sess-legacy-submit/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
     );
     expect(upstreamRequests[0]?.traceId).toBe("submit-legacy-import-trace");
-    expect(upstreamRequests[0]?.body?.messageID).toBe(deriveConversationRunOpenCodeMessageId({
-      workspaceId: "ws_1",
-      engineSessionId: "sess-legacy-submit",
-      clientMessageId: "msg-submit-legacy-import",
-    }));
+    expectOpenCodeAdmissionMessageId(upstreamRequests[0]?.body?.messageID);
   });
 
   test("GET /workspace/:id/sessions/:sessionId/transcript imports legacy OpenCode session identity", async () => {
@@ -2000,11 +1981,7 @@ describe("conversation routes", () => {
       `/session/sess-submit-replace/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
     ]);
     expect(upstreamRequests[3]?.body).toEqual({ messageID: "msg_original" });
-    expect(upstreamRequests[4]?.body?.messageID).toBe(deriveConversationRunOpenCodeMessageId({
-      workspaceId: "ws_1",
-      engineSessionId: "sess-submit-replace",
-      clientMessageId: "msg-submit-replace-run",
-    }));
+    expectOpenCodeAdmissionMessageId(upstreamRequests[4]?.body?.messageID);
     expect(upstreamRequests[4]?.body?.parts).toEqual([{ type: "text", text: "Edited replacement" }]);
   });
 
@@ -4241,11 +4218,7 @@ describe("conversation routes", () => {
     expect(receivedRunPaths[0]).toBe(`/session/sess-created/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`);
     expect(receivedRunDirectories[0]).toBe(workspaceRoot);
     expect(receivedBodies[1]?.parts).toEqual([{ type: "text", text: "Hello" }]);
-    expect(receivedBodies[1]?.messageID).toBe(deriveConversationRunOpenCodeMessageId({
-      workspaceId: "ws_1",
-      engineSessionId: "sess-created",
-      clientMessageId: "msg-client-1",
-    }));
+    expectOpenCodeAdmissionMessageId(receivedBodies[1]?.messageID);
     expect(receivedBodies[1]?.model).toEqual({ providerID: "openai", modelID: "gpt-5.5" });
     expect(receivedBodies[1]?.agent).toBe("build");
     expect(receivedBodies[1]?.system).toBe("system prompt");

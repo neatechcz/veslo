@@ -1530,8 +1530,28 @@
           },
           {
             "key": "VESLO_E2E_DEN_AUTH_JSON",
-            "operation": "set",
-            "value": "{}"
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
           },
           {
             "key": "VESLO_DISABLE_DEV_AUTOSTART",
@@ -1604,8 +1624,28 @@
           },
           {
             "key": "VESLO_E2E_DEN_AUTH_JSON",
-            "operation": "set",
-            "value": "{}"
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
           },
           {
             "key": "VESLO_DISABLE_DEV_AUTOSTART",
@@ -1680,8 +1720,28 @@
           },
           {
             "key": "VESLO_E2E_DEN_AUTH_JSON",
-            "operation": "set",
-            "value": "{}"
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
           },
           {
             "key": "VESLO_DISABLE_DEV_AUTOSTART",
@@ -2894,8 +2954,28 @@
           },
           {
             "key": "VESLO_E2E_DEN_AUTH_JSON",
-            "operation": "set",
-            "value": "{}"
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
           },
           {
             "key": "VESLO_DISABLE_DEV_AUTOSTART",
@@ -3331,8 +3411,28 @@
           },
           {
             "key": "VESLO_E2E_DEN_AUTH_JSON",
-            "operation": "set",
-            "value": "{}"
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
           },
           {
             "key": "VESLO_DISABLE_DEV_AUTOSTART",
@@ -3479,8 +3579,28 @@
           },
           {
             "key": "VESLO_E2E_DEN_AUTH_JSON",
-            "operation": "set",
-            "value": "{}"
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_JSON",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "E2E_DEN_AUTH_SNAPSHOT_FILE",
+            "operation": "clear",
+            "value": ""
+          },
+          {
+            "key": "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+            "operation": "clear",
+            "value": ""
           },
           {
             "key": "VESLO_DISABLE_DEV_AUTOSTART",

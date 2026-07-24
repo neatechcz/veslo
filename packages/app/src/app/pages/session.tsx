@@ -508,6 +508,7 @@ export type SessionViewProps = {
   setComposerDraftForStorageKey: (storageKey: string, draft: ComposerDraft) => void;
   captureComposerDraftRevision: (storageKey: string) => number;
   clearComposerDraftIfRevision: (storageKey: string, revision: number) => boolean;
+  clearComposerDraftIfMatches: (storageKey: string, draft: ComposerDraft) => boolean;
   remapPendingComposerDraftToSession: (
     pendingDraftKey: string | null | undefined,
     sessionId: string | null | undefined,
@@ -3533,6 +3534,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleSendPrompt = async (draft: ComposerDraft, options: ComposerSendOptions = {}): Promise<ComposerSendResult> => {
     const submissionSessionKey = currentSessionQueueKey();
+    const submissionComposerStorageKey = props.composerStorageKey;
     recordSendTrace("handleSendPrompt:start", {
       sendTraceId: options.sendTraceId ?? null,
       sendNow: options.sendNow,
@@ -3570,6 +3572,9 @@ export default function SessionView(props: SessionViewProps) {
           arguments: result.confirmation.arguments,
         },
       }));
+    }
+    if (!result.accepted && result.draftDisposition === "clear") {
+      props.clearComposerDraftIfMatches(submissionComposerStorageKey, draft);
     }
     return result;
   };

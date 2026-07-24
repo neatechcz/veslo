@@ -41,7 +41,7 @@ export const createComposerDraftHandoffController = (): ComposerDraftHandoffCont
       return tryClear(submission, clear);
     },
     applyResult: (submission, disposition, clear) => {
-      if (submission.transferAcknowledged || disposition !== "clear") return false;
+      if (disposition !== "clear") return false;
       return tryClear(submission, clear);
     },
     beginSubmission: () => ({

@@ -25,10 +25,16 @@ This is the short contract for switching between conversations and continuing th
 - Sidebar prefetch should prefer scoped refs (`clickedSession`, `selectedSession`, `loadedTopLevelSessions`, `expandedSubagentSessions`). Legacy raw id fields are compatibility only and must not guess when a raw id is ambiguous.
 - Server-owned submit may return `submitted`, `queued`, `blocked`, or `failed`. Assistant catch-up is a bounded fallback for accepted submitted work when the live transcript path did not observe an assistant response.
 - Catch-up may hydrate only while the submitted UI session is still selected and belongs to the expected workspace. Assistant SSE or cached assistant messages stop it before another transcript read.
+- Best-effort latest-run status probes are scoped to the selection generation that started them. A probe that returns after session/workspace navigation must be discarded and must not publish lifecycle status, terminal recovery, or a current-session error.
 - Pending user rows adopt only a unique, scoped post-baseline transcript candidate. Explicit client metadata wins when present; otherwise normalized text, mode, and attachment/file fingerprints are the bounded fallback.
 - Local echo is transient presentation. Same-render replacement does not confirm cleanup, and server acceptance alone does not delete pending state.
 - An ambiguous transcript candidate remains visible as local echo rather than being guessed. Only a known pre-admission failure is editable.
 - Transcript hydration must ignore unavailable, older, and shorter non-authoritative snapshots.
+- Non-image attachments cross the OpenCode boundary only as validated workspace-relative path references plus display metadata. Their original data URL or base64 bytes must not remain in prompt parts after staging. Images remain the explicit inline-media exception.
+- The server stages raw non-image attachments before conversation materialization and run admission, including the first message of a new chat. Known staging or format failures therefore create neither an OpenCode prompt nor a durable run.
+- A typed pre-admission attachment failure has exactly one visible owner: the editable failed optimistic user row, including a local-only row before first-chat materialization. The live Composer removes the submitted attachment from its armed draft so a text-only follow-up cannot resubmit it, while exact draft-revision matching protects edits or attachments added during the request. A Composer alert is only the fallback when no optimistic owner was created.
+- MSG is recognized but not parsed in the current runtime. A valid MSG returns an actionable unsupported-format result suggesting EML, PDF, or TXT; malformed MSG returns a processing-failed result. Generic `application/octet-stream` files are classified from their content and extension instead of being rejected only for their MIME type.
+- Veslo does not mutate historical transcript attachments automatically. A conversation created by an older unsafe client must use a new chat or re-attach the source in a supported format when legacy binary history still prevents recovery.
 
 ## Test Anchors
 
@@ -36,4 +42,6 @@ This is the short contract for switching between conversations and continuing th
 - Route contract: `packages/app/src/app/tests/context/app-route-sync.test.ts` and `packages/app/src/app/tests/context/session-route-sync.test.ts`
 - Prefetch identity contract: `packages/app/src/app/tests/components/session/workspace-session-list-prefetch-interest.test.ts` and `packages/server/src/tests/session-transcript-prefetch.test.ts`
 - Submit and catch-up contract: `packages/app/src/app/tests/pages/session-send-workflow.test.ts`, `packages/app/src/app/tests/pages/session-mutation-workflow.test.ts`, and `packages/app/src/app/tests/context/submitted-run-transcript-catchup.test.ts`
+- Latest-run selection fence: `packages/app/src/app/context/session-lifecycle-recovery.test.ts`
 - Queue and pending handoff contract: `packages/app/src/app/tests/pages/session-conversation-flow.test.ts` and `packages/app/src/app/tests/pages/session-message-queue.test.ts`
+- Attachment ownership and draft-revision contract: `packages/app/src/app/components/session/composer-attachment-failure-cleanup.test.ts`, `packages/app/src/app/components/session/composer-draft-handoff.test.ts`, and `packages/app/src/app/tests/pages/session-composer-drafts.test.ts`

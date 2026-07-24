@@ -90,31 +90,20 @@ These decisions are prerequisites, not implementation questions:
 
 ### Transcript source resolution
 
-The current resolver selects exactly one path before opening SQLite. Existing
-workspace-local `.opencode/opencode.db` wins over the implicit global path.
-Schema errors and missing exact sessions return `source=unavailable`; the
-resolver does not continue to another implicit candidate.
-
-This means both of the following mask the global database today:
-
-- a local file without the required OpenCode schema;
-- a schema-valid local file that is empty or does not contain the requested
-  session under the requested directory.
+The resolver now evaluates implicit workspace-local and global OpenCode
+database candidates read-only. A local candidate is skipped when it is
+unreadable, schema-incompatible, or does not contain the requested scope, so
+an empty historical `.opencode/opencode.db` no longer masks a valid global
+database. Explicit database configuration remains fail-closed.
 
 ### Lifecycle terminality
 
-The current activity probe returns inactive for more than one condition:
-
-- OpenCode reports `session/status = idle`;
-- no engine is available for the workspace;
-- selected session/message reads return some 404 paths;
-- the latest assistant message appears terminal.
-
-The run registry currently maps every reachable `active=false` result to
-`completed` and releases active ownership. The probe does not carry a durable
-run-start transcript watermark, so a terminal assistant message from an older
-turn in the same OpenCode session can also be mistaken for evidence about the
-new run.
+The run registry now keeps transient `session_idle`, engine absence, and
+missing-message observations non-terminal until durable terminal evidence is
+stable or explicitly confirmed. The server lifecycle controller also finalizes
+an unresolved active run after its bounded reconcile budget instead of leaving
+the workspace reservation active when `stale=false` and
+`noProgressSeconds=null`.
 
 ### Projection and composer
 
@@ -156,15 +145,29 @@ owners:
 - `session_idle`, missing engine, and session/message `404` no longer produce
   successful completion; completion requires a stable post-admission terminal
   message from the exact OpenCode session;
-- prompt runs carry a deterministic OpenCode admission `messageID` derived from
-  the already durable workspace, engine-session, and client-message identities;
-  legacy records without that correlation fall back to the persisted creation
-  timestamp and remain fail-closed when evidence is missing;
+- prompt runs allocate an OpenCode-compatible ascending admission `messageID`
+  at actual admission time, persist the exact id with the orchestrator run, and
+  use it for post-admission correlation; queued work allocates only at dequeue;
+- this replaces the first deterministic `msg_veslo_v1_*` implementation, which
+  made OpenCode 1.17.13 compare the user id as newer than every generated
+  assistant id and repeatedly call the model after a clean `finish=stop`;
+- legacy records without the persisted exact id reconstruct the former
+  deterministic identity only for compatibility and remain fail-closed when
+  evidence is missing;
 - terminal candidacy uses the existing durable `waitReason` and
   `lastProgressSignature` fields, so a restart can lose only the first
   observation and can never fabricate completion or release a live owner;
 - the existing terminal-delivery coordinator coalesces repeated hydration for
   one exact run while retaining ID-based message/part updates;
+- terminal hydration no longer clears live SSE opaque-delta replay IDs, so
+  late events from the still-open stream remain deduplicated;
+- `latest-probe` records an exact terminal run in the same settlement fence as
+  the watch path, so a second probe cannot re-project the same run;
+- terminal transcript requests use a 30-second projection timeout, and a
+  timeout is handed back to the lifecycle owner's bounded retry instead of
+  starting an overlapping status/ensure/recovery chain;
+- lifecycle reconcile exhaustion finalizes every still-active durable status,
+  releases its reservation, and wakes the queue after a successful failure mark;
 - focused app, orchestrator, server, and headless lifecycle tests pass,
   including the transient-idle multi-step integration and follow-up submit;
 - the canonical runtime and server contract documentation is updated;
@@ -309,14 +312,16 @@ missing
 
 ### Admission watermark
 
-Before forwarding the mutating OpenCode submit, Veslo derives a deterministic
-OpenCode user-message identity from the exact workspace, engine session, and
-already durable `clientMessageId`, then forwards it as `messageID`. The run
-record already persists the same `clientMessageId`, so the probe can reconstruct
-the admission fence after restart without adding duplicate watermark columns.
-Legacy runs without a client message identity use their persisted creation time
-as a weaker compatibility fence and cannot complete from an old terminal
-message when that timestamp is unavailable.
+Immediately before forwarding an admitted mutating OpenCode prompt, Veslo
+allocates an OpenCode-compatible ascending user-message identity from the
+admission timestamp plus exact run scope, forwards it as `messageID`, and
+persists that exact id in the run record. Allocation happens after the previous
+run has released ownership; queued submissions therefore allocate at dequeue.
+The exact persisted id is the restart-safe admission fence. `clientMessageId`
+remains the separate Veslo idempotency identity and is never reused verbatim as
+the OpenCode id. Legacy runs created by the earlier implementation reconstruct
+their former deterministic identity for compatibility; runs without usable
+identity evidence cannot complete from an old terminal message.
 
 If the pre-dispatch transcript probe is unavailable, mark the baseline as
 unknown. An unknown baseline cannot use an old terminal assistant message as

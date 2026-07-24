@@ -1253,6 +1253,7 @@ export default {
   "session.attachment_total_size_exceeded": "Přiložené soubory jsou dohromady příliš velké. Některé odeberte a zkuste to znovu.",
   "session.attachment_limit_exceeded": "Je přiloženo příliš mnoho souborů. Najednou lze přiložit nejvýše {maxAttachments} souborů.",
   "session.attachment_runtime_rejected_generic": "Veslu se v tomto běhu nepodařilo zpracovat přílohu. Odeberte ji nebo ji znovu přiložte v podporovaném formátu. Chat můžete dál používat.",
+  "session.runtime_stopped_before_response": "Místní AI runtime se zastavil dříve, než dokončil odpověď. Zkuste zprávu odeslat znovu; pokud se to opakuje, restartujte runtime pracovního prostoru.",
   "session.pending_submit_local_runtime_failed": "Selhal místní runtime",
   "session.pending_submit_canonical_missing": "Odesláno, ale přepis se nepodařilo synchronizovat",
   "session.pending_submit_sync_unverified": "Odesláno, ale synchronizaci přepisu nelze ověřit",

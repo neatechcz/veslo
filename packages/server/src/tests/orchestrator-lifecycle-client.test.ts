@@ -30,6 +30,7 @@ describe("orchestrator lifecycle client", () => {
       conversationId: "conv-a",
       runId: "run-a",
       opencodeSessionId: "sess-a",
+      opencodeMessageId: "msg_f946e8a160003a693ab36fcd8e",
       directory: "/tmp/workspace-a",
       kind: "prompt",
     });
@@ -39,6 +40,7 @@ describe("orchestrator lifecycle client", () => {
     expect((calls[0]?.init?.headers as Record<string, string>)[ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER]).toBe("secret-token");
     const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
     expect(body.opencodeSessionId).toBe("sess-a");
+    expect(body.opencodeMessageId).toBe("msg_f946e8a160003a693ab36fcd8e");
     expect(body.engineSessionId).toBeUndefined();
     expect(result).toMatchObject({ runId: "run-a", status: "active" });
   });
@@ -183,6 +185,7 @@ describe("orchestrator lifecycle client", () => {
         status: "failed",
         stale: false,
         clientMessageId: "msg-failed",
+        opencodeMessageId: "msg_f946e8a160003a693ab36fcd8e",
         origin: "session:send",
         error: "upstream request failed",
       }), { status: 200 }));
@@ -197,6 +200,7 @@ describe("orchestrator lifecycle client", () => {
       status: "failed",
       stale: false,
       clientMessageId: "msg-failed",
+      opencodeMessageId: "msg_f946e8a160003a693ab36fcd8e",
       origin: "session:send",
       error: "upstream request failed",
     });

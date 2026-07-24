@@ -119,10 +119,15 @@ describe("run registry", () => {
   test("register stores a running run", async () => {
     const { registry } = createRegistry(() => ({ active: true }));
 
-    const record = await registry.register(input);
+    const record = await registry.register({
+      ...input,
+      clientMessageId: "client-a",
+      opencodeMessageId: "msg_f946e8a160003a693ab36fcd8e",
+    });
 
     expect(record.status).toBe("running");
     expect(typeof record.startedAt).toBe("number");
+    expect(record.opencodeMessageId).toBe("msg_f946e8a160003a693ab36fcd8e");
   });
 
   test("second concurrent register throws while active remains active", async () => {
@@ -194,6 +199,44 @@ describe("run registry", () => {
       error: "attachment_runtime_rejected",
     });
     expect(await registry.active("ws-a", "conv-a")).toBeNull();
+  });
+
+  test("exact admitted assistant completion terminalizes on the first authoritative probe", async () => {
+    const { registry, store } = createRegistry(() => ({
+      active: false,
+      terminalCandidate: true,
+      terminalConfirmed: true,
+      terminalStatus: "completed",
+      progressSignature: "terminal:exact-assistant",
+    }));
+    await registry.register(input);
+
+    const reconciled = await registry.get("ws-a", "run-a");
+
+    expect(reconciled?.record.status).toBe("completed");
+    expect(reconciled?.record.waitReason).toBe("none");
+    expect(store.activeForConversation("ws-a", "conv-a")).toBeNull();
+  });
+
+  test("inactive unfinished assistant requires a stable second probe before failing", async () => {
+    const { registry, store } = createRegistry(() => ({
+      active: false,
+      terminalCandidate: true,
+      terminalStatus: "failed",
+      terminalError: "opencode_session_idle_before_assistant_completed",
+      progressSignature: "inactive-session:assistant-open",
+    }));
+    await registry.register(input);
+
+    expect((await registry.get("ws-a", "run-a"))?.record).toMatchObject({
+      status: "running",
+      waitReason: "session_idle",
+    });
+    expect((await registry.get("ws-a", "run-a"))?.record).toMatchObject({
+      status: "failed",
+      error: "opencode_session_idle_before_assistant_completed",
+    });
+    expect(store.activeForConversation("ws-a", "conv-a")).toBeNull();
   });
 
   test("transient idle is reopened by later assistant progress before terminal confirmation", async () => {

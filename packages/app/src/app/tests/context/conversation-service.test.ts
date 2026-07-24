@@ -692,6 +692,32 @@ test("accepted terminal transcript recovery refreshes a stale client after a dir
   ));
 });
 
+test("accepted terminal transcript recovery lets the lifecycle owner retry a client timeout", async () => {
+  const { service, calls, ensureCalls } = createService({
+    recoverTranscriptError: new Error("Request timed out after 30000ms"),
+    runStatusResult: { status: "completed" },
+  });
+
+  await assert.rejects(
+    service.recoverAcceptedConversationTranscript({
+      workspaceId: "app-ws",
+      directory: "/repo",
+      conversationId: "conv-a",
+      opencodeSessionId: "open-a",
+      sessionId: "ses-ui",
+      runId: "run-a",
+      clientMessageId: "msg-a",
+    }),
+    /Request timed out after 30000ms/,
+  );
+  assert.deepEqual(ensureCalls, []);
+  assert.deepEqual(calls, [
+    "listWorkspaces",
+    "addLocalWorkspace:/repo",
+    "recoverSessionTranscript:server-ws:open-a:run-a",
+  ]);
+});
+
 test("conversation write refreshes stale server workspace registration with live OpenCode URL", async () => {
   const staleBaseUrl = "http://127.0.0.1:60956/workspace/server-ws/opencode";
   const { service, calls } = createService({

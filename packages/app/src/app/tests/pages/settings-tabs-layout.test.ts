@@ -104,7 +104,10 @@ test("settings keeps compact update controls in general instead of a floating to
   assert.match(source, /settings\.pause_update_download/);
   assert.match(source, /updateState\(\) === "downloading" && props\.updateAutoDownload/);
   assert.match(source, /if \(updateState\(\) === "downloading" && props\.updateAutoDownload\) \{[\s\S]*?props\.toggleUpdateAutoDownload\(\);/);
-  assert.doesNotMatch(source, /"Checking for updates"|"Up to date"|"Check"|"Download"|"Install"|"Retry"|"Last checked"/);
+  assert.doesNotMatch(
+    generalUpdateControlsRow,
+    /"Checking for updates"|"Up to date"|"Check"|"Download"|"Install"|"Retry"|"Last checked"/,
+  );
 });
 
 test("settings does not expose automatic context compaction as a menu option", () => {

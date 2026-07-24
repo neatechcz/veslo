@@ -1374,10 +1374,23 @@ export function registerConversationSessionRoutes(
     if (!lifecycleClient) {
       throw new ApiError(503, "lifecycle_unavailable", "Run lifecycle owner is not configured");
     }
+    const statusTrace = {
+      workspaceId: workspace.id,
+      conversationId,
+      runId,
+    };
+    recordSendWorkflowTrace("server", "server:conversation-run-status:start", statusTrace);
     let status;
     try {
       status = await lifecycleClient.status(workspace.id, conversationId, runId);
     } catch (error) {
+      recordSendWorkflowTrace("server", "server:conversation-run-status:error", {
+        ...statusTrace,
+        errorType: error instanceof Error ? error.name : "unknown",
+        errorMessage: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+        errorCode: null,
+        status: error instanceof OrchestratorLifecycleRequestError ? error.status : null,
+      });
       if (error instanceof OrchestratorLifecycleRequestError) {
         throw lifecycleRequestApiError(error);
       }
@@ -1385,9 +1398,25 @@ export function registerConversationSessionRoutes(
     }
     if (!status) {
       const queued = conversationRunQueueStore.getForReservedRun(workspace.id, conversationId, runId);
-      if (queued) return jsonResponse(serializeQueuedRunLifecycleStatus(queued));
+      if (queued) {
+        recordSendWorkflowTrace("server", "server:conversation-run-status:settle", {
+          ...statusTrace,
+          outcome: "queued",
+        });
+        return jsonResponse(serializeQueuedRunLifecycleStatus(queued));
+      }
+      recordSendWorkflowTrace("server", "server:conversation-run-status:error", {
+        ...statusTrace,
+        outcome: "not-found",
+      });
       throw new ApiError(404, "run_not_found", "Run was not found for this conversation");
     }
+    recordSendWorkflowTrace("server", "server:conversation-run-status:settle", {
+      ...statusTrace,
+      outcome: "lifecycle-status",
+      status: status.status,
+      stale: status.stale,
+    });
     return jsonResponse({
       ok: true,
       workspaceId: workspace.id,

@@ -324,7 +324,15 @@ export function buildPilotSelectionPlan(signals: PilotSelectionSignals): PilotSe
     if (signals.requiresExplicitSessionRuntimeActivation) {
       addMutation(environment, 'E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION', 'set', '1');
     }
-    addMutation(environment, 'VESLO_E2E_DEN_AUTH_JSON', 'set', '{}');
+    for (const key of [
+      'VESLO_E2E_DEN_AUTH_JSON',
+      'E2E_DEN_AUTH_JSON',
+      'VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE',
+      'E2E_DEN_AUTH_SNAPSHOT_FILE',
+      'VESLO_DEN_AUTH_SNAPSHOT_PATH',
+    ]) {
+      addMutation(environment, key, 'clear', '');
+    }
     addMutation(environment, 'VESLO_DISABLE_DEV_AUTOSTART', 'set', '1');
   }
   if (signals.needsPackagedSmokeFixture) {

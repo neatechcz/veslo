@@ -1257,6 +1257,7 @@ export default {
   "session.attachment_total_size_exceeded": "The attached files are too large in total. Remove some files and try again.",
   "session.attachment_limit_exceeded": "Too many files are attached. Attach at most {maxAttachments} files at once.",
   "session.attachment_runtime_rejected_generic": "Veslo could not process an attachment in this run. Remove it or attach it again in a supported format. You can continue using this chat.",
+  "session.runtime_stopped_before_response": "The local AI runtime stopped before it finished the response. Retry the message; if it happens again, restart the workspace runtime.",
   "session.pending_submit_local_runtime_failed": "Local runtime failed",
   "session.pending_submit_canonical_missing": "Sent, but the transcript could not be synchronized",
   "session.pending_submit_sync_unverified": "Sent, but transcript synchronization could not be verified",

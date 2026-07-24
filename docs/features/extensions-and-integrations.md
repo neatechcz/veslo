@@ -148,6 +148,12 @@ Current MCP behavior includes:
 - remove/logout actions
 - reload banner when config changes require engine reload
 
+Local MCP servers are opt-in. In particular, Control Chrome is not attached to
+every workspace automatically; it becomes part of OpenCode prompt/tool startup
+only after the user explicitly connects it for that workspace. This keeps an
+ordinary first prompt independent of browser-MCP process startup while
+preserving browser automation where it was explicitly enabled.
+
 MCP config is still OpenCode config, not `.opencode/veslo.json`.
 
 The dashboard exposes Napojení as the MCP/external-app page. The MCP page

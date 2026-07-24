@@ -373,7 +373,10 @@ export function createVesloServerClient(options: {
     deleteWorkspace: 10_000,
     deleteSession: 12_000,
     sessionArtifacts: 10_000,
-    sessionTranscript: 10_000,
+    // Terminal transcript projection can include the final OpenCode read and
+    // artifact projection. It must outlive the generic request deadline or a
+    // slow-but-healthy server is mistaken for an unavailable transcript.
+    sessionTranscript: 30_000,
     conversationCreate: 70_000,
     conversationRun: 90_000,
     conversationAbort: 10_000,

@@ -27,11 +27,8 @@ test("active row uses subtle stronger background and a left accent strip", () =>
 });
 
 test("recent and by-project session rows both use the helper and aria-current", () => {
-  const recentUses = source.match(/class=\{sessionRowClass\(isSelected\(\), "pr-12"\)\}/g) ?? [];
-  assert.equal(recentUses.length, 1, "Recent rows should call the shared helper exactly once");
-
-  const projectUses = source.match(/class=\{sessionRowClass\(isSelected\(\), "gap-2 pr-12"\)\}/g) ?? [];
-  assert.equal(projectUses.length, 1, "By project rows should call the shared helper exactly once");
+  const rowClassUses = source.match(/class=\{sessionRowClass\(isSelected\(\), "pr-12"\)\}/g) ?? [];
+  assert.equal(rowClassUses.length, 2, "Recent and by-project rows should call the shared helper once each");
 
   const ariaCurrentUses = source.match(/aria-current=\{isSelected\(\) \? "page" : undefined\}/g) ?? [];
   assert.equal(ariaCurrentUses.length, 2, "Both render paths should expose active session via aria-current");

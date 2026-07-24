@@ -490,6 +490,54 @@ test("session creation opens a materialized session when first server submit fai
   assert.deepEqual(harness.errors, [null]);
 });
 
+test("typed first-submit rejection does not become a raw session creation error", async () => {
+  const submitResults: unknown[] = [];
+  const harness = createHarness({
+    submitConversationFromVesloWriteApi: async () => ({
+      status: "blocked",
+      code: "attachment_format_unsupported",
+      message: "raw server fallback must not own the UI",
+      recoverable: true,
+      workspaceId: "ws-main",
+      conversationId: "",
+      opencodeSessionId: "",
+      clientMessageId: "client-msg-rejected",
+      pendingClientSessionId: "pending-msg-rejected",
+      materializedSession: null,
+      draftDisposition: "restore",
+      details: {
+        attachmentName: "message.msg",
+        format: "MSG",
+      },
+      debugTrace: [],
+    }),
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("", {
+    submitDraft: {
+      mode: "prompt",
+      text: "",
+      resolvedText: "",
+      parts: [],
+      attachments: [{
+        name: "message.msg",
+        mimeType: "application/octet-stream",
+        kind: "file",
+        dataUrl: "data:application/octet-stream;base64,AA==",
+      }],
+    },
+    clientMessageId: "client-msg-rejected",
+    onSubmitResult: (submitResult) => submitResults.push(submitResult),
+  });
+
+  assert.equal(result, undefined);
+  assert.equal(submitResults.length, 1);
+  assert.deepEqual(harness.errors, [null]);
+  assert.ok(harness.events.includes("createSessionAndOpen:submit-stopped-materialization"));
+  assert.doesNotMatch(harness.actions.join("\n"), /set-sessions|select:|go:/);
+});
+
 test("session creation passes the prepared create preflight to conversation creation", async () => {
   let observedPreflight: SessionCreationPreflightContext | undefined;
   const harness = createHarness({

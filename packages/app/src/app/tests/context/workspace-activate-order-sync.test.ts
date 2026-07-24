@@ -499,13 +499,13 @@ test("workspace activation delegates local runtime reuse and restart flows to th
 
   assert.match(
     source,
-    /const ok = await deps\.localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{/,
+    /const prepareRuntime = async \(\) => await deps\.localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{/,
     "local-to-local engine switching should delegate to the backend-owned prepare helper",
   );
 
   assert.match(
     source,
-    /const ok = await deps\.localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{[\s\S]*connectMode: "quiet"/s,
+    /const prepareRuntime = async \(\) => await deps\.localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{[\s\S]*connectMode: "quiet"/s,
     "browsing-mode engine attach should use the shared backend prepare helper's quiet reconnect path",
   );
 });

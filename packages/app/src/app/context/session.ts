@@ -889,12 +889,6 @@ export function createSessionStore(options: {
                 kind: "hydration",
                 commit: () => {
                   hydrateTranscriptSnapshot(snapshot, { preserveLiveParts: false });
-                  // The lifecycle controller admits only an exact terminal run here.
-                  // Its snapshot closes the replay window for any opaque delta ids.
-                  eventStreamController?.clearTextDeltaReplayStateForTerminalSnapshot(
-                    snapshot.workspaceId,
-                    snapshot.sessionId,
-                  );
                 },
               },
             );
@@ -933,16 +927,21 @@ export function createSessionStore(options: {
             if (status.status !== "failed" || status.stale) return;
             terminalDeliveryCoordinator.retainTerminalDisplay(key, {
               kind: "error",
-              commit: () => appendSessionErrorTurn(
-                scope.sessionId,
-                status.error?.trim() === "attachment_runtime_rejected"
-                  ? t("session.attachment_runtime_rejected_generic", currentLocale())
-                  : status.error?.trim() || "Run failed",
-                {
-                durableRunId: scope.runId,
-                workspaceId: scope.workspaceId,
-                },
-              ),
+              commit: () => {
+                const runError = status.error?.trim() ?? "";
+                appendSessionErrorTurn(
+                  scope.sessionId,
+                  runError === "attachment_runtime_rejected"
+                    ? t("session.attachment_runtime_rejected_generic", currentLocale())
+                    : runError === "opencode_session_idle_before_assistant_completed"
+                      ? t("session.runtime_stopped_before_response", currentLocale())
+                      : runError || "Run failed",
+                  {
+                    durableRunId: scope.runId,
+                    workspaceId: scope.workspaceId,
+                  },
+                );
+              },
             });
           },
           setSessionStatusForWorkspace,

@@ -10,6 +10,6 @@ test("workspace session list accepts unread session ids", () => {
 });
 
 test("recent and by-project session titles become bold when unread", () => {
-  const classMatches = source.match(/class="text-\[13px\] text-gray-12 truncate"\s*classList=\{\{ "font-bold": isUnread\(\) \}\}/g) ?? [];
+  const classMatches = source.match(/class="text-\[12\.5px\] text-gray-12 truncate"\s*classList=\{\{ "font-bold": isUnread\(\) \}\}/g) ?? [];
   assert.ok(classMatches.length >= 2, "both Recent and By Project title spans should use unread bold styling");
 });

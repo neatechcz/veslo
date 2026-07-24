@@ -16,6 +16,7 @@ export const MODEL_RETRY_NO_PROGRESS_TIMEOUT = "model_retry_no_output_timeout";
 export type RunProbeActivityResult = {
   active: boolean;
   terminalCandidate?: boolean;
+  terminalConfirmed?: boolean;
   terminalStatus?: "completed" | "failed" | "aborted";
   terminalError?: string | null;
   activityKind?: RunActivityKind | null;
@@ -38,6 +39,7 @@ export type RunLifecycleOwner = {
     runId: string;
     engineSessionId: string;
     clientMessageId?: string | null;
+    opencodeMessageId?: string | null;
     origin?: string | null;
     directory: string;
     kind: RunKind;
@@ -222,6 +224,27 @@ export function createRunRegistry(deps: {
       return { record: next, stale: false, noProgressSeconds: noProgressSecondsForRecord(next, timestamp) };
     }
 
+    const terminalize = (): ReconciledRun => {
+      const timestamp = now();
+      const terminalStatus = probe.terminalStatus ?? "completed";
+      const next =
+        deps.store.update(record.workspaceId, record.runId, {
+          status: terminalStatus,
+          completedAt: timestamp,
+          error: terminalStatus === "completed" ? null : normalizeText(probe.terminalError) || (
+            terminalStatus === "aborted" ? DEFAULT_RUN_ABORT_ERROR : DEFAULT_RUN_FAILURE_ERROR
+          ),
+          activityKind: "idle",
+          waitReason: "none",
+          retrySince: null,
+        }) ?? record;
+      return { record: next, stale: false, noProgressSeconds: null };
+    };
+
+    if (probe.terminalConfirmed) {
+      return terminalize();
+    }
+
     const progressSignature = normalizeNullableText(probe.progressSignature);
     const stableTerminalCandidate = Boolean(
       progressSignature &&
@@ -241,20 +264,7 @@ export function createRunRegistry(deps: {
       return { record: next, stale: false, noProgressSeconds: noProgressSecondsForRecord(next, timestamp) };
     }
 
-    const timestamp = now();
-    const terminalStatus = probe.terminalStatus ?? "completed";
-    const next =
-      deps.store.update(record.workspaceId, record.runId, {
-        status: terminalStatus,
-        completedAt: timestamp,
-        error: terminalStatus === "completed" ? null : normalizeText(probe.terminalError) || (
-          terminalStatus === "aborted" ? DEFAULT_RUN_ABORT_ERROR : DEFAULT_RUN_FAILURE_ERROR
-        ),
-        activityKind: "idle",
-        waitReason: "none",
-        retrySince: null,
-      }) ?? record;
-    return { record: next, stale: false, noProgressSeconds: null };
+    return terminalize();
   };
 
   return {
@@ -264,6 +274,7 @@ export function createRunRegistry(deps: {
       const runId = normalizeText(input.runId);
       const engineSessionId = normalizeText(input.engineSessionId);
       const clientMessageId = normalizeNullableText(input.clientMessageId);
+      const opencodeMessageId = normalizeNullableText(input.opencodeMessageId);
       const origin = normalizeNullableText(input.origin);
       const directory = normalizeText(input.directory);
       if (!workspaceId || !conversationId || !runId || !engineSessionId || !directory) {
@@ -295,6 +306,7 @@ export function createRunRegistry(deps: {
         runId,
         engineSessionId,
         clientMessageId,
+        opencodeMessageId,
         origin,
         directory,
         kind: input.kind,

@@ -592,6 +592,7 @@ export type AppViewPropsScope = {
   setComposerDraftForStorageKey: (storageKey: string, draft: ComposerDraft) => void;
   captureComposerDraftRevision: (storageKey: string) => number;
   clearComposerDraftIfRevision: (storageKey: string, revision: number) => boolean;
+  clearComposerDraftIfMatches: (storageKey: string, draft: ComposerDraft) => boolean;
   activePermissionMemo: Accessor<PendingPermission | null>;
   permissionReplyBusy: Accessor<boolean>;
   respondPermissionForAppViewProps: (
@@ -933,6 +934,7 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     setComposerDraftForStorageKey,
     captureComposerDraftRevision,
     clearComposerDraftIfRevision,
+    clearComposerDraftIfMatches,
     activePermissionMemo,
     permissionReplyBusy,
     respondPermissionForAppViewProps,
@@ -1926,6 +1928,9 @@ export function createAppViewProps(deps: AppViewPropsScope): AppViewPropsAdapter
     },
     get clearComposerDraftIfRevision() {
       return clearComposerDraftIfRevision;
+    },
+    get clearComposerDraftIfMatches() {
+      return clearComposerDraftIfMatches;
     },
     get activePermission() {
       return activePermissionMemo();

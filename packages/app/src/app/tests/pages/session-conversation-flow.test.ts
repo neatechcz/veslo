@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   createSessionConversationFlow,
+  submitFailureHasTimelineOwner,
   createIdleRunState,
   remapPendingQueueToSession,
   remapPendingRunStateToSession,
@@ -3114,6 +3115,7 @@ test("pending submitted failure marks materialized drafts in place and reports t
 
   assert.equal(result.materializedSessionIdToRestore, "real");
   assert.equal(result.materializedSessionIdForRunStateReset, "real");
+  assert.equal(result.matched, true);
   assert.equal(result.draftsBySessionKey["session:real"]?.state, "error");
   assert.equal(result.draftsBySessionKey["session:real"]?.error, "failed");
   assert.equal(result.draftsBySessionKey["session:real"]?.sessionKey, "session:real");
@@ -3139,6 +3141,7 @@ test("pending submitted failure restores non-materialized drafts to the captured
 
   assert.equal(result.materializedSessionIdToRestore, "real-from-callback");
   assert.equal(result.materializedSessionIdForRunStateReset, null);
+  assert.equal(result.matched, true);
   assert.deepEqual(Object.keys(result.draftsBySessionKey), ["session:remapped", "pending-session:created-1"]);
   assert.equal(result.draftsBySessionKey["pending-session:created-1"]?.state, "error");
   assert.equal(result.draftsBySessionKey["pending-session:created-1"]?.sessionId, null);
@@ -3166,6 +3169,7 @@ test("pending submitted failure preserves identity when the submit id is missing
   assert.equal(result.draftsBySessionKey, current);
   assert.equal(result.materializedSessionIdToRestore, null);
   assert.equal(result.materializedSessionIdForRunStateReset, null);
+  assert.equal(result.matched, false);
 });
 
 test("run UI state equality compares baseline fields and preserves no-op update identity", () => {
@@ -3446,4 +3450,25 @@ test("queue drain completion marks rejected active drains as errors on the curre
     }),
     { kind: "mark-error", sessionKey: "session:active" },
   );
+});
+
+test("existing-chat submit failures use the optimistic timeline row as their only visible owner", () => {
+  assert.equal(submitFailureHasTimelineOwner({
+    showOptimisticSubmit: true,
+    pendingSubmitMatched: true,
+  }), true);
+});
+
+test("non-optimistic submit failures fall back to the Composer alert", () => {
+  assert.equal(submitFailureHasTimelineOwner({
+    showOptimisticSubmit: false,
+    pendingSubmitMatched: false,
+  }), false);
+});
+
+test("optimistic submit failures fall back to the Composer alert when their row disappeared", () => {
+  assert.equal(submitFailureHasTimelineOwner({
+    showOptimisticSubmit: true,
+    pendingSubmitMatched: false,
+  }), false);
 });

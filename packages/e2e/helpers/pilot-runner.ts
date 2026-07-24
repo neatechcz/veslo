@@ -1880,7 +1880,11 @@ export async function runPilotScenarios(options: RunPilotScenariosOptions = {}):
         )
           ? { E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION: '1' }
           : {}),
-        VESLO_E2E_DEN_AUTH_JSON: '{}',
+        VESLO_E2E_DEN_AUTH_JSON: '',
+        E2E_DEN_AUTH_JSON: '',
+        VESLO_E2E_DEN_AUTH_SNAPSHOT_FILE: '',
+        E2E_DEN_AUTH_SNAPSHOT_FILE: '',
+        VESLO_DEN_AUTH_SNAPSHOT_PATH: '',
         VESLO_DISABLE_DEV_AUTOSTART: '1',
       });
       console.log(`[e2e] Session queue runtime fixture: ${sessionQueueRuntimeFixture.baseUrl}`);

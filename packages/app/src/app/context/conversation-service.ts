@@ -1720,6 +1720,13 @@ export function createConversationService<Client extends ConversationServiceClie
         clientMessageId: scope.clientMessageId?.trim() || null,
         errorType: error instanceof Error ? error.name : "unknown",
       });
+      // The lifecycle recovery owner already has a bounded transcript retry.
+      // Do not immediately start a second status/ensure/recovery chain after a
+      // client deadline; that can overlap the late original request and create
+      // duplicate terminal projections.
+      if (error instanceof Error && /timed out after/i.test(error.message)) {
+        throw error;
+      }
       return recoverAfterEnsure();
     }
   };

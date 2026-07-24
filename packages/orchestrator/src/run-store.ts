@@ -31,6 +31,7 @@ export type RunRecord = {
   runId: string;
   engineSessionId: string;
   clientMessageId: string | null;
+  opencodeMessageId?: string | null;
   origin: string | null;
   directory: string;
   kind: RunKind;
@@ -89,6 +90,7 @@ type RunRow = {
   run_id: string;
   engine_session_id: string;
   client_message_id: string | null;
+  opencode_message_id: string | null;
   origin: string | null;
   directory: string;
   kind: string;
@@ -129,6 +131,7 @@ function rowToRecord(row: RunRow): RunRecord {
     runId: row.run_id,
     engineSessionId: row.engine_session_id,
     clientMessageId: row.client_message_id ?? null,
+    opencodeMessageId: row.opencode_message_id ?? null,
     origin: row.origin ?? null,
     directory: row.directory,
     kind: row.kind as RunKind,
@@ -180,6 +183,7 @@ function openDb(dbPath: string): Database {
       run_id TEXT NOT NULL,
       engine_session_id TEXT NOT NULL,
       client_message_id TEXT,
+      opencode_message_id TEXT,
       origin TEXT,
       directory TEXT NOT NULL,
       kind TEXT NOT NULL,
@@ -211,6 +215,7 @@ function openDb(dbPath: string): Database {
       WHERE status IN (${ACTIVE_RUN_STATUS_SQL_LIST});
   `);
   ensureColumn(db, "conversation_run", "client_message_id", "client_message_id TEXT");
+  ensureColumn(db, "conversation_run", "opencode_message_id", "opencode_message_id TEXT");
   ensureColumn(db, "conversation_run", "origin", "origin TEXT");
   ensureColumn(db, "conversation_run", "engine_slot_id", "engine_slot_id TEXT");
   ensureColumn(db, "conversation_run", "engine_owner_id", "engine_owner_id TEXT");
@@ -259,6 +264,7 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             run_id,
             engine_session_id,
             client_message_id,
+            opencode_message_id,
             origin,
             directory,
             kind,
@@ -279,7 +285,7 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             last_useful_progress_at,
             retry_since,
             last_progress_signature
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
           `,
         ).run(
           record.workspaceId,
@@ -287,6 +293,7 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           record.runId,
           record.engineSessionId,
           record.clientMessageId,
+          record.opencodeMessageId ?? null,
           record.origin,
           record.directory,
           record.kind,
@@ -321,26 +328,27 @@ export function createRunStore(options: { dbPath: string }): RunStore {
             conversation_id = ?3,
             engine_session_id = ?4,
             client_message_id = ?5,
-            origin = ?6,
-            directory = ?7,
-            kind = ?8,
-            status = ?9,
-            abort_requested = ?10,
-            created_at = ?11,
-            started_at = ?12,
-            completed_at = ?13,
-            error = ?14,
-            engine_slot_id = ?15,
-            engine_owner_id = ?16,
-            engine_owner_state = ?17,
-            engine_pid = ?18,
-            engine_started_at = ?19,
-            engine_base_url = ?20,
-            activity_kind = ?21,
-            wait_reason = ?22,
-            last_useful_progress_at = ?23,
-            retry_since = ?24,
-            last_progress_signature = ?25
+            opencode_message_id = ?6,
+            origin = ?7,
+            directory = ?8,
+            kind = ?9,
+            status = ?10,
+            abort_requested = ?11,
+            created_at = ?12,
+            started_at = ?13,
+            completed_at = ?14,
+            error = ?15,
+            engine_slot_id = ?16,
+            engine_owner_id = ?17,
+            engine_owner_state = ?18,
+            engine_pid = ?19,
+            engine_started_at = ?20,
+            engine_base_url = ?21,
+            activity_kind = ?22,
+            wait_reason = ?23,
+            last_useful_progress_at = ?24,
+            retry_since = ?25,
+            last_progress_signature = ?26
            WHERE workspace_id = ?1 AND run_id = ?2`,
         ).run(
           workspaceId,
@@ -348,6 +356,7 @@ export function createRunStore(options: { dbPath: string }): RunStore {
           next.conversationId,
           next.engineSessionId,
           next.clientMessageId,
+          next.opencodeMessageId ?? null,
           next.origin,
           next.directory,
           next.kind,

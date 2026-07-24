@@ -109,7 +109,9 @@ test("OpenAI OAuth UI routes forward thrown session failures to error middleware
 
       const { server, baseUrl } = await listen(app)
       try {
-        const signal = AbortSignal.timeout(250)
+        // Keep a finite failure bound without making this middleware contract
+        // depend on sub-second scheduler availability in the full workspace suite.
+        const signal = AbortSignal.timeout(5_000)
         const response = await fetch(`${baseUrl}${routePath}`, {
           method: "POST",
           headers: {

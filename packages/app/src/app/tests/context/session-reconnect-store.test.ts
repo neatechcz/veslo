@@ -71,7 +71,7 @@ test("recovery catch-up sync is limited to sessions running when outage started"
 
   assert.match(
     eventStreamSource,
-    /if \(shouldShowReconnected\(outageEpisode\)\) \{\s*deps\.onReconnectNotice\?\.\("reconnected"\);\s*outageEpisode = \{ \.\.\.outageEpisode, shownReconnected: true \};/s,
+    /if \(refreshTranscript && shouldShowReconnected\(outageEpisode\)\) \{\s*deps\.onReconnectNotice\?\.\("reconnected"\);\s*outageEpisode = \{ \.\.\.outageEpisode, shownReconnected: true \};/s,
     "reconnected notice should be emitted once after successful catch-up",
   );
 

@@ -134,12 +134,22 @@ const allowRules = [
   },
   {
     path: "packages/server/src/server.ts",
-    reason: "server OpenCode proxy/run correlation boundary",
+    reason: "server OpenCode proxy/run correlation and engine ownership response boundary",
     tokens: [
       "x-veslo-conversation-run-id",
       "x-veslo-request-id",
       "x-veslo-skill-view-revision",
+      "x-veslo-engine-slot-id",
+      "x-veslo-engine-owner-id",
+      "x-veslo-engine-pid",
+      "x-veslo-engine-started-at",
+      "x-veslo-engine-base-url",
     ],
+  },
+  {
+    path: "packages/server/src/workspace-config-owner.ts",
+    reason: "server conditional orchestrator engine lookup boundary",
+    tokens: ["x-veslo-engine-if-running"],
   },
   {
     path: "packages/desktop/src-tauri/src/commands/orchestrator.rs",

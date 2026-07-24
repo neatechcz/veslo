@@ -1,8 +1,8 @@
 ---
 title: VSLO-281 MSG Attachment Path Routing And Visible Errors Plan
 date: 2026-07-24
-status: planned
-done: false
+status: completed
+done: true
 base_branch: main
 base_commit: 45c6f129736bafdebd73a8657a4b6bd2e295d3d4
 source_issue: Showstopper - attaching an MSG file produces no answer and can poison later prompts
@@ -487,9 +487,12 @@ when server-owned submit is unavailable.
 
 Keep the exact composer draft revision semantics:
 
-- a known staging/reference/format failure restores or retains the submitted
-  draft and attachment chips;
+- a known staging/reference/format failure transfers the submitted snapshot to
+  its failed optimistic row and removes those submitted attachments from the
+  active Composer, so a text-only follow-up cannot resend them accidentally;
 - a newer composer revision is never overwritten;
+- text or attachments added while the rejected submit is in flight are
+  preserved;
 - retry reuses the same attachment identity and does not create duplicate
   optimistic rows;
 - successful canonical path-only adoption preserves the visible filename.
@@ -625,10 +628,12 @@ that the user receives the documented new-chat/re-attach recovery.
 Replace or extend the current shallow attachment-staging Pilot scenario with a
 real desktop flow named for `VSLO-281`.
 
-Use a fresh isolated desktop profile, the real compiled Veslo server,
-orchestrator, bundled OpenCode sidecar, and a deterministic loopback provider.
-Drive the actual composer file input with a committed synthetic MSG fixture
-whose browser MIME is `application/octet-stream`.
+Use a fresh isolated desktop profile and the real compiled Veslo server. Drive
+the actual composer file input with a deterministic synthetic MSG payload whose
+browser MIME is `application/octet-stream`. The focused UI scenario may use the
+deterministic OpenCode/lifecycle fixture so it can assert prompt and run counts;
+run the bundled OpenCode exact-message compatibility gate separately against
+the shipped sidecar.
 
 Required branches:
 
@@ -689,6 +694,42 @@ After runtime implementation is verified, update:
 This plan remains historical and must not become the only documentation of the
 shipped behavior.
 
+## Implementation Outcome (2026-07-24)
+
+The required hotfix slice is implemented. Server-owned submit staging is
+bounded, atomic, idempotent, and path-only for non-image attachments. Known
+attachment failures finish before conversation materialization and run
+admission. The app localizes the typed result and gives it one visible owner in
+the optimistic user row. The active Composer disarms the rejected attachment,
+while exact snapshot/revision checks preserve edits made during the request.
+
+The MSG parser capability gate was not promoted to a shipped capability. The
+runtime recognizes valid CFB-backed MSG files and reports them truthfully as
+unsupported with EML, PDF, and TXT recovery guidance; malformed MSG files use
+the processing-failed result. Generic `application/octet-stream` remains
+content/extension classified instead of being rejected by MIME alone.
+
+Optional automatic legacy-history sanitation did not ship. Existing transcript
+parts are never mutated without the deferred content-identity proof. Canonical
+documentation therefore directs affected older conversations to a new chat or
+a newly attached supported export.
+
+Verification is intentionally split across ownership boundaries: server tests
+prove staging, containment, limits, replay, and path-only prompt resolution;
+orchestrator tests plus the bundled exact-message gate prove exact-run terminal
+correlation; and the focused real-Tauri scenario proves first-message and
+existing-chat error ownership plus same-chat text recovery.
+
+The final gate is complete. The server binary and Pilot-enabled desktop were
+rebuilt, the bundled OpenCode 1.17.13 exact-message/concurrency proof passed,
+and the focused real-Tauri scenario passed all four assertions for new-chat
+and existing-chat rejection plus same-chat recovery. The repository-wide
+`pnpm check` and `git diff --check` both pass. During completion, stale app
+source-contract expectations and shared-engine header ownership were aligned
+with their current runtime owners; the server test runner was also serialized
+to prevent concurrent fixtures from sharing and locking the same SQLite
+run-queue database.
+
 ## Acceptance Criteria
 
 - A staged non-image attachment never sends its original `dataUrl`,
@@ -714,8 +755,11 @@ shipped behavior.
   run as `failed`, releases admission, and displays one visible error.
 - A stale completion or error from an earlier run cannot terminalize a newly
   admitted run; idle alone is not terminal authority.
-- A subsequent text message in the same conversation reaches the provider,
-  including the legacy poisoned-session fixture.
+- A subsequent text message in the same conversation after a newly rejected
+  attachment reaches the provider.
+- If bounded legacy repair ships, its poisoned-session fixture reaches the
+  provider after content-proven sanitation. Otherwise legacy history remains
+  immutable and the documented recovery is a new chat or supported re-attach.
 - Canonical path-only transcript adoption leaves exactly one user row and keeps
   a visible filename/reference.
 - Path validation rejects escapes, symlinks, non-regular files, and mismatched
@@ -738,12 +782,14 @@ pnpm --filter veslo-server exec bun test src/tests/conversation-submit-draft-res
 pnpm --filter veslo-orchestrator exec bun test src/tests/run-activity-probe.test.ts src/tests/run-registry.test.ts
 ```
 
-Then rebuild and run the bundled compatibility proof:
+Then rebuild and run the shipped bundled OpenCode exact-message compatibility
+proof. Attachment byte stripping and path-only resolution are proved by the
+server-focused tests above; there is no separate attachment integration script.
 
 ```powershell
 pnpm --filter veslo-server build:bin
 pnpm --filter veslo-orchestrator build
-node packages/orchestrator/scripts/opencode-msg-attachment-path.integration.mjs
+node packages/orchestrator/scripts/opencode-workspace-concurrency.integration.mjs
 ```
 
 Before desktop testing, follow the single-tenant runtime preflight in

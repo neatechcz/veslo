@@ -165,6 +165,12 @@ test("composer clears transferred drafts through the revision-owned handoff", ()
 
   assert.match(
     composerSource,
+    /const parentDraftRevision = props\.draftRevision;[\s\S]*const externalAttachments = props\.initialDraft\.attachments \?\? \[\];[\s\S]*const currentAttachments = untrack\(\(\) => attachments\(\)\);[\s\S]*if \(!attachmentsMatch\) \{\s*setAttachments\(externalAttachments\.map\(\(attachment\) => \(\{ \.\.\.attachment \}\)\)\);/,
+    "parent draft revisions should reconcile attachment-only clears without subscribing to local attachment edits",
+  );
+
+  assert.match(
+    composerSource,
     /sendPromise = props\.onSend\(submittedDraft, sendOptions\);[\s\S]*finally \{[\s\S]*finishSending\(\);[\s\S]*setActiveSendTraceId\(null\);/,
     "counter-based local sending and active trace state should be released after the handoff promise settles",
   );
@@ -215,7 +221,7 @@ test("send flow blocks screenshot analysis on non-vision models instead of relyi
 
   assert.match(
     stagingSource,
-    /for \(const attachment of draft\.attachments\) \{\s*parts\.push\(\{\s*type: "file",\s*url: attachment\.dataUrl,\s*filename: attachment\.name,\s*mime: attachment\.mimeType,/s,
-    "prompt building should still include staged image attachments as file parts",
+    /for \(const attachment of draft\.attachments\) \{\s*if \(attachment\.kind !== "image" && !attachment\.mimeType\.toLowerCase\(\)\.startsWith\("image\/"\)\) continue;\s*parts\.push\(\{\s*type: "file",\s*url: attachment\.dataUrl,\s*filename: attachment\.name,\s*mime: attachment\.mimeType,/s,
+    "prompt building should keep image attachments inline without leaking non-image bytes",
   );
 });
