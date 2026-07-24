@@ -39,6 +39,7 @@ import {
   scenarioSelectionDisablesDevAutostart,
   scenarioSelectionNeedsRelaunchReconnectCheck,
   scenarioSelectionNeedsSessionQueueRuntimeFixture,
+  scenarioSelectionRequiresExplicitSessionRuntimeActivation,
   assertSessionQueueRuntimeFixtureProfileIsolation,
   assertPackagedSmokeProfileIsolation,
   scenarioSelectionNeedsPackagedSmokeFixture,
@@ -937,6 +938,20 @@ test('session render stability reuses the isolated deterministic lifecycle fixtu
 test('session run truthfulness reuses the focused deterministic lifecycle fixture', () => {
   const selected = ['/repo/packages/e2e/pilot-scenarios/session-run-truthfulness.toml'];
   assert.equal(scenarioSelectionNeedsSessionQueueRuntimeFixture(selected), true);
+  assert.throws(
+    () => assertSessionQueueRuntimeFixtureProfileIsolation(selected, { E2E_USE_EXISTING_PROFILE: '1' }),
+    /must not use E2E_USE_EXISTING_PROFILE=1/,
+  );
+});
+
+test('VSLO-281 MSG attachment acceptance reuses the focused deterministic lifecycle fixture', () => {
+  const selected = ['/repo/packages/e2e/pilot-scenarios/vslo-281-msg-attachment-visible-error.toml'];
+  assert.equal(scenarioSelectionNeedsSessionQueueRuntimeFixture(selected), true);
+  assert.equal(scenarioSelectionRequiresExplicitSessionRuntimeActivation(selected), true);
+  assert.throws(
+    () => assertPilotScenarioSelectionIsolated([...selected, '/repo/packages/e2e/pilot-scenarios/smoke.toml']),
+    /focused pilot scenario/,
+  );
   assert.throws(
     () => assertSessionQueueRuntimeFixtureProfileIsolation(selected, { E2E_USE_EXISTING_PROFILE: '1' }),
     /must not use E2E_USE_EXISTING_PROFILE=1/,

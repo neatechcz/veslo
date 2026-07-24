@@ -112,7 +112,9 @@ function conversationSubmitDraftFromComposerDraft(
       name: attachment.name,
       kind: attachment.kind,
       mimeType: attachment.mimeType,
-      dataUrl: attachment.dataUrl,
+      dataUrl: attachment.kind === "image" || !stagedAttachments[index]
+        ? attachment.dataUrl
+        : null,
       fileSessionPath: stagedAttachments[index]?.relativePath ?? null,
     })),
   };
@@ -502,6 +504,7 @@ function sessionSubmitResultFromConversationSubmit(
       clientMessageId: result.clientMessageId,
       draftDisposition: result.draftDisposition,
       confirmation: result.confirmation ?? null,
+      details: result.details ?? null,
     });
   }
   const failedQueueItemId = "queueItemId" in result ? result.queueItemId : undefined;
@@ -516,6 +519,7 @@ function sessionSubmitResultFromConversationSubmit(
     reservedRunId: failedReservedRunId,
     clientMessageId: result.clientMessageId,
     draftDisposition: result.draftDisposition,
+    details: result.details ?? null,
   });
 }
 
@@ -1760,7 +1764,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
 
       if (result.status === "blocked" || result.status === "failed") {
         disposeProvisional();
-        const implicitSkillConfirmationRequired = conversationSubmitNeedsImplicitSkillConfirmation(result);
         if (commandMessageIDToClear) deps.sessionStoreClearCommandDisplay(commandMessageIDToClear);
         deps.finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
           sessionID: existingSessionId,
@@ -1780,11 +1783,9 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           draftDisposition: result.draftDisposition,
           message: result.message,
         });
-        if (result.status === "failed") {
-          reportServerSubmitError(result.message);
-        } else if (!implicitSkillConfirmationRequired && sendTargetStillDisplayed()) {
-          deps.setError(result.message);
-        }
+        // The optimistic pending row is the sole visible owner for a
+        // server-known pre-admission failure. No durable session error turn is
+        // created until an accepted run later reaches failed terminality.
         return sessionSubmitResultFromConversationSubmit(result);
       }
 
@@ -2122,9 +2123,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
       serverFirstSubmitResult &&
       (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked")
     ) {
-      const implicitSkillConfirmationRequired =
-        conversationSubmitNeedsImplicitSkillConfirmation(serverFirstSubmitResult);
-      const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResult.message);
       deps.recordSendTrace("sendPrompt:server-submit-first-failed", {
         traceId: sendTraceId,
         sessionID: null,
@@ -2134,9 +2132,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         code: serverFirstSubmitResult.code,
         draftDisposition: serverFirstSubmitResult.draftDisposition,
       });
-      if (!implicitSkillConfirmationRequired) {
-        deps.setError(hintedMessage);
-      }
       cleanupPendingSidebarSession();
       stopSendPromptBusy();
       return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);
@@ -2171,9 +2166,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
         }
       }
       if (serverFirstSubmitResult.status === "failed" || serverFirstSubmitResult.status === "blocked") {
-        const implicitSkillConfirmationRequired =
-          conversationSubmitNeedsImplicitSkillConfirmation(serverFirstSubmitResult);
-        const hintedMessage = deps.addOpencodeCacheHint(serverFirstSubmitResult.message);
         deps.recordSendTrace("sendPrompt:server-submit-first-failed", {
           traceId: sendTraceId,
           sessionID,
@@ -2183,10 +2175,6 @@ export function createSessionSendWorkflow(deps: SessionSendWorkflowOptions): Ses
           code: serverFirstSubmitResult.code,
           draftDisposition: serverFirstSubmitResult.draftDisposition,
         });
-        if (!implicitSkillConfirmationRequired) {
-          deps.setError(hintedMessage);
-          deps.sessionStoreAppendSessionErrorTurn(sessionID, hintedMessage);
-        }
         cleanupPendingSidebarSession();
         stopSendPromptBusy();
         return sessionSubmitResultFromConversationSubmit(serverFirstSubmitResult);

@@ -122,6 +122,7 @@ const SESSION_QUEUE_SCENARIOS = new Set([
   'session-queue-durability',
   'session-render-stability',
   'session-run-truthfulness',
+  'vslo-281-msg-attachment-visible-error',
 ]);
 
 const DEV_AUTOSTART_DISABLED_SCENARIOS = new Set([
@@ -180,7 +181,9 @@ export function inferPilotSelectionSignals(
     needsRelaunchReconnectCheck: hasScenario(scenarioNames, 'vslo-270-stop-reload-reconnect'),
     needsSessionQueueRuntimeFixture,
     requiresExplicitSessionRuntimeActivation:
-      hasScenario(scenarioNames, 'session-render-stability') || hasScenario(scenarioNames, 'session-run-truthfulness'),
+      hasScenario(scenarioNames, 'session-render-stability') ||
+      hasScenario(scenarioNames, 'session-run-truthfulness') ||
+      hasScenario(scenarioNames, 'vslo-281-msg-attachment-visible-error'),
     needsPackagedSmokeFixture,
     needsNoWorkspaceProfile: hasScenario(scenarioNames, 'vslo-235-local-host-no-workspace'),
     needsPortContentionFixture: hasScenario(scenarioNames, 'vslo-235-local-host-port-contention'),

@@ -1,0 +1,201 @@
+[scenario]
+name = "vslo-281-msg-attachment-visible-error"
+fail_fast = true
+global_timeout_ms = 240000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "VSLO-281 unsupported MSG is visible and does not poison the chat"
+action = "eval"
+timeout_ms = 210000
+script = '''
+const pilotE2E = window.__vesloPilotE2E;
+if (!pilotE2E) throw new Error('Pilot browser prelude is unavailable.');
+const { normalize, assert, invoke, visible, insertContenteditableThroughBrowser } = pilotE2E;
+const waitUntil = (predicate, options = {}) => pilotE2E.waitUntil(predicate, {
+  timeout: options.timeout ?? 45000,
+  interval: options.interval ?? 150,
+  message: options.message ?? 'condition was not met',
+});
+const serverRequest = async (baseUrl, token, path, options = {}) => {
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...options,
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: 'application/json',
+      ...(options.body ? { 'content-type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  const text = await response.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+  return { ok: response.ok, status: response.status, body };
+};
+
+window.localStorage.setItem('veslo.onboardingComplete', '1');
+window.localStorage.setItem('veslo.language', 'en');
+window.localStorage.setItem('veslo.sendWorkflowTrace', '1');
+
+const bootstrap = await invoke('workspace_bootstrap');
+const workspace = bootstrap?.workspaces?.find((item) => item.id === bootstrap?.activeId) ?? bootstrap?.workspaces?.[0];
+const workspacePath = normalize(workspace?.path || workspace?.directory);
+assert(workspacePath, 'The isolated VSLO-281 workspace is unavailable.');
+
+const localServer = await waitUntil(async () => {
+  const info = await invoke('veslo_server_info').catch(() => null);
+  const baseUrl = normalize(info?.baseUrl).replace(/\/+$/, '');
+  const token = normalize(info?.clientToken);
+  if (!info?.running || !baseUrl || !token) return false;
+  const health = await fetch(`${baseUrl}/health`).catch(() => null);
+  return health?.ok ? { baseUrl, token } : false;
+}, { timeout: 90000, interval: 500, message: 'The local Veslo server did not become ready.' });
+
+const workspaces = await serverRequest(localServer.baseUrl, localServer.token, '/workspaces');
+assert(workspaces.ok && Array.isArray(workspaces.body?.items), 'The local server did not expose workspaces.');
+const serverWorkspace = workspaces.body.items.find((item) => normalize(item.path) === workspacePath) ?? workspaces.body.items[0];
+const workspaceId = normalize(serverWorkspace?.id);
+const fixtureBaseUrl = normalize(serverWorkspace?.baseUrl).replace(/\/+$/, '');
+assert(workspaceId && fixtureBaseUrl.startsWith('http://127.0.0.1:'), 'The deterministic lifecycle fixture is not bound to the VSLO-281 workspace.');
+
+const fixtureState = async () => {
+  const response = await fetch(`${fixtureBaseUrl}/__session_queue_fixture/state`);
+  assert(response.ok, `The lifecycle fixture state read failed (${response.status}).`);
+  return await response.json();
+};
+const fixturePost = async (path, body = {}) => {
+  const response = await fetch(`${fixtureBaseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  assert(response.ok, `The lifecycle fixture transition failed (${response.status}).`);
+  return await response.json();
+};
+
+const oldUrl = window.location.href;
+window.location.hash = '/session';
+window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: oldUrl, newURL: window.location.href }));
+const picker = await waitUntil(() => {
+  const candidate = document.querySelector('[data-testid="composer-target-picker"]');
+  return visible(candidate) ? candidate : false;
+}, { message: 'The workspace target picker did not appear.' });
+picker.click();
+const target = await waitUntil(() => Array.from(document.querySelectorAll('[data-testid="composer-target-option"]')).find((option) =>
+  visible(option) && normalize(option.textContent).includes('Visual Workspace'),
+) || false, { message: 'Visual Workspace was not selectable.' });
+target.click();
+
+const sessionId = 'ses-vslo-281-msg';
+const title = 'VSLO-281 MSG attachment fixture';
+await waitUntil(async () => (await fixtureState()).sseSubscriberCount > 0, {
+  timeout: 45000,
+  message: 'The desktop SSE bridge did not subscribe before session creation.',
+});
+const created = await fetch(`${fixtureBaseUrl}/session`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ id: sessionId, title, directory: workspacePath }),
+});
+assert(created.ok, `The fixture OpenCode session could not be created (${created.status}).`);
+await fixturePost('/__session_queue_fixture/emit-session-created', { sessionId });
+const imported = await serverRequest(
+  localServer.baseUrl,
+  localServer.token,
+  `/workspace/${encodeURIComponent(workspaceId)}/conversations/import`,
+  {
+    method: 'POST',
+    body: JSON.stringify({
+      directory: workspacePath,
+      sessions: [{ id: sessionId, title, parentID: null, time: { created: 1000, updated: 1000 } }],
+    }),
+  },
+);
+assert(imported.ok, `The fixture conversation import failed (${imported.status}).`);
+await fixturePost('/__session_queue_fixture/append-session-transcript', {
+  sessionId,
+  messages: [],
+  partsByMessageId: {},
+});
+const recovered = await serverRequest(
+  localServer.baseUrl,
+  localServer.token,
+  `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}/transcript/recover`,
+  { method: 'POST', body: JSON.stringify({ directory: workspacePath }) },
+);
+assert(recovered.ok, `The fixture transcript recovery failed (${recovered.status}).`);
+
+const sessionButton = await waitUntil(() => Array.from(document.querySelectorAll('button')).find((button) =>
+  visible(button) && normalize(button.textContent).includes(title),
+) || false, { message: 'The VSLO-281 fixture session did not appear in the sidebar.' });
+sessionButton.click();
+await waitUntil(() => window.location.hash.endsWith(`/session/${sessionId}`), {
+  message: 'The VSLO-281 fixture session did not become active.',
+});
+
+const composer = () => Array.from(document.querySelectorAll('[data-testid="session-composer"]')).find(visible) || null;
+const submitComposer = async () => {
+  const button = await waitUntil(() => {
+    const root = composer();
+    return root && Array.from(root.querySelectorAll('button[aria-label="Queue message"]')).find((candidate) => visible(candidate) && !candidate.disabled) || false;
+  }, { message: 'The active composer did not expose an enabled queue button.' });
+  button.click();
+};
+const initialFixture = await fixtureState();
+const fileInput = await waitUntil(() => composer()?.querySelector('input[type="file"]') || false, {
+  message: 'The real composer did not expose its file input.',
+});
+const msgBytes = new Uint8Array(512);
+msgBytes.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+const transfer = new DataTransfer();
+transfer.items.add(new File([msgBytes], 'Zprava-z-webu.msg', { type: 'application/octet-stream' }));
+Object.defineProperty(fileInput, 'files', { configurable: true, value: transfer.files });
+fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+await waitUntil(() => normalize(composer()?.textContent).includes('Zprava-z-webu.msg'), {
+  message: 'The MSG file was not accepted by the real composer.',
+});
+await submitComposer();
+
+const unsupportedAlert = await waitUntil(() => Array.from(document.querySelectorAll('[role="alert"]')).find((candidate) => {
+  const text = normalize(candidate.textContent);
+  return visible(candidate) && text.includes('cannot read the MSG format') && text.includes('EML') && text.includes('PDF') && text.includes('TXT');
+}) || false, {
+  timeout: 45000,
+  message: 'The unsupported MSG result did not render an actionable visible error.',
+});
+assert(normalize(unsupportedAlert.closest('[data-message-role="user"]')?.textContent).includes('Zprava-z-webu.msg'), 'The MSG error was not scoped to its optimistic user row.');
+assert(!document.querySelector('[data-testid="session-run-indicator"]'), 'Unsupported MSG admission left a run visibly active.');
+const afterUnsupported = await fixtureState();
+assert(afterUnsupported.promptCalls === initialFixture.promptCalls, 'Unsupported MSG bytes reached OpenCode prompt_async.');
+assert(afterUnsupported.runs.length === initialFixture.runs.length, 'Unsupported MSG admission created a durable run.');
+
+const editor = await waitUntil(() => {
+  const candidate = composer()?.querySelector('[role="textbox"][contenteditable="true"]');
+  return visible(candidate) ? candidate : false;
+}, { message: 'The chat composer did not remain usable after the MSG failure.' });
+const followUp = 'follow-up after unsupported MSG';
+insertContenteditableThroughBrowser(editor, followUp);
+await waitUntil(() => normalize(editor.textContent) === followUp, { message: 'The follow-up text was not accepted.' });
+await submitComposer();
+const followUpRun = await waitUntil(async () => {
+  const state = await fixtureState();
+  return state.promptCalls === initialFixture.promptCalls + 1 && state.runs.length === initialFixture.runs.length + 1
+    ? state.runs.at(-1)
+    : false;
+}, { timeout: 45000, interval: 200, message: 'The follow-up message was not admitted after the MSG failure.' });
+assert(normalize(followUpRun?.clientMessageId), 'The follow-up run did not retain its client message identity.');
+assert(!document.body.innerText.includes('A previous message is still synchronizing'), 'The failed MSG row kept the pending slot blocked.');
+
+await fixturePost(`/workspace/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(followUpRun.runId)}/completed`);
+await fixturePost('/__session_queue_fixture/emit-session-idle', { sessionId });
+await waitUntil(() => !document.querySelector('[data-testid="session-run-indicator"]'), {
+  timeout: 45000,
+  message: 'The accepted follow-up run did not reach a terminal visible state.',
+});
+true;
+'''

@@ -33,6 +33,18 @@ test("stores a pending draft only when its session-key slot is unoccupied", () =
   assert.equal(occupied.draftsBySessionKey, stored.draftsBySessionKey);
 });
 
+test("allows a follow-up to replace a failed pending submit without overwriting uncertain delivery", () => {
+  const failed = { ...draft("submit-failed", "pending-session:a"), state: "error" as const, error: "failed" };
+  const next = draft("submit-next", "pending-session:a");
+  const replaced = trySetPendingSubmittedDraftForKey({ [failed.sessionKey]: failed }, failed.sessionKey, next);
+  assert.equal(replaced.kind, "stored");
+  assert.equal(replaced.pending.id, next.id);
+
+  const uncertain = { ...failed, state: "outcome-unknown" as const };
+  const blocked = trySetPendingSubmittedDraftForKey({ [uncertain.sessionKey]: uncertain }, uncertain.sessionKey, next);
+  assert.equal(blocked.kind, "occupied");
+});
+
 test("removes only the matching pending draft and materializes it into the real session key", () => {
   const pending = draft("submit-a", "pending-session:a");
   const current = { [pending.sessionKey]: pending };

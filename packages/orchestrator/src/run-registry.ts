@@ -15,6 +15,9 @@ export const MODEL_RETRY_NO_PROGRESS_TIMEOUT = "model_retry_no_output_timeout";
 
 export type RunProbeActivityResult = {
   active: boolean;
+  terminalCandidate?: boolean;
+  terminalStatus?: "completed" | "failed" | "aborted";
+  terminalError?: string | null;
   activityKind?: RunActivityKind | null;
   waitReason?: RunWaitReason | null;
   progressSignature?: string | null;
@@ -206,13 +209,49 @@ export function createRunRegistry(deps: {
       return { record: next, stale: false, noProgressSeconds: noProgressSecondsForRecord(next, timestamp) };
     }
 
-    const timestamp = now();
-    const next =
-      deps.store.update(record.workspaceId, record.runId, {
-        status: "completed",
-        completedAt: timestamp,
+    if (!probe.terminalCandidate) {
+      const timestamp = now();
+      const next = deps.store.update(record.workspaceId, record.runId, {
+        status: isActiveRunStatus(record.status) ? record.status : "running",
+        completedAt: null,
+        activityKind: normalizeActivityKind(probe.activityKind ?? "idle"),
+        waitReason: normalizeWaitReason(probe.waitReason ?? "session_idle"),
+        retrySince: null,
+        lastProgressSignature: normalizeNullableText(probe.progressSignature) ?? record.lastProgressSignature,
+      }) ?? record;
+      return { record: next, stale: false, noProgressSeconds: noProgressSecondsForRecord(next, timestamp) };
+    }
+
+    const progressSignature = normalizeNullableText(probe.progressSignature);
+    const stableTerminalCandidate = Boolean(
+      progressSignature &&
+      record.waitReason === "session_idle" &&
+      normalizeNullableText(record.lastProgressSignature) === progressSignature
+    );
+    if (!stableTerminalCandidate) {
+      const timestamp = now();
+      const next = deps.store.update(record.workspaceId, record.runId, {
+        status: isActiveRunStatus(record.status) ? record.status : "running",
+        completedAt: null,
         activityKind: "idle",
         waitReason: "session_idle",
+        retrySince: null,
+        lastProgressSignature: progressSignature,
+      }) ?? record;
+      return { record: next, stale: false, noProgressSeconds: noProgressSecondsForRecord(next, timestamp) };
+    }
+
+    const timestamp = now();
+    const terminalStatus = probe.terminalStatus ?? "completed";
+    const next =
+      deps.store.update(record.workspaceId, record.runId, {
+        status: terminalStatus,
+        completedAt: timestamp,
+        error: terminalStatus === "completed" ? null : normalizeText(probe.terminalError) || (
+          terminalStatus === "aborted" ? DEFAULT_RUN_ABORT_ERROR : DEFAULT_RUN_FAILURE_ERROR
+        ),
+        activityKind: "idle",
+        waitReason: "none",
         retrySince: null,
       }) ?? record;
     return { record: next, stale: false, noProgressSeconds: null };

@@ -295,4 +295,55 @@ describe("conversation submit draft resolution", () => {
       },
     });
   });
+
+  test("represents a staged non-image attachment only as a workspace path", async () => {
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "inspect document",
+        parts: [{ type: "text", text: "inspect document" }],
+        attachments: [{
+          name: "brief.docx",
+          kind: "file",
+          mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          dataUrl: "data:application/octet-stream;base64,YmluYXJ5",
+          fileSessionPath: "sessions/sess_1/brief.docx",
+        }],
+      }),
+      workspace: localWorkspace(process.cwd()),
+    });
+
+    expect(result).toMatchObject({
+      status: "ok",
+      resolvedRunInput: {
+        kind: "prompt_async",
+        text: "inspect document\nAttached workspace file: sessions/sess_1/brief.docx",
+        parts: [{
+          type: "text",
+          text: "inspect document\nAttached workspace file: sessions/sess_1/brief.docx",
+        }],
+      },
+    });
+  });
+
+  test("blocks a raw non-image attachment that bypassed server staging", async () => {
+    const result = await resolveConversationSubmitDraft({
+      request: request({
+        mode: "prompt",
+        text: "inspect document",
+        parts: [{ type: "text", text: "inspect document" }],
+        attachments: [{
+          name: "brief.bin",
+          kind: "file",
+          mimeType: "application/octet-stream",
+          dataUrl: "data:application/octet-stream;base64,YmluYXJ5",
+        }],
+      }),
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      result: { code: "attachment_reference_missing" },
+    });
+  });
 });

@@ -17,6 +17,7 @@ export type PendingSubmittedDraft = {
   draft: ComposerDraft;
   state: PendingSubmittedDraftState;
   error?: string;
+  errorCode?: string;
   admission?: PendingSubmittedDraftAdmission;
   acceptedRunId?: string | null;
   acceptedClientMessageId?: string | null;
@@ -25,7 +26,7 @@ export type PendingSubmittedDraft = {
 
 type PendingSubmittedDraftInput = Omit<
   PendingSubmittedDraft,
-  "state" | "error" | "admission" | "acceptedRunId" | "acceptedClientMessageId" | "admissionDiagnostic"
+  "state" | "error" | "errorCode" | "admission" | "acceptedRunId" | "acceptedClientMessageId" | "admissionDiagnostic"
 >;
 
 const filenameFromPath = (path: string) => {
@@ -77,11 +78,13 @@ export function markPendingSubmittedAccepted(
 export function markPendingSubmittedFailed(
   pending: PendingSubmittedDraft,
   error: string,
+  errorCode?: string | null,
 ): PendingSubmittedDraft {
   return {
     ...pending,
     state: "error",
     error,
+    ...(errorCode?.trim() ? { errorCode: errorCode.trim() } : {}),
   };
 }
 

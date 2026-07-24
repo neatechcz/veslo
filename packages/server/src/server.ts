@@ -18,6 +18,7 @@ import type {
   DisabledSkillTarget,
 } from "./types.js";
 import { ApprovalService } from "./approvals.js";
+import { deriveConversationRunOpenCodeMessageId } from "./conversation-run-message-id.js";
 import {
   deleteGlobalSkillRecoverable,
   deleteSkillAtPathRecoverable,
@@ -3203,6 +3204,7 @@ function isRecordLike(value: unknown): value is Record<string, unknown> {
 
 const CONVERSATION_RUN_BODY_FIELDS: Record<string, string[]> = {
   prompt_async: [
+    "messageID",
     "model",
     "agent",
     "noReply",
@@ -4517,7 +4519,18 @@ function createRoutes(
       captureEngineOwner,
     } = input;
     const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
-    const opencodeRunBody = buildConversationRunBody(kind, body);
+    const opencodeRunBody = buildConversationRunBody(kind, {
+      ...body,
+      ...(kind === "prompt_async" && clientMessageId
+        ? {
+            messageID: deriveConversationRunOpenCodeMessageId({
+              workspaceId: workspace.id,
+              engineSessionId: target.opencodeSessionId,
+              clientMessageId,
+            }),
+          }
+        : {}),
+    });
     const runtimeSkillView = workspace.workspaceType === "local"
       ? await ensureActiveRuntimeSkillView(workspace, {
           disabledSkills: await listDisabledSkills({

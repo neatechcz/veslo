@@ -298,7 +298,7 @@ test("builds prompt and command file parts from relative, absolute, and attachme
   ]);
 });
 
-test("empty workspace roots skip relative file references but keep absolute file and attachment parts", () => {
+test("empty workspace roots skip relative and raw non-image attachment parts", () => {
   const { client } = makeClient();
   const staging = createSessionAttachmentStaging(
     makeDeps(client, {
@@ -324,6 +324,5 @@ test("empty workspace roots skip relative file references but keep absolute file
 
   assert.deepEqual(staging.buildCommandFileParts(draft), [
     { type: "file", mime: "text/plain", url: "file:///tmp/absolute.txt", filename: "absolute.txt" },
-    { type: "file", url: "data:text/plain;base64,aGVsbG8=", filename: "inline.txt", mime: "text/plain" },
   ]);
 });

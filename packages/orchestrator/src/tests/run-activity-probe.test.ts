@@ -5,6 +5,7 @@ import {
   deriveRunActivityFromSessionMessages,
   deriveRunActivityFromSessionStatus,
 } from "../run-activity-probe.js";
+import { deriveConversationRunOpenCodeMessageId } from "../conversation-run-message-id.js";
 import { createRunRegistry } from "../run-registry.js";
 import { isActiveRunStatus, type RunRecord, type RunStore } from "../run-store.js";
 
@@ -20,9 +21,11 @@ const mockFetch = (
 
 const assistant = (input: {
   id?: string;
+  created?: number;
   completed?: number | string;
   error?: unknown;
   finish?: string;
+  parentID?: string;
   parts?: unknown[];
 }) => ({
   info: {
@@ -30,9 +33,10 @@ const assistant = (input: {
     sessionID: "sess-a",
     role: "assistant",
     time: {
-      created: 1_000,
+      created: input.created ?? 1_000,
       ...(input.completed === undefined ? {} : { completed: input.completed }),
     },
+    ...(input.parentID === undefined ? {} : { parentID: input.parentID }),
     ...(input.error === undefined ? {} : { error: input.error }),
     ...(input.finish === undefined ? {} : { finish: input.finish }),
   },
@@ -163,6 +167,24 @@ describe("run activity probe payload parsing", () => {
     ])).toMatchObject({ active: false, activityKind: "idle", waitReason: "session_idle" });
   });
 
+  test("normalizes unsupported attachment errors and uses durable abort intent", () => {
+    expect(deriveRunActivityFromSessionMessages([
+      user(),
+      assistant({ error: { name: "UnknownError", data: { message: "Unknown file type application/octet-stream" } } }),
+    ])).toMatchObject({
+      terminalStatus: "failed",
+      terminalError: "attachment_runtime_rejected",
+    });
+    const abortedPayload = [
+      user(),
+      assistant({ error: { name: "MessageAbortedError", data: { message: "aborted" } } }),
+    ];
+    expect(deriveRunActivityFromSessionMessages(abortedPayload, { abortRequested: true }))
+      .toMatchObject({ terminalStatus: "aborted" });
+    expect(deriveRunActivityFromSessionMessages(abortedPayload, { abortRequested: false }))
+      .toMatchObject({ terminalStatus: "failed", terminalError: "unexpected_message_abort" });
+  });
+
   test("assistant without terminal fields remains active", () => {
     expect(deriveRunActivityFromSessionMessages([
       user(),
@@ -252,10 +274,10 @@ describe("run activity probe HTTP behavior", () => {
       },
     });
 
-    await expect(probe(record)).resolves.toEqual({ active: false });
+    await expect(probe(record)).resolves.toEqual({ unreachable: true });
   });
 
-  test("idle session status returns completion without fetching the transcript", async () => {
+  test("idle session status requires a terminal transcript candidate", async () => {
     const urls: string[] = [];
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),
@@ -268,12 +290,12 @@ describe("run activity probe HTTP behavior", () => {
         if (String(input).endsWith("/session/status")) {
           return Response.json({ "sess-a": { type: "idle" } });
         }
-        throw new Error("idle status must not fetch the transcript");
+        return Response.json([user(), assistant({ completed: 2_000 })]);
       }) as typeof fetch,
     });
 
-    await expect(probe(record)).resolves.toMatchObject({ active: false, activityKind: "idle" });
-    expect(urls).toEqual(["http://engine/session/status"]);
+    await expect(probe(record)).resolves.toMatchObject({ active: false, terminalCandidate: true, activityKind: "idle" });
+    expect(urls).toEqual(["http://engine/session/status", "http://engine/session/sess-a/message"]);
   });
 
   test("busy session yields to an explicitly completed assistant transcript", async () => {
@@ -295,6 +317,87 @@ describe("run activity probe HTTP behavior", () => {
       active: false,
       activityKind: "idle",
       waitReason: "session_idle",
+    });
+  });
+
+  test("does not treat a pre-admission terminal assistant as completion for a new run", async () => {
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        if (String(input).endsWith("/session/status")) return Response.json({ "sess-a": { type: "idle" } });
+        return Response.json([user(), assistant({ created: 1_000, completed: 2_000 })]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe({ ...record, createdAt: 1_500 })).resolves.toMatchObject({
+      active: true,
+      waitReason: "assistant_message_open",
+    });
+  });
+
+  test("uses the deterministic admission message id instead of an older terminal assistant", async () => {
+    const clientMessageId = "client-current";
+    const admissionMessageId = deriveConversationRunOpenCodeMessageId({
+      workspaceId: record.workspaceId,
+      engineSessionId: record.engineSessionId,
+      clientMessageId,
+    });
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        if (String(input).endsWith("/session/status")) return Response.json({ "sess-a": { type: "idle" } });
+        return Response.json([
+          user("msg-old-user"),
+          assistant({ id: "msg-old-assistant", completed: 2_000 }),
+          user(admissionMessageId),
+          assistant({ id: "msg-current-assistant", parentID: admissionMessageId, completed: 4_000 }),
+        ]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe({
+      ...record,
+      kind: "prompt",
+      clientMessageId,
+    })).resolves.toMatchObject({
+      active: false,
+      terminalCandidate: true,
+      progressSignature: expect.stringContaining("msg-current-assistant"),
+    });
+  });
+
+  test("keeps the current run active when only a stale assistant error exists", async () => {
+    const clientMessageId = "client-after-stale-error";
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        if (String(input).endsWith("/session/status")) return Response.json({ "sess-a": { type: "idle" } });
+        return Response.json([
+          user("msg-old-user"),
+          assistant({
+            id: "msg-old-assistant",
+            parentID: "msg-old-user",
+            error: { name: "UnknownError", data: { message: "Unknown file type application/octet-stream" } },
+          }),
+        ]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe({ ...record, kind: "prompt", clientMessageId })).resolves.toMatchObject({
+      active: true,
+      waitReason: "assistant_message_open",
     });
   });
 
@@ -458,7 +561,7 @@ describe("run activity probe HTTP behavior", () => {
       }) as typeof fetch,
     });
 
-    await expect(probe(record)).resolves.toEqual({ active: false });
+    await expect(probe(record)).resolves.toEqual({ unreachable: true });
   });
 
   test("non-404 engine failures remain unreachable", async () => {
@@ -484,7 +587,11 @@ describe("run activity probe with registry reconciliation", () => {
         url: `http://engine${input.targetPath}`,
         headers: {},
       }),
-      fetchImpl: mockFetch(async () => Response.json({ "sess-a": { type: "idle" } })),
+      fetchImpl: mockFetch(async (input) =>
+        String(input).endsWith("/session/status")
+          ? Response.json({ "sess-a": { type: "idle" } })
+          : Response.json([user(), assistant({ created: 2_000, completed: 3_000 })]),
+      ),
     });
     const registry = createRunRegistry({
       store,
@@ -523,6 +630,7 @@ describe("run activity probe with registry reconciliation", () => {
       engineBaseUrl: null,
     });
 
+    await registry.get("ws-a", "run-stale");
     const next = await registry.register({
       workspaceId: "ws-a",
       conversationId: "conv-a",

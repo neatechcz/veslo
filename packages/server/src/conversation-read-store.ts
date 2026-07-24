@@ -242,10 +242,16 @@ const envForWorkspace = (workspaceId: string, key: string) => {
   return process.env[`${key}_${suffix}`]?.trim() ?? "";
 };
 
-function resolveOpenCodeDbPath(input: {
+type OpenCodeDbCandidate = {
+  path: string;
+  explicit: boolean;
+  source: "explicit" | "workspace-local" | "global";
+};
+
+function resolveOpenCodeDbCandidates(input: {
   workspaceId: string;
   workspace?: ConversationReadWorkspace | null;
-}): string | null {
+}): OpenCodeDbCandidate[] {
   const workspaceId = normalizeId(input.workspaceId);
   const workspace = input.workspace ?? null;
   const explicit =
@@ -255,7 +261,7 @@ function resolveOpenCodeDbPath(input: {
     process.env.VESLO_OPENCODE_DB_PATH?.trim() ||
     process.env.OPENCODE_DB_PATH?.trim() ||
     "";
-  if (explicit) return resolve(explicit);
+  if (explicit) return [{ path: resolve(explicit), explicit: true, source: "explicit" }];
 
   const dataDir =
     (workspaceId ? envForWorkspace(workspaceId, "VESLO_OPENCODE_DATA_DIR") : "") ||
@@ -264,7 +270,7 @@ function resolveOpenCodeDbPath(input: {
     process.env.VESLO_OPENCODE_DATA_DIR?.trim() ||
     process.env.OPENCODE_DATA_DIR?.trim() ||
     "";
-  if (dataDir) return join(resolve(dataDir), "opencode.db");
+  if (dataDir) return [{ path: join(resolve(dataDir), "opencode.db"), explicit: true, source: "explicit" }];
 
   const dataHome =
     (workspaceId ? envForWorkspace(workspaceId, "VESLO_OPENCODE_XDG_DATA_HOME") : "") ||
@@ -274,44 +280,187 @@ function resolveOpenCodeDbPath(input: {
     process.env.VESLO_OPENCODE_XDG_DATA_HOME?.trim() ||
     process.env.XDG_DATA_HOME?.trim() ||
     "";
-  if (dataHome) return join(dataHome, "opencode", "opencode.db");
+  if (dataHome) return [{ path: join(resolve(dataHome), "opencode", "opencode.db"), explicit: true, source: "explicit" }];
 
   const workspaceLocalDb = workspace?.path ? join(workspace.path, ".opencode", "opencode.db") : "";
-  if (workspaceLocalDb && existsSync(workspaceLocalDb)) return workspaceLocalDb;
+  const candidates: OpenCodeDbCandidate[] = [];
+  if (workspaceLocalDb) {
+    candidates.push({ path: workspaceLocalDb, explicit: false, source: "workspace-local" });
+  }
 
   const home = homedir();
-  if (!home) return null;
-  return join(home, ".local", "share", "opencode", "opencode.db");
+  if (home) {
+    candidates.push({
+      path: join(home, ".local", "share", "opencode", "opencode.db"),
+      explicit: false,
+      source: "global",
+    });
+  }
+  return candidates;
 }
 
 type OpenReadOnlyDatabaseResult =
-  | { db: Database; dbPath: string; diagnostic?: undefined }
+  | { db: Database; dbPath: string; candidate: OpenCodeDbCandidate; diagnostic?: undefined }
   | { db: null; dbPath: string | null; diagnostic: ConversationReadDiagnostic };
+
+type OpenCodeReadOperation = "list" | "transcript";
+
+const schemaColumns = (db: Database, table: string): Set<string> => {
+  try {
+    const rows = db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+    return new Set(rows.map((row) => row.name));
+  } catch {
+    return new Set();
+  }
+};
+
+const requiredColumnsByOperation: Record<OpenCodeReadOperation, Record<string, readonly string[]>> = {
+  list: {
+    session: ["id", "title", "directory", "parent_id", "time_created", "time_updated"],
+  },
+  transcript: {
+    session: ["id", "directory"],
+    message: ["id", "session_id", "data"],
+    part: ["id", "session_id", "message_id", "data"],
+  },
+};
+
+function validateOpenCodeReadSchema(db: Database, operation: OpenCodeReadOperation): string | null {
+  for (const [table, requiredColumns] of Object.entries(requiredColumnsByOperation[operation])) {
+    const actualColumns = schemaColumns(db, table);
+    if (actualColumns.size === 0) return `no such table: ${table}`;
+    const missing = requiredColumns.filter((column) => !actualColumns.has(column));
+    if (missing.length > 0) return `missing columns in ${table}: ${missing.join(", ")}`;
+  }
+  return null;
+}
 
 function openReadOnlyDatabase(input: {
   workspaceId: string;
   directory?: string | null;
   sessionId?: string | null;
   workspace?: ConversationReadWorkspace | null;
+  operation: OpenCodeReadOperation;
 }): OpenReadOnlyDatabaseResult {
   const workspaceId = normalizeId(input.workspaceId);
-  const dbPath = resolveOpenCodeDbPath(input);
-  const exists = Boolean(dbPath && existsSync(dbPath));
-  if (!dbPath || !exists) {
-    return {
-      db: null,
-      dbPath,
-      diagnostic: {
+  const candidates = resolveOpenCodeDbCandidates(input);
+  let lastDiagnostic: ConversationReadDiagnostic | null = null;
+  let emptyListCandidate: OpenCodeDbCandidate | null = null;
+  for (const candidate of candidates) {
+    const exists = existsSync(candidate.path);
+    if (!exists) {
+      lastDiagnostic = {
         reason: "database_missing",
         workspaceId,
         directory: input.directory ?? null,
         sessionId: input.sessionId ?? null,
-        dbPath,
+        dbPath: candidate.path,
         dbPathExists: false,
-      },
-    };
+      };
+      if (candidate.explicit) break;
+      continue;
+    }
+
+    let db: Database;
+    try {
+      db = new Database(candidate.path, { readonly: true });
+    } catch (error) {
+      lastDiagnostic = {
+        reason: "schema_unavailable",
+        workspaceId,
+        directory: input.directory ?? null,
+        sessionId: input.sessionId ?? null,
+        dbPath: candidate.path,
+        dbPathExists: true,
+        message: errorMessage(error),
+      };
+      if (candidate.explicit) break;
+      continue;
+    }
+
+    const schemaError = validateOpenCodeReadSchema(db, input.operation);
+    if (schemaError) {
+      db.close();
+      lastDiagnostic = {
+        reason: "schema_unavailable",
+        workspaceId,
+        directory: input.directory ?? null,
+        sessionId: input.sessionId ?? null,
+        dbPath: candidate.path,
+        dbPathExists: true,
+        message: schemaError,
+      };
+      if (candidate.explicit) break;
+      continue;
+    }
+
+    const { directories, lowerDirectories } = directoryLookupArgs(input.directory ?? "");
+    const scopeFound = input.operation === "list"
+      ? db
+          .query<{ id: string }, Array<string>>(
+            `SELECT id FROM session WHERE ${directoryMatchClause(
+              "directory",
+              1,
+              directories.length,
+              lowerDirectories.length,
+            )} LIMIT 1`,
+          )
+          .get(...directories, ...lowerDirectories)
+      : db
+          .query<{ id: string }, Array<string>>(
+            `SELECT id FROM session WHERE id = ?1 AND ${directoryMatchClause(
+              "directory",
+              2,
+              directories.length,
+              lowerDirectories.length,
+            )} LIMIT 1`,
+          )
+          .get(input.sessionId ?? "", ...directories, ...lowerDirectories);
+    if (!scopeFound) {
+      if (candidate.explicit) return { db, dbPath: candidate.path, candidate };
+      if (input.operation === "list" && !emptyListCandidate) emptyListCandidate = candidate;
+      db.close();
+      lastDiagnostic = {
+        reason: "session_not_found",
+        workspaceId,
+        directory: input.directory ?? null,
+        sessionId: input.sessionId ?? null,
+        dbPath: candidate.path,
+        dbPathExists: true,
+        directoryVariantCount: directories.length + lowerDirectories.length,
+      };
+      if (candidate.explicit) break;
+      continue;
+    }
+
+    return { db, dbPath: candidate.path, candidate };
   }
-  return { db: new Database(dbPath, { readonly: true }), dbPath };
+
+  if (input.operation === "list" && emptyListCandidate) {
+    try {
+      return {
+        db: new Database(emptyListCandidate.path, { readonly: true }),
+        dbPath: emptyListCandidate.path,
+        candidate: emptyListCandidate,
+      };
+    } catch {
+      // Keep the last scoped diagnostic below when the empty fallback cannot
+      // be reopened safely.
+    }
+  }
+
+  return {
+    db: null,
+    dbPath: lastDiagnostic?.dbPath ?? null,
+    diagnostic: lastDiagnostic ?? {
+      reason: "database_missing",
+      workspaceId,
+      directory: input.directory ?? null,
+      sessionId: input.sessionId ?? null,
+      dbPath: null,
+      dbPathExists: false,
+    },
+  };
 }
 
 function isOpenCodeReadSchemaUnavailableError(error: unknown): boolean {
@@ -403,7 +552,12 @@ export function createConversationReadStore(): ConversationReadStore {
         };
       }
 
-      const opened = openReadOnlyDatabase({ workspaceId, directory, workspace: input.workspace });
+      const opened = openReadOnlyDatabase({
+        workspaceId,
+        directory,
+        workspace: input.workspace,
+        operation: "list",
+      });
       if (!opened.db) {
         return { workspaceId, items: [], source: "unavailable", diagnostic: opened.diagnostic };
       }
@@ -494,7 +648,13 @@ export function createConversationReadStore(): ConversationReadStore {
         };
       }
 
-      const opened = openReadOnlyDatabase({ workspaceId, directory, sessionId, workspace: input.workspace });
+      const opened = openReadOnlyDatabase({
+        workspaceId,
+        directory,
+        sessionId,
+        workspace: input.workspace,
+        operation: "transcript",
+      });
       if (!opened.db) return { ...empty, source: "unavailable", diagnostic: opened.diagnostic };
       const { db, dbPath } = opened;
 

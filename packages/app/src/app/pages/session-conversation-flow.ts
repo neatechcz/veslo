@@ -35,6 +35,7 @@ import type {
   SessionSendOrigin,
   SessionSubmitResult,
 } from "../lib/session-send-contract";
+import { sessionSubmitFailureMessage } from "../lib/attachment-submit-error-presentation";
 import {
   sessionSubmitNeedsImplicitSkillConfirmation,
   sessionSubmitBlockedResult,
@@ -457,6 +458,7 @@ export type MarkMatchingPendingSubmittedDraftFailedInput = {
   pendingSessionKeyBeforeHandoff: string | null;
   materializedSessionIdFromHandoff: string | null;
   errorMessage: string;
+  errorCode?: string | null;
 };
 
 export type MarkMatchingPendingSubmittedDraftFailedResult = {
@@ -472,6 +474,7 @@ export const markMatchingPendingSubmittedDraftFailed = ({
   pendingSessionKeyBeforeHandoff,
   materializedSessionIdFromHandoff,
   errorMessage,
+  errorCode,
 }: MarkMatchingPendingSubmittedDraftFailedInput): MarkMatchingPendingSubmittedDraftFailedResult => {
   const submitId = pendingSubmitId.trim();
   const directMatch = draftsBySessionKey[sessionKey];
@@ -488,7 +491,7 @@ export const markMatchingPendingSubmittedDraftFailed = ({
   }
 
   const [matchingSessionKey, current] = matchingEntry;
-  const failed = markPendingSubmittedFailed(current, errorMessage);
+  const failed = markPendingSubmittedFailed(current, errorMessage, errorCode);
   if (!pendingSessionKeyBeforeHandoff) {
     return {
       draftsBySessionKey: setPendingSubmittedDraftForKey(draftsBySessionKey, matchingSessionKey, failed),
@@ -1293,7 +1296,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           removePendingSubmittedDraftById(current, pendingSubmitId),
         );
       };
-      const markMatchingPendingSubmitFailed = (errorMessage: string) => {
+      const markMatchingPendingSubmitFailed = (errorMessage: string, errorCode?: string | null) => {
         let materializedSessionIdToRestore: string | null = null;
         deps.pendingSubmitted.updatePendingSubmittedDrafts((draftsBySessionKey) => {
           const result = markMatchingPendingSubmittedDraftFailed({
@@ -1303,6 +1306,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             pendingSessionKeyBeforeHandoff,
             materializedSessionIdFromHandoff,
             errorMessage,
+            errorCode,
           });
           materializedSessionIdToRestore = result.materializedSessionIdToRestore;
           if (result.materializedSessionIdForRunStateReset) {
@@ -1599,23 +1603,23 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             settlePendingSessionMaterializationFlight(submitResult);
             return submitResult;
           }
-          if (showOptimisticSubmit) {
-            const errorMessage =
-              submitResult.message ??
+          const failurePresentation = sessionSubmitFailureMessage(submitResult, deps.feedback.tr);
+          const errorMessage = failurePresentation.specific
+            ? failurePresentation.message
+            : submitResult.message ??
               deps.runtime.error() ??
               deps.feedback.tr("session.connect_server_to_attach");
+          if (showOptimisticSubmit) {
             if (submitResult.code === "server_submit_outcome_unknown") {
               markMatchingPendingSubmitOutcomeUnknown(errorMessage);
             } else {
-              markMatchingPendingSubmitFailed(errorMessage);
+              markMatchingPendingSubmitFailed(errorMessage, failurePresentation.specific ? submitResult.code : null);
             }
             deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "send-rejected");
           }
           finishPendingSessionHandoffFailure();
           deps.feedback.setToastMessage(
-            submitResult.message ??
-            deps.runtime.error() ??
-              deps.feedback.tr("session.connect_server_to_attach"),
+            errorMessage,
           );
           settlePendingSessionMaterializationFlight(submitResult);
           return submitResult;

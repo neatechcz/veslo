@@ -138,6 +138,14 @@ export function createTerminalDeliveryCoordinator(options: TerminalDeliveryCoord
         mutation.commit();
         return false;
       }
+      if (mutation.kind === "hydration") {
+        const existingHydrationIndex = entry.terminalDisplays.findIndex((item) => item.kind === "hydration");
+        if (existingHydrationIndex >= 0) {
+          entry.terminalDisplays[existingHydrationIndex] = mutation;
+          trace("terminal-delivery:terminal-display-replaced", entry, { kind: mutation.kind });
+          return true;
+        }
+      }
       entry.terminalDisplays.push(mutation);
       trace("terminal-delivery:terminal-display-held", entry, { kind: mutation.kind });
       return true;

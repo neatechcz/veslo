@@ -213,9 +213,13 @@ try {
   }));
   assert.deepEqual(scopedReads.map((item) => item.id).sort(), [...sessions].sort());
 
+  const promptMessageIds = sessions.map((_, index) =>
+    `msg_veslo_v1_${String(index + 1).padStart(32, "0")}`,
+  );
   const prompts = await Promise.all(sessions.map((id, index) => requestJson(first.baseUrl, `/session/${encodeURIComponent(id)}/prompt_async?directory=${encodeURIComponent(workspace)}`, {
     method: "POST",
     body: JSON.stringify({
+      messageID: promptMessageIds[index],
       model: { providerID: "deterministic", modelID: "oracle" },
       parts: [{ type: "text", text: `conversation-${index + 1}` }],
     }),
@@ -234,11 +238,23 @@ try {
     headers: { "x-opencode-directory": workspace },
   });
   assert.equal(unaffected.response.status, 200);
-  const transcripts = await Promise.all(sessions.map(async (id) => requestJson(
-    first.baseUrl,
-    `/session/${encodeURIComponent(id)}/message?directory=${encodeURIComponent(workspace)}&limit=20`,
-    { headers: { "x-opencode-directory": workspace } },
-  )));
+  const transcripts = await waitFor(async () => {
+    const results = await Promise.all(sessions.map(async (id) => requestJson(
+      first.baseUrl,
+      `/session/${encodeURIComponent(id)}/message?directory=${encodeURIComponent(workspace)}&limit=20`,
+      { headers: { "x-opencode-directory": workspace } },
+    )));
+    const exactRunMessagesPresent = results.every((item, index) => {
+      if (item.response.status !== 200 || !Array.isArray(item.body)) return false;
+      const expectedId = promptMessageIds[index];
+      const exactUser = item.body.find((message) => message?.info?.role === "user" && message?.info?.id === expectedId);
+      const exactAssistant = item.body.find((message) =>
+        message?.info?.role === "assistant" && message?.info?.parentID === expectedId,
+      );
+      return Boolean(exactUser && exactAssistant);
+    });
+    return exactRunMessagesPresent ? results : null;
+  }, "exact messageID transcript correlation", 30_000);
   assert.ok(transcripts.every((item) => item.response.status === 200));
 
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
@@ -265,6 +281,7 @@ try {
     maxProviderConcurrency,
     abort: { status: abort.response.status, unaffectedSessionStatus: unaffected.response.status },
     transcriptCount: transcripts.length,
+    exactPromptMessageIdsPreserved: true,
     restartPreservedSessionIds: true,
     promptStatuses: prompts.map((item) => item.response.status),
   };

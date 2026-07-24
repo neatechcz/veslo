@@ -1,9 +1,9 @@
 ---
 title: Duplicate Transcript Projection and Premature Terminal Recovery
-status: proposed
+status: in_progress
 done: false
 scope: Installed Veslo desktop runs with workspace-local OpenCode database fallback, run-scoped terminal confirmation, transcript projection, and composer recovery
-runtime_code_changed: false
+runtime_code_changed: true
 e2e_required: false
 evidence_reviewed_at: 2026-07-24
 ---
@@ -49,7 +49,9 @@ content.
 
 Acceptance uses focused automated tests, a headless server/orchestrator
 multi-step test, and a manually operated live Tauri run. No E2E driver or E2E
-fixture is required by this plan.
+fixture is required by this plan. A conservative coalescing guard inside the
+existing terminal-delivery owner is allowed without text-based deduplication;
+broad projection changes remain gated on Phase 0 identity evidence.
 
 ## Locked decisions
 
@@ -130,7 +132,7 @@ Enter. Its blocked trace does not identify the exact blocking predicate, run,
 or client message. A lifecycle `busy` value combined with missing streaming
 state can prevent a normal send from reaching the server queue.
 
-### Focused baseline on 2026-07-24
+### Pre-implementation focused baseline on 2026-07-24
 
 - combined focused audit run: 137 passed, 2 skipped, 1 failed;
 - the failing case is the accepted-run OpenCode-to-materialized-UI-session
@@ -139,9 +141,35 @@ state can prevent a normal send from reaching the server queue.
   transcript-controller, and presentation groups otherwise passed;
 - `git diff --check`: passed before this plan revision.
 
-These green tests describe the current implementation. Some orchestrator
+These green tests described the pre-change implementation. Some orchestrator
 assertions explicitly encode the unsafe `idle -> inactive -> completed`
 behavior and must be replaced, not preserved as acceptance.
+
+### Implementation checkpoint
+
+The first implementation slice now covers the source-selection and terminality
+owners:
+
+- implicit local/global OpenCode DB candidates are probed read-only with
+  operation-specific schema and scope checks; explicit configuration remains
+  fail-closed;
+- `session_idle`, missing engine, and session/message `404` no longer produce
+  successful completion; completion requires a stable post-admission terminal
+  message from the exact OpenCode session;
+- prompt runs carry a deterministic OpenCode admission `messageID` derived from
+  the already durable workspace, engine-session, and client-message identities;
+  legacy records without that correlation fall back to the persisted creation
+  timestamp and remain fail-closed when evidence is missing;
+- terminal candidacy uses the existing durable `waitReason` and
+  `lastProgressSignature` fields, so a restart can lose only the first
+  observation and can never fabricate completion or release a live owner;
+- the existing terminal-delivery coordinator coalesces repeated hydration for
+  one exact run while retaining ID-based message/part updates;
+- focused app, orchestrator, server, and headless lifecycle tests pass,
+  including the transient-idle multi-step integration and follow-up submit;
+- the canonical runtime and server contract documentation is updated;
+  manual duplicate classification and the sanitized live artifact remain
+  outstanding, so `done` remains false.
 
 ## Owner and identity contract
 
@@ -158,8 +186,8 @@ Foreground workspace selection is not an identity authority for any phase.
 
 ## Phase 0 — Evidence and duplicate classification
 
-Before changing projection semantics, add bounded diagnostics at existing write
-and render boundaries. Do not log response text, tool arguments, absolute user
+Before changing projection semantics, use the existing bounded diagnostics at
+write, lifecycle, and render boundaries. Do not log response text, tool arguments, absolute user
 paths, credentials, or file contents.
 
 Record the following envelope for each visible assistant mutation:
@@ -281,10 +309,14 @@ missing
 
 ### Admission watermark
 
-Before forwarding the mutating OpenCode submit, capture the latest session
-message identity/time/progress signature and store it on the pending run. For a
-new empty session, store an explicit empty watermark. Attach the watermark to
-the exact run before upstream dispatch; failure to persist it is fail-closed.
+Before forwarding the mutating OpenCode submit, Veslo derives a deterministic
+OpenCode user-message identity from the exact workspace, engine session, and
+already durable `clientMessageId`, then forwards it as `messageID`. The run
+record already persists the same `clientMessageId`, so the probe can reconstruct
+the admission fence after restart without adding duplicate watermark columns.
+Legacy runs without a client message identity use their persisted creation time
+as a weaker compatibility fence and cannot complete from an old terminal
+message when that timestamp is unavailable.
 
 If the pre-dispatch transcript probe is unavailable, mark the baseline as
 unknown. An unknown baseline cannot use an old terminal assistant message as
@@ -294,34 +326,31 @@ signal.
 
 ### Durable candidate state
 
-Persist these fields with the run:
+The preferred durable fields are already present in the run record:
 
 ```text
-admissionMessageId
-admissionMessageCreatedAt
-admissionProgressSignature
-terminalCandidateSince
-terminalCandidateObservedAt
-terminalCandidateCount
-terminalCandidateProgressSignature
-terminalCandidateMessageId
-terminalConfirmationError
+clientMessageId
+createdAt
+waitReason
+lastProgressSignature
+completedAt
 ```
 
-Initial validation parameters (not locked production defaults):
+Initial validation contract (not a timer-based production default):
 
-- minimum two matching terminal-candidate observations;
-- observations separated by at least 1,000 ms;
-- unchanged post-admission transcript signature for at least 2,000 ms;
-- no active tool part;
-- terminal assistant message newer than the admission watermark;
-- maximum terminal-candidate age of 30,000 ms.
+- one coherent lifecycle observation combines the OpenCode status read with a
+  successful exact-session message read;
+- the latest assistant message is terminal, newer than the run admission
+  watermark, and has no active tool part;
+- a transient `session_idle` without that post-admission terminal snapshot keeps
+  the run and reservation active;
+- if the lifecycle poll cadence later proves that OpenCode can emit more work
+  after such a snapshot, add a durable candidate/quiescence state rather than
+  guessing a timeout in the registry.
 
-Use injected clock/durations in tests and tune them against the real lifecycle
-poll cadence. These values are not sufficient as a terminal contract by
-themselves: the post-admission watermark and no-new-activity condition are
-mandatory. If any progress appears, clear the candidate fields and keep the
-run active.
+The admission watermark and no-new-activity condition are mandatory. Missing
+evidence never becomes `completed`; explicit abort, engine loss, or upstream
+error remain the only non-success terminal paths.
 
 Do not mark a reachable, possibly still-running OpenCode loop as `failed` only
 because a guessed confirmation timeout expired. The timeout path must first
@@ -592,12 +621,14 @@ documents are updated.
 
 ## Implementation order and completion gate
 
-1. Add Phase 0 diagnostics and reproduce/classify the visible duplicate.
+1. Review the existing bounded diagnostics and reproduce/classify the visible duplicate;
+   add fields only if the live trace shows an actual identity gap.
 2. Implement and test the scope-aware DB candidate resolver.
-3. Introduce durable admission watermark and terminal-candidate fields.
+3. Use the deterministic admission watermark and existing durable candidate fields.
 4. Replace boolean inactivity with the discriminated probe/state machine.
 5. Add the headless multi-step server/orchestrator test.
-6. Apply only the projection correction authorized by Phase 0 evidence.
+6. Keep the conservative exact-run hydration coalescing guard; apply broader
+   projection corrections only when Phase 0 identity evidence authorizes them.
 7. Unify composer admission/block reasons and verify server queue handoff.
 8. Run focused suites, typechecks, `git diff --check`, and the manual live run.
 9. Update canonical docs and attach the sanitized live artifact.

@@ -247,6 +247,24 @@ currently cached entry.
 The run/conversation model must not depend on sandbox availability. Sandbox is
 an isolation strategy, not the only mechanism for parallel workspace execution.
 
+For transcript recovery, the server remains the source-selection and host-cache
+owner. Explicit OpenCode database configuration is authoritative; implicit
+workspace-local and global databases are read-only fallback candidates. A
+candidate is usable only when its operation-specific schema and exact
+workspace-directory/session scope are readable. A stale or empty local
+`.opencode/opencode.db` therefore cannot shadow the valid global database.
+
+The orchestrator treats `session_idle`, missing engine state, and a session or
+message `404` as observations rather than successful terminality. Fresh
+`prompt_async` admissions carry a deterministic OpenCode `messageID` derived
+from the exact workspace, OpenCode session, and Veslo `clientMessageId`; the
+run probe uses that identity to reject older terminal messages. A run becomes
+successfully terminal only after stable post-admission terminal assistant
+evidence from the exact OpenCode session. The app keeps live SSE projection and
+terminal hydration under the existing ID-based store and terminal-delivery
+owner; repeat hydration for one exact run is coalesced, while distinct
+canonical message/part ids are never removed by text comparison.
+
 ### Desktop Shell
 
 The desktop shell owns the local Veslo server process lifecycle.

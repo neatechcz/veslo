@@ -226,6 +226,14 @@ const conversationSubmitConfirmationSchema = z.object({
   arguments: z.string(),
 });
 
+const conversationSubmitErrorDetailsSchema = z.object({
+  attachmentName: z.string().optional(),
+  format: z.string().optional(),
+  suggestedAlternatives: z.array(z.string()).optional(),
+  maxBytes: z.number().nonnegative().optional(),
+  maxAttachments: z.number().int().nonnegative().optional(),
+});
+
 const blockedResultSchema = z.object({
   status: z.literal("blocked"),
   code: nonEmptyStringSchema,
@@ -239,6 +247,7 @@ const blockedResultSchema = z.object({
   draftDisposition: z.enum(["restore", "keep"]),
   recoverable: z.boolean(),
   confirmation: conversationSubmitConfirmationSchema.optional(),
+  details: conversationSubmitErrorDetailsSchema.optional(),
 });
 
 const failedResultSchema = z.object({
@@ -255,6 +264,7 @@ const failedResultSchema = z.object({
   materializedSession: z.unknown().nullable().optional(),
   draftDisposition: z.enum(["restore", "mark-failed"]),
   debugTrace: z.array(debugTraceEntrySchema).optional(),
+  details: conversationSubmitErrorDetailsSchema.optional(),
 });
 
 const conversationSubmitTerminalResultSchema = z.discriminatedUnion("status", [

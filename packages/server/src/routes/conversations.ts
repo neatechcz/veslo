@@ -22,6 +22,7 @@ import type {
   ConversationSubmitResolvedRunInput,
   ConversationSubmitSubmittedResult,
 } from "../conversation-submit-contract.js";
+import { CONVERSATION_SUBMIT_MAX_BODY_BYTES } from "../conversation-submit-attachment-staging.js";
 import { ApiError } from "../errors.js";
 import { VESLO_SEND_TRACE_ID_HEADER } from "../request-headers.js";
 import {
@@ -817,7 +818,10 @@ export function registerConversationSessionRoutes(
     requireClientScope(ctx, "collaborator");
     const sendTraceId = ctx.request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || null;
     const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
-    const body = await readJsonBody(ctx.request);
+    const body = await readJsonBody(ctx.request, {
+      maxBytes: CONVERSATION_SUBMIT_MAX_BODY_BYTES,
+      label: "conversation submit body",
+    });
     const orchestratorRegistrationScope = createOrchestratorWorkspaceRegistrationScope();
     const resolveManagedAiModelDescriptor = dependencies.createManagedAiModelDescriptorResolver({
       request: ctx.request,

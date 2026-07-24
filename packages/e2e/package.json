@@ -31,6 +31,7 @@
     "test:pilot:visual-regression": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario visual-regression",
     "test:pilot:session-render-stability": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-render-stability",
     "test:pilot:session-run-truthfulness": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario session-run-truthfulness",
+    "test:pilot:vslo-281-msg-attachment": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario vslo-281-msg-attachment-visible-error",
     "test:pilot:feedback-youtrack-live": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario feedback-youtrack-live",
     "test:pilot:live-admin-codex-roundtrip": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario live-admin-codex-roundtrip",
     "test:pilot:den-managed-openai-anthropic": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario den-managed-openai-anthropic",

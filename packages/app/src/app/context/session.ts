@@ -3,6 +3,7 @@ import { createStore, produce, reconcile } from "solid-js/store";
 
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type { VesloSessionTranscriptSnapshot } from "../lib/veslo-server";
+import { currentLocale, t } from "../../i18n";
 
 import type {
   Client,
@@ -932,10 +933,16 @@ export function createSessionStore(options: {
             if (status.status !== "failed" || status.stale) return;
             terminalDeliveryCoordinator.retainTerminalDisplay(key, {
               kind: "error",
-              commit: () => appendSessionErrorTurn(scope.sessionId, status.error?.trim() || "Run failed", {
+              commit: () => appendSessionErrorTurn(
+                scope.sessionId,
+                status.error?.trim() === "attachment_runtime_rejected"
+                  ? t("session.attachment_runtime_rejected_generic", currentLocale())
+                  : status.error?.trim() || "Run failed",
+                {
                 durableRunId: scope.runId,
                 workspaceId: scope.workspaceId,
-              }),
+                },
+              ),
             });
           },
           setSessionStatusForWorkspace,

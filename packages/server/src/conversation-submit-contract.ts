@@ -134,6 +134,14 @@ export type ConversationSubmitImplicitSkillCommandConfirmation = {
 export type ConversationSubmitConfirmation =
   | ConversationSubmitImplicitSkillCommandConfirmation;
 
+export type ConversationSubmitErrorDetails = {
+  attachmentName?: string;
+  format?: string;
+  suggestedAlternatives?: string[];
+  maxBytes?: number;
+  maxAttachments?: number;
+};
+
 export type ConversationSubmitBlockedResult = {
   status: "blocked";
   code: string;
@@ -147,6 +155,7 @@ export type ConversationSubmitBlockedResult = {
   draftDisposition: "restore" | "keep";
   recoverable: boolean;
   confirmation?: ConversationSubmitConfirmation;
+  details?: ConversationSubmitErrorDetails;
 };
 
 export type ConversationSubmitFailedResult = {
@@ -163,6 +172,7 @@ export type ConversationSubmitFailedResult = {
   materializedSession?: unknown | null;
   draftDisposition: "restore" | "mark-failed";
   debugTrace?: ConversationSubmitDebugTraceEntry[];
+  details?: ConversationSubmitErrorDetails;
 };
 
 export type ConversationSubmitResult =

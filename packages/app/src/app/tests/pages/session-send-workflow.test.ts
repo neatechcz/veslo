@@ -1291,7 +1291,7 @@ test("session send workflow stages existing local attachments as server submit r
     name: "brief.txt",
     kind: "file",
     mimeType: "text/plain",
-    dataUrl: "data:text/plain;base64,YnJpZWY=",
+    dataUrl: null,
     fileSessionPath: "sessions/sess-target/brief.txt",
   }]);
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-stage-attachments"));
@@ -1497,7 +1497,7 @@ test("session send workflow does not clear the active composer for explicit serv
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-success"));
 });
 
-test("session send workflow reports failed server submit into the visible transcript", async () => {
+test("session send workflow returns failed server submit without duplicating the pending-row error", async () => {
   const appendedErrors: Array<{ sessionId: string; message: string }> = [];
   const harness = createHarness({
     addOpencodeCacheHint: (message) => `${message} Clear the OpenCode cache and retry.`,
@@ -1543,11 +1543,9 @@ test("session send workflow reports failed server submit into the visible transc
   assert.equal(sent.queueItemId, "queue-failed");
   assert.equal(sent.reservedRunId, "run-failed");
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-failed"));
-  assert.match(harness.errors.at(-1) ?? "", /Clear the OpenCode cache/);
-  assert.deepEqual(appendedErrors, [{
-    sessionId: "sess-target",
-    message: "Submit failed for client-server-failed Clear the OpenCode cache and retry.",
-  }]);
+  assert.equal(sent.message, "Submit failed for client-server-failed");
+  assert.deepEqual(harness.errors, []);
+  assert.deepEqual(appendedErrors, []);
   assert.ok(!harness.actions.some((action) => action.startsWith("run:")));
 });
 
@@ -1599,7 +1597,8 @@ test("session send workflow reports remote server-submit blocks without compatib
   assert.equal(submitCalls.length, 1);
   assert.equal(submitCalls[0]?.target?.conversationId, "conv-remote");
   assert.ok(harness.events.includes("sendPrompt:server-submit-existing-blocked"));
-  assert.match(harness.errors.at(-1) ?? "", /Remote workspace submit/);
+  assert.equal(sent.message, "Remote workspace submit is not available through the local server.");
+  assert.deepEqual(harness.errors, []);
 });
 
 test("session send workflow blocks compatibility run when server submit is unavailable", async () => {
@@ -1981,8 +1980,9 @@ test("session send workflow opens first materialized session and reports failed 
   assert.equal(accepted.accepted, false);
   assert.equal(createOptions.length, 1);
   assert.ok(harness.events.includes("sendPrompt:server-submit-first-failed"));
-  assert.deepEqual(harness.errors, ["OpenCode prompt failed Clear the OpenCode cache and retry."]);
-  assert.ok(harness.actions.includes("append-error:sess-first-failed:OpenCode prompt failed Clear the OpenCode cache and retry."));
+  assert.equal(accepted.message, "OpenCode prompt failed");
+  assert.deepEqual(harness.errors, []);
+  assert.doesNotMatch(harness.actions.join("\n"), /append-error:/);
   assert.equal(activePendingDraftKey, "pending-draft:first-failed");
   assert.deepEqual(activePendingDraftMeta, pendingDraftMeta);
   assert.doesNotMatch(

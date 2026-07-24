@@ -2843,6 +2843,80 @@
       }
     },
     {
+      "id": "scenario:vslo-281-msg-attachment-visible-error",
+      "scenarios": [
+        "vslo-281-msg-attachment-visible-error"
+      ],
+      "env": {},
+      "plan": {
+        "schema": "veslo-tauri-pilot-selection-plan/v1",
+        "scenarios": [
+          "vslo-281-msg-attachment-visible-error"
+        ],
+        "suite": null,
+        "profile": {
+          "mode": "isolated",
+          "defaultWorkspace": "seeded"
+        },
+        "auth": "none",
+        "fixtures": [
+          "session-queue-runtime"
+        ],
+        "environment": [
+          {
+            "key": "E2E_SESSION_QUEUE_FIXTURE_BASE_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_QUEUE_VESLO_WORKSPACE_ID",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_URL",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "VESLO_DEV_SERVER_TOKEN",
+            "operation": "fixture-value"
+          },
+          {
+            "key": "E2E_SESSION_RUNTIME_REQUIRE_EXPLICIT_ACTIVATION",
+            "operation": "set",
+            "value": "1"
+          },
+          {
+            "key": "VESLO_E2E_DEN_AUTH_JSON",
+            "operation": "set",
+            "value": "{}"
+          },
+          {
+            "key": "VESLO_DISABLE_DEV_AUTOSTART",
+            "operation": "set",
+            "value": "1"
+          }
+        ],
+        "preconditions": [
+          "focused-session-queue-runtime",
+          "isolated-session-queue-profile"
+        ],
+        "launch": {
+          "devAutostart": "enabled",
+          "scenarioTimeout": "default",
+          "relaunch": "none"
+        },
+        "successArtifacts": [],
+        "rejection": null
+      }
+    },
+    {
       "id": "suite:current-gate",
       "suite": "current-gate",
       "scenarios": [

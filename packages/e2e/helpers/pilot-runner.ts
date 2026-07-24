@@ -923,6 +923,7 @@ export function scenarioSelectionNeedsSessionQueueRuntimeFixture(scenarios: stri
       'session-queue-durability',
       'session-render-stability',
       'session-run-truthfulness',
+      'vslo-281-msg-attachment-visible-error',
     ].some((name) => scenario.replaceAll('\\', '/').endsWith(`/pilot-scenarios/${name}.toml`)),
   );
 }
@@ -935,7 +936,7 @@ export function scenarioSelectionNeedsPackagedSmokeFixture(scenarios: string[]):
 
 export function scenarioSelectionRequiresExplicitSessionRuntimeActivation(scenarios: string[]): boolean {
   return scenarios.some((scenario) =>
-    ['session-render-stability', 'session-run-truthfulness']
+    ['session-render-stability', 'session-run-truthfulness', 'vslo-281-msg-attachment-visible-error']
       .some((name) => scenario.replaceAll('\\', '/').endsWith(`/pilot-scenarios/${name}.toml`)),
   );
 }

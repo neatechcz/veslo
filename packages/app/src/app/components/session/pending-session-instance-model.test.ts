@@ -158,6 +158,38 @@ test("the same submitted id may update its existing session slot", () => {
   assert.equal(selectPendingSubmittedDraft(result.draftsBySessionKey, "session-a")?.error, "failed");
 });
 
+test("a new explicit send replaces a terminally failed pending row but not an uncertain delivery", () => {
+  const failed = {
+    ...createPendingSubmittedDraft({
+      id: "optimistic:failed",
+      clientMessageId: "client:failed",
+      sessionKey: "session-a",
+      sessionId: "session-a",
+      createdAt: 100,
+      draft: draft("unsupported attachment"),
+    }),
+    state: "error" as const,
+    error: "Unsupported attachment",
+  };
+  const next = createPendingSubmittedDraft({
+    id: "optimistic:next",
+    clientMessageId: "client:next",
+    sessionKey: "session-a",
+    sessionId: "session-a",
+    createdAt: 101,
+    draft: draft("follow-up"),
+  });
+
+  const replaced = trySetPendingSubmittedDraftForKey({ "session-a": failed }, "session-a", next);
+  assert.equal(replaced.kind, "stored");
+  assert.equal(replaced.pending.id, next.id);
+
+  const uncertain = { ...failed, state: "outcome-unknown" as const };
+  const blocked = trySetPendingSubmittedDraftForKey({ "session-a": uncertain }, "session-a", next);
+  assert.equal(blocked.kind, "occupied");
+  assert.equal(blocked.pending.id, failed.id);
+});
+
 test("materializing one pending session remaps only its submitted draft", () => {
   let submitted: PendingSubmittedDraftBySessionKey = {};
   submitted = setPendingSubmittedDraftForKey(

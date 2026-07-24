@@ -16,6 +16,7 @@ import type {
   ConversationSubmitAttemptStore,
 } from "./conversation-submit-attempt-store.js";
 import { deriveConversationSubmitOpenCodeSessionId } from "./conversation-submit-attempt-store.js";
+import { prepareConversationSubmitAttachments } from "./conversation-submit-attachment-staging.js";
 import {
   resolveConversationSubmitDraft,
   type ConversationSubmitDocumentRuntimeStatusReader,
@@ -223,6 +224,36 @@ export function createConversationSubmitService(input: {
         };
       }
 
+      const hasExistingTarget = Boolean(
+        request.target?.conversationId?.trim() || request.target?.opencodeSessionId?.trim(),
+      );
+      const requestedOpenCodeSessionId = request.target?.opencodeSessionId?.trim() ||
+        claimed.attempt.opencodeSessionId ||
+        deriveConversationSubmitOpenCodeSessionId({
+          workspaceId: workspace.id,
+          clientMessageId: request.clientMessageId,
+        });
+      const requiresServerAttachmentPreparation = request.draft.attachments?.some((attachment) => (
+        attachment.kind !== "image" && !attachment.mimeType.trim().toLowerCase().startsWith("image/")
+      )) ?? false;
+      let directory: string | null = null;
+      if (requiresServerAttachmentPreparation) {
+        directory = await resolveDirectory(request.target?.directory ?? null);
+        const attachmentPreparation = await prepareConversationSubmitAttachments({
+          workspace,
+          request,
+          directory,
+          stagingSessionId: requestedOpenCodeSessionId,
+        });
+        if (attachmentPreparation.status === "blocked") {
+          return {
+            payload: completeAttempt(withExistingTarget(attachmentPreparation.result), "blocked"),
+            httpStatus: 200,
+          };
+        }
+        request = attachmentPreparation.request;
+      }
+
       const debugTrace: ConversationSubmitDebugTraceEntry[] = [];
       const draftResolution = await resolveConversationSubmitDraft({
         request,
@@ -242,10 +273,8 @@ export function createConversationSubmitService(input: {
         };
       }
 
-      const directory = await resolveDirectory(request.target?.directory ?? null);
-      const hasExistingTarget = Boolean(
-        request.target?.conversationId?.trim() || request.target?.opencodeSessionId?.trim(),
-      );
+      directory ??= await resolveDirectory(request.target?.directory ?? null);
+
       if (draftResolution.resolvedRunInput.kind === "summarize" && !hasExistingTarget) {
         return {
           payload: completeAttempt({
@@ -342,11 +371,6 @@ export function createConversationSubmitService(input: {
       }
 
       try {
-        const requestedOpenCodeSessionId = claimed.attempt.opencodeSessionId ??
-          deriveConversationSubmitOpenCodeSessionId({
-            workspaceId: workspace.id,
-            clientMessageId: request.clientMessageId,
-          });
         attemptStore.update({
           workspaceId: workspace.id,
           clientMessageId: request.clientMessageId,

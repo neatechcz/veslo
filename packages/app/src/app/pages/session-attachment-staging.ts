@@ -487,6 +487,7 @@ export function createSessionAttachmentStaging<
     }
 
     for (const attachment of draft.attachments) {
+      if (attachment.kind !== "image" && !attachment.mimeType.toLowerCase().startsWith("image/")) continue;
       parts.push({
         type: "file",
         url: attachment.dataUrl,
@@ -530,6 +531,7 @@ export function createSessionAttachmentStaging<
     }
 
     for (const attachment of draft.attachments) {
+      if (attachment.kind !== "image" && !attachment.mimeType.toLowerCase().startsWith("image/")) continue;
       parts.push({
         type: "file",
         url: attachment.dataUrl,

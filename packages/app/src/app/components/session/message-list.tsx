@@ -65,11 +65,13 @@ import {
   type TranscriptSurfaceIdentity,
 } from "../../context/session-transcript-write-diagnostics";
 import { uiEffectTrace } from "../../lib/ui-effect-trace";
+import { isAttachmentSubmitErrorCode } from "../../lib/attachment-submit-error-presentation";
 
 export type PendingMessageState =
   | {
       state: "error";
       error?: string;
+      errorCode?: string;
     }
   | {
       state: "sync-warning";
@@ -398,6 +400,11 @@ export default function MessageList(props: MessageListProps) {
       ? `${tr("session.pending_submit_failed")}: ${tr("session.pending_submit_local_runtime_failed")}`
       : tr("session.pending_submit_failed");
   };
+
+  const pendingSubmitVisibleError = (state: Extract<PendingMessageState, { state: "error" }> | null) =>
+    state?.error && isAttachmentSubmitErrorCode(state.errorCode)
+      ? state.error
+      : pendingSubmitFailureLabel(state?.error);
 
   const pendingSubmitSyncWarningLabel = (
     reason: Extract<PendingMessageState, { state: "sync-warning" }>["reason"] | undefined,
@@ -2027,10 +2034,10 @@ export default function MessageList(props: MessageListProps) {
             <div
               class="mt-2 flex items-center gap-1.5 font-product type-ui-xs text-red-11"
               title={pendingMessageError()?.error ?? undefined}
-              role="status"
+              role="alert"
             >
               <CircleAlert size={12} />
-              <span>{pendingSubmitFailureLabel(pendingMessageError()?.error)}</span>
+              <span>{pendingSubmitVisibleError(pendingMessageError())}</span>
             </div>
           </Show>
           <Show when={messageBlock().isUser && pendingMessageSyncWarning()}>

@@ -23,6 +23,7 @@ type RunRecord = {
   startedAt: number | null;
   completedAt: number | null;
   error: string | null;
+  activityKind?: string | null;
 };
 
 type RunStoreLike = {
@@ -165,7 +166,7 @@ function parseRunKind(value: unknown): RunKind | null {
 }
 
 describe("stale active run integration", () => {
-  test("10 stale active conversations are released through OpenCode idle status without touching the slow message fallback", async () => {
+  test("10 stale active conversations are released only after a stable idle terminal transcript", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-stale-active-workspace-"));
     tempDirs.push(workspaceRoot);
     const dataDir = await useTempVesloDataDir("veslo-stale-active-data-");
@@ -223,9 +224,17 @@ describe("stale active run integration", () => {
 
         const messageMatch = /^\/workspace\/ws_1\/opencode\/session\/([^/]+)\/message$/.exec(url.pathname);
         if (request.method === "GET" && messageMatch) {
-          messageFallbackSessions.push(decodeURIComponent(messageMatch[1] ?? ""));
-          await sleep(messageFallbackDelayMs);
-          return Response.json([]);
+          const sessionId = decodeURIComponent(messageMatch[1] ?? "");
+          messageFallbackSessions.push(sessionId);
+          return Response.json([{
+            info: {
+              id: `assistant-${sessionId}`,
+              sessionID: sessionId,
+              role: "assistant",
+              time: { created: Date.now(), completed: Date.now() },
+            },
+            parts: [],
+          }]);
         }
 
         const promptMatch = /^\/workspace\/ws_1\/opencode\/session\/([^/]+)\/prompt_async$/.exec(url.pathname);
@@ -350,6 +359,15 @@ describe("stale active run integration", () => {
     }));
     for (const record of staleRecords) runStore.insert(record);
 
+    // The first exact idle+transcript observation is only a terminal candidate.
+    // A second unchanged observation is required before the reservation can be
+    // released for the next submit.
+    const firstCandidates = await Promise.all(
+      staleRecords.map((record) => registry.active(record.workspaceId, record.conversationId)),
+    );
+    expect(firstCandidates.every((result) => result?.record.status === "running")).toBe(true);
+    expect(staleRecords.every((record) => runStore.get(record.workspaceId, record.runId)?.status === "running")).toBe(true);
+
     const startedAt = performance.now();
     const runResults = await Promise.all(created.map(async (item, index) => {
       const response = await fetch(
@@ -373,10 +391,10 @@ describe("stale active run integration", () => {
     expect(runResults.every((result) => typeof result.payload?.runId === "string")).toBe(true);
     expect(submittedSessions.sort()).toEqual(sessionIds.filter(Boolean).sort());
     expect(submittedBodies).toHaveLength(instanceCount);
-    expect(statusProbeTimes).toHaveLength(instanceCount);
-    expect(statusDirectoryQueries).toEqual(Array(instanceCount).fill(workspaceRoot));
-    expect(statusDirectoryHeaders).toEqual(Array(instanceCount).fill(workspaceRoot));
-    expect(messageFallbackSessions).toEqual([]);
+    expect(statusProbeTimes).toHaveLength(instanceCount * 2);
+    expect(statusDirectoryQueries).toEqual(Array(instanceCount * 2).fill(workspaceRoot));
+    expect(statusDirectoryHeaders).toEqual(Array(instanceCount * 2).fill(workspaceRoot));
+    expect(messageFallbackSessions.sort()).toEqual(sessionIds.flatMap((sessionId) => [sessionId, sessionId]).sort());
     expect(elapsedMs).toBeLessThan(messageFallbackDelayMs);
     expect(submittedTimes.every((submittedAt) =>
       statusProbeTimes.some((statusAt) => statusAt <= submittedAt)
@@ -389,5 +407,189 @@ describe("stale active run integration", () => {
       expect(active?.engineSessionId).toBe(created[index]?.opencodeSessionId);
       expect(active?.status).toBe("running");
     });
+  });
+
+  test("transient idle is reopened by later OpenCode progress before the next send is admitted", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-transient-idle-workspace-"));
+    tempDirs.push(workspaceRoot);
+    const dataDir = await useTempVesloDataDir("veslo-transient-idle-data-");
+    const {
+      createRunActivityProbe,
+      createRunRegistry,
+      createRunStore,
+    } = await loadOrchestratorRunModules();
+    const runStore = createRunStore({
+      dbPath: join(dataDir, "runs.sqlite"),
+    });
+
+    let phase: "idle" | "progress" = "idle";
+    let submittedFollowUp = 0;
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
+          return Response.json({
+            id: "sess-transient-idle",
+            title: "transient idle",
+            directory: workspaceRoot,
+            parentID: null,
+            time: { created: Date.now(), updated: Date.now() },
+          });
+        }
+
+        if (request.method === "GET" && url.pathname === "/workspace/ws_1/opencode/session/status") {
+          return Response.json({
+            "sess-transient-idle": { type: phase === "progress" ? "busy" : "idle" },
+          });
+        }
+
+        if (request.method === "GET" && url.pathname === "/workspace/ws_1/opencode/session/sess-transient-idle/message") {
+          if (phase === "progress") {
+            return Response.json([{
+              info: {
+                id: "assistant-progress",
+                sessionID: "sess-transient-idle",
+                role: "assistant",
+                time: { created: Date.now() },
+              },
+              parts: [{
+                id: "part-running-tool",
+                messageID: "assistant-progress",
+                sessionID: "sess-transient-idle",
+                type: "tool",
+                tool: "read",
+                state: { status: "running" },
+              }],
+            }]);
+          }
+          return Response.json([{
+            info: {
+              id: "assistant-terminal",
+              sessionID: "sess-transient-idle",
+              role: "assistant",
+              time: { created: Date.now(), completed: Date.now() },
+            },
+            parts: [],
+          }]);
+        }
+
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-transient-idle/prompt_async") {
+          submittedFollowUp += 1;
+          return Response.json({ ok: true });
+        }
+
+        return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const registry = createRunRegistry({
+      store: runStore,
+      probeRunActivity: createRunActivityProbe({
+        getEngine: () => ({ baseUrl: `http://127.0.0.1:${upstream.port}/workspace/ws_1/opencode` }),
+        buildEngineRequest: (engine, input) => ({
+          url: `${engine.baseUrl}${input.targetPath}?directory=${encodeURIComponent(input.directory)}`,
+          headers: { "x-opencode-directory": input.directory },
+        }),
+      }),
+    });
+
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== "lifecycle-token") {
+          return Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+        const activeMatch = /^\/workspace\/ws_1\/conversations\/([^/]+)\/runs\/active$/.exec(url.pathname);
+        if (request.method === "GET" && activeMatch) {
+          const active = await registry.active("ws_1", decodeURIComponent(activeMatch[1] ?? ""));
+          if (!active) return Response.json({ error: "run not found" }, { status: 404 });
+          return Response.json({ ok: true, ...active.record, stale: active.stale });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/runs/register") {
+          const body = await request.json() as Record<string, unknown>;
+          const record = await registry.register({
+            workspaceId: "ws_1",
+            conversationId: typeof body.conversationId === "string" ? body.conversationId : "",
+            runId: typeof body.runId === "string" ? body.runId : "",
+            engineSessionId: typeof body.opencodeSessionId === "string" ? body.opencodeSessionId : "",
+            directory: typeof body.directory === "string" ? body.directory : "",
+            kind: parseRunKind(body.kind) ?? "prompt",
+          });
+          return Response.json({ ok: true, ...record });
+        }
+        return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: upstream.port,
+      orchestratorPort: orchestrator.port,
+    });
+    const headers = {
+      Authorization: "Bearer client-token",
+      "Content-Type": "application/json",
+    };
+    const createdResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/conversations`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ directory: workspaceRoot, title: "transient idle" }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = await createdResponse.json() as { conversationId: string; opencodeSessionId: string };
+    const staleRecord: RunRecord = {
+      workspaceId: "ws_1",
+      conversationId: created.conversationId,
+      runId: "stale-transient-idle",
+      engineSessionId: created.opencodeSessionId,
+      directory: workspaceRoot,
+      kind: "prompt",
+      status: "running",
+      abortRequested: false,
+      engineOwnerState: "pending",
+      createdAt: Date.now() - 60_000,
+      startedAt: Date.now() - 60_000,
+      completedAt: null,
+      error: null,
+    };
+    runStore.insert(staleRecord);
+
+    const firstCandidate = await registry.active("ws_1", created.conversationId);
+    expect(firstCandidate?.record.status).toBe("running");
+
+    phase = "progress";
+    const progress = await registry.active("ws_1", created.conversationId);
+    expect(progress?.record.status).toBe("running");
+    expect(progress?.record.activityKind).toBe("local_tool");
+
+    phase = "idle";
+    const secondCandidate = await registry.active("ws_1", created.conversationId);
+    expect(secondCandidate?.record.status).toBe("running");
+    expect(runStore.get("ws_1", staleRecord.runId)?.status).toBe("running");
+
+    const terminal = await registry.active("ws_1", created.conversationId);
+    expect(terminal).toBeNull();
+    expect(runStore.get("ws_1", staleRecord.runId)?.status).toBe("completed");
+
+    const followUp = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          kind: "prompt_async",
+          directory: workspaceRoot,
+          parts: [{ type: "text", text: "follow-up" }],
+        }),
+      },
+    );
+    expect(followUp.status).toBe(200);
+    expect(submittedFollowUp).toBe(1);
   });
 });

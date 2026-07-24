@@ -1527,6 +1527,14 @@ export type VesloConversationSubmitImplicitSkillCommandConfirmation = {
 export type VesloConversationSubmitConfirmation =
   | VesloConversationSubmitImplicitSkillCommandConfirmation;
 
+export type VesloConversationSubmitErrorDetails = {
+  attachmentName?: string;
+  format?: string;
+  suggestedAlternatives?: string[];
+  maxBytes?: number;
+  maxAttachments?: number;
+};
+
 export type VesloConversationSubmitResult =
   | {
       status: "dry_run";
@@ -1590,6 +1598,7 @@ export type VesloConversationSubmitResult =
       draftDisposition: "restore" | "keep";
       recoverable: boolean;
       confirmation?: VesloConversationSubmitConfirmation;
+      details?: VesloConversationSubmitErrorDetails;
     }
   | {
       status: "failed";
@@ -1605,6 +1614,7 @@ export type VesloConversationSubmitResult =
       materializedSession?: unknown | null;
       draftDisposition: "restore" | "mark-failed";
       debugTrace?: VesloConversationSubmitDebugTraceEntry[];
+      details?: VesloConversationSubmitErrorDetails;
     };
 
 export type VesloConversationRunInput = {

@@ -193,6 +193,7 @@ function blockedResult(input: {
   draftDisposition?: "restore" | "keep";
   recoverable?: boolean;
   confirmation?: ConversationSubmitBlockedResult["confirmation"];
+  details?: ConversationSubmitBlockedResult["details"];
 }): { status: "blocked"; result: ConversationSubmitBlockedResult } {
   return {
     status: "blocked",
@@ -203,6 +204,7 @@ function blockedResult(input: {
       draftDisposition: input.draftDisposition ?? "restore",
       recoverable: input.recoverable ?? true,
       ...(input.confirmation ? { confirmation: input.confirmation } : {}),
+      ...(input.details ? { details: input.details } : {}),
     },
   };
 }
@@ -341,8 +343,9 @@ function resolveAttachmentRunParts(input: {
     }
     if (capability === "unsupported") {
       return blockedResult({
-        code: "attachment_rejected",
+        code: "model_attachment_unsupported",
         message: "The selected model cannot inspect image attachments. Switch to a model with image input and send again.",
+        details: { attachmentName: promptImages[0]?.name ?? "image" },
       });
     }
   }
@@ -352,16 +355,24 @@ function resolveAttachmentRunParts(input: {
     const image = isImageAttachment(attachment);
     if (fileSessionPath) {
       pathLinesForPathBasedRuns.push(fileSessionPath);
-      if (!image) pathLinesForPrompt.push(fileSessionPath);
+      if (!image) pathLinesForPrompt.push(`Attached workspace file: ${fileSessionPath}`);
     }
-    const inline = attachmentFilePart(attachment);
-    if (inline) {
-      inlineFileParts.push(inline);
-      continue;
+    if (image) {
+      const inline = attachmentFilePart(attachment);
+      if (inline) {
+        inlineFileParts.push(inline);
+        continue;
+      }
+      return blockedResult({
+        code: "attachment_reference_missing",
+        message: `The image ${attachment.name} is missing its inline content. Attach it again.`,
+      });
     }
-    if (fileSessionPath) {
-      const filePart = resolveWorkspaceFilePart(fileSessionPath, input.workspace);
-      if (filePart) inlineFileParts.push(filePart);
+    if (!fileSessionPath) {
+      return blockedResult({
+        code: "attachment_reference_missing",
+        message: `The file ${attachment.name} is not available inside the workspace. Attach it again.`,
+      });
     }
   }
 

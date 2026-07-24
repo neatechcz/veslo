@@ -454,10 +454,11 @@ run queue and returns `status: "queued"` with `queueItemId`, `reservedRunId`,
 accepted send, not as a failed send or transcript error. `run_already_active`
 is an internal lifecycle lock signal and should not be surfaced as the normal
 client-facing response for this route. The lifecycle active check is a
-reconciled read, not a raw active-row lookup: if OpenCode reports the session
-idle or the transcript probe shows a terminal assistant message, the
-orchestrator completes the stale run before the server decides whether to
-queue the new request.
+reconciled read, not a raw active-row lookup: a bare OpenCode `session_idle`,
+missing engine, or session/message `404` is not enough to complete a run.
+Completion requires a successful exact-session transcript read whose terminal
+assistant evidence is newer than the run admission watermark; only then may
+the server decide whether to queue the new request.
 
 The durable run queue treats `clientMessageId` as an idempotency key for the
 same conversation. A retry with the same request fingerprint reuses the existing
@@ -466,10 +467,14 @@ OpenCode session id, or origin is an idempotency conflict. If the server process
 stops after a queued row is marked `starting` but before it is submitted or
 failed, startup recovery moves that row back to `pending` before scheduling
 queue drains, so accepted sends are not lost across process restarts.
-`clientMessageId` is not an OpenCode prompt identity. Fresh `prompt_async` and
-`command` admissions omit upstream `messageID` so OpenCode can allocate the
-message id for the bound session. Revert is the exception: it sends the existing
-OpenCode `messageID` that is being reverted.
+`clientMessageId` remains the Veslo idempotency identity. For fresh
+`prompt_async` admissions, the server additionally derives a deterministic
+OpenCode `messageID` from the exact workspace, OpenCode session, and
+`clientMessageId`, then forwards it upstream so lifecycle reconciliation can
+identify the exact admitted turn after a restart. `command` admissions omit
+upstream `messageID` so OpenCode can allocate its normal command identity.
+Revert is the exception: it sends the existing OpenCode `messageID` that is
+being reverted.
 Clients may read a queued send with
 `GET /workspace/:id/conversations/:conversationId/queue/:queueItemId`. The
 response is scoped to the resolved workspace and conversation and includes the
@@ -507,6 +512,15 @@ terminal turn, the server asks the orchestrator to reconcile the latest run and
 wakes the durable run queue if that reconciliation reaches a terminal state.
 The transcript request itself does not directly mark lifecycle rows terminal;
 the orchestrator still verifies state against OpenCode first.
+
+OpenCode SQLite reads are host-owned and read-only. Explicit DB path/data-dir
+configuration is authoritative and fails closed when unusable. Without explicit
+configuration, the server probes the workspace-local `.opencode/opencode.db`
+and then the global OpenCode database. A candidate must have the
+operation-specific schema and exact requested directory/session scope; an empty
+or stale implicit local file must not mask a valid later candidate. Unavailable
+reads are returned with sanitized diagnostics and are not warmed into the
+transcript cache as empty snapshots.
 
 ## Capability Discovery
 

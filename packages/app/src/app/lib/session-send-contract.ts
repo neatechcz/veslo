@@ -31,6 +31,14 @@ export type SessionSubmitImplicitSkillCommandConfirmation = {
 type SessionSubmitConfirmation =
   | SessionSubmitImplicitSkillCommandConfirmation;
 
+export type SessionSubmitErrorDetails = {
+  attachmentName?: string;
+  format?: string;
+  suggestedAlternatives?: string[];
+  maxBytes?: number;
+  maxAttachments?: number;
+};
+
 export type SessionSubmitResult = {
   accepted: boolean;
   status: SessionSubmitStatus;
@@ -46,6 +54,7 @@ export type SessionSubmitResult = {
   queuePosition?: number | null;
   clientMessageId?: string | null;
   confirmation?: SessionSubmitConfirmation | null;
+  details?: SessionSubmitErrorDetails | null;
 };
 
 type MaterializedSessionConversationScope = {

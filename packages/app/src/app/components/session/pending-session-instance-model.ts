@@ -113,7 +113,7 @@ export function trySetPendingSubmittedDraftForKey(
   const key = sessionKey.trim();
   if (!key) return { kind: "invalid-session-key", draftsBySessionKey: current };
   const existing = Object.hasOwn(current, key) ? current[key] : null;
-  if (existing && existing.id !== draft.id) {
+  if (existing && existing.id !== draft.id && existing.state !== "error") {
     return { kind: "occupied", draftsBySessionKey: current, pending: existing };
   }
   const pending = { ...draft, sessionKey: key };

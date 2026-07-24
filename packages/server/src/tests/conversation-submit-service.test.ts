@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -970,7 +970,8 @@ describe("conversation submit service", () => {
     expect(result.httpStatus).toBe(200);
     expect(result.payload).toMatchObject({
       status: "blocked",
-      code: "attachment_rejected",
+      code: "model_attachment_unsupported",
+      details: { attachmentName: "shot.png" },
       draftDisposition: "restore",
       recoverable: true,
     });
@@ -1143,6 +1144,8 @@ describe("conversation submit service", () => {
   test("constructs prompt parts and path injection for staged file attachments", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-attachment-parts-"));
     tempDirs.push(workspaceRoot);
+    await mkdir(join(workspaceRoot, "sessions", "sess-existing"), { recursive: true });
+    await writeFile(join(workspaceRoot, "sessions", "sess-existing", "brief.txt"), "brief");
     let createConversationCalls = 0;
     const service = createConversationSubmitService({
       attemptStore: createConversationSubmitAttemptStore({
@@ -1185,19 +1188,131 @@ describe("conversation submit service", () => {
       status: "dry_run",
       resolvedRunInput: {
         kind: "prompt_async",
-        text: "review the brief\nsessions/sess-existing/brief.txt",
+        text: "review the brief\nAttached workspace file: sessions/sess-existing/brief.txt",
         parts: [
-          { type: "text", text: "review the brief\nsessions/sess-existing/brief.txt" },
-          {
-            type: "file",
-            url: "data:text/plain;base64,YnJpZWY=",
-            filename: "brief.txt",
-            mime: "text/plain",
-          },
+          { type: "text", text: "review the brief\nAttached workspace file: sessions/sess-existing/brief.txt" },
         ],
       },
     });
     expect(createConversationCalls).toBe(0);
+  });
+
+  test("stages a raw first-message file before materialization and submits path-only", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-first-attachment-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    let submittedInput: unknown = null;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-first-attachment-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+      documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
+    });
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-first-attachment",
+        origin: "session:normal",
+        target: { directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "review the brief",
+          parts: [{ type: "text", text: "review the brief" }],
+          attachments: [{
+            name: "brief.txt",
+            kind: "file",
+            mimeType: "text/plain",
+            contentBase64: "YnJpZWY=",
+          }],
+        },
+      },
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async (input) => {
+        submittedInput = input.resolvedRunInput;
+        return {
+          httpStatus: 200,
+          payload: {
+            status: "submitted",
+            workspaceId: "ws_1",
+            conversationId: "conv_1",
+            opencodeSessionId: "sess_1",
+            runId: "run_1",
+            clientMessageId: "msg-first-attachment",
+            draftDisposition: "clear",
+          },
+        };
+      },
+    });
+
+    expect(result.payload.status).toBe("submitted");
+    expect(createConversationCalls).toBe(1);
+    expect(submittedInput).toMatchObject({
+      kind: "prompt_async",
+      parts: [{
+        type: "text",
+        text: expect.stringContaining("Attached workspace file: sessions/"),
+      }],
+    });
+    expect(JSON.stringify(submittedInput)).not.toContain("base64");
+    expect(JSON.stringify(submittedInput)).not.toContain('"type":"file"');
+  });
+
+  test("stages MSG then blocks before conversation materialization or run admission", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-msg-unsupported-"));
+    tempDirs.push(workspaceRoot);
+    let createConversationCalls = 0;
+    let submitCalls = 0;
+    const service = createConversationSubmitService({
+      attemptStore: createConversationSubmitAttemptStore({
+        dbPath: await createTempDbPath("veslo-submit-service-msg-unsupported-db-"),
+      }),
+      conversationService: createConversationServiceStub(() => {
+        createConversationCalls += 1;
+      }),
+    });
+    const msgBytes = Buffer.concat([
+      Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+      Buffer.alloc(32),
+    ]);
+
+    const result = await service.submit({
+      workspace: workspace(workspaceRoot),
+      body: {
+        clientMessageId: "msg-unsupported-msg",
+        origin: "session:normal",
+        target: { directory: workspaceRoot },
+        draft: {
+          mode: "prompt",
+          text: "draft a reply",
+          parts: [{ type: "text", text: "draft a reply" }],
+          attachments: [{
+            name: "mail.msg",
+            kind: "file",
+            mimeType: "application/octet-stream",
+            contentBase64: msgBytes.toString("base64"),
+          }],
+        },
+      },
+      resolveDirectory: async () => workspaceRoot,
+      submitResolvedRun: async () => {
+        submitCalls += 1;
+        throw new Error("must not submit");
+      },
+    });
+
+    expect(result.payload).toMatchObject({
+      status: "blocked",
+      code: "attachment_format_unsupported",
+      details: { attachmentName: "mail.msg", format: "MSG" },
+    });
+    expect(createConversationCalls).toBe(0);
+    expect(submitCalls).toBe(0);
+    expect((await readdir(join(workspaceRoot, "sessions"), { recursive: true }))
+      .some((entry) => String(entry).endsWith("mail.msg"))).toBe(true);
   });
 
   test("first-session submit failure after materialization returns materialized session metadata", async () => {

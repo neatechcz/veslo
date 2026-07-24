@@ -70,7 +70,7 @@ test("session send flow starts optimistic run UI before prompt handoff resolves"
 test("failed handoff marks pending submitted message by immutable submit id", () => {
   assert.match(
     conversationFlowSource,
-    /export const markMatchingPendingSubmittedDraftFailed = \(\{[\s\S]*Object\.entries\(draftsBySessionKey\)\.find\(\(\[, draft\]\) => draft\.id === submitId\)[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\)[\s\S]*\};/,
+    /export const markMatchingPendingSubmittedDraftFailed = \(\{[\s\S]*Object\.entries\(draftsBySessionKey\)\.find\(\(\[, draft\]\) => draft\.id === submitId\)[\s\S]*const failed = markPendingSubmittedFailed\(current, errorMessage, errorCode\);[\s\S]*setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\)[\s\S]*\};/,
     "failed handoff should mark the optimistic submitted draft by id so remapped session keys still fail visibly",
   );
   assert.match(
@@ -89,7 +89,7 @@ test("failed handoff marks pending submitted message by immutable submit id", ()
 test("failed pending handoff restores the pending submit to its original pending draft key after remap", () => {
   assert.match(
     conversationFlowSource,
-    /const failed = markPendingSubmittedFailed\(current, errorMessage\);[\s\S]*if \(!pendingSessionKeyBeforeHandoff\) \{[\s\S]*setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\)[\s\S]*\}[\s\S]*return \{[\s\S]*setPendingSubmittedDraftForKey\([\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*\{[\s\S]*\.\.\.failed,[\s\S]*sessionKey: pendingSessionKeyBeforeHandoff,[\s\S]*sessionId: null,[\s\S]*\}/s,
+    /const failed = markPendingSubmittedFailed\(current, errorMessage, errorCode\);[\s\S]*if \(!pendingSessionKeyBeforeHandoff\) \{[\s\S]*setPendingSubmittedDraftForKey\(draftsBySessionKey, matchingSessionKey, failed\)[\s\S]*\}[\s\S]*return \{[\s\S]*setPendingSubmittedDraftForKey\([\s\S]*pendingSessionKeyBeforeHandoff,[\s\S]*\{[\s\S]*\.\.\.failed,[\s\S]*sessionKey: pendingSessionKeyBeforeHandoff,[\s\S]*sessionId: null,[\s\S]*\}/s,
     "failed pending handoff should be visible on the restored pending draft route even if session materialization remapped it first",
   );
 });
@@ -131,7 +131,7 @@ test("session renders an immediate local echo and synchronously defers to canoni
 test("session passes failure and delivery-uncertain state to the rendered message list", () => {
   assert.match(
     source,
-    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{[\s\S]*submitted\.state === "error"[\s\S]*\[submitted\.id\]: \{ state: "error", error: submitted\.error \}[\s\S]*submitted\.state === "outcome-unknown"[\s\S]*state: "sync-warning"/s,
+    /const pendingMessageStateById = createMemo<Record<string, PendingMessageState>>\(\(\) => \{[\s\S]*submitted\.state === "error"[\s\S]*\[submitted\.id\]: \{ state: "error", error: submitted\.error, errorCode: submitted\.errorCode \}[\s\S]*submitted\.state === "outcome-unknown"[\s\S]*state: "sync-warning"/s,
     "session view should distinguish pre-admission failures from delivery-uncertain submissions",
   );
 

@@ -96,6 +96,24 @@ test("pending submit failure preserves the message as editable state", () => {
   });
 });
 
+test("typed attachment failure keeps its code with the localized pending-row message", () => {
+  const pending = markPendingSubmittedFailed(
+    createPendingSubmittedDraft({
+      id: "pending-attachment",
+      clientMessageId: "client-attachment",
+      sessionKey: "session-a",
+      sessionId: "session-a",
+      createdAt: 1,
+      draft: draft("hello"),
+    }),
+    "The MSG attachment is unsupported.",
+    "attachment_format_unsupported",
+  );
+
+  assert.equal(pending.error, "The MSG attachment is unsupported.");
+  assert.equal(pending.errorCode, "attachment_format_unsupported");
+});
+
 test("pending submit can be remapped to the real session id", () => {
   const pending = createPendingSubmittedDraft({
     id: "pending-submit-1",

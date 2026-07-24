@@ -1,3 +1,4 @@
+import { deriveConversationRunOpenCodeMessageId } from "./conversation-run-message-id.js";
 import type { RunProbeResult } from "./run-registry.js";
 
 export const RUN_ACTIVITY_PROBE_TIMEOUT_MS = 4_000;
@@ -6,6 +7,10 @@ export type RunActivityProbeRecord = {
   workspaceId: string;
   engineSessionId: string;
   directory: string;
+  createdAt?: number | null;
+  clientMessageId?: string | null;
+  kind?: string | null;
+  abortRequested?: boolean;
 };
 
 export type RunActivityEngineRequestInput = {
@@ -95,12 +100,53 @@ function readMessageInfo(message: unknown): RecordLike | null {
   return null;
 }
 
+function messageIdentity(info: RecordLike): string | null {
+  return readString(info.id) ?? readString(info.messageID);
+}
+
 function assistantMessageIsTerminal(info: RecordLike): boolean {
   const time = isRecord(info.time) ? info.time : null;
   if (time && readPositiveFiniteNumber(time.completed) !== null) return true;
   if (isRecord(info.error)) return true;
   if (readString(info.finish)) return true;
   return false;
+}
+
+function readAssistantError(info: RecordLike): RecordLike | null {
+  return isRecord(info.error) ? info.error : null;
+}
+
+function assistantErrorMessage(error: RecordLike): string | null {
+  const data = isRecord(error.data) ? error.data : null;
+  return readString(data?.message) ?? readString(error.message) ?? readString(error.detail);
+}
+
+function unsupportedAttachmentRuntimeError(message: string | null): boolean {
+  const normalized = message?.toLowerCase() ?? "";
+  if (!normalized) return false;
+  const mentionsInputType = normalized.includes("file") || normalized.includes("media") || normalized.includes("mime");
+  const rejectsType = normalized.includes("not supported") || normalized.includes("unsupported") || normalized.includes("unknown file type");
+  return mentionsInputType && rejectsType;
+}
+
+function assistantTerminalOutcome(
+  info: RecordLike,
+  abortRequested: boolean,
+): { terminalStatus: "completed" | "failed" | "aborted"; terminalError: string | null } {
+  const error = readAssistantError(info);
+  if (!error) return { terminalStatus: "completed", terminalError: null };
+  const name = readString(error.name) ?? "OpenCodeError";
+  const message = assistantErrorMessage(error);
+  if (name === "MessageAbortedError") {
+    return abortRequested
+      ? { terminalStatus: "aborted", terminalError: "Run aborted" }
+      : { terminalStatus: "failed", terminalError: "unexpected_message_abort" };
+  }
+  if (unsupportedAttachmentRuntimeError(message)) {
+    return { terminalStatus: "failed", terminalError: "attachment_runtime_rejected" };
+  }
+  const safeMessage = message?.replace(/\s+/g, " ").trim().slice(0, 300) || name;
+  return { terminalStatus: "failed", terminalError: safeMessage };
 }
 
 function readParts(message: unknown): unknown[] {
@@ -156,7 +202,10 @@ function messageProgressSignature(messages: unknown[], latestInfo: RecordLike, l
   return `messages:${messages.length}:latest:${id}:${role}:${terminal}:visible:${descriptors}`;
 }
 
-export function deriveRunActivityFromSessionMessages(payload: unknown): RunProbeResult {
+export function deriveRunActivityFromSessionMessages(
+  payload: unknown,
+  options?: { expectedUserMessageId?: string | null; abortRequested?: boolean },
+): RunProbeResult {
   const messages = readMessages(payload);
   if (!messages.length) {
     return {
@@ -167,7 +216,39 @@ export function deriveRunActivityFromSessionMessages(payload: unknown): RunProbe
     };
   }
 
-  const latestMessage = messages[messages.length - 1];
+  const expectedUserMessageId = options?.expectedUserMessageId?.trim() || "";
+  let latestMessage = messages[messages.length - 1];
+  if (expectedUserMessageId) {
+    const exactUserIndex = messages.findIndex((message) => {
+      const info = readMessageInfo(message);
+      return Boolean(info && readString(info.role) === "user" && messageIdentity(info) === expectedUserMessageId);
+    });
+    if (exactUserIndex < 0) {
+      return {
+        active: true,
+        activityKind: "unknown",
+        waitReason: "assistant_message_open",
+        progressSignature: `expected-user:${expectedUserMessageId}:missing`,
+      };
+    }
+    const exactAssistants = messages.slice(exactUserIndex + 1).filter((message) => {
+      const info = readMessageInfo(message);
+      return Boolean(
+        info &&
+        readString(info.role) === "assistant" &&
+        readString(info.parentID) === expectedUserMessageId
+      );
+    });
+    if (!exactAssistants.length) {
+      return {
+        active: true,
+        activityKind: "unknown",
+        waitReason: "assistant_message_open",
+        progressSignature: `expected-user:${expectedUserMessageId}:assistant-missing`,
+      };
+    }
+    latestMessage = exactAssistants[exactAssistants.length - 1];
+  }
   const latestInfo = readMessageInfo(latestMessage);
   if (!latestInfo) {
     return {
@@ -190,15 +271,6 @@ export function deriveRunActivityFromSessionMessages(payload: unknown): RunProbe
 
   const progressSignature = messageProgressSignature(messages, latestInfo, latestMessage);
   const parts = readParts(latestMessage);
-  if (assistantMessageIsTerminal(latestInfo)) {
-    return {
-      active: false,
-      activityKind: "idle",
-      waitReason: "session_idle",
-      progressSignature,
-    };
-  }
-
   const activeTool = parts.find((part) => {
     if (!isRecord(part)) return false;
     if (readString(part.type) !== "tool") return false;
@@ -210,6 +282,17 @@ export function deriveRunActivityFromSessionMessages(payload: unknown): RunProbe
       active: true,
       activityKind: "local_tool",
       waitReason: "running_tool",
+      progressSignature,
+    };
+  }
+
+  if (assistantMessageIsTerminal(latestInfo)) {
+    return {
+      active: false,
+      terminalCandidate: true,
+      ...assistantTerminalOutcome(latestInfo, options?.abortRequested === true),
+      activityKind: "idle",
+      waitReason: "session_idle",
       progressSignature,
     };
   }
@@ -247,6 +330,52 @@ function mergeRetryStatusWithMessages(messages: RunProbeResult): RunProbeResult 
     activityKind: "model_retry",
     waitReason: "model_retry_no_output",
   };
+}
+
+function latestMessageCreatedAt(payload: unknown): number | null {
+  const messages = readMessages(payload);
+  const latest = messages[messages.length - 1];
+  const info = readMessageInfo(latest);
+  if (!info) return null;
+  const time = isRecord(info.time) ? info.time : null;
+  return readPositiveFiniteNumber(time?.created) ?? null;
+}
+
+function terminalEvidenceIsPostAdmission(
+  payload: unknown,
+  record: Pick<RunActivityProbeRecord, "workspaceId" | "engineSessionId" | "createdAt" | "clientMessageId" | "kind">,
+): boolean {
+  const messages = readMessages(payload);
+  if (record.kind === "prompt" && record.clientMessageId?.trim()) {
+    const expectedId = deriveConversationRunOpenCodeMessageId({
+      workspaceId: record.workspaceId,
+      engineSessionId: record.engineSessionId,
+      clientMessageId: record.clientMessageId,
+    });
+    const admissionIndex = messages.findIndex((message) => messageIdentity(readMessageInfo(message) ?? {}) === expectedId);
+    if (admissionIndex < 0) return false;
+    return messages.some((message, index) => {
+      if (index <= admissionIndex) return false;
+      const info = readMessageInfo(message);
+      return Boolean(
+        info &&
+        readString(info.role) === "assistant" &&
+        readString(info.parentID) === expectedId,
+      );
+    });
+  }
+  if (!Number.isFinite(record.createdAt ?? NaN)) return true;
+  const createdAt = latestMessageCreatedAt(payload);
+  return createdAt !== null && createdAt > (record.createdAt as number);
+}
+
+function expectedUserMessageIdForRecord(record: RunActivityProbeRecord): string | null {
+  if (record.kind !== "prompt" || !record.clientMessageId?.trim()) return null;
+  return deriveConversationRunOpenCodeMessageId({
+    workspaceId: record.workspaceId,
+    engineSessionId: record.engineSessionId,
+    clientMessageId: record.clientMessageId,
+  });
 }
 
 export function createRunActivityProbe<Engine>(deps: {
@@ -287,30 +416,41 @@ export function createRunActivityProbe<Engine>(deps: {
 
   return async (record) => {
     const engine = deps.getEngine(record.workspaceId);
-    if (!engine) return { active: false };
+    if (!engine) return { unreachable: true };
 
     try {
       const status = await fetchJson(engine, record, "/session/status");
       if (status.ok) {
         const activity = deriveRunActivityFromSessionStatus(status.payload, record.engineSessionId);
         if (activity && !("unreachable" in activity)) {
-          if (!activity.active) {
-            return activity;
-          }
           const messages = await fetchJson(
             engine,
             record,
             `/session/${encodeURIComponent(record.engineSessionId)}/message`,
           );
-          if (messages.status === 404) return { active: false };
+          if (messages.status === 404) return { unreachable: true };
           if (!messages.ok) return { unreachable: true };
-          const messageActivity = deriveRunActivityFromSessionMessages(messages.payload);
+          const messageActivity = deriveRunActivityFromSessionMessages(messages.payload, {
+            expectedUserMessageId: expectedUserMessageIdForRecord(record),
+            abortRequested: record.abortRequested === true,
+          });
           if ("unreachable" in messageActivity) return messageActivity;
+          if (!messageActivity.active && !terminalEvidenceIsPostAdmission(messages.payload, record)) {
+            return {
+              active: true,
+              activityKind: "unknown",
+              waitReason: "assistant_message_open",
+              progressSignature: `pre-admission:${messageActivity.progressSignature ?? "terminal"}`,
+            };
+          }
           // OpenCode can leave /session/status at busy briefly after it has written a
           // terminal assistant message. For one server-owned run, explicit transcript
           // completion is stronger evidence than that stale status; otherwise the UI
           // keeps rendering a second "responding" state beneath the completed reply.
           if (!messageActivity.active) {
+            return messageActivity;
+          }
+          if (expectedUserMessageIdForRecord(record) && activity.activityKind === "idle") {
             return messageActivity;
           }
           if (activity.activityKind === "model_retry") {
@@ -329,9 +469,22 @@ export function createRunActivityProbe<Engine>(deps: {
         record,
         `/session/${encodeURIComponent(record.engineSessionId)}/message`,
       );
-      if (messages.status === 404) return { active: false };
+      if (messages.status === 404) return { unreachable: true };
       if (!messages.ok) return { unreachable: true };
-      return deriveRunActivityFromSessionMessages(messages.payload);
+      const messageActivity = deriveRunActivityFromSessionMessages(messages.payload, {
+        expectedUserMessageId: expectedUserMessageIdForRecord(record),
+        abortRequested: record.abortRequested === true,
+      });
+      if ("unreachable" in messageActivity) return messageActivity;
+      if (!messageActivity.active && !terminalEvidenceIsPostAdmission(messages.payload, record)) {
+        return {
+          active: true,
+          activityKind: "unknown",
+          waitReason: "assistant_message_open",
+          progressSignature: `pre-admission:${messageActivity.progressSignature ?? "terminal"}`,
+        };
+      }
+      return messageActivity;
     } catch {
       return { unreachable: true };
     }

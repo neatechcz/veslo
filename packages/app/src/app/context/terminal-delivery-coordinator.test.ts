@@ -39,6 +39,21 @@ test("holds hydration and error display behind the same terminal boundary", () =
   assert.deepEqual(commits, ["text", "hydration", "error"]);
 });
 
+test("coalesces repeated terminal hydration for one exact run", () => {
+  const commits: string[] = [];
+  const renderBoundaries: Array<() => void> = [];
+  const coordinator = createTerminalDeliveryCoordinator({
+    scheduleRenderBoundary: (callback) => { renderBoundaries.push(callback); },
+  });
+
+  coordinator.confirmTerminal(key);
+  coordinator.retainTerminalDisplay(key, { kind: "hydration", commit: () => commits.push("old") });
+  coordinator.retainTerminalDisplay(key, { kind: "hydration", commit: () => commits.push("new") });
+  renderBoundaries.shift()?.();
+
+  assert.deepEqual(commits, ["new"]);
+});
+
 test("commits terminal A text before a candidate B event can take the shared alias", () => {
   const commits: string[] = [];
   const renderBoundaries: Array<() => void> = [];

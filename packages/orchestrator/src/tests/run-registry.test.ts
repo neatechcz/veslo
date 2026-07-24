@@ -133,8 +133,9 @@ describe("run registry", () => {
   });
 
   test("register reconciles a stale active run before rejecting", async () => {
-    const { registry } = createRegistry(() => ({ active: false }));
+    const { registry } = createRegistry(() => ({ active: false, terminalCandidate: true, progressSignature: "terminal" }));
     await registry.register(input);
+    await registry.get("ws-a", "run-a");
 
     const second = await registry.register({ ...input, runId: "run-b" });
 
@@ -143,9 +144,10 @@ describe("run registry", () => {
   });
 
   test("active read reconciles stale active rows and returns no active run after completion", async () => {
-    const { registry, store } = createRegistry(() => ({ active: false }));
+    const { registry, store } = createRegistry(() => ({ active: false, terminalCandidate: true, progressSignature: "terminal" }));
     await registry.register(input);
 
+    await registry.get("ws-a", "run-a");
     const active = await registry.active("ws-a", "conv-a");
 
     expect(active).toBeNull();
@@ -165,14 +167,71 @@ describe("run registry", () => {
   });
 
   test("abort intent is metadata and inactive reconcile completes the run", async () => {
-    const { registry } = createRegistry(() => ({ active: false }));
+    const { registry } = createRegistry(() => ({ active: false, terminalCandidate: true, progressSignature: "terminal" }));
     await registry.register(input);
     registry.markAbortRequested("ws-a", "run-a");
 
+    await registry.get("ws-a", "run-a");
     const reconciled = await registry.get("ws-a", "run-a");
 
     expect(reconciled?.record.status).toBe("completed");
     expect(reconciled?.record.abortRequested).toBe(true);
+  });
+
+  test("stable assistant error terminalizes as failed and releases the reservation", async () => {
+    const { registry } = createRegistry(() => ({
+      active: false,
+      terminalCandidate: true,
+      terminalStatus: "failed",
+      terminalError: "attachment_runtime_rejected",
+      progressSignature: "terminal:attachment-runtime-rejected",
+    }));
+    await registry.register(input);
+
+    expect((await registry.get("ws-a", "run-a"))?.record.status).toBe("running");
+    expect((await registry.get("ws-a", "run-a"))?.record).toMatchObject({
+      status: "failed",
+      error: "attachment_runtime_rejected",
+    });
+    expect(await registry.active("ws-a", "conv-a")).toBeNull();
+  });
+
+  test("transient idle is reopened by later assistant progress before terminal confirmation", async () => {
+    let probe: RunProbeResult = {
+      active: false,
+      terminalCandidate: true,
+      progressSignature: "terminal:first-idle",
+    };
+    const { registry, store } = createRegistry(() => probe);
+    await registry.register(input);
+
+    const firstCandidate = await registry.active("ws-a", "conv-a");
+    expect(firstCandidate?.record.status).toBe("running");
+    expect(firstCandidate?.record.waitReason).toBe("session_idle");
+
+    probe = {
+      active: true,
+      activityKind: "assistant_output",
+      waitReason: "assistant_message_open",
+      progressSignature: "assistant:progress-after-idle",
+    };
+    const progressed = await registry.active("ws-a", "conv-a");
+    expect(progressed?.record.status).toBe("running");
+    expect(progressed?.record.waitReason).toBe("assistant_message_open");
+    expect(progressed?.record.lastProgressSignature).toBe("assistant:progress-after-idle");
+
+    probe = {
+      active: false,
+      terminalCandidate: true,
+      progressSignature: "terminal:final-idle",
+    };
+    const finalCandidate = await registry.active("ws-a", "conv-a");
+    expect(finalCandidate?.record.status).toBe("running");
+    expect(store.get("ws-a", "run-a")?.status).toBe("running");
+
+    const terminal = await registry.active("ws-a", "conv-a");
+    expect(terminal).toBeNull();
+    expect(store.get("ws-a", "run-a")?.status).toBe("completed");
   });
 
   test("markAborted terminalizes the run and releases the active lock", async () => {
@@ -303,8 +362,9 @@ describe("run registry", () => {
   });
 
   test("attachEngineOwner ignores terminal runs", async () => {
-    const { registry } = createRegistry(() => ({ active: false }));
+    const { registry } = createRegistry(() => ({ active: false, terminalCandidate: true, progressSignature: "terminal" }));
     await registry.register(input);
+    await registry.get("ws-a", "run-a");
     await registry.get("ws-a", "run-a");
 
     const attached = registry.attachEngineOwner("ws-a", "run-a", {

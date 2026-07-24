@@ -544,7 +544,7 @@ UI requirements:
 ### VSLO281-06: Preserve assistant-error terminal semantics
 
 Implement this through the shared stable-terminal work in
-`2026-07-24-duplicate-transcript-premature-terminal-recovery-plan.md`; do not
+`2026-07-24-vslo-282-duplicate-transcript-premature-terminal-recovery-plan.md`; do not
 create a second VSLO-281-only terminal algorithm. VSLO-281 adds the unsupported
 attachment regression and safe error mapping to that shared lifecycle owner.
 

@@ -6,6 +6,7 @@ const representativeScenarios = [
   'message-send-registry-degraded',
   'live-skills-finder-roundtrip',
   'session-run-truthfulness',
+  'vslo-281-msg-attachment-visible-error',
 ] as const;
 
 function scenarioScripts(content: string): string[] {

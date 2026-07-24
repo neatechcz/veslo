@@ -1544,7 +1544,7 @@ export default function SessionView(props: SessionViewProps) {
     if (submitted.sessionKey !== currentSessionQueueKey()) return {};
     if (submitted.state === "error") {
       return {
-        [submitted.id]: { state: "error", error: submitted.error },
+        [submitted.id]: { state: "error", error: submitted.error, errorCode: submitted.errorCode },
       };
     }
     if (submitted.state === "outcome-unknown") {

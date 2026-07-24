@@ -32,6 +32,18 @@ const setEnv = (key: string, value: string) => {
   });
 };
 
+const clearEnv = (key: string) => {
+  const previous = process.env[key];
+  delete process.env[key];
+  envRestores.push(() => {
+    if (previous === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = previous;
+    }
+  });
+};
+
 const seedDb = (dbPath: string, directory: string) => {
   const db = new Database(dbPath);
   try {
@@ -72,6 +84,27 @@ const seedBadSchemaDb = (dbPath: string) => {
   const db = new Database(dbPath);
   try {
     db.exec("CREATE TABLE unrelated (id TEXT PRIMARY KEY);");
+  } finally {
+    db.close();
+  }
+};
+
+const seedListingOnlyDb = (dbPath: string, directory: string) => {
+  const db = new Database(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE session (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        directory TEXT,
+        parent_id TEXT,
+        time_created INTEGER,
+        time_updated INTEGER
+      );
+    `);
+    db.query(
+      "INSERT INTO session (id, title, directory, parent_id, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    ).run("sess-a", "Local listing", directory, null, 10, 20);
   } finally {
     db.close();
   }
@@ -254,6 +287,78 @@ describe("conversation read store DB path resolution", () => {
     });
     expect(transcript.messages).toEqual([]);
     expect(transcript.partsByMessageId).toEqual({});
+  });
+
+  test("skips an invalid implicit workspace-local DB and falls through to the global DB", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-local-fallback-"));
+    const homeRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-global-fallback-"));
+    tempDirs.push(workspaceRoot, homeRoot);
+    await mkdir(join(workspaceRoot, ".opencode"), { recursive: true });
+    await mkdir(join(homeRoot, ".local", "share", "opencode"), { recursive: true });
+    seedBadSchemaDb(join(workspaceRoot, ".opencode", "opencode.db"));
+    seedDb(join(homeRoot, ".local", "share", "opencode", "opencode.db"), workspaceRoot);
+    for (const key of [
+      "VESLO_OPENCODE_DB_PATH",
+      "OPENCODE_DB_PATH",
+      "VESLO_OPENCODE_DATA_DIR",
+      "OPENCODE_DATA_DIR",
+      "VESLO_OPENCODE_XDG_DATA_HOME",
+      "XDG_DATA_HOME",
+    ]) clearEnv(key);
+    setEnv("HOME", homeRoot);
+    setEnv("USERPROFILE", homeRoot);
+
+    const store = createConversationReadStore();
+    const transcript = await store.getTranscript({
+      workspaceId: "ws-fallback",
+      sessionId: "sess-a",
+      limit: 10,
+      directory: workspaceRoot,
+      workspace: { id: "ws-fallback", path: workspaceRoot },
+    });
+
+    expect(transcript.source).toBe("sqlite");
+    expect(transcript.messages.map((message) => (message as { id?: string }).id)).toEqual(["msg-1"]);
+    expect(transcript.partsByMessageId["msg-1"]?.length).toBe(1);
+  });
+
+  test("uses operation-specific schema validation for listing versus transcript reads", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-operation-schema-"));
+    const homeRoot = await mkdtemp(join(tmpdir(), "veslo-conversation-read-operation-global-"));
+    tempDirs.push(workspaceRoot, homeRoot);
+    await mkdir(join(workspaceRoot, ".opencode"), { recursive: true });
+    await mkdir(join(homeRoot, ".local", "share", "opencode"), { recursive: true });
+    seedListingOnlyDb(join(workspaceRoot, ".opencode", "opencode.db"), workspaceRoot);
+    seedDb(join(homeRoot, ".local", "share", "opencode", "opencode.db"), workspaceRoot);
+    for (const key of [
+      "VESLO_OPENCODE_DB_PATH",
+      "OPENCODE_DB_PATH",
+      "VESLO_OPENCODE_DATA_DIR",
+      "OPENCODE_DATA_DIR",
+      "VESLO_OPENCODE_XDG_DATA_HOME",
+      "XDG_DATA_HOME",
+    ]) clearEnv(key);
+    setEnv("HOME", homeRoot);
+    setEnv("USERPROFILE", homeRoot);
+
+    const store = createConversationReadStore();
+    const list = await store.listConversations({
+      workspaceId: "ws-operation-schema",
+      directory: workspaceRoot,
+      workspace: { path: workspaceRoot },
+    });
+    expect(list.source).toBe("sqlite");
+    expect(list.items[0]?.title).toBe("Local listing");
+
+    const transcript = await store.getTranscript({
+      workspaceId: "ws-operation-schema",
+      sessionId: "sess-a",
+      limit: 10,
+      directory: workspaceRoot,
+      workspace: { path: workspaceRoot },
+    });
+    expect(transcript.source).toBe("sqlite");
+    expect(transcript.messages.map((message) => (message as { id?: string }).id)).toEqual(["msg-1"]);
   });
 
   test("reports malformed transcript JSON rows without failing the sqlite read", async () => {
