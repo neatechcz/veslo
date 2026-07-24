@@ -53,15 +53,51 @@ separately:
 ```bash
 node packages/orchestrator/scripts/opencode-workspace-concurrency.integration.mjs
 node packages/orchestrator/scripts/opencode-directory-scoped-skills.integration.mjs
+node packages/orchestrator/scripts/opencode-directory-scoped-runtime.integration.mjs
+node packages/orchestrator/scripts/opencode-directory-scoped-scaling.integration.mjs
 ```
 
 These gates create ten sessions, submit ten concurrent `prompt_async` requests
 through a local deterministic provider, verify session reads and event-stream
 availability, restart the same OpenCode process with the same state/config
 roots, and confirm that all ten session IDs remain addressable. The skill gate
-also records the shipped binary's directory-scoped hot-update behavior; for
-OpenCode 1.17.13 the safe Veslo fallback remains required. Neither command
-launches Tauri Pilot.
+also fingerprints directory isolation, policy closure, and explicit
+ directory-scoped disposal. It is capability evidence only: the production
+ topology stays pooled until Veslo admission/epoch, event routing, placement,
+ and Tauri acceptance are also proven. The separate experimental
+ `VESLO_SHARED_OPENCODE_DIRECTORY_SCOPED=1` opt-in is for this verification
+ path, not a substitute for those acceptance gates. Neither command launches
+ Tauri Pilot.
+
+The runtime oracle additionally exercises the Veslo-owned directory lifecycle:
+two workspace roots share one process generation, a same-name skill remains
+directory-scoped, and two proxied `/event` streams receive only their own new
+session event with the matching Veslo binding. An active A run defers an A
+refresh with retryable `409`; after A is terminal the directory lifecycle
+disposes/reloads only A while the PID and B view stay unchanged; completion is
+retried internally and does not depend on a later proxy request. It also proves
+that placement is pinned for an admitted workspace after a project-config edit,
+while a newly admitted incompatible workspace receives a pooled process.
+
+The scaling oracle characterizes one shared process at 2, 5, and 10 workspace
+directory instances. Its JSON artifact records startup/hydration latency,
+process count, directory-instance count, process memory/CPU snapshot where the
+host exposes it, idle residency, and an A refresh while B retains an active
+run. It is a measurement gate, not a production capacity promise.
+
+For the desktop handoff lane, build the Pilot-enabled binary and run the
+isolated directory-scoped scenario. It verifies two workspace-local same-name
+skill views, ten routed session creations, the shared topology, and one shared
+PID through the real Tauri app:
+
+```bash
+pnpm --filter veslo-server build:bin
+VESLO_SIDECAR_FORCE_BUILD=1 pnpm --filter @neatech/veslo run prepare:sidecar
+cd packages/desktop
+pnpm tauri build --debug --no-bundle --config src-tauri/tauri.e2e.conf.json -- --features e2e
+cd ../e2e
+pnpm test:pilot:directory-scoped-shared-engine
+```
 
 ## Desktop Test Runtime Preflight
 

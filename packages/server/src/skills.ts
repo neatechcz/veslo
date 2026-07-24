@@ -29,6 +29,7 @@ import {
   isVesloManagedSkillRelativePath,
   userGlobalSkillRoots,
   userGlobalSkillRootsForMutation,
+  workspaceSkillSourceRoots,
   workspaceSkillRootsForMutation,
   workspaceSkillsRoot,
 } from "./skill-roots.js";
@@ -326,10 +327,9 @@ async function collectSkillItems(
   const items: SkillItem[] = [];
   for (const root of roots) {
     const workspaceOwner = normalizedOptions.workspaceOwner ?? workspaceResourceOwner({ root });
-    const opencodeDir = workspaceSkillsRoot(root);
-    const claudeDir = join(root, ".claude", "skills");
-    items.push(...(await listSkillsInDir(opencodeDir, "project", workspaceOwner)));
-    items.push(...(await listSkillsInDir(claudeDir, "project", workspaceOwner)));
+    for (const skillRoot of workspaceSkillSourceRoots(root)) {
+      items.push(...(await listSkillsInDir(skillRoot, "project", workspaceOwner)));
+    }
   }
 
   if (normalizedOptions.includeGlobal) {

@@ -116,6 +116,15 @@ Installing or updating a registry-backed skill should follow the same local safe
 
 The local Veslo server materializes server-controlled workspace skills into `.opencode/skills/veslo-managed/` and records both a root manifest and per-skill ownership markers. Server-controlled replacements and removals create pre-change backups under the Veslo data directory. Existing user skill directories are never overwritten by registry sync unless the user explicitly installs the registry-backed version into a server-controlled target.
 
+For execution, the server also publishes a revisioned effective manifest inside
+the owning workspace. It is a workspace-local policy view, not a process-global
+registry: `.opencode/skills`, `.claude/skills`, `.agents/skills`, and
+`.agent/skills` are resolved by the server into that manifest before the engine
+sees them. Raw project roots, user-global roots, configured `skills.paths`, and
+remote skill URLs are not independent runtime inputs. A locked or equal
+precedence collision is omitted before materialization rather than resolved by
+OpenCode filesystem order.
+
 Registry search can be reached through the local server at `/v1/skills/search` when the desktop app needs server-side registry auth and validation. Registry update polling can be reached through `/v1/skill-registry-events`; app clients should invalidate inventory for all visible events, mark active workspace updates as pending reload, and materialize idle workspace or personal-global updates through the local server. Workspace runtime sync uses `/workspace/:id/skills/materialization`; personal-global sync uses `/skills/materialization`. Registry writes are proxied through local host or owner-authenticated routes for skill creation, immutable version publishing, installation create/update/delete/restore, rollout policy create/update/delete, review request create/approve/reject, and workspace skill-set replacement. Filesystem materialization writes require host or owner auth and active runs should return a pending reload state instead of mutating files.
 
 Runtime warmup must treat remote registry or Den unavailability as a degraded registry state, not as a hard prompt-send blocker. Local materialization write/config/runtime errors can still block startup because the runtime would be unsafe or inconsistent, but registry fetch/search/sync failures caused by an unavailable remote control plane should be logged and reported while the existing local skill state continues to be used for the send.

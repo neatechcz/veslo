@@ -23,6 +23,19 @@ export function workspaceSkillsRoot(workspaceRoot: string): string {
   return projectSkillsDir(workspaceRoot);
 }
 
+/**
+ * Workspace-local source roots that the server may resolve into an effective
+ * runtime manifest. The engine never scans these directly.
+ */
+export function workspaceSkillSourceRoots(workspaceRoot: string): string[] {
+  return [
+    workspaceSkillsRoot(workspaceRoot),
+    join(workspaceRoot, ".claude", "skills"),
+    join(workspaceRoot, ".agents", "skills"),
+    join(workspaceRoot, ".agent", "skills"),
+  ];
+}
+
 export type WorkspaceRootResolutionOptions = {
   /**
    * Hard boundary owned by the caller (normally the registered workspace
@@ -70,10 +83,7 @@ export async function workspaceSkillRootsForMutation(
   const roots = await findWorkspaceRoots(workspaceRoot, options.boundaryRoot
     ? options
     : { ...options, boundaryRoot: workspaceRoot });
-  return roots.flatMap((root) => [
-    workspaceSkillsRoot(root),
-    join(root, ".claude", "skills"),
-  ]);
+  return roots.flatMap(workspaceSkillSourceRoots);
 }
 
 export function userGlobalSkillRoots(): string[] {

@@ -1,3 +1,5 @@
+import { parse, type ParseError } from "jsonc-parser";
+
 const LEGACY_SCHEDULER_PLUGIN = "opencode-scheduler";
 const CHROME_MCP_ALIASES = ["chrome-devtools", "control-chrome"] as const;
 const CHROME_MCP_COMMAND = ["chrome-devtools-mcp", "--isolated"] as const;
@@ -5,6 +7,13 @@ const CHROME_MCP_COMMAND = ["chrome-devtools-mcp", "--isolated"] as const;
 type SanitizeResult = {
   text: string;
   changed: boolean;
+};
+
+export type SanitizeRuntimeConfigOptions = {
+  /** Remove all config-owned OpenCode skill roots; the effective manifest owns them. */
+  removeSkills?: boolean;
+  /** Reject malformed JSONC when policy closure would otherwise be unprovable. */
+  failClosed?: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,17 +93,38 @@ function migrateLegacyChromeMcpCommands(config: unknown): boolean {
   return changed;
 }
 
-export function sanitizeOpencodeRuntimeConfigText(raw: string): SanitizeResult {
+function parseJsoncConfig(raw: string): { parsed: unknown; errors: ParseError[] } {
   const hasBom = raw.charCodeAt(0) === 0xfeff;
   const parseInput = hasBom ? raw.slice(1) : raw;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(parseInput);
-  } catch {
+  const errors: ParseError[] = [];
+  const parsed = parse(parseInput, errors, {
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
+  return { parsed, errors };
+}
+
+function removeConfiguredSkillRoots(config: unknown): boolean {
+  if (!isRecord(config) || !("skills" in config)) return false;
+  delete config.skills;
+  return true;
+}
+
+export function sanitizeOpencodeRuntimeConfigText(
+  raw: string,
+  options: SanitizeRuntimeConfigOptions = {},
+): SanitizeResult {
+  const hasBom = raw.charCodeAt(0) === 0xfeff;
+  const { parsed, errors } = parseJsoncConfig(raw);
+  if (errors.length > 0 || !isRecord(parsed)) {
+    if (options.failClosed) {
+      throw new Error("OpenCode runtime config must be valid JSONC before Veslo can close the skill policy");
+    }
     return { text: raw, changed: false };
   }
 
   let changed = false;
+  if (options.removeSkills) changed = removeConfiguredSkillRoots(parsed) || changed;
   changed = removeLegacySchedulerPlugin(parsed) || changed;
   changed = migrateLegacyChromeMcpCommands(parsed) || changed;
 

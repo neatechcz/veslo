@@ -35,6 +35,58 @@ export type EngineSkillStagingResult = {
   suppressed: Array<{ name: string; reason: string }>;
 };
 
+export type DirectorySkillViewPublishResult = EngineSkillStagingResult & {
+  /**
+   * Stable workspace-local root consumed through a relative `skills.paths`
+   * entry by a directory-scoped OpenCode instance.
+   */
+  runtimeRoot: string;
+  skillViewRevision: string;
+};
+
+type DirectorySkillViewSwapDeps = {
+  renamePath?: typeof rename;
+  removePath?: typeof rm;
+};
+
+/**
+ * Promotes a pending workspace-local skill root. If final promotion fails and
+ * restoration fails too, the previous root is deliberately retained for
+ * recovery instead of being deleted by best-effort cleanup.
+ */
+export async function promoteDirectorySkillView(
+  input: { runtimeRoot: string; pendingRoot: string; previousRoot: string },
+  deps: DirectorySkillViewSwapDeps = {},
+): Promise<void> {
+  const renamePath = deps.renamePath ?? rename;
+  const removePath = deps.removePath ?? rm;
+  let previousExists = false;
+  try {
+    try {
+      await renamePath(input.runtimeRoot, input.previousRoot);
+      previousExists = true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw error;
+    }
+    try {
+      await renamePath(input.pendingRoot, input.runtimeRoot);
+    } catch (error) {
+      if (previousExists) {
+        try {
+          await renamePath(input.previousRoot, input.runtimeRoot);
+        } catch {
+          // The previous root remains at previousRoot for recovery.
+        }
+      }
+      throw error;
+    }
+    if (previousExists) await removePath(input.previousRoot, { recursive: true, force: true });
+  } finally {
+    await removePath(input.pendingRoot, { recursive: true, force: true });
+  }
+}
+
 const isWithin = (root: string, target: string): boolean => {
   const value = relative(resolve(root), resolve(target));
   return value.length > 0 && !value.startsWith("..") && !value.includes(`..${"\\"}`) && !value.includes(`../`);
@@ -261,4 +313,62 @@ export async function stageEngineSkillView(input: {
     })),
     suppressed,
   };
+}
+
+/**
+ * Publish a server-owned effective view at a stable path inside one workspace.
+ *
+ * OpenCode resolves a relative `skills.paths` value against the request
+ * directory.  The path therefore must stay stable for the lifetime of a
+ * shared process; only this directory's contents are replaced while its
+ * admission is closed by DirectorySkillViewLifecycle.  The two-step rename is
+ * recoverable on Windows (where replacing a non-empty directory is not
+ * portable): the previous view is retained until the new root is in place.
+ */
+export async function publishDirectorySkillView(input: {
+  workspace: string;
+  runtimeRoot: string;
+  skillViewRevision: string;
+}): Promise<DirectorySkillViewPublishResult> {
+  const workspace = resolve(input.workspace);
+  const runtimeRoot = resolve(input.runtimeRoot);
+  const revision = input.skillViewRevision.trim();
+  if (!revision) throw new Error("directory skill view revision is required");
+  if (!isWithin(workspace, runtimeRoot)) {
+    throw new Error("Directory skill runtime root must be inside its workspace");
+  }
+
+  const runtimeParent = dirname(runtimeRoot);
+  const stagingRoot = join(runtimeParent, ".staging");
+  const staged = await stageEngineSkillView({
+    workspace,
+    stagingRoot,
+    requireEffectiveManifest: true,
+    expectedRevision: revision,
+  });
+  const pendingRoot = join(runtimeParent, `.pending-${randomUUID()}`);
+  const previousRoot = join(runtimeParent, `.previous-${randomUUID()}`);
+  await mkdir(runtimeParent, { recursive: true });
+
+  try {
+    await cp(staged.stagingRoot, pendingRoot, { recursive: true, force: true });
+    await writeFile(
+      join(pendingRoot, STAGING_MANIFEST),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        publishedAt: new Date().toISOString(),
+        runtimeRoot,
+        skillViewRevision: revision,
+        materialized: staged.materialized,
+        suppressed: staged.suppressed,
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    await promoteDirectorySkillView({ runtimeRoot, pendingRoot, previousRoot });
+  } finally {
+    await rm(pendingRoot, { recursive: true, force: true });
+  }
+
+  return { ...staged, runtimeRoot, skillViewRevision: revision };
 }

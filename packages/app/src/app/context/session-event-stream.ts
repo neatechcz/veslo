@@ -269,6 +269,11 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   let lastPartDebugEventAt = 0;
   let suppressedPartDebugEvents = 0;
   const sseConnectedByStream = new Map<string, boolean>();
+  // An OpenCode session belongs to exactly one workspace route for the life of
+  // this controller.  IDs are process-global in a shared engine, so the
+  // historical global Set alone is not enough to keep an event from stream B
+  // from mutating session state previously established by stream A.
+  const sessionWorkspaceBindings = new Map<string, string>();
   const activeSseStreamsByWorkspace = new Map<
     string,
     { generation: number; cleanup: () => void; startedAt: number }
@@ -409,13 +414,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     return false;
   };
 
-  const isKnownOrForegroundStreamSessionId = (sessionID: string, sourceWsId: string): boolean => {
-    const normalizedSessionId = sessionID.trim();
-    if (!normalizedSessionId) return false;
-    if (isKnownSessionId(normalizedSessionId)) return true;
-    return false;
-  };
-
   const hasAuthorizedSessionBinding = (
     record: Record<string, unknown>,
     sessionID: string,
@@ -430,10 +428,69 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       authorization.revision.trim().length > 0;
   };
 
+  const bindKnownSessionToSource = (
+    sessionID: string,
+    sourceWsId: string,
+    record?: Record<string, unknown>,
+  ): boolean => {
+    const normalizedSessionID = sessionID.trim();
+    const normalizedWorkspaceID = sourceWsId.trim();
+    if (!normalizedSessionID) return false;
+    if (!normalizedWorkspaceID) return isKnownSessionId(normalizedSessionID);
+    const existing = sessionWorkspaceBindings.get(normalizedSessionID);
+    if (existing) return existing === normalizedWorkspaceID;
+    // The orchestrator stamps every session-scoped event with this envelope.
+    // That permits an event stream to recover a background session after a
+    // client restart without falling back to the foreground workspace.
+    if (record && Object.hasOwn(record, "vesloBinding")) {
+      if (!hasAuthorizedSessionBinding(record, normalizedSessionID, normalizedWorkspaceID)) return false;
+      sessionWorkspaceBindings.set(normalizedSessionID, normalizedWorkspaceID);
+      return true;
+    }
+    if (!isKnownSessionId(normalizedSessionID)) return false;
+    sessionWorkspaceBindings.set(normalizedSessionID, normalizedWorkspaceID);
+    return true;
+  };
+
+  const bindAuthorizedCreatedSession = (
+    record: Record<string, unknown>,
+    sessionID: string,
+    sourceWsId: string,
+  ): boolean => {
+    if (!hasAuthorizedSessionBinding(record, sessionID, sourceWsId)) return false;
+    const normalizedSessionID = sessionID.trim();
+    const normalizedWorkspaceID = sourceWsId.trim();
+    const existing = sessionWorkspaceBindings.get(normalizedSessionID);
+    if (existing && existing !== normalizedWorkspaceID) return false;
+    if (normalizedWorkspaceID) sessionWorkspaceBindings.set(normalizedSessionID, normalizedWorkspaceID);
+    return true;
+  };
+
   const applyBackgroundWorkspaceEvent = (event: OpencodeEvent, workspaceId: string) => {
     if (!workspaceId || !event.properties || typeof event.properties !== "object") return;
     const record = event.properties as Record<string, unknown>;
     const sessionID = extractSessionId(record);
+
+    if (event.type === "session.created" && sessionID) {
+      // A background workspace is intentionally not allowed to populate the
+      // foreground session store.  It can, however, establish the immutable
+      // route binding needed for later lifecycle events from that same stream.
+      if (!bindAuthorizedCreatedSession(record, sessionID, workspaceId)) {
+        deps.sessionWarn("session.created:ignored:unauthorized-background-session", {
+          sessionID,
+          workspaceId,
+        });
+      }
+      return;
+    }
+
+    if (sessionID && !bindKnownSessionToSource(sessionID, workspaceId, record)) {
+      deps.sessionWarn(`${event.type}:ignored:workspace-session-mismatch`, {
+        sessionID,
+        workspaceId,
+      });
+      return;
+    }
 
     if (event.type === "session.status" && sessionID) {
       const normalized = normalizeSessionStatus(record.status);
@@ -579,11 +636,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = deps.applySessionDirectoryOverride(record.info as Session);
-          const known = isKnownSessionId(info.id);
-          if (!known && (
-            event.type !== "session.created" ||
-            !hasAuthorizedSessionBinding(record, info.id, sourceWsId)
-          )) {
+          const accepted = event.type === "session.created"
+            ? bindAuthorizedCreatedSession(record, info.id, sourceWsId)
+            : bindKnownSessionToSource(info.id, sourceWsId, record);
+          if (!accepted) {
             deps.sessionWarn(`${event.type}:ignored:unauthorized-session`, {
               sessionID: info.id,
               workspaceId: sourceWsId,
@@ -601,6 +657,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             return;
           }
           deps.workspaceSessionIds.add(info.id);
+          if (sourceWsId.trim()) sessionWorkspaceBindings.set(info.id, sourceWsId.trim());
           deps.setStore("sessions", (current: Session[]) => upsertSession(current, info));
         }
       }
@@ -611,6 +668,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const record = event.properties as Record<string, unknown>;
         const info = record.info as Session | undefined;
         if (info?.id) {
+          if (!bindKnownSessionToSource(info.id, sourceWsId, record)) return;
           const removedMessageIDs = (deps.store.messages[info.id] ?? []).map((message) => message.id);
           for (const messageID of removedMessageIDs) {
             forgetTextDeltaMessage(sourceWsId, info.id, messageID);
@@ -631,6 +689,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               delete draft.sessionErrorTurns[info.id];
             }),
           );
+          sessionWorkspaceBindings.delete(info.id);
         }
       }
     }
@@ -639,7 +698,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
-        if (sessionID && isKnownSessionId(sessionID)) {
+        if (sessionID && bindKnownSessionToSource(sessionID, sourceWsId, record)) {
           const normalized = normalizeSessionStatus(record.status);
           const lifecycleOwnsEvent =
             normalized === "idle" &&
@@ -673,7 +732,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
-        if (sessionID && isKnownSessionId(sessionID)) {
+        if (sessionID && bindKnownSessionToSource(sessionID, sourceWsId, record)) {
           const lifecycleOwnsEvent =
             deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.idle") === true;
           deps.recordSessionStatusTrace("sse-session-idle", {
@@ -711,7 +770,15 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const sessionID = extractSessionId(record);
         const errorObj = record.error as Record<string, unknown> | undefined;
         const errorName = typeof errorObj?.name === "string" ? errorObj.name : "UnknownError";
-        const lifecycleOwnsEvent = sessionID && errorName !== "MessageAbortedError"
+        const acceptsSession = Boolean(sessionID && bindKnownSessionToSource(sessionID, sourceWsId, record));
+        if (sessionID && !acceptsSession) {
+          deps.sessionWarn("session.error:ignored:workspace-session-mismatch", {
+            sessionID,
+            workspaceId: sourceWsId,
+          });
+          return;
+        }
+        const lifecycleOwnsEvent = acceptsSession && sessionID && errorName !== "MessageAbortedError"
           ? deps.onSessionLifecycleObservation?.(sessionID, sourceWsId, "session.error") === true
           : false;
         if (sessionID && !lifecycleOwnsEvent) {
@@ -807,7 +874,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = record.info as Message;
-          if (!isKnownOrForegroundStreamSessionId(info.sessionID, sourceWsId)) return;
+          if (!bindKnownSessionToSource(info.sessionID, sourceWsId, record)) return;
           const current = deps.store.messages[info.sessionID] ?? [];
           const next = upsertMessageInfo(current, info as MessageInfo);
           if (next !== current) {
@@ -836,7 +903,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         if (sessionID && messageID) {
           forgetTextDeltaMessage(sourceWsId, sessionID, messageID);
           const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
-          if (workspaceId && isKnownSessionId(sessionID)) {
+          if (workspaceId && bindKnownSessionToSource(sessionID, sourceWsId, record)) {
             deps.recordPendingTranscriptMessageDeletion(workspaceId, sessionID, messageID);
           }
           const currentMessages = deps.store.messages[sessionID] ?? [];
@@ -856,7 +923,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             }),
           );
           deps.onTranscriptObserved?.(sessionID);
-          if (workspaceId && isKnownSessionId(sessionID)) {
+          if (workspaceId && bindKnownSessionToSource(sessionID, sourceWsId, record)) {
           }
         }
       }
@@ -878,7 +945,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         if (record.part && typeof record.part === "object") {
           const part = record.part as Part;
 
-          if (!isKnownOrForegroundStreamSessionId(part.sessionID, sourceWsId)) {
+          if (!bindKnownSessionToSource(part.sessionID, sourceWsId, record)) {
             deps.sessionWarn("message.part.updated:ignored:unknown-session", {
               sessionID: part.sessionID,
               messageID: part.messageID,
@@ -1036,7 +1103,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           if (sessionID) forgetTextDeltaPart(sourceWsId, sessionID, partID);
           const resolvedSessionID = sessionID || deps.resolveSessionIdForMessage(messageID);
           const workspaceId = deps.resolveTranscriptIngestWorkspaceId(sourceWsId);
-          if (workspaceId && resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
+          if (workspaceId && resolvedSessionID && bindKnownSessionToSource(resolvedSessionID, sourceWsId, record)) {
             deps.recordPendingTranscriptPartDeletion(workspaceId, resolvedSessionID, messageID, partID);
           }
           const currentParts = deps.store.parts[messageID] ?? [];
@@ -1046,7 +1113,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             recordTranscriptStoreWrite("sse.part.removed", "part", resolvedSessionID ?? "", messageID, partID);
             deps.setStore("parts", messageID, nextParts);
           }
-          if (resolvedSessionID && isKnownSessionId(resolvedSessionID)) {
+          if (resolvedSessionID && bindKnownSessionToSource(resolvedSessionID, sourceWsId, record)) {
           }
         }
       }
@@ -1056,7 +1123,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
         const sessionID = extractSessionId(record);
-        if (sessionID && isKnownSessionId(sessionID) && Array.isArray(record.todos)) {
+        if (sessionID && bindKnownSessionToSource(sessionID, sourceWsId, record) && Array.isArray(record.todos)) {
           deps.setStore("todos", sessionID, normalizeTodoItems(record.todos));
         }
       }
@@ -1724,7 +1791,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         targets,
         (target) => setupSseStream(target.wsId, target.client, "routing-entry"),
       );
-      if (changed) deps.workspaceSessionIds.clear();
+      if (changed) {
+        deps.workspaceSessionIds.clear();
+        sessionWorkspaceBindings.clear();
+      }
 
       if (reconciledStreams.size === 0) {
         sseConnectedByStream.clear();

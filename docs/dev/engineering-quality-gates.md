@@ -65,13 +65,17 @@ Run the bundled OpenCode compatibility gates as a separate non-desktop lane:
 ```bash
 node packages/orchestrator/scripts/opencode-workspace-concurrency.integration.mjs
 node packages/orchestrator/scripts/opencode-directory-scoped-skills.integration.mjs
+node packages/orchestrator/scripts/opencode-directory-scoped-runtime.integration.mjs
+node packages/orchestrator/scripts/opencode-directory-scoped-scaling.integration.mjs
 ```
 
 The first gate uses the shipped OpenCode binary with a local deterministic
 provider and verifies ten concurrent prompts plus restart-preserved session
-IDs. The second verifies directory-scoped skill isolation and records whether
-the shipped binary supports safe hot updates. These commands do not use Tauri
-Pilot.
+IDs. The second records a fingerprinted Gate A/B/C capability result: directory
+isolation with prompt execution, Veslo effective-view policy closure, and
+explicit per-directory disposal. A passing upstream disposal observation alone
+does not enable shared topology; the Veslo admission/epoch and desktop gates
+remain required. These commands do not use Tauri Pilot.
 
 ## Required Headless Service Gate
 

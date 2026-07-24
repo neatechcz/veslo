@@ -72,7 +72,7 @@ export type RunStore = {
    * a run whose engine died before reaching a terminal status - from
    * counting as active work forever.
    */
-  hasActiveForWorkspace(workspaceId: string, createdSince: number): boolean;
+  hasActiveForWorkspace(workspaceId: string, createdSince: number, options?: { excludeRunId?: string }): boolean;
 };
 
 export type RunStoreWorkspaceMigrationResult = {
@@ -477,15 +477,17 @@ export function createRunStore(options: { dbPath: string }): RunStore {
       });
     },
 
-    hasActiveForWorkspace(workspaceId, createdSince) {
+    hasActiveForWorkspace(workspaceId, createdSince, options) {
+      const excludedRunId = options?.excludeRunId?.trim() ?? "";
       return withDb((db) => {
-        const row = db.query<{ present: number }, [string, number]>(
+        const row = db.query<{ present: number }, [string, number, string]>(
           `SELECT 1 AS present FROM conversation_run
            WHERE workspace_id = ?1
              AND status IN (${ACTIVE_RUN_STATUS_SQL_LIST})
              AND created_at >= ?2
+             AND (?3 = '' OR run_id <> ?3)
            LIMIT 1`,
-        ).get(workspaceId, createdSince);
+        ).get(workspaceId, createdSince, excludedRunId);
         return Boolean(row);
       });
     },

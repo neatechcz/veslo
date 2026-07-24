@@ -9,13 +9,15 @@ import type {
 } from "./engine-pool.js";
 import type { RuntimeEngineState } from "./runtime-engine-state.js";
 import { runtimeEngineStateFromEngineState } from "./runtime-engine-state.js";
+import type { EngineTopologyMode } from "./engine-topology.js";
 
 export type SharedOpenCodeEngineSnapshot = {
-  mode: "shared-unsandboxed";
+  mode: Extract<EngineTopologyMode, "shared-unsandboxed" | "shared-directory-scoped">;
   running: boolean;
   pending: boolean;
   engineState: RuntimeEngineState;
   state?: EngineState;
+  engineOwnerId?: string;
   baseUrl?: string;
   pid?: number;
   port?: number;
@@ -47,6 +49,7 @@ export type SharedOpenCodeEngineInput = {
   runtimeDirectory: string;
   configDirectory: string;
   workspaceId?: string;
+  mode?: Extract<EngineTopologyMode, "shared-unsandboxed" | "shared-directory-scoped">;
   deps: SharedOpenCodeEngineDeps;
 };
 
@@ -54,6 +57,7 @@ export class SharedOpenCodeEngine {
   private readonly runtimeDirectory: string;
   private readonly configDirectory: string;
   private readonly workspaceId: string;
+  private readonly mode: Extract<EngineTopologyMode, "shared-unsandboxed" | "shared-directory-scoped">;
   private readonly deps: Required<Pick<SharedOpenCodeEngineDeps, "now">> &
     Omit<SharedOpenCodeEngineDeps, "now">;
   private engine: EngineProcess | null = null;
@@ -67,6 +71,7 @@ export class SharedOpenCodeEngine {
     this.runtimeDirectory = input.runtimeDirectory;
     this.configDirectory = input.configDirectory;
     this.workspaceId = input.workspaceId ?? "shared-unsandboxed";
+    this.mode = input.mode ?? "shared-unsandboxed";
     this.deps = {
       ...input.deps,
       now: input.deps.now ?? (() => Date.now()),
@@ -124,11 +129,12 @@ export class SharedOpenCodeEngine {
         : this.lastEngineState;
 
     return {
-      mode: "shared-unsandboxed",
+      mode: this.mode,
       running: Boolean(running),
       pending,
       engineState,
       ...(engine ? { state: engine.state } : {}),
+      ...(engine ? { engineOwnerId: engine.engineOwnerId } : {}),
       ...(engine ? { baseUrl: engine.baseUrl } : {}),
       ...(engine ? { pid: engine.pid } : {}),
       ...(engine ? { port: engine.port } : {}),

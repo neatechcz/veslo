@@ -194,12 +194,27 @@ export function parseOpencodeErrorBody(input: string): unknown {
 export type ReloadOpencodeEngineOptions = {
   /** Current orchestrator-derived mount used when a persisted mount is stale. */
   fallbackBaseUrl?: string;
+  /** Reload only an engine that is already running; never cause a cold start. */
+  ifRunning?: boolean;
 };
+
+export type ReloadOpencodeEngineResult =
+  | { kind: "reloaded" }
+  | { kind: "not-running" }
+  | { kind: "starting" };
+
+function unavailableReloadResult(body: unknown): ReloadOpencodeEngineResult | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const error = (body as Record<string, unknown>).error;
+  if (error === "engine_not_running") return { kind: "not-running" };
+  if (error === "engine_starting") return { kind: "starting" };
+  return null;
+}
 
 export async function reloadOpencodeEngine(
   workspace: WorkspaceInfo,
   options: ReloadOpencodeEngineOptions = {},
-): Promise<void> {
+): Promise<ReloadOpencodeEngineResult> {
   const baseUrls = Array.from(new Set([
     workspace.baseUrl?.trim() ?? "",
     options.fallbackBaseUrl?.trim() ?? "",
@@ -217,6 +232,7 @@ export async function reloadOpencodeEngine(
   const headers: Record<string, string> = {};
   const auth = buildOpencodeAuthHeader(workspace);
   if (auth) headers.Authorization = auth;
+  if (options.ifRunning) headers["x-veslo-engine-if-running"] = "1";
 
   const timeoutMs = resolveOpenCodeJsonFetchTimeoutMs();
   let lastError: unknown = null;
@@ -233,8 +249,10 @@ export async function reloadOpencodeEngine(
     }
     try {
       const response = await fetch(targetUrl, { method: "POST", headers, signal: controller.signal });
-      if (response.ok) return;
+      if (response.ok) return { kind: "reloaded" };
       const body = parseOpencodeErrorBody(await readResponseTextWithLimit(response, OPENCODE_JSON_DEFAULT_RESPONSE_MAX_BYTES));
+      const unavailable = options.ifRunning ? unavailableReloadResult(body) : null;
+      if (unavailable && baseUrl === baseUrls[baseUrls.length - 1]) return unavailable;
       const error = new ApiError(502, "opencode_reload_failed", "OpenCode reload failed", {
         status: response.status,
         body,

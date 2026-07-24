@@ -1487,7 +1487,7 @@ test("inactive workspace heal marks unauthorized workspaces for the current toke
   assert.deepEqual(client.patched, []);
 });
 
-test("shared engine defers inactive workspace reload until that workspace is active", async () => {
+test("inactive workspace heal never uses the active pooled engine as another workspace's reload target", async () => {
   const client = createVesloClient();
   client.getConfig = async (workspaceId) => {
     client.getConfigCalls.push(workspaceId);
@@ -1496,7 +1496,6 @@ test("shared engine defers inactive workspace reload until that workspace is act
   const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
   const sync = createManagedAiRuntimeConfigSync(createOptions({
     vesloServerClient: () => client,
-    orchestratorEngineTopology: () => "shared-unsandboxed",
     recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
   }));
 
@@ -1505,9 +1504,27 @@ test("shared engine defers inactive workspace reload until that workspace is act
   assert.equal(client.patched.length, 1);
   assert.deepEqual(client.reloadEngineCalls, []);
   assert.ok(traces.some((entry) =>
-    entry.event === "managed-ai-config-sync:reload-deferred-shared-inactive" &&
-    entry.payload.workspaceId === "ws-private",
+    entry.event === "managed-ai-config-sync:reload-decision" &&
+    entry.payload.workspaceId === "ws-private" &&
+    entry.payload.engineRunning === false &&
+    entry.payload.engineRunningSource === "none",
   ));
+});
+
+test("inactive workspace heal reloads only a ready engine for that same workspace", async () => {
+  const client = createVesloClient();
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    return { opencode: {} };
+  };
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    orchestratorEngines: () => [{ workspaceId: "ws-private", state: "ready" }],
+  }));
+
+  await sync.healInactiveManagedAiWorkspaceConfigs();
+
+  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-private", ifIdle: true }]);
 });
 
 test("inactive workspace heal keeps config tracking across managed access metadata refresh", async () => {

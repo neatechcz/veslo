@@ -83,12 +83,37 @@ describe("sanitizeOpencodeRuntimeConfigText", () => {
     expect(parsed).not.toHaveProperty("plugin");
   });
 
-  test("leaves unparsable JSONC unchanged for the source config owner", () => {
+  test("sanitizes valid JSONC while normalizing the mirrored runtime snapshot", () => {
     const raw = '{ "plugin": ["opencode-scheduler"], // user comment\n }';
 
-    expect(sanitizeOpencodeRuntimeConfigText(raw)).toEqual({
-      text: raw,
-      changed: false,
-    });
+    const result = sanitizeOpencodeRuntimeConfigText(raw);
+
+    expect(result.changed).toBe(true);
+    expect(JSON.parse(result.text)).toEqual({});
+  });
+
+  test("removes config-owned skill paths and URLs for the effective runtime view", () => {
+    const input = `{
+      // source config is JSONC
+      "model": "openai/gpt-5",
+      "skills": {
+        "paths": ["C:/unmanaged-skills"],
+        "urls": ["https://example.test/skills"]
+      }
+    }`;
+
+    const result = sanitizeOpencodeRuntimeConfigText(input, { removeSkills: true, failClosed: true });
+    const parsed = JSON.parse(result.text);
+
+    expect(result.changed).toBe(true);
+    expect(parsed.model).toBe("openai/gpt-5");
+    expect(parsed).not.toHaveProperty("skills");
+  });
+
+  test("fails closed when a policy-constrained JSONC config cannot be parsed", () => {
+    expect(() => sanitizeOpencodeRuntimeConfigText("{ skills: [", {
+      removeSkills: true,
+      failClosed: true,
+    })).toThrow("must be valid JSONC");
   });
 });

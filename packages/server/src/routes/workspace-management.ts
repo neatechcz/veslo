@@ -52,7 +52,10 @@ export type WorkspaceManagementRouteDependencies = {
     merge: boolean,
   ) => Promise<void>;
   buildConfigTrigger: (path: string) => ReloadTrigger;
-  reloadOpencodeEngine: (workspace: WorkspaceInfo, options?: { fallbackBaseUrl?: string }) => Promise<void>;
+  reloadOpencodeEngine: (workspace: WorkspaceInfo, options?: {
+    fallbackBaseUrl?: string;
+    ifRunning?: boolean;
+  }) => Promise<{ kind: "reloaded" | "not-running" | "starting" }>;
   reloadWorkspaceEngineIfIdle: (input: {
     workspaceId: string;
     reload: () => Promise<void>;
@@ -454,12 +457,20 @@ export function registerWorkspaceManagementRoutes(
     requireClientScope(ctx, "collaborator");
     const body = await readOptionalJsonBody(ctx.request);
     const ifIdle = body?.ifIdle === true;
+    // An idle reload means "refresh an existing engine". A stopped engine will
+    // read its persisted config on first launch, so starting it here is pure
+    // background fan-out.
+    const ifRunning = body?.ifRunning === true || ifIdle;
+    let reloadResult: { kind: "reloaded" | "not-running" | "starting" } = { kind: "reloaded" };
     if (ifIdle) {
       const result = await reloadWorkspaceEngineIfIdle({
         workspaceId: workspace.id,
-        reload: () => reloadOpencodeEngine(workspace, {
-          fallbackBaseUrl: buildOrchestratorWorkspaceOpencodeBaseUrl(ctx.config, workspace),
-        }),
+        reload: async () => {
+          reloadResult = await reloadOpencodeEngine(workspace, {
+            fallbackBaseUrl: buildOrchestratorWorkspaceOpencodeBaseUrl(ctx.config, workspace),
+            ifRunning,
+          });
+        },
       });
       if (result.kind === "blocked") {
         throw new ApiError(409, "reload_blocked_active_runs", "Workspace engine reload is blocked by an active or reconciling run", {
@@ -468,8 +479,9 @@ export function registerWorkspaceManagementRoutes(
         });
       }
     } else {
-      await reloadOpencodeEngine(workspace, {
+      reloadResult = await reloadOpencodeEngine(workspace, {
         fallbackBaseUrl: buildOrchestratorWorkspaceOpencodeBaseUrl(ctx.config, workspace),
+        ifRunning,
       });
     }
 
@@ -479,11 +491,19 @@ export function registerWorkspaceManagementRoutes(
       actor: ctx.actor ?? { type: "remote" },
       action: "engine.reload",
       target: workspace.baseUrl ?? "opencode",
-      summary: "Reloaded workspace engine",
+      summary: reloadResult.kind === "reloaded"
+        ? "Reloaded workspace engine"
+        : "Skipped workspace engine reload because the engine is not ready",
       timestamp: Date.now(),
     });
 
-    return jsonResponse({ ok: true, reloadedAt: Date.now(), ifIdle });
+    return jsonResponse({
+      ok: true,
+      reloadedAt: Date.now(),
+      ifIdle,
+      reloaded: reloadResult.kind === "reloaded",
+      skipped: reloadResult.kind === "reloaded" ? null : reloadResult.kind,
+    });
   });
 
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {

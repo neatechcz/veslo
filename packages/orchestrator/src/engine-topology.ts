@@ -2,7 +2,10 @@ const RED = "\u001b[31;1m";
 const RESET = "\u001b[0m";
 const BORDER = "############################################################";
 
-export type EngineTopologyMode = "pooled-per-workspace" | "shared-unsandboxed";
+export type EngineTopologyMode =
+  | "pooled-per-workspace"
+  | "shared-unsandboxed"
+  | "shared-directory-scoped";
 
 export type EngineSandboxKind =
   | "none"
@@ -25,6 +28,19 @@ export function envFlagEnabled(value: string | undefined): boolean {
 
 export function sharedOpencodeEngineRequested(env: NodeJS.ProcessEnv = process.env): boolean {
   return envFlagEnabled(env.VESLO_SHARED_OPENCODE_ENGINE);
+}
+
+/**
+ * This is intentionally a separate opt-in from the legacy shared fallback.
+ * The mode remains experimental until the bundled capability fingerprint and
+ * desktop acceptance matrix are promoted together.
+ */
+export function sharedDirectoryScopedEngineRequested(env: NodeJS.ProcessEnv = process.env): boolean {
+  return envFlagEnabled(env.VESLO_SHARED_OPENCODE_DIRECTORY_SCOPED);
+}
+
+export function usesSharedOpenCodeEngine(mode: EngineTopologyMode): boolean {
+  return mode === "shared-unsandboxed" || mode === "shared-directory-scoped";
 }
 
 export function sandboxExplicitlyDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -72,6 +88,14 @@ export function resolveEngineTopology(input: {
     throw new Error(
       `Shared OpenCode engine requested, but sandbox kind '${input.sandboxKind}' is active. Disable sandboxing first.`,
     );
+  }
+
+  if (sharedDirectoryScopedEngineRequested(env)) {
+    return {
+      mode: "shared-directory-scoped",
+      reason: "explicit experimental directory-scoped shared engine requested",
+      sharedRequested,
+    };
   }
 
   return {

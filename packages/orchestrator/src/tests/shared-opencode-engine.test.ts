@@ -141,6 +141,17 @@ describe("SharedOpenCodeEngine", () => {
     });
   });
 
+  test("snapshot exposes the process-generation owner for shared directory trace attribution", async () => {
+    const h = harness();
+    const engine = await h.manager.ensureStarted("directory-scoped trace");
+
+    expect(h.manager.snapshot()).toMatchObject({
+      running: true,
+      engineOwnerId: engine.engineOwnerId,
+      pid: engine.pid,
+    });
+  });
+
   test("snapshot reports starting while shared health check is pending", async () => {
     let releaseHealthy!: () => void;
     const healthy = new Promise<void>((resolve) => {

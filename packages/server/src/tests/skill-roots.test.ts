@@ -126,7 +126,7 @@ test("workspace root helpers keep managed skills under the workspace skills root
   );
 });
 
-test("workspace mutation roots include opencode and claude roots for the workspace chain", async () => {
+test("workspace mutation roots include all supported source roots for the workspace chain", async () => {
   const repoRoot = join(await tempDir("veslo-skill-roots-chain-"), "repo");
   const nestedRoot = join(repoRoot, "packages", "app");
   await mkdir(join(repoRoot, ".git"), { recursive: true });
@@ -135,10 +135,16 @@ test("workspace mutation roots include opencode and claude roots for the workspa
   expect(await workspaceSkillRootsForMutation(nestedRoot, { boundaryRoot: repoRoot })).toEqual([
     join(nestedRoot, ".opencode", "skills"),
     join(nestedRoot, ".claude", "skills"),
+    join(nestedRoot, ".agents", "skills"),
+    join(nestedRoot, ".agent", "skills"),
     join(repoRoot, "packages", ".opencode", "skills"),
     join(repoRoot, "packages", ".claude", "skills"),
+    join(repoRoot, "packages", ".agents", "skills"),
+    join(repoRoot, "packages", ".agent", "skills"),
     join(repoRoot, ".opencode", "skills"),
     join(repoRoot, ".claude", "skills"),
+    join(repoRoot, ".agents", "skills"),
+    join(repoRoot, ".agent", "skills"),
   ]);
   expect(await findWorkspaceRoots(nestedRoot, { boundaryRoot: repoRoot })).toEqual([
     nestedRoot,
@@ -156,6 +162,8 @@ test("workspace root traversal is bounded for a gitless registered workspace", a
   expect(await workspaceSkillRootsForMutation(workspaceRoot)).toEqual([
     join(workspaceRoot, ".opencode", "skills"),
     join(workspaceRoot, ".claude", "skills"),
+    join(workspaceRoot, ".agents", "skills"),
+    join(workspaceRoot, ".agent", "skills"),
   ]);
 });
 

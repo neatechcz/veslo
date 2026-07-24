@@ -147,6 +147,7 @@ describe("run store", () => {
     }));
 
     expect(store.hasActiveForWorkspace("ws-a", 2_000)).toBe(true);
+    expect(store.hasActiveForWorkspace("ws-a", 2_000, { excludeRunId: "recent-active" })).toBe(false);
     expect(store.hasActiveForWorkspace("ws-b", 2_000)).toBe(true);
     expect(store.hasActiveForWorkspace("missing", 0)).toBe(false);
   });

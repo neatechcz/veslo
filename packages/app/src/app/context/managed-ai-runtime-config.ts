@@ -142,7 +142,7 @@ export type ManagedAiRuntimeConfigVesloClient = {
     workspaceId: string,
     payload: { opencode?: Record<string, unknown> },
   ) => Promise<unknown>;
-  reloadEngine: (workspaceId: string, options?: { ifIdle?: boolean }) => Promise<unknown>;
+  reloadEngine: (workspaceId: string, options?: { ifIdle?: boolean; ifRunning?: boolean }) => Promise<unknown>;
   listWorkspaces: () => Promise<{
     items?: Array<{ id: string; workspaceType?: string | null }> | null;
   }>;
@@ -445,6 +445,31 @@ export function createManagedAiRuntimeConfigSync(
     if (explicitTopology) return explicitTopology === "shared-unsandboxed";
     return [...deps.orchestratorStatusEngines(), ...deps.orchestratorEngines()]
       .some((engine) => engine?.workspaceId?.trim() === "shared-unsandboxed");
+  };
+  const resolveWorkspaceEngineRunning = (workspaceId: string): {
+    running: boolean;
+    source: "active-engine" | "orchestrator-snapshot" | "none";
+  } => {
+    const targetWorkspaceId = workspaceId.trim();
+    if (!targetWorkspaceId) return { running: false, source: "none" };
+
+    // `engine()` describes only the currently active desktop workspace. It
+    // must never be used as evidence that another workspace has a running
+    // pooled engine: doing so turns an inactive config sync into a cold start.
+    if (
+      targetWorkspaceId === (deps.vesloServerWorkspaceId()?.trim() ?? "") &&
+      deps.engine()?.running === true
+    ) {
+      return { running: true, source: "active-engine" };
+    }
+
+    const snapshot = [...deps.orchestratorEngines(), ...deps.orchestratorStatusEngines()].find((engine) =>
+      engine?.workspaceId?.trim() === targetWorkspaceId &&
+      (engine.state === "ready" || engine.state === "idle"),
+    );
+    return snapshot
+      ? { running: true, source: "orchestrator-snapshot" }
+      : { running: false, source: "none" };
   };
   const canReloadPendingWorkspace = (workspaceId: string): boolean => {
     if (!isSharedEngineTopology()) return true;
@@ -1643,7 +1668,7 @@ export function createManagedAiRuntimeConfigSync(
         phase: "start",
       });
       try {
-        await client.reloadEngine(input.workspaceId, { ifIdle: true });
+        await client.reloadEngine(input.workspaceId, { ifIdle: true, ifRunning: true });
         if (pendingServerReloads.get(input.workspaceId) === pending) {
           pendingServerReloads.delete(input.workspaceId);
         }
@@ -1755,11 +1780,13 @@ export function createManagedAiRuntimeConfigSync(
     vesloClient: ManagedAiRuntimeConfigVesloClient;
     traceContext: Record<string, unknown>;
   }) => {
-    const engineRunning = deps.engine()?.running === true;
+    const engineState = resolveWorkspaceEngineRunning(input.vesloWorkspaceId);
+    const engineRunning = engineState.running;
     deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:reload-decision", {
       ...input.traceContext,
       configSource: "veslo-server-config",
       engineRunning,
+      engineRunningSource: engineState.source,
       decision: engineRunning ? "server-reload-pending" : "skip-engine-not-running",
     });
     if (!engineRunning) return;

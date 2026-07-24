@@ -107,6 +107,35 @@ describe("resolveOpencodeProxyTarget", () => {
     expect(ensureCalls).toBe(1);
   });
 
+  test("directory-scoped shared mode retains the workspace root as the directory key", async () => {
+    const shared = engine("shared-directory-scoped", "http://127.0.0.1:6001");
+    const target = await resolveOpencodeProxyTarget({
+      topology: "shared-directory-scoped",
+      method: "POST",
+      workspaceId: "ws-a",
+      workspacePath: "/repo/a",
+      pooledEngine: {
+        getRunning: () => null,
+        ensure: async () => engine("ws-a", "http://127.0.0.1:5001"),
+      },
+      sharedEngine: {
+        getRunning: () => shared,
+        snapshot: () => ({
+          mode: "shared-directory-scoped",
+          running: true,
+          pending: false,
+          engineState: "ready",
+          runtimeDirectory: "/runtime",
+          configDirectory: "/config",
+        }),
+        ensureStarted: async () => shared,
+      },
+    });
+
+    expect(target.engineKind).toBe("shared");
+    expect(target.directory).toBe("/repo/a");
+  });
+
   test("GET in shared mode reports starting without starting another engine", async () => {
     let ensureCalls = 0;
 
@@ -195,6 +224,36 @@ describe("resolveOpencodeProxyTarget", () => {
     expect(target.spawnedByRequest).toBe(false);
     expect(target.engineState).toBe("starting");
     expect(target.unavailableReason).toBe("starting");
+    expect(ensureCalls).toBe(0);
+  });
+
+  test("a non-spawning POST reload reports an absent pooled engine", async () => {
+    let ensureCalls = 0;
+
+    const target = await resolveOpencodeProxyTarget({
+      topology: "pooled-per-workspace",
+      method: "POST",
+      allowEngineStart: false,
+      workspaceId: "ws-a",
+      workspacePath: "/repo/a",
+      pooledEngine: {
+        get: () => undefined,
+        getRunning: () => null,
+        ensure: async () => {
+          ensureCalls++;
+          return engine("ws-a", "http://127.0.0.1:5001");
+        },
+      },
+    });
+
+    expect(target).toEqual({
+      engine: null,
+      engineKind: "pooled",
+      directory: "/repo/a",
+      spawnedByRequest: false,
+      engineState: "absent",
+      unavailableReason: "absent",
+    });
     expect(ensureCalls).toBe(0);
   });
 });

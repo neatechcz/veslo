@@ -24,6 +24,8 @@ import {
   buildSharedOpencodeEngineWarning,
   resolveEngineTopology,
   sandboxExplicitlyDisabled,
+  usesSharedOpenCodeEngine,
+  type EngineTopologyMode,
 } from "./engine-topology.js";
 import { readVersionManifestFromDirs, type VersionInfo, type VersionManifest } from "./version-manifest.js";
 import type { SerializedEngineState } from "./engine-pool.js";
@@ -67,12 +69,13 @@ import { ensureOpencodeManagedTools as ensureOpencodeManagedToolsRuntime } from 
 import { migrateLegacyWorkspaceConfigDir } from "./workspace-runtime-migration.js";
 import {
   buildEngineConfigEnv,
-  buildEngineSkillConflictEnv,
   buildEngineSkillIsolationEnv,
   buildEngineSkillViewEnv,
 } from "./engine-launch-contract.js";
-import { stageEngineSkillView } from "./engine-skill-staging.js";
-import { sanitizeOpencodeRuntimeConfigText } from "./opencode-config-sanitizer.js";
+import { publishDirectorySkillView, stageEngineSkillView } from "./engine-skill-staging.js";
+import { DirectorySkillViewLifecycle, type DirectorySkillViewInstance } from "./directory-skill-view-lifecycle.js";
+import { inspectDirectoryScopedConfigProfile } from "./directory-scoped-placement.js";
+import { syncWorkspaceOpencodeConfigToConfigDir } from "./workspace-opencode-config-mirror.js";
 import {
   normalizeWorkspacePath,
   resolveWorkspaceRuntimeIdentity,
@@ -652,19 +655,12 @@ async function ensureWorkspace(workspace: string): Promise<string> {
   return resolved;
 }
 
-async function syncWorkspaceOpencodeConfigToConfigDir(workspace: string, configDir: string): Promise<void> {
-  await mkdir(configDir, { recursive: true });
+async function mirroredOpencodeConfigPath(configDir: string): Promise<string> {
   for (const name of ["opencode.jsonc", "opencode.json"] as const) {
-    const source = join(workspace, name);
-    const target = join(configDir, name);
-    if (await fileExists(source)) {
-      const raw = await readFile(source, "utf8");
-      const sanitized = sanitizeOpencodeRuntimeConfigText(raw);
-      await writeFile(target, sanitized.text, "utf8");
-    } else {
-      await rm(target, { force: true });
-    }
+    const candidate = join(configDir, name);
+    if (await fileExists(candidate)) return candidate;
   }
+  throw new Error(`Sanitized OpenCode config snapshot is missing from ${configDir}`);
 }
 
 async function opencodeConfigFileStats(configDir: string): Promise<Array<{ name: string; exists: boolean; bytes?: number }>> {
@@ -2717,6 +2713,14 @@ async function startOpencode(options: {
   skillWorkspace?: string;
   /** Server-published revision that staging must consume exactly. */
   skillViewRevision?: string;
+  /**
+   * A static relative root resolved by OpenCode from each request directory.
+   * This is only valid for the capability-gated shared directory topology.
+   */
+  directoryScopedSkillPath?: string;
+  /** Shared directory engines require hardened config discovery; pooled
+   * engines preserve normal native project configuration. */
+  skillIsolationProfile?: "normal" | "hardened";
   configDir?: string;
   hotReload: OpencodeHotReload;
   bindHost: string;
@@ -2775,53 +2779,70 @@ async function startOpencode(options: {
     ? normalizeRuntimeOptionPath(listenerLimitPreloadPath)
     : null;
 
-  const skillStagingRoot = join(
-    options.configDir ?? join(options.workspace, ".veslo", "opencode-runtime"),
-    "skill-staging",
-  );
-  const skillStaging = await stageEngineSkillView({
-    workspace: options.skillWorkspace ?? options.workspace,
-    stagingRoot: skillStagingRoot,
-    requireEffectiveManifest: true,
-    ...(options.skillViewRevision ? { expectedRevision: options.skillViewRevision } : {}),
-  });
-  options.logger.info(
-    "engine skill staging prepared",
-    {
+  const directoryScopedSkillPath = options.directoryScopedSkillPath?.trim() || undefined;
+  let skillViewPath: string;
+  if (directoryScopedSkillPath) {
+    if (isAbsolute(directoryScopedSkillPath)) {
+      throw new Error("directory-scoped shared skill path must be relative");
+    }
+    skillViewPath = directoryScopedSkillPath;
+    options.logger.info(
+      "engine directory-scoped skill path prepared",
+      { workspace: options.workspace, skillPath: directoryScopedSkillPath },
+      "opencode",
+    );
+    writeSkillAuditTrace("orchestrator:directory-scoped-skill-path", {
+      workspace: options.workspace,
+      skillPath: directoryScopedSkillPath,
+    });
+  } else {
+    const skillStagingRoot = join(
+      options.configDir ?? join(options.workspace, ".veslo", "opencode-runtime"),
+      "skill-staging",
+    );
+    const skillStaging = await stageEngineSkillView({
+      workspace: options.skillWorkspace ?? options.workspace,
+      stagingRoot: skillStagingRoot,
+      requireEffectiveManifest: true,
+      ...(options.skillViewRevision ? { expectedRevision: options.skillViewRevision } : {}),
+    });
+    skillViewPath = skillStaging.stagingRoot;
+    options.logger.info(
+      "engine skill staging prepared",
+      {
+        workspace: options.workspace,
+        skillWorkspace: options.skillWorkspace ?? options.workspace,
+        stagingRoot: skillStaging.stagingRoot,
+        source: skillStaging.source,
+        materialized: skillStaging.materialized,
+        suppressed: skillStaging.suppressed,
+      },
+      "opencode",
+    );
+    writeSkillAuditTrace("orchestrator:skill-staging", {
       workspace: options.workspace,
       skillWorkspace: options.skillWorkspace ?? options.workspace,
       stagingRoot: skillStaging.stagingRoot,
       source: skillStaging.source,
       materialized: skillStaging.materialized,
+      materializedDetails: skillStaging.materializedDetails,
       suppressed: skillStaging.suppressed,
-    },
-    "opencode",
-  );
-  writeSkillAuditTrace("orchestrator:skill-staging", {
-    workspace: options.workspace,
-    skillWorkspace: options.skillWorkspace ?? options.workspace,
-    stagingRoot: skillStaging.stagingRoot,
-    source: skillStaging.source,
-    materialized: skillStaging.materialized,
-    materializedDetails: skillStaging.materializedDetails,
-    suppressed: skillStaging.suppressed,
-  });
+    });
+  }
+  if (!options.configDir) {
+    throw new Error("Veslo requires an OpenCode config directory for skill-policy closure");
+  }
+  const configPath = await mirroredOpencodeConfigPath(options.configDir);
+  const projectInstructionPath = options.skillIsolationProfile === "normal" &&
+    await fileExists(join(options.configDir, "AGENTS.md"))
+    ? join(options.configDir, "AGENTS.md")
+    : undefined;
 
   const env = {
     ...process.env,
     OPENCODE_CLIENT: "veslo-orchestrator",
-    // Keep project `.claude/skills` compatibility, while preventing the
-    // upstream loader from scanning user-global Claude/Agents skill roots.
-    ...buildEngineSkillIsolationEnv(),
-    ...buildEngineSkillViewEnv(skillStaging.stagingRoot, process.env.OPENCODE_CONFIG_CONTENT),
-    ...buildEngineSkillConflictEnv({
-      suppressed: skillStaging.suppressed.length,
-      configPath: options.configDir
-        ? (await fileExists(join(options.configDir, "opencode.jsonc"))
-          ? join(options.configDir, "opencode.jsonc")
-          : join(options.configDir, "opencode.json"))
-        : undefined,
-    }),
+    ...buildEngineSkillIsolationEnv(configPath, options.skillIsolationProfile),
+    ...buildEngineSkillViewEnv(skillViewPath, process.env.OPENCODE_CONFIG_CONTENT, projectInstructionPath),
     VESLO: "1",
     VESLO_RUN_ID: options.runId,
     VESLO_LOG_FORMAT: options.logFormat,
@@ -4173,6 +4194,69 @@ async function runRouterDaemon(args: ParsedArgs) {
       "opencode",
     );
   }
+  if (engineTopology.mode === "shared-directory-scoped") {
+    logger.warn(
+      "experimental directory-scoped shared OpenCode engine enabled",
+      {
+        reason: engineTopology.reason,
+        sandboxKind: configuredSandboxBackend,
+        disableSandbox: process.env.VESLO_DISABLE_SANDBOX ?? null,
+      },
+      "opencode",
+    );
+  }
+
+  const workspacePlacements = new Map<string, {
+    workspacePath: string;
+    topology: EngineTopologyMode;
+    generation: number;
+  }>();
+  let nextWorkspacePlacementGeneration = 1;
+
+  /**
+   * Directory-shared compatibility is immutable for this orchestrator
+   * generation. A config edit cannot silently retarget an existing session or
+   * active run between a shared process and a pooled process.
+   */
+  const resolveWorkspaceEngineTopology = async (workspace: RouterWorkspace): Promise<EngineTopologyMode> => {
+    if (engineTopology.mode !== "shared-directory-scoped") return engineTopology.mode;
+    const workspacePath = resolve(workspace.path);
+    const existing = workspacePlacements.get(workspace.id);
+    if (existing) {
+      if (normalizeWorkspacePath(existing.workspacePath) !== normalizeWorkspacePath(workspacePath)) {
+        throw new Error("workspace_placement_path_changed_requires_orchestrator_restart");
+      }
+      return existing.topology;
+    }
+    let topology: EngineTopologyMode = "shared-directory-scoped";
+    for (const name of ["opencode.jsonc", "opencode.json"] as const) {
+      const configPath = join(workspacePath, name);
+      if (!await fileExists(configPath)) continue;
+      const profile = inspectDirectoryScopedConfigProfile(await readFile(configPath, "utf8"));
+      if (!profile.compatible) {
+        traceRuntime("orchestrator:directory-shared-placement:pooled", {
+          workspacePath,
+          configPath,
+          reason: profile.reason,
+        });
+        topology = "pooled-per-workspace";
+        break;
+      }
+    }
+    const placement = {
+      workspacePath,
+      topology,
+      generation: nextWorkspacePlacementGeneration++,
+    };
+    workspacePlacements.set(workspace.id, placement);
+    traceRuntime("orchestrator:directory-shared-placement:pinned", {
+      workspaceId: workspace.id,
+      workspacePath,
+      topology,
+      generation: placement.generation,
+    });
+    return topology;
+  };
 
   const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.VESLO_OPENCODE_BIN;
   const opencodeHost =
@@ -4495,6 +4579,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           bin: opencodeBinary.bin,
           workspace: workdir,
           configDir,
+          skillIsolationProfile: "normal",
           hotReload: opencodeHotReload,
           bindHost: opencodeHost,
           port,
@@ -4612,15 +4697,20 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   let sharedSkillView: { workspaceId: string; workspacePath: string; revision?: string } | null = null;
   let sharedSkillViewQueue: Promise<void> = Promise.resolve();
+  const sharedEngineMode = engineTopology.mode === "shared-unsandboxed" || engineTopology.mode === "shared-directory-scoped"
+    ? engineTopology.mode
+    : null;
   const sharedOpenCodeEngine =
-    engineTopology.mode === "shared-unsandboxed"
+    sharedEngineMode
       ? new SharedOpenCodeEngine({
           runtimeDirectory: join(dataDir, "shared-opencode-runtime"),
-          configDirectory: join(dataDir, "opencode-config", "shared-unsandboxed"),
+          configDirectory: join(dataDir, "opencode-config", sharedEngineMode),
+          workspaceId: sharedEngineMode,
+          mode: sharedEngineMode,
           deps: {
             prepareRuntime: async () => {
               const sharedWorkdir = await ensureWorkspace(join(dataDir, "shared-opencode-runtime"));
-              const sharedConfigDir = join(dataDir, "opencode-config", "shared-unsandboxed");
+              const sharedConfigDir = join(dataDir, "opencode-config", sharedEngineMode);
               await syncWorkspaceOpencodeConfigToConfigDir(sharedWorkdir, sharedConfigDir);
               await ensureOpencodeManagedToolsRuntime(sharedConfigDir, {
                 toolSources: {
@@ -4647,9 +4737,14 @@ async function runRouterDaemon(args: ParsedArgs) {
               const spawned = await startOpencode({
                 bin: opencodeBinary.bin,
                 workspace: workdir,
-                skillWorkspace: sharedSkillView?.workspacePath,
-                skillViewRevision: sharedSkillView?.revision,
+                ...(sharedEngineMode === "shared-unsandboxed"
+                  ? {
+                      skillWorkspace: sharedSkillView?.workspacePath,
+                      skillViewRevision: sharedSkillView?.revision,
+                    }
+                  : { directoryScopedSkillPath: ".opencode/.veslo/runtime-skills/current" }),
                 configDir,
+                skillIsolationProfile: "hardened",
                 hotReload: opencodeHotReload,
                 bindHost: opencodeHost,
                 port,
@@ -4779,6 +4874,99 @@ async function runRouterDaemon(args: ParsedArgs) {
           },
         })
       : null;
+  const directoryWorkspaceIds = new Map<string, string>();
+  const directorySkillViews = engineTopology.mode === "shared-directory-scoped"
+    ? new DirectorySkillViewLifecycle({
+        publish: async ({ directoryInstanceKey, skillViewRevision }) => {
+          const workspaceId = directoryWorkspaceIds.get(directoryInstanceKey);
+          if (!workspaceId) throw new Error(`directory skill view has no workspace binding: ${directoryInstanceKey}`);
+          const published = await publishDirectorySkillView({
+            workspace: directoryInstanceKey,
+            runtimeRoot: join(directoryInstanceKey, ".opencode", ".veslo", "runtime-skills", "current"),
+            skillViewRevision,
+          });
+          traceRuntime("orchestrator:directory-skill-view:published", {
+            workspaceId,
+            workspaceRoot: directoryInstanceKey,
+            directoryInstanceKey,
+            skillViewRevision,
+            runtimeRoot: published.runtimeRoot,
+            materialized: published.materialized,
+            suppressed: published.suppressed,
+          });
+        },
+        dispose: async ({ directoryInstanceKey }) => {
+          const engine = sharedOpenCodeEngine?.getRunning();
+          // A stopped process has no cached directory instance. The just
+          // published static root will be read on its next start.
+          if (!engine) return;
+          const response = await fetch(
+            `${engine.baseUrl}/instance/dispose?directory=${encodeURIComponent(directoryInstanceKey)}`,
+            { method: "POST", headers: authHeaders },
+          );
+          if (!response.ok) {
+            throw new Error(`directory_instance_dispose_failed:${response.status}`);
+          }
+          traceRuntime("orchestrator:directory-skill-view:disposed", {
+            workspaceId: directoryWorkspaceIds.get(directoryInstanceKey) ?? null,
+            directoryInstanceKey,
+            engineOwnerId: engine.engineOwnerId,
+            pid: engine.pid,
+          });
+        },
+        hasActiveRun: ({ directoryInstanceKey, excludeRunId }) => {
+          const workspaceId = directoryWorkspaceIds.get(directoryInstanceKey);
+          return Boolean(
+            workspaceId && runStore.hasActiveForWorkspace(
+              workspaceId,
+              Date.now() - ACTIVE_RUN_PROTECTION_WINDOW_MS,
+              excludeRunId ? { excludeRunId } : undefined,
+            ),
+          );
+        },
+        onRetryError: ({ directoryInstanceKey, error }) => {
+          traceRuntime("orchestrator:directory-skill-view:retry-error", {
+            workspaceId: directoryWorkspaceIds.get(directoryInstanceKey) ?? null,
+            directoryInstanceKey,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        },
+      })
+    : null;
+
+  const ensureDirectorySkillView = async (input: {
+    workspaceId: string;
+    workspacePath: string;
+    requestedRevision?: string;
+    excludeRunId?: string;
+  }): Promise<DirectorySkillViewInstance> => {
+    if (!directorySkillViews) throw new Error("directory-scoped shared engine is not configured");
+    const directoryInstanceKey = resolve(input.workspacePath);
+    directoryWorkspaceIds.set(directoryInstanceKey, input.workspaceId);
+    const skillViewRevision = input.requestedRevision ?? await readPublishedSharedSkillViewRevision(directoryInstanceKey);
+    if (!skillViewRevision) throw new Error("skill_view_stale: missing published directory skill revision");
+
+    const refreshed = await directorySkillViews.ensure({
+      directoryInstanceKey,
+      skillViewRevision,
+      ...(input.excludeRunId ? { excludeRunId: input.excludeRunId } : {}),
+    });
+    if (refreshed.status === "deferred") {
+      throw new Error(`directory_skill_view_refresh_deferred:${refreshed.retryAfterMs}`);
+    }
+    const admission = directorySkillViews.admit(directoryInstanceKey);
+    if (!admission.admitted) {
+      throw new Error(`directory_skill_view_reload_in_progress:${admission.retryAfterMs}`);
+    }
+    traceRuntime("orchestrator:directory-skill-view:ready", {
+      workspaceId: input.workspaceId,
+      workspaceRoot: directoryInstanceKey,
+      directoryInstanceKey,
+      directoryInstanceEpoch: admission.instance.directoryInstanceEpoch,
+      skillViewRevision: admission.instance.skillViewRevision ?? null,
+    });
+    return admission.instance;
+  };
   const ensureSharedSkillView = async (
     workspaceId: string,
     workspacePath: string,
@@ -4883,7 +5071,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       backend: resolveEnginePathMappingBackend({
         configuredBackend: configuredSandboxBackend,
         engineChildKind: engine.childKind ?? "direct",
-        sharedUnsandboxed: engineTopology.mode === "shared-unsandboxed",
+        sharedUnsandboxed: usesSharedOpenCodeEngine(engineTopology.mode),
       }),
       hostWorkspacePath: workspace?.path?.trim() || input.directory,
     };
@@ -4917,7 +5105,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       })
     : createRunActivityProbe({
         getEngine: (workspaceId) =>
-          engineTopology.mode === "shared-unsandboxed"
+          usesSharedOpenCodeEngine(engineTopology.mode)
             ? sharedOpenCodeEngine?.getRunning()
             : pool.get(workspaceId),
         buildEngineRequest,
@@ -4965,7 +5153,7 @@ async function runRouterDaemon(args: ParsedArgs) {
   }
 
   const resolveLifecycleRunEngineOwner = (workspaceId: string): RunEngineOwner => {
-    if (engineTopology.mode === "shared-unsandboxed") {
+    if (usesSharedOpenCodeEngine(engineTopology.mode)) {
       // A shared-view fallback run must not claim the currently running
       // process before `ensureSharedSkillView()` has selected and validated
       // its view. Otherwise the just-registered target run appears in
@@ -5106,6 +5294,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             engineTopology: engineTopology.mode,
             engines: pool.snapshot(),
             sharedEngine: sharedOpenCodeEngine?.snapshot() ?? null,
+            directoryInstances: directorySkillViews?.snapshot() ?? [],
             activeId: state.activeId,
             workspaceCount: state.workspaces.length,
             cliVersion: state.cliVersion ?? null,
@@ -5318,14 +5507,21 @@ async function runRouterDaemon(args: ParsedArgs) {
             : requestedSkillViewRevisionHeader
         )?.trim() || undefined;
         if (workspace.workspaceType === "local" && workspace.path) {
+          const workspaceTopology = await resolveWorkspaceEngineTopology(workspace);
           const ensureStartedAt = Date.now();
           traceRuntime("orchestrator:activate-ensure:start", {
             workspaceId: workspace.id,
             workspacePath: workspace.path,
           });
           try {
-            const ensured = engineTopology.mode === "shared-unsandboxed"
-              ? (await ensureSharedSkillView(
+            const ensured = workspaceTopology === "shared-directory-scoped"
+              ? (await ensureDirectorySkillView({
+                    workspaceId: workspace.id,
+                    workspacePath: workspace.path,
+                    requestedRevision: requestedSkillViewRevision,
+                  }), await sharedOpenCodeEngine!.ensureStarted(`activate ${workspace.id}`))
+              : workspaceTopology === "shared-unsandboxed"
+                ? (await ensureSharedSkillView(
                     workspace.id,
                     workspace.path,
                     `activate ${workspace.id}`,
@@ -5360,7 +5556,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             traceRuntime("orchestrator:activate-ensure:done", {
               workspaceId: workspace.id,
               workspacePath: workspace.path,
-              engineTopology: engineTopology.mode,
+              engineTopology: workspaceTopology,
               state: ensured.state,
               pid: ensured.pid,
               port: ensured.port,
@@ -5369,7 +5565,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               durationMs: Date.now() - ensureStartedAt,
             });
             const prime = sharedMcpPrime as { workspaceId: string; workspacePath: string } | null;
-            if (prime && engineTopology.mode === "shared-unsandboxed") {
+            if (prime && workspaceTopology === "shared-unsandboxed") {
               const flight = sharedMcpRuntimePrimeFlights.start({
                 workspaceId: prime.workspaceId,
                 baseUrl: ensured.baseUrl,
@@ -5409,6 +5605,15 @@ async function runRouterDaemon(args: ParsedArgs) {
               });
               return;
             }
+            if (detail.startsWith("directory_skill_view_refresh_deferred:") || detail.startsWith("directory_skill_view_reload_in_progress:")) {
+              const retryAfterMs = Number(detail.split(":").at(-1)) || 250;
+              send(409, {
+                error: "directory_skill_view_refresh_deferred",
+                message: "Workspace skill view is waiting for its active run to become idle",
+                retryAfterMs,
+              });
+              return;
+            }
             if (detail.startsWith("skill_view_stale:")) {
               send(409, { error: "skill_view_stale", message: detail });
               return;
@@ -5434,7 +5639,10 @@ async function runRouterDaemon(args: ParsedArgs) {
         // VSLO-171 fáze 2 F2Ú3: dispose mapuje na pool.suspend. Engine je
         // killnut, lazy respawn na další proxy request. Pro remote workspaces
         // dispose je no-op (vzdálený server si engine spravuje sám).
-        if (workspace.workspaceType === "local" && engineTopology.mode === "shared-unsandboxed") {
+        const workspaceTopology = workspace.workspaceType === "local" && workspace.path
+          ? await resolveWorkspaceEngineTopology(workspace)
+          : "pooled-per-workspace";
+        if (workspace.workspaceType === "local" && usesSharedOpenCodeEngine(workspaceTopology)) {
           logger.info(
             "workspace dispose skipped for shared OpenCode engine",
             { workspaceId: workspace.id, engineTopology: engineTopology.mode },
@@ -5591,6 +5799,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           send(400, { error: "local workspace missing path" });
           return;
         }
+        const workspaceTopology = await resolveWorkspaceEngineTopology(ws);
 
         // Send-timeout fix 2026-06-10: GET/HEAD never spawn an engine. Background
         // status polls (GET /mcp, /permission, /lsp, …) used to trigger pool.ensure
@@ -5600,6 +5809,8 @@ async function runRouterDaemon(args: ParsedArgs) {
         // `engine_starting` for an in-flight start); the engine still spawns via
         // explicit activate and via non-GET requests (prompt_async, session create).
         const proxyMethod = (req.method ?? "GET").toUpperCase();
+        const ifRunningHeader = req.headers["x-veslo-engine-if-running"];
+        const requireRunningEngine = (Array.isArray(ifRunningHeader) ? ifRunningHeader[0] : ifRunningHeader)?.trim() === "1";
         const sendTraceHeader = req.headers["x-veslo-send-trace-id"];
         const sendTraceId = (
           Array.isArray(sendTraceHeader) ? sendTraceHeader[0] : sendTraceHeader
@@ -5618,7 +5829,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           traceId: sendTraceId || null,
           workspaceId: ws.id,
           workspacePath: ws.path,
-          engineTopology: engineTopology.mode,
+          engineTopology: workspaceTopology,
           method: req.method,
           path: url.pathname,
           search: url.search,
@@ -5631,14 +5842,20 @@ async function runRouterDaemon(args: ParsedArgs) {
         // Other GET/HEAD requests retain their fail-fast, no-spawn behavior.
         const sharedEventStream = proxyMethod === "GET" && /^\/event\/?$/.test(restPath);
         const sharedViewRequired = requiresSharedSkillViewForProxy(proxyMethod, restPath);
+        // A refresh closes *new* admission for its directory, but the abort
+        // that drains the already admitted run must still reach that cached
+        // instance. Blocking it would turn a safe deferred update into a
+        // permanent drain and violate abort isolation.
+        const directoryRefreshBypass = proxyMethod === "POST" && /\/abort\/?$/.test(restPath);
         let proxyTarget: Awaited<ReturnType<typeof resolveOpencodeProxyTarget>>;
         let expectedSharedSkillView: { workspaceId: string; workspaceRoot: string; revision?: string } | null = null;
+        let directorySkillView: DirectorySkillViewInstance | null = null;
         const ensureStartedAt = Date.now();
         traceRuntime("orchestrator:proxy-ensure:start", {
           traceId: sendTraceId || null,
           workspaceId: ws.id,
           workspacePath: ws.path,
-          engineTopology: engineTopology.mode,
+          engineTopology: workspaceTopology,
           method: req.method,
           path: url.pathname,
           search: url.search,
@@ -5646,7 +5863,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         writeSendWorkflowTrace("orchestrator:proxy-ensure:start", workflowBase);
         try {
           if (
-            engineTopology.mode === "shared-unsandboxed" &&
+            workspaceTopology === "shared-unsandboxed" &&
             sharedViewRequired
           ) {
             try {
@@ -5668,9 +5885,18 @@ async function runRouterDaemon(args: ParsedArgs) {
               throw error;
             }
           }
+          if (workspaceTopology === "shared-directory-scoped" && !directoryRefreshBypass) {
+            directorySkillView = await ensureDirectorySkillView({
+              workspaceId: ws.id,
+              workspacePath: ws.path,
+              requestedRevision: requestedSkillViewRevision,
+              ...(conversationRunId ? { excludeRunId: conversationRunId } : {}),
+            });
+          }
           proxyTarget = await resolveOpencodeProxyTarget({
-            topology: engineTopology.mode,
+            topology: workspaceTopology,
             method: proxyMethod,
+            allowEngineStart: !requireRunningEngine,
             workspaceId: ws.id,
             workspacePath: ws.path,
             pooledEngine: pool,
@@ -5688,15 +5914,15 @@ async function runRouterDaemon(args: ParsedArgs) {
               traceId: sendTraceId || null,
               workspaceId: ws.id,
               workspacePath: ws.path,
-              engineTopology: engineTopology.mode,
+              engineTopology: workspaceTopology,
               engineKind: proxyTarget.engineKind,
               engineState: proxyTarget.engineState,
               unavailableReason: proxyTarget.unavailableReason ?? null,
               method: req.method,
               path: url.pathname,
               search: url.search,
-              poolState: engineTopology.mode === "pooled-per-workspace" ? pool.get(ws.id)?.state ?? "absent" : undefined,
-              sharedEngine: engineTopology.mode === "shared-unsandboxed" ? sharedOpenCodeEngine?.snapshot() : undefined,
+              poolState: workspaceTopology === "pooled-per-workspace" ? pool.get(ws.id)?.state ?? "absent" : undefined,
+              sharedEngine: usesSharedOpenCodeEngine(workspaceTopology) ? sharedOpenCodeEngine?.snapshot() : undefined,
             };
             traceRuntime(proxyUnavailableEvent, proxyUnavailablePayload);
             writeSendWorkflowTrace(proxyUnavailableEvent, {
@@ -5704,8 +5930,8 @@ async function runRouterDaemon(args: ParsedArgs) {
               engineKind: proxyTarget.engineKind,
               engineState: proxyTarget.engineState,
               unavailableReason: proxyTarget.unavailableReason ?? null,
-              poolState: engineTopology.mode === "pooled-per-workspace" ? pool.get(ws.id)?.state ?? "absent" : undefined,
-              sharedEngine: engineTopology.mode === "shared-unsandboxed" ? sharedOpenCodeEngine?.snapshot() : undefined,
+              poolState: workspaceTopology === "pooled-per-workspace" ? pool.get(ws.id)?.state ?? "absent" : undefined,
+              sharedEngine: usesSharedOpenCodeEngine(workspaceTopology) ? sharedOpenCodeEngine?.snapshot() : undefined,
             });
             if (isEngineStarting) {
               send(503, {
@@ -5732,7 +5958,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             return;
           }
           if (
-            engineTopology.mode === "shared-unsandboxed" &&
+            workspaceTopology === "shared-unsandboxed" &&
             sharedViewRequired &&
             !sharedSkillViewMatches(expectedSharedSkillView)
           ) {
@@ -5747,7 +5973,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             traceId: sendTraceId || null,
             workspaceId: ws.id,
             workspacePath: ws.path,
-            engineTopology: engineTopology.mode,
+            engineTopology: workspaceTopology,
             engineKind: proxyTarget.engineKind,
             spawnedByRequest: proxyTarget.spawnedByRequest,
             method: req.method,
@@ -5799,6 +6025,16 @@ async function runRouterDaemon(args: ParsedArgs) {
               error: "skill_view_stale",
               message: "Runtime skill view is stale; refresh the workspace skill view and retry",
               detail,
+            });
+            return;
+          }
+          if (detail.startsWith("directory_skill_view_refresh_deferred:") || detail.startsWith("directory_skill_view_reload_in_progress:")) {
+            const retryAfterMs = Number(detail.split(":").at(-1)) || 250;
+            send(409, {
+              error: "directory_skill_view_refresh_deferred",
+              message: "Workspace skill view is waiting for its active run to become idle",
+              workspaceId: ws.id,
+              retryAfterMs,
             });
             return;
           }
@@ -5880,7 +6116,11 @@ async function runRouterDaemon(args: ParsedArgs) {
             return;
           }
         }
-        if (proxyMethod !== "GET" && proxyMethod !== "HEAD") {
+        if (
+          workspaceTopology !== "shared-directory-scoped" &&
+          proxyMethod !== "GET" &&
+          proxyMethod !== "HEAD"
+        ) {
           const syncStartedAt = Date.now();
           await syncWorkspaceOpencodeConfigToConfigDir(proxyTarget.directory, engine.configDir);
           const configFiles = await opencodeConfigFileStats(engine.configDir);
@@ -5888,7 +6128,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             traceId: sendTraceId || null,
             workspaceId: ws.id,
             workspacePath: ws.path,
-            engineTopology: engineTopology.mode,
+            engineTopology: workspaceTopology,
             engineKind: proxyTarget.engineKind,
             method: req.method,
             path: url.pathname,
@@ -5911,7 +6151,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         // await and immediately before proxyToEngine() so a different shared
         // workspace cannot receive this request through its newly selected view.
         if (
-          engineTopology.mode === "shared-unsandboxed" &&
+          workspaceTopology === "shared-unsandboxed" &&
           sharedViewRequired &&
           !sharedSkillViewMatches(expectedSharedSkillView)
         ) {
@@ -5924,7 +6164,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         }
 
         if (
-          engineTopology.mode === "shared-unsandboxed" &&
+          workspaceTopology === "shared-unsandboxed" &&
           proxyMethod === "POST" &&
           /\/prompt_async\/?$/.test(restPath)
         ) {
@@ -5959,7 +6199,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           backend: resolveEnginePathMappingBackend({
             configuredBackend: configuredSandboxBackend,
             engineChildKind: proxyTarget.engine.childKind ?? "direct",
-            sharedUnsandboxed: engineTopology.mode === "shared-unsandboxed",
+            sharedUnsandboxed: usesSharedOpenCodeEngine(workspaceTopology),
           }),
           hostWorkspacePath: proxyTarget.directory,
         };
@@ -5998,7 +6238,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             requestId: proxyRequestId,
             workspaceId: ws.id,
             workspacePath: ws.path,
-            engineTopology: engineTopology.mode,
+            engineTopology: workspaceTopology,
             engineKind: proxyTarget.engineKind,
             method: req.method,
             path: url.pathname,
@@ -6009,6 +6249,9 @@ async function runRouterDaemon(args: ParsedArgs) {
             sandboxBackend: pathMapping.backend,
             rewriteEnginePaths,
             engineDirectory,
+            directoryInstanceKey: directorySkillView?.directoryInstanceKey ?? null,
+            directoryInstanceEpoch: directorySkillView?.directoryInstanceEpoch ?? null,
+            skillViewRevision: directorySkillView?.skillViewRevision ?? null,
             durationMs: Date.now() - upstreamStartedAt,
             ...payload,
           };
@@ -6020,7 +6263,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           requestId: proxyRequestId,
           workspaceId: ws.id,
           workspacePath: ws.path,
-          engineTopology: engineTopology.mode,
+          engineTopology: workspaceTopology,
           engineKind: proxyTarget.engineKind,
           method: req.method,
           path: url.pathname,
@@ -6032,6 +6275,9 @@ async function runRouterDaemon(args: ParsedArgs) {
           sandboxBackend: pathMapping.backend,
           rewriteEnginePaths,
           engineDirectory,
+          directoryInstanceKey: directorySkillView?.directoryInstanceKey ?? null,
+          directoryInstanceEpoch: directorySkillView?.directoryInstanceEpoch ?? null,
+          skillViewRevision: directorySkillView?.skillViewRevision ?? null,
         });
         writeSendWorkflowTrace("orchestrator:proxy-upstream:start", {
           ...workflowBase,
@@ -6045,7 +6291,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           engineDirectory,
         });
 
-        if (engineTopology.mode === "shared-unsandboxed" && e2eFailNextSharedProxy) {
+        if (usesSharedOpenCodeEngine(workspaceTopology) && e2eFailNextSharedProxy) {
           e2eFailNextSharedProxy = false;
           const error = new Error("The socket connection was closed unexpectedly (e2e)");
           finishUpstreamTrace("orchestrator:proxy-upstream:error", {
@@ -6070,16 +6316,29 @@ async function runRouterDaemon(args: ParsedArgs) {
             return rewritten;
           }
           const event = rewritten as Record<string, unknown>;
-          if (event.type !== "session.created" || !event.properties || typeof event.properties !== "object") {
+          if (!event.properties || typeof event.properties !== "object") {
             return rewritten;
           }
           const properties = event.properties as Record<string, unknown>;
-          const info = properties.info;
-          if (!info || typeof info !== "object" || Array.isArray(info)) return rewritten;
-          const rawSessionID = (info as Record<string, unknown>).id;
-          const sessionID = typeof rawSessionID === "string"
-            ? rawSessionID.trim()
-            : "";
+          const directSessionID = typeof properties.sessionID === "string"
+            ? properties.sessionID
+            : typeof properties.sessionId === "string"
+              ? properties.sessionId
+              : "";
+          const info = properties.info && typeof properties.info === "object" && !Array.isArray(properties.info)
+            ? properties.info as Record<string, unknown>
+            : null;
+          const part = properties.part && typeof properties.part === "object" && !Array.isArray(properties.part)
+            ? properties.part as Record<string, unknown>
+            : null;
+          const nestedSessionID = typeof info?.sessionID === "string"
+            ? info.sessionID
+            : typeof info?.id === "string"
+              ? info.id
+              : typeof part?.sessionID === "string"
+                ? part.sessionID
+                : "";
+          const sessionID = (directSessionID || nestedSessionID).trim();
           if (!sessionID) return rewritten;
           return {
             ...event,
@@ -6089,6 +6348,11 @@ async function runRouterDaemon(args: ParsedArgs) {
                 workspaceId: ws.id,
                 opencodeSessionId: sessionID,
                 revision: engine.engineOwnerId,
+                ...(directorySkillView ? {
+                  directoryInstanceKey: directorySkillView.directoryInstanceKey,
+                  directoryInstanceEpoch: directorySkillView.directoryInstanceEpoch,
+                  skillViewRevision: directorySkillView.skillViewRevision ?? null,
+                } : {}),
               },
             },
           };
@@ -6110,6 +6374,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             "x-forwarded-proto",
             "x-opencode-directory",
             "x-veslo-workspace-id",
+            "x-veslo-engine-if-running",
             VESLO_CONVERSATION_RUN_ID_HEADER,
           ],
           // Request bodies may contain `directory`; canonicalize direct
@@ -6123,7 +6388,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             finishUpstreamTrace("orchestrator:proxy-upstream:done", {
               statusCode: res.statusCode,
             });
-            if (engineTopology.mode === "pooled-per-workspace") {
+            if (workspaceTopology === "pooled-per-workspace") {
               pool.touch(ws.id);
             } else {
               sharedOpenCodeEngine?.getRunning();
@@ -6145,7 +6410,7 @@ async function runRouterDaemon(args: ParsedArgs) {
               shutdown: healthPolicy.shutdown,
               nonFatalEngineError: healthPolicy.nonFatalEngineError,
             });
-            if (engineTopology.mode === "shared-unsandboxed" && healthPolicy.markSharedEngineUnhealthy) {
+            if (usesSharedOpenCodeEngine(workspaceTopology) && healthPolicy.markSharedEngineUnhealthy) {
               void sharedOpenCodeEngine?.markUnhealthy("proxy-upstream-error", err);
             }
             const logAttrs = {
@@ -7052,6 +7317,7 @@ async function runStart(args: ParsedArgs) {
         bin: opencodeBinary.bin,
         workspace: resolvedWorkspace,
         configDir: opencodeConfigDir,
+        skillIsolationProfile: "normal",
         hotReload: opencodeHotReload,
         bindHost: opencodeBindHost,
         port: opencodePort,

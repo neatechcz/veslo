@@ -205,6 +205,13 @@ fn runtime_engine_state_from_shared_engine(status: &OrchestratorStatus) -> Runti
     }
 }
 
+fn topology_uses_shared_engine(topology: Option<&str>) -> bool {
+    matches!(
+        topology.map(str::trim),
+        Some("shared-unsandboxed" | "shared-directory-scoped")
+    )
+}
+
 fn is_opencode_reachable(base_url: &str) -> bool {
     const HEALTH_TIMEOUT_MS: u64 = 1200;
     let trimmed = base_url.trim().trim_end_matches('/');
@@ -514,7 +521,7 @@ pub fn engine_info(
             .iter()
             .find(|e| e.workspace_id == resolved_ws_id);
         let shared_engine = status.shared_engine.as_ref();
-        let uses_shared_engine = status.engine_topology.as_deref() == Some("shared-unsandboxed");
+        let uses_shared_engine = topology_uses_shared_engine(status.engine_topology.as_deref());
         let engine_state = if uses_shared_engine {
             runtime_engine_state_from_shared_engine(&status)
         } else {
@@ -1360,7 +1367,7 @@ fn engine_start_reserved(
         });
         let return_engine_state = if health.opencode.is_some() {
             RuntimeEngineState::Ready
-        } else if reconciled_status.engine_topology.as_deref() == Some("shared-unsandboxed") {
+        } else if topology_uses_shared_engine(reconciled_status.engine_topology.as_deref()) {
             runtime_engine_state_from_shared_engine(&reconciled_status)
         } else {
             runtime_engine_state_from_orchestrator_state(
@@ -1872,6 +1879,19 @@ mod tests {
             super::runtime_engine_state_from_shared_engine(&status),
             RuntimeEngineState::Starting,
         );
+    }
+
+    #[test]
+    fn shared_directory_scoped_topology_uses_the_shared_engine_snapshot() {
+        assert!(super::topology_uses_shared_engine(Some(
+            "shared-unsandboxed"
+        )));
+        assert!(super::topology_uses_shared_engine(Some(
+            "shared-directory-scoped"
+        )));
+        assert!(!super::topology_uses_shared_engine(Some(
+            "pooled-per-workspace"
+        )));
     }
 
     #[test]

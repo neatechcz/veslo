@@ -1,7 +1,7 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
-import { stageEngineSkillView } from "../engine-skill-staging.js";
+import { promoteDirectorySkillView, publishDirectorySkillView, stageEngineSkillView } from "../engine-skill-staging.js";
 
 const roots: string[] = [];
 
@@ -103,12 +103,39 @@ describe("engine skill staging", () => {
     expect(await Bun.file(join(result.stagingRoot, "local-policy-collision", "SKILL.md")).exists()).toBe(false);
   });
 
-  test("does not scan .agents as a runtime source", async () => {
+  test("does not independently scan .agents outside the server effective manifest", async () => {
     const input = await fixture();
     await mkdir(join(input.workspace, ".agents", "skills", "ambient-agent"), { recursive: true });
     await writeFile(join(input.workspace, ".agents", "skills", "ambient-agent", "SKILL.md"), "ambient\n");
     const result = await stageEngineSkillView(input);
     expect(result.materialized).not.toContain("ambient-agent");
+  });
+
+  test("materializes an .agents skill when the server effective manifest explicitly includes it", async () => {
+    const input = await fixture();
+    const skillPath = join(input.workspace, ".agents", "skills", "agents-manifest", "SKILL.md");
+    await mkdir(dirname(skillPath), { recursive: true });
+    await writeFile(skillPath, "agents manifest skill\n", "utf8");
+    await writeFile(
+      join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        workspaceRoot: input.workspace,
+        revision: "agents-manifest-view",
+        entries: [{ name: "agents-manifest", path: skillPath, source: "workspace-local" }],
+      }),
+      "utf8",
+    );
+
+    const result = await stageEngineSkillView({
+      ...input,
+      requireEffectiveManifest: true,
+      expectedRevision: "agents-manifest-view",
+    });
+
+    expect(result.source).toBe("effective-manifest");
+    expect(result.materialized).toEqual(["agents-manifest"]);
+    expect(await readFile(join(result.stagingRoot, "agents-manifest", "SKILL.md"), "utf8")).toBe("agents manifest skill\n");
   });
 
   test("cleans stale staging generations while retaining the current view", async () => {
@@ -117,5 +144,56 @@ describe("engine skill staging", () => {
     const generations = await readdir(join(input.stagingRoot, "generations"), { withFileTypes: true });
     expect(generations.filter((entry) => entry.isDirectory()).length).toBeLessThanOrEqual(3);
     expect(await Bun.file(join(input.stagingRoot, "current.json")).exists()).toBe(true);
+  });
+
+  test("publishes a stable workspace-local root for a specific effective revision", async () => {
+    const input = await fixture();
+    const skillPath = join(input.workspace, ".opencode", "skills", "local-tool", "SKILL.md");
+    await writeFile(
+      join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        workspaceRoot: input.workspace,
+        revision: "revision-a",
+        entries: [{ name: "local-tool", path: skillPath, source: "workspace-local" }],
+      }),
+      "utf8",
+    );
+    const runtimeRoot = join(input.workspace, ".opencode", ".veslo", "runtime-skills", "current");
+    const published = await publishDirectorySkillView({
+      workspace: input.workspace,
+      runtimeRoot,
+      skillViewRevision: "revision-a",
+    });
+
+    expect(published.runtimeRoot).toBe(runtimeRoot);
+    expect(await readFile(join(runtimeRoot, "local-tool", "SKILL.md"), "utf8")).toBe("local\n");
+    const marker = JSON.parse(await readFile(join(runtimeRoot, ".veslo-engine-skill-staging.json"), "utf8"));
+    expect(marker.skillViewRevision).toBe("revision-a");
+  });
+
+  test("retains the previous root when promotion and rollback both fail", async () => {
+    const input = await fixture();
+    const runtimeRoot = join(input.workspace, ".opencode", ".veslo", "runtime-skills", "current");
+    const pendingRoot = join(input.workspace, ".opencode", ".veslo", "runtime-skills", "pending");
+    const previousRoot = join(input.workspace, ".opencode", ".veslo", "runtime-skills", "previous");
+    await mkdir(runtimeRoot, { recursive: true });
+    await mkdir(pendingRoot, { recursive: true });
+    await writeFile(join(runtimeRoot, "marker.txt"), "previous view\n");
+    await writeFile(join(pendingRoot, "marker.txt"), "pending view\n");
+
+    await expect(promoteDirectorySkillView(
+      { runtimeRoot, pendingRoot, previousRoot },
+      {
+        renamePath: async (source, target) => {
+          if (source === pendingRoot && target === runtimeRoot) throw new Error("promotion failed");
+          if (source === previousRoot && target === runtimeRoot) throw new Error("rollback failed");
+          await rename(source, target);
+        },
+      },
+    )).rejects.toThrow("promotion failed");
+
+    expect(await readFile(join(previousRoot, "marker.txt"), "utf8")).toBe("previous view\n");
+    await expect(readFile(join(pendingRoot, "marker.txt"), "utf8")).rejects.toThrow();
   });
 });

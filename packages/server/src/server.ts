@@ -155,7 +155,11 @@ import {
   OPENCODE_SESSION_ID_HEADER,
   stripAiGatewayProxyRequestHeaders,
 } from "./ai-gateway-proxy-headers.js";
-import { createWorkspaceConfigOwner } from "./workspace-config-owner.js";
+import {
+  createWorkspaceConfigOwner,
+  type ReloadOpencodeEngineOptions,
+  type ReloadOpencodeEngineResult,
+} from "./workspace-config-owner.js";
 import { recordAudit, readAuditEntries, readLastAudit, resolveVesloDataDir, setAuditDebugLogPipeline } from "./audit.js";
 import { createDebugLogPipeline, type DebugLogPipeline } from "./debug-log-pipeline.js";
 import { validateDebugLogBatch } from "./debug-log-events.js";
@@ -5046,8 +5050,8 @@ function parseOpencodeErrorBody(input: string): unknown {
 
 async function reloadOpencodeEngine(
   workspace: WorkspaceInfo,
-  options?: { fallbackBaseUrl?: string },
-): Promise<void> {
+  options?: ReloadOpencodeEngineOptions,
+): Promise<ReloadOpencodeEngineResult> {
   return workspaceConfigOwner.reloadOpencodeEngine(workspace, options);
 }
 

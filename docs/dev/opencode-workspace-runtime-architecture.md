@@ -20,9 +20,15 @@ The app must not create an OpenCode session, choose an OpenCode session id, or
 override the OpenCode directory as a side effect of current UI selection. The
 app sends intent. Veslo resolves execution.
 
+The identities are deliberately separate: an OpenCode process generation has
+one `engineOwnerId`; it may hold multiple directory instances; each directory
+instance has a canonical directory key and freshness epoch; sessions are pinned
+to a directory; and Veslo runs remain independently attributable to a
+conversation, session, and process generation.
+
 ## Verified OpenCode Behavior
 
-OpenCode 1.16.2 was empirically checked outside this repository with one
+The bundled OpenCode 1.17.13 compatibility gate was checked with one
 `opencode serve` process and multiple temporary directories.
 
 Verified behavior:
@@ -34,9 +40,10 @@ Verified behavior:
 - an existing session remains pinned to the directory where it was created,
 - passing a different directory later does not retarget that existing session.
 
-Implication: the non-sandbox runtime can use a shared OpenCode process for
-multiple workspaces, but each Veslo conversation must create or reuse the
-OpenCode session that already belongs to its workspace directory.
+This is an upstream capability, not a statement that Veslo production supports
+multi-workspace shared skills. Veslo must additionally prove policy closure,
+per-directory freshness, event routing, and immutable launch-profile placement
+before it enables a directory-scoped shared topology.
 
 This verification covered session and shell filesystem behavior. Real model
 prompt streaming still needs desktop end-to-end validation when implementation
@@ -184,10 +191,42 @@ Avoid adding Tauri-only filesystem mutations for behavior that changes
 
 The orchestrator owns execution strategy and process routing.
 
-It must support two execution modes behind one runtime boundary:
+It supports pooled-per-workspace as the production topology and retains an
+explicit unsandboxed shared fallback for diagnostics. An experimental
+directory-scoped shared process exists behind a second explicit opt-in; it is
+not a current default and must not be treated as production support:
 
-- shared OpenCode process without sandbox,
-- workspace-scoped sandboxed engine process.
+- pooled workspace engine process,
+- explicit `shared-unsandboxed` diagnostic fallback with one process-wide view,
+- `shared-directory-scoped` experimental shard only with
+  `VESLO_DISABLE_SANDBOX=1`, `VESLO_SHARED_OPENCODE_ENGINE=1`, and
+  `VESLO_SHARED_OPENCODE_DIRECTORY_SCOPED=1`.
+
+The experimental shard uses the static relative skill path
+`.opencode/.veslo/runtime-skills/current`, resolved by OpenCode from the
+canonical workspace-root directory. Veslo publishes that workspace-local view,
+closes admission for that directory during an update, and uses directory-scoped
+disposal to advance its epoch. A workspace with process-level OpenCode config
+(provider, MCP, plugin, or other launch settings) is not profile-compatible
+with the first shard and remains pooled rather than mutating the shared
+process's launch environment.
+
+Pooled and shared launches deliberately use different projection profiles, but
+both disable native project discovery so raw project skills cannot bypass the
+effective manifest. A pooled engine receives a workspace-private projection of
+allowed `.opencode` agents, commands, modes, plugins, and `AGENTS.md` into its
+OpenCode config directory; it never copies `.opencode/skills`. The experimental
+shared directory process receives only Veslo's sanitized configuration and
+effective skill view, with no workspace launch-capability projection.
+
+Directory placement is pinned when a workspace first enters the experimental
+shard and remains immutable for that orchestrator generation. Editing a
+workspace config cannot retarget an existing session or run between pooled and
+shared processes; applying a different placement requires a controlled runtime
+restart/drain. Directory view publication, registration, and refresh are
+single-flight per workspace root. A failed publish restores the last ready
+lifecycle state, while a failed disposal keeps admission closed and retries
+after the active work has drained.
 
 Runtime prepare is a readiness contract. After a fresh orchestrator daemon start,
 the desktop runtime must activate the target workspace engine before returning a
@@ -265,17 +304,14 @@ ready WSL sandbox is auditable as `configured=windows-wsl2` and
 
 Use this mode when sandboxing is unavailable or disabled.
 
-Expected behavior:
-
-- one shared OpenCode process may serve multiple workspaces,
-- every Veslo conversation has its own OpenCode session created in the correct
-  workspace directory,
-- simultaneous conversations in different workspace directories may run at the
-  same time,
-- there is no filesystem isolation guarantee beyond normal host permissions.
-
-Correctness in this mode means correct routing and concurrency. It does not
-mean security isolation.
+The bundled OpenCode binary can host multiple directory instances, but current
+Veslo production behavior is still pooled-per-workspace. The
+`shared-unsandboxed` override is a compatibility/diagnostic fallback with a
+single process-wide skill view; it must reject a conflicting active view rather
+than claim independent parallel workspace skills. A future shared shard may
+serve compatible directories only when its source-policy, refresh, event, and
+placement gates pass. None of these unsandboxed modes provide filesystem
+isolation beyond host permissions.
 
 When Windows WSL2 sandbox launch fails because WSL, the managed `VesloSandbox`
 distro, bubblewrap, or workspace mountability is unavailable, Veslo falls back

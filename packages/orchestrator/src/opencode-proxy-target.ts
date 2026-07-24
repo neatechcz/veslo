@@ -1,5 +1,5 @@
 import type { EngineProcess, EngineWorkspace } from "./engine-pool.js";
-import type { EngineTopologyMode } from "./engine-topology.js";
+import { usesSharedOpenCodeEngine, type EngineTopologyMode } from "./engine-topology.js";
 import type { SharedOpenCodeEngine } from "./shared-opencode-engine.js";
 import type { RuntimeEngineState } from "./runtime-engine-state.js";
 import { runtimeEngineStateFromEngineState } from "./runtime-engine-state.js";
@@ -44,15 +44,16 @@ function unavailableReasonForEngineState(
 export async function resolveOpencodeProxyTarget(input: {
   topology: EngineTopologyMode;
   method: string;
+  allowEngineStart?: boolean;
   workspaceId: string;
   workspacePath: string;
   pooledEngine: PooledOpenCodeEngine;
   sharedEngine?: SharedOpenCodeEngineLike;
 }): Promise<OpenCodeProxyTarget> {
   const method = input.method.toUpperCase();
-  const isReadOnlyProbe = method === "GET" || method === "HEAD";
+  const isReadOnlyProbe = method === "GET" || method === "HEAD" || input.allowEngineStart === false;
 
-  if (input.topology === "shared-unsandboxed") {
+  if (usesSharedOpenCodeEngine(input.topology)) {
     if (!input.sharedEngine) {
       throw new Error("shared OpenCode engine is not configured");
     }

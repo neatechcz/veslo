@@ -283,7 +283,7 @@ test("background events update scoped runtime state without mutating active mess
   await createRoot(async (dispose) => {
     try {
       const { controller, store, busyCalls, backgroundIngest, permissionRefreshes, questionRefreshes } =
-        makeController({ activeWorkspaceId: "ws-a" });
+        makeController({ activeWorkspaceId: "ws-a", workspaceSessionIds: new Set(["sess-b"]) });
 
       await controller.applyEvent(
         {
@@ -317,6 +317,35 @@ test("background events update scoped runtime state without mutating active mess
       assert.deepEqual(backgroundIngest, []);
       assert.deepEqual(permissionRefreshes, ["permissions", "permissions"]);
       assert.deepEqual(questionRefreshes, ["questions", "questions"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("server-bound background lifecycle events do not need foreground session hydration", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, store, busyCalls } = makeController({ activeWorkspaceId: "ws-a" });
+
+      await controller.applyEvent(
+        {
+          type: "session.status",
+          properties: {
+            sessionID: "sess-b",
+            status: "running",
+            vesloBinding: {
+              workspaceId: "ws-b",
+              opencodeSessionId: "sess-b",
+              revision: "owner-1",
+            },
+          },
+        } as OpencodeEvent,
+        "ws-b",
+      );
+
+      assert.equal(store.sessionStatus["ws-b:sess-b"], "running");
+      assert.deepEqual(busyCalls, [{ sessionID: "sess-b", status: "running", workspaceId: "ws-b" }]);
     } finally {
       dispose();
     }
@@ -1069,6 +1098,7 @@ test("lifecycle-owned background idle session.status preserves the scoped active
       const observed: Array<{ sessionID: string; workspaceId: string | null | undefined; type: string }> = [];
       const { controller, store, setStore } = makeController({
         activeWorkspaceId: "ws-a",
+        workspaceSessionIds: new Set(["sess-b"]),
         lifecycleObservation: (sessionID, workspaceId, type) => {
           observed.push({ sessionID, workspaceId, type });
           return true;
@@ -1098,6 +1128,7 @@ test("background abort errors still release the scoped active status immediately
       let observations = 0;
       const { controller, store, setStore } = makeController({
         activeWorkspaceId: "ws-a",
+        workspaceSessionIds: new Set(["sess-b"]),
         lifecycleObservation: () => {
           observations += 1;
           return true;
@@ -1177,6 +1208,7 @@ test("event stream runtime errors recover route when scoped runtime is not ready
       };
       const { controller } = makeController({
         activeWorkspaceId: "ws-a",
+        workspaceSessionIds: new Set(["sess-a"]),
         routing,
         isWorkspaceRuntimeReady: () => false,
         recoverWorkspaceRuntimeForEventStream: async (workspaceId) => {
@@ -1434,6 +1466,40 @@ test("session.created requires a server binding authorization envelope", async (
   });
 });
 
+test("an admitted session remains pinned to its original workspace event stream", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const { controller, store } = makeController({ activeWorkspaceId: "ws-a" });
+      const info = { id: "sess-pinned", directory: "/repo" };
+
+      await controller.applyEvent({
+        type: "session.created",
+        properties: {
+          info,
+          vesloBinding: {
+            workspaceId: "ws-a",
+            opencodeSessionId: "sess-pinned",
+            revision: "owner-1",
+          },
+        },
+      } as OpencodeEvent, "ws-a");
+      await controller.applyEvent({
+        type: "session.status",
+        properties: { sessionID: "sess-pinned", status: "running" },
+      } as OpencodeEvent, "ws-a");
+      await controller.applyEvent({
+        type: "session.status",
+        properties: { sessionID: "sess-pinned", status: "idle" },
+      } as OpencodeEvent, "ws-b");
+
+      assert.equal(store.sessionStatus["ws-a:sess-pinned"], "running");
+      assert.equal(store.sessionStatus["ws-b:sess-pinned"], undefined);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("local Veslo bearer session errors trace and recover workspace runtime", withSendWorkflowTraceWindow(async (target) => {
   await createRoot(async (dispose) => {
     try {
@@ -1453,6 +1519,7 @@ test("local Veslo bearer session errors trace and recover workspace runtime", wi
       };
       const { controller } = makeController({
         activeWorkspaceId: "ws-a",
+        workspaceSessionIds: new Set(["sess-a"]),
         routing,
         statusTraces,
         sessionErrorTurns,

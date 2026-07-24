@@ -91,6 +91,27 @@ test("listSkills returns shared parser metadata for local skills", async () => {
   });
 });
 
+test("listActiveWorkspaceSkills resolves workspace .agents skills through the effective view", async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-agents-runtime-"));
+  tempDirs.push(workspaceRoot);
+
+  await mkdir(join(workspaceRoot, ".agents", "skills", "agents-runtime"), { recursive: true });
+  await writeFile(
+    join(workspaceRoot, ".agents", "skills", "agents-runtime", "SKILL.md"),
+    "---\nname: agents-runtime\ndescription: Workspace agent compatibility skill\n---\n\n# Agents runtime\n",
+    "utf8",
+  );
+
+  const skills = await listActiveWorkspaceSkills(workspaceRoot);
+
+  expect(skills).toHaveLength(1);
+  expect(skills[0]).toMatchObject({
+    name: "agents-runtime",
+    path: join(workspaceRoot, ".agents", "skills", "agents-runtime", "SKILL.md"),
+    scope: "project",
+  });
+});
+
 test("listSkills filters disabled skills before de-duping duplicate names", async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-dedupe-"));
   const homeDir = await mkdtemp(join(tmpdir(), "veslo-skills-disabled-dedupe-home-"));

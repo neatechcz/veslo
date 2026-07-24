@@ -176,12 +176,17 @@ export function createWorkspaceClient(context: WorkspaceClientContext) {
       );
     },
 
-    reloadEngine: (workspaceId: string, options?: { ifIdle?: boolean }) =>
+    reloadEngine: (workspaceId: string, options?: { ifIdle?: boolean; ifRunning?: boolean }) =>
       requestJson<{ ok: boolean; reloadedAt?: number }>(baseUrl, `${workspacePath(workspaceId)}/engine/reload`, {
         token,
         hostToken,
         method: "POST",
-        ...(options?.ifIdle ? { body: { ifIdle: true } } : {}),
+        ...((options?.ifIdle || options?.ifRunning) ? {
+          body: {
+            ...(options.ifIdle ? { ifIdle: true } : {}),
+            ...(options.ifRunning ? { ifRunning: true } : {}),
+          },
+        } : {}),
       }),
 
     listAudit: (workspaceId: string, limit = 50) =>

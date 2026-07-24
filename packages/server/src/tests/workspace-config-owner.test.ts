@@ -155,4 +155,22 @@ describe("workspace-config-owner", () => {
       else process.env.VESLO_OPENCODE_JSON_FETCH_TIMEOUT_MS = previousTimeout;
     }
   });
+
+  test("if-running reload does not fail or cold-start when the orchestrator reports no engine", async () => {
+    const workspace = await tempWorkspace();
+    workspace.baseUrl = "http://127.0.0.1:41003";
+    const previousFetch = globalThis.fetch;
+    let headers: HeadersInit | undefined;
+    globalThis.fetch = (async (_input, init) => {
+      headers = init?.headers;
+      return new Response(JSON.stringify({ error: "engine_not_running" }), { status: 503 });
+    }) as typeof fetch;
+    try {
+      await expect(reloadOpencodeEngine(workspace, { ifRunning: true }))
+        .resolves.toEqual({ kind: "not-running" });
+      expect(new Headers(headers).get("x-veslo-engine-if-running")).toBe("1");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
 });

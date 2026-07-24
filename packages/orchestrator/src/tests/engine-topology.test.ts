@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildSharedOpencodeEngineWarning,
   resolveEngineTopology,
+  usesSharedOpenCodeEngine,
 } from "../engine-topology.js";
 
 describe("engine topology resolution", () => {
@@ -38,6 +39,20 @@ describe("engine topology resolution", () => {
     });
 
     expect(topology.mode).toBe("shared-unsandboxed");
+  });
+
+  test("requires an explicit second flag for the experimental directory-scoped shared mode", () => {
+    const topology = resolveEngineTopology({
+      env: {
+        VESLO_DISABLE_SANDBOX: "1",
+        VESLO_SHARED_OPENCODE_ENGINE: "1",
+        VESLO_SHARED_OPENCODE_DIRECTORY_SCOPED: "1",
+      },
+      sandboxKind: "none",
+    });
+
+    expect(topology.mode).toBe("shared-directory-scoped");
+    expect(usesSharedOpenCodeEngine(topology.mode)).toBe(true);
   });
 
   test("rejects shared engine when sandbox is not explicitly disabled", () => {
