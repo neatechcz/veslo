@@ -253,6 +253,20 @@ reuse, which a liveness probe alone cannot detect. An ownerless acquisition, or 
 recovery fence left behind by a process that died mid-recovery, is likewise
 reclaimed on age, so a single crash cannot wedge a workspace permanently.
 
+The revision covers a skill's whole directory, not only its entrypoint: the
+entrypoint keeps a content hash while nested files contribute size and mtime, so
+resolving a view stays cheap. Anything less would call a view unchanged after an
+edit to a nested script or schema, even though staging copies that file too.
+
+Staging proves each copy atomic after the fact, not only before it. Comparing a
+source tree's signature either side of the copy is what catches a writer that
+edits a file in place: such a change copies without error and would otherwise
+yield a generation mixing pre- and post-edit content, with nothing raised. A
+single disturbance is absorbed by the staging retry; a source that keeps moving
+fails as `skill_view_changed`. The published manifest is re-read after staging
+for the same reason — the server may have republished while the generation was
+being built.
+
 Engine staging takes a second, narrower filesystem lock on the staging root,
 always inside the workspace lease and never the other way round; helpers invoked
 while it is held use the explicit unlocked variants. That lock follows the same
@@ -317,11 +331,21 @@ sync or file edit, rather than exposing the raw orchestrator `409` body. This is
 an activation-boundary rule, not a desktop-side skill resolver.
 
 The skill view revision is enforced in every topology, including the default
-pooled one. A caller that spawns an engine — explicit activation, or a proxied
-request that starts one — passes the revision it was promised down to staging,
-which must consume exactly that revision or fail with `skill_view_stale`. An
-engine therefore cannot quietly start on a different skill set than the one
-already shown to the user.
+pooled one, and on reuse as well as on spawn. A caller that starts an engine —
+explicit activation, or a proxied request that starts one — passes the revision
+it was promised down to staging, which must consume exactly that revision or
+fail with `skill_view_stale`.
+
+Enforcing this only at spawn would leave the contract trivially bypassable,
+because the common case is reuse. Each pooled engine therefore records the
+revision it was actually staged from, and a caller arriving with a different one
+does not simply get the running process. While no run owns that engine it is
+replaced with one staged from the new view; while a run does own it the request
+fails with `skill_view_busy` rather than pulling the process out from under work
+in progress. Joining an in-flight spawn is held to the same check: the flight
+may have been started with no handshake at all, so its result is reconciled like
+any other reuse. This mirrors what the shared topology already does with its
+single engine.
 
 Only a caller holding a live server handshake may supply a revision.
 Pool-internal restarts — crash respawn, idle resume — deliberately spawn without
