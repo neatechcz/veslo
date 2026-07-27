@@ -341,20 +341,15 @@ test("project-open workspace switches clear stale session routes before passive 
   );
 });
 
-test("bootstrap does not synchronously connect under lazy boot policy", () => {
-  // Lazy boot may warm the engine in the background through the runtime
-  // controller, but the old bootstrap-specific connect/start helpers must not
-  // be invoked anywhere in this file.
+test("bootstrap remains passive under lazy boot policy", () => {
+  // The workspace shell and cached sidebar may load at boot, but an OpenCode
+  // engine must only be started by an explicit user action.
   assert.doesNotMatch(
     source,
     /connectOrRecoverLocalBootstrap/,
     "bootstrap must not invoke connectOrRecoverLocalBootstrap; activate flow owns connect",
   );
-  assert.match(
-    source,
-    /function warmActiveLocalWorkspaceEngineInBackground\([\s\S]*ensureEngineForWorkspace\(workspaceId, \{[\s\S]*reason: "boot-warmup",[\s\S]*loadSessions: false,/s,
-    "background warmup should reuse runtime ensure without session-list side effects",
-  );
+  assert.doesNotMatch(source, /warmActiveLocalWorkspaceEngineInBackground|reason: "boot-warmup"/);
   assert.doesNotMatch(
     source,
     /reason: "bootstrap-local"/,

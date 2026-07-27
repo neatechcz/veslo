@@ -15,9 +15,10 @@ const MAX_BATCH_BYTES: usize = 512 * 1024;
 const MAX_BATCH_EVENTS: usize = 1_000;
 const MAX_RETRY_DELAY_MS: u64 = 5 * 60 * 1000;
 const PRODUCTION_DEN_API_BASE: &str = "https://api.veslo.work";
+const STAGING_DEN_API_BASE: &str = "https://api.staging.veslo.work";
 
 // Debug Tauri runtimes support team-assisted captures. Release builds require
-// build.rs to prove the explicit production compile-time inputs.
+// build.rs to prove the explicit compile-time opt-in.
 pub const USER_DIAGNOSTIC_CAPTURE_ENABLED: bool =
     cfg!(debug_assertions) || option_env!("VESLO_USER_DIAGNOSTIC_CAPTURE").is_some();
 
@@ -160,8 +161,11 @@ fn allowed_source(source: &str, stream: &str) -> bool {
         )
 }
 
-fn is_production_den_api_base(value: &str) -> bool {
-    value.trim().trim_end_matches('/') == PRODUCTION_DEN_API_BASE
+fn is_allowed_den_api_base(value: &str) -> bool {
+    matches!(
+        value.trim().trim_end_matches('/'),
+        PRODUCTION_DEN_API_BASE | STAGING_DEN_API_BASE
+    )
 }
 
 fn event_id(event: &serde_json::Value) -> Option<&str> {
@@ -449,9 +453,10 @@ impl UserDiagnosticCapture {
         {
             return Err("Sign in before starting a diagnostic capture".to_string());
         }
-        if !is_production_den_api_base(&context.den_api_base) {
+        if !is_allowed_den_api_base(&context.den_api_base) {
             return Err(
-                "Diagnostic capture is available only for the production Veslo service".to_string(),
+                "Diagnostic capture is available only for the production or staging Veslo service"
+                    .to_string(),
             );
         }
         let _queue = self
@@ -511,7 +516,7 @@ impl UserDiagnosticCapture {
                     && !context.token.trim().is_empty()
                     && !context.user_id.trim().is_empty()
                     && !context.org_id.trim().is_empty()
-                    && is_production_den_api_base(&context.den_api_base)
+                    && is_allowed_den_api_base(&context.den_api_base)
             })
     }
 
@@ -748,7 +753,7 @@ impl UserDiagnosticCapture {
             let _ = self.persist();
             return;
         }
-        if !is_production_den_api_base(&context.den_api_base) {
+        if !is_allowed_den_api_base(&context.den_api_base) {
             return;
         }
         if record
@@ -1234,7 +1239,7 @@ mod tests {
     }
 
     #[test]
-    fn capture_rejects_a_non_production_den_endpoint() {
+    fn capture_rejects_an_unapproved_den_endpoint() {
         let dir = tempdir().unwrap();
         let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
         if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
@@ -1243,5 +1248,17 @@ mod tests {
         let mut non_production = context();
         non_production.den_api_base = "https://example.test".to_string();
         assert!(capture.start(&non_production).is_err());
+    }
+
+    #[test]
+    fn capture_accepts_the_staging_den_endpoint() {
+        let dir = tempdir().unwrap();
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+        let mut staging = context();
+        staging.den_api_base = STAGING_DEN_API_BASE.to_string();
+        assert!(capture.start(&staging).is_ok());
     }
 }

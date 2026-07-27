@@ -314,6 +314,7 @@ fn format_orchestrator_start_error(
     waited_ms: u64,
     health_error: &str,
     child_exited: bool,
+    exit_code: Option<i32>,
     stderr: Option<&str>,
 ) -> String {
     let mut message = if child_exited {
@@ -327,6 +328,12 @@ fn format_orchestrator_start_error(
             health_error.trim()
         )
     };
+
+    if child_exited {
+        if let Some(exit_code) = exit_code {
+            message.push_str(&format!("\nexit code: {exit_code}"));
+        }
+    }
 
     let stderr = stderr.map(str::trim).filter(|value| !value.is_empty());
     if let Some(stderr) = stderr {
@@ -1174,6 +1181,7 @@ fn engine_start_reserved(
                     .map_err(|_| "orchestrator mutex poisoned".to_string())?;
                 orchestrator_state.child = Some(child);
                 orchestrator_state.child_exited = false;
+                orchestrator_state.last_exit_code = None;
                 orchestrator_state.data_dir = Some(data_dir.clone());
                 orchestrator_state.last_stdout = None;
                 orchestrator_state.last_stderr = None;
@@ -1196,7 +1204,7 @@ fn engine_start_reserved(
                                     &line,
                                 );
                             }
-                            if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                            if let Ok(mut state) = orchestrator_state_handle.lock() {
                                 let next =
                                     state.last_stdout.as_deref().unwrap_or_default().to_string()
                                         + &line;
@@ -1212,16 +1220,17 @@ fn engine_start_reserved(
                                     &line,
                                 );
                             }
-                            if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                            if let Ok(mut state) = orchestrator_state_handle.lock() {
                                 let next =
                                     state.last_stderr.as_deref().unwrap_or_default().to_string()
                                         + &line;
                                 state.last_stderr = Some(truncate_output(&next, 8000));
                             }
                         }
-                        CommandEvent::Terminated(_) => {
-                            if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                        CommandEvent::Terminated(payload) => {
+                            if let Ok(mut state) = orchestrator_state_handle.lock() {
                                 state.child_exited = true;
+                                state.last_exit_code = payload.code;
                             }
                         }
                         CommandEvent::Error(message) => {
@@ -1232,8 +1241,9 @@ fn engine_start_reserved(
                                     &message,
                                 );
                             }
-                            if let Ok(mut state) = orchestrator_state_handle.try_lock() {
+                            if let Ok(mut state) = orchestrator_state_handle.lock() {
                                 state.child_exited = true;
+                                state.last_exit_code = Some(-1);
                                 let next =
                                     state.last_stderr.as_deref().unwrap_or_default().to_string()
                                         + &message;
@@ -1255,16 +1265,23 @@ fn engine_start_reserved(
                     Err(error) => error,
                 };
                 let elapsed_ms = wait_started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
-                let (child_exited, stderr) = orchestrator_state_wait_handle
+                let (child_exited, exit_code, stderr) = orchestrator_state_wait_handle
                     .lock()
-                    .map(|state| (state.child_exited, state.last_stderr.clone()))
-                    .unwrap_or((false, None));
+                    .map(|state| {
+                        (
+                            state.child_exited,
+                            state.last_exit_code,
+                            state.last_stderr.clone(),
+                        )
+                    })
+                    .unwrap_or((false, None, None));
 
                 if child_exited {
                     break Err(format_orchestrator_start_error(
                         elapsed_ms,
                         &health_error,
                         true,
+                        exit_code,
                         stderr.as_deref(),
                     ));
                 }
@@ -1274,6 +1291,7 @@ fn engine_start_reserved(
                         health_timeout_ms,
                         &health_error,
                         false,
+                        None,
                         stderr.as_deref(),
                     ));
                 }
@@ -1900,6 +1918,7 @@ mod tests {
             180_000,
             "Failed to fetch http://127.0.0.1:59024/health: Connection refused",
             false,
+            None,
             Some("[opencode] wrong platform binary"),
         );
 
@@ -1914,12 +1933,14 @@ mod tests {
             2_300,
             "Failed to fetch http://127.0.0.1:59024/health: Connection refused",
             true,
+            Some(1),
             Some("[opencode] wrong platform binary"),
         );
 
         assert!(message
             .contains("Failed to start orchestrator: process exited before health became ready."));
         assert!(message.contains("Connection refused"));
+        assert!(message.contains("exit code: 1"));
         assert!(!message.contains("waited 2300ms"));
     }
 

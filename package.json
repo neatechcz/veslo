@@ -12,6 +12,7 @@
     "build": "node scripts/build.mjs",
     "build:ui": "pnpm --filter @neatech/veslo-ui build",
     "build:desktop-ui": "node scripts/release/build-desktop-ui.mjs",
+    "build:msi:diagnostics": "node scripts/build-local-windows-msi.mjs",
     "build:web": "pnpm --filter @neatech/veslo-ui build",
     "preview": "pnpm --filter @neatech/veslo-ui preview",
     "typecheck": "pnpm check:types",

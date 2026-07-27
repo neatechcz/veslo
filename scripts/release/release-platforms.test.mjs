@@ -110,11 +110,15 @@ test("desktop build workflow no longer runs Linux app builds", () => {
   assert.doesNotMatch(workflow, /Install Linux build dependencies/);
 });
 
-test("production desktop workflows compile user diagnostic capture for the production domain", () => {
-  for (const workflowPath of [".github/workflows/build-desktop.yml", ".github/workflows/build-windows-msi.yml"]) {
+test("desktop workflows compile user diagnostic capture for every release channel", () => {
+  for (const workflowPath of [
+    ".github/workflows/build-desktop.yml",
+    ".github/workflows/build-windows-msi.yml",
+    ".github/workflows/build-staging-app.yml",
+    ".github/workflows/prerelease.yml",
+  ]) {
     const workflow = readRepoFile(workflowPath);
     assert.match(workflow, /VESLO_USER_DIAGNOSTIC_CAPTURE:\s*"1"/);
-    assert.match(workflow, /VESLO_DEPLOYMENT_DOMAIN:\s*veslo\.work/);
   }
 
   const productionWorkflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");

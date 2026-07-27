@@ -13,6 +13,7 @@ pub struct OrchestratorManager {
 pub struct OrchestratorState {
     pub child: Option<SupervisedCommandChild>,
     pub child_exited: bool,
+    pub last_exit_code: Option<i32>,
     pub data_dir: Option<String>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
@@ -47,6 +48,7 @@ impl OrchestratorManager {
 
         orchestrator::clear_orchestrator_auth(&data_dir);
         state.child_exited = true;
+        state.last_exit_code = None;
         state.data_dir = None;
         state.last_stdout = None;
         state.last_stderr = None;

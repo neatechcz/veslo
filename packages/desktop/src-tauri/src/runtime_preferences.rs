@@ -5,6 +5,9 @@ use tauri::{AppHandle, Manager};
 
 const RUNTIME_PREFERENCES_FILE: &str = "runtime-preferences.json";
 
+const DEFAULT_RUNTIME_DIAGNOSTICS: bool =
+    option_env!("VESLO_DEFAULT_RUNTIME_DIAGNOSTICS").is_some();
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopRuntimePreferences {
@@ -130,7 +133,7 @@ fn shared_unsandboxed_engine_from_env() -> bool {
 }
 
 fn support_diagnostics_from_env() -> bool {
-    env_flag_enabled(std::env::var("VESLO_RUNTIME_DIAGNOSTICS").ok())
+    env_flag_enabled(std::env::var("VESLO_RUNTIME_DIAGNOSTICS").ok()) || DEFAULT_RUNTIME_DIAGNOSTICS
 }
 
 fn read_persisted_runtime_preferences(
@@ -220,7 +223,8 @@ pub fn runtime_diagnostics_env_overrides(app: &AppHandle) -> Result<Vec<(String,
         return Ok(runtime_diagnostics_env_overrides_for_dir(&dir));
     }
 
-    let preference = read_support_diagnostics_override(app)?;
+    let preference = read_support_diagnostics_override(app)?
+        .or_else(|| DEFAULT_RUNTIME_DIAGNOSTICS.then_some(true));
     let mut overrides = runtime_diagnostics_env_overrides_from_override(preference);
     if preference == Some(true) {
         let dir = support_diagnostics_dir(app)?;

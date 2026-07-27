@@ -179,6 +179,32 @@ const materializationMatchesDesired = (
   entry.removalPolicy === desired.removalPolicy &&
   entry.target === desired.target;
 
+export function createWorkspaceMaterializationSerialQueue() {
+  const tails = new Map<string, Promise<void>>();
+
+  return {
+    async run<T>(workspaceId: string, task: () => Promise<T>): Promise<T> {
+      const key = workspaceId.trim();
+      const previous = tails.get(key) ?? Promise.resolve();
+      let release: (() => void) | undefined;
+      const next = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      tails.set(key, next);
+
+      await previous;
+      try {
+        return await task();
+      } finally {
+        release?.();
+        if (tails.get(key) === next) {
+          tails.delete(key);
+        }
+      }
+    },
+  };
+}
+
 async function buildWorkspaceSkillMaterializationStatus(
   config: ServerConfig,
   workspace: WorkspaceInfo,
@@ -727,6 +753,7 @@ export function registerSkillMaterializationRoutes(
   dependencies: SkillMaterializationRouteDependencies,
 ): void {
   const { serverDataDir } = dependencies;
+  const workspaceMaterializationQueue = createWorkspaceMaterializationSerialQueue();
   const publishRuntimeView = async (workspace: WorkspaceInfo): Promise<void> => {
     invalidateActiveRuntimeSkillView(workspace);
     await ensureActiveRuntimeSkillView(workspace, {
@@ -922,6 +949,7 @@ export function registerSkillMaterializationRoutes(
       }, registryConfigured ? 202 : 200);
     }
 
+    return await workspaceMaterializationQueue.run(workspace.id, async () => {
     let materializationInput: Awaited<ReturnType<typeof fetchRegistryWorkspaceMaterializations>>;
     try {
       materializationInput = await fetchRegistryWorkspaceMaterializations(ctx, workspace);
@@ -1057,6 +1085,7 @@ export function registerSkillMaterializationRoutes(
         ...legacyProjectionMigration.backupDirs,
       ],
       legacyProjectionMigration,
+    });
     });
   });
 }

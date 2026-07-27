@@ -5660,7 +5660,14 @@ async function runRouterDaemon(args: ParsedArgs) {
               return;
             }
             if (detail.startsWith("skill_view_changed:")) {
-              send(409, { error: "skill_view_changed", message: "Workspace skill sources changed during engine staging; refresh and retry" });
+              const skillName = /^skill_view_changed: source for (.+) changed during staging$/.exec(detail)?.[1]?.trim();
+              send(409, {
+                error: "skill_view_changed",
+                message: skillName
+                  ? `Workspace skill "${skillName}" changed during engine staging; refresh and retry`
+                  : "Workspace skill sources changed during engine staging; refresh and retry",
+                ...(skillName ? { skillName } : {}),
+              });
               return;
             }
             send(502, { error: "engine spawn failed", detail });
@@ -6075,9 +6082,13 @@ async function runRouterDaemon(args: ParsedArgs) {
             return;
           }
           if (detail.startsWith("skill_view_changed:")) {
+            const skillName = /^skill_view_changed: source for (.+) changed during staging$/.exec(detail)?.[1]?.trim();
             send(409, {
               error: "skill_view_changed",
-              message: "Workspace skill sources changed during engine staging; refresh and retry",
+              message: skillName
+                ? `Workspace skill "${skillName}" changed during engine staging; refresh and retry`
+                : "Workspace skill sources changed during engine staging; refresh and retry",
+              ...(skillName ? { skillName } : {}),
             });
             return;
           }

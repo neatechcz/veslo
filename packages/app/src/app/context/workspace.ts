@@ -1214,58 +1214,6 @@ export function createWorkspaceStore(options: {
       });
   }
 
-  const scheduledEngineWarmupKeys = new Set<string>();
-
-  function warmActiveLocalWorkspaceEngineInBackground(input: {
-    workspaceId: string;
-    workspacePath: string;
-    reason: string;
-  }) {
-    if (!isTauriRuntime() || CLOUD_ONLY_MODE) return;
-    const workspaceId = input.workspaceId.trim();
-    const workspacePath = input.workspacePath.trim();
-    if (!workspaceId || !workspacePath) return;
-
-    const stillCurrent = () => {
-      const active = activeWorkspaceInfo();
-      if (!active || active.workspaceType !== "local") return false;
-      if (active.id !== workspaceId) return false;
-      return (
-        normalizeWorkspaceScopePath(active.path, "local") ===
-        normalizeWorkspaceScopePath(workspacePath, "local")
-      );
-    };
-
-    const warmupScopePath = normalizeWorkspaceScopePath(workspacePath, "local") || workspacePath;
-    const warmupKey = `${workspaceId}::${warmupScopePath}`;
-    if (scheduledEngineWarmupKeys.has(warmupKey)) return;
-    scheduledEngineWarmupKeys.add(warmupKey);
-
-    const startWarmup = () => {
-      bootTrace("ensureEngineForWorkspace background warmup...", input.reason);
-      void ensureEngineForWorkspace(workspaceId, {
-        reason: "boot-warmup",
-        loadSessions: false,
-      })
-        .then((ok) => untrack(() => {
-          if (!ok) scheduledEngineWarmupKeys.delete(warmupKey);
-          if (!stillCurrent()) return;
-          bootTrace("ensureEngineForWorkspace background warmup done", ok ? "ok" : "failed");
-        }))
-        .catch((error) => untrack(() => {
-          scheduledEngineWarmupKeys.delete(warmupKey);
-          if (!stillCurrent()) return;
-          _wsLog("[workspace:bootstrap] engine warmup failed", {
-            workspaceId,
-            workspacePath,
-            reason: input.reason,
-            error: error instanceof Error ? error.message : safeStringify(error),
-          });
-        }));
-    };
-    startWarmup();
-  }
-
   async function bootstrapConfiguredRemoteServer(input: {
     hostUrl: string;
     token?: string | null;
@@ -1508,8 +1456,9 @@ export function createWorkspaceStore(options: {
       const workspacePath = activeWorkspacePath().trim();
       options.setStartupPreference("local");
 
-      // Lazy boot: render the workspace shell immediately. Engine warmup and
-      // sidebar rows run in the background and share the send-time runtime path.
+      // Lazy boot: render the workspace shell immediately. Sidebar rows hydrate
+      // in the background; engine startup is owned exclusively by an explicit
+      // user action such as the first send.
       if (isTauriRuntime() && options.populateSidebarFromDb) {
         options.setEngineReady?.(false);
         _wsLog("[workspace:bootstrap] lazy boot — skip Veslo host activation", {
@@ -1517,11 +1466,6 @@ export function createWorkspaceStore(options: {
         });
         markOnboardingComplete();
         options.setOnboardingStep(resolveWelcomeOnboardingStep());
-        warmActiveLocalWorkspaceEngineInBackground({
-          workspaceId: activeWorkspace?.id ?? "",
-          workspacePath,
-          reason: "bootstrap",
-        });
         populateSidebarFromDbInBackground({
           workspaceId: activeWorkspace?.id ?? "",
           workspacePath,

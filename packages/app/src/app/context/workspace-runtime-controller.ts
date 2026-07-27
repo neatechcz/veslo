@@ -284,9 +284,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
     let id = workspaceId?.trim() || deps.activeWorkspaceId().trim();
     const ensureReason = options.reason?.trim() || "ensure-engine-for-workspace";
     const shouldLoadSessions = options.loadSessions !== false;
-    const isBootWarmup = ensureReason === "boot-warmup";
     const isRuntimeRecovery = ensureReason.includes("runtime-recovery");
-    // First sends must not share the background warmup single-flight.
     const forceFreshRuntime = options.forceFreshRuntime === true || isRuntimeRecovery;
     if (!deps.workspacesHydrated()) {
       const start = Date.now();
@@ -409,12 +407,8 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           }
         }
 
-        const skillSyncMaxAttempts = isBootWarmup || isRuntimeRecovery ? 6 : 1;
-        const skillSyncReason = isBootWarmup
-          ? "boot-warmup"
-          : isRuntimeRecovery
-            ? "runtime-recovery"
-            : "browse-attach";
+        const skillSyncMaxAttempts = isRuntimeRecovery ? 6 : 1;
+        const skillSyncReason = isRuntimeRecovery ? "runtime-recovery" : "browse-attach";
         let skillsReady = false;
         for (let attempt = 1; attempt <= skillSyncMaxAttempts; attempt += 1) {
           skillsReady = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {

@@ -10,6 +10,7 @@ fn main() {
     emit_build_info();
     emit_glitchtip_build_env();
     emit_user_diagnostic_capture_build_env();
+    emit_default_runtime_diagnostics_build_env();
     ensure_opencode_sidecar();
     ensure_veslo_server_sidecar();
     ensure_opencode_router_sidecar();
@@ -22,13 +23,18 @@ fn main() {
 
 fn emit_user_diagnostic_capture_build_env() {
     const KEY: &str = "VESLO_USER_DIAGNOSTIC_CAPTURE";
-    const DOMAIN_KEY: &str = "VESLO_DEPLOYMENT_DOMAIN";
     println!("cargo:rerun-if-env-changed={KEY}");
-    println!("cargo:rerun-if-env-changed={DOMAIN_KEY}");
-    // Omit the value in every build except an explicit production-domain release.
-    if read_non_empty_env(KEY).as_deref() == Some("1")
-        && read_non_empty_env(DOMAIN_KEY).as_deref() == Some("veslo.work")
-    {
+    // Release workflows opt in explicitly. The runtime still restricts uploads
+    // to Veslo-owned API endpoints and requires a signed-in account.
+    if read_non_empty_env(KEY).as_deref() == Some("1") {
+        println!("cargo:rustc-env={KEY}=1");
+    }
+}
+
+fn emit_default_runtime_diagnostics_build_env() {
+    const KEY: &str = "VESLO_DEFAULT_RUNTIME_DIAGNOSTICS";
+    println!("cargo:rerun-if-env-changed={KEY}");
+    if read_non_empty_env(KEY).as_deref() == Some("1") {
         println!("cargo:rustc-env={KEY}=1");
     }
 }
