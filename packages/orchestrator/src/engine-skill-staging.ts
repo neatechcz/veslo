@@ -12,6 +12,8 @@ const GENERATION_RETENTION = 3;
 const STAGING_LOCK_WAIT_MS = 50;
 const STAGING_LOCK_TIMEOUT_MS = 15_000;
 const ORPHAN_GENERATION_RECOVERY_MS = 30_000;
+const SOURCE_CHANGE_RETRY_ATTEMPTS = 3;
+const SOURCE_CHANGE_RETRY_DELAY_MS = 50;
 const PROCESS_INSTANCE_ID = randomUUID();
 const PROCESS_STARTED_AT = Date.now() - Math.floor(process.uptime() * 1000);
 
@@ -48,6 +50,9 @@ export class SkillViewChangedError extends Error {
     this.skillName = skillName;
   }
 }
+
+type CandidateCopyTestHook = (candidate: Candidate) => Promise<void>;
+let beforeCandidateCopyForTests: CandidateCopyTestHook | null = null;
 
 /**
  * A generation is not safe to clean up until the operation that created it
@@ -595,6 +600,7 @@ async function stageEngineSkillViewUnlocked(input: {
       left.name.localeCompare(right.name) || left.reason.localeCompare(right.reason));
     for (const candidate of selected) {
       try {
+        await beforeCandidateCopyForTests?.(candidate);
         await cp(candidate.sourceDir, join(generationRoot, candidate.name), { recursive: true, force: true });
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
@@ -642,6 +648,24 @@ async function stageEngineSkillViewUnlocked(input: {
   }
 }
 
+async function stageEngineSkillViewWithRetries(input: {
+  workspace: string;
+  stagingRoot: string;
+  requireEffectiveManifest?: boolean;
+  expectedRevision?: string;
+  engineOwnerId?: string;
+}): Promise<EngineSkillStagingResult> {
+  for (let attempt = 1; attempt <= SOURCE_CHANGE_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await stageEngineSkillViewUnlocked(input);
+    } catch (error) {
+      if (!(error instanceof SkillViewChangedError) || attempt === SOURCE_CHANGE_RETRY_ATTEMPTS) throw error;
+      await delay(SOURCE_CHANGE_RETRY_DELAY_MS);
+    }
+  }
+  throw new Error("skill_view_changed: source remained unstable during staging");
+}
+
 export async function stageEngineSkillView(input: {
   workspace: string;
   stagingRoot: string;
@@ -651,8 +675,14 @@ export async function stageEngineSkillView(input: {
   expectedRevision?: string;
   engineOwnerId?: string;
 }): Promise<EngineSkillStagingResult> {
-  return withStagingRootLock(input.stagingRoot, () => stageEngineSkillViewUnlocked(input));
+  return withStagingRootLock(input.stagingRoot, () => stageEngineSkillViewWithRetries(input));
 }
+
+export const __engineSkillStagingTestHooks = {
+  setBeforeCandidateCopy(hook: CandidateCopyTestHook | null): void {
+    beforeCandidateCopyForTests = hook;
+  },
+};
 
 /**
  * Publish a server-owned effective view at a stable path inside one workspace.
@@ -680,7 +710,7 @@ export async function publishDirectorySkillView(input: {
   const runtimeParent = dirname(runtimeRoot);
   const stagingRoot = join(runtimeParent, ".staging");
   return withStagingRootLock(stagingRoot, async () => {
-    const staged = await stageEngineSkillViewUnlocked({
+    const staged = await stageEngineSkillViewWithRetries({
       workspace,
       stagingRoot,
       requireEffectiveManifest: true,

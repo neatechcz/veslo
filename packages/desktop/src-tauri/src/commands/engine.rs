@@ -733,7 +733,7 @@ fn runtime_prepare_workspace_blocking(
                 // from the orchestrator. Do not hide it behind a fresh daemon
                 // start: the client must refresh its server-owned skill view
                 // and retry activation with the newly published revision.
-                if error.contains("skill_view_stale") {
+                if error.contains("skill_view_stale") || error.contains("skill_view_changed") {
                     return Err(error);
                 }
                 eprintln!(

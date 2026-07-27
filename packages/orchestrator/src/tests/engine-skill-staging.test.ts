@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   claimEngineSkillGeneration,
+  __engineSkillStagingTestHooks,
   promoteDirectorySkillView,
   publishDirectorySkillView,
   releaseEngineSkillGeneration,
@@ -41,6 +42,7 @@ async function fixture(): Promise<{ workspace: string; stagingRoot: string }> {
 }
 
 afterEach(async () => {
+  __engineSkillStagingTestHooks.setBeforeCandidateCopy(null);
   for (const root of roots.splice(0)) {
     await rm(root, { recursive: true, force: true });
   }
@@ -253,6 +255,29 @@ describe("engine skill staging", () => {
       "utf8",
     )).toBe("schema\n");
     expect(await readFile(join(latest.stagingRoot, "local-tool", "SKILL.md"), "utf8")).toBe("local\n");
+  });
+
+  test("retries when materialization replaces a source during staging", async () => {
+    const input = await fixture();
+    const sourceDir = join(input.workspace, ".opencode", "skills", "local-tool");
+    const replacementDir = join(input.workspace, ".replacement-local-tool");
+    await mkdir(join(replacementDir, "scripts"), { recursive: true });
+    await writeFile(join(replacementDir, "SKILL.md"), "replacement\n");
+    await writeFile(join(replacementDir, "scripts", "replacement.txt"), "replacement\n");
+
+    let replaced = false;
+    __engineSkillStagingTestHooks.setBeforeCandidateCopy(async (candidate) => {
+      if (replaced || candidate.name !== "local-tool") return;
+      replaced = true;
+      await rename(sourceDir, `${sourceDir}.backup`);
+      await rename(replacementDir, sourceDir);
+    });
+
+    const result = await stageEngineSkillView(input);
+
+    expect(replaced).toBe(true);
+    expect(await readFile(join(result.stagingRoot, "local-tool", "SKILL.md"), "utf8")).toBe("replacement\n");
+    expect(await readFile(join(result.stagingRoot, "local-tool", "scripts", "replacement.txt"), "utf8")).toBe("replacement\n");
   });
 
   test("publishes a stable workspace-local root for a specific effective revision", async () => {
