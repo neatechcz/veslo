@@ -1557,7 +1557,11 @@ async function fetchOpencodeJson(
         (localLifecycleError === "shared_engine_skill_view_busy" ||
           localLifecycleError === "shared_engine_skill_view_stale" ||
           localLifecycleError === "skill_view_stale" ||
-          localLifecycleError === "skill_view_changed")
+          localLifecycleError === "skill_view_changed" ||
+          // Both mean "wait, then retry". Flattening them into a generic 502
+          // here would strand the wait/retry contract the app implements.
+          localLifecycleError === "skill_view_busy" ||
+          localLifecycleError === "directory_skill_view_refresh_deferred")
       ) {
         if (
           localLifecycleError === "skill_view_changed" &&

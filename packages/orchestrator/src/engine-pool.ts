@@ -264,6 +264,8 @@ type ResolvedDepsWithEvents = ResolvedDeps & {
 export class EnginePool {
   private readonly engines = new Map<string, EngineProcess>();
   private readonly pending = new Map<string, Promise<EngineProcess>>();
+  /** Bounded so a pathological activation storm fails loudly instead of spinning. */
+  private static readonly RECONCILE_ATTEMPTS = 4;
   private readonly deps: ResolvedDepsWithEvents;
   private readonly config: EnginePoolConfig;
   private idleSweepHandle: ScheduleHandle | null = null;
@@ -400,6 +402,28 @@ export class EnginePool {
    * A caller that joins an in-flight start is a reuse, not a second spawn.
    */
   async ensureWithStatus(workspace: EngineWorkspace): Promise<EngineEnsureResult> {
+    // Every path below ends in an await, and a concurrent caller may swap the
+    // engine during any of them. Serializing the swap is not enough on its own:
+    // the caller must also confirm what it actually received.
+    for (let attempt = 0; attempt < EnginePool.RECONCILE_ATTEMPTS; attempt += 1) {
+      const outcome = await this.resolveEngine(workspace);
+      if (!workspace.skillViewRevision) return outcome;
+      if (outcome.engine.skillViewRevision === workspace.skillViewRevision) {
+        return outcome;
+      }
+      this.deps.log?.("engine skill view reconcile retry", {
+        workspaceId: workspace.id,
+        attempt: attempt + 1,
+        engineRevision: outcome.engine.skillViewRevision ?? null,
+        requestedRevision: workspace.skillViewRevision,
+      });
+    }
+    throw new Error(
+      "skill_view_busy: workspace engine skill view kept changing under concurrent activations",
+    );
+  }
+
+  private async resolveEngine(workspace: EngineWorkspace): Promise<EngineEnsureResult> {
     const inflight = this.pending.get(workspace.id);
     if (inflight) {
       this.deps.log?.("engine ensure pending reuse", { workspaceId: workspace.id });
@@ -527,20 +551,25 @@ export class EnginePool {
       requestedRevision: requested,
     });
 
-    if (this.engines.get(workspace.id) === engine) {
-      this.engines.delete(workspace.id);
-    }
-    if (engine.child && this.deps.isProcessAlive(engine.pid)) {
-      try {
-        await this.deps.stopChild(engine.child);
-      } catch (err) {
-        this.deps.log?.("engine cleanup on skill view restart failed", {
-          workspaceId: workspace.id,
-          error: String(err),
-        });
+    // Register the replacement flight before the first await. Tearing the old
+    // engine down first would leave a window with no engine and no pending
+    // flight, in which a concurrent caller starts a spawn for its own revision
+    // and this caller then joins it — handing each of them the other's view.
+    return await this.startPending(workspace, true, async () => {
+      if (this.engines.get(workspace.id) === engine) {
+        this.engines.delete(workspace.id);
       }
-    }
-    return await this.startPending(workspace, true);
+      if (engine.child && this.deps.isProcessAlive(engine.pid)) {
+        try {
+          await this.deps.stopChild(engine.child);
+        } catch (err) {
+          this.deps.log?.("engine cleanup on skill view restart failed", {
+            workspaceId: workspace.id,
+            error: String(err),
+          });
+        }
+      }
+    });
   }
 
   /**
@@ -548,11 +577,17 @@ export class EnginePool {
    * and crash recovery must share this flight so they cannot stage the same
    * workspace concurrently.
    */
-  private startPending(workspace: EngineWorkspace, evictLru: boolean): Promise<EngineProcess> {
+  private startPending(
+    workspace: EngineWorkspace,
+    evictLru: boolean,
+    /** Teardown that must happen inside the flight, never before it exists. */
+    before?: () => Promise<void>,
+  ): Promise<EngineProcess> {
     const existing = this.pending.get(workspace.id);
     if (existing) return existing;
 
     const promise = (async () => {
+      if (before) await before();
       if (evictLru) await this.evictLruIfNeeded(workspace.id);
       return await this.spawn(workspace);
     })().finally(() => {

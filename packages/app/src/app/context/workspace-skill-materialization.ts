@@ -72,8 +72,24 @@ export class RuntimeSkillViewRefreshError extends Error {
   }
 }
 
+/**
+ * The same conflict reaches the app by two different routes: raw from native
+ * activation, where the orchestrator's 409 envelope is embedded in the message,
+ * and re-wrapped by the Veslo server, where the code lands on `code` and the
+ * envelope in `details`. Classifying on the message alone silently misses the
+ * second route, so inspect everything the error carries.
+ */
+function conflictHaystack(error: unknown): string {
+  if (!(error instanceof Error)) return safeStringify(error);
+  const carrier = error as Error & { code?: unknown; details?: unknown };
+  const parts = [error.message];
+  if (typeof carrier.code === "string") parts.push(carrier.code);
+  if (carrier.details !== undefined) parts.push(safeStringify(carrier.details));
+  return parts.join(" ");
+}
+
 export function runtimeSkillViewConflict(error: unknown): RuntimeSkillViewConflict | null {
-  const message = error instanceof Error ? error.message : safeStringify(error);
+  const message = conflictHaystack(error);
   // Order matters: these envelopes also carry a skill view revision, so match
   // their own markers before the generic ones.
   if (message.includes("directory_skill_view_refresh_deferred")) return "skill_view_deferred";
@@ -92,8 +108,7 @@ export function runtimeSkillViewConflict(error: unknown): RuntimeSkillViewConfli
  * surfacing a transient drain as a failed activation.
  */
 export function runtimeSkillViewRetryAfterMs(error: unknown): number {
-  const message = error instanceof Error ? error.message : safeStringify(error);
-  const parsed = Number(/"retryAfterMs"\s*:\s*(\d+)/.exec(message)?.[1]);
+  const parsed = Number(/"retryAfterMs"\s*:\s*(\d+)/.exec(conflictHaystack(error))?.[1]);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFERRED_REFRESH_FALLBACK_MS;
   return Math.min(parsed, DEFERRED_REFRESH_MAX_WAIT_MS);
 }

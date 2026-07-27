@@ -450,6 +450,72 @@ describe("EnginePool", () => {
     }
   });
 
+  test("concurrent ensures with different revisions each get their own view", async () => {
+    let releaseStop!: () => void;
+    let releaseSpawn!: () => void;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const spawnGate = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    let stops = 0;
+    const h = harness({
+      spawnEngine: async ({ port, skillViewRevision }) => {
+        // Keep the third caller's flight in flight, so the first swap resumes
+        // into a pending spawn that belongs to somebody else's revision.
+        if (skillViewRevision === "revision-three") await spawnGate;
+        const child = spawnLongLivedChild();
+        h.registry.push(child);
+        return {
+          child,
+          baseUrl: `http://127.0.0.1:${port}?rev=${skillViewRevision ?? "none"}`,
+        };
+      },
+      // Hold the swap open exactly where the old engine is already gone from
+      // the map but the replacement flight has not been registered yet.
+      stopChild: async (child) => {
+        stops += 1;
+        if (stops === 1) await stopGate;
+        await stopChild(child);
+      },
+    });
+    try {
+      await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-one",
+      });
+
+      const wantsTwo = h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-two",
+      });
+      // Let the swap reach its stopChild await.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const wantsThree = h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-three",
+      });
+      // Give the third caller time to register its own flight, then let the
+      // first swap resume straight into it.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      releaseStop();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      releaseSpawn();
+
+      const [two, three] = await Promise.all([wantsTwo, wantsThree]);
+
+      // Neither caller may be handed an engine staged for the other's view.
+      expect(two.skillViewRevision).toBe("revision-two");
+      expect(three.skillViewRevision).toBe("revision-three");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
   test("a crash respawn does not replay the original caller's revision", async () => {
     const seen: Array<string | undefined> = [];
     const timers = new FakeTimers();

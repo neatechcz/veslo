@@ -447,6 +447,41 @@ test("a deferred refresh hint is clamped and falls back when absent", async () =
   assert.equal(prepares, 3);
 });
 
+test("a server-rewrapped busy conflict is classified from code and details", async () => {
+  const waits: number[] = [];
+  let prepares = 0;
+
+  // What the Veslo server produces when it relays the orchestrator's 409: the
+  // marker is no longer in the message, only in `code` and `details`.
+  class RelayedError extends Error {
+    code = "skill_view_busy";
+    details = {
+      status: 409,
+      body: { error: "skill_view_busy", retryAfterMs: 250 },
+      path: "/opencode/session",
+    };
+  }
+
+  const result = await prepareRuntimeWithSkillViewRefresh({
+    prepare: async () => {
+      prepares += 1;
+      if (prepares === 1) {
+        throw new RelayedError(
+          "Workspace engine is running a job staged from a different skill view",
+        );
+      }
+      return "ready";
+    },
+    refresh: async () => true,
+    wait: async (ms) => {
+      waits.push(ms);
+    },
+  });
+
+  assert.equal(result, "ready");
+  assert.deepEqual(waits, [250]);
+});
+
 test("the retry budget is bounded and reports the first conflict", async () => {
   let prepares = 0;
 
