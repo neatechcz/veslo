@@ -16,7 +16,14 @@ use crate::types::{OrchestratorEngineSnapshot, OrchestratorStatus, OrchestratorW
 use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 
 const DEFAULT_DETACHED_VESLO_HOST: &str = "127.0.0.1";
-const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS: u64 = 10_000;
+/// Must stay above the orchestrator's own worst-case activation budget,
+/// otherwise a healthy-but-slow activation is reported to the user as a
+/// failure while it keeps running inside the daemon. The daemon can spend up
+/// to 30s waiting for the cross-process workspace skill lease and up to 60s on
+/// an OpenCode cold start; this leaves a small margin on top. Activation runs
+/// on `spawn_blocking`, so the longer ceiling does not stall the Tauri command
+/// runtime.
+const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS: u64 = 95_000;
 const DETACHED_VESLO_READY_TIMEOUT_MS: u64 = 30_000;
 const DETACHED_VESLO_READY_POLL_MS: u64 = 200;
 

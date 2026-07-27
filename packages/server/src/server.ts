@@ -28,7 +28,10 @@ import {
   readSkillAtPath,
   updateSkillAtPath,
 } from "./skills.js";
-import { ensureActiveRuntimeSkillView, invalidateActiveRuntimeSkillView } from "./active-runtime-skill-view.js";
+import {
+  ensureActiveRuntimeSkillView,
+  invalidateActiveRuntimeSkillView,
+} from "./active-runtime-skill-view.js";
 import { installHubSkill } from "./skill-hub.js";
 import {
   listSkillRemovals,
@@ -72,7 +75,10 @@ import {
 import { deploymentServiceUrl } from "./deployment-endpoints.js";
 import type { SoulPendingEdit } from "./soul-cache.js";
 import type { SoulDocument, SoulScope, SoulVersion } from "./soul-memory.js";
-import { createSoulController, type SoulMaterializationTestHookInput } from "./soul-controller.js";
+import {
+  createSoulController,
+  type SoulMaterializationTestHookInput,
+} from "./soul-controller.js";
 import type { SoulMaterializationResult } from "./soul-materializer.js";
 import {
   readOpencodeConfig,
@@ -134,10 +140,17 @@ import type {
 import type { SkillPackageArchive } from "./skill-packages.js";
 import { resolveSkillMatch } from "./skill-resolver.js";
 import { resolveWorkspaceSkillSet } from "./workspace-skill-set.js";
-import type { WorkspaceSkillRegistryInstallation, WorkspaceSkillRolloutPolicy } from "./workspace-skill-set.js";
+import type {
+  WorkspaceSkillRegistryInstallation,
+  WorkspaceSkillRolloutPolicy,
+} from "./workspace-skill-set.js";
 import { writeWorkspaceSkillLockfile } from "./workspace-skill-lockfile.js";
+import { withWorkspaceSkillLease } from "./workspace-skill-lease.js";
 import { workspaceResourceOwner } from "./resource-owner.js";
-import { provisionWorkspaceInternalSystem, resolveVesloAppDataDir } from "./internal-system.js";
+import {
+  provisionWorkspaceInternalSystem,
+  resolveVesloAppDataDir,
+} from "./internal-system.js";
 import { ApiError, formatError } from "./errors.js";
 import {
   createAiGatewayRuntimeOwner,
@@ -160,16 +173,35 @@ import {
   type ReloadOpencodeEngineOptions,
   type ReloadOpencodeEngineResult,
 } from "./workspace-config-owner.js";
-import { recordAudit, readAuditEntries, readLastAudit, resolveVesloDataDir, setAuditDebugLogPipeline } from "./audit.js";
-import { createDebugLogPipeline, type DebugLogPipeline } from "./debug-log-pipeline.js";
+import {
+  recordAudit,
+  readAuditEntries,
+  readLastAudit,
+  resolveVesloDataDir,
+  setAuditDebugLogPipeline,
+} from "./audit.js";
+import {
+  createDebugLogPipeline,
+  type DebugLogPipeline,
+} from "./debug-log-pipeline.js";
 import { validateDebugLogBatch } from "./debug-log-events.js";
 import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, vesloConfigPath } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
-import { persistServerWorkspaceState, workspaceIdForPath } from "./workspaces.js";
+import {
+  persistServerWorkspaceState,
+  workspaceIdForPath,
+} from "./workspaces.js";
 import { TokenService } from "./tokens.js";
-import { TOY_UI_CSS, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse } from "./toy-ui.js";
+import {
+  TOY_UI_CSS,
+  TOY_UI_HTML,
+  TOY_UI_JS,
+  cssResponse,
+  htmlResponse,
+  jsResponse,
+} from "./toy-ui.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerAiGatewayRoutes } from "./routes/ai-gateway.js";
 import { registerAutomationRoutes } from "./routes/automations.js";
@@ -210,7 +242,13 @@ import { registerSoulRoutes } from "./routes/soul.js";
 import { registerUserGlobalSkillRoutes } from "./routes/user-global-skills.js";
 import { registerWorkspaceManagementRoutes } from "./routes/workspace-management.js";
 import { registerWorkspaceSkillRoutes } from "./routes/workspace-skills.js";
-import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routing.js";
+import {
+  addRoute,
+  matchRoute,
+  type AuthMode,
+  type RequestContext,
+  type Route,
+} from "./routing.js";
 import {
   buildOrchestratorWorkspaceOpencodeBaseUrl,
   contentLengthFor,
@@ -290,7 +328,8 @@ const CONVERSATION_RUN_LIFECYCLE_RECONCILE_MAX_ATTEMPTS_DEFAULT = 600;
 const AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS = 30_000;
 export const REDACTED_SECRET_VALUE = "[REDACTED]";
 const OPENCODE_SESSION_ID_TEMPLATE = "${OPENCODE_SESSION_ID}";
-const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE = "{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}";
+const VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE =
+  "{env:VESLO_OPENCODE_SERVER_CLIENT_TOKEN}";
 const AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES = 64 * 1024;
 const AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES = 64 * 1024;
 const AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES = 64 * 1024;
@@ -316,24 +355,30 @@ function truthyEnv(name: string): boolean {
 }
 
 function runtimeDiagnosticsDisabled(): boolean {
-  const value = process.env.VESLO_RUNTIME_DIAGNOSTICS?.trim().toLowerCase() ?? "";
-  return value === "0" || value === "false" || value === "no" || value === "off";
+  const value =
+    process.env.VESLO_RUNTIME_DIAGNOSTICS?.trim().toLowerCase() ?? "";
+  return (
+    value === "0" || value === "false" || value === "no" || value === "off"
+  );
 }
 
 function resolveSendWorkflowTraceFile(): string {
-  const sourceOverride = process.env.VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE?.trim();
+  const sourceOverride =
+    process.env.VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE?.trim();
   if (sourceOverride) return sourceOverride;
   const override = process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim();
   if (override) return override;
   const pilotDir = process.env.TAURI_PILOT_LOG_DIR?.trim();
   if (pilotDir) return join(pilotDir, "send-workflow-trace.server.ndjson");
   const runtimeTraceFile = process.env.VESLO_RUNTIME_TRACE_FILE?.trim();
-  if (runtimeTraceFile) return join(dirname(runtimeTraceFile), "send-workflow-trace.server.ndjson");
+  if (runtimeTraceFile)
+    return join(dirname(runtimeTraceFile), "send-workflow-trace.server.ndjson");
   return join(resolveVesloDataDir(), "send-workflow-trace.server.ndjson");
 }
 
 function resolveSendWorkflowTraceMirrorFile(): string | null {
-  const sourceMirror = process.env.VESLO_SEND_WORKFLOW_TRACE_SERVER_MIRROR_FILE?.trim();
+  const sourceMirror =
+    process.env.VESLO_SEND_WORKFLOW_TRACE_SERVER_MIRROR_FILE?.trim();
   if (sourceMirror) return sourceMirror;
   const mirror = process.env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE?.trim();
   return mirror || null;
@@ -341,11 +386,13 @@ function resolveSendWorkflowTraceMirrorFile(): string | null {
 
 function sendWorkflowTraceEnabled(): boolean {
   if (runtimeDiagnosticsDisabled()) return false;
-  return truthyEnv("VESLO_SEND_WORKFLOW_TRACE") ||
+  return (
+    truthyEnv("VESLO_SEND_WORKFLOW_TRACE") ||
     Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_SERVER_FILE?.trim()) ||
     Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_SERVER_MIRROR_FILE?.trim()) ||
     Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_FILE?.trim()) ||
-    Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE?.trim());
+    Boolean(process.env.VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE?.trim())
+  );
 }
 
 function appendSendWorkflowTraceFile(file: string, line: string): void {
@@ -391,7 +438,8 @@ function recordSendWorkflowTrace(
 
 const aiGatewayRuntimeOwner = createAiGatewayRuntimeOwner({
   providerStartTimeoutMs: resolveAiGatewayProviderStartTimeoutMs,
-  recordTrace: (event, payload) => recordSendWorkflowTrace("server", event, payload),
+  recordTrace: (event, payload) =>
+    recordSendWorkflowTrace("server", event, payload),
 });
 const soulController = createSoulController();
 
@@ -400,7 +448,9 @@ type ServerLogger = {
 };
 
 let conversationRunLifecycleControllerFactoryForTests:
-  | ((options: ConversationRunLifecycleControllerOptions) => ConversationRunLifecycleController)
+  | ((
+      options: ConversationRunLifecycleControllerOptions,
+    ) => ConversationRunLifecycleController)
   | null = null;
 
 export function setSoulMaterializationTestHookForTests(
@@ -410,7 +460,11 @@ export function setSoulMaterializationTestHookForTests(
 }
 
 export function setConversationRunLifecycleControllerFactoryForTests(
-  factory: ((options: ConversationRunLifecycleControllerOptions) => ConversationRunLifecycleController) | null,
+  factory:
+    | ((
+        options: ConversationRunLifecycleControllerOptions,
+      ) => ConversationRunLifecycleController)
+    | null,
 ): void {
   conversationRunLifecycleControllerFactoryForTests = factory;
 }
@@ -423,14 +477,18 @@ function isSensitiveConfigKey(key: string): boolean {
   const normalized = normalizeConfigKey(key);
   if (!normalized) return false;
   if (normalized === "tokensource") return false;
-  return REDACTED_CONFIG_KEYS.some((segment) => normalized === segment || normalized.endsWith(segment));
+  return REDACTED_CONFIG_KEYS.some(
+    (segment) => normalized === segment || normalized.endsWith(segment),
+  );
 }
 
 function isSafeManagedConfigCredentialReference(value: unknown): boolean {
   if (typeof value !== "string") return false;
   const normalized = value.trim();
-  return normalized === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE ||
-    normalized === `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`;
+  return (
+    normalized === VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE ||
+    normalized === `Bearer ${VESLO_OPENCODE_SERVER_CLIENT_TOKEN_TEMPLATE}`
+  );
 }
 
 export function redactSensitiveConfig<T>(value: T): T {
@@ -450,9 +508,10 @@ export function redactSensitiveConfig<T>(value: T): T {
         output[key] = rawValue;
         continue;
       }
-      output[key] = rawValue === null || rawValue === undefined || rawValue === ""
-        ? rawValue
-        : REDACTED_SECRET_VALUE;
+      output[key] =
+        rawValue === null || rawValue === undefined || rawValue === ""
+          ? rawValue
+          : REDACTED_SECRET_VALUE;
       continue;
     }
     output[key] = redactSensitiveConfig(rawValue);
@@ -504,7 +563,11 @@ export function createServerLogger(config: ServerConfig): ServerLogger {
     "process.pid": process.pid,
   };
 
-  const emit = (level: LogLevel, message: string, attributes?: LogAttributes) => {
+  const emit = (
+    level: LogLevel,
+    message: string,
+    attributes?: LogAttributes,
+  ) => {
     const merged = { ...baseAttributes, ...(attributes ?? {}) };
     if (config.logFormat === "json") {
       const record = {
@@ -535,9 +598,20 @@ function logRequest(input: {
   error?: string;
   errorDetails?: unknown;
 }) {
-  const { logger, request, response, durationMs, authMode, proxyService, proxyBaseUrl, error, errorDetails } = input;
+  const {
+    logger,
+    request,
+    response,
+    durationMs,
+    authMode,
+    proxyService,
+    proxyBaseUrl,
+    error,
+    errorDetails,
+  } = input;
   const status = response.status;
-  const level: LogLevel = status >= 500 ? "error" : status >= 400 ? "warn" : "info";
+  const level: LogLevel =
+    status >= 500 ? "error" : status >= 400 ? "warn" : "info";
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
   const proxyLabel = proxyBaseUrl ? ` (${proxyService ?? "proxy"})` : "";
@@ -577,13 +651,19 @@ function resolveOpenCodeRouterProxyPolicy(
   const upper = method.trim().toUpperCase();
 
   if (upper === "GET") {
-    if (normalized === "/opencode-router" || normalized === "/opencode-router/health") {
+    if (
+      normalized === "/opencode-router" ||
+      normalized === "/opencode-router/health"
+    ) {
       return { auth: "client" };
     }
     if (normalized === "/opencode-router/bindings") {
       return { auth: "client", requiredScope: "collaborator" };
     }
-    if (normalized === "/opencode-router/identities/telegram" || normalized === "/opencode-router/identities/slack") {
+    if (
+      normalized === "/opencode-router/identities/telegram" ||
+      normalized === "/opencode-router/identities/slack"
+    ) {
       return { auth: "client", requiredScope: "collaborator" };
     }
   }
@@ -591,7 +671,9 @@ function resolveOpenCodeRouterProxyPolicy(
   return { auth: "host" };
 }
 
-function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath: string } | null {
+function parseWorkspaceMount(
+  pathname: string,
+): { workspaceId: string; restPath: string } | null {
   if (!pathname.startsWith("/w/")) return null;
   const remainder = pathname.slice(3);
   if (!remainder) return null;
@@ -621,18 +703,25 @@ export function parseWorkspaceOpencodeMount(
   const workspaceId = remainder.slice(0, slash);
   const restPath = remainder.slice(slash) || "/";
   if (!workspaceId.trim()) return null;
-  if (restPath !== "/opencode" && !restPath.startsWith("/opencode/")) return null;
+  if (restPath !== "/opencode" && !restPath.startsWith("/opencode/"))
+    return null;
   return { workspaceId: decodeURIComponent(workspaceId), restPath };
 }
 
 function normalizeOpencodeProxyPath(proxyPath: string): string {
   const raw = (proxyPath ?? "").trim() || "/";
-  const withoutPrefix = raw.startsWith("/opencode") ? raw.slice("/opencode".length) : raw;
+  const withoutPrefix = raw.startsWith("/opencode")
+    ? raw.slice("/opencode".length)
+    : raw;
   const normalized = (withoutPrefix || "/").replace(/\/+$/, "");
   return normalized || "/";
 }
 
-function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: string) {
+function assertOpencodeProxyAllowed(
+  actor: Actor,
+  method: string,
+  proxyPath: string,
+) {
   const m = method.toUpperCase();
   const scope = actor.scope ?? "viewer";
 
@@ -645,7 +734,11 @@ function assertOpencodeProxyAllowed(actor: Actor, method: string, proxyPath: str
   if (scope !== "owner" && m !== "GET" && m !== "HEAD") {
     const normalized = normalizeOpencodeProxyPath(proxyPath);
     if (/\/permission\/[^/]+\/reply$/.test(normalized)) {
-      throw new ApiError(403, "forbidden", "Only owner tokens can reply to permission requests");
+      throw new ApiError(
+        403,
+        "forbidden",
+        "Only owner tokens can reply to permission requests",
+      );
     }
   }
 }
@@ -660,15 +753,18 @@ export function startServer(config: ServerConfig) {
   const runnerWorkspaces = config.readOnly
     ? []
     : config.workspaces
-      .filter((workspace) => isAuthorizedRootSync(resolve(workspace.path), config.authorizedRoots))
-      .map((workspace) => ({ ...workspace, path: resolve(workspace.path) }));
+        .filter((workspace) =>
+          isAuthorizedRootSync(resolve(workspace.path), config.authorizedRoots),
+        )
+        .map((workspace) => ({ ...workspace, path: resolve(workspace.path) }));
   const automationRunner = createAutomationRunner({
     workspaces: runnerWorkspaces,
     execute: createOpenCodeAutomationExecutor(config),
   });
   const routeBundle = createRoutes(config, approvals, tokens, automationRunner);
   const routes = routeBundle.routes;
-  const conversationRunLifecycleController = routeBundle.conversationRunLifecycleController;
+  const conversationRunLifecycleController =
+    routeBundle.conversationRunLifecycleController;
   const baseLogger = createServerLogger(config);
 
   const debugLogPipeline: DebugLogPipeline = createDebugLogPipeline({
@@ -681,18 +777,20 @@ export function startServer(config: ServerConfig) {
   const logger: typeof baseLogger = {
     log(level, message, attributes) {
       baseLogger.log(level, message, attributes);
-      void debugLogPipeline.append({
-        id: randomUUID(),
-        userId: "",
-        orgId: "",
-        workspaceId: "",
-        source: "veslo-server-self",
-        stream: "logger",
-        level,
-        timestamp: Date.now() * 1_000_000,
-        sequenceNo: 0,
-        payload: { message, attributes: attributes ?? {} },
-      }).catch(() => undefined);
+      void debugLogPipeline
+        .append({
+          id: randomUUID(),
+          userId: "",
+          orgId: "",
+          workspaceId: "",
+          source: "veslo-server-self",
+          stream: "logger",
+          level,
+          timestamp: Date.now() * 1_000_000,
+          sequenceNo: 0,
+          payload: { message, attributes: attributes ?? {} },
+        })
+        .catch(() => undefined);
     },
   };
 
@@ -748,7 +846,9 @@ export function startServer(config: ServerConfig) {
       const mount = canonicalOpencodeMount ?? parseWorkspaceMount(url.pathname);
       const opencodeMount =
         canonicalOpencodeMount ??
-        (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))
+        (mount &&
+        (mount.restPath === "/opencode" ||
+          mount.restPath.startsWith("/opencode/"))
           ? mount
           : null);
 
@@ -756,8 +856,15 @@ export function startServer(config: ServerConfig) {
         authMode = "client";
         try {
           const actor = await requireClient(request, config, tokens);
-          assertOpencodeProxyAllowed(actor, request.method, opencodeMount.restPath);
-          const workspace = await resolveWorkspace(config, opencodeMount.workspaceId);
+          assertOpencodeProxyAllowed(
+            actor,
+            request.method,
+            opencodeMount.restPath,
+          );
+          const workspace = await resolveWorkspace(
+            config,
+            opencodeMount.workspaceId,
+          );
           proxyService = "opencode";
           proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
           const response = await proxyOpencodeRequest({
@@ -768,24 +875,36 @@ export function startServer(config: ServerConfig) {
           });
           return finalize(response);
         } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected server error");
+          const apiError =
+            error instanceof ApiError
+              ? error
+              : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
           errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
       }
 
-      if (mount && (mount.restPath === "/opencode-router" || mount.restPath.startsWith("/opencode-router/"))) {
-        const policy = resolveOpenCodeRouterProxyPolicy(request.method, mount.restPath);
+      if (
+        mount &&
+        (mount.restPath === "/opencode-router" ||
+          mount.restPath.startsWith("/opencode-router/"))
+      ) {
+        const policy = resolveOpenCodeRouterProxyPolicy(
+          request.method,
+          mount.restPath,
+        );
         authMode = policy.auth;
         try {
           if (authMode === "host") {
             await requireHost(request, config, tokens);
           } else {
             const actor = await requireClient(request, config, tokens);
-            if (policy.requiredScope && scopeRank(actor.scope ?? "viewer") < scopeRank(policy.requiredScope)) {
+            if (
+              policy.requiredScope &&
+              scopeRank(actor.scope ?? "viewer") <
+                scopeRank(policy.requiredScope)
+            ) {
               throw new ApiError(403, "forbidden", "Insufficient token scope", {
                 required: policy.requiredScope,
                 scope: actor.scope,
@@ -794,12 +913,17 @@ export function startServer(config: ServerConfig) {
           }
           proxyService = "opencode-router";
           proxyBaseUrl = resolveOpenCodeRouterBaseUrl();
-          const response = await proxyOpenCodeRouterRequest({ request, url, proxyPath: mount.restPath });
+          const response = await proxyOpenCodeRouterRequest({
+            request,
+            url,
+            proxyPath: mount.restPath,
+          });
           return finalize(response);
         } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected server error");
+          const apiError =
+            error instanceof ApiError
+              ? error
+              : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
           errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
@@ -818,51 +942,79 @@ export function startServer(config: ServerConfig) {
         const nestedId = match?.[1] ? decodeURIComponent(match[1]) : null;
         if (nestedId && nestedId !== mount.workspaceId) {
           errorMessage = "not_found";
-          return finalize(jsonResponse({ code: "not_found", message: "Not found" }, 404));
+          return finalize(
+            jsonResponse({ code: "not_found", message: "Not found" }, 404),
+          );
         }
         url.pathname = mount.restPath;
       }
 
       // Session archives are global per-account metadata, but mounted clients may
       // still call them relative to /w/:id.
-      if (mount && (mount.restPath === "/session-archives" || mount.restPath.startsWith("/session-archives/"))) {
+      if (
+        mount &&
+        (mount.restPath === "/session-archives" ||
+          mount.restPath.startsWith("/session-archives/"))
+      ) {
         url.pathname = mount.restPath;
       }
 
       // AI gateway routes are also host-level APIs, but OpenCode provider config can
       // be generated from a workspace-mounted base URL.
-      if (mount && (mount.restPath === "/ai-gateway" || mount.restPath.startsWith("/ai-gateway/"))) {
+      if (
+        mount &&
+        (mount.restPath === "/ai-gateway" ||
+          mount.restPath.startsWith("/ai-gateway/"))
+      ) {
         url.pathname = mount.restPath;
       }
 
-      if (url.pathname === "/opencode" || url.pathname.startsWith("/opencode/")) {
+      if (
+        url.pathname === "/opencode" ||
+        url.pathname.startsWith("/opencode/")
+      ) {
         authMode = "client";
         proxyBaseUrl = config.workspaces[0]?.baseUrl?.trim() || undefined;
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           proxyService = "opencode";
-          const response = await proxyOpencodeRequest({ request, url, workspace: config.workspaces[0] });
+          const response = await proxyOpencodeRequest({
+            request,
+            url,
+            workspace: config.workspaces[0],
+          });
           return finalize(response);
         } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected server error");
+          const apiError =
+            error instanceof ApiError
+              ? error
+              : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
           errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
       }
 
-      if (url.pathname === "/opencode-router" || url.pathname.startsWith("/opencode-router/")) {
-        const policy = resolveOpenCodeRouterProxyPolicy(request.method, url.pathname);
+      if (
+        url.pathname === "/opencode-router" ||
+        url.pathname.startsWith("/opencode-router/")
+      ) {
+        const policy = resolveOpenCodeRouterProxyPolicy(
+          request.method,
+          url.pathname,
+        );
         authMode = policy.auth;
         try {
           if (authMode === "host") {
             await requireHost(request, config, tokens);
           } else {
             const actor = await requireClient(request, config, tokens);
-            if (policy.requiredScope && scopeRank(actor.scope ?? "viewer") < scopeRank(policy.requiredScope)) {
+            if (
+              policy.requiredScope &&
+              scopeRank(actor.scope ?? "viewer") <
+                scopeRank(policy.requiredScope)
+            ) {
               throw new ApiError(403, "forbidden", "Insufficient token scope", {
                 required: policy.requiredScope,
                 scope: actor.scope,
@@ -874,9 +1026,10 @@ export function startServer(config: ServerConfig) {
           const response = await proxyOpenCodeRouterRequest({ request, url });
           return finalize(response);
         } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected server error");
+          const apiError =
+            error instanceof ApiError
+              ? error
+              : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
           errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
@@ -891,16 +1044,27 @@ export function startServer(config: ServerConfig) {
             maxBytes: config.debugLogs.batchMaxBytes,
             label: "debug log batch",
           }).catch((error) => {
-            if (error instanceof ApiError && error.code === "invalid_json") return null;
+            if (error instanceof ApiError && error.code === "invalid_json")
+              return null;
             throw error;
           });
           const issues = validateDebugLogBatch(body);
           if (issues.length > 0) {
             return finalize(
-              jsonResponse({ code: "invalid_batch", message: "Invalid debug log batch", issues }, 400),
+              jsonResponse(
+                {
+                  code: "invalid_batch",
+                  message: "Invalid debug log batch",
+                  issues,
+                },
+                400,
+              ),
             );
           }
-          const batch = body as { batchId: string; events: Parameters<DebugLogPipeline["append"]>[0] };
+          const batch = body as {
+            batchId: string;
+            events: Parameters<DebugLogPipeline["append"]>[0];
+          };
           await debugLogPipeline.append(batch.events);
           return finalize(
             jsonResponse(
@@ -913,50 +1077,113 @@ export function startServer(config: ServerConfig) {
             ),
           );
         } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected server error");
+          const apiError =
+            error instanceof ApiError
+              ? error
+              : new ApiError(500, "internal_error", "Unexpected server error");
           errorMessage = apiError.message;
           errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
       }
 
-      if (url.pathname === "/internal/orchestrator/engine-loss" && request.method === "POST") {
+      if (
+        url.pathname === "/internal/orchestrator/engine-loss" &&
+        request.method === "POST"
+      ) {
         authMode = "host";
         try {
           const lifecycleToken = config.orchestratorLifecycleToken?.trim();
-          if (!lifecycleToken || request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== lifecycleToken) {
-            return finalize(jsonResponse({ code: "unauthorized", message: "Invalid orchestrator lifecycle token" }, 401));
+          if (
+            !lifecycleToken ||
+            request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !==
+              lifecycleToken
+          ) {
+            return finalize(
+              jsonResponse(
+                {
+                  code: "unauthorized",
+                  message: "Invalid orchestrator lifecycle token",
+                },
+                401,
+              ),
+            );
           }
           const body = await readJsonBody(request, {
             maxBytes: 512 * 1024,
             label: "engine loss notification",
           });
           if (!body || typeof body !== "object" || Array.isArray(body)) {
-            return finalize(jsonResponse({ code: "invalid_request", message: "Engine loss payload must be an object" }, 400));
+            return finalize(
+              jsonResponse(
+                {
+                  code: "invalid_request",
+                  message: "Engine loss payload must be an object",
+                },
+                400,
+              ),
+            );
           }
           const payload = body as Record<string, unknown>;
-          const eventId = typeof payload.eventId === "string" ? payload.eventId.trim() : "";
-          const workspaceId = typeof payload.workspaceId === "string" ? payload.workspaceId.trim() : "";
-          const engineSlotId = typeof payload.engineSlotId === "string" ? payload.engineSlotId.trim() : "";
-          const engineOwnerId = typeof payload.engineOwnerId === "string" ? payload.engineOwnerId.trim() : "";
-          const enginePid = typeof payload.enginePid === "number" && Number.isSafeInteger(payload.enginePid)
-            ? payload.enginePid
-            : null;
-          const engineStartedAt = typeof payload.engineStartedAt === "number" && Number.isSafeInteger(payload.engineStartedAt)
-            ? payload.engineStartedAt
-            : null;
-          const engineBaseUrl = typeof payload.engineBaseUrl === "string" ? payload.engineBaseUrl.trim() : "";
-          const reason = typeof payload.reason === "string" ? payload.reason.trim() : "";
+          const eventId =
+            typeof payload.eventId === "string" ? payload.eventId.trim() : "";
+          const workspaceId =
+            typeof payload.workspaceId === "string"
+              ? payload.workspaceId.trim()
+              : "";
+          const engineSlotId =
+            typeof payload.engineSlotId === "string"
+              ? payload.engineSlotId.trim()
+              : "";
+          const engineOwnerId =
+            typeof payload.engineOwnerId === "string"
+              ? payload.engineOwnerId.trim()
+              : "";
+          const enginePid =
+            typeof payload.enginePid === "number" &&
+            Number.isSafeInteger(payload.enginePid)
+              ? payload.enginePid
+              : null;
+          const engineStartedAt =
+            typeof payload.engineStartedAt === "number" &&
+            Number.isSafeInteger(payload.engineStartedAt)
+              ? payload.engineStartedAt
+              : null;
+          const engineBaseUrl =
+            typeof payload.engineBaseUrl === "string"
+              ? payload.engineBaseUrl.trim()
+              : "";
+          const reason =
+            typeof payload.reason === "string" ? payload.reason.trim() : "";
           const runIds = Array.isArray(payload.runIds)
-            ? payload.runIds.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean)
+            ? payload.runIds
+                .filter((value): value is string => typeof value === "string")
+                .map((value) => value.trim())
+                .filter(Boolean)
             : [];
-          if (!eventId || !workspaceId || !engineSlotId || !engineOwnerId || enginePid === null || enginePid <= 0 || engineStartedAt === null || engineStartedAt <= 0 || !engineBaseUrl || !reason || runIds.length === 0) {
-            return finalize(jsonResponse({
-              code: "invalid_request",
-              message: "eventId, workspaceId, engineSlotId, engineOwnerId, enginePid, engineStartedAt, engineBaseUrl, reason, and runIds are required",
-            }, 400));
+          if (
+            !eventId ||
+            !workspaceId ||
+            !engineSlotId ||
+            !engineOwnerId ||
+            enginePid === null ||
+            enginePid <= 0 ||
+            engineStartedAt === null ||
+            engineStartedAt <= 0 ||
+            !engineBaseUrl ||
+            !reason ||
+            runIds.length === 0
+          ) {
+            return finalize(
+              jsonResponse(
+                {
+                  code: "invalid_request",
+                  message:
+                    "eventId, workspaceId, engineSlotId, engineOwnerId, enginePid, engineStartedAt, engineBaseUrl, reason, and runIds are required",
+                },
+                400,
+              ),
+            );
           }
           const result = conversationRunLifecycleController.notifyEngineLoss({
             eventId,
@@ -969,11 +1196,21 @@ export function startServer(config: ServerConfig) {
             runIds,
             reason,
           });
-          return finalize(jsonResponse({ ok: true, schema: "veslo-engine-loss/v1", ...result }, 200));
+          return finalize(
+            jsonResponse(
+              { ok: true, schema: "veslo-engine-loss/v1", ...result },
+              200,
+            ),
+          );
         } catch (error) {
-          const apiError = error instanceof ApiError
-            ? error
-            : new ApiError(500, "internal_error", "Unexpected engine loss notification error");
+          const apiError =
+            error instanceof ApiError
+              ? error
+              : new ApiError(
+                  500,
+                  "internal_error",
+                  "Unexpected engine loss notification error",
+                );
           errorMessage = apiError.message;
           errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
@@ -983,18 +1220,21 @@ export function startServer(config: ServerConfig) {
       const route = matchRoute(routes, request.method, url.pathname);
       if (!route) {
         errorMessage = "not_found";
-        return finalize(jsonResponse({ code: "not_found", message: "Not found" }, 404));
+        return finalize(
+          jsonResponse({ code: "not_found", message: "Not found" }, 404),
+        );
       }
 
       authMode = route.auth;
       try {
-        const actor = route.auth === "host"
-          ? await requireHost(request, config, tokens)
-          : route.auth === "client"
-            ? await requireClient(request, config, tokens)
-            : route.auth === "hostOrClient"
-              ? await requireHostOrClient(request, config, tokens)
-              : undefined;
+        const actor =
+          route.auth === "host"
+            ? await requireHost(request, config, tokens)
+            : route.auth === "client"
+              ? await requireClient(request, config, tokens)
+              : route.auth === "hostOrClient"
+                ? await requireHostOrClient(request, config, tokens)
+                : undefined;
         const response = await route.handler({
           request,
           url,
@@ -1011,9 +1251,10 @@ export function startServer(config: ServerConfig) {
         if (!(error instanceof ApiError)) {
           console.error("[veslo-server] Unhandled error:", error);
         }
-        const apiError = error instanceof ApiError
-          ? error
-          : new ApiError(500, "internal_error", "Unexpected server error");
+        const apiError =
+          error instanceof ApiError
+            ? error
+            : new ApiError(500, "internal_error", "Unexpected server error");
         recordAiGatewayAuthFailureTrace(request, url, apiError);
         errorMessage = apiError.message;
         errorDetails = apiError.details;
@@ -1024,7 +1265,9 @@ export function startServer(config: ServerConfig) {
 
   (serverOptions as { idleTimeout?: number }).idleTimeout = 120;
 
-  type StoppableServer = ReturnType<typeof Bun.serve> & { stop: (closeActiveConnections?: boolean) => void };
+  type StoppableServer = ReturnType<typeof Bun.serve> & {
+    stop: (closeActiveConnections?: boolean) => void;
+  };
   const server = Bun.serve(serverOptions) as StoppableServer;
   conversationRunLifecycleController.start();
   void automationRunner.start().catch((error) => {
@@ -1042,7 +1285,10 @@ export function startServer(config: ServerConfig) {
   let bridgeServer: StoppableServer | null = null;
   if (bridgeHost && bridgeHost !== config.host) {
     try {
-      bridgeServer = Bun.serve({ ...serverOptions, hostname: bridgeHost }) as StoppableServer;
+      bridgeServer = Bun.serve({
+        ...serverOptions,
+        hostname: bridgeHost,
+      }) as StoppableServer;
       logger.log("info", "veslo-server bridge listener started", {
         bridgeHost,
         port: config.port,
@@ -1078,14 +1324,28 @@ export function startServer(config: ServerConfig) {
 const ACCEPT_ENCODING_IDENTITY = "identity";
 const VESLO_CONVERSATION_RUN_ID_HEADER = "x-veslo-conversation-run-id";
 
-function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string, workspaceId?: string) {
+function buildOpencodeProxyUrl(
+  baseUrl: string,
+  path: string,
+  search: string,
+  workspaceId?: string,
+) {
   const target = new URL(baseUrl);
   const trimmedPath = path.replace(/^\/opencode/, "");
-  const suffix = trimmedPath === "" ? "/" : trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
+  const suffix =
+    trimmedPath === ""
+      ? "/"
+      : trimmedPath.startsWith("/")
+        ? trimmedPath
+        : `/${trimmedPath}`;
   const basePath = target.pathname.replace(/\/+$/, "") || "";
-  const workspaceMount = basePath.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/);
+  const workspaceMount = basePath.match(
+    /^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/,
+  );
   if (workspaceMount) {
-    const id = encodeURIComponent(workspaceId ?? decodeURIComponent(workspaceMount[1] ?? ""));
+    const id = encodeURIComponent(
+      workspaceId ?? decodeURIComponent(workspaceMount[1] ?? ""),
+    );
     target.pathname = `/workspace/${id}/opencode${suffix === "/" ? "" : suffix}`;
   } else {
     target.pathname = `${basePath}${suffix === "/" ? "" : suffix}` || "/";
@@ -1123,16 +1383,22 @@ async function fetchOpencodeJson(
 ) {
   const baseUrl = workspace.baseUrl?.trim() ?? "";
   if (!baseUrl) {
-    throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
+    throw new ApiError(
+      400,
+      "opencode_unconfigured",
+      "OpenCode base URL is missing for this workspace",
+    );
   }
 
   const [pathname = "", search = ""] = path.split("?");
-  const url = new URL(buildOpencodeProxyUrl(
-    baseUrl,
-    pathname.startsWith("/") ? pathname : `/${pathname}`,
-    search ? `?${search}` : "",
-    workspace.id,
-  ));
+  const url = new URL(
+    buildOpencodeProxyUrl(
+      baseUrl,
+      pathname.startsWith("/") ? pathname : `/${pathname}`,
+      search ? `?${search}` : "",
+      workspace.id,
+    ),
+  );
 
   const headers = new Headers();
   headers.set(CONTENT_TYPE_HEADER, "application/json");
@@ -1141,7 +1407,9 @@ async function fetchOpencodeJson(
     headers.set(VESLO_SEND_TRACE_ID_HEADER, sendTraceId);
   }
   const conversationRunId = init.conversationRunId?.trim() ?? "";
-  const shouldSendConversationRunId = Boolean(conversationRunId && isWorkspaceOpencodeProxyUrl(url, workspace.id));
+  const shouldSendConversationRunId = Boolean(
+    conversationRunId && isWorkspaceOpencodeProxyUrl(url, workspace.id),
+  );
   if (shouldSendConversationRunId) {
     headers.set(VESLO_CONVERSATION_RUN_ID_HEADER, conversationRunId);
   }
@@ -1196,11 +1464,16 @@ async function fetchOpencodeJson(
       signal: controller.signal,
     });
 
-    const engineSlotId = response.headers.get("x-veslo-engine-slot-id")?.trim() ?? "";
-    const engineOwnerId = response.headers.get("x-veslo-engine-owner-id")?.trim() ?? "";
-    const enginePidRaw = response.headers.get("x-veslo-engine-pid")?.trim() ?? "";
-    const engineStartedAtRaw = response.headers.get("x-veslo-engine-started-at")?.trim() ?? "";
-    const engineBaseUrl = response.headers.get("x-veslo-engine-base-url")?.trim() ?? "";
+    const engineSlotId =
+      response.headers.get("x-veslo-engine-slot-id")?.trim() ?? "";
+    const engineOwnerId =
+      response.headers.get("x-veslo-engine-owner-id")?.trim() ?? "";
+    const enginePidRaw =
+      response.headers.get("x-veslo-engine-pid")?.trim() ?? "";
+    const engineStartedAtRaw =
+      response.headers.get("x-veslo-engine-started-at")?.trim() ?? "";
+    const engineBaseUrl =
+      response.headers.get("x-veslo-engine-base-url")?.trim() ?? "";
     const enginePid = Number.parseInt(enginePidRaw, 10);
     const engineStartedAt = Number.parseInt(engineStartedAtRaw, 10);
     if (
@@ -1230,16 +1503,31 @@ async function fetchOpencodeJson(
       );
     } catch (error) {
       if (timedOut || isAbortError(error)) {
-        throw new ApiError(502, "opencode_request_timeout", "OpenCode request timed out", {
-          path,
-          timeoutMs,
-        });
+        throw new ApiError(
+          502,
+          "opencode_request_timeout",
+          "OpenCode request timed out",
+          {
+            path,
+            timeoutMs,
+          },
+        );
       }
-      if (error instanceof ApiError && error.code === "upstream_payload_too_large") {
-        throw new ApiError(502, "opencode_response_too_large", "OpenCode response exceeds local parsing limit", {
-          path,
-          ...(error.details && typeof error.details === "object" ? error.details as Record<string, unknown> : {}),
-        });
+      if (
+        error instanceof ApiError &&
+        error.code === "upstream_payload_too_large"
+      ) {
+        throw new ApiError(
+          502,
+          "opencode_response_too_large",
+          "OpenCode response exceeds local parsing limit",
+          {
+            path,
+            ...(error.details && typeof error.details === "object"
+              ? (error.details as Record<string, unknown>)
+              : {}),
+          },
+        );
       }
       throw error;
     }
@@ -1260,9 +1548,10 @@ async function fetchOpencodeJson(
         durationMs: Date.now() - requestStartedAt,
       });
       const localLifecycleBody = isRecordLike(json) ? json : null;
-      const localLifecycleError = localLifecycleBody && typeof localLifecycleBody.error === "string"
-        ? localLifecycleBody.error
-        : null;
+      const localLifecycleError =
+        localLifecycleBody && typeof localLifecycleBody.error === "string"
+          ? localLifecycleBody.error
+          : null;
       if (
         response.status === 409 &&
         (localLifecycleError === "shared_engine_skill_view_busy" ||
@@ -1270,22 +1559,35 @@ async function fetchOpencodeJson(
           localLifecycleError === "skill_view_stale" ||
           localLifecycleError === "skill_view_changed")
       ) {
-        if (localLifecycleError === "skill_view_changed" && workspace.workspaceType === "local") {
+        if (
+          localLifecycleError === "skill_view_changed" &&
+          workspace.workspaceType === "local"
+        ) {
           invalidateActiveRuntimeSkillView(workspace);
         }
-        throw new ApiError(409, localLifecycleError, typeof localLifecycleBody?.message === "string"
-          ? localLifecycleBody.message
-          : "The local OpenCode runtime rejected the skill view", {
+        throw new ApiError(
+          409,
+          localLifecycleError,
+          typeof localLifecycleBody?.message === "string"
+            ? localLifecycleBody.message
+            : "The local OpenCode runtime rejected the skill view",
+          {
+            status: response.status,
+            body: json ?? text,
+            path,
+          },
+        );
+      }
+      throw new ApiError(
+        502,
+        "opencode_request_failed",
+        "OpenCode request failed",
+        {
           status: response.status,
           body: json ?? text,
           path,
-        });
-      }
-      throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-        status: response.status,
-        body: json ?? text,
-        path,
-      });
+        },
+      );
     }
     recordSendWorkflowTrace("server", "server:opencode-json:done", {
       traceId: sendTraceId || null,
@@ -1307,10 +1609,15 @@ async function fetchOpencodeJson(
         timeoutMs,
         durationMs: Date.now() - requestStartedAt,
       });
-      throw new ApiError(502, "opencode_request_timeout", "OpenCode request timed out", {
-        path,
-        timeoutMs,
-      });
+      throw new ApiError(
+        502,
+        "opencode_request_timeout",
+        "OpenCode request timed out",
+        {
+          path,
+          timeoutMs,
+        },
+      );
     }
     recordSendWorkflowTrace("server", "server:opencode-json:error", {
       traceId: sendTraceId || null,
@@ -1320,10 +1627,15 @@ async function fetchOpencodeJson(
       error: error instanceof Error ? error.message : String(error),
       durationMs: Date.now() - requestStartedAt,
     });
-    throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
-      path,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    throw new ApiError(
+      502,
+      "opencode_request_failed",
+      "OpenCode request failed",
+      {
+        path,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
   } finally {
     clearTimeout(timeout);
   }
@@ -1361,7 +1673,8 @@ function shouldRetryOpenCodeViaOrchestrator(error: unknown): boolean {
 }
 
 function shouldRetryConversationSubmitAfterTransport(error: unknown): boolean {
-  if (!(error instanceof ApiError) || error.code !== "opencode_request_failed") return false;
+  if (!(error instanceof ApiError) || error.code !== "opencode_request_failed")
+    return false;
   const details = isRecordLike(error.details) ? error.details : {};
   if (typeof details.status === "number") return false;
   const text = detailsText(error.details).toLowerCase();
@@ -1375,7 +1688,10 @@ function shouldRetryConversationSubmitAfterTransport(error: unknown): boolean {
   );
 }
 
-function orchestratorFallbackWorkspace(config: ServerConfig, workspace: WorkspaceInfo): WorkspaceInfo | null {
+function orchestratorFallbackWorkspace(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+): WorkspaceInfo | null {
   const baseUrl = buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
   if (!baseUrl) return null;
   if (workspace.baseUrl?.trim() === baseUrl) return null;
@@ -1387,11 +1703,18 @@ function orchestratorWorkspaceRegistrationKey(
   workspace: WorkspaceInfo,
 ): string | null {
   if (workspace.workspaceType !== "local") return null;
-  const daemonUrl = config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
+  const daemonUrl =
+    config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
   const workspaceId = workspace.id?.trim() ?? "";
   const workspacePath = workspace.path?.trim() ?? "";
   if (!daemonUrl || !workspaceId || !workspacePath) return null;
-  return daemonUrl + "\0" + workspaceId + "\0" + normalizeOpencodeDirectory(workspacePath);
+  return (
+    daemonUrl +
+    "\0" +
+    workspaceId +
+    "\0" +
+    normalizeOpencodeDirectory(workspacePath)
+  );
 }
 
 let unscopedOrchestratorRegistrationFlightSequence = 0;
@@ -1404,13 +1727,17 @@ function recordOrchestratorWorkspaceRegistrationFlight(
     scope: "http-submit" | "background";
   },
 ): void {
-  recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:flight", {
-    traceId: init.sendTraceId?.trim() || null,
-    action: input.action,
-    flightId: input.flightId,
-    caller: input.scope === "http-submit" ? "submit" : "background",
-    scope: input.scope,
-  });
+  recordSendWorkflowTrace(
+    "server",
+    "server:orchestrator-workspace-register:flight",
+    {
+      traceId: init.sendTraceId?.trim() || null,
+      action: input.action,
+      flightId: input.flightId,
+      caller: input.scope === "http-submit" ? "submit" : "background",
+      scope: input.scope,
+    },
+  );
 }
 
 async function performOrchestratorWorkspaceRegistration(
@@ -1419,7 +1746,8 @@ async function performOrchestratorWorkspaceRegistration(
   init: Pick<Parameters<typeof fetchOpencodeJson>[2], "method" | "sendTraceId">,
 ): Promise<void> {
   if (workspace.workspaceType !== "local") return;
-  const daemonUrl = config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
+  const daemonUrl =
+    config.orchestratorDaemonUrl?.trim().replace(/\/+$/, "") ?? "";
   const workspaceId = workspace.id?.trim() ?? "";
   const workspacePath = workspace.path?.trim() ?? "";
   if (!daemonUrl || !workspaceId || !workspacePath) return;
@@ -1427,12 +1755,16 @@ async function performOrchestratorWorkspaceRegistration(
   const timeoutMs = resolveOpenCodeJsonFetchTimeoutMs();
   const targetUrl = `${daemonUrl}/workspaces`;
   const requestStartedAt = Date.now();
-  recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:start", {
-    traceId: init.sendTraceId?.trim() || null,
-    workspaceId,
-    method: init.method,
-    timeoutMs,
-  });
+  recordSendWorkflowTrace(
+    "server",
+    "server:orchestrator-workspace-register:start",
+    {
+      traceId: init.sendTraceId?.trim() || null,
+      workspaceId,
+      method: init.method,
+      timeoutMs,
+    },
+  );
   const controller = new AbortController();
   let timedOut = false;
   const timeout = setTimeout(() => {
@@ -1456,15 +1788,22 @@ async function performOrchestratorWorkspaceRegistration(
       }),
       signal: controller.signal,
     });
-    const text = await readResponseTextWithLimit(response, 128 * 1024).catch((error) => {
-      if (timedOut || isAbortError(error)) {
-        throw new ApiError(502, "orchestrator_workspace_registration_timeout", "Orchestrator workspace registration timed out", {
-          workspaceId,
-          timeoutMs,
-        });
-      }
-      throw error;
-    });
+    const text = await readResponseTextWithLimit(response, 128 * 1024).catch(
+      (error) => {
+        if (timedOut || isAbortError(error)) {
+          throw new ApiError(
+            502,
+            "orchestrator_workspace_registration_timeout",
+            "Orchestrator workspace registration timed out",
+            {
+              workspaceId,
+              timeoutMs,
+            },
+          );
+        }
+        throw error;
+      },
+    );
     let body: unknown = null;
     try {
       body = text ? JSON.parse(text) : null;
@@ -1473,38 +1812,61 @@ async function performOrchestratorWorkspaceRegistration(
     }
     if (!response.ok) {
       if ([404, 405, 501].includes(response.status)) {
-        recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:unsupported", {
-          traceId: init.sendTraceId?.trim() || null,
-          workspaceId,
-          status: response.status,
-          durationMs: Date.now() - requestStartedAt,
-        });
+        recordSendWorkflowTrace(
+          "server",
+          "server:orchestrator-workspace-register:unsupported",
+          {
+            traceId: init.sendTraceId?.trim() || null,
+            workspaceId,
+            status: response.status,
+            durationMs: Date.now() - requestStartedAt,
+          },
+        );
         return;
       }
-      throw new ApiError(502, "orchestrator_workspace_registration_failed", "Orchestrator workspace registration failed", {
+      throw new ApiError(
+        502,
+        "orchestrator_workspace_registration_failed",
+        "Orchestrator workspace registration failed",
+        {
+          workspaceId,
+          status: response.status,
+          body,
+        },
+      );
+    }
+    recordSendWorkflowTrace(
+      "server",
+      "server:orchestrator-workspace-register:done",
+      {
+        traceId: init.sendTraceId?.trim() || null,
         workspaceId,
         status: response.status,
-        body,
-      });
-    }
-    recordSendWorkflowTrace("server", "server:orchestrator-workspace-register:done", {
-      traceId: init.sendTraceId?.trim() || null,
-      workspaceId,
-      status: response.status,
-      durationMs: Date.now() - requestStartedAt,
-    });
+        durationMs: Date.now() - requestStartedAt,
+      },
+    );
   } catch (error) {
     if (error instanceof ApiError) throw error;
     if (timedOut || isAbortError(error)) {
-      throw new ApiError(502, "orchestrator_workspace_registration_timeout", "Orchestrator workspace registration timed out", {
-        workspaceId,
-        timeoutMs,
-      });
+      throw new ApiError(
+        502,
+        "orchestrator_workspace_registration_timeout",
+        "Orchestrator workspace registration timed out",
+        {
+          workspaceId,
+          timeoutMs,
+        },
+      );
     }
-    throw new ApiError(502, "orchestrator_workspace_registration_failed", "Orchestrator workspace registration failed", {
-      workspaceId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    throw new ApiError(
+      502,
+      "orchestrator_workspace_registration_failed",
+      "Orchestrator workspace registration failed",
+      {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
   } finally {
     clearTimeout(timeout);
   }
@@ -1519,9 +1881,16 @@ async function ensureOrchestratorWorkspaceRegistered(
   >,
 ): Promise<void> {
   const scope = init.orchestratorRegistrationScope ?? null;
-  const registrationKey = orchestratorWorkspaceRegistrationKey(config, workspace);
+  const registrationKey = orchestratorWorkspaceRegistrationKey(
+    config,
+    workspace,
+  );
   if (!registrationKey) {
-    return await performOrchestratorWorkspaceRegistration(config, workspace, init);
+    return await performOrchestratorWorkspaceRegistration(
+      config,
+      workspace,
+      init,
+    );
   }
 
   if (scope) {
@@ -1538,7 +1907,9 @@ async function ensureOrchestratorWorkspaceRegistered(
     const flightId = scope.nextFlightId();
     let promise!: Promise<void>;
     promise = Promise.resolve()
-      .then(() => performOrchestratorWorkspaceRegistration(config, workspace, init))
+      .then(() =>
+        performOrchestratorWorkspaceRegistration(config, workspace, init),
+      )
       .then(
         () => {
           recordOrchestratorWorkspaceRegistrationFlight(init, {
@@ -1568,7 +1939,9 @@ async function ensureOrchestratorWorkspaceRegistered(
     return await promise;
   }
 
-  const flightId = "background-registration-" + String(++unscopedOrchestratorRegistrationFlightSequence);
+  const flightId =
+    "background-registration-" +
+    String(++unscopedOrchestratorRegistrationFlightSequence);
   recordOrchestratorWorkspaceRegistrationFlight(init, {
     action: "start",
     flightId,
@@ -1597,8 +1970,14 @@ async function fetchOpencodeJsonWithOrchestratorFallback(
   path: string,
   init: Parameters<typeof fetchOpencodeJson>[2],
 ) {
-  const orchestratorBaseUrl = buildOrchestratorWorkspaceOpencodeBaseUrl(config, workspace);
-  if (orchestratorBaseUrl && workspace.baseUrl?.trim() === orchestratorBaseUrl) {
+  const orchestratorBaseUrl = buildOrchestratorWorkspaceOpencodeBaseUrl(
+    config,
+    workspace,
+  );
+  if (
+    orchestratorBaseUrl &&
+    workspace.baseUrl?.trim() === orchestratorBaseUrl
+  ) {
     await ensureOrchestratorWorkspaceRegistered(config, workspace, init);
   }
   try {
@@ -1608,16 +1987,20 @@ async function fetchOpencodeJsonWithOrchestratorFallback(
     if (!fallback || !shouldRetryOpenCodeViaOrchestrator(error)) {
       throw error;
     }
-    recordSendWorkflowTrace("server", "server:opencode-json:fallback-orchestrator", {
-      traceId: init.sendTraceId?.trim() || null,
-      workspaceId: workspace.id,
-      method: init.method,
-      path,
-      primaryBaseUrl: workspace.baseUrl?.trim() || null,
-      fallbackBaseUrl: fallback.baseUrl ?? null,
-      error: error instanceof Error ? error.message : String(error),
-      code: error instanceof ApiError ? error.code : null,
-    });
+    recordSendWorkflowTrace(
+      "server",
+      "server:opencode-json:fallback-orchestrator",
+      {
+        traceId: init.sendTraceId?.trim() || null,
+        workspaceId: workspace.id,
+        method: init.method,
+        path,
+        primaryBaseUrl: workspace.baseUrl?.trim() || null,
+        fallbackBaseUrl: fallback.baseUrl ?? null,
+        error: error instanceof Error ? error.message : String(error),
+        code: error instanceof ApiError ? error.code : null,
+      },
+    );
     await ensureOrchestratorWorkspaceRegistered(config, workspace, init);
     return await fetchOpencodeJson(fallback, path, init);
   }
@@ -1632,7 +2015,13 @@ function createOpenCodeAutomationExecutor(
       targetWorkspace: WorkspaceInfo,
       path: string,
       init: Parameters<typeof fetchOpencodeJson>[2],
-    ) => fetchOpencodeJsonWithOrchestratorFallback(config, targetWorkspace, path, init);
+    ) =>
+      fetchOpencodeJsonWithOrchestratorFallback(
+        config,
+        targetWorkspace,
+        path,
+        init,
+      );
 
     const preferredSessionId = input.target.preferredSessionId?.trim() || "";
     if (preferredSessionId) {
@@ -1643,9 +2032,16 @@ function createOpenCodeAutomationExecutor(
           { method: "GET", timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS },
         );
         const existingRecord = isRecordLike(existing) ? existing : {};
-        const existingId = typeof existingRecord.id === "string" ? existingRecord.id.trim() : "";
+        const existingId =
+          typeof existingRecord.id === "string" ? existingRecord.id.trim() : "";
         if (existingId) {
-          await postAutomationPrompt(fetchAutomationOpenCodeJson, workspace, existingId, input.prompt, input.target);
+          await postAutomationPrompt(
+            fetchAutomationOpenCodeJson,
+            workspace,
+            existingId,
+            input.prompt,
+            input.target,
+          );
           return { sessionId: existingId, createdSession: false };
         }
       } catch {
@@ -1655,15 +2051,30 @@ function createOpenCodeAutomationExecutor(
 
     const created = await fetchAutomationOpenCodeJson(workspace, "/session", {
       method: "POST",
-      body: { title: input.target.fallbackTitle?.trim() || `Automation: ${input.automation.name}` },
+      body: {
+        title:
+          input.target.fallbackTitle?.trim() ||
+          `Automation: ${input.automation.name}`,
+      },
       timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
     });
     const createdRecord = isRecordLike(created) ? created : {};
-    const sessionId = typeof createdRecord.id === "string" ? createdRecord.id.trim() : "";
+    const sessionId =
+      typeof createdRecord.id === "string" ? createdRecord.id.trim() : "";
     if (!sessionId) {
-      throw new ApiError(502, "opencode_failed", "OpenCode session did not return an id");
+      throw new ApiError(
+        502,
+        "opencode_failed",
+        "OpenCode session did not return an id",
+      );
     }
-    await postAutomationPrompt(fetchAutomationOpenCodeJson, workspace, sessionId, input.prompt, input.target);
+    await postAutomationPrompt(
+      fetchAutomationOpenCodeJson,
+      workspace,
+      sessionId,
+      input.prompt,
+      input.target,
+    );
     return { sessionId, createdSession: true };
   };
 }
@@ -1686,21 +2097,32 @@ async function postAutomationPrompt(
   if (agent) {
     body.agent = agent;
   }
-  const variant = typeof target.variant === "string" ? target.variant.trim() : "";
+  const variant =
+    typeof target.variant === "string" ? target.variant.trim() : "";
   if (variant) {
     body.variant = variant;
   }
-  await fetchAutomationOpenCodeJson(workspace, `/session/${encodeURIComponent(sessionId)}/prompt_async`, {
-    method: "POST",
-    body,
-    timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
-  });
+  await fetchAutomationOpenCodeJson(
+    workspace,
+    `/session/${encodeURIComponent(sessionId)}/prompt_async`,
+    {
+      method: "POST",
+      body,
+      timeoutMs: AUTOMATION_OPENCODE_REQUEST_TIMEOUT_MS,
+    },
+  );
 }
 
-function buildOpenCodeRouterProxyUrl(baseUrl: string, path: string, search: string) {
+function buildOpenCodeRouterProxyUrl(
+  baseUrl: string,
+  path: string,
+  search: string,
+) {
   const target = new URL(baseUrl);
   const trimmedPath = path.replace(/^\/opencode-router/, "");
-  const normalized = trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
+  const normalized = trimmedPath.startsWith("/")
+    ? trimmedPath
+    : `/${trimmedPath}`;
   target.pathname = normalized === "/" ? "/" : normalized;
   target.search = search;
   return target.toString();
@@ -1715,11 +2137,20 @@ async function proxyOpencodeRequest(input: {
   const workspace = input.workspace;
   const baseUrl = workspace?.baseUrl?.trim() ?? "";
   if (!baseUrl) {
-    throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
+    throw new ApiError(
+      400,
+      "opencode_unconfigured",
+      "OpenCode base URL is missing for this workspace",
+    );
   }
 
   const proxyPath = input.proxyPath ?? input.url.pathname;
-  const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search, workspace?.id);
+  const targetUrl = buildOpencodeProxyUrl(
+    baseUrl,
+    proxyPath,
+    input.url.search,
+    workspace?.id,
+  );
   const headers = new Headers(input.request.headers);
   headers.delete(AUTHORIZATION_HEADER);
   headers.delete(VESLO_HOST_TOKEN_HEADER);
@@ -1739,7 +2170,8 @@ async function proxyOpencodeRequest(input: {
   // header through the proxy.
   headers.delete(OPENCODE_DIRECTORY_HEADER);
   const queryDir = input.url.searchParams.get("directory")?.trim() || null;
-  const directory = queryDir ?? (workspace ? resolveOpencodeDirectory(workspace) : null);
+  const directory =
+    queryDir ?? (workspace ? resolveOpencodeDirectory(workspace) : null);
   if (directory) {
     headers.set(OPENCODE_DIRECTORY_HEADER, directory);
   }
@@ -1750,7 +2182,8 @@ async function proxyOpencodeRequest(input: {
   }
 
   const method = input.request.method.toUpperCase();
-  const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  const body =
+    method === "GET" || method === "HEAD" ? undefined : input.request.body;
   // Bound the wait for upstream response headers only - the timer is cleared
   // as soon as fetch resolves, so streaming bodies (SSE) are never aborted.
   // Without this, a hung engine/orchestrator held proxied requests open until
@@ -1762,7 +2195,11 @@ async function proxyOpencodeRequest(input: {
     timedOut = true;
     controller.abort();
   }, headersTimeoutMs);
-  if (typeof headersTimer === "object" && headersTimer && "unref" in headersTimer) {
+  if (
+    typeof headersTimer === "object" &&
+    headersTimer &&
+    "unref" in headersTimer
+  ) {
     (headersTimer as { unref?: () => void }).unref?.();
   }
   let response: Response;
@@ -1775,15 +2212,25 @@ async function proxyOpencodeRequest(input: {
     });
   } catch (error) {
     if (timedOut || isAbortError(error)) {
-      throw new ApiError(502, "opencode_proxy_timeout", "OpenCode proxy timed out waiting for upstream response", {
-        url: targetUrl,
-        timeoutMs: headersTimeoutMs,
-      });
+      throw new ApiError(
+        502,
+        "opencode_proxy_timeout",
+        "OpenCode proxy timed out waiting for upstream response",
+        {
+          url: targetUrl,
+          timeoutMs: headersTimeoutMs,
+        },
+      );
     }
-    throw new ApiError(502, "opencode_proxy_failed", "OpenCode proxy request failed", {
-      url: targetUrl,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    throw new ApiError(
+      502,
+      "opencode_proxy_failed",
+      "OpenCode proxy request failed",
+      {
+        url: targetUrl,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
   } finally {
     clearTimeout(headersTimer);
   }
@@ -1813,7 +2260,11 @@ export function sanitizeProxyResponse(response: Response): Response {
 function resolveOpenCodeRouterBaseUrl(): string {
   const port = parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT);
   if (!port) {
-    throw new ApiError(404, "opencodeRouter_unconfigured", "OpenCodeRouter is not configured on this host");
+    throw new ApiError(
+      404,
+      "opencodeRouter_unconfigured",
+      "OpenCodeRouter is not configured on this host",
+    );
   }
   return `http://127.0.0.1:${port}`;
 }
@@ -1825,7 +2276,11 @@ async function proxyOpenCodeRouterRequest(input: {
 }) {
   const baseUrl = resolveOpenCodeRouterBaseUrl();
   const proxyPath = input.proxyPath ?? input.url.pathname;
-  const targetUrl = buildOpenCodeRouterProxyUrl(baseUrl, proxyPath, input.url.search);
+  const targetUrl = buildOpenCodeRouterProxyUrl(
+    baseUrl,
+    proxyPath,
+    input.url.search,
+  );
   const headers = new Headers(input.request.headers);
   headers.delete(AUTHORIZATION_HEADER);
   headers.delete(VESLO_HOST_TOKEN_HEADER);
@@ -1834,7 +2289,8 @@ async function proxyOpenCodeRouterRequest(input: {
   headers.delete(ORIGIN_HEADER);
 
   const method = input.request.method.toUpperCase();
-  const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  const body =
+    method === "GET" || method === "HEAD" ? undefined : input.request.body;
   try {
     const response = await fetch(targetUrl, {
       method,
@@ -1844,12 +2300,17 @@ async function proxyOpenCodeRouterRequest(input: {
     return response;
   } catch (error) {
     const port = parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT);
-    throw new ApiError(503, "opencodeRouter_unreachable", "OpenCodeRouter is not reachable on this host", {
-      baseUrl,
-      port,
-      targetUrl,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    throw new ApiError(
+      503,
+      "opencodeRouter_unreachable",
+      "OpenCodeRouter is not reachable on this host",
+      {
+        baseUrl,
+        port,
+        targetUrl,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
   }
 }
 
@@ -1863,22 +2324,33 @@ function resolveAiGatewayBaseUrl(): string {
   if (process.env.VESLO_DEPLOYMENT_DOMAIN?.trim()) {
     return deploymentServiceUrl("ai", process.env.VESLO_DEPLOYMENT_DOMAIN);
   }
-  const port = parseInteger(process.env.AI_GATEWAY_PORT) ?? AI_GATEWAY_DEFAULT_PORT;
+  const port =
+    parseInteger(process.env.AI_GATEWAY_PORT) ?? AI_GATEWAY_DEFAULT_PORT;
   return `http://127.0.0.1:${port}`;
 }
 
 function requireAiGatewayCallerAuth(request: Request): string {
-  const authorization = request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
+  const authorization =
+    request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
   if (!authorization) {
-    throw new ApiError(401, "gateway_unauthorized", "Gateway caller authorization is required");
+    throw new ApiError(
+      401,
+      "gateway_unauthorized",
+      "Gateway caller authorization is required",
+    );
   }
   return authorization;
 }
 
 function requireAiGatewaySessionId(request: Request): string {
-  const sessionId = request.headers.get(GATEWAY_SESSION_ID_HEADER)?.trim() ?? "";
+  const sessionId =
+    request.headers.get(GATEWAY_SESSION_ID_HEADER)?.trim() ?? "";
   if (!sessionId) {
-    throw new ApiError(400, "gateway_session_required", "Gateway session id is required");
+    throw new ApiError(
+      400,
+      "gateway_session_required",
+      "Gateway session id is required",
+    );
   }
   return sessionId;
 }
@@ -1903,7 +2375,11 @@ function resolveAiGatewayPathForTrace(pathname: string): string | null {
   return gatewayPath || "/";
 }
 
-function recordAiGatewayAuthFailureTrace(request: Request, url: URL, error: ApiError): void {
+function recordAiGatewayAuthFailureTrace(
+  request: Request,
+  url: URL,
+  error: ApiError,
+): void {
   if (error.status !== 401 && error.status !== 403) return;
   const gatewayPath = resolveAiGatewayPathForTrace(url.pathname);
   if (!gatewayPath) return;
@@ -1917,13 +2393,25 @@ function recordAiGatewayAuthFailureTrace(request: Request, url: URL, error: ApiE
     code: error.code,
     incomingHeaders: headerNamesForTrace(request.headers),
     incomingInternalHeaders: {
-      hasGatewayAccessToken: Boolean(trimmedHeader(request, GATEWAY_ACCESS_TOKEN_HEADER)),
-      hasGatewayCallerAuth: Boolean(trimmedHeader(request, GATEWAY_CALLER_AUTH_HEADER)),
-      hasWorkspaceId: Boolean(trimmedHeader(request, GATEWAY_WORKSPACE_ID_HEADER)),
-      hasSendTraceId: Boolean(trimmedHeader(request, VESLO_SEND_TRACE_ID_HEADER)),
+      hasGatewayAccessToken: Boolean(
+        trimmedHeader(request, GATEWAY_ACCESS_TOKEN_HEADER),
+      ),
+      hasGatewayCallerAuth: Boolean(
+        trimmedHeader(request, GATEWAY_CALLER_AUTH_HEADER),
+      ),
+      hasWorkspaceId: Boolean(
+        trimmedHeader(request, GATEWAY_WORKSPACE_ID_HEADER),
+      ),
+      hasSendTraceId: Boolean(
+        trimmedHeader(request, VESLO_SEND_TRACE_ID_HEADER),
+      ),
       hasSessionId: Boolean(trimmedHeader(request, GATEWAY_SESSION_ID_HEADER)),
-      hasOpenCodeSessionId: Boolean(trimmedHeader(request, OPENCODE_SESSION_ID_HEADER)),
-      hasOpenCodeSessionAffinity: Boolean(trimmedHeader(request, OPENCODE_SESSION_AFFINITY_HEADER)),
+      hasOpenCodeSessionId: Boolean(
+        trimmedHeader(request, OPENCODE_SESSION_ID_HEADER),
+      ),
+      hasOpenCodeSessionAffinity: Boolean(
+        trimmedHeader(request, OPENCODE_SESSION_AFFINITY_HEADER),
+      ),
       hasHostToken: Boolean(trimmedHeader(request, VESLO_HOST_TOKEN_HEADER)),
       hasClientId: Boolean(trimmedHeader(request, VESLO_CLIENT_ID_HEADER)),
     },
@@ -1985,11 +2473,15 @@ function resolveAiGatewayProviderAuthorization(input: {
   });
 }
 
-function readManagedAiModelRef(value: unknown): { providerID: string; modelID: string } | null {
+function readManagedAiModelRef(
+  value: unknown,
+): { providerID: string; modelID: string } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  const providerID = typeof record.providerID === "string" ? record.providerID.trim() : "";
-  const modelID = typeof record.modelID === "string" ? record.modelID.trim() : "";
+  const providerID =
+    typeof record.providerID === "string" ? record.providerID.trim() : "";
+  const modelID =
+    typeof record.modelID === "string" ? record.modelID.trim() : "";
   return providerID && modelID ? { providerID, modelID } : null;
 }
 
@@ -1997,25 +2489,51 @@ function readManagedAiCatalogDescriptor(input: {
   value: unknown;
   providerID: string;
   modelID: string;
-}): { providerID: string; modelID: string; attachment?: boolean; modalities?: { input?: string[] } } | null {
-  if (!input.value || typeof input.value !== "object" || Array.isArray(input.value)) return null;
+}): {
+  providerID: string;
+  modelID: string;
+  attachment?: boolean;
+  modalities?: { input?: string[] };
+} | null {
+  if (
+    !input.value ||
+    typeof input.value !== "object" ||
+    Array.isArray(input.value)
+  )
+    return null;
   const aiAccess = (input.value as Record<string, unknown>).aiAccess;
-  if (!aiAccess || typeof aiAccess !== "object" || Array.isArray(aiAccess)) return null;
-  const selectableModels = (aiAccess as Record<string, unknown>).selectableModels;
+  if (!aiAccess || typeof aiAccess !== "object" || Array.isArray(aiAccess))
+    return null;
+  const selectableModels = (aiAccess as Record<string, unknown>)
+    .selectableModels;
   if (!Array.isArray(selectableModels)) return null;
   const descriptor = selectableModels.find((candidate) => {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+      return false;
     const record = candidate as Record<string, unknown>;
-    return record.provider === input.providerID && record.model === input.modelID;
+    return (
+      record.provider === input.providerID && record.model === input.modelID
+    );
   });
-  if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor)) return null;
+  if (
+    !descriptor ||
+    typeof descriptor !== "object" ||
+    Array.isArray(descriptor)
+  )
+    return null;
   const record = descriptor as Record<string, unknown>;
-  const attachment = typeof record.attachment === "boolean" ? record.attachment : undefined;
-  const modalitiesRecord = record.modalities && typeof record.modalities === "object" && !Array.isArray(record.modalities)
-    ? record.modalities as Record<string, unknown>
-    : null;
+  const attachment =
+    typeof record.attachment === "boolean" ? record.attachment : undefined;
+  const modalitiesRecord =
+    record.modalities &&
+    typeof record.modalities === "object" &&
+    !Array.isArray(record.modalities)
+      ? (record.modalities as Record<string, unknown>)
+      : null;
   const inputModalities = Array.isArray(modalitiesRecord?.input)
-    ? modalitiesRecord.input.filter((item): item is string => typeof item === "string")
+    ? modalitiesRecord.input.filter(
+        (item): item is string => typeof item === "string",
+      )
     : undefined;
   return {
     providerID: input.providerID,
@@ -2073,26 +2591,37 @@ function createManagedAiModelDescriptorResolver(input: {
       });
       // Authorize before reading the descriptor cache: a cached capability must
       // never outlive the run-scoped authorization that permitted it.
-      const remainingAuthorizationMs = aiGatewayRuntimeOwner.runtimeAuthorizationRemainingMs({
-        actorTokenHash: binding.actorTokenHash,
-        orgId: binding.orgId,
-      });
+      const remainingAuthorizationMs =
+        aiGatewayRuntimeOwner.runtimeAuthorizationRemainingMs({
+          actorTokenHash: binding.actorTokenHash,
+          orgId: binding.orgId,
+        });
       const descriptorCacheTtlMs = Math.min(
         MANAGED_AI_MODEL_DESCRIPTOR_CACHE_TTL_MS,
         Math.max(0, remainingAuthorizationMs ?? 0),
       );
-      const cached = aiGatewayRuntimeOwner.getManagedAiModelCapabilityDescriptor(cacheKey);
+      const cached =
+        aiGatewayRuntimeOwner.getManagedAiModelCapabilityDescriptor(cacheKey);
       if (cached) return cached;
-      const headers = new Headers({ [AUTHORIZATION_HEADER]: authorization.authorization });
-      if (authorization.orgId) headers.set(VESLO_ORG_ID_HEADER, authorization.orgId);
+      const headers = new Headers({
+        [AUTHORIZATION_HEADER]: authorization.authorization,
+      });
+      if (authorization.orgId)
+        headers.set(VESLO_ORG_ID_HEADER, authorization.orgId);
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), MANAGED_AI_MODEL_DESCRIPTOR_REQUEST_TIMEOUT_MS);
+      const timeout = setTimeout(
+        () => controller.abort(),
+        MANAGED_AI_MODEL_DESCRIPTOR_REQUEST_TIMEOUT_MS,
+      );
       let response: Response;
       try {
-        response = await fetch(`${resolveAiGatewayBaseUrl()}/api/me/ai-access`, {
-          headers,
-          signal: controller.signal,
-        });
+        response = await fetch(
+          `${resolveAiGatewayBaseUrl()}/api/me/ai-access`,
+          {
+            headers,
+            signal: controller.signal,
+          },
+        );
       } finally {
         clearTimeout(timeout);
       }
@@ -2118,16 +2647,23 @@ function createManagedAiModelDescriptorResolver(input: {
   };
 }
 
-function listActiveAiGatewayRunContexts(now = Date.now()): ActiveAiGatewayRunContext[] {
+function listActiveAiGatewayRunContexts(
+  now = Date.now(),
+): ActiveAiGatewayRunContext[] {
   return aiGatewayRuntimeOwner.listActiveRunContexts(now);
 }
 
 function unregisterActiveAiGatewayRun(
-  input: Pick<ActiveAiGatewayRunContext, "workspaceId" | "conversationId" | "runId" | "opencodeSessionId">,
+  input: Pick<
+    ActiveAiGatewayRunContext,
+    "workspaceId" | "conversationId" | "runId" | "opencodeSessionId"
+  >,
 ): void {
   aiGatewayRuntimeOwner.unregisterActiveRun(input);
 }
-function registerActiveAiGatewayRun(input: Omit<ActiveAiGatewayRunContext, "at">): void {
+function registerActiveAiGatewayRun(
+  input: Omit<ActiveAiGatewayRunContext, "at">,
+): void {
   aiGatewayRuntimeOwner.registerActiveRun(input);
 }
 
@@ -2139,7 +2675,9 @@ function resolveAiGatewaySession(input: {
   return aiGatewayRuntimeOwner.resolveSession(input);
 }
 
-function registerActiveAiGatewayProxyRequest(input: Omit<ActiveAiGatewayProxyRequest, "abortReason">): ActiveAiGatewayProxyRequest {
+function registerActiveAiGatewayProxyRequest(
+  input: Omit<ActiveAiGatewayProxyRequest, "abortReason">,
+): ActiveAiGatewayProxyRequest {
   return aiGatewayRuntimeOwner.registerActiveProxyRequest(input);
 }
 
@@ -2214,7 +2752,10 @@ type AiGatewayRequestDiagnostic = {
   hasReasoning?: boolean;
 };
 
-function summarizeChatCompletionBody(json: Record<string, unknown>, text: string): AiGatewayRequestDiagnostic {
+function summarizeChatCompletionBody(
+  json: Record<string, unknown>,
+  text: string,
+): AiGatewayRequestDiagnostic {
   const messages = Array.isArray(json.messages) ? json.messages : [];
   const messageRoles = messages
     .map((message) => {
@@ -2234,7 +2775,10 @@ function summarizeChatCompletionBody(json: Record<string, unknown>, text: string
       : Array.isArray(lastUserContent)
         ? Buffer.byteLength(JSON.stringify(lastUserContent), "utf8")
         : undefined;
-  const model = typeof json.model === "string" && json.model.trim() ? json.model.trim() : undefined;
+  const model =
+    typeof json.model === "string" && json.model.trim()
+      ? json.model.trim()
+      : undefined;
   const tools = Array.isArray(json.tools) ? json.tools : undefined;
 
   const diagnostic: AiGatewayRequestDiagnostic = {
@@ -2248,26 +2792,42 @@ function summarizeChatCompletionBody(json: Record<string, unknown>, text: string
     hasTools: Boolean(tools?.length),
     hasToolChoice: "tool_choice" in json || "toolChoice" in json,
     hasResponseFormat: "response_format" in json || "responseFormat" in json,
-    hasReasoning: "reasoning" in json || "reasoning_effort" in json || "reasoningEffort" in json,
+    hasReasoning:
+      "reasoning" in json ||
+      "reasoning_effort" in json ||
+      "reasoningEffort" in json,
   };
   if (model) diagnostic.model = model;
   if (typeof json.stream === "boolean") diagnostic.stream = json.stream;
   const lastMessageRole = messageRoles[messageRoles.length - 1];
   if (lastMessageRole) diagnostic.lastMessageRole = lastMessageRole;
-  if (lastUserContentBytes !== undefined) diagnostic.lastUserContentBytes = lastUserContentBytes;
+  if (lastUserContentBytes !== undefined)
+    diagnostic.lastUserContentBytes = lastUserContentBytes;
   if (tools) diagnostic.toolCount = tools.length;
   return diagnostic;
 }
 
-async function readAiGatewayRequestDiagnostic(request: Request): Promise<AiGatewayRequestDiagnostic> {
+async function readAiGatewayRequestDiagnostic(
+  request: Request,
+): Promise<AiGatewayRequestDiagnostic> {
   const contentType = request.headers.get(CONTENT_TYPE_HEADER) ?? "";
   if (!contentType.toLowerCase().includes("application/json")) {
-    return { contentType: contentType || null, contentLength: null, skipped: "non-json" };
+    return {
+      contentType: contentType || null,
+      contentLength: null,
+      skipped: "non-json",
+    };
   }
 
-  const contentLength = Number(request.headers.get(CONTENT_LENGTH_HEADER) ?? NaN);
+  const contentLength = Number(
+    request.headers.get(CONTENT_LENGTH_HEADER) ?? NaN,
+  );
   if (!Number.isFinite(contentLength) || contentLength < 0) {
-    return { contentType: contentType || null, contentLength: null, skipped: "unknown-content-length" };
+    return {
+      contentType: contentType || null,
+      contentLength: null,
+      skipped: "unknown-content-length",
+    };
   }
   if (contentLength > AI_GATEWAY_MODEL_DIAGNOSTIC_MAX_REQUEST_BYTES) {
     return {
@@ -2295,22 +2855,34 @@ async function readAiGatewayRequestDiagnostic(request: Request): Promise<AiGatew
       contentLength,
     };
   } catch {
-    return { contentType: contentType || null, contentLength, skipped: "parse-failed" };
+    return {
+      contentType: contentType || null,
+      contentLength,
+      skipped: "parse-failed",
+    };
   }
 }
 
-function redactKnownSecretsFromText(text: string, secrets: Array<string | undefined>): string {
+function redactKnownSecretsFromText(
+  text: string,
+  secrets: Array<string | undefined>,
+): string {
   let output = text;
   for (const secret of secrets) {
     if (!secret) continue;
     output = output.split(secret).join(REDACTED_SECRET_VALUE);
   }
   return output
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${REDACTED_SECRET_VALUE}`)
+    .replace(
+      /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
+      `Bearer ${REDACTED_SECRET_VALUE}`,
+    )
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, REDACTED_SECRET_VALUE);
 }
 
-function expandKnownSecrets(secrets: Array<string | undefined>): Array<string | undefined> {
+function expandKnownSecrets(
+  secrets: Array<string | undefined>,
+): Array<string | undefined> {
   const expanded: string[] = [];
   for (const secret of secrets) {
     const trimmed = secret?.trim();
@@ -2324,7 +2896,10 @@ function expandKnownSecrets(secrets: Array<string | undefined>): Array<string | 
   return Array.from(new Set(expanded));
 }
 
-function truncateAiGatewaySnippet(text: string): { text: string; truncated: boolean } {
+function truncateAiGatewaySnippet(text: string): {
+  text: string;
+  truncated: boolean;
+} {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= AI_GATEWAY_UPSTREAM_RESPONSE_SNIPPET_MAX) {
     return { text: normalized, truncated: false };
@@ -2349,29 +2924,49 @@ function buildAiGatewayUpstreamSnippet(input: {
       text = input.text;
     }
   }
-  return truncateAiGatewaySnippet(redactKnownSecretsFromText(text, input.knownSecrets));
+  return truncateAiGatewaySnippet(
+    redactKnownSecretsFromText(text, input.knownSecrets),
+  );
 }
 
-async function readResponseTextWithLimit(response: Response, maxBytes: number): Promise<string> {
-  const contentLength = Number(response.headers.get(CONTENT_LENGTH_HEADER) ?? NaN);
+async function readResponseTextWithLimit(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  const contentLength = Number(
+    response.headers.get(CONTENT_LENGTH_HEADER) ?? NaN,
+  );
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     await response.body?.cancel().catch(() => undefined);
-    throw new ApiError(502, "upstream_payload_too_large", "Upstream response body exceeds local parsing limit", {
-      maxBytes,
-      size: contentLength,
-    });
+    throw new ApiError(
+      502,
+      "upstream_payload_too_large",
+      "Upstream response body exceeds local parsing limit",
+      {
+        maxBytes,
+        size: contentLength,
+      },
+    );
   }
 
   const preview = await readTextPreview(response.body, maxBytes);
   if (preview.truncated) {
-    throw new ApiError(502, "upstream_payload_too_large", "Upstream response body exceeds local parsing limit", {
-      maxBytes,
-    });
+    throw new ApiError(
+      502,
+      "upstream_payload_too_large",
+      "Upstream response body exceeds local parsing limit",
+      {
+        maxBytes,
+      },
+    );
   }
   return preview.text;
 }
 
-function firstResponseHeader(headers: Headers, names: string[]): string | undefined {
+function firstResponseHeader(
+  headers: Headers,
+  names: string[],
+): string | undefined {
   for (const name of names) {
     const value = headers.get(name)?.trim() ?? "";
     if (value) return value;
@@ -2423,7 +3018,8 @@ function buildAiGatewayFailureDetails(input: {
     ]),
     upstreamContentType: contentType || undefined,
     upstreamResponse: upstreamSnippet.text,
-    upstreamResponseTruncated: input.responseTextTruncated || upstreamSnippet.truncated || undefined,
+    upstreamResponseTruncated:
+      input.responseTextTruncated || upstreamSnippet.truncated || undefined,
   };
 }
 
@@ -2439,7 +3035,10 @@ async function proxyAiGatewayReadinessRequest(input: {
   const requestId = randomUUID();
   const headers = new Headers();
   headers.set(AUTHORIZATION_HEADER, requireAiGatewayCallerAuth(input.request));
-  headers.set("accept", input.request.headers.get("accept") ?? "application/json");
+  headers.set(
+    "accept",
+    input.request.headers.get("accept") ?? "application/json",
+  );
   headers.set("x-veslo-request-id", requestId);
   headers.set(ACCEPT_ENCODING_HEADER, ACCEPT_ENCODING_IDENTITY);
 
@@ -2450,12 +3049,17 @@ async function proxyAiGatewayReadinessRequest(input: {
       headers,
     });
   } catch (error) {
-    throw new ApiError(503, "ai_gateway_unreachable", "AI gateway readiness is not reachable on this host", {
-      requestId,
-      baseUrl,
-      targetUrl: target.toString(),
-      error: error instanceof Error ? error.message : String(error),
-    });
+    throw new ApiError(
+      503,
+      "ai_gateway_unreachable",
+      "AI gateway readiness is not reachable on this host",
+      {
+        requestId,
+        baseUrl,
+        targetUrl: target.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
   }
 
   return new Response(response.body, {
@@ -2485,18 +3089,27 @@ async function proxyAiGatewayRequest(input: {
   let redactionDoneAt: number | undefined;
   const baseUrl = resolveAiGatewayBaseUrl();
   const target = new URL(baseUrl);
-  target.pathname = input.gatewayPath.startsWith("/") ? input.gatewayPath : `/${input.gatewayPath}`;
+  target.pathname = input.gatewayPath.startsWith("/")
+    ? input.gatewayPath
+    : `/${input.gatewayPath}`;
   target.search = input.url.search;
 
   const headers = new Headers(input.request.headers);
   const requestId = randomUUID();
-  const gatewayAccessToken = input.request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
-  const gatewayCallerAuth = input.request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
-  const incomingSessionId = input.requireSessionId ? requireAiGatewaySessionId(input.request) : undefined;
+  const gatewayAccessToken =
+    input.request.headers.get(GATEWAY_ACCESS_TOKEN_HEADER)?.trim() ?? "";
+  const gatewayCallerAuth =
+    input.request.headers.get(GATEWAY_CALLER_AUTH_HEADER)?.trim() ?? "";
+  const incomingSessionId = input.requireSessionId
+    ? requireAiGatewaySessionId(input.request)
+    : undefined;
   const incomingOpenCodeSessionId = input.requireSessionId
     ? trimmedHeader(input.request, OPENCODE_SESSION_ID_HEADER)
     : undefined;
-  const incomingWorkspaceId = trimmedHeader(input.request, GATEWAY_WORKSPACE_ID_HEADER);
+  const incomingWorkspaceId = trimmedHeader(
+    input.request,
+    GATEWAY_WORKSPACE_ID_HEADER,
+  );
   const incomingOrganizationId =
     trimmedHeader(input.request, VESLO_DEN_ORG_ID_HEADER) ??
     trimmedHeader(input.request, VESLO_ORG_ID_HEADER) ??
@@ -2506,39 +3119,59 @@ async function proxyAiGatewayRequest(input: {
   const sessionResolution = input.requireSessionId
     ? resolveAiGatewaySession({
         ...(incomingSessionId !== undefined ? { incomingSessionId } : {}),
-        ...(incomingOpenCodeSessionId !== undefined ? { openCodeSessionId: incomingOpenCodeSessionId } : {}),
-        ...(incomingWorkspaceId !== undefined ? { workspaceId: incomingWorkspaceId } : {}),
+        ...(incomingOpenCodeSessionId !== undefined
+          ? { openCodeSessionId: incomingOpenCodeSessionId }
+          : {}),
+        ...(incomingWorkspaceId !== undefined
+          ? { workspaceId: incomingWorkspaceId }
+          : {}),
       })
     : null;
   const activeRunContext = sessionResolution?.activeRunContext ?? null;
-  const sessionId = input.requireSessionId ? sessionResolution?.sessionId ?? "" : undefined;
+  const sessionId = input.requireSessionId
+    ? (sessionResolution?.sessionId ?? "")
+    : undefined;
   const workspaceId = input.requireSessionId
-    ? sessionResolution?.workspaceId ?? undefined
-    : incomingWorkspaceId ?? undefined;
-  const isSessionlessFallback = input.requireSessionId && sessionResolution?.source === "sessionless-fallback";
-  const providerAuthorization = input.auth === "gateway-token"
-    ? resolveAiGatewayProviderAuthorization({
-        request: input.request,
-        ...(input.actor ? { actor: input.actor } : {}),
-        runtimeAuthorizationActorTokenHash: activeRunContext?.runtimeAuthorizationActorTokenHash ?? null,
-        runtimeAuthorizationOrgId: activeRunContext?.runtimeAuthorizationOrgId ?? null,
-        activeRunContextPresent: Boolean(activeRunContext),
-      })
-    : null;
-  const authorization = input.auth === "caller"
-    ? requireAiGatewayCallerAuth(input.request)
-    : providerAuthorization?.authorization ?? "";
+    ? (sessionResolution?.workspaceId ?? undefined)
+    : (incomingWorkspaceId ?? undefined);
+  const isSessionlessFallback =
+    input.requireSessionId &&
+    sessionResolution?.source === "sessionless-fallback";
+  const providerAuthorization =
+    input.auth === "gateway-token"
+      ? resolveAiGatewayProviderAuthorization({
+          request: input.request,
+          ...(input.actor ? { actor: input.actor } : {}),
+          runtimeAuthorizationActorTokenHash:
+            activeRunContext?.runtimeAuthorizationActorTokenHash ?? null,
+          runtimeAuthorizationOrgId:
+            activeRunContext?.runtimeAuthorizationOrgId ?? null,
+          activeRunContextPresent: Boolean(activeRunContext),
+        })
+      : null;
+  const authorization =
+    input.auth === "caller"
+      ? requireAiGatewayCallerAuth(input.request)
+      : (providerAuthorization?.authorization ?? "");
   const incomingInternalHeaderSummary = {
     hasGatewayAccessToken: Boolean(gatewayAccessToken),
     hasRuntimeGatewayAuthorization: Boolean(providerAuthorization),
-    gatewayAuthorizationSource: providerAuthorization?.source ?? (input.auth === "caller" ? "caller" : "missing"),
+    gatewayAuthorizationSource:
+      providerAuthorization?.source ??
+      (input.auth === "caller" ? "caller" : "missing"),
     hasGatewayCallerAuth: Boolean(gatewayCallerAuth),
     hasWorkspaceId: Boolean(incomingWorkspaceId),
-    hasSendTraceId: Boolean(trimmedHeader(input.request, VESLO_SEND_TRACE_ID_HEADER)),
+    hasSendTraceId: Boolean(
+      trimmedHeader(input.request, VESLO_SEND_TRACE_ID_HEADER),
+    ),
     hasSessionId: Boolean(incomingSessionId),
     hasOpenCodeSessionId: Boolean(incomingOpenCodeSessionId),
-    hasOpenCodeSessionAffinity: Boolean(trimmedHeader(input.request, OPENCODE_SESSION_AFFINITY_HEADER)),
-    hasHostToken: Boolean(trimmedHeader(input.request, VESLO_HOST_TOKEN_HEADER)),
+    hasOpenCodeSessionAffinity: Boolean(
+      trimmedHeader(input.request, OPENCODE_SESSION_AFFINITY_HEADER),
+    ),
+    hasHostToken: Boolean(
+      trimmedHeader(input.request, VESLO_HOST_TOKEN_HEADER),
+    ),
     hasClientId: Boolean(trimmedHeader(input.request, VESLO_CLIENT_ID_HEADER)),
     activeRunRuntimeAuthorizationActorTokenHashPresent: Boolean(
       activeRunContext?.runtimeAuthorizationActorTokenHash,
@@ -2547,19 +3180,23 @@ async function proxyAiGatewayRequest(input: {
   const forwardedSessionId = input.requireSessionId
     ? isSessionlessFallback
       ? incomingSessionId?.trim() || OPENCODE_SESSION_ID_TEMPLATE
-      : sessionId ?? ""
+      : (sessionId ?? "")
     : undefined;
   const forwardedSessionHeaderMode = input.requireSessionId
     ? isSessionlessFallback
       ? "incoming-placeholder"
       : "resolved"
     : "not-required";
-  let activeContextDiagnosticsForUnresolved: Record<string, unknown> | null = null;
+  let activeContextDiagnosticsForUnresolved: Record<string, unknown> | null =
+    null;
   const getActiveContextDiagnosticsForUnresolved = () => {
-    activeContextDiagnosticsForUnresolved ??= buildActiveAiGatewayResolutionDiagnostics({
-      ...(incomingSessionId !== undefined ? { incomingSessionId } : {}),
-      ...(incomingWorkspaceId !== undefined ? { workspaceId: incomingWorkspaceId } : {}),
-    });
+    activeContextDiagnosticsForUnresolved ??=
+      buildActiveAiGatewayResolutionDiagnostics({
+        ...(incomingSessionId !== undefined ? { incomingSessionId } : {}),
+        ...(incomingWorkspaceId !== undefined
+          ? { workspaceId: incomingWorkspaceId }
+          : {}),
+      });
     return activeContextDiagnosticsForUnresolved;
   };
   const hasActiveGatewayResolutionContext = () => {
@@ -2573,17 +3210,14 @@ async function proxyAiGatewayRequest(input: {
   const rejectUnresolvedSession =
     input.requireSessionId &&
     !sessionId &&
-    (
-      !isSessionlessFallback ||
+    (!isSessionlessFallback ||
       // A placeholder cannot be safely forwarded when the runtime owner found
       // more than one possible run. Doing so loses run correlation and lets a
       // managed-AI provider request escape the local fail-closed boundary.
-      sessionResolution?.workspaceFallbackSuppressedReason === "ambiguous-active-run-context" ||
-      (
-        isAiGatewayChatCompletionsPath(input.gatewayPath) &&
-        !hasActiveGatewayResolutionContext()
-      )
-    );
+      sessionResolution?.workspaceFallbackSuppressedReason ===
+        "ambiguous-active-run-context" ||
+      (isAiGatewayChatCompletionsPath(input.gatewayPath) &&
+        !hasActiveGatewayResolutionContext()));
   if (rejectUnresolvedSession) {
     const activeContextDiagnostics = getActiveContextDiagnosticsForUnresolved();
     const unresolvedTrace = {
@@ -2591,33 +3225,48 @@ async function proxyAiGatewayRequest(input: {
       provider,
       gatewayPath: input.gatewayPath,
       incomingSessionId,
-      normalizedIncomingSessionId: normalizeAiGatewaySessionId(incomingSessionId) || null,
+      normalizedIncomingSessionId:
+        normalizeAiGatewaySessionId(incomingSessionId) || null,
       incomingOpenCodeSessionId: incomingOpenCodeSessionId ?? null,
-      normalizedIncomingOpenCodeSessionId: normalizeAiGatewaySessionId(incomingOpenCodeSessionId) || null,
+      normalizedIncomingOpenCodeSessionId:
+        normalizeAiGatewaySessionId(incomingOpenCodeSessionId) || null,
       workspaceId: workspaceId ?? null,
       incomingWorkspaceId: incomingWorkspaceId ?? null,
       sessionResolutionSource: sessionResolution?.source ?? "unresolved",
-      workspaceFallbackSuppressedReason: sessionResolution?.workspaceFallbackSuppressedReason ?? null,
-      workspaceFallbackCandidateCount: sessionResolution?.workspaceFallbackCandidateCount ?? null,
+      workspaceFallbackSuppressedReason:
+        sessionResolution?.workspaceFallbackSuppressedReason ?? null,
+      workspaceFallbackCandidateCount:
+        sessionResolution?.workspaceFallbackCandidateCount ?? null,
       activeContextCount: sessionResolution?.activeContextCount ?? null,
       incomingHeaders: incomingHeaderNames,
       incomingInternalHeaders: incomingInternalHeaderSummary,
       activeContextDiagnostics,
     };
-    recordSendWorkflowTrace("server", "server:ai-gateway:session-unresolved", unresolvedTrace);
+    recordSendWorkflowTrace(
+      "server",
+      "server:ai-gateway:session-unresolved",
+      unresolvedTrace,
+    );
     try {
-      console.warn(`[veslo:ai-gateway] session-unresolved ${JSON.stringify(unresolvedTrace)}`);
+      console.warn(
+        `[veslo:ai-gateway] session-unresolved ${JSON.stringify(unresolvedTrace)}`,
+      );
     } catch {
       console.warn("[veslo:ai-gateway] session-unresolved");
     }
-    throw new ApiError(400, "gateway_session_unresolved", "Gateway session id placeholder could not be resolved", {
-      requestId,
-      provider,
-      incomingSessionId,
-      incomingOpenCodeSessionId,
-      workspaceId: incomingWorkspaceId,
-      sessionResolutionSource: sessionResolution?.source ?? "unresolved",
-    });
+    throw new ApiError(
+      400,
+      "gateway_session_unresolved",
+      "Gateway session id placeholder could not be resolved",
+      {
+        requestId,
+        provider,
+        incomingSessionId,
+        incomingOpenCodeSessionId,
+        workspaceId: incomingWorkspaceId,
+        sessionResolutionSource: sessionResolution?.source ?? "unresolved",
+      },
+    );
   }
   if (isSessionlessFallback) {
     const sessionlessTrace = {
@@ -2625,34 +3274,51 @@ async function proxyAiGatewayRequest(input: {
       provider,
       gatewayPath: input.gatewayPath,
       incomingSessionId,
-      normalizedIncomingSessionId: normalizeAiGatewaySessionId(incomingSessionId) || null,
+      normalizedIncomingSessionId:
+        normalizeAiGatewaySessionId(incomingSessionId) || null,
       incomingOpenCodeSessionId: incomingOpenCodeSessionId ?? null,
-      normalizedIncomingOpenCodeSessionId: normalizeAiGatewaySessionId(incomingOpenCodeSessionId) || null,
+      normalizedIncomingOpenCodeSessionId:
+        normalizeAiGatewaySessionId(incomingOpenCodeSessionId) || null,
       workspaceId: workspaceId ?? null,
       incomingWorkspaceId: incomingWorkspaceId ?? null,
-      sessionResolutionSource: sessionResolution?.source ?? "sessionless-fallback",
-      workspaceFallbackSuppressedReason: sessionResolution?.workspaceFallbackSuppressedReason ?? null,
-      workspaceFallbackCandidateCount: sessionResolution?.workspaceFallbackCandidateCount ?? null,
+      sessionResolutionSource:
+        sessionResolution?.source ?? "sessionless-fallback",
+      workspaceFallbackSuppressedReason:
+        sessionResolution?.workspaceFallbackSuppressedReason ?? null,
+      workspaceFallbackCandidateCount:
+        sessionResolution?.workspaceFallbackCandidateCount ?? null,
       activeContextCount: sessionResolution?.activeContextCount ?? null,
       forwardedSessionHeaderMode,
       incomingHeaders: incomingHeaderNames,
       incomingInternalHeaders: incomingInternalHeaderSummary,
       activeContextDiagnostics: buildActiveAiGatewayResolutionDiagnostics({
         ...(incomingSessionId !== undefined ? { incomingSessionId } : {}),
-        ...(incomingWorkspaceId !== undefined ? { workspaceId: incomingWorkspaceId } : {}),
+        ...(incomingWorkspaceId !== undefined
+          ? { workspaceId: incomingWorkspaceId }
+          : {}),
       }),
     };
-    recordSendWorkflowTrace("server", "server:ai-gateway:sessionless-forward", sessionlessTrace);
+    recordSendWorkflowTrace(
+      "server",
+      "server:ai-gateway:sessionless-forward",
+      sessionlessTrace,
+    );
     try {
-      console.log(`[veslo:ai-gateway] sessionless-forward ${JSON.stringify(sessionlessTrace)}`);
+      console.log(
+        `[veslo:ai-gateway] sessionless-forward ${JSON.stringify(sessionlessTrace)}`,
+      );
     } catch {
       console.log("[veslo:ai-gateway] sessionless-forward");
     }
   }
   const incomingSessionIdForTrace =
-    incomingSessionId && incomingSessionId !== sessionId ? incomingSessionId : undefined;
+    incomingSessionId && incomingSessionId !== sessionId
+      ? incomingSessionId
+      : undefined;
   const incomingOpenCodeSessionIdForTrace =
-    incomingOpenCodeSessionId && incomingOpenCodeSessionId !== sessionId ? incomingOpenCodeSessionId : undefined;
+    incomingOpenCodeSessionId && incomingOpenCodeSessionId !== sessionId
+      ? incomingOpenCodeSessionId
+      : undefined;
   const sessionResolvedFromActiveRunContext =
     sessionResolution?.source === "workspace-active-run-context";
   const watchdogHitRecorded = !isSessionlessFallback;
@@ -2682,7 +3348,8 @@ async function proxyAiGatewayRequest(input: {
     clientMessageId: activeRunContext?.clientMessageId ?? null,
     origin: activeRunContext?.origin ?? null,
     sessionResolutionSource: sessionResolution?.source ?? null,
-    workspaceFallbackSuppressedReason: sessionResolution?.workspaceFallbackSuppressedReason ?? null,
+    workspaceFallbackSuppressedReason:
+      sessionResolution?.workspaceFallbackSuppressedReason ?? null,
     sessionResolvedFromActiveRunContext,
     watchdogHitRecorded,
     forwardedSessionHeaderMode,
@@ -2696,23 +3363,27 @@ async function proxyAiGatewayRequest(input: {
     .then((value) => {
       requestDiagnostic = value;
       model = value.model;
-      recordSendWorkflowTrace("server", "server:ai-gateway:request-diagnostic", {
-        traceId: activeRunContext?.traceId ?? null,
-        requestId,
-        provider,
-        gatewayPath: input.gatewayPath,
-        sessionId: sessionId ?? null,
-        workspaceId: workspaceId ?? null,
-        incomingWorkspaceId: incomingWorkspaceId ?? null,
-        incomingOpenCodeSessionId: incomingOpenCodeSessionIdForTrace,
-        sessionResolutionSource: sessionResolution?.source ?? null,
-        forwardedSessionHeaderMode,
-        conversationId: activeRunContext?.conversationId ?? null,
-        runId: activeRunContext?.runId ?? null,
-        opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
-        clientMessageId: activeRunContext?.clientMessageId ?? null,
-        ...value,
-      });
+      recordSendWorkflowTrace(
+        "server",
+        "server:ai-gateway:request-diagnostic",
+        {
+          traceId: activeRunContext?.traceId ?? null,
+          requestId,
+          provider,
+          gatewayPath: input.gatewayPath,
+          sessionId: sessionId ?? null,
+          workspaceId: workspaceId ?? null,
+          incomingWorkspaceId: incomingWorkspaceId ?? null,
+          incomingOpenCodeSessionId: incomingOpenCodeSessionIdForTrace,
+          sessionResolutionSource: sessionResolution?.source ?? null,
+          forwardedSessionHeaderMode,
+          conversationId: activeRunContext?.conversationId ?? null,
+          runId: activeRunContext?.runId ?? null,
+          opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
+          clientMessageId: activeRunContext?.clientMessageId ?? null,
+          ...value,
+        },
+      );
       return value.model;
     })
     .finally(() => {
@@ -2725,9 +3396,10 @@ async function proxyAiGatewayRequest(input: {
   }
   headers.set("x-veslo-request-id", requestId);
   stripAiGatewayProxyRequestHeaders(headers);
-  const forwardedOrganizationId = input.auth === "gateway-token"
-    ? providerAuthorization?.orgId ?? null
-    : incomingOrganizationId;
+  const forwardedOrganizationId =
+    input.auth === "gateway-token"
+      ? (providerAuthorization?.orgId ?? null)
+      : incomingOrganizationId;
   if (forwardedOrganizationId) {
     headers.set(VESLO_ORG_ID_HEADER, forwardedOrganizationId);
   }
@@ -2735,7 +3407,8 @@ async function proxyAiGatewayRequest(input: {
   const forwardedHeaderNames = headerNamesForTrace(headers);
 
   const method = input.request.method.toUpperCase();
-  const body = method === "GET" || method === "HEAD" ? undefined : input.request.body;
+  const body =
+    method === "GET" || method === "HEAD" ? undefined : input.request.body;
   headersPreparedAt = perfMs();
 
   const logEvent = (event: "start", extra: Record<string, unknown> = {}) => {
@@ -2769,15 +3442,25 @@ async function proxyAiGatewayRequest(input: {
       strippedTransportHeaders: AI_GATEWAY_TRANSPORT_REQUEST_HEADERS,
       ...extra,
     };
-    recordSendWorkflowTrace("server", `server:ai-gateway:proxy-${event}`, attributes);
+    recordSendWorkflowTrace(
+      "server",
+      `server:ai-gateway:proxy-${event}`,
+      attributes,
+    );
     try {
-      console.log(`[veslo:ai-gateway] proxy-${event} ${JSON.stringify(attributes)}`);
+      console.log(
+        `[veslo:ai-gateway] proxy-${event} ${JSON.stringify(attributes)}`,
+      );
     } catch {
       console.log(`[veslo:ai-gateway] proxy-${event}`);
     }
   };
 
-  const logTiming = (status: number, outcome: "ok" | "error", extra: Record<string, unknown> = {}) => {
+  const logTiming = (
+    status: number,
+    outcome: "ok" | "error",
+    extra: Record<string, unknown> = {},
+  ) => {
     const finishedAt = perfMs();
     const attributes = {
       requestId,
@@ -2803,17 +3486,22 @@ async function proxyAiGatewayRequest(input: {
       status,
       outcome,
       totalMs: roundTraceMs(finishedAt - startedAt),
-      localPreflightMs: roundTraceMs((upstreamFetchStartedAt ?? headersPreparedAt) - startedAt),
+      localPreflightMs: roundTraceMs(
+        (upstreamFetchStartedAt ?? headersPreparedAt) - startedAt,
+      ),
       modelDiagnosticMs:
-        modelDiagnosticStartedAt !== undefined && modelDiagnosticFinishedAt !== undefined
+        modelDiagnosticStartedAt !== undefined &&
+        modelDiagnosticFinishedAt !== undefined
           ? roundTraceMs(modelDiagnosticFinishedAt - modelDiagnosticStartedAt)
           : undefined,
       upstreamHeadersMs:
-        upstreamFetchStartedAt !== undefined && upstreamHeadersReceivedAt !== undefined
+        upstreamFetchStartedAt !== undefined &&
+        upstreamHeadersReceivedAt !== undefined
           ? roundTraceMs(upstreamHeadersReceivedAt - upstreamFetchStartedAt)
           : undefined,
       upstreamBodyMs:
-        upstreamHeadersReceivedAt !== undefined && upstreamBodyDoneAt !== undefined
+        upstreamHeadersReceivedAt !== undefined &&
+        upstreamBodyDoneAt !== undefined
           ? roundTraceMs(upstreamBodyDoneAt - upstreamHeadersReceivedAt)
           : undefined,
       redactionMs:
@@ -2824,7 +3512,11 @@ async function proxyAiGatewayRequest(input: {
       targetPath: target.pathname,
       ...extra,
     };
-    recordSendWorkflowTrace("server", "server:ai-gateway:proxy:timing", attributes);
+    recordSendWorkflowTrace(
+      "server",
+      "server:ai-gateway:proxy:timing",
+      attributes,
+    );
     try {
       console.log(`[veslo:ai-gateway] proxy ${JSON.stringify(attributes)}`);
     } catch {
@@ -2854,7 +3546,11 @@ async function proxyAiGatewayRequest(input: {
     timedOut = true;
     controller.abort();
   }, headersTimeoutMs);
-  if (typeof headersTimer === "object" && headersTimer && "unref" in headersTimer) {
+  if (
+    typeof headersTimer === "object" &&
+    headersTimer &&
+    "unref" in headersTimer
+  ) {
     (headersTimer as { unref?: () => void }).unref?.();
   }
 
@@ -2898,53 +3594,70 @@ async function proxyAiGatewayRequest(input: {
         upstreamFetchStartedAt !== undefined
           ? roundTraceMs(upstreamHeadersReceivedAt - upstreamFetchStartedAt)
           : undefined,
-      upstreamContentType: response.headers.get(CONTENT_TYPE_HEADER) || undefined,
+      upstreamContentType:
+        response.headers.get(CONTENT_TYPE_HEADER) || undefined,
     });
   } catch (error) {
-    const diagnosticModel = model ?? await modelDiagnosticPromise;
+    const diagnosticModel = model ?? (await modelDiagnosticPromise);
     if (activeProxyRequest.abortReason) {
       logTiming(499, "error", {
         error: "AI gateway proxy request was aborted",
         abortReason: activeProxyRequest.abortReason,
         timeoutMs: headersTimeoutMs,
       });
-      throw new ApiError(499, "ai_gateway_aborted", "AI gateway request was aborted", {
-        requestId,
-        provider,
-        model: diagnosticModel,
-        sessionId,
-        baseUrl,
-        targetUrl: target.toString(),
-        abortReason: activeProxyRequest.abortReason,
-      });
+      throw new ApiError(
+        499,
+        "ai_gateway_aborted",
+        "AI gateway request was aborted",
+        {
+          requestId,
+          provider,
+          model: diagnosticModel,
+          sessionId,
+          baseUrl,
+          targetUrl: target.toString(),
+          abortReason: activeProxyRequest.abortReason,
+        },
+      );
     }
     if (timedOut || isAbortError(error)) {
       logTiming(504, "error", {
-        error: "AI gateway upstream did not send response headers before timeout",
+        error:
+          "AI gateway upstream did not send response headers before timeout",
         timeoutMs: headersTimeoutMs,
       });
-      throw new ApiError(504, "ai_gateway_timeout", "AI gateway timed out waiting for upstream response", {
-        requestId,
-        provider,
-        model: diagnosticModel,
-        sessionId,
-        baseUrl,
-        targetUrl: target.toString(),
-        timeoutMs: headersTimeoutMs,
-      });
+      throw new ApiError(
+        504,
+        "ai_gateway_timeout",
+        "AI gateway timed out waiting for upstream response",
+        {
+          requestId,
+          provider,
+          model: diagnosticModel,
+          sessionId,
+          baseUrl,
+          targetUrl: target.toString(),
+          timeoutMs: headersTimeoutMs,
+        },
+      );
     }
     logTiming(503, "error", {
       error: error instanceof Error ? error.message : String(error),
     });
-    throw new ApiError(503, "ai_gateway_unreachable", "AI gateway is not reachable on this host", {
-      requestId,
-      provider,
-      model: diagnosticModel,
-      sessionId,
-      baseUrl,
-      targetUrl: target.toString(),
-      error: error instanceof Error ? error.message : String(error),
-    });
+    throw new ApiError(
+      503,
+      "ai_gateway_unreachable",
+      "AI gateway is not reachable on this host",
+      {
+        requestId,
+        provider,
+        model: diagnosticModel,
+        sessionId,
+        baseUrl,
+        targetUrl: target.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
   } finally {
     clearTimeout(headersTimer);
     unregisterActiveAiGatewayProxyRequest(requestId);
@@ -2952,29 +3665,44 @@ async function proxyAiGatewayRequest(input: {
 
   const contentType = response.headers.get(CONTENT_TYPE_HEADER) ?? "";
   if (!response.ok) {
-    const diagnostic = await readTextPreview(response.body, AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES);
+    const diagnostic = await readTextPreview(
+      response.body,
+      AI_GATEWAY_ERROR_DIAGNOSTIC_MAX_RESPONSE_BYTES,
+    );
     upstreamBodyDoneAt = perfMs();
-    const diagnosticModel = model ?? await modelDiagnosticPromise;
+    const diagnosticModel = model ?? (await modelDiagnosticPromise);
     logTiming(response.status, "error", {
       upstreamStatus: response.status,
       upstreamContentType: contentType || undefined,
       upstreamResponseTruncated: diagnostic.truncated || undefined,
     });
-    throw new ApiError(502, "ai_gateway_upstream_failed", "AI gateway upstream request failed", buildAiGatewayFailureDetails({
-      requestId,
-      request: input.request,
-      gatewayPath: input.gatewayPath,
-      response,
-      responseText: diagnostic.text,
-      responseTextTruncated: diagnostic.truncated,
-      orgId: forwardedOrganizationId,
-      knownSecrets: expandKnownSecrets([gatewayAccessToken, gatewayCallerAuth, authorization]),
-      ...(sessionId ? { sessionId } : {}),
-      ...(diagnosticModel ? { model: diagnosticModel } : {}),
-    }));
+    throw new ApiError(
+      502,
+      "ai_gateway_upstream_failed",
+      "AI gateway upstream request failed",
+      buildAiGatewayFailureDetails({
+        requestId,
+        request: input.request,
+        gatewayPath: input.gatewayPath,
+        response,
+        responseText: diagnostic.text,
+        responseTextTruncated: diagnostic.truncated,
+        orgId: forwardedOrganizationId,
+        knownSecrets: expandKnownSecrets([
+          gatewayAccessToken,
+          gatewayCallerAuth,
+          authorization,
+        ]),
+        ...(sessionId ? { sessionId } : {}),
+        ...(diagnosticModel ? { model: diagnosticModel } : {}),
+      }),
+    );
   }
 
-  if (!contentType.toLowerCase().includes("application/json") || !input.preserveAiAccessToken) {
+  if (
+    !contentType.toLowerCase().includes("application/json") ||
+    !input.preserveAiAccessToken
+  ) {
     logTiming(response.status, "ok", {
       streaming: true,
       upstreamContentType: contentType || undefined,
@@ -2986,7 +3714,10 @@ async function proxyAiGatewayRequest(input: {
     });
   }
 
-  const text = await readResponseTextWithLimit(response, AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES);
+  const text = await readResponseTextWithLimit(
+    response,
+    AI_GATEWAY_JSON_REDACTION_MAX_RESPONSE_BYTES,
+  );
   upstreamBodyDoneAt = perfMs();
   let json: unknown = null;
   try {
@@ -2999,11 +3730,15 @@ async function proxyAiGatewayRequest(input: {
     });
     return new Response(text, {
       status: response.status,
-      ...(contentType ? { headers: { [CONTENT_TYPE_HEADER]: contentType } } : {}),
+      ...(contentType
+        ? { headers: { [CONTENT_TYPE_HEADER]: contentType } }
+        : {}),
     });
   }
 
-  const redacted = input.preserveAiAccessToken ? redactAiAccessBundleForClient(json) : redactSensitiveConfig(json);
+  const redacted = input.preserveAiAccessToken
+    ? redactAiAccessBundleForClient(json)
+    : redactSensitiveConfig(json);
   if (input.auth === "caller" && input.preserveAiAccessToken) {
     syncAiGatewayRuntimeAuthorizationFromAccessBundle({
       value: json,
@@ -3018,10 +3753,7 @@ async function proxyAiGatewayRequest(input: {
     streaming: false,
     upstreamContentType: contentType || undefined,
   });
-  return jsonResponse(
-    redacted,
-    response.status,
-  );
+  return jsonResponse(redacted, response.status);
 }
 
 function sanitizeDecodedProxyResponseHeaders(headers: Headers): Headers {
@@ -3044,19 +3776,25 @@ function withCors(response: Response, request: Request, config: ServerConfig) {
   if (!allowOrigin) return response;
   const headers = new Headers(response.headers);
   headers.set("Access-Control-Allow-Origin", allowOrigin);
+  headers.set("Access-Control-Allow-Headers", VESLO_ALLOWED_CORS_HEADERS_VALUE);
   headers.set(
-    "Access-Control-Allow-Headers",
-    VESLO_ALLOWED_CORS_HEADERS_VALUE,
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   );
-  headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-  if (request.headers.get("access-control-request-private-network") === "true") {
+  if (
+    request.headers.get("access-control-request-private-network") === "true"
+  ) {
     headers.set("Access-Control-Allow-Private-Network", "true");
   }
   headers.set("Vary", "Origin");
   return new Response(response.body, { status: response.status, headers });
 }
 
-async function requireClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
+async function requireClient(
+  request: Request,
+  config: ServerConfig,
+  tokens: TokenService,
+): Promise<Actor> {
   const header = request.headers.get(AUTHORIZATION_HEADER) ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   const token = match?.[1];
@@ -3071,7 +3809,11 @@ async function requireClient(request: Request, config: ServerConfig, tokens: Tok
   return { type: "remote", clientId, tokenHash: hashToken(token), scope };
 }
 
-async function requireHost(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
+async function requireHost(
+  request: Request,
+  config: ServerConfig,
+  tokens: TokenService,
+): Promise<Actor> {
   const hostToken = request.headers.get(VESLO_HOST_TOKEN_HEADER);
   if (hostToken && hostToken === config.hostToken) {
     return { type: "host", tokenHash: hashToken(hostToken), scope: "owner" };
@@ -3091,7 +3833,11 @@ async function requireHost(request: Request, config: ServerConfig, tokens: Token
   return { type: "remote", clientId, tokenHash: hashToken(bearer), scope };
 }
 
-async function requireHostOrClient(request: Request, config: ServerConfig, tokens: TokenService): Promise<Actor> {
+async function requireHostOrClient(
+  request: Request,
+  config: ServerConfig,
+  tokens: TokenService,
+): Promise<Actor> {
   if (request.headers.get(VESLO_HOST_TOKEN_HEADER)) {
     return requireHost(request, config, tokens);
   }
@@ -3101,7 +3847,11 @@ async function requireHostOrClient(request: Request, config: ServerConfig, token
 export function resolveArchiveOwnerKey(request: Request): string {
   const accountId = request.headers.get(VESLO_ACCOUNT_ID_HEADER)?.trim() ?? "";
   if (!accountId) {
-    throw new ApiError(400, "account_id_required", "A stable cloud account id is required for session archive sync.");
+    throw new ApiError(
+      400,
+      "account_id_required",
+      "A stable cloud account id is required for session archive sync.",
+    );
   }
   return accountId;
 }
@@ -3114,8 +3864,12 @@ export function buildCapabilities(config: ServerConfig): Capabilities {
   const maxBytes = resolveInboxMaxBytes();
   const toyUiEnabled = resolveToyUiEnabled();
   const browserProvider = resolveBrowserProvider();
-  const opencodeRouterConfigured = Boolean(parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT));
-  const opencodeConfigured = config.workspaces.some((workspace) => Boolean(workspace.baseUrl?.trim()));
+  const opencodeRouterConfigured = Boolean(
+    parseInteger(process.env.OPENCODE_ROUTER_HEALTH_PORT),
+  );
+  const opencodeConfigured = config.workspaces.some((workspace) =>
+    Boolean(workspace.baseUrl?.trim()),
+  );
   return {
     schemaVersion,
     serverVersion: SERVER_VERSION,
@@ -3139,7 +3893,10 @@ export function buildCapabilities(config: ServerConfig): Capabilities {
     config: { read: true, write: writeEnabled },
     sandbox: resolveSandboxCapability(),
 
-    approvals: { mode: config.approval.mode, timeoutMs: config.approval.timeoutMs },
+    approvals: {
+      mode: config.approval.mode,
+      timeoutMs: config.approval.timeoutMs,
+    },
     ui: { toy: toyUiEnabled },
     tokens: { scoped: true, scopes: ["owner", "collaborator", "viewer"] },
     proxy: {
@@ -3160,7 +3917,9 @@ export function buildCapabilities(config: ServerConfig): Capabilities {
 }
 
 function resolveSandboxCapability(): Capabilities["sandbox"] {
-  const raw = (process.env.VESLO_SANDBOX_BACKEND ?? "none").trim() as SandboxBackend;
+  const raw = (
+    process.env.VESLO_SANDBOX_BACKEND ?? "none"
+  ).trim() as SandboxBackend;
   const known = new Set<SandboxBackend>([
     "none",
     "docker",
@@ -3176,7 +3935,8 @@ function resolveSandboxCapability(): Capabilities["sandbox"] {
   ]);
   const backend = known.has(raw) ? raw : "none";
   return {
-    enabled: activeBackends.has(backend) && process.env.VESLO_DISABLE_SANDBOX !== "1",
+    enabled:
+      activeBackends.has(backend) && process.env.VESLO_DISABLE_SANDBOX !== "1",
     backend,
   };
 }
@@ -3217,27 +3977,15 @@ const CONVERSATION_RUN_BODY_FIELDS: Record<string, string[]> = {
     "variant",
     "parts",
   ],
-  command: [
-    "agent",
-    "model",
-    "arguments",
-    "command",
-    "variant",
-    "parts",
-  ],
-  shell: [
-    "agent",
-    "model",
-    "command",
-  ],
-  summarize: [
-    "providerID",
-    "modelID",
-    "auto",
-  ],
+  command: ["agent", "model", "arguments", "command", "variant", "parts"],
+  shell: ["agent", "model", "command"],
+  summarize: ["providerID", "modelID", "auto"],
 };
 
-function buildConversationRunBody(kind: "prompt_async" | "command" | "shell" | "summarize", body: Record<string, unknown>) {
+function buildConversationRunBody(
+  kind: "prompt_async" | "command" | "shell" | "summarize",
+  body: Record<string, unknown>,
+) {
   const result: Record<string, unknown> = {};
   for (const field of CONVERSATION_RUN_BODY_FIELDS[kind] ?? []) {
     if (body[field] !== undefined) result[field] = body[field];
@@ -3285,19 +4033,23 @@ function summarizeConversationRunBodyForTrace(body: Record<string, unknown>) {
   };
 }
 
-function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
-  const status = error.status === 401 || error.status === 403
-    ? 503
-    : error.status === 404
-      ? 404
-      : error.status === 501
-        ? 501
-        : 503;
-  const code = status === 404
-    ? "lifecycle_not_found"
-    : status === 501
-      ? "lifecycle_unsupported"
-      : "lifecycle_unavailable";
+function lifecycleRequestApiError(
+  error: OrchestratorLifecycleRequestError,
+): ApiError {
+  const status =
+    error.status === 401 || error.status === 403
+      ? 503
+      : error.status === 404
+        ? 404
+        : error.status === 501
+          ? 501
+          : 503;
+  const code =
+    status === 404
+      ? "lifecycle_not_found"
+      : status === 501
+        ? "lifecycle_unsupported"
+        : "lifecycle_unavailable";
   return new ApiError(status, code, "Run lifecycle owner is unavailable", {
     upstreamStatus: error.status,
     path: error.path,
@@ -3322,7 +4074,9 @@ const perfMs = () =>
     ? performance.now()
     : Date.now();
 
-function conversationRunTraceErrorFields(error: unknown): Record<string, unknown> {
+function conversationRunTraceErrorFields(
+  error: unknown,
+): Record<string, unknown> {
   const fields: Record<string, unknown> = {
     message: error instanceof Error ? error.message : String(error),
   };
@@ -3339,7 +4093,11 @@ function conversationRunTraceErrorFields(error: unknown): Record<string, unknown
 
 function createConversationRunTracer(request: Request) {
   const traceId = request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || "";
-  const enabled = Boolean(traceId) || ["1", "true", "yes"].includes((process.env.VESLO_FLOW_LOG ?? "").toLowerCase());
+  const enabled =
+    Boolean(traceId) ||
+    ["1", "true", "yes"].includes(
+      (process.env.VESLO_FLOW_LOG ?? "").toLowerCase(),
+    );
   const entries: ConversationRunDebugTraceEntry[] = [];
 
   const record = (event: string, payload: Record<string, unknown> = {}) => {
@@ -3362,7 +4120,7 @@ function createConversationRunTracer(request: Request) {
     }
   };
 
-  const step = async <T,>(
+  const step = async <T>(
     event: string,
     fn: () => Promise<T>,
     payload: Record<string, unknown> = {},
@@ -3391,7 +4149,9 @@ function createConversationRunTracer(request: Request) {
   return { entries, record, step, traceId: traceId || null };
 }
 
-function createBackgroundConversationRunTracer(traceId: string | null = null): ConversationRunTracer {
+function createBackgroundConversationRunTracer(
+  traceId: string | null = null,
+): ConversationRunTracer {
   const entries: ConversationRunDebugTraceEntry[] = [];
   const normalizedTraceId = traceId?.trim() || null;
   const record = (event: string, payload: Record<string, unknown> = {}) => {
@@ -3406,7 +4166,7 @@ function createBackgroundConversationRunTracer(traceId: string | null = null): C
     entries.push(entry);
     recordSendWorkflowTrace("server", event, entry);
   };
-  const step = async <T,>(
+  const step = async <T>(
     event: string,
     fn: () => Promise<T>,
     payload: Record<string, unknown> = {},
@@ -3447,7 +4207,11 @@ function requireConversationRunId(body: Record<string, unknown>): string {
 }
 
 const ownerForWorkspace = (workspace: WorkspaceInfo) =>
-  workspaceResourceOwner({ workspaceId: workspace.id, root: workspace.path, label: workspace.name });
+  workspaceResourceOwner({
+    workspaceId: workspace.id,
+    root: workspace.path,
+    label: workspace.name,
+  });
 
 function buildConfigTrigger(path: string): ReloadTrigger {
   const name = path.split(/[\\/]/).filter(Boolean).pop();
@@ -3459,9 +4223,19 @@ function buildConfigTrigger(path: string): ReloadTrigger {
   };
 }
 
-export function serializeWorkspace(workspace: ServerConfig["workspaces"][number], config?: ServerConfig) {
-  const { opencodeUsername, opencodePassword, baseUrl: rawBaseUrl, ...rest } = workspace;
-  const baseUrl = config ? resolveWorkspaceOpencodeBaseUrl(config, workspace) : rawBaseUrl;
+export function serializeWorkspace(
+  workspace: ServerConfig["workspaces"][number],
+  config?: ServerConfig,
+) {
+  const {
+    opencodeUsername,
+    opencodePassword,
+    baseUrl: rawBaseUrl,
+    ...rest
+  } = workspace;
+  const baseUrl = config
+    ? resolveWorkspaceOpencodeBaseUrl(config, workspace)
+    : rawBaseUrl;
   const opencodeDirectory = resolveOpencodeDirectory(workspace);
   const opencode =
     baseUrl || opencodeDirectory || opencodeUsername || opencodePassword
@@ -3542,11 +4316,16 @@ function validateSoulScopeParam(value: string): SoulScope {
   return soulController.validateSoulScopeParam(value);
 }
 
-function requireSoulText(body: Record<string, unknown>, field: "content" | "changeSummary"): string {
+function requireSoulText(
+  body: Record<string, unknown>,
+  field: "content" | "changeSummary",
+): string {
   return soulController.requireSoulText(body, field);
 }
 
-function optionalSoulBaseVersionId(body: Record<string, unknown>): string | null {
+function optionalSoulBaseVersionId(
+  body: Record<string, unknown>,
+): string | null {
   return soulController.optionalSoulBaseVersionId(body);
 }
 
@@ -3558,11 +4337,18 @@ function soulVersionId(prefix = "soul_v"): string {
   return soulController.soulVersionId(prefix);
 }
 
-function soulVersionResponse(document: SoulDocument, versionId: string): SoulVersion {
+function soulVersionResponse(
+  document: SoulDocument,
+  versionId: string,
+): SoulVersion {
   return soulController.soulVersionResponse(document, versionId);
 }
 
-async function readCachedSoulVersions(dataDir: string, scope: SoulScope, ownerId: string): Promise<SoulVersion[]> {
+async function readCachedSoulVersions(
+  dataDir: string,
+  scope: SoulScope,
+  ownerId: string,
+): Promise<SoulVersion[]> {
   return soulController.readCachedSoulVersions(dataDir, scope, ownerId);
 }
 
@@ -3573,7 +4359,13 @@ async function materializeSoulForWorkspace(
   overrides: Partial<Record<SoulScope, SoulDocument | null>> = {},
   options: { workspaceActive?: boolean } = {},
 ): Promise<SoulMaterializationResult> {
-  return soulController.materializeSoulForWorkspace(dataDir, ctx, workspace, overrides, options);
+  return soulController.materializeSoulForWorkspace(
+    dataDir,
+    ctx,
+    workspace,
+    overrides,
+    options,
+  );
 }
 
 async function materializeSoulForConfiguredWorkspaces(
@@ -3588,7 +4380,13 @@ async function materializeSoulForConfiguredWorkspaces(
   manualSyncRequired: false;
   workspaces: Array<{ workspaceId: string; result: SoulMaterializationResult }>;
 }> {
-  return soulController.materializeSoulForConfiguredWorkspaces(dataDir, config, ctx, overrides, options);
+  return soulController.materializeSoulForConfiguredWorkspaces(
+    dataDir,
+    config,
+    ctx,
+    overrides,
+    options,
+  );
 }
 
 function soulReadPayload(input: {
@@ -3601,11 +4399,17 @@ function soulReadPayload(input: {
   return soulController.soulReadPayload(input);
 }
 
-function activeSoulWorkspaceIdsFromBody(body: Record<string, unknown>, config?: ServerConfig): Set<string> {
+function activeSoulWorkspaceIdsFromBody(
+  body: Record<string, unknown>,
+  config?: ServerConfig,
+): Set<string> {
   return soulController.activeSoulWorkspaceIdsFromBody(body, config);
 }
 
-function soulWorkspaceActiveFromBody(body: Record<string, unknown>, workspaceId: string): boolean {
+function soulWorkspaceActiveFromBody(
+  body: Record<string, unknown>,
+  workspaceId: string,
+): boolean {
   return soulController.soulWorkspaceActiveFromBody(body, workspaceId);
 }
 
@@ -3613,17 +4417,22 @@ async function configuredSoulMaterializationApprovalPaths(
   config: ServerConfig,
   extraPaths: string[],
 ): Promise<string[]> {
-  return soulController.configuredSoulMaterializationApprovalPaths(config, extraPaths);
+  return soulController.configuredSoulMaterializationApprovalPaths(
+    config,
+    extraPaths,
+  );
 }
 
 function globalSoulApprovalWorkspaceId(config: ServerConfig): string {
   return soulController.globalSoulApprovalWorkspaceId(config);
 }
 
-function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
-  skillDir?: string;
-  materializedAt?: string;
-}) {
+function materializationEntryPayload(
+  entry: WorkspaceSkillMaterialization & {
+    skillDir?: string;
+    materializedAt?: string;
+  },
+) {
   return {
     installationId: entry.installationId,
     skillId: entry.skillId,
@@ -3664,7 +4473,10 @@ const materializationMatchesDesired = (
   entry.removalPolicy === desired.removalPolicy &&
   entry.target === desired.target;
 
-async function buildWorkspaceSkillMaterializationStatus(config: ServerConfig, workspace: WorkspaceInfo) {
+async function buildWorkspaceSkillMaterializationStatus(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+) {
   const rootDir = workspaceManagedSkillsRoot(workspace.path);
   const manifest = await readSkillMaterializationManifest(rootDir);
   const registryConfigured = Boolean(skillRegistryBaseUrl(config));
@@ -3673,7 +4485,8 @@ async function buildWorkspaceSkillMaterializationStatus(config: ServerConfig, wo
     status: registryConfigured ? "pending" : "not-configured",
     registryConfigured,
     rootDir,
-    materializedSkills: manifest?.entries.map(materializationEntryPayload) ?? [],
+    materializedSkills:
+      manifest?.entries.map(materializationEntryPayload) ?? [],
     reloadRequired: registryConfigured,
   };
 }
@@ -3683,8 +4496,11 @@ async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
   const manifest = await readSkillMaterializationManifest(rootDir);
   const registryConfigured = Boolean(skillRegistryBaseUrl(config));
   const platformSkillSet = await getPlatformManagedPersonalGlobalSkillSet();
-  const platformSynced = platformSkillSet.skills.every((skill) =>
-    manifest?.entries.some((entry) => materializationMatchesDesired(entry, skill)) ?? false
+  const platformSynced = platformSkillSet.skills.every(
+    (skill) =>
+      manifest?.entries.some((entry) =>
+        materializationMatchesDesired(entry, skill),
+      ) ?? false,
   );
   const platformPending = platformSkillSet.skills.length > 0 && !platformSynced;
   return {
@@ -3692,7 +4508,8 @@ async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
     status: registryConfigured || platformPending ? "pending" : "synced",
     registryConfigured,
     rootDir,
-    materializedSkills: manifest?.entries.map(materializationEntryPayload) ?? [],
+    materializedSkills:
+      manifest?.entries.map(materializationEntryPayload) ?? [],
     platformManaged: {
       enabled: platformSkillSet.skills.length > 0,
       synced: platformSynced,
@@ -3702,7 +4519,9 @@ async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
   };
 }
 
-function desiredSkillSetRevision(materializations: WorkspaceSkillMaterialization[]) {
+function desiredSkillSetRevision(
+  materializations: WorkspaceSkillMaterialization[],
+) {
   const payload = materializations
     .map((entry) => ({
       installationId: entry.installationId,
@@ -3714,12 +4533,18 @@ function desiredSkillSetRevision(materializations: WorkspaceSkillMaterialization
       target: entry.target,
       removalPolicy: entry.removalPolicy,
     }))
-    .sort((left, right) => left.name.localeCompare(right.name) || left.installationId.localeCompare(right.installationId));
+    .sort(
+      (left, right) =>
+        left.name.localeCompare(right.name) ||
+        left.installationId.localeCompare(right.installationId),
+    );
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 function registryInstallationToWorkspaceInstallation(input: {
-  installation: Awaited<ReturnType<typeof getWorkspaceSkillSetFromRegistry>>["skills"][number];
+  installation: Awaited<
+    ReturnType<typeof getWorkspaceSkillSetFromRegistry>
+  >["skills"][number];
   workspace: WorkspaceInfo;
   packageResponse: { versionId: string; package: SkillPackageArchive };
   orgId?: string;
@@ -3731,20 +4556,33 @@ function registryInstallationToWorkspaceInstallation(input: {
     skillId: installation.skillId,
     name: installation.name?.trim() || packageResponse.package.metadata.name,
     versionId: packageResponse.versionId,
-    packageSha256: installation.desiredPackageSha256?.trim() || installation.packageSha256?.trim() || packageResponse.package.packageSha256,
+    packageSha256:
+      installation.desiredPackageSha256?.trim() ||
+      installation.packageSha256?.trim() ||
+      packageResponse.package.packageSha256,
     enabled: installation.enabled,
     source: installation.source,
     installedAt: installation.installedAt,
-    ownerUserId: installation.ownerUserId ?? (installation.source === "personal" ? userId : undefined),
-    orgId: installation.orgId ?? (installation.source === "organization" ? orgId : undefined),
-    workspaceId: installation.workspaceId ?? (installation.source === "workspace" ? workspace.id : undefined),
-    approved: installation.approved ?? (installation.source === "personal" ? undefined : true),
+    ownerUserId:
+      installation.ownerUserId ??
+      (installation.source === "personal" ? userId : undefined),
+    orgId:
+      installation.orgId ??
+      (installation.source === "organization" ? orgId : undefined),
+    workspaceId:
+      installation.workspaceId ??
+      (installation.source === "workspace" ? workspace.id : undefined),
+    approved:
+      installation.approved ??
+      (installation.source === "personal" ? undefined : true),
     desiredVersionId: installation.desiredVersionId ?? null,
     desiredPackageSha256: installation.desiredPackageSha256 ?? null,
   };
 }
 
-function requireRolloutPolicyVersionId(policy: RegistrySkillRolloutPolicy): string {
+function requireRolloutPolicyVersionId(
+  policy: RegistrySkillRolloutPolicy,
+): string {
   const versionId = policy.versionId?.trim();
   if (versionId) return versionId;
   throw new ApiError(
@@ -3768,10 +4606,13 @@ function registryRolloutPolicyToWorkspacePolicy(input: {
     versionId: packageResponse.versionId,
     packageSha256: packageResponse.package.packageSha256,
     enabled: policy.enabled,
-    source: policy.catalogScope === "organization" ? "organization" : "platform",
+    source:
+      policy.catalogScope === "organization" ? "organization" : "platform",
     target: policy.target === "user-global" ? "personal-global" : "workspace",
     audience: policy.audience,
-    orgId: policy.orgId ?? (policy.catalogScope === "organization" ? orgId : undefined),
+    orgId:
+      policy.orgId ??
+      (policy.catalogScope === "organization" ? orgId : undefined),
     userId: policy.userId ?? undefined,
     workspaceId: policy.workspaceId ?? undefined,
     removalPolicy: policy.removalPolicy,
@@ -3788,10 +4629,17 @@ function registryRolloutPolicyAppliesToMaterialization(input: {
 }): boolean {
   const { policy, userId, orgId, workspaceId } = input;
   if (!policy.enabled) return false;
-  if (policy.catalogScope === "organization" && (!orgId || policy.orgId !== orgId)) return false;
+  if (
+    policy.catalogScope === "organization" &&
+    (!orgId || policy.orgId !== orgId)
+  )
+    return false;
 
   if (policy.target === "workspace") {
-    return policy.audience === "selected-workspaces" && Boolean(workspaceId && policy.workspaceId === workspaceId);
+    return (
+      policy.audience === "selected-workspaces" &&
+      Boolean(workspaceId && policy.workspaceId === workspaceId)
+    );
   }
 
   if (policy.audience === "user") {
@@ -3807,9 +4655,12 @@ function assertNoPlatformManagedPersonalGlobalNameConflicts(input: {
   materializations: WorkspaceSkillMaterialization[];
   platformSkills: WorkspaceSkillMaterialization[];
 }) {
-  const platformNames = new Set(input.platformSkills.map((skill) => skill.name));
-  const duplicate = input.materializations.find((skill) =>
-    skill.target === "personal-global" && platformNames.has(skill.name)
+  const platformNames = new Set(
+    input.platformSkills.map((skill) => skill.name),
+  );
+  const duplicate = input.materializations.find(
+    (skill) =>
+      skill.target === "personal-global" && platformNames.has(skill.name),
   );
   if (!duplicate) return;
   throw new ApiError(
@@ -3833,7 +4684,11 @@ async function fetchRegistryWorkspaceMaterializations(
 }> {
   const baseUrl = skillRegistryRequestBaseUrl(ctx);
   if (!baseUrl) {
-    throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
+    throw new ApiError(
+      503,
+      "skill_registry_misconfigured",
+      "Skill registry base URL is missing",
+    );
   }
 
   const registryInput = skillRegistryRequestInput(ctx);
@@ -3846,7 +4701,10 @@ async function fetchRegistryWorkspaceMaterializations(
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
-  for (const [installationId, archive] of platformSkillSet.archivesByInstallationId) {
+  for (const [
+    installationId,
+    archive,
+  ] of platformSkillSet.archivesByInstallationId) {
     packagesByInstallationId.set(installationId, archive);
   }
   const seenInstallationIds = new Set<string>();
@@ -3858,13 +4716,14 @@ async function fetchRegistryWorkspaceMaterializations(
   };
   let personalGlobalSyncRequired = false;
   const addRegistryInstallation = async (
-    installation: typeof skillSet.skills[number],
+    installation: (typeof skillSet.skills)[number],
     targetWorkspace: WorkspaceInfo,
   ) => {
     if (!installation.enabled) return;
     if (seenInstallationIds.has(installation.installationId)) return;
     seenInstallationIds.add(installation.installationId);
-    const versionId = installation.desiredVersionId?.trim() || installation.versionId;
+    const versionId =
+      installation.desiredVersionId?.trim() || installation.versionId;
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId,
@@ -3877,7 +4736,10 @@ async function fetchRegistryWorkspaceMaterializations(
       userId: registryInput.userId,
     });
     registryInstallations.push(workspaceInstallation);
-    packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
+    packagesByInstallationId.set(
+      workspaceInstallation.installationId,
+      packageResponse.package,
+    );
   };
 
   for (const installation of skillSet.skills) {
@@ -3906,12 +4768,14 @@ async function fetchRegistryWorkspaceMaterializations(
       enabled: true,
     });
     for (const policy of rolloutPoliciesResponse.policies) {
-      if (!registryRolloutPolicyAppliesToMaterialization({
-        policy,
-        userId: registryInput.userId,
-        orgId: registryInput.orgId,
-        workspaceId: workspace.id,
-      })) {
+      if (
+        !registryRolloutPolicyAppliesToMaterialization({
+          policy,
+          userId: registryInput.userId,
+          orgId: registryInput.orgId,
+          workspaceId: workspace.id,
+        })
+      ) {
         continue;
       }
       if (policy.target === "user-global") {
@@ -3927,7 +4791,10 @@ async function fetchRegistryWorkspaceMaterializations(
         orgId: registryInput.orgId,
       });
       rolloutPolicies.push(workspacePolicy);
-      packagesByInstallationId.set(`rollout:${workspacePolicy.id}`, packageResponse.package);
+      packagesByInstallationId.set(
+        `rollout:${workspacePolicy.id}`,
+        packageResponse.package,
+      );
     }
   }
 
@@ -3960,7 +4827,8 @@ async function fetchRegistryWorkspaceMaterializations(
     packagesByInstallationId,
     personalGlobalSyncRequired,
     skillSetId: skillSet.skillSetId?.trim() || `workspace:${workspace.id}`,
-    skillSetRevision: skillSet.revision?.trim() || desiredSkillSetRevision(materializations),
+    skillSetRevision:
+      skillSet.revision?.trim() || desiredSkillSetRevision(materializations),
   };
 }
 
@@ -3991,7 +4859,10 @@ async function fetchRegistryPersonalGlobalMaterializations(
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
-  for (const [installationId, archive] of platformSkillSet.archivesByInstallationId) {
+  for (const [
+    installationId,
+    archive,
+  ] of platformSkillSet.archivesByInstallationId) {
     packagesByInstallationId.set(installationId, archive);
   }
   const personalGlobalWorkspace: WorkspaceInfo = {
@@ -4014,7 +4885,10 @@ async function fetchRegistryPersonalGlobalMaterializations(
       userId: registryInput.userId,
     });
     registryInstallations.push(workspaceInstallation);
-    packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
+    packagesByInstallationId.set(
+      workspaceInstallation.installationId,
+      packageResponse.package,
+    );
   }
 
   const rolloutPoliciesResponse = await listRegistrySkillRolloutPolicies({
@@ -4023,11 +4897,13 @@ async function fetchRegistryPersonalGlobalMaterializations(
     enabled: true,
   });
   for (const policy of rolloutPoliciesResponse.policies) {
-    if (!registryRolloutPolicyAppliesToMaterialization({
-      policy,
-      userId: registryInput.userId,
-      orgId: registryInput.orgId,
-    })) {
+    if (
+      !registryRolloutPolicyAppliesToMaterialization({
+        policy,
+        userId: registryInput.userId,
+        orgId: registryInput.orgId,
+      })
+    ) {
       continue;
     }
     const packageResponse = await downloadSkillPackageFromRegistry({
@@ -4040,7 +4916,10 @@ async function fetchRegistryPersonalGlobalMaterializations(
       orgId: registryInput.orgId,
     });
     rolloutPolicies.push(workspacePolicy);
-    packagesByInstallationId.set(`rollout:${workspacePolicy.id}`, packageResponse.package);
+    packagesByInstallationId.set(
+      `rollout:${workspacePolicy.id}`,
+      packageResponse.package,
+    );
   }
 
   const resolution = resolveWorkspaceSkillSet({
@@ -4062,20 +4941,36 @@ async function fetchRegistryPersonalGlobalMaterializations(
     materializations: resolution.requiredMaterializations,
     platformSkills: platformSkillSet.skills,
   });
-  const materializations = [...resolution.requiredMaterializations, ...platformSkillSet.skills];
+  const materializations = [
+    ...resolution.requiredMaterializations,
+    ...platformSkillSet.skills,
+  ];
 
-  return { materializations, conflicts: resolution.conflicts, packagesByInstallationId };
+  return {
+    materializations,
+    conflicts: resolution.conflicts,
+    packagesByInstallationId,
+  };
 }
 
-const trimmedSearchParam = (params: URLSearchParams, key: string): string | undefined => {
+const trimmedSearchParam = (
+  params: URLSearchParams,
+  key: string,
+): string | undefined => {
   const value = params.get(key)?.trim();
   return value || undefined;
 };
 
-const parseSkillRemovalScope = (value: string | undefined): SkillRemovalScope | undefined => {
+const parseSkillRemovalScope = (
+  value: string | undefined,
+): SkillRemovalScope | undefined => {
   if (!value) return undefined;
   if (value === "workspace" || value === "user-global") return value;
-  throw new ApiError(400, "invalid_scope", "Skill removal scope must be workspace or user-global");
+  throw new ApiError(
+    400,
+    "invalid_scope",
+    "Skill removal scope must be workspace or user-global",
+  );
 };
 
 type SkillBatchRemoveScope = "workspace" | "user-global" | "organization";
@@ -4122,23 +5017,41 @@ type SkillBatchRemoveFailure = {
   details?: unknown;
 };
 
-const optionalRecordString = (record: Record<string, unknown>, field: string): string | undefined => {
+const optionalRecordString = (
+  record: Record<string, unknown>,
+  field: string,
+): string | undefined => {
   const value = record[field];
   if (typeof value !== "string") return undefined;
   return value.trim() || undefined;
 };
 
-const parseSkillBatchRemoveItem = (value: unknown, index: number): SkillBatchRemoveItem => {
+const parseSkillBatchRemoveItem = (
+  value: unknown,
+  index: number,
+): SkillBatchRemoveItem => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new ApiError(400, "invalid_skill_batch_item", "Skill batch item must be an object");
+    throw new ApiError(
+      400,
+      "invalid_skill_batch_item",
+      "Skill batch item must be an object",
+    );
   }
   const record = value as Record<string, unknown>;
   const name = optionalRecordString(record, "name");
   if (!name) {
-    throw new ApiError(400, "invalid_skill_batch_item", "Skill batch item name is required");
+    throw new ApiError(
+      400,
+      "invalid_skill_batch_item",
+      "Skill batch item name is required",
+    );
   }
   const rawScope = optionalRecordString(record, "scope");
-  if (rawScope !== "workspace" && rawScope !== "user-global" && rawScope !== "organization") {
+  if (
+    rawScope !== "workspace" &&
+    rawScope !== "user-global" &&
+    rawScope !== "organization"
+  ) {
     throw new ApiError(
       400,
       "invalid_skill_batch_item",
@@ -4148,11 +5061,22 @@ const parseSkillBatchRemoveItem = (value: unknown, index: number): SkillBatchRem
   const registryValue = record.registry;
   let registry: SkillBatchRemoveItem["registry"];
   if (registryValue !== undefined) {
-    if (!registryValue || typeof registryValue !== "object" || Array.isArray(registryValue)) {
-      throw new ApiError(400, "invalid_skill_batch_item", "Skill batch item registry must be an object");
+    if (
+      !registryValue ||
+      typeof registryValue !== "object" ||
+      Array.isArray(registryValue)
+    ) {
+      throw new ApiError(
+        400,
+        "invalid_skill_batch_item",
+        "Skill batch item registry must be an object",
+      );
     }
     const registryRecord = registryValue as Record<string, unknown>;
-    const installationId = optionalRecordString(registryRecord, "installationId");
+    const installationId = optionalRecordString(
+      registryRecord,
+      "installationId",
+    );
     const policyId = optionalRecordString(registryRecord, "policyId");
     if (installationId && policyId) {
       throw new ApiError(
@@ -4168,10 +5092,18 @@ const parseSkillBatchRemoveItem = (value: unknown, index: number): SkillBatchRem
     index,
     name,
     scope: rawScope,
-    ...(optionalRecordString(record, "id") ? { id: optionalRecordString(record, "id") } : {}),
-    ...(optionalRecordString(record, "path") ? { path: optionalRecordString(record, "path") } : {}),
-    ...(optionalRecordString(record, "workspaceId") ? { workspaceId: optionalRecordString(record, "workspaceId") } : {}),
-    ...(optionalRecordString(record, "reason") ? { reason: optionalRecordString(record, "reason") } : {}),
+    ...(optionalRecordString(record, "id")
+      ? { id: optionalRecordString(record, "id") }
+      : {}),
+    ...(optionalRecordString(record, "path")
+      ? { path: optionalRecordString(record, "path") }
+      : {}),
+    ...(optionalRecordString(record, "workspaceId")
+      ? { workspaceId: optionalRecordString(record, "workspaceId") }
+      : {}),
+    ...(optionalRecordString(record, "reason")
+      ? { reason: optionalRecordString(record, "reason") }
+      : {}),
     ...(registry ? { registry } : {}),
   };
 };
@@ -4181,18 +5113,26 @@ const skillBatchRemoveFailure = (
   index: number,
   error: unknown,
 ): SkillBatchRemoveFailure => {
-  const record = value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-  const apiError = error instanceof ApiError
-    ? error
-    : new ApiError(500, "internal_error", "Unexpected server error");
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const apiError =
+    error instanceof ApiError
+      ? error
+      : new ApiError(500, "internal_error", "Unexpected server error");
   return {
-    ...(optionalRecordString(record, "id") ? { id: optionalRecordString(record, "id") } : {}),
+    ...(optionalRecordString(record, "id")
+      ? { id: optionalRecordString(record, "id") }
+      : {}),
     index,
     ok: false,
-    ...(optionalRecordString(record, "name") ? { name: optionalRecordString(record, "name") } : {}),
-    ...(optionalRecordString(record, "scope") ? { scope: optionalRecordString(record, "scope") } : {}),
+    ...(optionalRecordString(record, "name")
+      ? { name: optionalRecordString(record, "name") }
+      : {}),
+    ...(optionalRecordString(record, "scope")
+      ? { scope: optionalRecordString(record, "scope") }
+      : {}),
     code: apiError.code,
     message: apiError.message,
     status: apiError.status,
@@ -4213,7 +5153,9 @@ type SkillRemovalListItem = {
   canRestore: boolean;
 };
 
-const serializeSkillRemoval = (record: SkillRemovalRecord): SkillRemovalListItem => ({
+const serializeSkillRemoval = (
+  record: SkillRemovalRecord,
+): SkillRemovalListItem => ({
   id: record.id,
   name: record.name,
   scope: record.scope,
@@ -4226,7 +5168,10 @@ const serializeSkillRemoval = (record: SkillRemovalRecord): SkillRemovalListItem
   canRestore: !record.restoredAt,
 });
 
-function requireBodyString(body: Record<string, unknown>, field: string): string {
+function requireBodyString(
+  body: Record<string, unknown>,
+  field: string,
+): string {
   const value = body[field];
   if (typeof value !== "string" || value.trim() === "") {
     throw new ApiError(400, "invalid_request", `Field ${field} is required`);
@@ -4234,27 +5179,43 @@ function requireBodyString(body: Record<string, unknown>, field: string): string
   return value.trim();
 }
 
-function optionalBodyString(body: Record<string, unknown>, field: string): string | undefined {
+function optionalBodyString(
+  body: Record<string, unknown>,
+  field: string,
+): string | undefined {
   const value = body[field];
   if (typeof value !== "string") return undefined;
   return value.trim() || undefined;
 }
 
-function optionalBodyNullableString(body: Record<string, unknown>, field: string): string | null | undefined {
+function optionalBodyNullableString(
+  body: Record<string, unknown>,
+  field: string,
+): string | null | undefined {
   if (body[field] === null) return null;
   return optionalBodyString(body, field);
 }
 
-function optionalBodyHttpUrl(body: Record<string, unknown>, field: string): string | undefined {
+function optionalBodyHttpUrl(
+  body: Record<string, unknown>,
+  field: string,
+): string | undefined {
   const value = optionalBodyString(body, field);
   if (!value) return undefined;
   if (!value.startsWith("http://") && !value.startsWith("https://")) {
-    throw new ApiError(400, "invalid_payload", `${field} must start with http:// or https://`);
+    throw new ApiError(
+      400,
+      "invalid_payload",
+      `${field} must start with http:// or https://`,
+    );
   }
   return value.replace(/\/+$/, "");
 }
 
-function requireBodyObject(body: Record<string, unknown>, field: string): Record<string, unknown> {
+function requireBodyObject(
+  body: Record<string, unknown>,
+  field: string,
+): Record<string, unknown> {
   const value = body[field];
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new ApiError(400, "invalid_request", `Field ${field} is required`);
@@ -4267,18 +5228,31 @@ function createRoutes(
   approvals: ApprovalService,
   tokens: TokenService,
   automationRunner: AutomationRunner,
-): { routes: Route[]; conversationRunLifecycleController: ConversationRunLifecycleController } {
+): {
+  routes: Route[];
+  conversationRunLifecycleController: ConversationRunLifecycleController;
+} {
   const routes: Route[] = [];
-  const serializeWorkspaceForResponse = (workspace: WorkspaceInfo) => serializeWorkspace(workspace, config);
+  const serializeWorkspaceForResponse = (workspace: WorkspaceInfo) =>
+    serializeWorkspace(workspace, config);
   const serverDataDir = resolveVesloDataDir();
   const fileSessions = new FileSessionStore();
   const sessionArchives = createSessionArchiveStore();
   const conversationReadStore = createConversationReadStore();
-  const conversationBindingStore = createConversationBindingStore({ dataDir: serverDataDir });
-  const conversationTranscriptStore = createConversationTranscriptStore({ dataDir: serverDataDir });
-  const conversationRunQueueStore = createConversationRunQueueStore({ dataDir: serverDataDir });
-  const conversationSubmitAttemptStore = createConversationSubmitAttemptStore({ dataDir: serverDataDir });
-  const documentRuntimeDependencies = createDocumentRuntimeProviderDependencies();
+  const conversationBindingStore = createConversationBindingStore({
+    dataDir: serverDataDir,
+  });
+  const conversationTranscriptStore = createConversationTranscriptStore({
+    dataDir: serverDataDir,
+  });
+  const conversationRunQueueStore = createConversationRunQueueStore({
+    dataDir: serverDataDir,
+  });
+  const conversationSubmitAttemptStore = createConversationSubmitAttemptStore({
+    dataDir: serverDataDir,
+  });
+  const documentRuntimeDependencies =
+    createDocumentRuntimeProviderDependencies();
   const conversationService = createConversationService({
     readStore: conversationReadStore,
     bindingStore: conversationBindingStore,
@@ -4291,18 +5265,27 @@ function createRoutes(
       sendTraceId,
       orchestratorRegistrationScope,
     }) => {
-      const scopedWorkspace = directory ? { ...workspace, directory } : workspace;
-      return await fetchOpencodeJsonWithOrchestratorFallback(config, scopedWorkspace, "/session", {
-        method: "POST",
-        timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
-        sendTraceId,
-        orchestratorRegistrationScope,
-        body: {
-          ...(requestedOpenCodeSessionId?.trim() ? { id: requestedOpenCodeSessionId.trim() } : {}),
-          ...(directory ? { directory } : {}),
-          ...(title?.trim() ? { title: title.trim() } : {}),
+      const scopedWorkspace = directory
+        ? { ...workspace, directory }
+        : workspace;
+      return await fetchOpencodeJsonWithOrchestratorFallback(
+        config,
+        scopedWorkspace,
+        "/session",
+        {
+          method: "POST",
+          timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
+          sendTraceId,
+          orchestratorRegistrationScope,
+          body: {
+            ...(requestedOpenCodeSessionId?.trim()
+              ? { id: requestedOpenCodeSessionId.trim() }
+              : {}),
+            ...(directory ? { directory } : {}),
+            ...(title?.trim() ? { title: title.trim() } : {}),
+          },
         },
-      });
+      );
     },
   });
   const lifecycleClient =
@@ -4315,10 +5298,13 @@ function createRoutes(
   const conversationSubmitService = createConversationSubmitService({
     attemptStore: conversationSubmitAttemptStore,
     conversationService,
-    documentRuntimeStatus: async () => documentRuntimeDependencies.readStatus
-      ? await documentRuntimeDependencies.readStatus({} as RequestContext)
-      : createDocumentRuntimeStatusPayload(documentRuntimeDependencies),
-    resolveSkillCommand: createConversationSubmitSkillCommandResolver({ dataDir: serverDataDir }),
+    documentRuntimeStatus: async () =>
+      documentRuntimeDependencies.readStatus
+        ? await documentRuntimeDependencies.readStatus({} as RequestContext)
+        : createDocumentRuntimeStatusPayload(documentRuntimeDependencies),
+    resolveSkillCommand: createConversationSubmitSkillCommandResolver({
+      dataDir: serverDataDir,
+    }),
     queueStatusReader: (payload) =>
       conversationRunQueueStore.getForConversation(
         payload.workspaceId,
@@ -4330,7 +5316,8 @@ function createRoutes(
   const sessionTranscriptPrefetch = createSessionTranscriptPrefetchStore({
     loadTranscript: async ({ workspaceId, sessionId, limit, directory }) => {
       const workspace = await resolveWorkspace(config, workspaceId);
-      const resolvedDirectory = directory ?? resolveOpencodeDirectory(workspace);
+      const resolvedDirectory =
+        directory ?? resolveOpencodeDirectory(workspace);
       return await conversationService.loadTranscript({
         workspace,
         sessionId,
@@ -4349,7 +5336,9 @@ function createRoutes(
       });
       return {
         complete: snapshot.complete,
-        ...(snapshot.conversationId ? { conversationId: snapshot.conversationId } : {}),
+        ...(snapshot.conversationId
+          ? { conversationId: snapshot.conversationId }
+          : {}),
         messages: snapshot.messages,
         partsByMessageId: snapshot.partsByMessageId,
       };
@@ -4394,7 +5383,11 @@ function createRoutes(
       sessionOrConversationId: input.sessionOrConversationId,
     });
     if (!binding) {
-      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+      throw new ApiError(
+        404,
+        "conversation_not_found",
+        "Conversation was not found in this workspace",
+      );
     }
     const opencodeSessionId = binding.engineSessionId;
     const sourceResult = input.includeSource
@@ -4426,10 +5419,12 @@ function createRoutes(
       staleAt: snapshot.staleAt,
       source: snapshot.source,
       ...(snapshot.diagnostic ? { diagnostic: snapshot.diagnostic } : {}),
-      ...(sourceResult ? {
-        sourceSnapshot: sourceResult.snapshot,
-        cacheOutcome: sourceResult.outcome,
-      } : {}),
+      ...(sourceResult
+        ? {
+            sourceSnapshot: sourceResult.snapshot,
+            cacheOutcome: sourceResult.outcome,
+          }
+        : {}),
     };
   };
 
@@ -4440,14 +5435,22 @@ function createRoutes(
     missingDirectoryMessage: string;
   }) => {
     if (!input.requestedDirectory) {
-      throw new ApiError(400, "invalid_directory", input.missingDirectoryMessage);
+      throw new ApiError(
+        400,
+        "invalid_directory",
+        input.missingDirectoryMessage,
+      );
     }
     const directory = await resolveConversationReadDirectory(
       input.workspace,
       input.requestedDirectory,
     );
     if (!directory) {
-      throw new ApiError(400, "invalid_directory", "Conversation directory is required");
+      throw new ApiError(
+        400,
+        "invalid_directory",
+        "Conversation directory is required",
+      );
     }
     const binding = await conversationService.resolveOpenCodeSessionForRead({
       workspaceId: input.workspace.id,
@@ -4456,7 +5459,11 @@ function createRoutes(
       sessionOrConversationId: input.sessionOrConversationId,
     });
     if (!binding) {
-      throw new ApiError(404, "conversation_not_found", "Conversation was not found in this workspace");
+      throw new ApiError(
+        404,
+        "conversation_not_found",
+        "Conversation was not found in this workspace",
+      );
     }
     return {
       directory,
@@ -4522,7 +5529,11 @@ function createRoutes(
       orchestratorRegistrationScope,
       captureEngineOwner,
     } = input;
-    const path = buildConversationRunSubmitPath(kind, target.opencodeSessionId, target.directory);
+    const path = buildConversationRunSubmitPath(
+      kind,
+      target.opencodeSessionId,
+      target.directory,
+    );
     const opencodeRunBody = buildConversationRunBody(kind, {
       ...body,
       ...(kind === "prompt_async" && input.opencodeMessageId
@@ -4531,21 +5542,27 @@ function createRoutes(
           }
         : {}),
     });
-    const runtimeSkillView = workspace.workspaceType === "local"
-      ? await ensureActiveRuntimeSkillView(workspace, {
-          disabledSkills: await listDisabledSkills({
-            dataDir: serverDataDir,
-            workspaceId: workspace.id,
-            includeGlobal: true,
-          }),
-          workspaceId: workspace.id,
-          workspaceOwner: workspaceResourceOwner({
-            workspaceId: workspace.id,
-            root: workspace.path,
-            label: workspace.name,
-          }),
-        })
-      : null;
+    const runtimeSkillView =
+      workspace.workspaceType === "local"
+        ? await withWorkspaceSkillLease(
+            workspace.path,
+            "conversation-runtime-skill-view",
+            async () =>
+              ensureActiveRuntimeSkillView(workspace, {
+                disabledSkills: await listDisabledSkills({
+                  dataDir: serverDataDir,
+                  workspaceId: workspace.id,
+                  includeGlobal: true,
+                }),
+                workspaceId: workspace.id,
+                workspaceOwner: workspaceResourceOwner({
+                  workspaceId: workspace.id,
+                  root: workspace.path,
+                  label: workspace.name,
+                }),
+              }),
+          )
+        : null;
     runTrace.record("server:conversation-run:opencode-submit-body", {
       workspaceId: workspace.id,
       conversationId: target.conversationId,
@@ -4557,21 +5574,22 @@ function createRoutes(
       skillViewRevision: runtimeSkillView?.revision ?? null,
       body: summarizeConversationRunBodyForTrace(opencodeRunBody),
     });
-    const submitUpstream = () => fetchOpencodeJsonWithOrchestratorFallback(
-      config,
-      { ...workspace, directory: target.directory },
-      path,
-      {
-        method: "POST",
-        timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
-        body: opencodeRunBody,
-        sendTraceId: runTrace.traceId,
-        conversationRunId: runId,
-        skillViewRevision: runtimeSkillView?.revision ?? null,
-        orchestratorRegistrationScope,
-        captureEngineOwner,
-      },
-    );
+    const submitUpstream = () =>
+      fetchOpencodeJsonWithOrchestratorFallback(
+        config,
+        { ...workspace, directory: target.directory },
+        path,
+        {
+          method: "POST",
+          timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
+          body: opencodeRunBody,
+          sendTraceId: runTrace.traceId,
+          conversationRunId: runId,
+          skillViewRevision: runtimeSkillView?.revision ?? null,
+          orchestratorRegistrationScope,
+          captureEngineOwner,
+        },
+      );
     return runTrace.step(
       "server:conversation-run:opencode-submit",
       async () => {
@@ -4579,14 +5597,17 @@ function createRoutes(
           return await submitUpstream();
         } catch (error) {
           if (!shouldRetryConversationSubmitAfterTransport(error)) throw error;
-          runTrace.record("server:conversation-run:opencode-submit-transport-retry", {
-            workspaceId: workspace.id,
-            conversationId: target.conversationId,
-            runId,
-            kind,
-            opencodeSessionId: target.opencodeSessionId,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          runTrace.record(
+            "server:conversation-run:opencode-submit-transport-retry",
+            {
+              workspaceId: workspace.id,
+              conversationId: target.conversationId,
+              runId,
+              kind,
+              opencodeSessionId: target.opencodeSessionId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
           return await submitUpstream();
         }
       },
@@ -4613,48 +5634,61 @@ function createRoutes(
       : 1_500;
 
   const conversationRunLifecycleControllerFactory =
-    conversationRunLifecycleControllerFactoryForTests ?? createConversationRunLifecycleController;
-  const conversationRunLifecycleController = conversationRunLifecycleControllerFactory({
-    lifecycleClient,
-    queueStore: conversationRunQueueStore,
-    resolveWorkspace: (workspaceId) => config.workspaces.find((candidate) => candidate.id === workspaceId) ?? null,
-    createBackgroundRunTrace: createBackgroundConversationRunTracer,
-    submitOpenCode: submitConversationRunToOpenCode,
-    abortOpenCode: async ({ runTrace, workspace, target }) => {
-      const abortQuery = new URLSearchParams();
-      abortQuery.set("directory", target.directory);
-      return fetchOpencodeJsonWithOrchestratorFallback(
-        config,
-        { ...workspace, directory: target.directory },
-        `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
-        { method: "POST", sendTraceId: runTrace.traceId },
-      );
-    },
-    abortActiveGatewayProxyRequests: abortActiveAiGatewayProxyRequests,
-    aiGatewayActiveRun: {
-      register: registerActiveAiGatewayRun,
-      unregister: unregisterActiveAiGatewayRun,
-    },
-    aiGatewayProviderWatch: {
-      waitForProviderStart: waitForAiGatewayProviderStart,
-    },
-    queueDrainPollMs: CONVERSATION_QUEUE_DRAIN_POLL_MS,
-    resolveLifecycleReconcileInitialDelayMs: resolveConversationRunLifecycleReconcileInitialDelayMs,
-    resolveLifecycleReconcilePollMs: resolveConversationRunLifecycleReconcilePollMs,
-    resolveLifecycleReconcileMaxAttempts: resolveConversationRunLifecycleReconcileMaxAttempts,
-    ingestTerminalTranscript: async ({ workspace, directory, opencodeSessionId, runId }) => {
-      await transcriptIngestCoordinator.request({
-        workspaceId: workspace.id,
+    conversationRunLifecycleControllerFactoryForTests ??
+    createConversationRunLifecycleController;
+  const conversationRunLifecycleController =
+    conversationRunLifecycleControllerFactory({
+      lifecycleClient,
+      queueStore: conversationRunQueueStore,
+      resolveWorkspace: (workspaceId) =>
+        config.workspaces.find((candidate) => candidate.id === workspaceId) ??
+        null,
+      createBackgroundRunTrace: createBackgroundConversationRunTracer,
+      submitOpenCode: submitConversationRunToOpenCode,
+      abortOpenCode: async ({ runTrace, workspace, target }) => {
+        const abortQuery = new URLSearchParams();
+        abortQuery.set("directory", target.directory);
+        return fetchOpencodeJsonWithOrchestratorFallback(
+          config,
+          { ...workspace, directory: target.directory },
+          `/session/${encodeURIComponent(target.opencodeSessionId)}/abort?${abortQuery.toString()}`,
+          { method: "POST", sendTraceId: runTrace.traceId },
+        );
+      },
+      abortActiveGatewayProxyRequests: abortActiveAiGatewayProxyRequests,
+      aiGatewayActiveRun: {
+        register: registerActiveAiGatewayRun,
+        unregister: unregisterActiveAiGatewayRun,
+      },
+      aiGatewayProviderWatch: {
+        waitForProviderStart: waitForAiGatewayProviderStart,
+      },
+      queueDrainPollMs: CONVERSATION_QUEUE_DRAIN_POLL_MS,
+      resolveLifecycleReconcileInitialDelayMs:
+        resolveConversationRunLifecycleReconcileInitialDelayMs,
+      resolveLifecycleReconcilePollMs:
+        resolveConversationRunLifecycleReconcilePollMs,
+      resolveLifecycleReconcileMaxAttempts:
+        resolveConversationRunLifecycleReconcileMaxAttempts,
+      ingestTerminalTranscript: async ({
+        workspace,
         directory,
         opencodeSessionId,
-        trigger: "terminal-lifecycle",
         runId,
-      });
-    },
-    trace: {
-      record: (event, payload = {}) => recordSendWorkflowTrace("server", event, payload),
-    },
-  });
+      }) => {
+        await transcriptIngestCoordinator.request({
+          workspaceId: workspace.id,
+          directory,
+          opencodeSessionId,
+          trigger: "terminal-lifecycle",
+          runId,
+        });
+      },
+      trace: {
+        record: (event, payload = {}) =>
+          recordSendWorkflowTrace("server", event, payload),
+      },
+    });
 
   const serializeFileSession = (session: {
     id: string;
@@ -4674,16 +5708,33 @@ function createRoutes(
   const resolveFileSession = (ctx: RequestContext, sessionId: string) => {
     const session = fileSessions.get(sessionId);
     if (!session) {
-      throw new ApiError(404, "file_session_not_found", "File session not found");
+      throw new ApiError(
+        404,
+        "file_session_not_found",
+        "File session not found",
+      );
     }
 
-    if (!ctx.actor?.tokenHash || session.actorTokenHash !== ctx.actor.tokenHash) {
-      throw new ApiError(403, "forbidden", "File session does not belong to this token");
+    if (
+      !ctx.actor?.tokenHash ||
+      session.actorTokenHash !== ctx.actor.tokenHash
+    ) {
+      throw new ApiError(
+        403,
+        "forbidden",
+        "File session does not belong to this token",
+      );
     }
 
-    const workspace = config.workspaces.find((item) => item.id === session.workspaceId);
+    const workspace = config.workspaces.find(
+      (item) => item.id === session.workspaceId,
+    );
     if (!workspace) {
-      throw new ApiError(404, "workspace_not_found", "Workspace not found for this file session");
+      throw new ApiError(
+        404,
+        "workspace_not_found",
+        "Workspace not found for this file session",
+      );
     }
 
     return { session, workspace };
@@ -4697,11 +5748,22 @@ function createRoutes(
     return soulController.readUserSoulModel(serverDataDir, ctx);
   };
 
-  const readWorkspaceSoulModel = async (ctx: RequestContext, workspace: WorkspaceInfo) => {
+  const readWorkspaceSoulModel = async (
+    ctx: RequestContext,
+    workspace: WorkspaceInfo,
+  ) => {
     return soulController.readWorkspaceSoulModel(serverDataDir, ctx, workspace);
   };
 
-  const recordWorkspaceFileEvent = (workspaceId: string, input: { type: "write" | "delete" | "rename" | "mkdir"; path: string; toPath?: string; revision?: string }) => {
+  const recordWorkspaceFileEvent = (
+    workspaceId: string,
+    input: {
+      type: "write" | "delete" | "rename" | "mkdir";
+      path: string;
+      toPath?: string;
+      revision?: string;
+    },
+  ) => {
     return fileSessions.recordWorkspaceEvent({ workspaceId, ...input });
   };
 
@@ -4727,11 +5789,15 @@ function createRoutes(
     writeVesloConfig,
     buildConfigTrigger,
     reloadOpencodeEngine,
-    reloadWorkspaceEngineIfIdle: conversationRunLifecycleController.reloadWorkspaceEngineIfIdle,
+    reloadWorkspaceEngineIfIdle:
+      conversationRunLifecycleController.reloadWorkspaceEngineIfIdle,
     exportWorkspace,
     importWorkspace,
   });
-  registerSessionArchiveRoutes(routes, { resolveArchiveOwnerKey, sessionArchives });
+  registerSessionArchiveRoutes(routes, {
+    resolveArchiveOwnerKey,
+    sessionArchives,
+  });
 
   registerAiGatewayRoutes(routes, {
     clearAiGatewayRuntimeAuthorization,
@@ -4768,21 +5834,37 @@ function createRoutes(
       await fetchOpencodeJsonWithOrchestratorFallback(
         config,
         { ...workspace, directory: target.directory },
-        buildConversationSessionActionPath(target.opencodeSessionId, target.directory),
+        buildConversationSessionActionPath(
+          target.opencodeSessionId,
+          target.directory,
+        ),
         { method: "GET", sendTraceId },
       ),
     abortOpenCodeSession: async ({ workspace, target, sendTraceId }) =>
       await fetchOpencodeJsonWithOrchestratorFallback(
         config,
         { ...workspace, directory: target.directory },
-        buildConversationSessionActionPath(target.opencodeSessionId, target.directory, "abort"),
+        buildConversationSessionActionPath(
+          target.opencodeSessionId,
+          target.directory,
+          "abort",
+        ),
         { method: "POST", sendTraceId },
       ),
-    revertOpenCodeSession: async ({ workspace, target, messageId, sendTraceId }) =>
+    revertOpenCodeSession: async ({
+      workspace,
+      target,
+      messageId,
+      sendTraceId,
+    }) =>
       await fetchOpencodeJsonWithOrchestratorFallback(
         config,
         { ...workspace, directory: target.directory },
-        buildConversationSessionActionPath(target.opencodeSessionId, target.directory, "revert"),
+        buildConversationSessionActionPath(
+          target.opencodeSessionId,
+          target.directory,
+          "revert",
+        ),
         {
           method: "POST",
           body: { messageID: messageId },
@@ -4793,7 +5875,11 @@ function createRoutes(
       await fetchOpencodeJsonWithOrchestratorFallback(
         config,
         { ...workspace, directory: target.directory },
-        buildConversationSessionActionPath(target.opencodeSessionId, target.directory, "unrevert"),
+        buildConversationSessionActionPath(
+          target.opencodeSessionId,
+          target.directory,
+          "unrevert",
+        ),
         { method: "POST", sendTraceId },
       ),
     recordSendWorkflowTrace,
@@ -4846,7 +5932,8 @@ function createRoutes(
     materializeSoulForConfiguredWorkspaces,
     activeSoulWorkspaceIdsFromBody,
     soulWorkspaceActiveFromBody,
-    soulMaterializationApprovalPaths: (workspace) => soulRuntimeMaterializationApprovalPaths(workspace.path),
+    soulMaterializationApprovalPaths: (workspace) =>
+      soulRuntimeMaterializationApprovalPaths(workspace.path),
     configuredSoulMaterializationApprovalPaths,
     globalSoulApprovalWorkspaceId,
     validateSoulScopeParam,
@@ -4888,7 +5975,9 @@ function resolveOpenCodeJsonFetchTimeoutMs(): number {
 }
 
 function resolveOpencodeProxyHeadersTimeoutMs(): number {
-  const parsed = parseInteger(process.env.VESLO_OPENCODE_PROXY_HEADERS_TIMEOUT_MS);
+  const parsed = parseInteger(
+    process.env.VESLO_OPENCODE_PROXY_HEADERS_TIMEOUT_MS,
+  );
   if (parsed && parsed > 0) {
     return clampNumber(parsed, 100, 600_000);
   }
@@ -4896,7 +5985,9 @@ function resolveOpencodeProxyHeadersTimeoutMs(): number {
 }
 
 function resolveAiGatewayProxyHeadersTimeoutMs(): number {
-  const parsed = parseInteger(process.env.VESLO_AI_GATEWAY_PROXY_HEADERS_TIMEOUT_MS);
+  const parsed = parseInteger(
+    process.env.VESLO_AI_GATEWAY_PROXY_HEADERS_TIMEOUT_MS,
+  );
   if (parsed && parsed > 0) {
     return clampNumber(parsed, 100, 600_000);
   }
@@ -4904,7 +5995,9 @@ function resolveAiGatewayProxyHeadersTimeoutMs(): number {
 }
 
 function resolveAiGatewayProviderStartTimeoutMs(): number {
-  const parsed = parseInteger(process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS);
+  const parsed = parseInteger(
+    process.env.VESLO_AI_GATEWAY_PROVIDER_START_TIMEOUT_MS,
+  );
   if (parsed && parsed > 0) {
     return clampNumber(parsed, 10, 600_000);
   }
@@ -4912,7 +6005,9 @@ function resolveAiGatewayProviderStartTimeoutMs(): number {
 }
 
 function resolveConversationRunLifecycleReconcileInitialDelayMs(): number {
-  const parsed = parseInteger(process.env.VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_INITIAL_DELAY_MS);
+  const parsed = parseInteger(
+    process.env.VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_INITIAL_DELAY_MS,
+  );
   if (parsed !== null && parsed >= 0) {
     return clampNumber(parsed, 0, 60_000);
   }
@@ -4920,7 +6015,9 @@ function resolveConversationRunLifecycleReconcileInitialDelayMs(): number {
 }
 
 function resolveConversationRunLifecycleReconcilePollMs(): number {
-  const parsed = parseInteger(process.env.VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_POLL_MS);
+  const parsed = parseInteger(
+    process.env.VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_POLL_MS,
+  );
   if (parsed !== null && parsed > 0) {
     return clampNumber(parsed, 10, 60_000);
   }
@@ -4928,7 +6025,9 @@ function resolveConversationRunLifecycleReconcilePollMs(): number {
 }
 
 function resolveConversationRunLifecycleReconcileMaxAttempts(): number {
-  const parsed = parseInteger(process.env.VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_MAX_ATTEMPTS);
+  const parsed = parseInteger(
+    process.env.VESLO_CONVERSATION_RUN_LIFECYCLE_RECONCILE_MAX_ATTEMPTS,
+  );
   if (parsed !== null && parsed > 0) {
     return clampNumber(parsed, 1, 600);
   }
@@ -4937,7 +6036,8 @@ function resolveConversationRunLifecycleReconcileMaxAttempts(): number {
 
 function isAbortError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
-  const name = "name" in error ? String((error as { name?: unknown }).name ?? "") : "";
+  const name =
+    "name" in error ? String((error as { name?: unknown }).name ?? "") : "";
   return name === "AbortError" || name === "TimeoutError";
 }
 
@@ -4951,7 +6051,11 @@ function ensurePlainObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-async function persistWorkspaceDeletion(configPath: string, workspaceId: string, workspacePath: string): Promise<boolean> {
+async function persistWorkspaceDeletion(
+  configPath: string,
+  workspaceId: string,
+  workspacePath: string,
+): Promise<boolean> {
   if (!configPath.trim()) return false;
   if (!(await exists(configPath))) {
     // If the server was started from CLI args/env, avoid implicitly creating server.json
@@ -4963,10 +6067,15 @@ async function persistWorkspaceDeletion(configPath: string, workspaceId: string,
   try {
     raw = await readFile(configPath, "utf8");
   } catch (error) {
-    throw new ApiError(500, "server_config_read_failed", "Failed to read server config", {
-      path: configPath,
-      error: String(error),
-    });
+    throw new ApiError(
+      500,
+      "server_config_read_failed",
+      "Failed to read server config",
+      {
+        path: configPath,
+        error: String(error),
+      },
+    );
   }
 
   let parsed: VesloServerConfigFile;
@@ -5026,7 +6135,9 @@ async function persistWorkspaceDeletion(configPath: string, workspaceId: string,
   }
 }
 
-async function readVesloConfig(workspaceRoot: string): Promise<Record<string, unknown>> {
+async function readVesloConfig(
+  workspaceRoot: string,
+): Promise<Record<string, unknown>> {
   return workspaceConfigOwner.readVesloConfig(workspaceRoot);
 }
 
@@ -5038,7 +6149,10 @@ async function resolveConversationReadDirectory(
   workspace: WorkspaceInfo,
   requestedRaw: string | null,
 ): Promise<string | null> {
-  return workspaceConfigOwner.resolveConversationReadDirectory(workspace, requestedRaw);
+  return workspaceConfigOwner.resolveConversationReadDirectory(
+    workspace,
+    requestedRaw,
+  );
 }
 
 function normalizeConversationReadDirectoryRequest(
@@ -5046,10 +6160,17 @@ function normalizeConversationReadDirectoryRequest(
   requestedRaw: string | null,
   fallback: string | null,
 ): string {
-  return workspaceConfigOwner.normalizeConversationReadDirectoryRequest(workspace, requestedRaw, fallback);
+  return workspaceConfigOwner.normalizeConversationReadDirectoryRequest(
+    workspace,
+    requestedRaw,
+    fallback,
+  );
 }
 
-function buildOpencodeReloadUrl(baseUrl: string, directory?: string | null): string {
+function buildOpencodeReloadUrl(
+  baseUrl: string,
+  directory?: string | null,
+): string {
   return workspaceConfigOwner.buildOpencodeReloadUrl(baseUrl, directory);
 }
 
@@ -5068,7 +6189,11 @@ async function reloadOpencodeEngine(
   return workspaceConfigOwner.reloadOpencodeEngine(workspace, options);
 }
 
-async function writeVesloConfig(workspaceRoot: string, payload: Record<string, unknown>, merge: boolean): Promise<void> {
+async function writeVesloConfig(
+  workspaceRoot: string,
+  payload: Record<string, unknown>,
+  merge: boolean,
+): Promise<void> {
   return workspaceConfigOwner.writeVesloConfig(workspaceRoot, payload, merge);
 }
 
@@ -5076,6 +6201,9 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
   return workspaceConfigOwner.exportWorkspace(workspace);
 }
 
-async function importWorkspace(workspace: WorkspaceInfo, payload: Record<string, unknown>): Promise<void> {
+async function importWorkspace(
+  workspace: WorkspaceInfo,
+  payload: Record<string, unknown>,
+): Promise<void> {
   return workspaceConfigOwner.importWorkspace(workspace, payload);
 }

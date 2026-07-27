@@ -336,13 +336,13 @@ test("repeated skill view changes produce an actionable UI error", async () => {
       assert.ok(error instanceof RuntimeSkillViewRefreshError);
       assert.equal(error.code, "skill_view_changed");
       assert.equal(error.phase, "retry");
-      assert.match(error.message, /refreshed the skill view and retried once/i);
+      assert.match(error.message, /refreshed the skill view and retried/i);
       return true;
     },
   );
 });
 
-test("a stale runtime view requests the fresh-refresh context once", async () => {
+test("a stale runtime view requests the fresh-refresh context on every retry", async () => {
   const contexts: Array<{ reason: string }> = [];
   let prepares = 0;
 
@@ -360,8 +360,58 @@ test("a stale runtime view requests the fresh-refresh context once", async () =>
     (error: unknown) => error instanceof RuntimeSkillViewRefreshError && error.code === "skill_view_stale",
   );
 
+  assert.equal(prepares, 3);
+  assert.deepEqual(contexts, [
+    { reason: "skill-view-stale-retry" },
+    { reason: "skill-view-stale-retry" },
+  ]);
+});
+
+test("a conflict that clears on the second retry still starts the engine", async () => {
+  let prepares = 0;
+  let refreshes = 0;
+
+  const result = await prepareRuntimeWithSkillViewRefresh({
+    prepare: async () => {
+      prepares += 1;
+      if (prepares < 3) throw new Error('Failed to activate workspace: status 409: {"error":"skill_view_changed"}');
+      return "ready";
+    },
+    refresh: async () => {
+      refreshes += 1;
+      return true;
+    },
+  });
+
+  assert.equal(result, "ready");
+  assert.equal(prepares, 3);
+  assert.equal(refreshes, 2);
+});
+
+test("the retry budget is bounded and reports the first conflict", async () => {
+  let prepares = 0;
+
+  await assert.rejects(
+    prepareRuntimeWithSkillViewRefresh({
+      prepare: async () => {
+        prepares += 1;
+        throw new Error(
+          prepares === 1
+            ? 'Failed to activate workspace: status 409: {"error":"skill_view_changed"}'
+            : 'Failed to activate workspace: status 409: {"error":"skill_view_stale"}',
+        );
+      },
+      refresh: async () => true,
+      retryLimit: 1,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof RuntimeSkillViewRefreshError);
+      assert.equal(error.code, "skill_view_changed");
+      return true;
+    },
+  );
+
   assert.equal(prepares, 2);
-  assert.deepEqual(contexts, [{ reason: "skill-view-stale-retry" }]);
 });
 
 test("degraded workspace materialization status skips sync without blocking runtime", async () => {

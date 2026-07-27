@@ -190,6 +190,15 @@ The server-owned debug-log spool, when local forwarding is available, is under
 successful `msiexec` return code is not startup evidence by itself: preserve
 the summary, verbose log, and redacted ready event together.
 
+For a local Windows MSI with diagnostic capture and runtime traces enabled, run
+`pnpm build:msi:diagnostics`. The builder writes the unsigned MSI, a build
+metadata file, and `run-installed-veslo-with-diagnostics.cmd` under
+`.tmp\veslo-msi-diagnostics-<commit>`. Use the launcher after installing the
+MSI when collecting a startup failure; it sets the runtime trace variables and
+writes the mirror under the normal `support-diagnostics` log directory. This
+builder is intentionally separate from public release workflows and must not
+be used as a release-signing substitute.
+
 ## Den Debug-Log Ingest
 
 Den accepts uploaded debug-log batches at `POST /v1/internal/debug-logs` for server-to-server `veslo-server` shipping and at `POST /v1/desktop-diagnostics` for signed-in desktop fallback diagnostics when the local server is unavailable or not a trusted carrier. Both routes write to the application-queryable debug-log store: metadata is queryable, while payload content is encrypted and returned only through admin read paths.

@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
-import { ensureActiveRuntimeSkillView, invalidateActiveRuntimeSkillView } from "../active-runtime-skill-view.js";
+import {
+  ensureActiveRuntimeSkillView,
+  invalidateActiveRuntimeSkillView,
+} from "../active-runtime-skill-view.js";
 import { getPlatformManagedPersonalGlobalSkillSet } from "../platform-managed-skills.js";
 import {
   readSkillRegistryRequestInput as skillRegistryRequestInput,
@@ -54,6 +57,7 @@ import {
   userGlobalMaterializedSkillsRoot,
 } from "../user-skill-store.js";
 import { shortId } from "../utils.js";
+import { withWorkspaceSkillLease } from "../workspace-skill-lease.js";
 import { writeWorkspaceSkillLockfile } from "../workspace-skill-lockfile.js";
 import {
   resolveWorkspaceSkillSet,
@@ -73,7 +77,11 @@ type WorkspaceSkillMaterializationStatusOptions = {
   registryError?: ApiError;
 };
 
-function requireRouteParam(params: Record<string, string>, field: string, label = field): string {
+function requireRouteParam(
+  params: Record<string, string>,
+  field: string,
+  label = field,
+): string {
   const value = params[field]?.trim() ?? "";
   if (!value) {
     throw new ApiError(400, "invalid_payload", `${label} is required`);
@@ -85,7 +93,9 @@ function skillRegistryBaseUrl(config: ServerConfig): string {
   return skillRegistryConfiguredBaseUrl(config);
 }
 
-function registryIdentityPayload(input: Pick<SkillRegistryRequestInput, "orgId" | "userId">): {
+function registryIdentityPayload(
+  input: Pick<SkillRegistryRequestInput, "orgId" | "userId">,
+): {
   orgId?: string;
   userId?: string;
 } {
@@ -95,10 +105,12 @@ function registryIdentityPayload(input: Pick<SkillRegistryRequestInput, "orgId" 
   };
 }
 
-function materializationEntryPayload(entry: WorkspaceSkillMaterialization & {
-  skillDir?: string;
-  materializedAt?: string;
-}) {
+function materializationEntryPayload(
+  entry: WorkspaceSkillMaterialization & {
+    skillDir?: string;
+    materializedAt?: string;
+  },
+) {
   return {
     installationId: entry.installationId,
     skillId: entry.skillId,
@@ -127,9 +139,12 @@ function materializationSummaryPayload(entry: WorkspaceSkillMaterialization) {
 }
 
 function skillRegistryErrorPayload(error: ApiError) {
-  const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
-    ? error.details as Record<string, unknown>
-    : {};
+  const details =
+    error.details &&
+    typeof error.details === "object" &&
+    !Array.isArray(error.details)
+      ? (error.details as Record<string, unknown>)
+      : {};
   const stringDetail = (key: string) => {
     const value = details[key];
     return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -150,16 +165,32 @@ function skillRegistryErrorPayload(error: ApiError) {
     code: error.code,
     message: error.message,
     status: error.status,
-    ...(stringDetail("registryAction") ? { registryAction: stringDetail("registryAction") } : {}),
-    ...(stringDetail("registryResource") ? { registryResource: stringDetail("registryResource") } : {}),
-    ...(stringDetail("registryScope") ? { registryScope: stringDetail("registryScope") } : {}),
+    ...(stringDetail("registryAction")
+      ? { registryAction: stringDetail("registryAction") }
+      : {}),
+    ...(stringDetail("registryResource")
+      ? { registryResource: stringDetail("registryResource") }
+      : {}),
+    ...(stringDetail("registryScope")
+      ? { registryScope: stringDetail("registryScope") }
+      : {}),
     ...(registryPath ? { registryPath } : {}),
-    ...(stringDetail("workspaceId") ? { workspaceId: stringDetail("workspaceId") } : {}),
-    ...(stringDetail("versionId") ? { versionId: stringDetail("versionId") } : {}),
-    ...(stringDetail("installationId") ? { installationId: stringDetail("installationId") } : {}),
+    ...(stringDetail("workspaceId")
+      ? { workspaceId: stringDetail("workspaceId") }
+      : {}),
+    ...(stringDetail("versionId")
+      ? { versionId: stringDetail("versionId") }
+      : {}),
+    ...(stringDetail("installationId")
+      ? { installationId: stringDetail("installationId") }
+      : {}),
     ...(stringDetail("skillId") ? { skillId: stringDetail("skillId") } : {}),
-    ...(stringDetail("skillName") ? { skillName: stringDetail("skillName") } : {}),
-    ...(stringDetail("rolloutPolicyId") ? { rolloutPolicyId: stringDetail("rolloutPolicyId") } : {}),
+    ...(stringDetail("skillName")
+      ? { skillName: stringDetail("skillName") }
+      : {}),
+    ...(stringDetail("rolloutPolicyId")
+      ? { rolloutPolicyId: stringDetail("rolloutPolicyId") }
+      : {}),
     ...(stringDetail("target") ? { target: stringDetail("target") } : {}),
     ...(stringDetail("source") ? { source: stringDetail("source") } : {}),
     ...(stringDetail("audience") ? { audience: stringDetail("audience") } : {}),
@@ -179,32 +210,6 @@ const materializationMatchesDesired = (
   entry.removalPolicy === desired.removalPolicy &&
   entry.target === desired.target;
 
-export function createWorkspaceMaterializationSerialQueue() {
-  const tails = new Map<string, Promise<void>>();
-
-  return {
-    async run<T>(workspaceId: string, task: () => Promise<T>): Promise<T> {
-      const key = workspaceId.trim();
-      const previous = tails.get(key) ?? Promise.resolve();
-      let release: (() => void) | undefined;
-      const next = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      tails.set(key, next);
-
-      await previous;
-      try {
-        return await task();
-      } finally {
-        release?.();
-        if (tails.get(key) === next) {
-          tails.delete(key);
-        }
-      }
-    },
-  };
-}
-
 async function buildWorkspaceSkillMaterializationStatus(
   config: ServerConfig,
   workspace: WorkspaceInfo,
@@ -212,18 +217,25 @@ async function buildWorkspaceSkillMaterializationStatus(
 ) {
   const rootDir = workspaceManagedSkillsRoot(workspace.path);
   const manifest = await readSkillMaterializationManifest(rootDir);
-  const registryConfigured = options.registryConfigured ?? Boolean(skillRegistryBaseUrl(config));
-  const workspaceRegistryConfigured = options.workspaceRegistryConfigured ?? registryConfigured;
-  const reloadRequired = options.reloadRequired ?? (registryConfigured && workspaceRegistryConfigured);
+  const registryConfigured =
+    options.registryConfigured ?? Boolean(skillRegistryBaseUrl(config));
+  const workspaceRegistryConfigured =
+    options.workspaceRegistryConfigured ?? registryConfigured;
+  const reloadRequired =
+    options.reloadRequired ??
+    (registryConfigured && workspaceRegistryConfigured);
   return {
     workspaceId: workspace.id,
     status: options.status ?? (reloadRequired ? "pending" : "not-configured"),
     registryConfigured,
     workspaceRegistryConfigured,
     rootDir,
-    materializedSkills: manifest?.entries.map(materializationEntryPayload) ?? [],
+    materializedSkills:
+      manifest?.entries.map(materializationEntryPayload) ?? [],
     reloadRequired,
-    ...(options.registryError ? { registryError: skillRegistryErrorPayload(options.registryError) } : {}),
+    ...(options.registryError
+      ? { registryError: skillRegistryErrorPayload(options.registryError) }
+      : {}),
   };
 }
 
@@ -232,12 +244,16 @@ async function buildWorkspaceSkillRegistryUnavailableStatus(
   workspace: WorkspaceInfo,
   error: ApiError,
 ) {
-  const base = await buildWorkspaceSkillMaterializationStatus(config, workspace, {
-    workspaceRegistryConfigured: false,
-    status: "degraded",
-    reloadRequired: false,
-    registryError: error,
-  });
+  const base = await buildWorkspaceSkillMaterializationStatus(
+    config,
+    workspace,
+    {
+      workspaceRegistryConfigured: false,
+      status: "degraded",
+      reloadRequired: false,
+      registryError: error,
+    },
+  );
   return {
     ...base,
     synced: false,
@@ -246,27 +262,48 @@ async function buildWorkspaceSkillRegistryUnavailableStatus(
 }
 
 function isWorkspaceSkillRegistryNotFound(error: unknown): error is ApiError {
-  if (!(error instanceof ApiError) || error.status !== 404 || error.code !== "skill_registry_not_found") {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 404 ||
+    error.code !== "skill_registry_not_found"
+  ) {
     return false;
   }
-  const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
-    ? error.details as Record<string, unknown>
-    : {};
-  return details.registryResource === undefined || details.registryResource === "workspace-skill-set";
+  const details =
+    error.details &&
+    typeof error.details === "object" &&
+    !Array.isArray(error.details)
+      ? (error.details as Record<string, unknown>)
+      : {};
+  return (
+    details.registryResource === undefined ||
+    details.registryResource === "workspace-skill-set"
+  );
 }
 
-function isPersonalGlobalInstallationsUnavailable(error: unknown): error is ApiError {
-  if (!(error instanceof ApiError) || error.status !== 404 || error.code !== "skill_registry_not_found") {
+function isPersonalGlobalInstallationsUnavailable(
+  error: unknown,
+): error is ApiError {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 404 ||
+    error.code !== "skill_registry_not_found"
+  ) {
     return false;
   }
-  const details = error.details && typeof error.details === "object" && !Array.isArray(error.details)
-    ? error.details as Record<string, unknown>
-    : {};
-  return details.registryAction === "list" &&
+  const details =
+    error.details &&
+    typeof error.details === "object" &&
+    !Array.isArray(error.details)
+      ? (error.details as Record<string, unknown>)
+      : {};
+  return (
+    details.registryAction === "list" &&
     details.registryResource === "skill-installations" &&
     details.registryScope === "personal-global" &&
     details.source === "personal" &&
-    details.target === "personal-global";
+    details.target === "personal-global"
+  );
 }
 
 async function listPersonalGlobalInstallations(
@@ -293,7 +330,10 @@ function isSkillRegistryApiError(error: unknown): error is ApiError {
   return error instanceof ApiError && error.code.startsWith("skill_registry_");
 }
 
-async function buildWorkspaceSkillMaterializationStatusForRequest(ctx: RequestContext, workspace: WorkspaceInfo) {
+async function buildWorkspaceSkillMaterializationStatusForRequest(
+  ctx: RequestContext,
+  workspace: WorkspaceInfo,
+) {
   const baseUrl = skillRegistryRequestBaseUrl(ctx);
   const registryConfigured = Boolean(baseUrl);
   if (!registryConfigured) {
@@ -343,8 +383,11 @@ async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
   const manifest = await readSkillMaterializationManifest(rootDir);
   const registryConfigured = Boolean(skillRegistryBaseUrl(config));
   const platformSkillSet = await getPlatformManagedPersonalGlobalSkillSet();
-  const platformSynced = platformSkillSet.skills.every((skill) =>
-    manifest?.entries.some((entry) => materializationMatchesDesired(entry, skill)) ?? false
+  const platformSynced = platformSkillSet.skills.every(
+    (skill) =>
+      manifest?.entries.some((entry) =>
+        materializationMatchesDesired(entry, skill),
+      ) ?? false,
   );
   const platformPending = platformSkillSet.skills.length > 0 && !platformSynced;
   return {
@@ -352,7 +395,8 @@ async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
     status: registryConfigured || platformPending ? "pending" : "synced",
     registryConfigured,
     rootDir,
-    materializedSkills: manifest?.entries.map(materializationEntryPayload) ?? [],
+    materializedSkills:
+      manifest?.entries.map(materializationEntryPayload) ?? [],
     platformManaged: {
       enabled: platformSkillSet.skills.length > 0,
       synced: platformSynced,
@@ -362,7 +406,9 @@ async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
   };
 }
 
-function desiredSkillSetRevision(materializations: WorkspaceSkillMaterialization[]) {
+function desiredSkillSetRevision(
+  materializations: WorkspaceSkillMaterialization[],
+) {
   const payload = materializations
     .map((entry) => ({
       installationId: entry.installationId,
@@ -374,28 +420,45 @@ function desiredSkillSetRevision(materializations: WorkspaceSkillMaterialization
       target: entry.target,
       removalPolicy: entry.removalPolicy,
     }))
-    .sort((left, right) => left.name.localeCompare(right.name) || left.installationId.localeCompare(right.installationId));
+    .sort(
+      (left, right) =>
+        left.name.localeCompare(right.name) ||
+        left.installationId.localeCompare(right.installationId),
+    );
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
 
 function registryInstallationToWorkspaceInstallation(input: {
-  installation: Awaited<ReturnType<typeof getWorkspaceSkillSetFromRegistry>>["skills"][number];
+  installation: Awaited<
+    ReturnType<typeof getWorkspaceSkillSetFromRegistry>
+  >["skills"][number];
   workspace: WorkspaceInfo;
   packageResponse: { versionId: string; package: SkillPackageArchive };
   orgId?: string;
   userId?: string;
 }): WorkspaceSkillRegistryInstallation {
   const { installation, workspace, packageResponse, orgId, userId } = input;
-  const ownerUserId = installation.ownerUserId ?? (installation.source === "personal" ? userId : undefined);
-  const installationOrgId = installation.orgId ?? (installation.source === "organization" ? orgId : undefined);
-  const workspaceId = installation.workspaceId ?? (installation.source === "workspace" ? workspace.id : undefined);
-  const approved = installation.approved ?? (installation.source === "personal" ? undefined : true);
+  const ownerUserId =
+    installation.ownerUserId ??
+    (installation.source === "personal" ? userId : undefined);
+  const installationOrgId =
+    installation.orgId ??
+    (installation.source === "organization" ? orgId : undefined);
+  const workspaceId =
+    installation.workspaceId ??
+    (installation.source === "workspace" ? workspace.id : undefined);
+  const approved =
+    installation.approved ??
+    (installation.source === "personal" ? undefined : true);
   return {
     installationId: installation.installationId,
     skillId: installation.skillId,
     name: installation.name?.trim() || packageResponse.package.metadata.name,
     versionId: packageResponse.versionId,
-    packageSha256: installation.desiredPackageSha256?.trim() || installation.packageSha256?.trim() || packageResponse.package.packageSha256,
+    packageSha256:
+      installation.desiredPackageSha256?.trim() ||
+      installation.packageSha256?.trim() ||
+      packageResponse.package.packageSha256,
     enabled: installation.enabled,
     source: installation.source,
     installedAt: installation.installedAt,
@@ -408,7 +471,9 @@ function registryInstallationToWorkspaceInstallation(input: {
   };
 }
 
-function requireRolloutPolicyVersionId(policy: RegistrySkillRolloutPolicy): string {
+function requireRolloutPolicyVersionId(
+  policy: RegistrySkillRolloutPolicy,
+): string {
   const versionId = policy.versionId?.trim();
   if (versionId) return versionId;
   throw new ApiError(
@@ -425,7 +490,9 @@ function registryRolloutPolicyToWorkspacePolicy(input: {
   orgId?: string;
 }): WorkspaceSkillRolloutPolicy {
   const { policy, packageResponse, orgId } = input;
-  const policyOrgId = policy.orgId ?? (policy.catalogScope === "organization" ? orgId : undefined);
+  const policyOrgId =
+    policy.orgId ??
+    (policy.catalogScope === "organization" ? orgId : undefined);
   return {
     id: policy.id,
     skillId: policy.skillId,
@@ -433,12 +500,15 @@ function registryRolloutPolicyToWorkspacePolicy(input: {
     versionId: packageResponse.versionId,
     packageSha256: packageResponse.package.packageSha256,
     enabled: policy.enabled,
-    source: policy.catalogScope === "organization" ? "organization" : "platform",
+    source:
+      policy.catalogScope === "organization" ? "organization" : "platform",
     target: policy.target === "user-global" ? "personal-global" : "workspace",
     audience: policy.audience,
     ...(policyOrgId !== undefined ? { orgId: policyOrgId } : {}),
     ...(policy.userId !== undefined ? { userId: policy.userId } : {}),
-    ...(policy.workspaceId !== undefined ? { workspaceId: policy.workspaceId } : {}),
+    ...(policy.workspaceId !== undefined
+      ? { workspaceId: policy.workspaceId }
+      : {}),
     removalPolicy: policy.removalPolicy,
     updatePolicy: policy.updatePolicy,
     releaseChannel: policy.releaseChannel ?? null,
@@ -453,10 +523,17 @@ function registryRolloutPolicyAppliesToMaterialization(input: {
 }): boolean {
   const { policy, userId, orgId, workspaceId } = input;
   if (!policy.enabled) return false;
-  if (policy.catalogScope === "organization" && (!orgId || policy.orgId !== orgId)) return false;
+  if (
+    policy.catalogScope === "organization" &&
+    (!orgId || policy.orgId !== orgId)
+  )
+    return false;
 
   if (policy.target === "workspace") {
-    return policy.audience === "selected-workspaces" && Boolean(workspaceId && policy.workspaceId === workspaceId);
+    return (
+      policy.audience === "selected-workspaces" &&
+      Boolean(workspaceId && policy.workspaceId === workspaceId)
+    );
   }
 
   if (policy.audience === "user") {
@@ -472,9 +549,12 @@ function assertNoPlatformManagedPersonalGlobalNameConflicts(input: {
   materializations: WorkspaceSkillMaterialization[];
   platformSkills: WorkspaceSkillMaterialization[];
 }) {
-  const platformNames = new Set(input.platformSkills.map((skill) => skill.name));
-  const duplicate = input.materializations.find((skill) =>
-    skill.target === "personal-global" && platformNames.has(skill.name)
+  const platformNames = new Set(
+    input.platformSkills.map((skill) => skill.name),
+  );
+  const duplicate = input.materializations.find(
+    (skill) =>
+      skill.target === "personal-global" && platformNames.has(skill.name),
   );
   if (!duplicate) return;
   throw new ApiError(
@@ -498,7 +578,11 @@ async function fetchRegistryWorkspaceMaterializations(
 }> {
   const baseUrl = skillRegistryRequestBaseUrl(ctx);
   if (!baseUrl) {
-    throw new ApiError(503, "skill_registry_misconfigured", "Skill registry base URL is missing");
+    throw new ApiError(
+      503,
+      "skill_registry_misconfigured",
+      "Skill registry base URL is missing",
+    );
   }
 
   const registryInput = skillRegistryRequestInput(ctx);
@@ -511,7 +595,10 @@ async function fetchRegistryWorkspaceMaterializations(
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
-  for (const [installationId, archive] of platformSkillSet.archivesByInstallationId) {
+  for (const [
+    installationId,
+    archive,
+  ] of platformSkillSet.archivesByInstallationId) {
     packagesByInstallationId.set(installationId, archive);
   }
   const seenInstallationIds = new Set<string>();
@@ -523,22 +610,28 @@ async function fetchRegistryWorkspaceMaterializations(
   };
   let personalGlobalSyncRequired = false;
   const addRegistryInstallation = async (
-    installation: typeof skillSet.skills[number],
+    installation: (typeof skillSet.skills)[number],
     targetWorkspace: WorkspaceInfo,
   ) => {
     if (!installation.enabled) return;
     if (seenInstallationIds.has(installation.installationId)) return;
     seenInstallationIds.add(installation.installationId);
-    const versionId = installation.desiredVersionId?.trim() || installation.versionId;
+    const versionId =
+      installation.desiredVersionId?.trim() || installation.versionId;
     const packageResponse = await downloadSkillPackageFromRegistry({
       ...registryInput,
       versionId,
       registryContext: {
-        ...(targetWorkspace.id === "personal-global" ? {} : { workspaceId: targetWorkspace.id }),
+        ...(targetWorkspace.id === "personal-global"
+          ? {}
+          : { workspaceId: targetWorkspace.id }),
         installationId: installation.installationId,
         skillId: installation.skillId,
         ...(installation.name ? { skillName: installation.name } : {}),
-        target: targetWorkspace.id === "personal-global" ? "personal-global" : "workspace",
+        target:
+          targetWorkspace.id === "personal-global"
+            ? "personal-global"
+            : "workspace",
         source: installation.source,
       },
     });
@@ -549,14 +642,18 @@ async function fetchRegistryWorkspaceMaterializations(
       ...registryIdentityPayload(registryInput),
     });
     registryInstallations.push(workspaceInstallation);
-    packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
+    packagesByInstallationId.set(
+      workspaceInstallation.installationId,
+      packageResponse.package,
+    );
   };
 
   for (const installation of skillSet.skills) {
     await addRegistryInstallation(installation, workspace);
   }
 
-  const personalGlobalInstallations = await listPersonalGlobalInstallations(registryInput);
+  const personalGlobalInstallations =
+    await listPersonalGlobalInstallations(registryInput);
   if (personalGlobalInstallations.installations.length > 0) {
     personalGlobalSyncRequired = true;
   }
@@ -574,11 +671,13 @@ async function fetchRegistryWorkspaceMaterializations(
       enabled: true,
     });
     for (const policy of rolloutPoliciesResponse.policies) {
-      if (!registryRolloutPolicyAppliesToMaterialization({
-        policy,
-        workspaceId: workspace.id,
-        ...registryIdentityPayload(registryInput),
-      })) {
+      if (
+        !registryRolloutPolicyAppliesToMaterialization({
+          policy,
+          workspaceId: workspace.id,
+          ...registryIdentityPayload(registryInput),
+        })
+      ) {
         continue;
       }
       if (policy.target === "user-global") {
@@ -598,10 +697,15 @@ async function fetchRegistryWorkspaceMaterializations(
       const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
         policy,
         packageResponse,
-        ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
+        ...(registryInput.orgId !== undefined
+          ? { orgId: registryInput.orgId }
+          : {}),
       });
       rolloutPolicies.push(workspacePolicy);
-      packagesByInstallationId.set(`rollout:${workspacePolicy.id}`, packageResponse.package);
+      packagesByInstallationId.set(
+        `rollout:${workspacePolicy.id}`,
+        packageResponse.package,
+      );
     }
   }
 
@@ -609,11 +713,15 @@ async function fetchRegistryWorkspaceMaterializations(
     workspace: {
       id: workspace.id,
       scope: registryInput.orgId ? "organization" : "personal",
-      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
+      ...(registryInput.orgId !== undefined
+        ? { orgId: registryInput.orgId }
+        : {}),
     },
     user: {
       id: registryInput.userId ?? "local-user",
-      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
+      ...(registryInput.orgId !== undefined
+        ? { orgId: registryInput.orgId }
+        : {}),
     },
     registryInstallations,
     rolloutPolicies,
@@ -634,7 +742,8 @@ async function fetchRegistryWorkspaceMaterializations(
     packagesByInstallationId,
     personalGlobalSyncRequired,
     skillSetId: skillSet.skillSetId?.trim() || `workspace:${workspace.id}`,
-    skillSetRevision: skillSet.revision?.trim() || desiredSkillSetRevision(materializations),
+    skillSetRevision:
+      skillSet.revision?.trim() || desiredSkillSetRevision(materializations),
   };
 }
 
@@ -661,7 +770,10 @@ async function fetchRegistryPersonalGlobalMaterializations(
   const registryInstallations: WorkspaceSkillRegistryInstallation[] = [];
   const rolloutPolicies: WorkspaceSkillRolloutPolicy[] = [];
   const packagesByInstallationId = new Map<string, SkillPackageArchive>();
-  for (const [installationId, archive] of platformSkillSet.archivesByInstallationId) {
+  for (const [
+    installationId,
+    archive,
+  ] of platformSkillSet.archivesByInstallationId) {
     packagesByInstallationId.set(installationId, archive);
   }
   const personalGlobalWorkspace: WorkspaceInfo = {
@@ -690,7 +802,10 @@ async function fetchRegistryPersonalGlobalMaterializations(
       ...registryIdentityPayload(registryInput),
     });
     registryInstallations.push(workspaceInstallation);
-    packagesByInstallationId.set(workspaceInstallation.installationId, packageResponse.package);
+    packagesByInstallationId.set(
+      workspaceInstallation.installationId,
+      packageResponse.package,
+    );
   }
 
   const rolloutPoliciesResponse = await listRegistrySkillRolloutPolicies({
@@ -699,10 +814,12 @@ async function fetchRegistryPersonalGlobalMaterializations(
     enabled: true,
   });
   for (const policy of rolloutPoliciesResponse.policies) {
-    if (!registryRolloutPolicyAppliesToMaterialization({
-      policy,
-      ...registryIdentityPayload(registryInput),
-    })) {
+    if (
+      !registryRolloutPolicyAppliesToMaterialization({
+        policy,
+        ...registryIdentityPayload(registryInput),
+      })
+    ) {
       continue;
     }
     const packageResponse = await downloadSkillPackageFromRegistry({
@@ -718,21 +835,30 @@ async function fetchRegistryPersonalGlobalMaterializations(
     const workspacePolicy = registryRolloutPolicyToWorkspacePolicy({
       policy,
       packageResponse,
-      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
+      ...(registryInput.orgId !== undefined
+        ? { orgId: registryInput.orgId }
+        : {}),
     });
     rolloutPolicies.push(workspacePolicy);
-    packagesByInstallationId.set(`rollout:${workspacePolicy.id}`, packageResponse.package);
+    packagesByInstallationId.set(
+      `rollout:${workspacePolicy.id}`,
+      packageResponse.package,
+    );
   }
 
   const resolution = resolveWorkspaceSkillSet({
     workspace: {
       id: personalGlobalWorkspace.id,
       scope: registryInput.orgId ? "organization" : "personal",
-      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
+      ...(registryInput.orgId !== undefined
+        ? { orgId: registryInput.orgId }
+        : {}),
     },
     user: {
       id: registryInput.userId ?? "local-user",
-      ...(registryInput.orgId !== undefined ? { orgId: registryInput.orgId } : {}),
+      ...(registryInput.orgId !== undefined
+        ? { orgId: registryInput.orgId }
+        : {}),
     },
     registryInstallations,
     rolloutPolicies,
@@ -743,9 +869,16 @@ async function fetchRegistryPersonalGlobalMaterializations(
     materializations: resolution.requiredMaterializations,
     platformSkills: platformSkillSet.skills,
   });
-  const materializations = [...resolution.requiredMaterializations, ...platformSkillSet.skills];
+  const materializations = [
+    ...resolution.requiredMaterializations,
+    ...platformSkillSet.skills,
+  ];
 
-  return { materializations, conflicts: resolution.conflicts, packagesByInstallationId };
+  return {
+    materializations,
+    conflicts: resolution.conflicts,
+    packagesByInstallationId,
+  };
 }
 
 export function registerSkillMaterializationRoutes(
@@ -753,8 +886,9 @@ export function registerSkillMaterializationRoutes(
   dependencies: SkillMaterializationRouteDependencies,
 ): void {
   const { serverDataDir } = dependencies;
-  const workspaceMaterializationQueue = createWorkspaceMaterializationSerialQueue();
-  const publishRuntimeView = async (workspace: WorkspaceInfo): Promise<void> => {
+  const publishRuntimeView = async (
+    workspace: WorkspaceInfo,
+  ): Promise<void> => {
     invalidateActiveRuntimeSkillView(workspace);
     await ensureActiveRuntimeSkillView(workspace, {
       disabledSkills: await listDisabledSkills({
@@ -787,305 +921,418 @@ export function registerSkillMaterializationRoutes(
   };
 
   addRoute(routes, "GET", "/skills/materialization", "client", async (ctx) => {
-    return jsonResponse(await buildGlobalSkillMaterializationStatus(ctx.config));
+    return jsonResponse(
+      await buildGlobalSkillMaterializationStatus(ctx.config),
+    );
   });
 
-  addRoute(routes, "POST", "/skills/materialization/sync-global", "host", async (ctx) => {
-    ensureWritable(ctx.config);
-    const body = await readOptionalJsonBody(ctx.request);
-    if (body.activeRun === true) {
-      const status = await buildGlobalSkillMaterializationStatus(ctx.config);
-      return jsonResponse({
-        ...status,
-        status: "pending",
-        synced: false,
-        reloadRequired: true,
-        conflicts: [],
-      }, 202);
-    }
-
-    const { materializations, conflicts, packagesByInstallationId } = await fetchRegistryPersonalGlobalMaterializations(ctx);
-    const loadPackage = async (skill: WorkspaceSkillMaterialization) => {
-      const archive = packagesByInstallationId.get(skill.installationId);
-      if (!archive) {
-        throw new ApiError(500, "skill_package_missing", `Missing package for skill ${skill.name}`);
+  addRoute(
+    routes,
+    "POST",
+    "/skills/materialization/sync-global",
+    "host",
+    async (ctx) => {
+      ensureWritable(ctx.config);
+      const body = await readOptionalJsonBody(ctx.request);
+      if (body.activeRun === true) {
+        const status = await buildGlobalSkillMaterializationStatus(ctx.config);
+        return jsonResponse(
+          {
+            ...status,
+            status: "pending",
+            synced: false,
+            reloadRequired: true,
+            conflicts: [],
+          },
+          202,
+        );
       }
-      return archive;
-    };
 
-    const result = await materializePersonalGlobalSkillSet({
-      skills: materializations,
-      loadPackage,
-      unmanagedSkillRoots: userGlobalSkillRootsForMutation(),
-    });
+      const { materializations, conflicts, packagesByInstallationId } =
+        await fetchRegistryPersonalGlobalMaterializations(ctx);
+      const loadPackage = async (skill: WorkspaceSkillMaterialization) => {
+        const archive = packagesByInstallationId.get(skill.installationId);
+        if (!archive) {
+          throw new ApiError(
+            500,
+            "skill_package_missing",
+            `Missing package for skill ${skill.name}`,
+          );
+        }
+        return archive;
+      };
 
-    // Keep the registry-backed personal-global set as storage/provenance, but
-    // make the active runtime copy workspace-owned. The engine never receives
-    // the raw global root; every registered local workspace gets an isolated
-    // projection that is reconciled by the normal materializer lifecycle.
-    const workspaceProjections = [];
-    for (const workspace of ctx.config.workspaces) {
-      if (workspace.workspaceType !== "local") continue;
-      const projectionSkills = materializations.map((skill) => ({
-        ...skill,
-        target: "workspace" as const,
-      }));
-      const projection = await materializeWorkspaceSkillSet({
-        workspaceRoot: workspace.path,
-        rootDir: workspaceRegistryPersonalSkillsRoot(workspace.path),
-        skills: projectionSkills,
-        loadPackage: async (skill) => loadPackage({ ...skill, target: "personal-global" }),
-      });
-      const legacyProjectionMigration = await migrateLegacyProjectionOrFail(workspace);
-      // Materialization must publish the effective runtime manifest before a
-      // caller can start an engine for this workspace.
-      await publishRuntimeView(workspace);
-      workspaceProjections.push({ workspaceId: workspace.id, ...projection, legacyProjectionMigration });
-    }
-
-    await recordAudit(result.rootDir, {
-      id: shortId(),
-      workspaceId: "global",
-      actor: ctx.actor ?? { type: "host" },
-      action: "skills.materialization.sync-global",
-      target: result.rootDir,
-      summary: `Synced ${materializations.length} managed global skill materialization(s)`,
-      timestamp: Date.now(),
-    });
-    for (const workspace of ctx.config.workspaces) {
-      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-        type: "skill",
-        name: "veslo-managed",
-        action: "updated",
-        path: result.rootDir,
-      });
-      const projection = workspaceProjections.find((entry) => entry.workspaceId === workspace.id);
-      if (projection) {
-        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-          type: "skill",
-          name: "veslo-registry",
-          action: "updated",
-          path: projection.rootDir,
-        });
-      }
-    }
-
-    return jsonResponse({
-      scope: "personal-global",
-      status: "synced",
-      synced: true,
-      reloadRequired: true,
-      registryConfigured: Boolean(skillRegistryBaseUrl(ctx.config)),
-      rootDir: result.rootDir,
-      materializedSkills: materializations.map(materializationSummaryPayload),
-      conflicts,
-      removedSkillNames: result.removedSkillNames,
-      backupDirs: result.backupDirs,
-      workspaceProjections,
-    });
-  });
-
-  addRoute(routes, "GET", "/workspace/:id/skills/materialization", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
-    return jsonResponse(await buildWorkspaceSkillMaterializationStatusForRequest(ctx, workspace));
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/skills/user-global-store/sync", "client", async (ctx) => {
-    ensureWritable(ctx.config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "skills.user_global_store.sync",
-      summary: "Sync user-global skills into workspace runtime",
-      paths: [userGlobalMaterializedSkillsRoot(workspace.path)],
-    });
-
-    const result = await materializeUserGlobalSkillsForWorkspace({
-      workspaceRoot: workspace.path,
-      workspaceId: workspace.id,
-      dataDir: serverDataDir,
-    });
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "skills.user_global_store.sync",
-      target: result.rootDir,
-      summary: `Synced ${result.materializedSkills.length} user-global skill(s) into workspace runtime`,
-      timestamp: Date.now(),
-    });
-
-    if (result.reloadRequired) {
-      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-        type: "skill",
-        name: "veslo-user",
-        action: "updated",
-        path: result.rootDir,
-      });
-    }
-
-    return jsonResponse(result);
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/skills/materialization/sync", "host", async (ctx) => {
-    ensureWritable(ctx.config);
-    const workspace = await resolveWorkspace(ctx.config, requireRouteParam(ctx.params, "id", "workspace id"));
-    const body = await readOptionalJsonBody(ctx.request);
-    if (body.activeRun === true) {
-      const registryConfigured = Boolean(skillRegistryRequestBaseUrl(ctx));
-      const status = await buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
-        registryConfigured,
-        workspaceRegistryConfigured: registryConfigured,
-        reloadRequired: registryConfigured,
-      });
-      return jsonResponse({
-        ...status,
-        status: registryConfigured ? "pending" : status.status,
-        synced: false,
-        reloadRequired: registryConfigured,
-        conflicts: [],
-      }, registryConfigured ? 202 : 200);
-    }
-
-    return await workspaceMaterializationQueue.run(workspace.id, async () => {
-    let materializationInput: Awaited<ReturnType<typeof fetchRegistryWorkspaceMaterializations>>;
-    try {
-      materializationInput = await fetchRegistryWorkspaceMaterializations(ctx, workspace);
-    } catch (error) {
-      if (isWorkspaceSkillRegistryNotFound(error)) {
-        return jsonResponse(await buildWorkspaceSkillRegistryUnavailableStatus(ctx.config, workspace, error));
-      }
-      throw error;
-    }
-    const {
-      materializations,
-      conflicts,
-      packagesByInstallationId,
-      personalGlobalSyncRequired,
-      skillSetId,
-      skillSetRevision,
-    } = materializationInput;
-    const workspaceMaterializations = materializations.filter((skill) => skill.target === "workspace");
-    const personalGlobalMaterializations = materializations.filter((skill) => skill.target === "personal-global");
-    const loadPackage = async (skill: WorkspaceSkillMaterialization) => {
-      const archive = packagesByInstallationId.get(skill.installationId);
-      if (!archive) {
-        throw new ApiError(500, "skill_package_missing", `Missing package for skill ${skill.name}`);
-      }
-      return archive;
-    };
-
-    const workspaceResult = await materializeWorkspaceSkillSet({
-      workspaceRoot: workspace.path,
-      skills: workspaceMaterializations,
-      loadPackage,
-    });
-    let personalGlobalResult: SkillSetMaterializationResult = {
-      rootDir: personalGlobalManagedSkillsRoot(),
-      materializedSkills: [],
-      removedSkillNames: [],
-      backupDirs: [],
-    };
-    if (personalGlobalSyncRequired) {
-      personalGlobalResult = await materializePersonalGlobalSkillSet({
-        skills: personalGlobalMaterializations,
+      const result = await materializePersonalGlobalSkillSet({
+        skills: materializations,
         loadPackage,
         unmanagedSkillRoots: userGlobalSkillRootsForMutation(),
       });
-    }
-    let personalGlobalProjectionResult: SkillSetMaterializationResult = {
-      rootDir: workspaceRegistryPersonalSkillsRoot(workspace.path),
-      materializedSkills: [],
-      removedSkillNames: [],
-      backupDirs: [],
-    };
-    if (personalGlobalSyncRequired) {
-      personalGlobalProjectionResult = await materializeWorkspaceSkillSet({
-        workspaceRoot: workspace.path,
-        rootDir: workspaceRegistryPersonalSkillsRoot(workspace.path),
-        skills: personalGlobalMaterializations.map((skill) => ({
+
+      // Keep the registry-backed personal-global set as storage/provenance, but
+      // make the active runtime copy workspace-owned. The engine never receives
+      // the raw global root; every registered local workspace gets an isolated
+      // projection that is reconciled by the normal materializer lifecycle.
+      const workspaceProjections = [];
+      for (const workspace of ctx.config.workspaces) {
+        if (workspace.workspaceType !== "local") continue;
+        const projectionSkills = materializations.map((skill) => ({
           ...skill,
           target: "workspace" as const,
-        })),
-        loadPackage: async (skill) => loadPackage({ ...skill, target: "personal-global" }),
+        }));
+        const { projection, legacyProjectionMigration } =
+          await withWorkspaceSkillLease(
+            workspace.path,
+            "global-skill-projection",
+            async () => {
+              const projection = await materializeWorkspaceSkillSet({
+                workspaceRoot: workspace.path,
+                rootDir: workspaceRegistryPersonalSkillsRoot(workspace.path),
+                skills: projectionSkills,
+                loadPackage: async (skill) =>
+                  loadPackage({ ...skill, target: "personal-global" }),
+              });
+              const legacyProjectionMigration =
+                await migrateLegacyProjectionOrFail(workspace);
+              // Publish the manifest before releasing the source mutation lease.
+              await publishRuntimeView(workspace);
+              return { projection, legacyProjectionMigration };
+            },
+          );
+        workspaceProjections.push({
+          workspaceId: workspace.id,
+          ...projection,
+          legacyProjectionMigration,
+        });
+      }
+
+      await recordAudit(result.rootDir, {
+        id: shortId(),
+        workspaceId: "global",
+        actor: ctx.actor ?? { type: "host" },
+        action: "skills.materialization.sync-global",
+        target: result.rootDir,
+        summary: `Synced ${materializations.length} managed global skill materialization(s)`,
+        timestamp: Date.now(),
       });
-    }
-    const legacyProjectionMigration = await migrateLegacyProjectionOrFail(workspace);
-    const responseMaterializations = [
-      ...workspaceMaterializations,
-      ...personalGlobalMaterializations,
-    ];
-    const lockfileEntries = workspaceMaterializations.map((skill) => ({
-      skillId: skill.skillId,
-      installationId: skill.installationId,
-      versionId: skill.versionId,
-      name: skill.name,
-      packageSha256: skill.packageSha256,
-    }));
-    const lockfilePath = await writeWorkspaceSkillLockfile(workspace.path, {
-      schemaVersion: 1,
-      workspaceId: workspace.id,
-      skillSetId,
-      skillSetRevision,
-      entries: lockfileEntries,
-    });
+      for (const workspace of ctx.config.workspaces) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+          type: "skill",
+          name: "veslo-managed",
+          action: "updated",
+          path: result.rootDir,
+        });
+        const projection = workspaceProjections.find(
+          (entry) => entry.workspaceId === workspace.id,
+        );
+        if (projection) {
+          emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+            type: "skill",
+            name: "veslo-registry",
+            action: "updated",
+            path: projection.rootDir,
+          });
+        }
+      }
 
-    // The orchestrator stages from this manifest during process startup. Write
-    // it in the same sync transaction so staging cannot observe a missing
-    // manifest between materialization and engine launch.
-    await publishRuntimeView(workspace);
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "host" },
-      action: "skills.materialization.sync",
-      target: workspaceResult.rootDir,
-      summary: `Synced ${responseMaterializations.length} managed skill materialization(s)`,
-      timestamp: Date.now(),
-    });
-    emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-      type: "skill",
-      name: "veslo-managed",
-      action: "updated",
-      path: workspaceResult.rootDir,
-    });
-    if (personalGlobalSyncRequired) {
-      emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
-        type: "skill",
-        name: "veslo-registry",
-        action: "updated",
-        path: personalGlobalProjectionResult.rootDir,
+      return jsonResponse({
+        scope: "personal-global",
+        status: "synced",
+        synced: true,
+        reloadRequired: true,
+        registryConfigured: Boolean(skillRegistryBaseUrl(ctx.config)),
+        rootDir: result.rootDir,
+        materializedSkills: materializations.map(materializationSummaryPayload),
+        conflicts,
+        removedSkillNames: result.removedSkillNames,
+        backupDirs: result.backupDirs,
+        workspaceProjections,
       });
-    }
+    },
+  );
 
-    return jsonResponse({
-      workspaceId: workspace.id,
-      status: "synced",
-      synced: true,
-      reloadRequired: true,
-      registryConfigured: true,
-      rootDir: workspaceResult.rootDir,
-      globalRootDir: personalGlobalResult.rootDir,
-      globalProjectionRootDir: personalGlobalProjectionResult.rootDir,
-      lockfilePath,
-      materializedSkills: responseMaterializations.map(materializationSummaryPayload),
-      conflicts,
-      removedSkillNames: [
-        ...workspaceResult.removedSkillNames,
-        ...personalGlobalResult.removedSkillNames,
-        ...personalGlobalProjectionResult.removedSkillNames,
-      ].sort(),
-      backupDirs: [
-        ...workspaceResult.backupDirs,
-        ...personalGlobalResult.backupDirs,
-        ...personalGlobalProjectionResult.backupDirs,
-        ...legacyProjectionMigration.backupDirs,
-      ],
-      legacyProjectionMigration,
-    });
-    });
-  });
+  addRoute(
+    routes,
+    "GET",
+    "/workspace/:id/skills/materialization",
+    "client",
+    async (ctx) => {
+      const workspace = await resolveWorkspace(
+        ctx.config,
+        requireRouteParam(ctx.params, "id", "workspace id"),
+      );
+      return jsonResponse(
+        await buildWorkspaceSkillMaterializationStatusForRequest(
+          ctx,
+          workspace,
+        ),
+      );
+    },
+  );
+
+  addRoute(
+    routes,
+    "POST",
+    "/workspace/:id/skills/user-global-store/sync",
+    "client",
+    async (ctx) => {
+      ensureWritable(ctx.config);
+      requireClientScope(ctx, "collaborator");
+      const workspace = await resolveWorkspace(
+        ctx.config,
+        requireRouteParam(ctx.params, "id", "workspace id"),
+      );
+      await requireApproval(ctx, {
+        workspaceId: workspace.id,
+        action: "skills.user_global_store.sync",
+        summary: "Sync user-global skills into workspace runtime",
+        paths: [userGlobalMaterializedSkillsRoot(workspace.path)],
+      });
+
+      const result = await withWorkspaceSkillLease(
+        workspace.path,
+        "user-global-skill-projection",
+        async () => {
+          const result = await materializeUserGlobalSkillsForWorkspace({
+            workspaceRoot: workspace.path,
+            workspaceId: workspace.id,
+            dataDir: serverDataDir,
+          });
+          await publishRuntimeView(workspace);
+          return result;
+        },
+      );
+
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "remote" },
+        action: "skills.user_global_store.sync",
+        target: result.rootDir,
+        summary: `Synced ${result.materializedSkills.length} user-global skill(s) into workspace runtime`,
+        timestamp: Date.now(),
+      });
+
+      if (result.reloadRequired) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+          type: "skill",
+          name: "veslo-user",
+          action: "updated",
+          path: result.rootDir,
+        });
+      }
+
+      return jsonResponse(result);
+    },
+  );
+
+  addRoute(
+    routes,
+    "POST",
+    "/workspace/:id/skills/materialization/sync",
+    "host",
+    async (ctx) => {
+      ensureWritable(ctx.config);
+      const workspace = await resolveWorkspace(
+        ctx.config,
+        requireRouteParam(ctx.params, "id", "workspace id"),
+      );
+      const body = await readOptionalJsonBody(ctx.request);
+      if (body.activeRun === true) {
+        const registryConfigured = Boolean(skillRegistryRequestBaseUrl(ctx));
+        const status = await buildWorkspaceSkillMaterializationStatus(
+          ctx.config,
+          workspace,
+          {
+            registryConfigured,
+            workspaceRegistryConfigured: registryConfigured,
+            reloadRequired: registryConfigured,
+          },
+        );
+        return jsonResponse(
+          {
+            ...status,
+            status: registryConfigured ? "pending" : status.status,
+            synced: false,
+            reloadRequired: registryConfigured,
+            conflicts: [],
+          },
+          registryConfigured ? 202 : 200,
+        );
+      }
+
+      let materializationInput: Awaited<
+        ReturnType<typeof fetchRegistryWorkspaceMaterializations>
+      >;
+      try {
+        // Registry I/O does not touch workspace sources. Keep it outside the
+        // lease so engine staging is blocked only by the atomic local update.
+        materializationInput = await fetchRegistryWorkspaceMaterializations(
+          ctx,
+          workspace,
+        );
+      } catch (error) {
+        if (isWorkspaceSkillRegistryNotFound(error)) {
+          return jsonResponse(
+            await buildWorkspaceSkillRegistryUnavailableStatus(
+              ctx.config,
+              workspace,
+              error,
+            ),
+          );
+        }
+        throw error;
+      }
+
+      return await withWorkspaceSkillLease(
+        workspace.path,
+        "registry-skill-materialization",
+        async () => {
+          const {
+            materializations,
+            conflicts,
+            packagesByInstallationId,
+            personalGlobalSyncRequired,
+            skillSetId,
+            skillSetRevision,
+          } = materializationInput;
+          const workspaceMaterializations = materializations.filter(
+            (skill) => skill.target === "workspace",
+          );
+          const personalGlobalMaterializations = materializations.filter(
+            (skill) => skill.target === "personal-global",
+          );
+          const loadPackage = async (skill: WorkspaceSkillMaterialization) => {
+            const archive = packagesByInstallationId.get(skill.installationId);
+            if (!archive) {
+              throw new ApiError(
+                500,
+                "skill_package_missing",
+                `Missing package for skill ${skill.name}`,
+              );
+            }
+            return archive;
+          };
+
+          const workspaceResult = await materializeWorkspaceSkillSet({
+            workspaceRoot: workspace.path,
+            skills: workspaceMaterializations,
+            loadPackage,
+          });
+          let personalGlobalResult: SkillSetMaterializationResult = {
+            rootDir: personalGlobalManagedSkillsRoot(),
+            materializedSkills: [],
+            removedSkillNames: [],
+            backupDirs: [],
+          };
+          if (personalGlobalSyncRequired) {
+            personalGlobalResult = await materializePersonalGlobalSkillSet({
+              skills: personalGlobalMaterializations,
+              loadPackage,
+              unmanagedSkillRoots: userGlobalSkillRootsForMutation(),
+            });
+          }
+          let personalGlobalProjectionResult: SkillSetMaterializationResult = {
+            rootDir: workspaceRegistryPersonalSkillsRoot(workspace.path),
+            materializedSkills: [],
+            removedSkillNames: [],
+            backupDirs: [],
+          };
+          if (personalGlobalSyncRequired) {
+            personalGlobalProjectionResult = await materializeWorkspaceSkillSet(
+              {
+                workspaceRoot: workspace.path,
+                rootDir: workspaceRegistryPersonalSkillsRoot(workspace.path),
+                skills: personalGlobalMaterializations.map((skill) => ({
+                  ...skill,
+                  target: "workspace" as const,
+                })),
+                loadPackage: async (skill) =>
+                  loadPackage({ ...skill, target: "personal-global" }),
+              },
+            );
+          }
+          const legacyProjectionMigration =
+            await migrateLegacyProjectionOrFail(workspace);
+          const responseMaterializations = [
+            ...workspaceMaterializations,
+            ...personalGlobalMaterializations,
+          ];
+          const lockfileEntries = workspaceMaterializations.map((skill) => ({
+            skillId: skill.skillId,
+            installationId: skill.installationId,
+            versionId: skill.versionId,
+            name: skill.name,
+            packageSha256: skill.packageSha256,
+          }));
+          const lockfilePath = await writeWorkspaceSkillLockfile(
+            workspace.path,
+            {
+              schemaVersion: 1,
+              workspaceId: workspace.id,
+              skillSetId,
+              skillSetRevision,
+              entries: lockfileEntries,
+            },
+          );
+
+          // The orchestrator stages from this manifest during process startup. Write
+          // it in the same sync transaction so staging cannot observe a missing
+          // manifest between materialization and engine launch.
+          await publishRuntimeView(workspace);
+
+          await recordAudit(workspace.path, {
+            id: shortId(),
+            workspaceId: workspace.id,
+            actor: ctx.actor ?? { type: "host" },
+            action: "skills.materialization.sync",
+            target: workspaceResult.rootDir,
+            summary: `Synced ${responseMaterializations.length} managed skill materialization(s)`,
+            timestamp: Date.now(),
+          });
+          emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+            type: "skill",
+            name: "veslo-managed",
+            action: "updated",
+            path: workspaceResult.rootDir,
+          });
+          if (personalGlobalSyncRequired) {
+            emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+              type: "skill",
+              name: "veslo-registry",
+              action: "updated",
+              path: personalGlobalProjectionResult.rootDir,
+            });
+          }
+
+          return jsonResponse({
+            workspaceId: workspace.id,
+            status: "synced",
+            synced: true,
+            reloadRequired: true,
+            registryConfigured: true,
+            rootDir: workspaceResult.rootDir,
+            globalRootDir: personalGlobalResult.rootDir,
+            globalProjectionRootDir: personalGlobalProjectionResult.rootDir,
+            lockfilePath,
+            materializedSkills: responseMaterializations.map(
+              materializationSummaryPayload,
+            ),
+            conflicts,
+            removedSkillNames: [
+              ...workspaceResult.removedSkillNames,
+              ...personalGlobalResult.removedSkillNames,
+              ...personalGlobalProjectionResult.removedSkillNames,
+            ].sort(),
+            backupDirs: [
+              ...workspaceResult.backupDirs,
+              ...personalGlobalResult.backupDirs,
+              ...personalGlobalProjectionResult.backupDirs,
+              ...legacyProjectionMigration.backupDirs,
+            ],
+            legacyProjectionMigration,
+          });
+        },
+      );
+    },
+  );
 }

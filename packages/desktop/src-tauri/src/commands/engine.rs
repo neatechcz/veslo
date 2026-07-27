@@ -25,14 +25,11 @@ use crate::veslo_server::{
 use crate::workspace::server_client::reconcile_server_workspaces;
 use serde::Serialize;
 use serde_json::json;
-use std::sync::MutexGuard;
 use std::time::Duration;
 use uuid::Uuid;
 
 const DEFAULT_OPENCODE_BIND_HOST: &str = "127.0.0.1";
 const VESLO_OPENCODE_BIND_HOST_ENV: &str = "VESLO_OPENCODE_BIND_HOST";
-#[cfg(debug_assertions)]
-const VESLO_DISABLE_DEV_AUTOSTART_ENV: &str = "VESLO_DISABLE_DEV_AUTOSTART";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorkspaceRuntimePrepareAction {
@@ -113,19 +110,6 @@ fn current_or_new_veslo_client_token(manager: &VesloServerManager) -> String {
     token
 }
 
-fn try_reserve_dev_autostart(manager: &EngineManager) -> Option<MutexGuard<'_, ()>> {
-    let permit = manager.start_queue.try_lock().ok()?;
-    let explicit_runtime_running = manager
-        .inner
-        .lock()
-        .ok()
-        .is_some_and(|state| state.base_url.is_some());
-    if explicit_runtime_running {
-        return None;
-    }
-    Some(permit)
-}
-
 #[derive(Default)]
 struct OutputState {
     stdout: String,
@@ -144,23 +128,6 @@ fn resolve_opencode_bind_host_from_env(value: Option<&str>) -> String {
 
 fn resolve_opencode_bind_host() -> String {
     resolve_opencode_bind_host_from_env(std::env::var(VESLO_OPENCODE_BIND_HOST_ENV).ok().as_deref())
-}
-
-#[cfg(debug_assertions)]
-fn dev_autostart_disabled_from_env(value: Option<&str>) -> bool {
-    matches!(
-        value.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
-        Some("1" | "true" | "yes" | "on")
-    )
-}
-
-#[cfg(debug_assertions)]
-fn dev_autostart_disabled() -> bool {
-    dev_autostart_disabled_from_env(
-        std::env::var(VESLO_DISABLE_DEV_AUTOSTART_ENV)
-            .ok()
-            .as_deref(),
-    )
 }
 
 fn runtime_engine_state_from_public(value: Option<&str>) -> RuntimeEngineState {
@@ -350,83 +317,6 @@ fn should_retry_orchestrator_start(
     child_exited: bool,
 ) -> bool {
     child_exited && attempt < max_attempts && max_attempts > 1
-}
-
-/// VSLO-171 F2Ú7 (dev only): auto-spawn orchestrator daemon shortly after app
-/// boot so the UI can use per-workspace `engine_info(workspaceId)` without
-/// requiring an explicit user action. Runs on a dedicated OS thread because
-/// `engine_start` does blocking I/O (spawns binaries, waits for health).
-///
-/// No-op when:
-/// - the engine is already running (frontend onboarding got there first), or
-/// - the home directory can't be resolved, or
-/// - directory creation/spawning fails (logged to stderr, not surfaced).
-#[cfg(debug_assertions)]
-pub fn spawn_orchestrator_dev_autostart(app: AppHandle) {
-    use std::thread;
-    use std::time::Duration;
-    use tauri::Manager;
-
-    if dev_autostart_disabled() {
-        eprintln!("[dev-autostart] disabled by VESLO_DISABLE_DEV_AUTOSTART");
-        return;
-    }
-
-    thread::spawn(move || {
-        // Give explicit runtime startup requests a short head start. If a real
-        // workspace engine is already running after this delay, this debug
-        // scratch autostart becomes a no-op (see check below).
-        thread::sleep(Duration::from_millis(1500));
-
-        let engine_manager = app.state::<EngineManager>();
-        let Some(_start_permit) = try_reserve_dev_autostart(&engine_manager) else {
-            eprintln!("[dev-autostart] explicit engine startup active or ready — skipping");
-            return;
-        };
-
-        let scratch_root = crate::paths::app_local_data_dir_override()
-            .or_else(|| app.path().app_local_data_dir().ok())
-            .or_else(|| crate::paths::home_dir().map(|home| home.join(".veslo")));
-        let Some(scratch_root) = scratch_root else {
-            eprintln!("[dev-autostart] data dir not found — skipping");
-            return;
-        };
-        let scratch = scratch_root.join("scratch");
-        if let Err(e) = std::fs::create_dir_all(&scratch) {
-            eprintln!("[dev-autostart] mkdir {:?} failed: {}", scratch, e);
-            return;
-        }
-
-        let project_dir = scratch.to_string_lossy().to_string();
-        eprintln!("[dev-autostart] starting orchestrator at {}", project_dir);
-        // Force `prefer_sidecar = true`: the dev autostart runs before the
-        // frontend has a chance to surface the user's engineSource preference,
-        // so without this override the path resolver falls back to system
-        // PATH and picks /opt/homebrew/bin/opencode (typically 1.3.2),
-        // incompatible with the bundled orchestrator (expects 1.17.13).
-        // Engine spawns then silently time out.
-        let result = engine_start_reserved(
-            app.clone(),
-            app.state::<EngineManager>(),
-            app.state::<OrchestratorManager>(),
-            app.state::<VesloServerManager>(),
-            app.state::<OpenCodeRouterManager>(),
-            project_dir,
-            Some(true),
-            None,
-            Some(EngineRuntime::Orchestrator),
-            None,
-            None,
-            None,
-        );
-        match result {
-            Ok(info) => eprintln!(
-                "[dev-autostart] orchestrator ready, base_url={:?}",
-                info.base_url
-            ),
-            Err(e) => eprintln!("[dev-autostart] failed: {}", e),
-        }
-    });
 }
 
 #[tauri::command]
@@ -1720,13 +1610,11 @@ fn engine_start_reserved(
 #[cfg(test)]
 mod tests {
     use super::{
-        current_or_new_veslo_client_token, dev_autostart_disabled_from_env,
-        format_orchestrator_start_error, orchestrator_opencode_base_url,
-        resolve_opencode_bind_host_from_env, resolve_orchestrator_proxy_workspace_id,
-        should_retry_orchestrator_start, try_reserve_dev_autostart,
+        current_or_new_veslo_client_token, format_orchestrator_start_error,
+        orchestrator_opencode_base_url, resolve_opencode_bind_host_from_env,
+        resolve_orchestrator_proxy_workspace_id, should_retry_orchestrator_start,
         workspace_runtime_prepare_action, WorkspaceRuntimePrepareAction,
     };
-    use crate::engine::manager::EngineManager;
     use crate::types::{
         EngineRuntime, OrchestratorSharedEngineSnapshot, OrchestratorStatus, OrchestratorWorkspace,
         RuntimeEngineState,
@@ -1805,6 +1693,15 @@ mod tests {
     }
 
     #[test]
+    fn desktop_boot_does_not_autostart_a_runtime() {
+        let desktop_boot = include_str!("../lib.rs");
+        assert!(
+            !desktop_boot.contains("spawn_orchestrator_dev_autostart("),
+            "desktop startup must not create a scratch runtime; engines start from explicit runtime requests"
+        );
+    }
+
+    #[test]
     fn opencode_bind_host_defaults_to_loopback() {
         assert_eq!(resolve_opencode_bind_host_from_env(None), "127.0.0.1");
         assert_eq!(resolve_opencode_bind_host_from_env(Some(" ")), "127.0.0.1");
@@ -1812,38 +1709,6 @@ mod tests {
             resolve_opencode_bind_host_from_env(Some("0.0.0.0")),
             "0.0.0.0"
         );
-    }
-
-    #[test]
-    fn dev_autostart_disable_env_accepts_truthy_values() {
-        assert!(!dev_autostart_disabled_from_env(None));
-        assert!(!dev_autostart_disabled_from_env(Some("")));
-        assert!(!dev_autostart_disabled_from_env(Some("0")));
-        assert!(!dev_autostart_disabled_from_env(Some("false")));
-        assert!(dev_autostart_disabled_from_env(Some("1")));
-        assert!(dev_autostart_disabled_from_env(Some(" TRUE ")));
-        assert!(dev_autostart_disabled_from_env(Some("yes")));
-        assert!(dev_autostart_disabled_from_env(Some("on")));
-    }
-
-    #[test]
-    fn dev_autostart_does_not_race_an_explicit_engine_start() {
-        let manager = EngineManager::default();
-        let explicit_start = manager
-            .start_queue
-            .lock()
-            .expect("engine start queue mutex poisoned");
-
-        assert!(try_reserve_dev_autostart(&manager).is_none());
-        drop(explicit_start);
-
-        assert!(try_reserve_dev_autostart(&manager).is_some());
-        manager
-            .inner
-            .lock()
-            .expect("engine mutex poisoned")
-            .base_url = Some("http://127.0.0.1:12345".to_string());
-        assert!(try_reserve_dev_autostart(&manager).is_none());
     }
 
     #[test]

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createWorkspaceRuntimeController } from "../../context/workspace-runtime-controller.js";
-import { readContextSource, readWorkspaceFacadeSource } from "./workspace-source";
+import {
+  readContextSource,
+  readWorkspaceFacadeSource,
+} from "./workspace-source";
 
 async function waitForCondition(condition: () => boolean) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -16,25 +19,40 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   const runtimeSource = readContextSource("workspace-runtime-controller.ts");
   const facadeSource = readWorkspaceFacadeSource();
 
-  assert.match(runtimeSource, /export function createWorkspaceRuntimeController\(/);
+  assert.match(
+    runtimeSource,
+    /export function createWorkspaceRuntimeController\(/,
+  );
   assert.match(runtimeSource, /async function ensureEngineForWorkspace/);
   assert.match(
     runtimeSource,
     /export type EnsureEngineForWorkspaceOptions = \{[\s\S]*reason\?: string;[\s\S]*loadSessions\?: boolean;[\s\S]*forceFreshRuntime\?: boolean;[\s\S]*\};/,
-    "runtime ensure should expose one narrow options object for boot warmup and send recovery without adding another owner",
+    "runtime ensure should expose one narrow options object for requested starts and send recovery without adding another owner",
   );
   assert.match(
     runtimeSource,
     /async function ensureEngineForWorkspace\([\s\S]*workspaceId\?: string \| null,[\s\S]*options: EnsureEngineForWorkspaceOptions = \{\},[\s\S]*\): Promise<boolean>/,
-    "boot warmup and first-send recovery should share the same runtime ensure owner",
+    "initial requests and first-send recovery should share the same runtime ensure owner",
   );
   assert.match(runtimeSource, /connectMode: "quiet"/);
-  const ensureStart = runtimeSource.indexOf("async function ensureEngineForWorkspace");
+  const ensureStart = runtimeSource.indexOf(
+    "async function ensureEngineForWorkspace",
+  );
   const ensureSource = runtimeSource.slice(ensureStart);
-  const hydrationWaitIndex = ensureSource.indexOf('recordSendWorkflowTrace("workspace-runtime", "ensure-engine:hydration-wait"');
-  const workspaceLookupIndex = ensureSource.indexOf("const workspace = deps.workspaces().find");
-  assert.ok(hydrationWaitIndex >= 0, "runtime ensure should wait for workspace hydration");
-  assert.ok(workspaceLookupIndex >= 0, "runtime ensure should resolve the target workspace");
+  const hydrationWaitIndex = ensureSource.indexOf(
+    'recordSendWorkflowTrace("workspace-runtime", "ensure-engine:hydration-wait"',
+  );
+  const workspaceLookupIndex = ensureSource.indexOf(
+    "const workspace = deps.workspaces().find",
+  );
+  assert.ok(
+    hydrationWaitIndex >= 0,
+    "runtime ensure should wait for workspace hydration",
+  );
+  assert.ok(
+    workspaceLookupIndex >= 0,
+    "runtime ensure should resolve the target workspace",
+  );
   assert.ok(
     hydrationWaitIndex < workspaceLookupIndex,
     "runtime ensure must wait for workspace hydration before deciding the target workspace is missing",
@@ -44,13 +62,19 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
     /async function connectToEngineQuiet[\s\S]*deps\.routing\.ensure\(workspaceId, baseUrl,[\s\S]*deps\.setClient\(nextClient\);/s,
     "quiet reconnect must bind a workspace-scoped routed client before send uses routedClient(workspaceId)",
   );
-  assert.doesNotMatch(runtimeSource, /connect-quiet:routing-skip-health|skipHealth: true/);
+  assert.doesNotMatch(
+    runtimeSource,
+    /connect-quiet:routing-skip-health|skipHealth: true/,
+  );
   assert.match(
     runtimeSource,
     /function isEngineStartingRoutingError[\s\S]*engine_starting[\s\S]*"connect-quiet:engine-starting"/s,
     "quiet reconnect should trace pending engine startup separately from generic routing failures",
   );
-  assert.match(runtimeSource, /localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{/);
+  assert.match(
+    runtimeSource,
+    /localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{/,
+  );
   assert.match(
     runtimeSource,
     /const prepareReason = ensureReason;[\s\S]*localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{[\s\S]*reason: prepareReason,[\s\S]*connectMode: "quiet",[\s\S]*forceFreshRuntime,/,
@@ -64,7 +88,7 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
   assert.match(
     runtimeSource,
     /const shouldLoadSessions = options\.loadSessions !== false;[\s\S]*if \(shouldLoadSessions\) \{[\s\S]*withTimeoutOrThrow\(deps\.loadSessions\(workspace\.path\)/s,
-    "boot warmup should be able to start the engine without forcing session-list UI side effects",
+    "requested starts should not force session-list UI side effects",
   );
   assert.match(runtimeSource, /ensure-engine:load-sessions:skipped/);
   assert.match(runtimeSource, /loadSessions failed; continuing first prompt/);
@@ -74,14 +98,34 @@ test("lazy runtime ensure lives in workspace runtime controller", () => {
     /const runtimeReady = workspace\.workspaceType === "local"[\s\S]*await deps\.ensureLocalRuntimeReadyForWorkspaceStart\?\.\(workspace\.path\)[\s\S]*if \(runtimeReady === false\) \{[\s\S]*ensure-engine:runtime-prerequisites-not-ready[\s\S]*return false;[\s\S]*\}[\s\S]*const skillSyncMaxAttempts = isRuntimeRecovery \? 6 : 1;[\s\S]*const skillSyncReason = isRuntimeRecovery \? "runtime-recovery" : "browse-attach";[\s\S]*deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(workspace,[\s\S]*reason: skillSyncReason,/s,
     "first-prompt lazy runtime startup must ask the local runtime readiness guard before skill sync or engine spawn",
   );
-  const managedConfigStart = ensureSource.indexOf('"ensure-engine:managed-ai-config:start"');
-  const managedConfigDone = ensureSource.indexOf('"ensure-engine:managed-ai-config:done"');
-  const skillSync = ensureSource.indexOf("deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace");
-  const runtimePrepare = ensureSource.indexOf("deps.localRuntimeLifecycle.prepareWorkspaceRuntime({");
-  assert.ok(managedConfigStart >= 0, "runtime ensure should trace the managed AI config gate");
-  assert.ok(managedConfigDone > managedConfigStart, "runtime ensure should wait for managed AI config completion");
-  assert.ok(skillSync > managedConfigDone, "managed AI config must be ready before skill sync");
-  assert.ok(runtimePrepare > managedConfigDone, "managed AI config must be ready before cold engine start");
+  const managedConfigStart = ensureSource.indexOf(
+    '"ensure-engine:managed-ai-config:start"',
+  );
+  const managedConfigDone = ensureSource.indexOf(
+    '"ensure-engine:managed-ai-config:done"',
+  );
+  const skillSync = ensureSource.indexOf(
+    "deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace",
+  );
+  const runtimePrepare = ensureSource.indexOf(
+    "deps.localRuntimeLifecycle.prepareWorkspaceRuntime({",
+  );
+  assert.ok(
+    managedConfigStart >= 0,
+    "runtime ensure should trace the managed AI config gate",
+  );
+  assert.ok(
+    managedConfigDone > managedConfigStart,
+    "runtime ensure should wait for managed AI config completion",
+  );
+  assert.ok(
+    skillSync > managedConfigDone,
+    "managed AI config must be ready before skill sync",
+  );
+  assert.ok(
+    runtimePrepare > managedConfigDone,
+    "managed AI config must be ready before cold engine start",
+  );
   assert.match(
     ensureSource,
     /if \(!managedAiConfigReady\) \{[\s\S]*ensure-engine:managed-ai-config:not-ready[\s\S]*return false;/,
@@ -143,7 +187,8 @@ test("quiet connect traces engine_starting routing failures distinctly", async (
       routing: {
         release: () => {},
         ensure: async () => null,
-        lastEnsureError: () => '{"error":"engine_starting","engineState":"starting"}',
+        lastEnsureError: () =>
+          '{"error":"engine_starting","engineState":"starting"}',
       },
       resolveEngineRuntime: () => "veslo-orchestrator",
       localRuntimeLifecycle: {} as never,
@@ -158,7 +203,9 @@ test("quiet connect traces engine_starting routing failures distinctly", async (
       clearWorkspaceBusyAllExcept: () => {},
       syncWorkspaceSkillMaterializationBeforeRuntime: async () => true,
       createClient: () => {
-        throw new Error("createClient should not run for routing ensure failures");
+        throw new Error(
+          "createClient should not run for routing ensure failures",
+        );
       },
       waitForHealthy: async () => ({}),
       safeStringify: String,
@@ -173,7 +220,9 @@ test("quiet connect traces engine_starting routing failures distinctly", async (
     );
     assert.equal(ok, false);
 
-    const logs = traceWindow.__vesloSendWorkflowTrace as Array<Record<string, unknown>>;
+    const logs = traceWindow.__vesloSendWorkflowTrace as Array<
+      Record<string, unknown>
+    >;
     assert.equal(logs.at(-1)?.event, "connect-quiet:engine-starting");
     assert.equal(logs.at(-1)?.engineState, "starting");
   } finally {
@@ -205,8 +254,13 @@ test("runtime ensure sends recovery reasons to the backend-owned prepare workflo
     },
     resolveEngineRuntime: () => "veslo-orchestrator",
     localRuntimeLifecycle: {
-      prepareWorkspaceRuntime: async (options: { reason?: string; forceFreshRuntime?: boolean }) => {
-        calls.push(`prepare:${options.forceFreshRuntime === true}:${options.reason ?? ""}`);
+      prepareWorkspaceRuntime: async (options: {
+        reason?: string;
+        forceFreshRuntime?: boolean;
+      }) => {
+        calls.push(
+          `prepare:${options.forceFreshRuntime === true}:${options.reason ?? ""}`,
+        );
         return true;
       },
     } as never,
@@ -257,14 +311,14 @@ test("runtime ensure sends recovery reasons to the backend-owned prepare workflo
   ]);
 });
 
-test("runtime recovery does not wait on an in-flight boot warmup single-flight", async () => {
+test("runtime recovery does not wait on an unrelated in-flight requested start", async () => {
   const calls: string[] = [];
-  let releaseBootWarmup: () => void = () => {
-    throw new Error("boot warmup was not started");
+  let releaseInitialRequest: () => void = () => {
+    throw new Error("initial request was not started");
   };
-  let markBootWarmupStarted: () => void = () => {};
-  const bootWarmupStarted = new Promise<void>((resolve) => {
-    markBootWarmupStarted = resolve;
+  let markInitialRequestStarted: () => void = () => {};
+  const initialRequestStarted = new Promise<void>((resolve) => {
+    markInitialRequestStarted = resolve;
   });
   const controller = createWorkspaceRuntimeController({
     activeWorkspaceId: () => "ws-a",
@@ -284,12 +338,17 @@ test("runtime recovery does not wait on an in-flight boot warmup single-flight",
     },
     resolveEngineRuntime: () => "veslo-orchestrator",
     localRuntimeLifecycle: {
-      prepareWorkspaceRuntime: async (options: { reason?: string; forceFreshRuntime?: boolean }) => {
-        calls.push(`prepare:${options.forceFreshRuntime === true}:${options.reason ?? ""}`);
-        if (options.reason === "boot-warmup") {
-          markBootWarmupStarted();
+      prepareWorkspaceRuntime: async (options: {
+        reason?: string;
+        forceFreshRuntime?: boolean;
+      }) => {
+        calls.push(
+          `prepare:${options.forceFreshRuntime === true}:${options.reason ?? ""}`,
+        );
+        if (options.reason === "initial-request") {
+          markInitialRequestStarted();
           await new Promise<void>((resolve) => {
-            releaseBootWarmup = resolve;
+            releaseInitialRequest = resolve;
           });
         }
         return true;
@@ -315,11 +374,11 @@ test("runtime recovery does not wait on an in-flight boot warmup single-flight",
     wsLog: () => {},
   });
 
-  const bootWarmup = controller.ensureEngineForWorkspace("ws-a", {
-    reason: "boot-warmup",
+  const initialRequest = controller.ensureEngineForWorkspace("ws-a", {
+    reason: "initial-request",
     loadSessions: false,
   });
-  await bootWarmupStarted;
+  await initialRequestStarted;
 
   const recovery = controller.ensureEngineForWorkspace("ws-a", {
     reason: "sendPrompt-runtime-recovery",
@@ -328,10 +387,10 @@ test("runtime recovery does not wait on an in-flight boot warmup single-flight",
   await waitForCondition(() => calls.length === 2);
 
   assert.deepEqual(calls, [
-    "prepare:false:boot-warmup",
+    "prepare:false:initial-request",
     "prepare:true:sendPrompt-runtime-recovery",
   ]);
   assert.equal(await recovery, true);
-  releaseBootWarmup();
-  assert.equal(await bootWarmup, true);
+  releaseInitialRequest();
+  assert.equal(await initialRequest, true);
 });

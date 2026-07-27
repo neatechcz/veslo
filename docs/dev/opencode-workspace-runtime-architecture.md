@@ -118,8 +118,8 @@ To inspect the buffer from DevTools:
 
 ```js
 window.__vesloSendTrace?.filter((entry) =>
-  String(entry.event ?? "").includes("validation-")
-)
+  String(entry.event ?? "").includes("validation-"),
+);
 ```
 
 Strict validation failures are fail-closed for fields needed to continue
@@ -236,6 +236,36 @@ filesystem-fenced operation record and is leased to the concrete OpenCode
 child through its engine-owner id; cleanup may compact released generations but
 cannot delete a live lease merely because it is old or no longer current.
 
+The server and orchestrator additionally share one workspace-source lease at
+`<workspace>/.opencode/.veslo/workspace-skill-lease`. Any Veslo-owned mutation
+that can change the effective skill view (materialization, user projection,
+install, edit, delete, restore, enable-state, import, or provisioning) holds
+that lease through the matching effective-manifest publish. Engine staging and
+directory-view publication hold the same lease before reading or copying a
+manifest source. This prevents staging from observing a partially replaced
+skill directory.
+
+Ownership is token- and process-fenced, and liveness is proven by a heartbeat:
+the holder bumps the owner record's mtime about once a second. A waiter reclaims
+the lease when the owning process is gone or when its heartbeat has stopped for
+well beyond that interval. The heartbeat is what makes recovery safe against pid
+reuse, which a liveness probe alone cannot detect. An ownerless acquisition, or a
+recovery fence left behind by a process that died mid-recovery, is likewise
+reclaimed on age, so a single crash cannot wedge a workspace permanently.
+
+The lease is re-entrant within one process: a code path that already holds it for
+a workspace runs nested acquisitions inline. Acquiring it twice for the same
+workspace root would otherwise queue the inner acquisition behind the outer one
+while the outer one waits for the inner task — a cycle that never resolves.
+Callers that take leases for several workspaces at once must deduplicate and
+order them by resolved path, not by workspace id, since two ids can name one root.
+
+Activation timeouts are budgeted against each other on purpose: the daemon may
+wait up to 30s for this lease and up to 60s for an OpenCode cold start, so the
+desktop's activation request allows more than their sum. A desktop ceiling below
+the daemon's own budget would report a healthy-but-slow activation as a failure
+while it kept running inside the daemon.
+
 Legacy workspace config directories are detection-only during activation. Veslo
 records the legacy identity for diagnostics, leaves the old tree untouched, and
 creates the new config directory from the current workspace mirror and managed
@@ -262,21 +292,35 @@ the desktop runtime must activate the target workspace engine before returning a
 ready engine snapshot; the app should not paper over an absent workspace engine
 with generic UI retries.
 
-Before every local runtime prepare (first host start, engine reload, local
-workspace switch, remote-to-local attach, and recovery), the app asks the
+Before every requested local runtime prepare (send/session creation, engine
+reload, local workspace switch, remote-to-local attach, and recovery), the app asks the
 server to publish the effective workspace skill manifest and passes its
 revision to native activation. If native activation reports `skill_view_changed`
-or `skill_view_stale`, the app performs exactly one server-owned refresh and
-one prepare retry. A second conflict is terminal for that activation: the UI
-must describe the completed recovery attempt and tell the user to finish the
-skill sync or file edit, rather than exposing the raw orchestrator `409` body.
-This is an activation-boundary rule, not a desktop-side skill resolver.
+or `skill_view_stale`, the app performs a server-owned refresh and a prepare
+retry, for a bounded number of attempts. The workspace skill lease closes the
+race between Veslo's own writers, but an editor save, a sync client, or a branch
+switch can still land mid-activation, and those settle in well under a second —
+so the retry budget is what separates a transient conflict from a real "finish
+your edit" situation. Exhausting it is terminal for that activation: the UI must
+describe the completed recovery attempts and tell the user to finish the skill
+sync or file edit, rather than exposing the raw orchestrator `409` body. This is
+an activation-boundary rule, not a desktop-side skill resolver.
 
-On the app side, local runtime prepare serialization must stay held until native
-prepare, orchestrator workspace activation, and routed reconnect have all
-finished. A foreground send/session recovery may start after a timed-out native
-warmup, but it must not force a second fresh engine while a boot warmup is still
-binding the routed workspace client.
+The daemon port is a contract, not a hint. When a caller passes `--daemon-port`
+or `VESLO_DAEMON_PORT`, that caller polls exactly that port for `/health` and has
+no channel to learn about a fallback, so the daemon binds it or refuses to start
+with an explicit conflict error. Silently listening elsewhere converts a port
+conflict into an unexplained health timeout. Only a caller that requested no
+specific port gets an OS-allocated one. A bind failure at listen time is reported
+explicitly for the same reason: unhandled, it surfaces to the desktop as nothing
+more than "process exited before health became ready".
+
+Opening or browsing a workspace, including sidebar/database hydration, must not
+start an OpenCode engine. On the app side, a requested local runtime prepare
+stays serialized until native prepare, orchestrator workspace activation, and
+routed reconnect have all finished. A foreground send/session recovery may
+join an in-progress requested prepare, but must not create a second fresh
+engine for the same workspace.
 
 Workspace route release must also invalidate in-flight routed-client ensures.
 Recovery, port rotation, and stale-route cleanup all depend on release meaning

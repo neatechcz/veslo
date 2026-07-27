@@ -9,20 +9,37 @@ import {
 } from "./workspace-source";
 
 const source = readWorkspaceBehaviorSources();
-const connectionControllerSource = readContextSource("workspace-connection-controller.ts");
-const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
+const connectionControllerSource = readContextSource(
+  "workspace-connection-controller.ts",
+);
+const appSource = readFileSync(
+  new URL("../../app.tsx", import.meta.url),
+  "utf8",
+);
 const engineCommandSource = readFileSync(
-  new URL("../../../../../desktop/src-tauri/src/commands/engine.rs", import.meta.url),
+  new URL(
+    "../../../../../desktop/src-tauri/src/commands/engine.rs",
+    import.meta.url,
+  ),
   "utf8",
 );
 const orchestratorCommandSource = readFileSync(
-  new URL("../../../../../desktop/src-tauri/src/commands/orchestrator.rs", import.meta.url),
+  new URL(
+    "../../../../../desktop/src-tauri/src/commands/orchestrator.rs",
+    import.meta.url,
+  ),
   "utf8",
 );
 
 test("local activation path applies workspace_set_active response back into the workspace list", () => {
+  // Keep this source-level contract insensitive to formatter line wrapping.
+  const compactSource = source
+    .replace(/\s+/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/,\s*\}/g, " }")
+    .replace(/,\s*\)/g, ")");
   assert.match(
-    source,
+    compactSource,
     /deps\.wsLog\("\[workspace:activate\] STEP 3 — workspaceSetActive\.\.\.", \{ id \}\);[\s\S]*const ws = await deps\.withTimeoutOrThrow\([\s\S]*workspaceSetActive\(id, \{ promoteToFront: deps\.activationOptions\?\.promoteToFront \?\? false \}\),[\s\S]*\);[\s\S]*deps\.setWorkspaces\(ws\.workspaces\);/s,
   );
 });
@@ -136,7 +153,7 @@ test("workspace scope comparisons use scope-aware normalized directory paths", (
   );
   assert.match(
     source,
-    /const startedFromLocalMode = deps\.startupPreference\(\) === "local";[\s\S]*const wasLocalConnection = startedFromLocalMode && Boolean\(deps\.routingActive\(\)\);[\s\S]*const previousProjectDir = deps\.projectDir\(\);[\s\S]*const previousActiveWorkspaceRoot = deps\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const oldWorkspacePath = previousActiveWorkspaceRoot \|\| previousProjectDir;/s,
+    /const startedFromLocalMode = deps\.startupPreference\(\) === "local";[\s\S]*const wasLocalConnection =\s*startedFromLocalMode && Boolean\(deps\.routingActive\(\)\);[\s\S]*const previousProjectDir = deps\.projectDir\(\);[\s\S]*const previousActiveWorkspaceRoot = deps\.activeWorkspaceRoot\(\)\.trim\(\);[\s\S]*const oldWorkspacePath = previousActiveWorkspaceRoot \|\| previousProjectDir;/s,
     "activateWorkspace should use the scoped active workspace root before falling back to the mutable runtime projectDir",
   );
   assert.match(
@@ -186,7 +203,12 @@ test("routing ensure failures preserve concrete UI error messages", () => {
 });
 
 test("browsing mode keeps the live client and preserves target runtime readiness before SQLite-backed browsing", () => {
-  const localActivationSource = readContextSource("workspace-activation-local.ts");
+  const localActivationSource = readContextSource(
+    "workspace-activation-local.ts",
+  )
+    .replace(/\s+/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")");
 
   assert.match(
     localActivationSource,
@@ -195,7 +217,7 @@ test("browsing mode keeps the live client and preserves target runtime readiness
   );
   assert.match(
     localActivationSource,
-    /if \(targetRuntimeReady\) \{[\s\S]*deps\.setEngineReady\?\.\(true\);[\s\S]*\} else if \(startedFromLocalMode && workspaceChanged && isTauriRuntime\(\) && deps\.populateSidebarFromDb\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
+    /if \(targetRuntimeReady\) \{[\s\S]*deps\.setEngineReady\?\.\(true\);[\s\S]*\} else if \(\s*startedFromLocalMode &&\s*workspaceChanged &&\s*isTauriRuntime\(\) &&\s*deps\.populateSidebarFromDb\s*\) \{[\s\S]*deps\.setEngineReady\?\.\(false\);[\s\S]*\}/s,
     "browse mode must not demote engineReady when the target workspace already has a ready route/runtime",
   );
   assert.match(
@@ -215,12 +237,12 @@ test("browsing mode keeps the live client and preserves target runtime readiness
   );
   assert.match(
     localActivationSource,
-    /!\(selection\.startedFromLocalMode \|\| selection\.wasLocalConnection \|\| isColdBoot \|\| needsEngineWarmup\)/s,
+    /!\(selection\.startedFromLocalMode \|\| selection\.wasLocalConnection \|\| isColdBoot \|\| needsRuntimeHydration\)/s,
     "local browse mode should allow SQLite-backed browsing even when no routed client was active at activation start",
   );
   assert.match(
     localActivationSource,
-    /!selection\.passiveBrowseActivation[\s\S]*!\(selection\.startedFromLocalMode \|\| selection\.wasLocalConnection \|\| isColdBoot \|\| needsEngineWarmup\)/s,
+    /!selection\.passiveBrowseActivation[\s\S]*!\(selection\.startedFromLocalMode \|\| selection\.wasLocalConnection \|\| isColdBoot \|\| needsRuntimeHydration\)/s,
     "local browse mode should be limited to explicit passive browse activations, not send or compose activations",
   );
   assert.match(
@@ -243,8 +265,13 @@ test("browsing mode keeps the live client and preserves target runtime readiness
 
 test("passive browse path is non-spawning and title-only", () => {
   const facadeSource = readWorkspaceFacadeSource();
-  const match = facadeSource.match(/async function browseWorkspace[\s\S]*?const connectionController/);
-  assert.ok(match, "workspace facade should expose a dedicated browseWorkspace function");
+  const match = facadeSource.match(
+    /async function browseWorkspace[\s\S]*?const connectionController/,
+  );
+  assert.ok(
+    match,
+    "workspace facade should expose a dedicated browseWorkspace function",
+  );
   const browseSource = match[0] ?? "";
 
   assert.match(
@@ -330,7 +357,7 @@ test("app controllers use the shared browse-policy activation wrapper instead of
 test("project-open workspace switches clear stale session routes before passive browse", () => {
   assert.match(
     appSource,
-    /const shouldClearSessionRouteForProjectOpen = \(workspaceId: string, origin\?: string \| null\) => \{[\s\S]*origin !== "workspace-session-list:project-open"[\s\S]*location\.pathname\.toLowerCase\(\)\.startsWith\("\/session\/"\)[\s\S]*nextWorkspaceId !== workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*\};/s,
+    /const shouldClearSessionRouteForProjectOpen = \([\s\S]*workspaceId:\s*string,[\s\S]*origin\?:\s*string\s*\|\s*null,[\s\S]*\)\s*=>\s*\{[\s\S]*origin !== "workspace-session-list:project-open"[\s\S]*location\.pathname\.toLowerCase\(\)\.startsWith\("\/session\/"\)[\s\S]*nextWorkspaceId !== workspaceStore\.activeWorkspaceId\(\)\.trim\(\);[\s\S]*\};/s,
     "explicit project-open switches should only reset concrete session routes when moving to another workspace",
   );
 
@@ -349,7 +376,10 @@ test("bootstrap remains passive under lazy boot policy", () => {
     /connectOrRecoverLocalBootstrap/,
     "bootstrap must not invoke connectOrRecoverLocalBootstrap; activate flow owns connect",
   );
-  assert.doesNotMatch(source, /warmActiveLocalWorkspaceEngineInBackground|reason: "boot-warmup"/);
+  assert.doesNotMatch(
+    source,
+    /warmActiveLocalWorkspaceEngineInBackground|reason: "boot-warmup"/,
+  );
   assert.doesNotMatch(
     source,
     /reason: "bootstrap-local"/,
@@ -394,7 +424,9 @@ test("bootstrap schedules sidebar hydration without blocking lazy boot completio
 });
 
 test("lazy browse stays title-only and does not auto-hydrate or auto-select the latest session", () => {
-  const localActivationSource = readContextSource("workspace-activation-local.ts");
+  const localActivationSource = readContextSource(
+    "workspace-activation-local.ts",
+  );
 
   assert.match(
     localActivationSource,

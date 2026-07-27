@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { cp, mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+
+import { withWorkspaceSkillLease } from "./workspace-skill-lease.js";
 
 const ENTRYPOINT = "SKILL.md";
 const MARKER = ".veslo-managed.json";
@@ -73,7 +84,8 @@ type StagingLockOwner = {
   heartbeatAt: string;
 };
 
-const delay = (ms: number): Promise<void> => new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 
 function processIsAlive(processId: number): boolean {
   if (!Number.isInteger(processId) || processId <= 0) return false;
@@ -85,10 +97,18 @@ function processIsAlive(processId: number): boolean {
   }
 }
 
-async function readLockOwner(lockDir: string): Promise<StagingLockOwner | null> {
+async function readLockOwner(
+  lockDir: string,
+): Promise<StagingLockOwner | null> {
   try {
-    const parsed = JSON.parse(await readFile(join(lockDir, STAGING_LOCK_OWNER), "utf8")) as StagingLockOwner;
-    if (parsed.schemaVersion !== 1 || typeof parsed.token !== "string" || !Number.isInteger(parsed.processId)) {
+    const parsed = JSON.parse(
+      await readFile(join(lockDir, STAGING_LOCK_OWNER), "utf8"),
+    ) as StagingLockOwner;
+    if (
+      parsed.schemaVersion !== 1 ||
+      typeof parsed.token !== "string" ||
+      !Number.isInteger(parsed.processId)
+    ) {
       return null;
     }
     return parsed;
@@ -124,11 +144,16 @@ async function recoverDeadFilesystemLock(
     removed = true;
     return true;
   } finally {
-    if (!removed) await rm(recoveryDir, { recursive: true, force: true }).catch(() => undefined);
+    if (!removed)
+      await rm(recoveryDir, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
   }
 }
 
-async function acquireFilesystemLock(stagingRoot: string): Promise<() => Promise<void>> {
+async function acquireFilesystemLock(
+  stagingRoot: string,
+): Promise<() => Promise<void>> {
   const lockDir = join(stagingRoot, STAGING_LOCK_DIR);
   const token = randomUUID();
   const deadline = Date.now() + STAGING_LOCK_TIMEOUT_MS;
@@ -148,39 +173,62 @@ async function acquireFilesystemLock(stagingRoot: string): Promise<() => Promise
     try {
       await mkdir(lockDir);
       created = true;
-      await writeFile(join(lockDir, STAGING_LOCK_OWNER), `${JSON.stringify(owner)}\n`, "utf8");
+      await writeFile(
+        join(lockDir, STAGING_LOCK_OWNER),
+        `${JSON.stringify(owner)}\n`,
+        "utf8",
+      );
       return async () => {
         const current = await readLockOwner(lockDir);
-        if (current?.token === token) await rm(lockDir, { recursive: true, force: true });
+        if (current?.token === token)
+          await rm(lockDir, { recursive: true, force: true });
       };
     } catch (error) {
-      if (created) await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
+      if (created)
+        await rm(lockDir, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "EEXIST" && code !== "ENOTEMPTY") throw error;
 
       const current = await readLockOwner(lockDir);
-      if (current && !processIsAlive(current.processId) && await recoverDeadFilesystemLock(lockDir, current)) {
+      if (
+        current &&
+        !processIsAlive(current.processId) &&
+        (await recoverDeadFilesystemLock(lockDir, current))
+      ) {
         continue;
       }
-      if (Date.now() >= deadline) throw new Error("skill_staging_busy: another orchestrator owns the staging lock");
+      if (Date.now() >= deadline)
+        throw new Error(
+          "skill_staging_busy: another orchestrator owns the staging lock",
+        );
       await delay(STAGING_LOCK_WAIT_MS);
     }
   }
 }
 
-async function withStagingRootLock<T>(stagingRoot: string, operation: () => Promise<T>): Promise<T> {
+async function withStagingRootLock<T>(
+  stagingRoot: string,
+  operation: () => Promise<T>,
+): Promise<T> {
   const key = resolve(stagingRoot).toLowerCase();
   const previous = stagingRootQueues.get(key) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(async () => {
-    await mkdir(resolve(stagingRoot), { recursive: true });
-    const release = await acquireFilesystemLock(resolve(stagingRoot));
-    try {
-      return await operation();
-    } finally {
-      await release();
-    }
-  });
-  const settled = current.then(() => undefined, () => undefined);
+  const current = previous
+    .catch(() => undefined)
+    .then(async () => {
+      await mkdir(resolve(stagingRoot), { recursive: true });
+      const release = await acquireFilesystemLock(resolve(stagingRoot));
+      try {
+        return await operation();
+      } finally {
+        await release();
+      }
+    });
+  const settled = current.then(
+    () => undefined,
+    () => undefined,
+  );
   stagingRootQueues.set(key, settled);
   try {
     return await current;
@@ -213,7 +261,11 @@ export type EngineSkillStagingResult = {
   stagingRoot: string;
   source: "effective-manifest" | "fail-closed-no-manifest" | "legacy-discovery";
   materialized: string[];
-  materializedDetails: Array<{ name: string; sourcePath: string; className: Candidate["className"] }>;
+  materializedDetails: Array<{
+    name: string;
+    sourcePath: string;
+    className: Candidate["className"];
+  }>;
   suppressed: Array<{ name: string; reason: string }>;
   generationLease?: EngineSkillGenerationLease;
 };
@@ -264,7 +316,8 @@ export async function promoteDirectorySkillView(
       }
       throw error;
     }
-    if (previousExists) await removePath(input.previousRoot, { recursive: true, force: true });
+    if (previousExists)
+      await removePath(input.previousRoot, { recursive: true, force: true });
   } finally {
     await removePath(input.pendingRoot, { recursive: true, force: true });
   }
@@ -272,29 +325,58 @@ export async function promoteDirectorySkillView(
 
 const isWithin = (root: string, target: string): boolean => {
   const value = relative(resolve(root), resolve(target));
-  return value.length > 0 && !isAbsolute(value) && !value.startsWith("..") && !value.includes(`..${"\\"}`) && !value.includes(`../`);
+  return (
+    value.length > 0 &&
+    !isAbsolute(value) &&
+    !value.startsWith("..") &&
+    !value.includes(`..${"\\"}`) &&
+    !value.includes(`../`)
+  );
 };
 
-async function readGenerationRecord(generationRoot: string): Promise<GenerationRecord | null> {
+async function readGenerationRecord(
+  generationRoot: string,
+): Promise<GenerationRecord | null> {
   try {
-    const parsed = JSON.parse(await readFile(join(generationRoot, GENERATION_RECORD), "utf8")) as GenerationRecord;
-    if (parsed.schemaVersion !== 1 || typeof parsed.operationId !== "string" || typeof parsed.engineOwnerId !== "string") return null;
+    const parsed = JSON.parse(
+      await readFile(join(generationRoot, GENERATION_RECORD), "utf8"),
+    ) as GenerationRecord;
+    if (
+      parsed.schemaVersion !== 1 ||
+      typeof parsed.operationId !== "string" ||
+      typeof parsed.engineOwnerId !== "string"
+    )
+      return null;
     return parsed;
   } catch {
     return null;
   }
 }
 
-async function writeGenerationRecord(generationRoot: string, record: GenerationRecord): Promise<void> {
+async function writeGenerationRecord(
+  generationRoot: string,
+  record: GenerationRecord,
+): Promise<void> {
   const path = join(generationRoot, GENERATION_RECORD);
   const temporaryPath = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  await writeFile(
+    temporaryPath,
+    `${JSON.stringify(record, null, 2)}\n`,
+    "utf8",
+  );
   await rename(temporaryPath, path);
 }
 
-async function releaseEngineSkillGenerationUnlocked(lease: EngineSkillGenerationLease): Promise<void> {
+async function releaseEngineSkillGenerationUnlocked(
+  lease: EngineSkillGenerationLease,
+): Promise<void> {
   const record = await readGenerationRecord(lease.generationRoot);
-  if (!record || record.operationId !== lease.operationId || record.engineOwnerId !== lease.engineOwnerId) return;
+  if (
+    !record ||
+    record.operationId !== lease.operationId ||
+    record.engineOwnerId !== lease.engineOwnerId
+  )
+    return;
   await writeGenerationRecord(lease.generationRoot, {
     ...record,
     state: "released",
@@ -303,13 +385,25 @@ async function releaseEngineSkillGenerationUnlocked(lease: EngineSkillGeneration
   });
 }
 
-export async function claimEngineSkillGeneration(lease: EngineSkillGenerationLease, childPid: number): Promise<void> {
+export async function claimEngineSkillGeneration(
+  lease: EngineSkillGenerationLease,
+  childPid: number,
+): Promise<void> {
   await withStagingRootLock(lease.stagingRoot, async () => {
     const record = await readGenerationRecord(lease.generationRoot);
-    if (!record || record.operationId !== lease.operationId || record.engineOwnerId !== lease.engineOwnerId) {
-      throw new Error("skill_generation_invalid: generation lease does not match");
+    if (
+      !record ||
+      record.operationId !== lease.operationId ||
+      record.engineOwnerId !== lease.engineOwnerId
+    ) {
+      throw new Error(
+        "skill_generation_invalid: generation lease does not match",
+      );
     }
-    if (record.state !== "ready") throw new Error(`skill_generation_invalid: generation is ${record.state}`);
+    if (record.state !== "ready")
+      throw new Error(
+        `skill_generation_invalid: generation is ${record.state}`,
+      );
     await writeGenerationRecord(lease.generationRoot, {
       ...record,
       state: "leased",
@@ -319,11 +413,18 @@ export async function claimEngineSkillGeneration(lease: EngineSkillGenerationLea
   });
 }
 
-export async function releaseEngineSkillGeneration(lease: EngineSkillGenerationLease): Promise<void> {
-  await withStagingRootLock(lease.stagingRoot, () => releaseEngineSkillGenerationUnlocked(lease));
+export async function releaseEngineSkillGeneration(
+  lease: EngineSkillGenerationLease,
+): Promise<void> {
+  await withStagingRootLock(lease.stagingRoot, () =>
+    releaseEngineSkillGenerationUnlocked(lease),
+  );
 }
 
-async function cleanupStagingGenerations(stagingRoot: string, currentGeneration: string): Promise<void> {
+async function cleanupStagingGenerations(
+  stagingRoot: string,
+  currentGeneration: string,
+): Promise<void> {
   const generationsRoot = join(stagingRoot, "generations");
   let entries;
   try {
@@ -336,32 +437,67 @@ async function cleanupStagingGenerations(stagingRoot: string, currentGeneration:
     .map((entry) => entry.name)
     .sort((left, right) => right.localeCompare(left));
   const currentName = currentGeneration.split(/[\\/]/).pop() ?? "";
-  const records = await Promise.all(generations.map(async (generation) => ({
-    generation,
-    record: await readGenerationRecord(join(generationsRoot, generation)),
-  })));
+  const records = await Promise.all(
+    generations.map(async (generation) => ({
+      generation,
+      record: await readGenerationRecord(join(generationsRoot, generation)),
+    })),
+  );
   const released = records.filter(({ record }) => record?.state === "released");
-  const keep = new Set([currentName, ...released.slice(0, GENERATION_RETENTION).map(({ generation }) => generation)]);
+  const keep = new Set([
+    currentName,
+    ...released
+      .slice(0, GENERATION_RETENTION)
+      .map(({ generation }) => generation),
+  ]);
   const now = Date.now();
   const orphaned = records.filter(({ generation, record }) => {
-    if (!record || record.state !== "leased" || !record.childPid || keep.has(generation)) return false;
+    if (
+      !record ||
+      record.state !== "leased" ||
+      !record.childPid ||
+      keep.has(generation)
+    )
+      return false;
     const updatedAt = Date.parse(record.updatedAt);
-    if (!Number.isFinite(updatedAt) || now - updatedAt < ORPHAN_GENERATION_RECOVERY_MS) return false;
+    if (
+      !Number.isFinite(updatedAt) ||
+      now - updatedAt < ORPHAN_GENERATION_RECOVERY_MS
+    )
+      return false;
     const ownerIsDead = !processIsAlive(record.processId);
     const childIsDead = !processIsAlive(record.childPid);
     return ownerIsDead && childIsDead;
   });
   const deletable = [
-    ...released.slice(GENERATION_RETENTION).filter(({ generation }) => !keep.has(generation)),
+    ...released
+      .slice(GENERATION_RETENTION)
+      .filter(({ generation }) => !keep.has(generation)),
     ...orphaned,
   ];
-  await Promise.all(deletable.map(({ generation }) => rm(join(generationsRoot, generation), { recursive: true, force: true })));
+  await Promise.all(
+    deletable.map(({ generation }) =>
+      rm(join(generationsRoot, generation), { recursive: true, force: true }),
+    ),
+  );
 }
 
-async function readEffectiveManifest(workspace: string): Promise<EffectiveSkillManifest | null> {
+async function readEffectiveManifest(
+  workspace: string,
+): Promise<EffectiveSkillManifest | null> {
   try {
-    const parsed = JSON.parse(await readFile(join(workspace, ".opencode", "veslo.runtime.skills.json"), "utf8")) as EffectiveSkillManifest;
-    if ((parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) || resolve(parsed.workspaceRoot) !== workspace || !Array.isArray(parsed.entries)) return null;
+    const parsed = JSON.parse(
+      await readFile(
+        join(workspace, ".opencode", "veslo.runtime.skills.json"),
+        "utf8",
+      ),
+    ) as EffectiveSkillManifest;
+    if (
+      (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) ||
+      resolve(parsed.workspaceRoot) !== workspace ||
+      !Array.isArray(parsed.entries)
+    )
+      return null;
     return parsed;
   } catch {
     return null;
@@ -371,11 +507,18 @@ async function readEffectiveManifest(workspace: string): Promise<EffectiveSkillM
 async function discoverEffectiveManifestCandidates(
   workspace: string,
   manifest: EffectiveSkillManifest,
-): Promise<{ candidates: Candidate[]; suppressed: EngineSkillStagingResult["suppressed"] }> {
+): Promise<{
+  candidates: Candidate[];
+  suppressed: EngineSkillStagingResult["suppressed"];
+}> {
   const candidates: Candidate[] = [];
   const suppressed: EngineSkillStagingResult["suppressed"] = [];
   const workspacePhysical = await realpath(workspace).catch(() => null);
-  if (typeof workspacePhysical !== "string") return { candidates, suppressed: [{ name: "<manifest>", reason: "missing_source" }] };
+  if (typeof workspacePhysical !== "string")
+    return {
+      candidates,
+      suppressed: [{ name: "<manifest>", reason: "missing_source" }],
+    };
   const authorizedWorkspaceRoot: string = workspacePhysical;
   const sourceRoots = [
     join(workspace, ".opencode", "skills"),
@@ -383,34 +526,63 @@ async function discoverEffectiveManifestCandidates(
     join(workspace, ".agents", "skills"),
     join(workspace, ".agent", "skills"),
   ];
-  const physicalRoots = (await Promise.all(sourceRoots.map((root) => realpath(root).catch(() => null))))
-    .filter((root): root is string => root !== null && isWithin(authorizedWorkspaceRoot, root));
+  const physicalRoots = (
+    await Promise.all(
+      sourceRoots.map((root) => realpath(root).catch(() => null)),
+    )
+  ).filter(
+    (root): root is string =>
+      root !== null && isWithin(authorizedWorkspaceRoot, root),
+  );
   for (const entry of manifest.entries) {
-    const entryName = entry && typeof entry.name === "string" ? entry.name : "<invalid>";
-    if (!entry || typeof entry.name !== "string" || typeof entry.path !== "string") {
+    const entryName =
+      entry && typeof entry.name === "string" ? entry.name : "<invalid>";
+    if (
+      !entry ||
+      typeof entry.name !== "string" ||
+      typeof entry.path !== "string"
+    ) {
       suppressed.push({ name: entryName, reason: "invalid_manifest" });
       continue;
     }
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(entry.name) || entry.name.length > 64) {
+    if (
+      !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(entry.name) ||
+      entry.name.length > 64
+    ) {
       suppressed.push({ name: entry.name, reason: "invalid_name" });
       continue;
     }
-    if (!(["workspace-local", "user-imported", "policy-enforced"] as string[]).includes(entry.source)) {
+    if (
+      !(
+        ["workspace-local", "user-imported", "policy-enforced"] as string[]
+      ).includes(entry.source)
+    ) {
       suppressed.push({ name: entry.name, reason: "invalid_manifest" });
       continue;
     }
     const sourcePath = resolve(entry.path);
-    if (!isWithin(workspace, sourcePath) || sourcePath.toLowerCase().split(/[\\/]/).pop() !== ENTRYPOINT.toLowerCase()) {
+    if (
+      !isWithin(workspace, sourcePath) ||
+      sourcePath.toLowerCase().split(/[\\/]/).pop() !== ENTRYPOINT.toLowerCase()
+    ) {
       suppressed.push({ name: entry.name, reason: "outside_authorized_root" });
       continue;
     }
     const physicalSourcePath = await realpath(sourcePath).catch(() => null);
-    const physicalSourceDir = physicalSourcePath ? await realpath(dirname(physicalSourcePath)).catch(() => null) : null;
+    const physicalSourceDir = physicalSourcePath
+      ? await realpath(dirname(physicalSourcePath)).catch(() => null)
+      : null;
     if (!physicalSourcePath || !physicalSourceDir) {
       suppressed.push({ name: entry.name, reason: "missing_source" });
       continue;
     }
-    if (!physicalRoots.some((root) => isWithin(root, physicalSourceDir) && isWithin(root, physicalSourcePath))) {
+    if (
+      !physicalRoots.some(
+        (root) =>
+          isWithin(root, physicalSourceDir) &&
+          isWithin(root, physicalSourcePath),
+      )
+    ) {
       suppressed.push({ name: entry.name, reason: "symlink_escape" });
       continue;
     }
@@ -425,29 +597,48 @@ async function discoverEffectiveManifestCandidates(
       sourceDir: physicalSourceDir,
       sourcePath,
       className: entry.source,
-      removalPolicy: entry.removalPolicy === "locked" ? "locked" : "user_removable",
+      removalPolicy:
+        entry.removalPolicy === "locked" ? "locked" : "user_removable",
     });
   }
   return { candidates, suppressed };
 }
 
-const candidateClass = async (skillDir: string, root: string): Promise<Candidate["className"]> => {
+const candidateClass = async (
+  skillDir: string,
+  root: string,
+): Promise<Candidate["className"]> => {
   try {
-    const marker = JSON.parse(await readFile(join(skillDir, MARKER), "utf8")) as { source?: string };
-    if (marker.source === "organization" || marker.source === "platform") return "policy-enforced";
+    const marker = JSON.parse(
+      await readFile(join(skillDir, MARKER), "utf8"),
+    ) as { source?: string };
+    if (marker.source === "organization" || marker.source === "platform")
+      return "policy-enforced";
     if (marker.source === "personal") return "user-imported";
   } catch {
     // Unmanaged directories are classified by their root below.
   }
   const normalizedRoot = root.replace(/\\/g, "/").toLowerCase();
-  if (normalizedRoot.includes("/veslo-user/") || normalizedRoot.endsWith("/veslo-user")) return "user-imported";
-  if (normalizedRoot.includes("/veslo-managed/") || normalizedRoot.endsWith("/veslo-managed")) return "policy-enforced";
+  if (
+    normalizedRoot.includes("/veslo-user/") ||
+    normalizedRoot.endsWith("/veslo-user")
+  )
+    return "user-imported";
+  if (
+    normalizedRoot.includes("/veslo-managed/") ||
+    normalizedRoot.endsWith("/veslo-managed")
+  )
+    return "policy-enforced";
   return "workspace-local";
 };
 
-const candidateRemovalPolicy = async (skillDir: string): Promise<Candidate["removalPolicy"]> => {
+const candidateRemovalPolicy = async (
+  skillDir: string,
+): Promise<Candidate["removalPolicy"]> => {
   try {
-    const marker = JSON.parse(await readFile(join(skillDir, MARKER), "utf8")) as { removalPolicy?: unknown };
+    const marker = JSON.parse(
+      await readFile(join(skillDir, MARKER), "utf8"),
+    ) as { removalPolicy?: unknown };
     return marker.removalPolicy === "locked" ? "locked" : "user_removable";
   } catch {
     return "user_removable";
@@ -466,7 +657,11 @@ async function discover(root: string): Promise<Candidate[]> {
     if (!entry.isDirectory()) continue;
     const sourceDir = join(root, entry.name);
     const add = async (name: string, dir: string) => {
-      try { await readFile(join(dir, ENTRYPOINT), "utf8"); } catch { return; }
+      try {
+        await readFile(join(dir, ENTRYPOINT), "utf8");
+      } catch {
+        return;
+      }
       candidates.push({
         name,
         sourceDir: dir,
@@ -476,9 +671,14 @@ async function discover(root: string): Promise<Candidate[]> {
       });
     };
     await add(entry.name, sourceDir);
-    if (candidates.some((candidate) => candidate.sourceDir === sourceDir)) continue;
+    if (candidates.some((candidate) => candidate.sourceDir === sourceDir))
+      continue;
     let nested;
-    try { nested = await readdir(sourceDir, { withFileTypes: true }); } catch { continue; }
+    try {
+      nested = await readdir(sourceDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
     for (const child of nested) {
       if (!child.isDirectory()) continue;
       await add(child.name, join(sourceDir, child.name));
@@ -487,7 +687,10 @@ async function discover(root: string): Promise<Candidate[]> {
   return candidates;
 }
 
-function chooseCandidates(candidates: Candidate[]): { selected: Candidate[]; suppressed: EngineSkillStagingResult["suppressed"] } {
+function chooseCandidates(candidates: Candidate[]): {
+  selected: Candidate[];
+  suppressed: EngineSkillStagingResult["suppressed"];
+} {
   const byName = new Map<string, Candidate[]>();
   for (const candidate of candidates) {
     const list = byName.get(candidate.name) ?? [];
@@ -497,9 +700,15 @@ function chooseCandidates(candidates: Candidate[]): { selected: Candidate[]; sup
   const selected: Candidate[] = [];
   const suppressed: EngineSkillStagingResult["suppressed"] = [];
   for (const [name, variants] of byName) {
-    const policies = variants.filter((item) => item.className === "policy-enforced");
-    const locals = variants.filter((item) => item.className === "workspace-local");
-    const imports = variants.filter((item) => item.className === "user-imported");
+    const policies = variants.filter(
+      (item) => item.className === "policy-enforced",
+    );
+    const locals = variants.filter(
+      (item) => item.className === "workspace-local",
+    );
+    const imports = variants.filter(
+      (item) => item.className === "user-imported",
+    );
     if (policies.length > 1) {
       suppressed.push({ name, reason: "policy-conflict" });
       continue;
@@ -543,12 +752,18 @@ async function stageEngineSkillViewUnlocked(input: {
 }): Promise<EngineSkillStagingResult> {
   const workspace = resolve(input.workspace);
   const stagingRoot = resolve(input.stagingRoot);
-  if (!isWithin(dirname(stagingRoot), stagingRoot)) throw new Error("Engine skill staging root must be a child directory");
+  if (!isWithin(dirname(stagingRoot), stagingRoot))
+    throw new Error("Engine skill staging root must be a child directory");
   await mkdir(stagingRoot, { recursive: true });
   const operationId = randomUUID();
   const requestedEngineOwnerId = input.engineOwnerId?.trim() || undefined;
-  const engineOwnerId = requestedEngineOwnerId ?? `unclaimed-${PROCESS_INSTANCE_ID}`;
-  const generationRoot = join(stagingRoot, "generations", `${Date.now()}-${operationId}`);
+  const engineOwnerId =
+    requestedEngineOwnerId ?? `unclaimed-${PROCESS_INSTANCE_ID}`;
+  const generationRoot = join(
+    stagingRoot,
+    "generations",
+    `${Date.now()}-${operationId}`,
+  );
   const generationLease: EngineSkillGenerationLease = {
     stagingRoot,
     generationRoot,
@@ -576,8 +791,13 @@ async function stageEngineSkillViewUnlocked(input: {
   ];
   try {
     const manifest = await readEffectiveManifest(workspace);
-    if (input.expectedRevision && manifest?.revision !== input.expectedRevision) {
-      throw new Error(`skill_view_stale: expected ${input.expectedRevision}, received ${manifest?.revision ?? "none"}`);
+    if (
+      input.expectedRevision &&
+      manifest?.revision !== input.expectedRevision
+    ) {
+      throw new Error(
+        `skill_view_stale: expected ${input.expectedRevision}, received ${manifest?.revision ?? "none"}`,
+      );
     }
     const source = manifest
       ? "effective-manifest"
@@ -587,7 +807,10 @@ async function stageEngineSkillViewUnlocked(input: {
     let candidates: Candidate[];
     let manifestSuppressed: EngineSkillStagingResult["suppressed"] = [];
     if (manifest) {
-      const discovered = await discoverEffectiveManifestCandidates(workspace, manifest);
+      const discovered = await discoverEffectiveManifestCandidates(
+        workspace,
+        manifest,
+      );
       candidates = discovered.candidates;
       manifestSuppressed = discovered.suppressed;
     } else {
@@ -596,15 +819,22 @@ async function stageEngineSkillViewUnlocked(input: {
         : (await Promise.all(roots.map(discover))).flat();
     }
     const { selected, suppressed } = chooseCandidates(candidates);
-    const allSuppressed = [...manifestSuppressed, ...suppressed].sort((left, right) =>
-      left.name.localeCompare(right.name) || left.reason.localeCompare(right.reason));
+    const allSuppressed = [...manifestSuppressed, ...suppressed].sort(
+      (left, right) =>
+        left.name.localeCompare(right.name) ||
+        left.reason.localeCompare(right.reason),
+    );
     for (const candidate of selected) {
       try {
         await beforeCandidateCopyForTests?.(candidate);
-        await cp(candidate.sourceDir, join(generationRoot, candidate.name), { recursive: true, force: true });
+        await cp(candidate.sourceDir, join(generationRoot, candidate.name), {
+          recursive: true,
+          force: true,
+        });
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if (code === "ENOENT" || code === "ENOTDIR") throw new SkillViewChangedError(candidate.name);
+        if (code === "ENOENT" || code === "ENOTDIR")
+          throw new SkillViewChangedError(candidate.name);
         throw error;
       }
     }
@@ -627,7 +857,11 @@ async function stageEngineSkillViewUnlocked(input: {
     });
     const pointerPath = join(stagingRoot, "current.json");
     const pointerTemp = `${pointerPath}.${randomUUID()}.tmp`;
-    await writeFile(pointerTemp, `${JSON.stringify({ schemaVersion: 1, generationRoot }, null, 2)}\n`, "utf8");
+    await writeFile(
+      pointerTemp,
+      `${JSON.stringify({ schemaVersion: 1, generationRoot }, null, 2)}\n`,
+      "utf8",
+    );
     await rename(pointerTemp, pointerPath);
     await cleanupStagingGenerations(stagingRoot, generationRoot);
     return {
@@ -643,7 +877,9 @@ async function stageEngineSkillViewUnlocked(input: {
       ...(requestedEngineOwnerId ? { generationLease } : {}),
     };
   } catch (error) {
-    await rm(generationRoot, { recursive: true, force: true }).catch(() => undefined);
+    await rm(generationRoot, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
     throw error;
   }
 }
@@ -659,11 +895,17 @@ async function stageEngineSkillViewWithRetries(input: {
     try {
       return await stageEngineSkillViewUnlocked(input);
     } catch (error) {
-      if (!(error instanceof SkillViewChangedError) || attempt === SOURCE_CHANGE_RETRY_ATTEMPTS) throw error;
+      if (
+        !(error instanceof SkillViewChangedError) ||
+        attempt === SOURCE_CHANGE_RETRY_ATTEMPTS
+      )
+        throw error;
       await delay(SOURCE_CHANGE_RETRY_DELAY_MS);
     }
   }
-  throw new Error("skill_view_changed: source remained unstable during staging");
+  throw new Error(
+    "skill_view_changed: source remained unstable during staging",
+  );
 }
 
 export async function stageEngineSkillView(input: {
@@ -675,7 +917,11 @@ export async function stageEngineSkillView(input: {
   expectedRevision?: string;
   engineOwnerId?: string;
 }): Promise<EngineSkillStagingResult> {
-  return withStagingRootLock(input.stagingRoot, () => stageEngineSkillViewWithRetries(input));
+  return withWorkspaceSkillLease(input.workspace, "engine-stage", () =>
+    withStagingRootLock(input.stagingRoot, () =>
+      stageEngineSkillViewWithRetries(input),
+    ),
+  );
 }
 
 export const __engineSkillStagingTestHooks = {
@@ -704,43 +950,62 @@ export async function publishDirectorySkillView(input: {
   const revision = input.skillViewRevision.trim();
   if (!revision) throw new Error("directory skill view revision is required");
   if (!isWithin(workspace, runtimeRoot)) {
-    throw new Error("Directory skill runtime root must be inside its workspace");
+    throw new Error(
+      "Directory skill runtime root must be inside its workspace",
+    );
   }
 
   const runtimeParent = dirname(runtimeRoot);
   const stagingRoot = join(runtimeParent, ".staging");
-  return withStagingRootLock(stagingRoot, async () => {
-    const staged = await stageEngineSkillViewWithRetries({
-      workspace,
-      stagingRoot,
-      requireEffectiveManifest: true,
-      expectedRevision: revision,
-    });
-    const pendingRoot = join(runtimeParent, `.pending-${randomUUID()}`);
-    const previousRoot = join(runtimeParent, `.previous-${randomUUID()}`);
-    await mkdir(runtimeParent, { recursive: true });
+  return withWorkspaceSkillLease(
+    workspace,
+    "directory-skill-view-publish",
+    () =>
+      withStagingRootLock(stagingRoot, async () => {
+        const staged = await stageEngineSkillViewWithRetries({
+          workspace,
+          stagingRoot,
+          requireEffectiveManifest: true,
+          expectedRevision: revision,
+        });
+        const pendingRoot = join(runtimeParent, `.pending-${randomUUID()}`);
+        const previousRoot = join(runtimeParent, `.previous-${randomUUID()}`);
+        await mkdir(runtimeParent, { recursive: true });
 
-    try {
-      await cp(staged.stagingRoot, pendingRoot, { recursive: true, force: true });
-      await writeFile(
-        join(pendingRoot, STAGING_MANIFEST),
-        `${JSON.stringify({
-          schemaVersion: 1,
-          publishedAt: new Date().toISOString(),
-          runtimeRoot,
-          skillViewRevision: revision,
-          materialized: staged.materialized,
-          suppressed: staged.suppressed,
-        }, null, 2)}\n`,
-        "utf8",
-      );
+        try {
+          await cp(staged.stagingRoot, pendingRoot, {
+            recursive: true,
+            force: true,
+          });
+          await writeFile(
+            join(pendingRoot, STAGING_MANIFEST),
+            `${JSON.stringify(
+              {
+                schemaVersion: 1,
+                publishedAt: new Date().toISOString(),
+                runtimeRoot,
+                skillViewRevision: revision,
+                materialized: staged.materialized,
+                suppressed: staged.suppressed,
+              },
+              null,
+              2,
+            )}\n`,
+            "utf8",
+          );
 
-      await promoteDirectorySkillView({ runtimeRoot, pendingRoot, previousRoot });
-    } finally {
-      await rm(pendingRoot, { recursive: true, force: true });
-    }
+          await promoteDirectorySkillView({
+            runtimeRoot,
+            pendingRoot,
+            previousRoot,
+          });
+        } finally {
+          await rm(pendingRoot, { recursive: true, force: true });
+        }
 
-    if (staged.generationLease) await releaseEngineSkillGenerationUnlocked(staged.generationLease);
-    return { ...staged, runtimeRoot, skillViewRevision: revision };
-  });
+        if (staged.generationLease)
+          await releaseEngineSkillGenerationUnlocked(staged.generationLease);
+        return { ...staged, runtimeRoot, skillViewRevision: revision };
+      }),
+  );
 }

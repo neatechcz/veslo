@@ -1,9 +1,11 @@
 import type { OpencodeAuth } from "../lib/opencode";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
-import type { EngineInfo, WorkspaceInfo, WorkspaceRuntimePrepareResult } from "../lib/tauri";
-import {
-  activateVesloHostWorkspaceWithTimeout,
-} from "./workspace-switch-timeouts";
+import type {
+  EngineInfo,
+  WorkspaceInfo,
+  WorkspaceRuntimePrepareResult,
+} from "../lib/tauri";
+import { activateVesloHostWorkspaceWithTimeout } from "./workspace-switch-timeouts";
 import { withTimeoutOrThrow } from "./promise-timeout";
 
 const DEFAULT_LOCAL_RUNTIME_PREPARE_TIMEOUT_MS = 75_000;
@@ -43,16 +45,21 @@ export interface LocalRuntimeLifecycleDeps {
   idleSuspendMs?: () => number | null;
   setEngine: (info: EngineInfo) => void;
   setEngineAuth: (auth: OpencodeAuth | null) => void;
-  readEngineInfo: (workspaceId?: string, workspacePath?: string) => Promise<EngineInfo>;
+  readEngineInfo: (
+    workspaceId?: string,
+    workspacePath?: string,
+  ) => Promise<EngineInfo>;
   runtimePrepareTimeoutMs?: () => number | null;
-  prepareWorkspaceRuntime: (input: LocalRuntimeStartOptions & {
-    projectDir: string;
-    workspaceId?: string | null;
-    workspaceName?: string | null;
-    reason?: string | null;
-    forceFreshRuntime?: boolean;
-    skillViewRevision?: string | null;
-  }) => Promise<WorkspaceRuntimePrepareResult>;
+  prepareWorkspaceRuntime: (
+    input: LocalRuntimeStartOptions & {
+      projectDir: string;
+      workspaceId?: string | null;
+      workspaceName?: string | null;
+      reason?: string | null;
+      forceFreshRuntime?: boolean;
+      skillViewRevision?: string | null;
+    },
+  ) => Promise<WorkspaceRuntimePrepareResult>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<unknown>;
   connectToServer: (
     nextBaseUrl: string,
@@ -87,22 +94,32 @@ export function resolveEngineAuth(
   return username && password ? { username, password } : undefined;
 }
 
-function isEngineStarting(info: Pick<EngineInfo, "runtime" | "engineState">): boolean {
-  return info.runtime === "veslo-orchestrator" && info.engineState === "starting";
+function isEngineStarting(
+  info: Pick<EngineInfo, "runtime" | "engineState">,
+): boolean {
+  return (
+    info.runtime === "veslo-orchestrator" && info.engineState === "starting"
+  );
 }
 
 function shouldSkipQuietConnectForOrchestratorState(
   info: Pick<EngineInfo, "runtime" | "running" | "engineState">,
 ): boolean {
   if (info.runtime !== "veslo-orchestrator" || info.running) return false;
-  return info.engineState === "absent" || info.engineState === "stopped" || info.engineState === "failed";
+  return (
+    info.engineState === "absent" ||
+    info.engineState === "stopped" ||
+    info.engineState === "failed"
+  );
 }
 
 function messageFromUnknownError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function resolveRuntimePrepareTimeoutMs(value: number | null | undefined): number {
+function resolveRuntimePrepareTimeoutMs(
+  value: number | null | undefined,
+): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? value
     : DEFAULT_LOCAL_RUNTIME_PREPARE_TIMEOUT_MS;
@@ -111,9 +128,14 @@ function resolveRuntimePrepareTimeoutMs(value: number | null | undefined): numbe
 export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   let prepareQueue: Promise<void> = Promise.resolve();
 
-  const buildStartOptions = (runtime: EngineInfo["runtime"]): LocalRuntimeStartOptions => ({
+  const buildStartOptions = (
+    runtime: EngineInfo["runtime"],
+  ): LocalRuntimeStartOptions => ({
     preferSidecar: deps.engineSource() === "sidecar",
-    opencodeBinPath: deps.engineSource() === "custom" ? deps.engineCustomBinPath?.().trim() || null : null,
+    opencodeBinPath:
+      deps.engineSource() === "custom"
+        ? deps.engineCustomBinPath?.().trim() || null
+        : null,
     runtime,
     workspacePaths: deps.resolveWorkspacePaths(),
     maxEngines: deps.maxEngines?.() ?? null,
@@ -127,7 +149,9 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     return auth;
   };
 
-  const buildConnectOptions = (options: Pick<LocalRuntimeReconnectOptions, "navigate" | "quiet">) => {
+  const buildConnectOptions = (
+    options: Pick<LocalRuntimeReconnectOptions, "navigate" | "quiet">,
+  ) => {
     const next: { quiet?: boolean; navigate?: boolean } = {};
     if (options.quiet !== undefined) next.quiet = options.quiet;
     if (options.navigate !== undefined) next.navigate = options.navigate;
@@ -148,9 +172,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     });
   };
 
-  const acquirePrepareQueue = async (
-    options: LocalRuntimeReconnectOptions,
-  ) => {
+  const acquirePrepareQueue = async (options: LocalRuntimeReconnectOptions) => {
     const previous = prepareQueue;
     let releaseQueue!: () => void;
     const current = new Promise<void>((resolve) => {
@@ -167,16 +189,21 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       releaseQueue();
     };
 
-    const timeoutMs = resolveRuntimePrepareTimeoutMs(deps.runtimePrepareTimeoutMs?.() ?? null);
+    const timeoutMs = resolveRuntimePrepareTimeoutMs(
+      deps.runtimePrepareTimeoutMs?.() ?? null,
+    );
     const queuedAt = Date.now();
     recordPrepareTrace("prepare-runtime:queue-wait:start", options, {
       timeoutMs,
     });
     try {
-      await withTimeoutOrThrow(previous.catch(() => undefined), {
-        timeoutMs,
-        label: "local runtime prepare queue",
-      });
+      await withTimeoutOrThrow(
+        previous.catch(() => undefined),
+        {
+          timeoutMs,
+          label: "local runtime prepare queue",
+        },
+      );
     } catch (error) {
       recordPrepareTrace("prepare-runtime:queue-timeout", options, {
         durationMs: Date.now() - queuedAt,
@@ -190,12 +217,19 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       timeoutMs,
     });
 
-    staleReleaseId = setTimeout(() => {
-      recordPrepareTrace("prepare-runtime:native-queue-stale-release", options, {
-        durationMs: Date.now() - queuedAt,
-      });
-      releaseOnce();
-    }, Math.max(timeoutMs, DEFAULT_LOCAL_RUNTIME_PREPARE_QUEUE_STALE_RELEASE_MS));
+    staleReleaseId = setTimeout(
+      () => {
+        recordPrepareTrace(
+          "prepare-runtime:native-queue-stale-release",
+          options,
+          {
+            durationMs: Date.now() - queuedAt,
+          },
+        );
+        releaseOnce();
+      },
+      Math.max(timeoutMs, DEFAULT_LOCAL_RUNTIME_PREPARE_QUEUE_STALE_RELEASE_MS),
+    );
 
     return { releaseOnce, timeoutMs };
   };
@@ -267,7 +301,9 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       const baseUrl = value?.trim() ?? "";
       if (!baseUrl) return "";
       try {
-        const match = new URL(baseUrl).pathname.match(/^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/);
+        const match = new URL(baseUrl).pathname.match(
+          /^\/workspace\/([^/]+)\/opencode(?:\/.*)?$/,
+        );
         return match ? decodeURIComponent(match[1] ?? "").trim() : "";
       } catch {
         return "";
@@ -280,7 +316,10 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       snapshotWorkspaceId &&
       snapshotWorkspaceId !== options.workspaceId
     ) {
-      activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
+      activeInfo = await deps.readEngineInfo(
+        options.workspaceId,
+        options.workspacePath,
+      );
     }
 
     let auth = syncEngineSnapshot(activeInfo);
@@ -313,7 +352,10 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         attempts += 1;
         try {
-          activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
+          activeInfo = await deps.readEngineInfo(
+            options.workspaceId,
+            options.workspacePath,
+          );
         } catch (error) {
           failures += 1;
           lastError = messageFromUnknownError(error);
@@ -354,7 +396,10 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         attempts += 1;
         try {
-          activeInfo = await deps.readEngineInfo(options.workspaceId, options.workspacePath);
+          activeInfo = await deps.readEngineInfo(
+            options.workspaceId,
+            options.workspacePath,
+          );
         } catch (error) {
           failures += 1;
           lastError = messageFromUnknownError(error);
@@ -371,7 +416,11 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
         auth = syncEngineSnapshot(activeInfo);
         if (!isEngineStarting(activeInfo) || activeInfo.running) break;
       }
-      if (isEngineStarting(activeInfo) && !activeInfo.running && (attempts > 0 || failures > 0)) {
+      if (
+        isEngineStarting(activeInfo) &&
+        !activeInfo.running &&
+        (attempts > 0 || failures > 0)
+      ) {
         recordEngineInfoPollTrace("engine-info-poll:timeout", {
           phase: "starting",
           attempts,
@@ -388,12 +437,17 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     if (!baseUrl) return true;
 
     if ((options.connectMode ?? "server") === "quiet") {
-      return await deps.connectQuiet(baseUrl, options.workspacePath, auth ?? undefined, {
-        workspaceId: options.workspaceId,
-        workspaceType: "local",
-        targetRoot: options.workspacePath,
-        reason: options.reason,
-      });
+      return await deps.connectQuiet(
+        baseUrl,
+        options.workspacePath,
+        auth ?? undefined,
+        {
+          workspaceId: options.workspaceId,
+          workspaceType: "local",
+          targetRoot: options.workspacePath,
+          reason: options.reason,
+        },
+      );
     }
 
     return await deps.connectToServer(
@@ -410,30 +464,37 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     );
   };
 
-  async function prepareWorkspaceRuntime(options: LocalRuntimeReconnectOptions) {
+  async function prepareWorkspaceRuntime(
+    options: LocalRuntimeReconnectOptions,
+  ) {
     const runtime = deps.resolveEngineRuntime();
     const { releaseOnce, timeoutMs } = await acquirePrepareQueue(options);
     try {
-      const result = await runNativePrepare({
-        ...buildStartOptions(runtime),
-        projectDir: options.workspacePath,
-        workspaceId: options.workspaceId?.trim() || null,
-        workspaceName: options.workspaceName?.trim() || null,
-        reason: options.reason,
-        forceFreshRuntime: options.forceFreshRuntime === true,
-        skillViewRevision: options.skillViewRevision ?? null,
-      }, options, timeoutMs, releaseOnce);
+      const result = await runNativePrepare(
+        {
+          ...buildStartOptions(runtime),
+          projectDir: options.workspacePath,
+          workspaceId: options.workspaceId?.trim() || null,
+          workspaceName: options.workspaceName?.trim() || null,
+          reason: options.reason,
+          forceFreshRuntime: options.forceFreshRuntime === true,
+          skillViewRevision: options.skillViewRevision ?? null,
+        },
+        options,
+        timeoutMs,
+        releaseOnce,
+      );
 
       if (result.engine.runtime === "veslo-orchestrator") {
-        await activateVesloHostWorkspaceWithTimeout(
-          () => deps.activateVesloHostWorkspace(options.workspacePath),
+        await activateVesloHostWorkspaceWithTimeout(() =>
+          deps.activateVesloHostWorkspace(options.workspacePath),
         );
       }
 
       return await reconnectFromEngineSnapshot(result.engine, options);
     } finally {
       // Keep the runtime prepare queue held through activation and reconnect so a
-      // foreground recovery cannot replace a warmup engine before its routed
+      // foreground recovery cannot replace an in-flight requested runtime before its routed
       // client is bound.
       releaseOnce();
     }
@@ -442,7 +503,12 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   async function startHost(
     options: Pick<
       LocalRuntimeReconnectOptions,
-      "workspacePath" | "workspaceId" | "reason" | "connectMode" | "navigate" | "skillViewRevision"
+      | "workspacePath"
+      | "workspaceId"
+      | "reason"
+      | "connectMode"
+      | "navigate"
+      | "skillViewRevision"
     >,
   ) {
     return await prepareWorkspaceRuntime({
@@ -451,14 +517,21 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     });
   }
 
-  async function restartWorkspaceRuntime(options: LocalRuntimeReconnectOptions) {
+  async function restartWorkspaceRuntime(
+    options: LocalRuntimeReconnectOptions,
+  ) {
     return await prepareWorkspaceRuntime(options);
   }
 
   async function reattachOrchestratorWorkspace(
     options: Pick<
       LocalRuntimeReconnectOptions,
-      "workspacePath" | "workspaceId" | "workspaceName" | "reason" | "connectMode" | "navigate"
+      | "workspacePath"
+      | "workspaceId"
+      | "workspaceName"
+      | "reason"
+      | "connectMode"
+      | "navigate"
     >,
   ) {
     return await prepareWorkspaceRuntime(options);

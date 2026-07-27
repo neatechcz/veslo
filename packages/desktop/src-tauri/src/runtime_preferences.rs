@@ -251,6 +251,18 @@ pub fn runtime_diagnostics_env_overrides(app: &AppHandle) -> Result<Vec<(String,
                     .to_string_lossy()
                     .to_string(),
             ),
+            (
+                "VESLO_SEND_WORKFLOW_TRACE_UI_FILE".to_string(),
+                dir.join("send-workflow-trace.ui.ndjson")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            (
+                "VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE".to_string(),
+                dir.join("send-workflow-trace.mirror.ndjson")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
         ]);
     }
     Ok(overrides)
@@ -291,6 +303,14 @@ fn runtime_diagnostics_env_overrides_for_dir(dir: &Path) -> Vec<(String, String)
         .join("opencode-health.ndjson")
         .to_string_lossy()
         .to_string();
+    let ui_file = trace_dir
+        .join("send-workflow-trace.ui.ndjson")
+        .to_string_lossy()
+        .to_string();
+    let mirror_file = trace_dir
+        .join("send-workflow-trace.mirror.ndjson")
+        .to_string_lossy()
+        .to_string();
     vec![
         ("VESLO_RUNTIME_DIAGNOSTICS".to_string(), "1".to_string()),
         ("VESLO_RUNTIME_TRACE".to_string(), "1".to_string()),
@@ -303,6 +323,11 @@ fn runtime_diagnostics_env_overrides_for_dir(dir: &Path) -> Vec<(String, String)
         (
             "VESLO_SEND_WORKFLOW_TRACE_ORCHESTRATOR_FILE".to_string(),
             orchestrator_file,
+        ),
+        ("VESLO_SEND_WORKFLOW_TRACE_UI_FILE".to_string(), ui_file),
+        (
+            "VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE".to_string(),
+            mirror_file,
         ),
         ("VESLO_OPENCODE_HEALTH_DIAG".to_string(), "1".to_string()),
         ("VESLO_OPENCODE_HEALTH_DIAG_FILE".to_string(), health_file),
@@ -317,6 +342,10 @@ fn runtime_diagnostics_env_overrides_from_override(
             ("VESLO_RUNTIME_DIAGNOSTICS".to_string(), "1".to_string()),
             ("VESLO_RUNTIME_TRACE".to_string(), "1".to_string()),
             ("VESLO_SEND_WORKFLOW_TRACE".to_string(), "1".to_string()),
+            (
+                "VESLO_SEND_WORKFLOW_TRACE_CONSOLE".to_string(),
+                "1".to_string(),
+            ),
             ("VESLO_OPENCODE_HEALTH_DIAG".to_string(), "1".to_string()),
         ],
         Some(false) => vec![("VESLO_RUNTIME_DIAGNOSTICS".to_string(), "0".to_string())],
@@ -466,6 +495,14 @@ mod tests {
             .join("opencode-health.ndjson")
             .to_string_lossy()
             .to_string();
+        let ui_file = trace_dir
+            .join("send-workflow-trace.ui.ndjson")
+            .to_string_lossy()
+            .to_string();
+        let mirror_file = trace_dir
+            .join("send-workflow-trace.mirror.ndjson")
+            .to_string_lossy()
+            .to_string();
         let resolved = pilot_diagnostics_dir_from_value(trace_dir.to_str())
             .expect("an absolute trace directory should be accepted");
         let overrides = runtime_diagnostics_env_overrides_for_dir(&resolved);
@@ -484,6 +521,12 @@ mod tests {
         }));
         assert!(overrides.iter().any(|(key, value)| {
             key == "VESLO_OPENCODE_HEALTH_DIAG_FILE" && value == &health_file
+        }));
+        assert!(overrides.iter().any(|(key, value)| {
+            key == "VESLO_SEND_WORKFLOW_TRACE_UI_FILE" && value == &ui_file
+        }));
+        assert!(overrides.iter().any(|(key, value)| {
+            key == "VESLO_SEND_WORKFLOW_TRACE_MIRROR_FILE" && value == &mirror_file
         }));
         assert!(pilot_diagnostics_dir_from_value(Some("relative/pilot-trace")).is_none());
         assert!(pilot_diagnostics_dir_from_value(Some("   ")).is_none());

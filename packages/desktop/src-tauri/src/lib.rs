@@ -427,12 +427,8 @@ pub fn run() {
     // OS thread for the lifetime of the app process.
     spawn_engine_event_poller(app.handle().clone());
 
-    // F2Ú7 (dev only): auto-spawn orchestrator daemon shortly after app boot
-    // so the per-workspace pool is available without explicit user action.
-    // No-op if the frontend onboarding starts an engine first.
-    #[cfg(debug_assertions)]
-    commands::engine::spawn_orchestrator_dev_autostart(app.handle().clone());
-
+    // Runtime processes are request-started in every build profile, including
+    // manual development runtimes. Passive UI hydration never starts an engine.
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
     // running after the UI quits (especially during dev), leading to multiple
     // orchestrator/veslo-code/veslo-server processes and stale ports.

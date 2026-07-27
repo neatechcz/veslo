@@ -4,7 +4,8 @@ import {
 } from "../controllers/managed-ai-bootstrap-readiness-controller";
 import type { RuntimeEngineState } from "../lib/tauri";
 
-export const localRuntimeHealthTimeoutMessage = "Timed out waiting for local runtime health";
+export const localRuntimeHealthTimeoutMessage =
+  "Timed out waiting for local runtime health";
 export const managedAiRuntimeConfigNotReadyMessage =
   "Managed AI gateway setup is not ready for this runtime. Please wait a moment and try again.";
 export const managedAiRuntimeAuthorizationNotReadyMessage =
@@ -44,7 +45,10 @@ export type SendRuntimeEngineInfo = {
 };
 
 function isReadyRuntimeEngine(info: SendRuntimeEngineInfo): boolean {
-  return Boolean(info.running && (info.engineState === "ready" || info.engineState === "process_ready"));
+  return Boolean(
+    info.running &&
+    (info.engineState === "ready" || info.engineState === "process_ready"),
+  );
 }
 
 export type SendRuntimeClient = {
@@ -90,7 +94,9 @@ export type SendRuntimePreparationResult = {
     | "managed-ai-bootstrap-blocked";
 };
 
-export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRuntimeClient> = {
+export type SendRuntimeReadinessDeps<
+  Client extends SendRuntimeClient = SendRuntimeClient,
+> = {
   isTauriRuntime: () => boolean;
   activeWorkspaceDisplay: () => SendRuntimeWorkspaceInfo;
   activeWorkspaceId: () => string;
@@ -101,7 +107,11 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
   releaseWorkspaceRoute?: (workspaceId: string) => void;
   ensureEngineForWorkspace: (
     workspaceId?: string,
-    options?: { reason?: string; loadSessions?: boolean; forceFreshRuntime?: boolean },
+    options?: {
+      reason?: string;
+      loadSessions?: boolean;
+      forceFreshRuntime?: boolean;
+    },
   ) => Promise<boolean>;
   connectToServer: (
     baseUrl: string,
@@ -110,7 +120,10 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
     auth?: { username: string; password: string },
     options?: SendRuntimeConnectOptions,
   ) => Promise<boolean>;
-  engineInfo: (workspaceId?: string, workspaceRoot?: string) => Promise<SendRuntimeEngineInfo>;
+  engineInfo: (
+    workspaceId?: string,
+    workspaceRoot?: string,
+  ) => Promise<SendRuntimeEngineInfo>;
   managedAiAccess: () => unknown;
   managedAiAccessBusy: () => boolean;
   managedAiBootstrapBusy: () => boolean;
@@ -125,7 +138,9 @@ export type SendRuntimeReadinessDeps<Client extends SendRuntimeClient = SendRunt
   syncManagedAiRuntimeConfigForSend?: (
     targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
   ) => Promise<void>;
-  waitForManagedAiBootstrapReady: (options: SendRuntimeManagedAiBootstrapReadyOptions) => Promise<void>;
+  waitForManagedAiBootstrapReady: (
+    options: SendRuntimeManagedAiBootstrapReadyOptions,
+  ) => Promise<void>;
   sendTraceStep: <T>(
     event: string,
     fn: () => Promise<T>,
@@ -165,12 +180,18 @@ export function isLocalRuntimeHealthTimeoutError(
   error: unknown,
   safeStringify?: (value: unknown) => string,
 ): boolean {
-  return messageFromUnknownError(error, safeStringify).includes(localRuntimeHealthTimeoutMessage);
+  return messageFromUnknownError(error, safeStringify).includes(
+    localRuntimeHealthTimeoutMessage,
+  );
 }
 
-function isLocalVesloServerInvalidBearerMessage(normalizedMessage: string): boolean {
-  return normalizedMessage.includes("invalid bearer token") ||
-    normalizedMessage.includes("invalid_bearer_token");
+function isLocalVesloServerInvalidBearerMessage(
+  normalizedMessage: string,
+): boolean {
+  return (
+    normalizedMessage.includes("invalid bearer token") ||
+    normalizedMessage.includes("invalid_bearer_token")
+  );
 }
 
 export function shouldRecoverLocalRuntimeFromHealthError(
@@ -181,7 +202,8 @@ export function shouldRecoverLocalRuntimeFromHealthError(
   const normalized = message.toLowerCase();
   // Local OpenCode runtimes inherit the Veslo client token at spawn time; a 401
   // means the routed runtime is stale and should be rebuilt once.
-  const localRuntimeStaleAuth = isLocalVesloServerInvalidBearerMessage(normalized);
+  const localRuntimeStaleAuth =
+    isLocalVesloServerInvalidBearerMessage(normalized);
   const localRuntimeUnavailable =
     normalized.includes("engine_not_running") ||
     normalized.includes("engine_starting") ||
@@ -238,7 +260,10 @@ function assertLocalRuntimeHealthOk(
     }
 
     if (isRecord(result.response)) {
-      const status = typeof result.response.status === "number" ? result.response.status : null;
+      const status =
+        typeof result.response.status === "number"
+          ? result.response.status
+          : null;
       if (status !== null && status >= 400) {
         throw new Error(`OpenCode health returned status ${status}`);
       }
@@ -260,13 +285,10 @@ export async function withLocalRuntimeHealthTimeout<T>(
   const timeoutPromise = new Promise<never>((_, reject) => {
     rejectTimeout = reject;
   });
-  const timeoutId = setTimeout(
-    () => {
-      onTimeout?.();
-      rejectTimeout(new Error(localRuntimeHealthTimeoutMessage));
-    },
-    timeoutMs,
-  );
+  const timeoutId = setTimeout(() => {
+    onTimeout?.();
+    rejectTimeout(new Error(localRuntimeHealthTimeoutMessage));
+  }, timeoutMs);
   try {
     return await Promise.race([promise, timeoutPromise]);
   } finally {
@@ -274,19 +296,24 @@ export async function withLocalRuntimeHealthTimeout<T>(
   }
 }
 
-export function createSendRuntimeReadiness<Client extends SendRuntimeClient = SendRuntimeClient>(
-  deps: SendRuntimeReadinessDeps<Client>,
-) {
-  const errorMessage = (error: unknown) => messageFromUnknownError(error, deps.safeStringify);
+export function createSendRuntimeReadiness<
+  Client extends SendRuntimeClient = SendRuntimeClient,
+>(deps: SendRuntimeReadinessDeps<Client>) {
+  const errorMessage = (error: unknown) =>
+    messageFromUnknownError(error, deps.safeStringify);
 
   const ensureManagedAiBootstrapReady = async (
     preflightOrTraceId?: SendRuntimePreflightContext | string | null,
   ): Promise<boolean> => {
     try {
-      const preflight = typeof preflightOrTraceId === "object" ? preflightOrTraceId ?? undefined : undefined;
-      const traceId = typeof preflightOrTraceId === "string"
-        ? preflightOrTraceId
-        : preflight?.traceId ?? null;
+      const preflight =
+        typeof preflightOrTraceId === "object"
+          ? (preflightOrTraceId ?? undefined)
+          : undefined;
+      const traceId =
+        typeof preflightOrTraceId === "string"
+          ? preflightOrTraceId
+          : (preflight?.traceId ?? null);
       const targetWorkspace = preflight?.targetWorkspace ?? null;
       const targetWorkspaceId = targetWorkspace?.workspaceId?.trim() ?? "";
       const hasManagedProfile = Boolean(deps.managedAiAccess());
@@ -296,7 +323,8 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         reloadBusy: deps.reloadBusy(),
       });
       let canUseCurrentManagedConfig =
-        (hasManagedProfile || currentConfigCheck.type === "check-current-config") &&
+        (hasManagedProfile ||
+          currentConfigCheck.type === "check-current-config") &&
         (await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace));
       if (
         hasManagedProfile &&
@@ -310,7 +338,8 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           freshnessRevalidation: true,
         });
         await deps.syncManagedAiRuntimeConfigForSend(targetWorkspace);
-        canUseCurrentManagedConfig = await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace);
+        canUseCurrentManagedConfig =
+          await deps.hasUsableManagedAiRuntimeConfigForSend(targetWorkspace);
         deps.recordSendTrace("managed-ai-bootstrap-config-sync:end", {
           traceId,
           targetWorkspaceId: targetWorkspaceId || null,
@@ -318,9 +347,14 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           freshnessRevalidation: true,
         });
       }
-      if (canUseCurrentManagedConfig && deps.ensureManagedAiRuntimeAuthorizationForSend) {
+      if (
+        canUseCurrentManagedConfig &&
+        deps.ensureManagedAiRuntimeAuthorizationForSend
+      ) {
         const runtimeAuthorizationReady =
-          await deps.ensureManagedAiRuntimeAuthorizationForSend(targetWorkspace);
+          await deps.ensureManagedAiRuntimeAuthorizationForSend(
+            targetWorkspace,
+          );
         if (!runtimeAuthorizationReady) {
           deps.setError(managedAiRuntimeAuthorizationNotReadyMessage);
           return false;
@@ -344,7 +378,12 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         hasManagedProfile: waitDecision.hasManagedProfile,
         isBootstrapBusy: deps.managedAiBootstrapBusy,
         isReloadBusy: deps.reloadBusy,
-        hasClient: () => Boolean(targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient()),
+        hasClient: () =>
+          Boolean(
+            targetWorkspaceId
+              ? deps.routedClient(targetWorkspaceId)
+              : deps.routedClient(),
+          ),
       });
       return true;
     } catch (error) {
@@ -357,18 +396,30 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     reason: string,
     preflightOrTraceId?: SendRuntimePreflightContext | string | null,
   ): Promise<SendRuntimePreparationResult> {
-    const preflight = typeof preflightOrTraceId === "object" ? preflightOrTraceId ?? undefined : undefined;
-    const traceId = typeof preflightOrTraceId === "string"
-      ? preflightOrTraceId
-      : preflightOrTraceId?.traceId ?? null;
+    const preflight =
+      typeof preflightOrTraceId === "object"
+        ? (preflightOrTraceId ?? undefined)
+        : undefined;
+    const traceId =
+      typeof preflightOrTraceId === "string"
+        ? preflightOrTraceId
+        : (preflightOrTraceId?.traceId ?? null);
     const tracePayload = traceId ? { traceId } : undefined;
-    const targetWorkspaceId = preflight?.targetWorkspace?.workspaceId?.trim() ?? "";
+    const targetWorkspaceId =
+      preflight?.targetWorkspace?.workspaceId?.trim() ?? "";
     const targetWorkspace = targetWorkspaceId
-      ? deps.workspaces().find((workspace) => workspace.id === targetWorkspaceId) ?? null
+      ? (deps
+          .workspaces()
+          .find((workspace) => workspace.id === targetWorkspaceId) ?? null)
       : null;
-    const targetWorkspaceType = targetWorkspace?.workspaceType ?? deps.activeWorkspaceDisplay().workspaceType;
-    const resultWorkspaceId = targetWorkspaceId || deps.activeWorkspaceId().trim() || null;
-    const targetIsActiveWorkspace = !targetWorkspaceId || targetWorkspaceId === deps.activeWorkspaceId().trim();
+    const targetWorkspaceType =
+      targetWorkspace?.workspaceType ??
+      deps.activeWorkspaceDisplay().workspaceType;
+    const resultWorkspaceId =
+      targetWorkspaceId || deps.activeWorkspaceId().trim() || null;
+    const targetIsActiveWorkspace =
+      !targetWorkspaceId ||
+      targetWorkspaceId === deps.activeWorkspaceId().trim();
     if (!deps.isTauriRuntime() || targetWorkspaceType !== "local") {
       deps.recordSendTrace(`${reason}:runtime-health-skipped`, {
         ...(tracePayload ?? {}),
@@ -387,7 +438,9 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
       };
     }
 
-    const currentClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
+    const currentClient = targetWorkspaceId
+      ? deps.routedClient(targetWorkspaceId)
+      : deps.routedClient();
     const forceRecovery = preflight?.forceRecovery === true;
     if (preflight?.runtimeHealthOk && !forceRecovery) {
       deps.recordSendTrace(`${reason}:runtime-health-skip`, {
@@ -417,22 +470,29 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           `${reason}:runtime-health`,
           async () => {
             await withLocalRuntimeHealthTimeout(
-              currentClient.global.health().then((result) =>
-                assertLocalRuntimeHealthOk(result, deps.safeStringify)
-              ),
+              currentClient.global
+                .health()
+                .then((result) =>
+                  assertLocalRuntimeHealthOk(result, deps.safeStringify),
+                ),
               3_000,
               () => {
-                deps.recordSendTrace(`${reason}:runtime-health-visible-timeout`, {
-                  ...(tracePayload ?? {}),
-                  timeoutMs: 3_000,
-                  targetWorkspaceId: targetWorkspaceId || null,
-                  requestMayStillBeRunning: true,
-                });
+                deps.recordSendTrace(
+                  `${reason}:runtime-health-visible-timeout`,
+                  {
+                    ...(tracePayload ?? {}),
+                    timeoutMs: 3_000,
+                    targetWorkspaceId: targetWorkspaceId || null,
+                    requestMayStillBeRunning: true,
+                  },
+                );
               },
             );
             const engineInfo = await deps.engineInfo(
               resultWorkspaceId ?? undefined,
-              preflight?.targetWorkspace?.workspaceRoot ?? targetWorkspace?.path ?? deps.activeWorkspaceRoot(),
+              preflight?.targetWorkspace?.workspaceRoot ??
+                targetWorkspace?.path ??
+                deps.activeWorkspaceRoot(),
             );
             if (!isReadyRuntimeEngine(engineInfo)) {
               throw new Error(
@@ -461,8 +521,14 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         };
       } catch (error) {
         const message = errorMessage(error);
-        const timedOut = isLocalRuntimeHealthTimeoutError(error, deps.safeStringify);
-        const classifiedRecoverable = shouldRecoverLocalRuntimeFromHealthError(error, deps.safeStringify);
+        const timedOut = isLocalRuntimeHealthTimeoutError(
+          error,
+          deps.safeStringify,
+        );
+        const classifiedRecoverable = shouldRecoverLocalRuntimeFromHealthError(
+          error,
+          deps.safeStringify,
+        );
         deps.recordSendTrace(`${reason}:runtime-health-error`, {
           ...(tracePayload ?? {}),
           message,
@@ -473,25 +539,27 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         // A routed client that fails health is not ready; unknown probe failures recover once.
       }
     } else {
-      // A cold workspace can have completed native startup while its routed client is
-      // still being published by the regular workspace bootstrap. Join that owner
-      // before treating the missing client as a broken runtime: releasing the route
-      // here would turn a normal first-send race into a forced second startup.
+      // A first requested runtime start can still be publishing its routed client.
+      // Join that request before treating the missing client as broken: releasing
+      // the route here would turn a normal first-send race into a second startup.
       deps.recordSendTrace(`${reason}:runtime-missing-client`, tracePayload);
-      const joinedBootstrap = await deps.sendTraceStep(
-        `${reason}:runtime-bootstrap-join`,
-        () => deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
-          reason: `${reason}-runtime-bootstrap-join`,
-          loadSessions: false,
-        }),
+      const joinedInitialEnsure = await deps.sendTraceStep(
+        `${reason}:runtime-initial-ensure`,
+        () =>
+          deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
+            reason: `${reason}-runtime-initial-ensure`,
+            loadSessions: false,
+          }),
         {
           ...(tracePayload ?? {}),
           targetWorkspaceId: targetWorkspaceId || null,
         },
       );
-      const joinedClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
-      if (joinedBootstrap && joinedClient) {
-        deps.recordSendTrace(`${reason}:runtime-bootstrap-joined`, {
+      const joinedClient = targetWorkspaceId
+        ? deps.routedClient(targetWorkspaceId)
+        : deps.routedClient();
+      if (joinedInitialEnsure && joinedClient) {
+        deps.recordSendTrace(`${reason}:runtime-initial-ensure-ready`, {
           ...(tracePayload ?? {}),
           targetWorkspaceId: targetWorkspaceId || null,
         });
@@ -508,16 +576,17 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           reason: "runtime-health-ok",
         };
       }
-      deps.recordSendTrace(`${reason}:runtime-bootstrap-join-unavailable`, {
+      deps.recordSendTrace(`${reason}:runtime-initial-ensure-unavailable`, {
         ...(tracePayload ?? {}),
         targetWorkspaceId: targetWorkspaceId || null,
-        joinedBootstrap,
+        joinedInitialEnsure,
         hasClient: Boolean(joinedClient),
       });
     }
 
     deps.recordSendTrace(`${reason}:runtime-recovery-start`, tracePayload);
-    const recoveryWorkspaceId = targetWorkspaceId || deps.activeWorkspaceId().trim();
+    const recoveryWorkspaceId =
+      targetWorkspaceId || deps.activeWorkspaceId().trim();
     if (recoveryWorkspaceId) {
       deps.releaseWorkspaceRoute?.(recoveryWorkspaceId);
       deps.recordSendTrace(`${reason}:runtime-route-released`, {
@@ -534,11 +603,12 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     try {
       const started = await deps.sendTraceStep(
         `${reason}:runtime-recovery-ensure-engine`,
-        () => deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
-          reason: `${reason}-runtime-recovery`,
-          loadSessions: false,
-          forceFreshRuntime: true,
-        }),
+        () =>
+          deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
+            reason: `${reason}-runtime-recovery`,
+            loadSessions: false,
+            forceFreshRuntime: true,
+          }),
         {
           ...(tracePayload ?? {}),
           activeWorkspaceId: deps.activeWorkspaceId().trim(),
@@ -546,25 +616,31 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
           targetWorkspaceId: targetWorkspaceId || null,
         },
       );
-      const recoveredClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
+      const recoveredClient = targetWorkspaceId
+        ? deps.routedClient(targetWorkspaceId)
+        : deps.routedClient();
       if (!started || !recoveredClient) {
         let retryStarted: boolean | null = null;
         let retryHasClient: boolean | null = null;
         if (!started && !recoveredClient) {
-          deps.recordSendTrace(`${reason}:runtime-recovery-first-attempt-not-started`, {
-            ...(tracePayload ?? {}),
-            started,
-            hasClient: false,
-            targetWorkspaceId: targetWorkspaceId || null,
-          });
+          deps.recordSendTrace(
+            `${reason}:runtime-recovery-first-attempt-not-started`,
+            {
+              ...(tracePayload ?? {}),
+              started,
+              hasClient: false,
+              targetWorkspaceId: targetWorkspaceId || null,
+            },
+          );
           await new Promise((resolve) => setTimeout(resolve, 250));
           retryStarted = await deps.sendTraceStep(
             `${reason}:runtime-recovery-ensure-engine-retry`,
-            () => deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
-              reason: `${reason}-runtime-recovery-retry`,
-              loadSessions: false,
-              forceFreshRuntime: true,
-            }),
+            () =>
+              deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
+                reason: `${reason}-runtime-recovery-retry`,
+                loadSessions: false,
+                forceFreshRuntime: true,
+              }),
             {
               ...(tracePayload ?? {}),
               activeWorkspaceId: deps.activeWorkspaceId().trim(),
@@ -572,7 +648,9 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
               targetWorkspaceId: targetWorkspaceId || null,
             },
           );
-          const retryClient = targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient();
+          const retryClient = targetWorkspaceId
+            ? deps.routedClient(targetWorkspaceId)
+            : deps.routedClient();
           retryHasClient = Boolean(retryClient);
           if (retryStarted && retryClient) {
             deps.recordSendTrace(`${reason}:runtime-recovery-ok`, {
@@ -650,19 +728,28 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     reason: string,
     preflightOrTraceId?: SendRuntimePreflightContext | string | null,
   ): Promise<boolean> {
-    return (await ensureLocalRuntimeReachableForSendResult(reason, preflightOrTraceId)).ok;
+    return (
+      await ensureLocalRuntimeReachableForSendResult(reason, preflightOrTraceId)
+    ).ok;
   }
 
   async function prepareSendRuntimeForSend(
     reason: string,
     preflight: SendRuntimePreflightContext,
   ): Promise<SendRuntimePreparationResult> {
-    const tracePayload = preflight.traceId ? { traceId: preflight.traceId } : undefined;
-    const targetWorkspaceId = preflight.targetWorkspace?.workspaceId?.trim() ?? "";
+    const tracePayload = preflight.traceId
+      ? { traceId: preflight.traceId }
+      : undefined;
+    const targetWorkspaceId =
+      preflight.targetWorkspace?.workspaceId?.trim() ?? "";
     const targetWorkspace = targetWorkspaceId
-      ? deps.workspaces().find((workspace) => workspace.id === targetWorkspaceId) ?? null
+      ? (deps
+          .workspaces()
+          .find((workspace) => workspace.id === targetWorkspaceId) ?? null)
       : null;
-    const workspaceType = targetWorkspace?.workspaceType ?? deps.activeWorkspaceDisplay().workspaceType;
+    const workspaceType =
+      targetWorkspace?.workspaceType ??
+      deps.activeWorkspaceDisplay().workspaceType;
 
     const runtimeResult = await deps.sendTraceStep(
       `${reason}:ensure-local-runtime-reachable`,
@@ -672,7 +759,11 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         activeWorkspaceId: deps.activeWorkspaceId().trim(),
         targetWorkspaceId: targetWorkspaceId || null,
         workspaceType,
-        hasClient: Boolean(targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient()),
+        hasClient: Boolean(
+          targetWorkspaceId
+            ? deps.routedClient(targetWorkspaceId)
+            : deps.routedClient(),
+        ),
       },
     );
     if (!runtimeResult.ok) {
@@ -693,11 +784,18 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         ...(tracePayload ?? {}),
         managedAiBootstrapBusy: deps.managedAiBootstrapBusy(),
         reloadBusy: deps.reloadBusy(),
-        hasClient: Boolean(targetWorkspaceId ? deps.routedClient(targetWorkspaceId) : deps.routedClient()),
+        hasClient: Boolean(
+          targetWorkspaceId
+            ? deps.routedClient(targetWorkspaceId)
+            : deps.routedClient(),
+        ),
       },
     );
     if (!managedAiReady) {
-      deps.recordSendTrace(`${reason}:blocked-managed-ai-bootstrap`, tracePayload);
+      deps.recordSendTrace(
+        `${reason}:blocked-managed-ai-bootstrap`,
+        tracePayload,
+      );
       return {
         ...runtimeResult,
         ok: false,
@@ -715,15 +813,23 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
     };
   }
 
-  async function connectLocalRuntimeClientFromEngineInfo(reason: string): Promise<Client | null> {
-    if (!deps.isTauriRuntime() || deps.activeWorkspaceDisplay().workspaceType !== "local") {
+  async function connectLocalRuntimeClientFromEngineInfo(
+    reason: string,
+  ): Promise<Client | null> {
+    if (
+      !deps.isTauriRuntime() ||
+      deps.activeWorkspaceDisplay().workspaceType !== "local"
+    ) {
       return deps.routedClient() ?? null;
     }
 
     try {
       const activeWorkspaceId = deps.activeWorkspaceId().trim();
       const activeWorkspaceRoot = deps.activeWorkspaceRoot().trim();
-      const info = await deps.engineInfo(activeWorkspaceId || undefined, activeWorkspaceRoot || undefined);
+      const info = await deps.engineInfo(
+        activeWorkspaceId || undefined,
+        activeWorkspaceRoot || undefined,
+      );
       const nextBaseUrl = info.baseUrl?.trim() ?? "";
       if (!info.running || !nextBaseUrl) {
         deps.recordSendTrace(`${reason}:engine-info-unavailable`, {
@@ -736,7 +842,11 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         return null;
       }
 
-      const directory = info.projectDir?.trim() || activeWorkspaceRoot || deps.clientDirectory().trim() || undefined;
+      const directory =
+        info.projectDir?.trim() ||
+        activeWorkspaceRoot ||
+        deps.clientDirectory().trim() ||
+        undefined;
       const username = info.opencodeUsername?.trim() ?? "";
       const password = info.opencodePassword?.trim() ?? "";
       const auth = username && password ? { username, password } : undefined;
@@ -752,7 +862,9 @@ export function createSendRuntimeReadiness<Client extends SendRuntimeClient = Se
         auth,
         { quiet: true, navigate: false, forceRefresh: true },
       );
-      const nextClient = activeWorkspaceId ? deps.routedClient(activeWorkspaceId) : deps.routedClient();
+      const nextClient = activeWorkspaceId
+        ? deps.routedClient(activeWorkspaceId)
+        : deps.routedClient();
       if (!connected || !nextClient) {
         deps.recordSendTrace(`${reason}:engine-info-connect-failed`, {
           activeWorkspaceId: activeWorkspaceId || null,

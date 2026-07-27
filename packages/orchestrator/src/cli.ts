@@ -4172,10 +4172,27 @@ async function runRouterDaemon(args: ParsedArgs) {
   let state = await loadRouterState(statePath);
 
   const host = readFlag(args.flags, "daemon-host") ?? "127.0.0.1";
-  const port = await resolvePort(
-    readNumber(args.flags, "daemon-port", undefined, "VESLO_DAEMON_PORT"),
-    "127.0.0.1",
+  // An explicitly requested daemon port is a contract with whoever spawned us:
+  // the desktop app and `ensureRouterDaemon` both poll exactly that port for
+  // /health and have no way to learn about a fallback. Quietly listening
+  // somewhere else turns a port conflict into an unexplained health timeout,
+  // so refuse to start instead.
+  const requestedPort = readNumber(
+    args.flags,
+    "daemon-port",
+    undefined,
+    "VESLO_DAEMON_PORT",
   );
+  if (
+    requestedPort !== undefined &&
+    !(await canBind("127.0.0.1", requestedPort))
+  ) {
+    throw new Error(
+      `daemon port ${requestedPort} is not available on 127.0.0.1: another process is already listening on it. ` +
+        `The daemon does not fall back to a different port because the caller polls this one for /health.`,
+    );
+  }
+  const port = requestedPort ?? (await findFreePort("127.0.0.1"));
 
   // VSLO-171 fáze 2 F2Ú4 — engine pool capacity + idle suspend.
   const maxEngines = readNumber(args.flags, "max-engines", 8, "VESLO_MAX_ENGINES") ?? 8;
@@ -6538,6 +6555,23 @@ async function runRouterDaemon(args: ParsedArgs) {
     exitProcess: (code) => process.exit(code),
     logger,
     context: { host, port },
+  });
+
+  // Without this the bind failure surfaces as an unhandled 'error' event and
+  // the process dies with no explanation, which the desktop app can only
+  // report as "process exited before health became ready".
+  server.once("error", (error: NodeJS.ErrnoException) => {
+    const detail =
+      error.code === "EADDRINUSE"
+        ? `another process started listening on ${host}:${port} between the availability check and bind`
+        : error.message;
+    logger.error(
+      "daemon failed to bind",
+      { host, port, code: error.code ?? null, detail },
+      "veslo-orchestrator-router",
+    );
+    console.error(`orchestrator daemon failed to bind ${host}:${port}: ${detail}`);
+    process.exit(1);
   });
 
   server.listen(port, host, async () => {

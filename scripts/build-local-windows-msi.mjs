@@ -45,6 +45,12 @@ const outputDir = resolve(
     join(repoRoot, ".tmp", `veslo-msi-diagnostics-${gitSha()}`),
 );
 mkdirSync(outputDir, { recursive: true });
+const localTauriConfigPath = join(outputDir, "tauri.local-msi.conf.json");
+writeFileSync(
+  localTauriConfigPath,
+  `${JSON.stringify({ bundle: { createUpdaterArtifacts: false } }, null, 2)}\n`,
+  "utf8",
+);
 
 const env = {
   ...process.env,
@@ -93,6 +99,8 @@ run(
     "build",
     "--config",
     "src-tauri/tauri.windows.conf.json",
+    "--config",
+    localTauriConfigPath,
     "--target",
     targetTriple,
     "--bundles",

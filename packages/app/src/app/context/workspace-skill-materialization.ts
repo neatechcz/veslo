@@ -51,7 +51,7 @@ export class RuntimeSkillViewRefreshError extends Error {
           ? "Workspace skills changed while Veslo was starting the engine. Veslo could not refresh the skill view, so the engine was not started. Resolve any Skills sync error and try again."
           : "The workspace skill view was out of date. Veslo could not refresh it, so the engine was not started. Try again after the workspace finishes loading."
         : changed
-          ? "Workspace skills kept changing while Veslo was starting the engine. Veslo refreshed the skill view and retried once, but the files changed again. Finish the skill sync or file edit, then try again."
+          ? "Workspace skills kept changing while Veslo was starting the engine. Veslo refreshed the skill view and retried, but the files changed again each time. Finish the skill sync or file edit, then try again."
           : "The workspace skill view was refreshed, but it became stale again before the engine started. Try again after the workspace finishes loading.",
     );
     this.name = "RuntimeSkillViewRefreshError";
@@ -68,8 +68,17 @@ export function runtimeSkillViewConflict(error: unknown): RuntimeSkillViewConfli
 }
 
 /**
+ * The cross-process workspace skill lease closes the race between Veslo's own
+ * writers, but nothing can stop an editor save, a sync client, or a branch
+ * switch from landing mid-activation. Those settle in well under a second, so
+ * more than one retry is what separates a transient conflict from a real
+ * "finish your edit" situation.
+ */
+const RUNTIME_SKILL_VIEW_RETRY_LIMIT = 2;
+
+/**
  * The server owns the effective manifest and the desktop owns process
- * activation. Every app activation path must bridge one retry at this exact
+ * activation. Every app activation path must bridge the retries at this exact
  * boundary; placing it here prevents host-start and workspace-switch paths
  * from drifting apart.
  */
@@ -77,31 +86,35 @@ export async function prepareRuntimeWithSkillViewRefresh<T>(input: {
   prepare: () => Promise<T>;
   refresh: (context: RuntimeSkillViewRefreshContext) => Promise<boolean>;
   onRetry?: (context: RuntimeSkillViewRefreshContext) => void;
+  retryLimit?: number;
 }): Promise<T> {
-  try {
-    return await input.prepare();
-  } catch (error) {
-    const conflict = runtimeSkillViewConflict(error);
-    if (!conflict) throw error;
-    const context: RuntimeSkillViewRefreshContext = {
-      conflict,
-      reason: conflict === "skill_view_changed" ? "skill-view-changed-retry" : "skill-view-stale-retry",
-    };
-    input.onRetry?.(context);
-    let refreshed = false;
-    try {
-      refreshed = await input.refresh(context);
-    } catch {
-      throw new RuntimeSkillViewRefreshError(conflict, "refresh");
-    }
-    if (!refreshed) throw new RuntimeSkillViewRefreshError(conflict, "refresh");
+  const retryLimit = input.retryLimit ?? RUNTIME_SKILL_VIEW_RETRY_LIMIT;
+  // The UI explains the conflict the user actually hit first; a later attempt
+  // failing as "stale" instead of "changed" is noise from the same root cause.
+  let firstConflict: RuntimeSkillViewConflict | null = null;
+
+  for (let retries = 0; ; retries += 1) {
     try {
       return await input.prepare();
-    } catch (retryError) {
-      if (runtimeSkillViewConflict(retryError)) {
-        throw new RuntimeSkillViewRefreshError(conflict, "retry");
+    } catch (error) {
+      const conflict = runtimeSkillViewConflict(error);
+      if (!conflict) throw error;
+      firstConflict ??= conflict;
+      if (retries >= retryLimit) {
+        throw new RuntimeSkillViewRefreshError(firstConflict, "retry");
       }
-      throw retryError;
+      const context: RuntimeSkillViewRefreshContext = {
+        conflict,
+        reason: conflict === "skill_view_changed" ? "skill-view-changed-retry" : "skill-view-stale-retry",
+      };
+      input.onRetry?.(context);
+      let refreshed = false;
+      try {
+        refreshed = await input.refresh(context);
+      } catch {
+        throw new RuntimeSkillViewRefreshError(firstConflict, "refresh");
+      }
+      if (!refreshed) throw new RuntimeSkillViewRefreshError(firstConflict, "refresh");
     }
   }
 }

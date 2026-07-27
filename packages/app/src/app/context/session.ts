@@ -44,9 +44,7 @@ import {
   sessionErrorTurnScopeKey,
   sortSessionsByActivity,
 } from "./session-store-model";
-import {
-  createSessionTranscriptController,
-} from "./session-transcript-controller";
+import { createSessionTranscriptController } from "./session-transcript-controller";
 import { observeTranscriptProjectionBoundary } from "./session-transcript-write-diagnostics";
 import { createSessionRuntimePrompts } from "./session-runtime-prompts";
 import {
@@ -72,7 +70,10 @@ import {
 import { createSessionWorkspaceCacheController } from "./session-workspace-cache";
 import type { ReconnectNotice, ReconnectState } from "./session-reconnect";
 import type { TranscriptProjectionScope } from "./transcript-projection-store";
-import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
+import {
+  currentLocale as __vesloIndirectLocale,
+  t as __vesloIndirectT,
+} from "../../i18n";
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
 export type { WorkspaceSessionCache } from "./session-workspace-cache";
@@ -91,7 +92,10 @@ function activeSendTraceId() {
   return (window as RuntimeEffectTraceRoot).__vesloActiveSendTraceId ?? null;
 }
 
-function recordSessionStatusTrace(event: string, payload?: Record<string, unknown>) {
+function recordSessionStatusTrace(
+  event: string,
+  payload?: Record<string, unknown>,
+) {
   if (typeof window === "undefined") return;
   try {
     const root = window as SessionStatusTraceRoot;
@@ -106,7 +110,10 @@ function recordSessionStatusTrace(event: string, payload?: Record<string, unknow
     if (logs.length > 500) logs.splice(0, logs.length - 500);
     root.__vesloSessionStatusTrace = logs;
     if (payload?.next && typeof payload.next === "object") {
-      root.__vesloSessionStatusSnapshot = payload.next as Record<string, string>;
+      root.__vesloSessionStatusSnapshot = payload.next as Record<
+        string,
+        string
+      >;
     }
     console.log("[session:status]", event, payload ?? {});
   } catch {
@@ -114,7 +121,10 @@ function recordSessionStatusTrace(event: string, payload?: Record<string, unknow
   }
 }
 
-function recordSessionLifecycleRecoveryTrace(event: string, payload?: Record<string, unknown>) {
+function recordSessionLifecycleRecoveryTrace(
+  event: string,
+  payload?: Record<string, unknown>,
+) {
   recordSessionStatusTrace(event, payload);
   recordSendWorkflowTrace("session-lifecycle-recovery", event, payload);
 }
@@ -142,7 +152,10 @@ const COMPACTION_LOOP_WARN_MIN_INTERVAL_MS = 10_000;
 export function shouldDeferToolErrorToLifecycle(
   sessionId: string | null | undefined,
   workspaceId: string | null | undefined,
-  observe: ((sessionId: string, workspaceId: string) => boolean) | null | undefined,
+  observe:
+    | ((sessionId: string, workspaceId: string) => boolean)
+    | null
+    | undefined,
 ) {
   const normalizedSessionId = sessionId?.trim() ?? "";
   const normalizedWorkspaceId = workspaceId?.trim() ?? "";
@@ -173,7 +186,10 @@ export function createSessionStore(options: {
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   onHotReloadApplied?: () => void;
   onSessionLoadComplete?: () => void;
-  onSessionSelectionStart?: (sessionID: string, selectionVersion: number) => void;
+  onSessionSelectionStart?: (
+    sessionID: string,
+    selectionVersion: number,
+  ) => void;
   loadOfflineTranscript?: (
     sessionID: string,
     limit: number,
@@ -210,7 +226,9 @@ export function createSessionStore(options: {
     appWorkspaceId?: string | null;
     connectionSnapshot?: Record<string, string | null | undefined> | null;
   };
-  onConversationRunBecameActive?: (scope: SessionLifecycleRecoveryScope) => void;
+  onConversationRunBecameActive?: (
+    scope: SessionLifecycleRecoveryScope,
+  ) => void;
   onConversationRunTerminal?: (
     scope: SessionLifecycleRecoveryScope,
     status: SessionLifecycleRecoveryStatus,
@@ -224,20 +242,29 @@ export function createSessionStore(options: {
   } | null;
   /**
    * Legacy active-workspace runtime readiness fallback. Browse/live transcript
-   * policy is owned by `shouldBrowseSessionFromDb`, so background warmup can
+   * policy is owned by `shouldBrowseSessionFromDb`, so sidebar hydration can
    * make the runtime ready without making ordinary history browsing use
    * `session.messages`.
    */
   engineReady?: () => boolean;
   isWorkspaceRuntimeReady?: (workspaceId: string) => boolean;
   isSharedEngineSingleViewFallback?: () => boolean;
-  recoverWorkspaceRuntimeForEventStream?: (workspaceId: string) => Promise<boolean> | boolean;
+  recoverWorkspaceRuntimeForEventStream?: (
+    workspaceId: string,
+  ) => Promise<boolean> | boolean;
   shouldBrowseSessionFromDb?: (sessionID: string) => boolean;
-  onSessionBusyChange?: (sessionId: string, busy: boolean, workspaceId?: string) => void;
+  onSessionBusyChange?: (
+    sessionId: string,
+    busy: boolean,
+    workspaceId?: string,
+  ) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
 }) {
-
-  const notifySessionBusy = (sessionId: string, status: string, workspaceId?: string) => {
+  const notifySessionBusy = (
+    sessionId: string,
+    status: string,
+    workspaceId?: string,
+  ) => {
     recordSessionStatusTrace("notify-busy", {
       sessionId,
       status,
@@ -278,7 +305,8 @@ export function createSessionStore(options: {
 
   const isWorkspaceRuntimeReady = (workspaceId?: string | null) => {
     const id = workspaceId?.trim() ?? "";
-    if (id && options.isWorkspaceRuntimeReady) return options.isWorkspaceRuntimeReady(id);
+    if (id && options.isWorkspaceRuntimeReady)
+      return options.isWorkspaceRuntimeReady(id);
     return options.engineReady ? options.engineReady() : false;
   };
 
@@ -292,19 +320,25 @@ export function createSessionStore(options: {
     const workspaceId = resolveSessionWorkspaceId(sessionID);
     return {
       workspaceId,
-      client: workspaceId ? options.routing.client(workspaceId) : options.routing.active(),
+      client: workspaceId
+        ? options.routing.client(workspaceId)
+        : options.routing.active(),
     };
   };
 
   const sessionReadPolicy = (sessionID: string, workspaceId: string) => {
     const activeWorkspaceId = options.routing.activeWorkspaceId().trim();
-    const foreignWorkspace = Boolean(workspaceId && activeWorkspaceId && workspaceId !== activeWorkspaceId);
+    const foreignWorkspace = Boolean(
+      workspaceId && activeWorkspaceId && workspaceId !== activeWorkspaceId,
+    );
     const runtimeReady = workspaceId
       ? isWorkspaceRuntimeReady(workspaceId)
       : isActiveWorkspaceRuntimeReady();
-    const configuredBrowseFromDb = options.shouldBrowseSessionFromDb?.(sessionID) ?? false;
+    const configuredBrowseFromDb =
+      options.shouldBrowseSessionFromDb?.(sessionID) ?? false;
     const browseModeOnly = !runtimeReady;
-    const browseFromDb = configuredBrowseFromDb || browseModeOnly || foreignWorkspace;
+    const browseFromDb =
+      configuredBrowseFromDb || browseModeOnly || foreignWorkspace;
     const liveRecoveryFromUnavailable = Boolean(
       configuredBrowseFromDb &&
       workspaceId &&
@@ -327,22 +361,29 @@ export function createSessionStore(options: {
   const hasAnyRefreshableRuntime = () => {
     const entryIds = options.routing.entryIds();
     if (entryIds.length > 0) {
-      return entryIds.some((workspaceId) => isWorkspaceRuntimeReady(workspaceId));
+      return entryIds.some((workspaceId) =>
+        isWorkspaceRuntimeReady(workspaceId),
+      );
     }
     return isActiveWorkspaceRuntimeReady();
   };
 
   const MAX_RELOAD_DETECTION_KEYS = 5000;
 
-  const sessionDirectoryOverrides = () => options.sessionDirectoryOverrideById?.() ?? {};
+  const sessionDirectoryOverrides = () =>
+    options.sessionDirectoryOverrideById?.() ?? {};
   const applySessionDirectoryOverride = <T extends Session>(session: T): T => {
     const override = sessionDirectoryOverrides()[session.id]?.trim() ?? "";
     if (!override) return session;
     if ((session.directory ?? "").trim() === override) return session;
     return { ...session, directory: override } as T;
   };
-  const resolveSessionDirectory = (session: Pick<Session, "id" | "directory">) =>
-    normalizeDirectoryPath(sessionDirectoryOverrides()[session.id] ?? session.directory ?? "");
+  const resolveSessionDirectory = (
+    session: Pick<Session, "id" | "directory">,
+  ) =>
+    normalizeDirectoryPath(
+      sessionDirectoryOverrides()[session.id] ?? session.directory ?? "",
+    );
 
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
@@ -360,8 +401,15 @@ export function createSessionStore(options: {
   const statusWorkspaceId = (workspaceId?: string | null) =>
     workspaceId?.trim() || options.routing.activeWorkspaceId().trim();
 
-  const readStatusForSession = (sessionID: string | null | undefined, workspaceId?: string | null) =>
-    readSessionStatus(store.sessionStatus, statusWorkspaceId(workspaceId), sessionID);
+  const readStatusForSession = (
+    sessionID: string | null | undefined,
+    workspaceId?: string | null,
+  ) =>
+    readSessionStatus(
+      store.sessionStatus,
+      statusWorkspaceId(workspaceId),
+      sessionID,
+    );
 
   const setSessionStatusForWorkspace = (
     sessionID: string | null | undefined,
@@ -370,10 +418,20 @@ export function createSessionStore(options: {
   ) => {
     const id = sessionID?.trim() ?? "";
     if (!id) return;
-    setStore("sessionStatus", withSessionStatus(store.sessionStatus, statusWorkspaceId(workspaceId), id, status));
+    setStore(
+      "sessionStatus",
+      withSessionStatus(
+        store.sessionStatus,
+        statusWorkspaceId(workspaceId),
+        id,
+        status,
+      ),
+    );
   };
 
-  const conversationRunDiagnosticKeys = (scope: SessionLifecycleRecoveryScope) => {
+  const conversationRunDiagnosticKeys = (
+    scope: SessionLifecycleRecoveryScope,
+  ) => {
     const workspaceId = statusWorkspaceId(scope.workspaceId);
     return scopedSessionAliasKeys(workspaceId, [
       scope.sessionId,
@@ -416,16 +474,21 @@ export function createSessionStore(options: {
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
   const chromeMcpFailureDetectionSet = new Set<string>();
-  let observeToolErrorLifecycle = (_sessionId: string, _workspaceId: string) => false;
+  let observeToolErrorLifecycle = (_sessionId: string, _workspaceId: string) =>
+    false;
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
   const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
   const workspaceSessionIds = new Set<string>();
   const skillPathPattern = /(?:^|[\\/])\.opencode[\\/](skill|skills)[\\/]/i;
-  const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
-  const commandPathPattern = /(?:^|[\\/])\.opencode[\\/](command|commands)[\\/]/i;
-  const commandNamePattern = /[\\/]\.opencode[\\/](?:command|commands)[\\/]+([^\\/]+)/i;
+  const skillNamePattern =
+    /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
+  const commandPathPattern =
+    /(?:^|[\\/])\.opencode[\\/](command|commands)[\\/]/i;
+  const commandNamePattern =
+    /[\\/]\.opencode[\\/](?:command|commands)[\\/]+([^\\/]+)/i;
   const agentPathPattern = /(?:^|[\\/])\.opencode[\\/](agent|agents)[\\/]/i;
-  const agentNamePattern = /[\\/]\.opencode[\\/](?:agent|agents)[\\/]+([^\\/]+)/i;
+  const agentNamePattern =
+    /[\\/]\.opencode[\\/](?:agent|agents)[\\/]+([^\\/]+)/i;
   const opencodeConfigPattern = /(?:^|[\\/])opencode\.jsonc?\b/i;
   const opencodePathPattern = /(?:^|[\\/])\.opencode[\\/]/i;
   const vesloConfigPattern = /[\\/]\.opencode[\\/]veslo\.json\b/i;
@@ -537,7 +600,9 @@ export function createSessionStore(options: {
     return null;
   };
 
-  const detectReloadFromPart = (part: Part): { reason: ReloadReason; trigger?: ReloadTrigger } | null => {
+  const detectReloadFromPart = (
+    part: Part,
+  ): { reason: ReloadReason; trigger?: ReloadTrigger } | null => {
     if (part.type !== "tool") return null;
     const record = part as Record<string, unknown>;
     const toolName = typeof record.tool === "string" ? record.tool : "";
@@ -561,7 +626,9 @@ export function createSessionStore(options: {
 
     const root = normalizeDirectoryPath(options.activeWorkspaceRoot());
     if (root) {
-      const session = store.sessions.find((candidate) => candidate.id === part.sessionID) ?? null;
+      const session =
+        store.sessions.find((candidate) => candidate.id === part.sessionID) ??
+        null;
       const sessionRoot = normalizeDirectoryPath(session?.directory ?? "");
       if (!sessionRoot || sessionRoot !== root) {
         return;
@@ -601,13 +668,26 @@ export function createSessionStore(options: {
   const invalidToolNextStepHint = (part: Part) => {
     const name = toolNameFromPart(part);
     const lower = name.toLowerCase();
-    if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
-      return __vesloIndirectT("ui.indirect.chrome_mcp_is_not_ready_yet_open_the_mcp_tab_c_r0vewj", __vesloIndirectLocale());
+    if (
+      lower.includes("browser") ||
+      lower.includes("chrome") ||
+      lower.includes("devtools")
+    ) {
+      return __vesloIndirectT(
+        "ui.indirect.chrome_mcp_is_not_ready_yet_open_the_mcp_tab_c_r0vewj",
+        __vesloIndirectLocale(),
+      );
     }
-    return __vesloIndirectT("ui.indirect.try_again_or_switch_to_an_agent_prompt_that_on_1x3e0z", __vesloIndirectLocale());
+    return __vesloIndirectT(
+      "ui.indirect.try_again_or_switch_to_an_agent_prompt_that_on_1x3e0z",
+      __vesloIndirectLocale(),
+    );
   };
 
-  const maybeHandleInvalidToolError = (part: Part, sourceWorkspaceId?: string | null) => {
+  const maybeHandleInvalidToolError = (
+    part: Part,
+    sourceWorkspaceId?: string | null,
+  ) => {
     if (!isInvalidToolError(part)) return;
     if (!part?.id || !part.messageID) return;
 
@@ -629,12 +709,20 @@ export function createSessionStore(options: {
     }
 
     const toolName = toolNameFromPart(part).trim();
-    const tool = toolName || __vesloIndirectT("ui.indirect.unknown_tool_8c32ki", __vesloIndirectLocale());
+    const tool =
+      toolName ||
+      __vesloIndirectT(
+        "ui.indirect.unknown_tool_8c32ki",
+        __vesloIndirectLocale(),
+      );
     const hint = invalidToolNextStepHint(part);
     options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
   };
 
-  const maybeHandleChromeMcpCompletedError = (part: Part, sourceWorkspaceId?: string | null) => {
+  const maybeHandleChromeMcpCompletedError = (
+    part: Part,
+    sourceWorkspaceId?: string | null,
+  ) => {
     if (!part?.id || !part.messageID) return;
 
     const key = `${part.messageID}:${part.id}`;
@@ -656,14 +744,20 @@ export function createSessionStore(options: {
         setSessionStatusForWorkspace(part.sessionID, "idle", workspaceId);
         notifySessionBusy(part.sessionID, "idle", workspaceId);
       }
-      appendSessionErrorTurn(part.sessionID, addOpencodeCacheHint(detected), { workspaceId });
+      appendSessionErrorTurn(part.sessionID, addOpencodeCacheHint(detected), {
+        workspaceId,
+      });
     }
     options.setError(addOpencodeCacheHint(detected));
   };
 
   const isSyntheticContinueControlPart = (part: Part) => {
     if (part.type !== "text") return false;
-    const record = part as Part & { text?: unknown; synthetic?: unknown; ignored?: unknown };
+    const record = part as Part & {
+      text?: unknown;
+      synthetic?: unknown;
+      ignored?: unknown;
+    };
     if (record.synthetic !== true) return false;
     if (record.ignored === true) return false;
     const text = typeof record.text === "string" ? record.text.trim() : "";
@@ -682,29 +776,40 @@ export function createSessionStore(options: {
     syntheticContinueEventTimesBySession.set(sessionID, next);
 
     const countInWindow = next.length;
-    recordPerfLog(sessionDebugEnabled(), "session.compaction", "synthetic-continue", {
-      sessionID,
-      messageID: part.messageID,
-      partID: part.id,
-      countPerMinute: countInWindow,
-      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
-    });
+    recordPerfLog(
+      sessionDebugEnabled(),
+      "session.compaction",
+      "synthetic-continue",
+      {
+        sessionID,
+        messageID: part.messageID,
+        partID: part.id,
+        countPerMinute: countInWindow,
+        windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+      },
+    );
 
     if (countInWindow < COMPACTION_LOOP_WARN_THRESHOLD) return;
 
-    const lastWarnAt = syntheticContinueLoopLastWarnAtBySession.get(sessionID) ?? 0;
+    const lastWarnAt =
+      syntheticContinueLoopLastWarnAtBySession.get(sessionID) ?? 0;
     if (now - lastWarnAt < COMPACTION_LOOP_WARN_MIN_INTERVAL_MS) return;
     syntheticContinueLoopLastWarnAtBySession.set(sessionID, now);
     sessionWarn("compaction:synthetic-continue-loop", {
       sessionID,
       countPerMinute: countInWindow,
     });
-    recordPerfLog(sessionDebugEnabled(), "session.compaction", "synthetic-continue-loop-suspected", {
-      sessionID,
-      countPerMinute: countInWindow,
-      threshold: COMPACTION_LOOP_WARN_THRESHOLD,
-      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
-    });
+    recordPerfLog(
+      sessionDebugEnabled(),
+      "session.compaction",
+      "synthetic-continue-loop-suspected",
+      {
+        sessionID,
+        countPerMinute: countInWindow,
+        threshold: COMPACTION_LOOP_WARN_THRESHOLD,
+        windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+      },
+    );
   };
 
   const addError = (error: unknown, fallback = "Unknown error") => {
@@ -716,12 +821,16 @@ export function createSessionStore(options: {
   const appendSessionErrorTurn = (
     sessionID: string,
     message: string | null,
-    appendOptions?: { durableRunId?: string | null; workspaceId?: string | null },
+    appendOptions?: {
+      durableRunId?: string | null;
+      workspaceId?: string | null;
+    },
   ) => {
     const text = message?.trim() ?? "";
     if (!sessionID || !text) return;
 
-    const workspaceId = appendOptions?.workspaceId?.trim() ||
+    const workspaceId =
+      appendOptions?.workspaceId?.trim() ||
       options.resolveSessionWorkspaceId?.(sessionID)?.trim() ||
       statusWorkspaceId();
     const errorTurnKey = sessionErrorTurnScopeKey(workspaceId, sessionID);
@@ -737,11 +846,21 @@ export function createSessionStore(options: {
     );
   };
 
-  const sessionErrorTurnsForScope = (sessionID: string | null, workspaceId?: string | null) => {
+  const sessionErrorTurnsForScope = (
+    sessionID: string | null,
+    workspaceId?: string | null,
+  ) => {
     const id = sessionID?.trim() ?? "";
     if (!id) return [];
-    const resolvedWorkspaceId = workspaceId?.trim() || options.resolveSessionWorkspaceId?.(id)?.trim() || statusWorkspaceId();
-    return readSessionErrorTurnsForScope(store.sessionErrorTurns, resolvedWorkspaceId, id);
+    const resolvedWorkspaceId =
+      workspaceId?.trim() ||
+      options.resolveSessionWorkspaceId?.(id)?.trim() ||
+      statusWorkspaceId();
+    return readSessionErrorTurnsForScope(
+      store.sessionErrorTurns,
+      resolvedWorkspaceId,
+      id,
+    );
   };
 
   const setCommandDisplay = (messageID: string, name: string, args: string) => {
@@ -762,10 +881,17 @@ export function createSessionStore(options: {
     );
   };
 
-  const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string) => {
+  const withTimeout = async <T>(
+    promise: Promise<T>,
+    ms: number,
+    label: string,
+  ) => {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms);
+      timeoutId = setTimeout(
+        () => reject(new Error(`Timed out waiting for ${label}`)),
+        ms,
+      );
     });
     try {
       return await Promise.race([promise, timeoutPromise]);
@@ -805,8 +931,12 @@ export function createSessionStore(options: {
     recordPendingTranscriptPartDeletion,
   } = transcriptController;
 
-  let eventStreamController: ReturnType<typeof createSessionEventStreamController> | null = null;
-  const terminalDeliveryKeyForScope = (scope: SessionLifecycleRecoveryScope): TerminalDeliveryKey => ({
+  let eventStreamController: ReturnType<
+    typeof createSessionEventStreamController
+  > | null = null;
+  const terminalDeliveryKeyForScope = (
+    scope: SessionLifecycleRecoveryScope,
+  ): TerminalDeliveryKey => ({
     workspaceId: scope.workspaceId,
     conversationId: scope.conversationId,
     runId: scope.runId,
@@ -821,7 +951,8 @@ export function createSessionStore(options: {
     clientMessageId: scope.clientMessageId,
   });
   const terminalDeliveryCoordinator = createTerminalDeliveryCoordinator({
-    trace: (event, payload) => recordSessionLifecycleRecoveryTrace(event, payload),
+    trace: (event, payload) =>
+      recordSessionLifecycleRecoveryTrace(event, payload),
   });
   const conversationRunOwnership = createConversationRunOwnershipIndex();
   const presentPromotedRun = (promoted: {
@@ -835,27 +966,45 @@ export function createSessionStore(options: {
       promoted.scope.opencodeSessionId,
       promoted.scope.conversationId,
     ])) {
-      setSessionStatusForWorkspace(sessionKey.slice(workspaceId.length + 1), promoted.status.status, workspaceId);
+      setSessionStatusForWorkspace(
+        sessionKey.slice(workspaceId.length + 1),
+        promoted.status.status,
+        workspaceId,
+      );
     }
-    const busySessionId = promoted.scope.opencodeSessionId?.trim() || promoted.scope.sessionId;
-    if (busySessionId) notifySessionBusy(busySessionId, promoted.status.status, workspaceId);
+    const busySessionId =
+      promoted.scope.opencodeSessionId?.trim() || promoted.scope.sessionId;
+    if (busySessionId)
+      notifySessionBusy(busySessionId, promoted.status.status, workspaceId);
     updateConversationRunDiagnosticsForScope(promoted.scope, promoted.status);
     options.onConversationRunBecameActive?.(promoted.scope);
     for (const commit of promoted.commits) commit();
   };
 
   const lifecycleRecoveryController =
-    options.resolveConversationRunForSession && options.readConversationRunStatus
+    options.resolveConversationRunForSession &&
+    options.readConversationRunStatus
       ? createSessionLifecycleRecoveryController({
           sessionStatusById: () => store.sessionStatus,
           selectedSessionId: options.selectedSessionId,
-          resolveConversationRunForSession: (sessionId, workspaceId, resolveOptions) =>
+          resolveConversationRunForSession: (
+            sessionId,
+            workspaceId,
+            resolveOptions,
+          ) =>
             conversationRunOwnership.resolveActive(sessionId, workspaceId) ??
-            options.resolveConversationRunForSession!(sessionId, workspaceId, resolveOptions),
+            options.resolveConversationRunForSession!(
+              sessionId,
+              workspaceId,
+              resolveOptions,
+            ),
           readConversationRunStatus: options.readConversationRunStatus,
-          recoverAcceptedConversationRunStatus: options.recoverAcceptedConversationRunStatus,
-          recoverAcceptedConversationTranscript: options.recoverAcceptedConversationTranscript,
-          isConversationRunActive: (scope) => conversationRunOwnership.isActiveOrUnknown(scope),
+          recoverAcceptedConversationRunStatus:
+            options.recoverAcceptedConversationRunStatus,
+          recoverAcceptedConversationTranscript:
+            options.recoverAcceptedConversationTranscript,
+          isConversationRunActive: (scope) =>
+            conversationRunOwnership.isActiveOrUnknown(scope),
           recoverConversationTranscript: options.recoverConversationTranscript,
           currentSelectionVersion: options.currentSelectionVersion,
           reserveTranscriptProjection: (scope, selectionVersion) => {
@@ -870,15 +1019,18 @@ export function createSessionStore(options: {
             });
           },
           publishTranscriptProjection: (scope, snapshot, selectionVersion) =>
-            options.publishTranscriptProjection?.({
-              workspaceId: scope.workspaceId,
-              directory: scope.directory,
-              uiSessionId: scope.sessionId,
-              conversationId: scope.conversationId,
-              opencodeSessionId: scope.opencodeSessionId,
-              selectionVersion,
-              expectedRunId: scope.runId,
-            }, snapshot),
+            options.publishTranscriptProjection?.(
+              {
+                workspaceId: scope.workspaceId,
+                directory: scope.directory,
+                uiSessionId: scope.sessionId,
+                conversationId: scope.conversationId,
+                opencodeSessionId: scope.opencodeSessionId,
+                selectionVersion,
+                expectedRunId: scope.runId,
+              },
+              snapshot,
+            ),
           // Terminal recovery has already passed its exact durable run fence;
           // unlike a passive browse snapshot, it is allowed to replace stale
           // live parts with the canonical terminal snapshot.
@@ -888,21 +1040,34 @@ export function createSessionStore(options: {
               {
                 kind: "hydration",
                 commit: () => {
-                  hydrateTranscriptSnapshot(snapshot, { preserveLiveParts: false });
+                  hydrateTranscriptSnapshot(snapshot, {
+                    preserveLiveParts: false,
+                  });
                 },
               },
             );
           },
           onTerminalTranscriptRecoverySettled: (scope) => {
-            const released = conversationRunOwnership.settleTerminalTranscript(scope);
+            const released =
+              conversationRunOwnership.settleTerminalTranscript(scope);
             for (const commit of released.commits) commit();
             if (released.promoted) presentPromotedRun(released.promoted);
           },
           diagnosticContext: options.lifecycleRecoveryDiagnosticContext,
           onConversationRunStatus: (scope, status) => {
-            const active = conversationRunOwnership.observeStatus(scope, status);
-            if (status && ["completed", "failed", "aborted"].includes(status.status) && !active) {
-              for (const commit of conversationRunOwnership.settleNonActiveTerminal(scope)) commit();
+            const active = conversationRunOwnership.observeStatus(
+              scope,
+              status,
+            );
+            if (
+              status &&
+              ["completed", "failed", "aborted"].includes(status.status) &&
+              !active
+            ) {
+              for (const commit of conversationRunOwnership.settleNonActiveTerminal(
+                scope,
+              ))
+                commit();
               return;
             }
             const promoted = conversationRunOwnership.promoteReadyRun(scope);
@@ -919,7 +1084,8 @@ export function createSessionStore(options: {
             conversationRunOwnership.beginTerminal(scope);
             terminalDeliveryCoordinator.confirmTerminal(key, () => {
               untrack(() => {
-                const released = conversationRunOwnership.releaseTerminal(scope);
+                const released =
+                  conversationRunOwnership.releaseTerminal(scope);
                 for (const commit of released.commits) commit();
                 if (released.promoted) presentPromotedRun(released.promoted);
               });
@@ -932,9 +1098,16 @@ export function createSessionStore(options: {
                 appendSessionErrorTurn(
                   scope.sessionId,
                   runError === "attachment_runtime_rejected"
-                    ? t("session.attachment_runtime_rejected_generic", currentLocale())
-                    : runError === "opencode_session_idle_before_assistant_completed"
-                      ? t("session.runtime_stopped_before_response", currentLocale())
+                    ? t(
+                        "session.attachment_runtime_rejected_generic",
+                        currentLocale(),
+                      )
+                    : runError ===
+                        "opencode_session_idle_before_assistant_completed"
+                      ? t(
+                          "session.runtime_stopped_before_response",
+                          currentLocale(),
+                        )
                       : runError || "Run failed",
                   {
                     durableRunId: scope.runId,
@@ -1008,7 +1181,10 @@ export function createSessionStore(options: {
   const noteTranscriptObserved = (sessionId: string) => {
     const id = sessionId.trim();
     if (!id) return;
-    transcriptObservationVersionBySession.set(id, (transcriptObservationVersionBySession.get(id) ?? 0) + 1);
+    transcriptObservationVersionBySession.set(
+      id,
+      (transcriptObservationVersionBySession.get(id) ?? 0) + 1,
+    );
   };
 
   const selectionController = createSessionSelectionController({
@@ -1042,7 +1218,8 @@ export function createSessionStore(options: {
     workspaceSessionIds,
     setMessagesForSession,
     hydrateTranscriptSnapshot,
-    transcriptObservationVersion: (sessionId) => transcriptObservationVersionBySession.get(sessionId.trim()) ?? 0,
+    transcriptObservationVersion: (sessionId) =>
+      transcriptObservationVersionBySession.get(sessionId.trim()) ?? 0,
     messageLimitBySession,
     setMessageLimitBySession,
     messageCompleteBySession,
@@ -1065,10 +1242,19 @@ export function createSessionStore(options: {
     loadEarlierMessages,
     currentSelectionVersion,
   } = selectionController;
-  const selectSession = async (sessionId: string, selectOptions?: { skipTranscriptRead?: boolean }) => {
-    lifecycleRecoveryController?.resumeExhaustedWatchForSession(sessionId, resolveSessionWorkspaceId(sessionId));
+  const selectSession = async (
+    sessionId: string,
+    selectOptions?: { skipTranscriptRead?: boolean },
+  ) => {
+    lifecycleRecoveryController?.resumeExhaustedWatchForSession(
+      sessionId,
+      resolveSessionWorkspaceId(sessionId),
+    );
     const result = await selectSessionFromController(sessionId, selectOptions);
-    lifecycleRecoveryController?.retryAcceptedRunForSession(sessionId, resolveSessionWorkspaceId(sessionId));
+    lifecycleRecoveryController?.retryAcceptedRunForSession(
+      sessionId,
+      resolveSessionWorkspaceId(sessionId),
+    );
     lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession(
       sessionId,
       resolveSessionWorkspaceId(sessionId),
@@ -1077,10 +1263,13 @@ export function createSessionStore(options: {
     return result;
   };
   const sessionStatusById = () => store.sessionStatus;
-  const conversationRunDiagnosticsBySessionKey = () => store.conversationRunDiagnosticsBySessionKey;
+  const conversationRunDiagnosticsBySessionKey = () =>
+    store.conversationRunDiagnosticsBySessionKey;
   const events = () => store.events;
 
-  let messageProjection = null as import("./session-store-model").MessageProjectionCache | null;
+  let messageProjection = null as
+    | import("./session-store-model").MessageProjectionCache
+    | null;
   const messages = createMemo<MessageWithParts[]>(() => {
     const id = options.selectedSessionId();
     if (!id) {
@@ -1101,7 +1290,10 @@ export function createSessionStore(options: {
   });
 
   const setSessions = (next: Session[]) => {
-    setStore("sessions", reconcile(sortSessionsByActivity(next), { key: "id" }));
+    setStore(
+      "sessions",
+      reconcile(sortSessionsByActivity(next), { key: "id" }),
+    );
   };
 
   const setSessionStatusById = (next: Record<string, string>) => {
@@ -1142,7 +1334,9 @@ export function createSessionStore(options: {
       options.onReconnectState?.(state);
       if (state.status === "live") {
         lifecycleRecoveryController?.resumeExhaustedWatches(state.workspaceId);
-        lifecycleRecoveryController?.resumeAcceptedRunsForWorkspace(state.workspaceId);
+        lifecycleRecoveryController?.resumeAcceptedRunsForWorkspace(
+          state.workspaceId,
+        );
         void lifecycleRecoveryController?.probeSelectedConversationLatestRun();
       }
     },
@@ -1159,8 +1353,16 @@ export function createSessionStore(options: {
     resolveSessionDirectory,
     appendSessionErrorTurn,
     deferAssistantTextPartMutation: ({ sessionId, workspaceId, commit }) => {
-      if (conversationRunOwnership.holdTransitionMutation(sessionId, workspaceId, commit)) return true;
-      const scope = conversationRunOwnership.resolveActive(sessionId, workspaceId) ??
+      if (
+        conversationRunOwnership.holdTransitionMutation(
+          sessionId,
+          workspaceId,
+          commit,
+        )
+      )
+        return true;
+      const scope =
+        conversationRunOwnership.resolveActive(sessionId, workspaceId) ??
         options.resolveConversationRunForSession?.(sessionId, workspaceId);
       if (scope?.runId && scope.runId !== "latest") {
         return terminalDeliveryCoordinator.retainVisibleMutation(
@@ -1168,7 +1370,10 @@ export function createSessionStore(options: {
           { kind: "assistant", commit },
         );
       }
-      const provisional = conversationRunOwnership.resolveProvisional(sessionId, workspaceId);
+      const provisional = conversationRunOwnership.resolveProvisional(
+        sessionId,
+        workspaceId,
+      );
       if (!provisional) return false;
       return terminalDeliveryCoordinator.retainVisibleMutation(
         terminalDeliveryProvisionalKeyForScope(provisional),
@@ -1176,7 +1381,11 @@ export function createSessionStore(options: {
       );
     },
     onSessionLifecycleObservation: (sessionId, workspaceId, type) =>
-      lifecycleRecoveryController?.observeSessionLifecycleEvent(sessionId, workspaceId, type) === true,
+      lifecycleRecoveryController?.observeSessionLifecycleEvent(
+        sessionId,
+        workspaceId,
+        type,
+      ) === true,
     setCommandDisplay,
     recordSyntheticContinueDiagnostic,
     maybeMarkReloadRequired,
@@ -1196,7 +1405,8 @@ export function createSessionStore(options: {
     isWorkspaceRuntimeReady,
     isActiveWorkspaceRuntimeReady,
     isSharedEngineSingleViewFallback: options.isSharedEngineSingleViewFallback,
-    recoverWorkspaceRuntimeForEventStream: options.recoverWorkspaceRuntimeForEventStream,
+    recoverWorkspaceRuntimeForEventStream:
+      options.recoverWorkspaceRuntimeForEventStream,
   });
   eventStreamController.startEventStreams();
 
@@ -1228,7 +1438,8 @@ export function createSessionStore(options: {
 
   return {
     sessions,
-    sessionErrorTurnsById: (sessionID: string | null) => sessionErrorTurnsForScope(sessionID),
+    sessionErrorTurnsById: (sessionID: string | null) =>
+      sessionErrorTurnsForScope(sessionID),
     selectedSessionErrorTurns,
     sessionStatusById,
     conversationRunDiagnosticsBySessionKey,
@@ -1266,7 +1477,9 @@ export function createSessionStore(options: {
       directory?: string | null;
       clientMessageId: string;
     }) => {
-      lifecycleRecoveryController?.invalidateTerminalTranscriptRecoveriesForConversation(input);
+      lifecycleRecoveryController?.invalidateTerminalTranscriptRecoveriesForConversation(
+        input,
+      );
       return conversationRunOwnership.armProvisional(input);
     },
     disposeConversationRunProvisional: (input: {
@@ -1294,15 +1507,22 @@ export function createSessionStore(options: {
         );
       }
       conversationRunOwnership.activate(input);
-      return lifecycleRecoveryController?.admitAcceptedConversationRun(input) ?? false;
+      return (
+        lifecycleRecoveryController?.admitAcceptedConversationRun(input) ??
+        false
+      );
     },
     watchQueuedConversationRun: (input: AcceptedConversationRunInput) => {
       conversationRunOwnership.reserve(input);
-      return lifecycleRecoveryController?.watchQueuedConversationRun(input) ?? false;
+      return (
+        lifecycleRecoveryController?.watchQueuedConversationRun(input) ?? false
+      );
     },
-    retryAcceptedRunForSession: lifecycleRecoveryController?.retryAcceptedRunForSession ?? (() => 0),
+    retryAcceptedRunForSession:
+      lifecycleRecoveryController?.retryAcceptedRunForSession ?? (() => 0),
     retryTerminalTranscriptRecoveryForSession:
-      lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession ?? (() => 0),
+      lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession ??
+      (() => 0),
     setMessages,
     setTodos,
     setPendingPermissions,
