@@ -7,6 +7,7 @@ import {
 import { isTauriRuntime } from "../utils";
 import type { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { isPassiveLocalBrowseActivationOrigin } from "./workspace-activation-controller";
+import { prepareRuntimeWithSkillViewRefresh } from "./workspace-skill-materialization";
 import type { StartupPreference, WorkspaceConnectionState, WorkspaceVesloConfig } from "../types";
 import type { Language } from "../../i18n";
 import type { WorkspaceActivationOptions } from "./workspace-types";
@@ -316,6 +317,7 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
     }
 
     let connectedToLocalHost = false;
+    let localFailureMessage: string | null = null;
     const runtime = deps.engine()?.runtime ?? deps.resolveEngineRuntime();
     deps.wsDebug("activate:remote->local:runtimePrepare", {
       runtime,
@@ -328,7 +330,17 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
       runtime,
     });
     try {
-      connectedToLocalHost = await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
+      const skillsReady = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
+        reason: "workspace-attach-local",
+      });
+      if (!skillsReady) {
+        const message = "Workspace skills could not be prepared before connecting to the local engine. Resolve any Skills sync error and try again.";
+        localFailureMessage = message;
+        deps.setError(message);
+        deps.updateWorkspaceConnectionState(id, { status: "error", message });
+        return false;
+      }
+      const prepareRuntime = async () => await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
         workspacePath: next.path,
         workspaceId: next.id,
         workspaceName: next.displayName?.trim() || next.name?.trim() || null,
@@ -336,20 +348,28 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
         navigate: false,
         skillViewRevision: deps.runtimeSkillViewRevision?.(next.id) ?? null,
       });
+      connectedToLocalHost = await prepareRuntimeWithSkillViewRefresh({
+        prepare: prepareRuntime,
+        refresh: async ({ reason }) => await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, { reason }),
+      });
       deps.wsDebug("activate:remote->local:prepareRuntime:done", {
         ok: connectedToLocalHost,
         ms: Date.now() - prepareStartedAt,
       });
     } catch (error) {
       connectedToLocalHost = false;
+      const message = error instanceof Error ? error.message : deps.safeStringify(error);
+      localFailureMessage = message;
+      deps.setError(message);
+      deps.updateWorkspaceConnectionState(id, { status: "error", message });
       deps.wsDebug("activate:remote->local:prepareRuntime:error", {
-        error: error instanceof Error ? error.message : deps.safeStringify(error),
+        error: message,
       });
     }
     if (!connectedToLocalHost) {
       deps.updateWorkspaceConnectionState(id, {
         status: "error",
-        message: deps.indirectT("ui.indirect.failed_to_start_local_engine_1uglec", deps.indirectLocale()),
+        message: localFailureMessage ?? deps.indirectT("ui.indirect.failed_to_start_local_engine_1uglec", deps.indirectLocale()),
       });
       return false;
     }
@@ -445,19 +465,10 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
         navigate: false,
         skillViewRevision: deps.runtimeSkillViewRevision?.(next.id) ?? null,
       });
-      let ok: boolean;
-      try {
-        ok = await prepareRuntime();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : deps.safeStringify(error);
-        const skillViewChanged = message.includes("skill_view_changed");
-        if (!skillViewChanged && !message.includes("skill_view_stale")) throw error;
-        const refreshed = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
-          reason: skillViewChanged ? "skill-view-changed-retry" : "skill-view-stale-retry",
-        });
-        if (!refreshed) throw error;
-        ok = await prepareRuntime();
-      }
+      const ok = await prepareRuntimeWithSkillViewRefresh({
+        prepare: prepareRuntime,
+        refresh: async ({ reason }) => await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, { reason }),
+      });
       if (!ok) {
         deps.setError("Failed to reconnect after worker switch");
         return "failed";

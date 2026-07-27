@@ -953,6 +953,8 @@ export function createWorkspaceStore(options: {
     markOnboardingComplete,
     resolveWelcomeOnboardingStep,
     setMigrationRepairResult: (value: MigrationRepairResult | null) => configStoreRef.setMigrationRepairResult(value),
+    syncWorkspaceSkillMaterializationBeforeRuntime,
+    runtimeSkillViewRevision,
   });
 
   // Use a ref object so the engine store can call configStore methods that

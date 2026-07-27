@@ -442,7 +442,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
   async function startHost(
     options: Pick<
       LocalRuntimeReconnectOptions,
-      "workspacePath" | "workspaceId" | "reason" | "connectMode" | "navigate"
+      "workspacePath" | "workspaceId" | "reason" | "connectMode" | "navigate" | "skillViewRevision"
     >,
   ) {
     return await prepareWorkspaceRuntime({

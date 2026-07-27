@@ -112,6 +112,9 @@ pub struct UserDiagnosticCapture {
     spool_dir: PathBuf,
     journal_path: PathBuf,
     journal: Mutex<CaptureJournal>,
+    // Delivery confirmation is useful in the running UI, but it must not be
+    // restored after a desktop restart once every event was accepted.
+    recently_completed: Mutex<Option<CaptureRecord>>,
     // Serializes every read/write/rewrite of a capture queue with capture appends.
     queue_lock: Mutex<()>,
 }
@@ -139,6 +142,14 @@ fn load_journal(path: &Path) -> CaptureJournal {
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_default()
+}
+
+fn is_fully_delivered(record: &CaptureRecord) -> bool {
+    record.pending_events == 0
+        && matches!(
+            record.state.as_str(),
+            "uploaded" | "uploaded_with_truncation"
+        )
 }
 
 fn allowed_source(source: &str, stream: &str) -> bool {
@@ -263,10 +274,25 @@ impl UserDiagnosticCapture {
             spool_dir,
             journal_path: journal_path.clone(),
             journal: Mutex::new(load_journal(&journal_path)),
+            recently_completed: Mutex::new(None),
             queue_lock: Mutex::new(()),
         };
         {
             let _queue = capture.queue_lock.lock().ok();
+            let completed_capture_id = capture.journal.lock().ok().and_then(|mut journal| {
+                let capture_id = journal
+                    .latest
+                    .as_ref()
+                    .filter(|record| is_fully_delivered(record))?
+                    .capture_id
+                    .clone();
+                journal.latest = None;
+                Some(capture_id)
+            });
+            if let Some(capture_id) = completed_capture_id {
+                let _ = fs::remove_file(&capture.journal_path);
+                let _ = fs::remove_file(queue_path(&capture.spool_dir, &capture_id));
+            }
             let interrupted = capture.journal.lock().ok().and_then(|mut journal| {
                 let record = journal
                     .latest
@@ -282,8 +308,8 @@ impl UserDiagnosticCapture {
                 } else {
                     capture.mark_undeliverable(&record.capture_id, "summary_write_failed");
                 }
+                let _ = capture.persist();
             }
-            let _ = capture.persist();
         }
         capture
     }
@@ -466,6 +492,9 @@ impl UserDiagnosticCapture {
         if self.append_summary_unlocked(&record).is_err() {
             return Err("Could not create the diagnostic capture queue".to_string());
         }
+        if let Ok(mut completed) = self.recently_completed.lock() {
+            *completed = None;
+        }
         if let Ok(mut journal) = self.journal.lock() {
             journal.latest = Some(record.clone());
         }
@@ -567,12 +596,18 @@ impl UserDiagnosticCapture {
 
     pub fn status(&self) -> UserDiagnosticCaptureStatus {
         self.finalize_expired();
-        match self
+        let record = self
             .journal
             .lock()
             .ok()
             .and_then(|journal| journal.latest.clone())
-        {
+            .or_else(|| {
+                self.recently_completed
+                    .lock()
+                    .ok()
+                    .and_then(|completed| completed.clone())
+            });
+        match record {
             Some(record) => UserDiagnosticCaptureStatus {
                 available: USER_DIAGNOSTIC_CAPTURE_ENABLED,
                 can_start: false,
@@ -834,6 +869,26 @@ impl UserDiagnosticCapture {
                 };
             }
         });
+        let completed = self
+            .journal
+            .lock()
+            .ok()
+            .and_then(|journal| journal.latest.clone())
+            .filter(is_fully_delivered);
+        if let Some(completed) = completed {
+            if let Ok(mut journal) = self.journal.lock() {
+                if journal.latest.as_ref().is_some_and(|latest| {
+                    latest.capture_id == completed.capture_id && is_fully_delivered(latest)
+                }) {
+                    journal.latest = None;
+                }
+            }
+            if let Ok(mut recent) = self.recently_completed.lock() {
+                *recent = Some(completed);
+            }
+            let _ = fs::remove_file(&self.journal_path);
+            return;
+        }
         let _ = self.persist();
     }
 }
@@ -982,6 +1037,38 @@ mod tests {
         assert_eq!(status.pending_events, 0);
         assert_eq!(status.accepted_events, 1);
         assert_eq!(status.state, "uploaded");
+        assert!(!queue_path(dir.path(), &capture_id).exists());
+        assert!(!dir.path().join(JOURNAL_FILE).exists());
+
+        let restarted = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        let restarted_status = restarted.status();
+        assert_eq!(restarted_status.state, "idle");
+        assert_eq!(restarted_status.capture_id, None);
+        assert!(!dir.path().join(JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn next_start_prunes_a_legacy_completed_capture_and_its_queue() {
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        let capture_id = capture.start(&context()).unwrap().capture_id.unwrap();
+        fs::write(queue_path(dir.path(), &capture_id), "legacy event\n").unwrap();
+        capture.update_latest(&capture_id, |latest| {
+            latest.state = "uploaded".to_string();
+            latest.pending_events = 0;
+        });
+        capture.persist().unwrap();
+        drop(capture);
+
+        let restarted = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        let status = restarted.status();
+        assert_eq!(status.state, "idle");
+        assert_eq!(status.capture_id, None);
+        assert!(!dir.path().join(JOURNAL_FILE).exists());
         assert!(!queue_path(dir.path(), &capture_id).exists());
     }
 

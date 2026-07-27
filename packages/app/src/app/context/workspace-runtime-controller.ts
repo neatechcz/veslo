@@ -9,6 +9,7 @@ import { withTimeoutOrThrow } from "../utils/promise-timeout";
 import type { ConnectToServer } from "./workspace-types";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import type { WorkspaceLifecycleEvent } from "./workspace-lifecycle-state";
+import { prepareRuntimeWithSkillViewRefresh } from "./workspace-skill-materialization";
 
 const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
 const CONNECT_LOAD_SESSIONS_TIMEOUT_MS = 20_000;
@@ -459,24 +460,17 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           forceFreshRuntime,
           skillViewRevision: deps.runtimeSkillViewRevision?.(workspace.id) ?? null,
         });
-        let ok: boolean;
-        try {
-          ok = await prepareRuntime();
-        } catch (error) {
-          const detail = messageFromUnknownError(error, deps.safeStringify);
-          const skillViewChanged = detail.includes("skill_view_changed");
-          if (!skillViewChanged && !detail.includes("skill_view_stale")) throw error;
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skill-view-refresh", {
-            workspaceId: id,
-            reason: prepareReason,
-            cause: skillViewChanged ? "skill_view_changed" : "skill_view_stale",
-          });
-          const refreshed = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
-            reason: skillViewChanged ? "skill-view-changed-retry" : "skill-view-stale-retry",
-          });
-          if (!refreshed) throw error;
-          ok = await prepareRuntime();
-        }
+        const ok = await prepareRuntimeWithSkillViewRefresh({
+          prepare: prepareRuntime,
+          refresh: async ({ reason }) => await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, { reason }),
+          onRetry: ({ conflict }) => {
+            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skill-view-refresh", {
+              workspaceId: id,
+              reason: prepareReason,
+              cause: conflict,
+            });
+          },
+        });
         recordSendWorkflowTrace("workspace-runtime", "ensure-engine:prepare-runtime:done", {
           workspaceId: id,
           ok,

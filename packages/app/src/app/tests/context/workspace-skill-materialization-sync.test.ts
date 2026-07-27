@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createWorkspaceSkillMaterializationGate } from "../../context/workspace-skill-materialization.js";
+import {
+  createWorkspaceSkillMaterializationGate,
+  prepareRuntimeWithSkillViewRefresh,
+  RuntimeSkillViewRefreshError,
+} from "../../context/workspace-skill-materialization.js";
 import { VesloServerError } from "../../lib/veslo-server.js";
 import { readContextSource, readWorkspaceBehaviorSources } from "./workspace-source";
 
@@ -268,6 +272,96 @@ test("skill view changed forces a fresh active manifest before retrying runtime"
 
   assert.equal(ready, true);
   assert.deepEqual(options, { forceRefresh: true });
+});
+
+test("a stale skill view forces the same fresh active manifest", async () => {
+  let options: { forceRefresh?: boolean } | undefined;
+  const gate = createGate({
+    client: {
+      getWorkspaceSkillMaterializationStatus: async () => ({
+        registryConfigured: false,
+        workspaceRegistryConfigured: false,
+        status: "not-configured",
+        reloadRequired: false,
+      }),
+      prepareRuntimeSkillView: async (
+        _workspaceId: string,
+        nextOptions?: { forceRefresh?: boolean },
+      ) => {
+        options = nextOptions;
+        return { ready: true, revision: "view-2", generatedAt: "2026-07-27T00:00:00.000Z", activeCount: 1, items: [{ name: "workspace-only" }] };
+      },
+    },
+  });
+
+  const ready = await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "skill-view-stale-retry" },
+  );
+
+  assert.equal(ready, true);
+  assert.deepEqual(options, { forceRefresh: true });
+});
+
+test("runtime preparation refreshes one changed skill view and retries once", async () => {
+  let prepareCalls = 0;
+  const refreshReasons: string[] = [];
+
+  const result = await prepareRuntimeWithSkillViewRefresh({
+    prepare: async () => {
+      prepareCalls += 1;
+      if (prepareCalls === 1) throw new Error('Failed to activate workspace: status 409: {"error":"skill_view_changed"}');
+      return "ready";
+    },
+    refresh: async ({ reason }) => {
+      refreshReasons.push(reason);
+      return true;
+    },
+  });
+
+  assert.equal(result, "ready");
+  assert.equal(prepareCalls, 2);
+  assert.deepEqual(refreshReasons, ["skill-view-changed-retry"]);
+});
+
+test("repeated skill view changes produce an actionable UI error", async () => {
+  await assert.rejects(
+    prepareRuntimeWithSkillViewRefresh({
+      prepare: async () => {
+        throw new Error('Failed to activate workspace: status 409: {"error":"skill_view_changed"}');
+      },
+      refresh: async () => true,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof RuntimeSkillViewRefreshError);
+      assert.equal(error.code, "skill_view_changed");
+      assert.equal(error.phase, "retry");
+      assert.match(error.message, /refreshed the skill view and retried once/i);
+      return true;
+    },
+  );
+});
+
+test("a stale runtime view requests the fresh-refresh context once", async () => {
+  const contexts: Array<{ reason: string }> = [];
+  let prepares = 0;
+
+  await assert.rejects(
+    prepareRuntimeWithSkillViewRefresh({
+      prepare: async () => {
+        prepares += 1;
+        throw new Error("Failed to activate workspace: status 409: {\\\"error\\\":\\\"skill_view_stale\\\"}");
+      },
+      refresh: async (context) => {
+        contexts.push({ reason: context.reason });
+        return true;
+      },
+    }),
+    (error: unknown) => error instanceof RuntimeSkillViewRefreshError && error.code === "skill_view_stale",
+  );
+
+  assert.equal(prepares, 2);
+  assert.deepEqual(contexts, [{ reason: "skill-view-stale-retry" }]);
 });
 
 test("degraded workspace materialization status skips sync without blocking runtime", async () => {

@@ -262,6 +262,16 @@ the desktop runtime must activate the target workspace engine before returning a
 ready engine snapshot; the app should not paper over an absent workspace engine
 with generic UI retries.
 
+Before every local runtime prepare (first host start, engine reload, local
+workspace switch, remote-to-local attach, and recovery), the app asks the
+server to publish the effective workspace skill manifest and passes its
+revision to native activation. If native activation reports `skill_view_changed`
+or `skill_view_stale`, the app performs exactly one server-owned refresh and
+one prepare retry. A second conflict is terminal for that activation: the UI
+must describe the completed recovery attempt and tell the user to finish the
+skill sync or file edit, rather than exposing the raw orchestrator `409` body.
+This is an activation-boundary rule, not a desktop-side skill resolver.
+
 On the app side, local runtime prepare serialization must stay held until native
 prepare, orchestrator workspace activation, and routed reconnect have all
 finished. A foreground send/session recovery may start after a timed-out native

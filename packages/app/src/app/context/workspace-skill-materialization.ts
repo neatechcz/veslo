@@ -27,6 +27,85 @@ export type WorkspaceSkillMaterializationGateDeps = {
   wsDebug: (label: string, payload?: unknown) => void;
 };
 
+export type RuntimeSkillViewConflict = "skill_view_changed" | "skill_view_stale";
+
+export type RuntimeSkillViewRefreshContext = {
+  conflict: RuntimeSkillViewConflict;
+  reason: "skill-view-changed-retry" | "skill-view-stale-retry";
+};
+
+/**
+ * A failed refresh should not expose the orchestrator's raw 409 envelope to
+ * people using the desktop app. Keep the code for traces/tests while giving
+ * the UI one actionable explanation of the completed recovery attempt.
+ */
+export class RuntimeSkillViewRefreshError extends Error {
+  readonly code: RuntimeSkillViewConflict;
+  readonly phase: "refresh" | "retry";
+
+  constructor(conflict: RuntimeSkillViewConflict, phase: "refresh" | "retry") {
+    const changed = conflict === "skill_view_changed";
+    super(
+      phase === "refresh"
+        ? changed
+          ? "Workspace skills changed while Veslo was starting the engine. Veslo could not refresh the skill view, so the engine was not started. Resolve any Skills sync error and try again."
+          : "The workspace skill view was out of date. Veslo could not refresh it, so the engine was not started. Try again after the workspace finishes loading."
+        : changed
+          ? "Workspace skills kept changing while Veslo was starting the engine. Veslo refreshed the skill view and retried once, but the files changed again. Finish the skill sync or file edit, then try again."
+          : "The workspace skill view was refreshed, but it became stale again before the engine started. Try again after the workspace finishes loading.",
+    );
+    this.name = "RuntimeSkillViewRefreshError";
+    this.code = conflict;
+    this.phase = phase;
+  }
+}
+
+export function runtimeSkillViewConflict(error: unknown): RuntimeSkillViewConflict | null {
+  const message = error instanceof Error ? error.message : safeStringify(error);
+  if (message.includes("skill_view_changed")) return "skill_view_changed";
+  if (message.includes("skill_view_stale")) return "skill_view_stale";
+  return null;
+}
+
+/**
+ * The server owns the effective manifest and the desktop owns process
+ * activation. Every app activation path must bridge one retry at this exact
+ * boundary; placing it here prevents host-start and workspace-switch paths
+ * from drifting apart.
+ */
+export async function prepareRuntimeWithSkillViewRefresh<T>(input: {
+  prepare: () => Promise<T>;
+  refresh: (context: RuntimeSkillViewRefreshContext) => Promise<boolean>;
+  onRetry?: (context: RuntimeSkillViewRefreshContext) => void;
+}): Promise<T> {
+  try {
+    return await input.prepare();
+  } catch (error) {
+    const conflict = runtimeSkillViewConflict(error);
+    if (!conflict) throw error;
+    const context: RuntimeSkillViewRefreshContext = {
+      conflict,
+      reason: conflict === "skill_view_changed" ? "skill-view-changed-retry" : "skill-view-stale-retry",
+    };
+    input.onRetry?.(context);
+    let refreshed = false;
+    try {
+      refreshed = await input.refresh(context);
+    } catch {
+      throw new RuntimeSkillViewRefreshError(conflict, "refresh");
+    }
+    if (!refreshed) throw new RuntimeSkillViewRefreshError(conflict, "refresh");
+    try {
+      return await input.prepare();
+    } catch (retryError) {
+      if (runtimeSkillViewConflict(retryError)) {
+        throw new RuntimeSkillViewRefreshError(conflict, "retry");
+      }
+      throw retryError;
+    }
+  }
+}
+
 export function isSkillRegistryMaterializationError(error: unknown): boolean {
   if (error instanceof VesloServerError) {
     const code = error.code.trim();
@@ -154,9 +233,12 @@ export function createWorkspaceSkillMaterializationGate(
           trace("active-manifest-unsupported");
           return;
         }
+        const forceRefresh =
+          context?.reason === "skill-view-changed-retry" ||
+          context?.reason === "skill-view-stale-retry";
         const active = await client.prepareRuntimeSkillView(
           workspaceId,
-          context?.reason === "skill-view-changed-retry" ? { forceRefresh: true } : undefined,
+          forceRefresh ? { forceRefresh: true } : undefined,
         );
         runtimeViewRevisions.set(workspaceId, active.revision);
         trace("active-manifest-ready", { activeCount: active.activeCount, revision: active.revision });

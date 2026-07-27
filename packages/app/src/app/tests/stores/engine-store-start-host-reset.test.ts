@@ -7,7 +7,7 @@ const source = readFileSync(new URL("../../stores/engine-store.ts", import.meta.
 test("startHost clears the stale live client before launching a different local host", () => {
   assert.match(
     source,
-    /async function startHost\(optionsOverride\?: \{ workspacePath\?: string; navigate\?: boolean \}\) \{[\s\S]*deps\.setClient\(null\);[\s\S]*deps\.setConnectedVersion\(null\);[\s\S]*deps\.setSelectedSessionId\(null\);[\s\S]*deps\.setMessages\(\[\]\);[\s\S]*deps\.setTodos\(\[\]\);[\s\S]*deps\.setPendingPermissions\(\[\]\);[\s\S]*deps\.setSessionStatusById\(\{\}\);[\s\S]*deps\.setSseConnected\(false\);[\s\S]*const ok = await localRuntimeLifecycle\.startHost\(/s,
+    /async function startHost\(optionsOverride\?: \{ workspacePath\?: string; navigate\?: boolean \}\) \{[\s\S]*deps\.setClient\(null\);[\s\S]*deps\.setConnectedVersion\(null\);[\s\S]*deps\.setSelectedSessionId\(null\);[\s\S]*deps\.setMessages\(\[\]\);[\s\S]*deps\.setTodos\(\[\]\);[\s\S]*deps\.setPendingPermissions\(\[\]\);[\s\S]*deps\.setSessionStatusById\(\{\}\);[\s\S]*deps\.setSseConnected\(false\);[\s\S]*const prepareRuntime = async \(\) => await localRuntimeLifecycle\.startHost\(/s,
     "startHost must drop the previous workspace client before delegating engine start to the shared helper so session opens cannot race against a stale engine connection",
   );
 });
@@ -44,14 +44,14 @@ test("engine store delegates host start and reload reconnect flow to the shared 
 
   assert.match(
     source,
-    /const ok = await localRuntimeLifecycle\.startHost\(\{/,
-    "startHost should delegate engine start and reconnect orchestration to the shared helper",
+    /const prepareRuntime = async \(\) => await localRuntimeLifecycle\.startHost\(\{[\s\S]*await prepareRuntimeWithSkillViewRefresh\(\{[\s\S]*prepare: prepareRuntime,/s,
+    "startHost should delegate engine start to the shared lifecycle and bridge one skill-view refresh retry",
   );
 
   assert.match(
     source,
-    /const ok = await localRuntimeLifecycle\.restartWorkspaceRuntime\(\{/,
-    "reloadWorkspaceEngine should delegate restart and reconnect orchestration to the shared helper",
+    /const prepareRuntime = async \(\) => await localRuntimeLifecycle\.restartWorkspaceRuntime\(\{[\s\S]*await prepareRuntimeWithSkillViewRefresh\(\{[\s\S]*prepare: prepareRuntime,/s,
+    "reloadWorkspaceEngine should delegate reconnect orchestration to the shared lifecycle and bridge one skill-view refresh retry",
   );
 });
 
