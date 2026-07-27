@@ -7,6 +7,13 @@ import { ApiError } from "./errors.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import {
+  VESLO_MANAGED_SKILL_STORE_ROOT_HEADER,
+  VESLO_RUNTIME_SKILL_OPERATION_ID_HEADER,
+  VESLO_SKILL_AUTHORIZATION_REVISION_HEADER,
+  VESLO_SKILL_MANIFEST_PATH_HEADER,
+  VESLO_SKILL_VIEW_REVISION_HEADER,
+} from "./request-headers.js";
+import {
   isAuthorizedRoot,
   normalizeOpencodeDirectory,
   readTextPreview,
@@ -196,6 +203,13 @@ export type ReloadOpencodeEngineOptions = {
   fallbackBaseUrl?: string;
   /** Reload only an engine that is already running; never cause a cold start. */
   ifRunning?: boolean;
+  /** Server-published direct view that an orchestrator reload must validate. */
+  skillViewRevision?: string;
+  authorizationRevision?: string;
+  runtimeSkillOperationId?: string;
+  /** Candidate manifest validated before it is promoted to serving. */
+  skillManifestPath?: string;
+  managedSkillStoreRoot?: string;
 };
 
 export type ReloadOpencodeEngineResult =
@@ -233,6 +247,21 @@ export async function reloadOpencodeEngine(
   const auth = buildOpencodeAuthHeader(workspace);
   if (auth) headers.Authorization = auth;
   if (options.ifRunning) headers["x-veslo-engine-if-running"] = "1";
+  if (options.skillViewRevision?.trim()) {
+    headers[VESLO_SKILL_VIEW_REVISION_HEADER] = options.skillViewRevision.trim();
+  }
+  if (options.authorizationRevision?.trim()) {
+    headers[VESLO_SKILL_AUTHORIZATION_REVISION_HEADER] = options.authorizationRevision.trim();
+  }
+  if (options.runtimeSkillOperationId?.trim()) {
+    headers[VESLO_RUNTIME_SKILL_OPERATION_ID_HEADER] = options.runtimeSkillOperationId.trim();
+  }
+  if (options.skillManifestPath?.trim()) {
+    headers[VESLO_SKILL_MANIFEST_PATH_HEADER] = options.skillManifestPath.trim();
+  }
+  if (options.managedSkillStoreRoot?.trim()) {
+    headers[VESLO_MANAGED_SKILL_STORE_ROOT_HEADER] = options.managedSkillStoreRoot.trim();
+  }
 
   const timeoutMs = resolveOpenCodeJsonFetchTimeoutMs();
   let lastError: unknown = null;

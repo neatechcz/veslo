@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -25,7 +25,7 @@ const artifactDir = resolve(
   process.env.VESLO_OPENCODE_COMPAT_ARTIFACT_DIR?.trim() ||
     join(repoRoot, ".tmp", "runtime-oracle", `bundled-opencode-directory-skills-${new Date().toISOString().replaceAll(/[:.]/g, "-")}`),
 );
-const GATE_SCHEMA_VERSION = "veslo-opencode-directory-skills/v3";
+const GATE_SCHEMA_VERSION = "veslo-opencode-directory-skills/v4";
 
 function tail(value, maxChars = 6_000) {
   return value.length > maxChars ? value.slice(-maxChars) : value;
@@ -80,6 +80,16 @@ async function writeRawProjectSkill(workspace, name, marker) {
   );
 }
 
+async function writeSelectedDirectSkill(workspace, name, marker) {
+  return writeSkill(
+    workspace,
+    [".opencode", "skills"],
+    name,
+    `direct-marker-${marker}`,
+    `direct skill body ${marker}`,
+  );
+}
+
 async function writeExternalProjectSkill(workspace, rootName, name, marker) {
   return writeSkill(
     workspace,
@@ -94,6 +104,17 @@ async function prepareWorkspace(workspace, marker) {
   await mkdir(join(workspace, "packages", "foo"), { recursive: true });
   await writeEffectiveSkill(workspace, "same-name", marker);
   await writeEffectiveSkill(workspace, "managed-same-name", `managed-${marker}`);
+  await writeSelectedDirectSkill(workspace, "same-name", marker);
+  await writeSkill(
+    workspace,
+    [".opencode", "skills", "veslo-managed"],
+    "managed-direct",
+    `managed-direct-marker-${marker}`,
+    `managed direct skill body ${marker}`,
+  );
+  const directAssetDir = join(workspace, ".opencode", "skills", "same-name", "scripts");
+  await mkdir(directAssetDir, { recursive: true });
+  await writeFile(join(directAssetDir, "probe.txt"), `nested-asset-marker-${marker}\n`, "utf8");
   await writeRawProjectSkill(workspace, `raw-omitted-${marker.toLowerCase()}`, marker);
   // This represents an unmanaged duplicate of a managed entry. The direct
   // OpenCode probe cannot prove Veslo's manifest/marker logic, but it records
@@ -331,10 +352,10 @@ async function startOpenCode(input) {
       },
     },
     ...(projectInstructionPath ? { instructions: [projectInstructionPath] } : {}),
-    skills: { paths: [".opencode/.veslo/runtime-skills/current"] },
+    skills: { paths: input.skillPaths ?? [".opencode/.veslo/runtime-skills/current"] },
   };
   const child = spawn(opencodeBinary, ["serve", "--hostname", "127.0.0.1", "--port", String(input.port)], {
-    cwd: input.workspaceA,
+    cwd: input.workspace ?? input.workspaceA,
     env: {
       ...process.env,
       HOME: input.homeRoot,
@@ -362,7 +383,101 @@ async function startOpenCode(input) {
     const result = await requestJson(baseUrl, "/global/health", { signal: AbortSignal.timeout(1_000) });
     return result.response.ok ? result.body : null;
   }, `OpenCode ${input.profile} health`);
-  return { child, baseUrl, logs, health, profile: input.profile };
+  return {
+    child,
+    baseUrl,
+    logs,
+    health,
+    profile: input.profile,
+    configDigest: createHash("sha256").update(JSON.stringify(configContent)).digest("hex"),
+  };
+}
+
+async function runPooledDirectPathGate(input) {
+  const start = async (workspace, marker) => {
+    const port = await findFreePort();
+    const runtime = await startOpenCode({
+      profile: `pooled-direct-${marker}`,
+      workspace,
+      workspaceA: workspace,
+      homeRoot: input.homeRoot,
+      configRoot: join(input.configRoot, marker),
+      dataRoot: join(input.dataRoot, marker),
+      inheritedSkillsRoot: input.inheritedSkillsRoot,
+      providerPort: input.providerPort,
+      port,
+      skillPaths: [
+        join(workspace, ".opencode", "skills", "same-name"),
+        join(workspace, ".opencode", "skills", "veslo-managed", "managed-direct"),
+      ],
+    });
+    const skills = await fetchSkills(runtime.baseUrl, workspace);
+    return { runtime, skills };
+  };
+
+  const [a, b] = await Promise.all([
+    start(input.workspaceA, "A"),
+    start(input.workspaceB, "B"),
+  ]);
+  try {
+    const nestedAssetReadable = {
+      a: (await readFile(join(input.workspaceA, ".opencode", "skills", "same-name", "scripts", "probe.txt"), "utf8")).trim() === "nested-asset-marker-A",
+      b: (await readFile(join(input.workspaceB, ".opencode", "skills", "same-name", "scripts", "probe.txt"), "utf8")).trim() === "nested-asset-marker-B",
+    };
+    const expected = (entry, marker, workspace) =>
+      findSkill(entry.skills, "same-name")?.description === `direct-marker-${marker}` &&
+      findSkill(entry.skills, "same-name")?.location?.startsWith(workspace) &&
+      findSkill(entry.skills, "managed-direct")?.description === `managed-direct-marker-${marker}` &&
+      findSkill(entry.skills, "managed-direct")?.location?.startsWith(workspace);
+    const excluded = (entry, marker) =>
+      !hasSkill(entry.skills, `raw-omitted-${marker.toLowerCase()}`) &&
+      !hasSkill(entry.skills, "managed-same-name") &&
+      !hasSkill(entry.skills, `claude-project-${marker.toLowerCase()}`) &&
+      !hasSkill(entry.skills, `agents-project-${marker.toLowerCase()}`) &&
+      !hasSkill(entry.skills, "global-claude") &&
+      !hasSkill(entry.skills, "global-agents") &&
+      !hasSkill(entry.skills, "global-agent") &&
+      !hasSkill(entry.skills, "global-opencode");
+    return {
+      passed:
+        a.runtime.child.pid !== b.runtime.child.pid &&
+        expected(a, "A", input.workspaceA) &&
+        expected(b, "B", input.workspaceB) &&
+        excluded(a, "A") &&
+        excluded(b, "B") &&
+        nestedAssetReadable.a &&
+        nestedAssetReadable.b,
+      engines: [
+        {
+          workspace: input.workspaceA,
+          pid: a.runtime.child.pid ?? null,
+          configDigest: a.runtime.configDigest,
+          skills: summarizeSkills(a.skills),
+        },
+        {
+          workspace: input.workspaceB,
+          pid: b.runtime.child.pid ?? null,
+          configDigest: b.runtime.configDigest,
+          skills: summarizeSkills(b.skills),
+        },
+      ],
+      selectedSkillIsolation: {
+        a: expected(a, "A", input.workspaceA),
+        b: expected(b, "B", input.workspaceB),
+      },
+      ambientSkillExclusion: {
+        a: excluded(a, "A"),
+        b: excluded(b, "B"),
+      },
+      selectedManagedPaths: {
+        a: hasSkill(a.skills, "managed-direct"),
+        b: hasSkill(b.skills, "managed-direct"),
+      },
+      nestedAssetReadable,
+    };
+  } finally {
+    await Promise.all([stop(a.runtime.child), stop(b.runtime.child)]);
+  }
 }
 
 async function runProfile(input) {
@@ -456,6 +571,7 @@ const result = {
   gateA: null,
   gateB: null,
   gateC: null,
+  directPathGate: null,
   fallbackRequired: true,
   errors: [],
 };
@@ -509,6 +625,21 @@ try {
   });
   normalRuntime = normal.runtime;
 
+  result.directPathGate = await runPooledDirectPathGate({
+    workspaceA,
+    workspaceB,
+    homeRoot,
+    configRoot: join(configRoot, "pooled-direct"),
+    dataRoot: join(dataRoot, "pooled-direct"),
+    inheritedSkillsRoot,
+    providerPort,
+  });
+  if (!result.directPathGate.passed) {
+    throw new Error(
+      `direct_path_capability_gate_failed: ${JSON.stringify(result.directPathGate)}`,
+    );
+  }
+
   result.capabilityFingerprint = {
     binaryPath: opencodeBinary,
     binarySha256,
@@ -519,6 +650,7 @@ try {
     launchProfiles: {
       hardened: { disableProjectConfig: true, disableExternalSkills: true, relativeSkillsPath: ".opencode/.veslo/runtime-skills/current" },
       normal: { disableProjectConfig: true, disableExternalSkills: true, sanitizedConfigSnapshot: true, relativeSkillsPath: ".opencode/.veslo/runtime-skills/current" },
+      pooledDirect: { disableProjectConfig: true, disableExternalSkills: true, absoluteSelectedSkillPaths: true, perWorkspaceProcess: true },
     },
   };
 
@@ -701,7 +833,13 @@ try {
   await new Promise((resolveClose) => provider.server.close(() => resolveClose()));
   await mkdir(artifactDir, { recursive: true });
   await writeFile(join(artifactDir, "opencode-directory-scoped-skills.json"), `${JSON.stringify(result, null, 2)}\n`, "utf8");
-  await rm(root, { recursive: true, force: true });
+  // OpenCode can retain a Windows directory handle for a short period after
+  // its child exits. This probe owns the temporary root, so bounded retries
+  // make cleanup deterministic without broad process or filesystem cleanup.
+  await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 })
+    .catch((error) => {
+      result.cleanupError = error instanceof Error ? error.message : String(error);
+    });
 }
 
 console.log(JSON.stringify({ ...result, artifactDir }, null, 2));

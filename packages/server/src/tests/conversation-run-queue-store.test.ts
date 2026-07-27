@@ -421,9 +421,13 @@ describe("conversation run queue store", () => {
     const owner = {
       engineSlotId: "ws-a",
       engineOwnerId: "generation-1",
+      directoryInstanceEpoch: 7,
       enginePid: 101,
       engineStartedAt: 1_000,
       engineBaseUrl: "http://127.0.0.1:4101",
+      skillViewRevision: "skill-view-1",
+      authorizationRevision: "authorization-1",
+      openCodeConfigDigest: "config-1",
     };
     expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", owner)).toEqual(
       expect.objectContaining(owner),
@@ -438,6 +442,14 @@ describe("conversation run queue store", () => {
     expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
       ...owner,
       engineSlotId: "other-slot",
+    })).toBeNull();
+    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
+      ...owner,
+      skillViewRevision: "skill-view-2",
+    })).toBeNull();
+    expect(store.attachWorkspaceRunEngineOwner("ws-a", "run-a", {
+      ...owner,
+      directoryInstanceEpoch: 8,
     })).toBeNull();
 
     const restarted = createConversationRunQueueStore({ dataDir, now: () => 3_000 });

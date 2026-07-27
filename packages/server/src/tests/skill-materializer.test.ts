@@ -7,8 +7,9 @@ import { afterEach, expect, test } from "bun:test";
 import type { SkillPackageFile } from "../skill-package-model.js";
 import { buildSkillPackageManifest } from "../skill-package-model.js";
 import type { SkillPackageArchive } from "../skill-packages.js";
-import { listSkills } from "../skills.js";
+import { listSkills, resolveActiveWorkspaceSkills } from "../skills.js";
 import {
+  immutableManagedSkillDir,
   migrateLegacyRegistrySkillProjections,
   materializeSkillPackageToRoot,
   materializeWorkspaceSkillSet,
@@ -85,10 +86,11 @@ test("materializes a full package tree with root and per-skill managed markers",
     archiveFile("scripts/setup.sh", "#!/bin/sh\necho setup\n", { executable: true }),
     archiveFile("examples/example.txt", "example\n"),
   ]);
+  const dataDir = await tempDir("veslo-materializer-data-");
 
   const result = await materializeSkillPackageToRoot({
     rootDir,
-    dataDir: await tempDir("veslo-materializer-data-"),
+    dataDir,
     skill: materialization("managed-tool", pkg),
     archive: pkg,
   });
@@ -96,6 +98,7 @@ test("materializes a full package tree with root and per-skill managed markers",
   expect(result.skillDir).toBe(join(rootDir, "managed-tool"));
   expect(await readFile(join(rootDir, "managed-tool", "SKILL.md"), "utf8")).toContain("# Managed");
   expect(await readFile(join(rootDir, "managed-tool", "examples", "example.txt"), "utf8")).toBe("example\n");
+  expect(await readFile(join(immutableManagedSkillDir(dataDir, pkg.packageSha256, "managed-tool"), "examples", "example.txt"), "utf8")).toBe("example\n");
   expect(JSON.parse(await readFile(join(rootDir, "managed-tool", ".veslo-managed.json"), "utf8"))).toMatchObject({
     schemaVersion: 1,
     name: "managed-tool",
@@ -109,6 +112,12 @@ test("materializes a full package tree with root and per-skill managed markers",
       installationId: "install-managed-tool",
       packageSha256: pkg.packageSha256,
     },
+  ]);
+  await expect(resolveActiveWorkspaceSkills(workspaceRoot, { dataDir })).resolves.toEqual([
+    expect.objectContaining({
+      name: "managed-tool",
+      path: join(immutableManagedSkillDir(dataDir, pkg.packageSha256, "managed-tool"), "SKILL.md"),
+    }),
   ]);
 });
 

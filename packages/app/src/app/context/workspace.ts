@@ -563,7 +563,7 @@ export function createWorkspaceStore(options: {
   });
   const syncWorkspaceSkillMaterializationBeforeRuntime =
     skillMaterializationGate.syncWorkspaceSkillMaterializationBeforeRuntime;
-  const runtimeSkillViewRevision = skillMaterializationGate.runtimeSkillViewRevision;
+  const runtimeSkillBinding = skillMaterializationGate.runtimeSkillBinding;
 
   const runWorkspaceActivation = async ({
     id,
@@ -642,7 +642,7 @@ export function createWorkspaceStore(options: {
           resolveEngineRuntime,
           localRuntimeLifecycle,
           syncWorkspaceSkillMaterializationBeforeRuntime,
-          runtimeSkillViewRevision,
+          runtimeSkillBinding,
           clearDisplayedSessionState,
           updateWorkspaceConnectionState,
           setWorkspaceConfig,
@@ -954,7 +954,7 @@ export function createWorkspaceStore(options: {
     resolveWelcomeOnboardingStep,
     setMigrationRepairResult: (value: MigrationRepairResult | null) => configStoreRef.setMigrationRepairResult(value),
     syncWorkspaceSkillMaterializationBeforeRuntime,
-    runtimeSkillViewRevision,
+    runtimeSkillBinding,
   });
 
   // Use a ref object so the engine store can call configStore methods that
@@ -1631,6 +1631,7 @@ export function createWorkspaceStore(options: {
 
   const runtimeController = createWorkspaceRuntimeController({
     activeWorkspaceId,
+    activeSendTraceId: options.activeSendTraceId,
     workspaces,
     workspacesHydrated,
     routing: options.routing,
@@ -1650,7 +1651,7 @@ export function createWorkspaceStore(options: {
     ensureLocalRuntimeReadyForWorkspaceStart: engineStore.ensureLocalRuntimeReadyForWorkspaceStart,
     syncManagedAiRuntimeConfigBeforeRuntime: options.syncManagedAiRuntimeConfigBeforeRuntime,
     syncWorkspaceSkillMaterializationBeforeRuntime,
-    runtimeSkillViewRevision,
+    runtimeSkillBinding,
     probeWorkspaceApiReady: async ({ workspaceId, workspacePath, reason }) => {
       const entry = options.routing.entry(workspaceId);
       const client = entry?.client ?? options.routing.client(workspaceId);

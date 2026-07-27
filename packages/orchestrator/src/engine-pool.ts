@@ -1,6 +1,10 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
+import {
+  EMPTY_DIRECT_AUTHORIZATION_REVISION,
+  EMPTY_DIRECT_SKILL_VIEW_REVISION,
+} from "./engine-skill-staging.js";
 
 // Workflow diagnostic toggle — see dev-specific-docs/logging-workflow-milestones--claude.md
 // Off by default. Opt-in via env var: VESLO_FLOW_LOG=1 (or =true)
@@ -42,16 +46,19 @@ export type EngineWorkspace = {
   path?: string;
   legacyWorkspaceIds?: string[];
   /**
-   * Effective skill view the caller was promised by the server. Staging must
-   * consume exactly this revision, so a spawn cannot silently hand the engine a
-   * different skill set than the one the caller already showed the user.
+   * Effective skill view observed by the caller from the server. A newly
+   * spawned engine must consume exactly this revision, so it cannot silently
+   * receive a different direct source set than the one the caller observed.
    *
-   * Only a caller acting on a fresh server handshake may set it. Pool-internal
-   * restarts (crash respawn, idle resume) deliberately leave it undefined:
-   * they have no live handshake, and replaying a remembered revision would turn
-   * an ordinary recovery into a permanent failure once that revision aged out.
-   */
+   * Only a caller acting on a fresh server handshake may set a non-empty value.
+   * Pool-internal crash recovery uses the explicit empty binding because it has
+   * no live authorization handshake.
+  */
   skillViewRevision?: string;
+  /** Authorization membership/disable binding observed with the skill view. */
+  authorizationRevision?: string;
+  managedSkillStoreRoot?: string;
+  skillManifestPath?: string;
 };
 
 export type EngineEnsureResult = {
@@ -65,8 +72,11 @@ export type EngineSpawnContext = {
   workdir: string;
   configDir: string;
   port: number;
-  /** Revision staging must consume exactly; absent for pool-internal restarts. */
+  /** Revision the direct resolver must consume exactly. */
   skillViewRevision?: string;
+  authorizationRevision?: string;
+  managedSkillStoreRoot?: string;
+  skillManifestPath?: string;
 };
 
 export type EngineSpawnResult = {
@@ -78,12 +88,17 @@ export type EngineSpawnResult = {
   effectiveSandboxBackend?: string;
   sandboxMode?: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
   sandboxFallbackReason?: string | null;
+  skillViewRevision?: string | null;
+  authorizationRevision?: string | null;
+  openCodeConfigDigest?: string | null;
 };
 
 export type EngineProcess = {
   workspaceId: string;
   /** Opaque identity of this process generation; never a workspace ID. */
   engineOwnerId: string;
+  /** Monotonic directory-instance generation for this pooled workspace engine. */
+  directoryInstanceEpoch?: number;
   pid: number;
   port: number;
   baseUrl: string;
@@ -97,12 +112,16 @@ export type EngineProcess = {
   sandboxFallbackReason?: string | null;
   state: EngineState;
   /**
-   * Skill view this process was actually staged from, or undefined when it was
-   * started without a handshake (pool-internal restart). Recording it is what
+   * Skill view this process was actually staged from. Recording it is what
    * lets a later caller notice that reusing this engine would silently serve a
    * skill set the server has since replaced.
-   */
+  */
   skillViewRevision?: string;
+  /** A newer view observed while this process is owned by an active run. */
+  pendingSkillViewRevision?: string;
+  pendingAuthorizationRevision?: string;
+  authorizationRevision?: string;
+  openCodeConfigDigest?: string;
   spawnedAt: number;
   lastActivityAt: number;
   child: ChildProcess;
@@ -118,6 +137,7 @@ export type SerializedEngineState = {
   workspaceId: string;
   /** Opaque identity of this process generation; never a workspace ID. */
   engineOwnerId: string;
+  directoryInstanceEpoch?: number;
   pid: number;
   port: number;
   baseUrl: string;
@@ -129,6 +149,11 @@ export type SerializedEngineState = {
   effectiveSandboxBackend?: string;
   sandboxMode?: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
   sandboxFallbackReason?: string | null;
+  skillViewRevision?: string;
+  pendingSkillViewRevision?: string;
+  pendingAuthorizationRevision?: string;
+  authorizationRevision?: string;
+  openCodeConfigDigest?: string;
   state: EngineState;
   spawnedAt: number;
   lastActivityAt: number;
@@ -173,6 +198,8 @@ export type EnginePoolDeps = {
     configDir: string;
   }>;
   spawnEngine: (ctx: EngineSpawnContext) => Promise<EngineSpawnResult>;
+  /** Validate a replacement direct view before retiring a healthy engine. */
+  validateSkillView?: (workspace: EngineWorkspace) => Promise<void>;
   waitForHealthy: (baseUrl: string) => Promise<void>;
   stopChild: (child: ChildProcess) => Promise<void>;
   findFreePort: () => Promise<number>;
@@ -263,6 +290,7 @@ type ResolvedDepsWithEvents = ResolvedDeps & {
 
 export class EnginePool {
   private readonly engines = new Map<string, EngineProcess>();
+  private readonly directoryInstanceEpochs = new Map<string, number>();
   private readonly pending = new Map<string, Promise<EngineProcess>>();
   /** Bounded so a pathological activation storm fails loudly instead of spinning. */
   private static readonly RECONCILE_ATTEMPTS = 4;
@@ -284,6 +312,7 @@ export class EnginePool {
     this.deps = {
       resolveWorkspace: deps.resolveWorkspace,
       spawnEngine: deps.spawnEngine,
+      validateSkillView: deps.validateSkillView,
       waitForHealthy: deps.waitForHealthy,
       stopChild: deps.stopChild,
       findFreePort: deps.findFreePort,
@@ -371,6 +400,7 @@ export class EnginePool {
     return Array.from(this.engines.values()).map((engine) => ({
       workspaceId: engine.workspaceId,
       engineOwnerId: engine.engineOwnerId,
+      directoryInstanceEpoch: engine.directoryInstanceEpoch,
       pid: engine.pid,
       port: engine.port,
       baseUrl: engine.baseUrl,
@@ -382,6 +412,21 @@ export class EnginePool {
       ...(engine.effectiveSandboxBackend !== undefined ? { effectiveSandboxBackend: engine.effectiveSandboxBackend } : {}),
       ...(engine.sandboxMode !== undefined ? { sandboxMode: engine.sandboxMode } : {}),
       ...(engine.sandboxFallbackReason !== undefined ? { sandboxFallbackReason: engine.sandboxFallbackReason } : {}),
+      ...(engine.skillViewRevision !== undefined
+        ? { skillViewRevision: engine.skillViewRevision }
+        : {}),
+      ...(engine.pendingSkillViewRevision !== undefined
+        ? { pendingSkillViewRevision: engine.pendingSkillViewRevision }
+        : {}),
+      ...(engine.pendingAuthorizationRevision !== undefined
+        ? { pendingAuthorizationRevision: engine.pendingAuthorizationRevision }
+        : {}),
+      ...(engine.authorizationRevision !== undefined
+        ? { authorizationRevision: engine.authorizationRevision }
+        : {}),
+      ...(engine.openCodeConfigDigest !== undefined
+        ? { openCodeConfigDigest: engine.openCodeConfigDigest }
+        : {}),
       state: engine.state,
       spawnedAt: engine.spawnedAt,
       lastActivityAt: engine.lastActivityAt,
@@ -407,15 +452,36 @@ export class EnginePool {
     // the caller must also confirm what it actually received.
     for (let attempt = 0; attempt < EnginePool.RECONCILE_ATTEMPTS; attempt += 1) {
       const outcome = await this.resolveEngine(workspace);
-      if (!workspace.skillViewRevision) return outcome;
-      if (outcome.engine.skillViewRevision === workspace.skillViewRevision) {
+      if (!workspace.skillViewRevision && !workspace.authorizationRevision) return outcome;
+      if (
+        (!workspace.skillViewRevision || outcome.engine.skillViewRevision === workspace.skillViewRevision) &&
+        (!workspace.authorizationRevision || outcome.engine.authorizationRevision === workspace.authorizationRevision)
+      ) {
         return outcome;
+      }
+      // A content update observed while an attached run owns the engine is
+      // deliberately deferred. Ordinary traffic keeps the healthy binding and
+      // the lifecycle retry reloads it at the first idle boundary.
+      if (
+        outcome.engine.pendingSkillViewRevision === workspace.skillViewRevision &&
+        outcome.engine.pendingAuthorizationRevision === workspace.authorizationRevision &&
+        this.deps.hasActiveRuns?.(outcome.engine.engineOwnerId)
+      ) {
+        // This caller presented a newer server-published view. Returning the
+        // old engine here would let a new run execute with a binding different
+        // from the view it was admitted against. The already attached run may
+        // keep its engine; new admission must wait for the idle reload.
+        throw new Error(
+          "skill_view_busy: workspace engine is bound to an older skill view while an active run completes",
+        );
       }
       this.deps.log?.("engine skill view reconcile retry", {
         workspaceId: workspace.id,
         attempt: attempt + 1,
         engineRevision: outcome.engine.skillViewRevision ?? null,
         requestedRevision: workspace.skillViewRevision,
+        engineAuthorizationRevision: outcome.engine.authorizationRevision ?? null,
+        requestedAuthorizationRevision: workspace.authorizationRevision ?? null,
       });
     }
     throw new Error(
@@ -508,35 +574,48 @@ export class EnginePool {
    *
    * Returns a freshly spawned engine when the running one had to be replaced,
    * or null when the existing engine may be reused as-is. Mirrors what the
-   * shared topology already does for its single engine: replace it while idle,
-   * refuse while a run owns it. Without this, the revision is enforced only on
-   * cold start and any reuse silently serves the previous skill set.
+   * shared topology already does for its single engine: replace it while idle.
+   * While a run owns the process, preserve that binding and defer the newer
+   * view; otherwise ordinary sends would turn a non-destructive content change
+   * into a failed activation.
    */
   private async reconcileSkillView(
     workspace: EngineWorkspace,
     engine: EngineProcess,
   ): Promise<EngineProcess | null> {
-    const requested = workspace.skillViewRevision;
+    const requested =
+      workspace.skillViewRevision ?? engine.pendingSkillViewRevision;
+    const requestedAuthorizationRevision =
+      workspace.authorizationRevision ?? engine.pendingAuthorizationRevision;
     // No handshake to enforce. Pool-internal restarts land here, and so does
     // any caller that legitimately has no server-published view yet.
-    if (!requested) return null;
-    if (engine.skillViewRevision === requested) return null;
+    if (!requested && !requestedAuthorizationRevision) return null;
+    if (
+      (!requested || engine.skillViewRevision === requested) &&
+      (!requestedAuthorizationRevision || engine.authorizationRevision === requestedAuthorizationRevision)
+    ) return null;
 
     if (this.deps.hasActiveRuns?.(engine.engineOwnerId)) {
+      engine.pendingSkillViewRevision = requested;
+      engine.pendingAuthorizationRevision = requestedAuthorizationRevision;
       this.deps.log?.("engine skill view busy", {
         workspaceId: workspace.id,
         engineOwnerId: engine.engineOwnerId,
         engineRevision: engine.skillViewRevision ?? null,
         requestedRevision: requested,
+        engineAuthorizationRevision: engine.authorizationRevision ?? null,
+        requestedAuthorizationRevision: requestedAuthorizationRevision ?? null,
       });
       writeSpawnDiag("ensure-skill-view-busy", {
         workspaceId: workspace.id,
+        engineOwnerId: engine.engineOwnerId,
         engineRevision: engine.skillViewRevision ?? null,
+        pendingRevision: engine.pendingSkillViewRevision ?? null,
+        pendingAuthorizationRevision: engine.pendingAuthorizationRevision ?? null,
         requestedRevision: requested,
+        outcome: "reload-deferred",
       });
-      throw new Error(
-        "skill_view_busy: workspace engine is running a job staged from a different skill view",
-      );
+      return null;
     }
 
     this.deps.log?.("engine skill view restart", {
@@ -549,13 +628,35 @@ export class EnginePool {
       workspaceId: workspace.id,
       engineRevision: engine.skillViewRevision ?? null,
       requestedRevision: requested,
+      engineAuthorizationRevision: engine.authorizationRevision ?? null,
+      requestedAuthorizationRevision: requestedAuthorizationRevision ?? null,
+    });
+
+    // Validate before the old process is disposed. startOpencode validates a
+    // second time at spawn, but this preserves a healthy binding when a
+    // watcher candidate already violates direct-path containment.
+    await this.deps.validateSkillView?.({
+      ...workspace,
+      skillViewRevision: requested,
+      ...(requestedAuthorizationRevision
+        ? { authorizationRevision: requestedAuthorizationRevision }
+        : {}),
     });
 
     // Register the replacement flight before the first await. Tearing the old
     // engine down first would leave a window with no engine and no pending
     // flight, in which a concurrent caller starts a spawn for its own revision
     // and this caller then joins it — handing each of them the other's view.
-    return await this.startPending(workspace, true, async () => {
+    return await this.startPending(
+      {
+        ...workspace,
+        skillViewRevision: requested,
+        ...(requestedAuthorizationRevision
+          ? { authorizationRevision: requestedAuthorizationRevision }
+          : {}),
+      },
+      true,
+      async () => {
       if (this.engines.get(workspace.id) === engine) {
         this.engines.delete(workspace.id);
       }
@@ -569,7 +670,8 @@ export class EnginePool {
           });
         }
       }
-    });
+      },
+    );
   }
 
   /**
@@ -827,6 +929,8 @@ export class EnginePool {
     const port = await this.deps.findFreePort();
     const spawnedAt = this.deps.now();
     const engineOwnerId = randomUUID();
+    const directoryInstanceEpoch = (this.directoryInstanceEpochs.get(workspace.id) ?? 0) + 1;
+    this.directoryInstanceEpochs.set(workspace.id, directoryInstanceEpoch);
     writeSpawnDiag("engine-spawn-start", {
       workspaceId: workspace.id,
       workdir,
@@ -855,6 +959,9 @@ export class EnginePool {
       effectiveSandboxBackend,
       sandboxMode,
       sandboxFallbackReason,
+      skillViewRevision: spawnedSkillViewRevision,
+      authorizationRevision,
+      openCodeConfigDigest,
     } = await this.deps.spawnEngine({
       workspaceId: workspace.id,
       engineOwnerId,
@@ -864,6 +971,13 @@ export class EnginePool {
       ...(workspace.skillViewRevision
         ? { skillViewRevision: workspace.skillViewRevision }
         : {}),
+      ...(workspace.authorizationRevision
+        ? { authorizationRevision: workspace.authorizationRevision }
+        : {}),
+      ...(workspace.managedSkillStoreRoot
+        ? { managedSkillStoreRoot: workspace.managedSkillStoreRoot }
+        : {}),
+      ...(workspace.skillManifestPath ? { skillManifestPath: workspace.skillManifestPath } : {}),
     });
     const childKind = spawnedChildKind ?? "direct";
 
@@ -871,6 +985,7 @@ export class EnginePool {
     const engine: EngineProcess = {
       workspaceId: workspace.id,
       engineOwnerId,
+      directoryInstanceEpoch,
       pid: child.pid ?? 0,
       port,
       baseUrl,
@@ -882,9 +997,11 @@ export class EnginePool {
       ...(effectiveSandboxBackend !== undefined ? { effectiveSandboxBackend } : {}),
       ...(sandboxMode !== undefined ? { sandboxMode } : {}),
       ...(sandboxFallbackReason !== undefined ? { sandboxFallbackReason } : {}),
-      ...(workspace.skillViewRevision
-        ? { skillViewRevision: workspace.skillViewRevision }
+      ...(spawnedSkillViewRevision ?? workspace.skillViewRevision
+        ? { skillViewRevision: spawnedSkillViewRevision ?? workspace.skillViewRevision! }
         : {}),
+      ...(authorizationRevision ? { authorizationRevision } : {}),
+      ...(openCodeConfigDigest ? { openCodeConfigDigest } : {}),
       state: "spawning",
       spawnedAt,
       lastActivityAt: spawnedAt,
@@ -1129,7 +1246,23 @@ export class EnginePool {
     // Reconstruct EngineWorkspace from saved fields. workdir was set by
     // resolveWorkspace; we don't have original path here, but workdir IS the
     // resolved path so passing it as path is correct for re-resolution.
-    const workspace: EngineWorkspace = { id: workspaceId, path: engine.workdir };
+    // A pool-internal crash has no live server authorization handshake. Start
+    // from the explicit isolated empty contract; the next server-owned request
+    // may replace it with the current authorized serving binding.
+    const workspace: EngineWorkspace = {
+      id: workspaceId,
+      path: engine.workdir,
+      skillViewRevision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+      authorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+    };
+    this.deps.log?.("engine crash recovery using empty skill binding", {
+      workspaceId,
+      previousSkillViewRevision: engine.skillViewRevision ?? null,
+      previousAuthorizationRevision: engine.authorizationRevision ?? null,
+      recoverySkillViewRevision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+      recoveryAuthorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+      reasonCode: "crash_recovery_without_authorization_handshake",
+    });
     try {
       await this.startPending(workspace, false);
     } catch (err) {

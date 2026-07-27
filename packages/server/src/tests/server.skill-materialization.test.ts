@@ -11,6 +11,10 @@ import {
   VESLO_AUTOMATIONS_PLATFORM_SKILL,
   getPlatformManagedPersonalGlobalSkillSet,
 } from "../platform-managed-skills.js";
+import {
+  EMPTY_SERVING_RUNTIME_AUTHORIZATION_REVISION,
+  EMPTY_SERVING_RUNTIME_SKILL_VIEW_REVISION,
+} from "../active-runtime-skill-view.js";
 import { startServer } from "../server.js";
 import type { WorkspaceSkillLockfile } from "../workspace-skill-lockfile.js";
 
@@ -83,6 +87,7 @@ async function startFixture(input: { registryBaseUrl?: string } = {}) {
   const server = startServer({
     host: "127.0.0.1",
     port: 0,
+    dataDir,
     token: "client-token",
     hostToken: "host-token",
     approval: { mode: "auto", timeoutMs: 1_000 },
@@ -976,11 +981,13 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
       if (url.pathname === "/v1/workspaces/ws_1/skill-set") {
         return Response.json({
           workspaceId: "ws_1",
+          revision: "rev_1",
           skills: [
             {
               installationId: "install_1",
               skillId: "skill_1",
               versionId: "version_1",
+              packageSha256: pkg.packageSha256,
               enabled: true,
               source: "workspace",
               installedAt: "2026-05-26T12:00:00.000Z",
@@ -1111,6 +1118,94 @@ test("POST /workspace/:id/skills/materialization/sync downloads desired packages
       user: "user_1",
     },
   ]);
+
+  const repeatedResponse = await fetch(
+    `http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`,
+    {
+      method: "POST",
+      headers: {
+        "x-veslo-host-token": "host-token",
+        "x-veslo-den-org-id": "org_1",
+        "x-veslo-den-user-id": "user_1",
+      },
+    },
+  );
+  expect(repeatedResponse.status).toBe(200);
+  await expect(repeatedResponse.json()).resolves.toMatchObject({
+    status: "synced",
+    synced: true,
+    reloadRequired: false,
+    removedSkillNames: [],
+    backupDirs: [],
+  });
+  expect(
+    registryCalls.filter(
+      (call) => call.pathname === "/v1/skill-versions/version_1/package",
+    ),
+  ).toHaveLength(1);
+
+  const currentResponse = await fetch(
+    `http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization`,
+    { headers: { Authorization: "Bearer client-token" } },
+  );
+  await expect(currentResponse.json()).resolves.toMatchObject({
+    status: "current",
+    registryConfigured: true,
+    workspaceRegistryConfigured: true,
+    servingRevision: "rev_1",
+    reloadRequired: false,
+  });
+
+  const managedSkillPath = join(
+    workspaceRoot,
+    ".opencode",
+    "skills",
+    "veslo-managed",
+    "registry-tool",
+    "SKILL.md",
+  );
+  await rm(managedSkillPath);
+  const repairResponse = await fetch(
+    `http://127.0.0.1:${server.port}/workspace/ws_1/skills/materialization/sync`,
+    {
+      method: "POST",
+      headers: {
+        "x-veslo-host-token": "host-token",
+        "x-veslo-den-org-id": "org_1",
+        "x-veslo-den-user-id": "user_1",
+      },
+    },
+  );
+  expect(repairResponse.status).toBe(200);
+  await expect(repairResponse.json()).resolves.toMatchObject({
+    status: "synced",
+    synced: true,
+    reloadRequired: true,
+  });
+  expect(await readFile(managedSkillPath, "utf8")).toContain("# registry-tool");
+});
+
+test("POST /workspace/:id/skills/runtime-view returns the complete canonical empty binding", async () => {
+  const { server } = await startFixture();
+
+  const response = await fetch(`http://127.0.0.1:${server.port}/workspace/ws_1/skills/runtime-view`, {
+    method: "POST",
+    headers: { Authorization: "Bearer client-token" },
+  });
+
+  expect(response.status).toBe(200);
+  const payload = await response.json() as {
+    ready: boolean;
+    revision: string;
+    authorizationRevision: string;
+    activeCount: number;
+  };
+  expect(payload).toMatchObject({
+    ready: true,
+    revision: EMPTY_SERVING_RUNTIME_SKILL_VIEW_REVISION,
+    authorizationRevision: EMPTY_SERVING_RUNTIME_AUTHORIZATION_REVISION,
+    activeCount: 0,
+  });
 });
 
 test("POST /workspace/:id/skills/materialization/sync reports rollout target conflicts", async () => {
@@ -1720,7 +1815,7 @@ test("POST workspace materialization sync skips out-of-scope user rollout packag
   }
 });
 
-test("GET workspace materialization status stays pending when registry exposes the workspace skill set", async () => {
+test("GET workspace materialization status is local and never queries the registry", async () => {
   const registryCalls: string[] = [];
   const registry = Bun.serve({
     hostname: "127.0.0.1",
@@ -1756,13 +1851,13 @@ test("GET workspace materialization status stays pending when registry exposes t
     reloadRequired: boolean;
   };
   expect(payload.registryConfigured).toBe(true);
-  expect(payload.workspaceRegistryConfigured).toBe(true);
-  expect(payload.status).toBe("pending");
-  expect(payload.reloadRequired).toBe(true);
-  expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
+  expect(payload.workspaceRegistryConfigured).toBe(false);
+  expect(payload.status).toBe("stale");
+  expect(payload.reloadRequired).toBe(false);
+  expect(registryCalls).toEqual([]);
 });
 
-test("GET workspace materialization status does not require sync when registry has no workspace skill set", async () => {
+test("GET workspace materialization status does not query an unavailable registry", async () => {
   const registryCalls: string[] = [];
   const registry = Bun.serve({
     hostname: "127.0.0.1",
@@ -1798,22 +1893,16 @@ test("GET workspace materialization status does not require sync when registry h
     };
   };
   expect(payload).toMatchObject({
-    status: "not-configured",
+    status: "stale",
     registryConfigured: true,
     workspaceRegistryConfigured: false,
     reloadRequired: false,
-    registryError: {
-      code: "skill_registry_not_found",
-      status: 404,
-      registryAction: "read",
-      registryResource: "workspace-skill-set",
-      registryScope: "workspace",
-    },
   });
-  expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
+  expect(payload.registryError).toBeUndefined();
+  expect(registryCalls).toEqual([]);
 });
 
-test("GET workspace materialization status degrades when registry lookup fails", async () => {
+test("GET workspace materialization status remains locally readable during a registry outage", async () => {
   const registryCalls: string[] = [];
   const registry = Bun.serve({
     hostname: "127.0.0.1",
@@ -1844,18 +1933,12 @@ test("GET workspace materialization status degrades when registry lookup fails",
     };
   };
   expect(payload).toMatchObject({
-    status: "degraded",
+    status: "stale",
     registryConfigured: true,
     reloadRequired: false,
-    registryError: {
-      code: "skill_registry_fetch_failed",
-      status: 502,
-      registryAction: "read",
-      registryResource: "workspace-skill-set",
-      registryScope: "workspace",
-    },
   });
-  expect(registryCalls).toEqual(["/v1/workspaces/ws_1/skill-set"]);
+  expect(payload.registryError).toBeUndefined();
+  expect(registryCalls).toEqual([]);
 });
 
 test("POST workspace materialization sync degrades when configured registry does not expose the workspace resource", async () => {

@@ -1,12 +1,11 @@
 import { recordAudit } from "../audit.js";
 import {
-  ensureActiveRuntimeSkillView,
   invalidateActiveRuntimeSkillView,
+  readServingRuntimeSkillBinding,
 } from "../active-runtime-skill-view.js";
+import { fenceRuntimeSkillAuthorization } from "../runtime-skill-revocation-fence.js";
 import { ApiError } from "../errors.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
-import { workspaceResourceOwner } from "../resource-owner.js";
-import { listDisabledSkills } from "../skill-enabled-overrides.js";
 import {
   readSkillRegistryRequestInput as skillRegistryRequestInput,
   requireSkillRegistryRequestBaseUrl,
@@ -276,20 +275,6 @@ export function registerSkillRemovalRoutes(
     workspace: WorkspaceInfo,
   ): Promise<void> => {
     invalidateActiveRuntimeSkillView(workspace);
-    await ensureActiveRuntimeSkillView(workspace, {
-      disabledSkills: await listDisabledSkills({
-        dataDir: serverDataDir,
-        workspaceId: workspace.id,
-        includeGlobal: true,
-      }),
-      workspaceId: workspace.id,
-      workspaceOwner: workspaceResourceOwner({
-        workspaceId: workspace.id,
-        root: workspace.path,
-        label: workspace.name,
-      }),
-      forceRefresh: true,
-    });
   };
 
   addRoute(routes, "GET", "/skill-removals", "hostOrClient", async (ctx) => {
@@ -444,9 +429,20 @@ export function registerSkillRemovalRoutes(
     ctx: RequestContext,
     item: SkillBatchRemoveItem,
   ): Promise<SkillBatchRemoveSuccess> => {
+    const fenceServingBindings = async (workspaces: WorkspaceInfo[]): Promise<void> => {
+      for (const workspace of workspaces) {
+        const binding = await readServingRuntimeSkillBinding(workspace, { dataDir: serverDataDir });
+        if (binding) await fenceRuntimeSkillAuthorization({
+          dataDir: serverDataDir,
+          workspaceId: workspace.id,
+          authorizationRevision: binding.authorizationRevision,
+        });
+      }
+    };
     const installationId = item.registry?.installationId?.trim() ?? "";
     if (installationId) {
       requireSkillRegistryRequestBaseUrl(ctx);
+      await fenceServingBindings(ctx.config.workspaces.filter((workspace) => workspace.workspaceType === "local"));
       await deleteRegistrySkillInstallation({
         ...skillRegistryRequestInput(ctx),
         installationId,
@@ -471,6 +467,7 @@ export function registerSkillRemovalRoutes(
     const policyId = item.registry?.policyId?.trim() ?? "";
     if (policyId) {
       requireSkillRegistryRequestBaseUrl(ctx);
+      await fenceServingBindings(ctx.config.workspaces.filter((workspace) => workspace.workspaceType === "local"));
       await updateRegistrySkillRolloutPolicy({
         ...skillRegistryRequestInput(ctx),
         policyId,
@@ -507,6 +504,7 @@ export function registerSkillRemovalRoutes(
         workspace.path,
         "workspace-skill-batch-delete",
         async () => {
+          await fenceServingBindings([workspace]);
           const result = item.path
             ? await deleteSkillAtPathRecoverable(
                 workspace.path,

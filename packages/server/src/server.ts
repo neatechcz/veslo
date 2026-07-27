@@ -29,8 +29,12 @@ import {
   updateSkillAtPath,
 } from "./skills.js";
 import {
-  ensureActiveRuntimeSkillView,
+  EMPTY_SERVING_RUNTIME_SKILL_BINDING,
+  discardRuntimeSkillCandidate,
   invalidateActiveRuntimeSkillView,
+  prepareRuntimeSkillCandidate,
+  publishValidatedRuntimeSkillCandidate,
+  readServingRuntimeSkillBinding,
 } from "./active-runtime-skill-view.js";
 import { installHubSkill } from "./skill-hub.js";
 import {
@@ -66,9 +70,17 @@ import {
   VESLO_GATEWAY_AUTHORIZATION_HEADER as GATEWAY_CALLER_AUTH_HEADER,
   VESLO_GATEWAY_TOKEN_HEADER as GATEWAY_ACCESS_TOKEN_HEADER,
   VESLO_HOST_TOKEN_HEADER,
+  VESLO_ENGINE_AUTHORIZATION_REVISION_HEADER,
+  VESLO_ENGINE_CONFIG_DIGEST_HEADER,
+  VESLO_ENGINE_DIRECTORY_INSTANCE_EPOCH_HEADER,
+  VESLO_ENGINE_SKILL_VIEW_REVISION_HEADER,
+  VESLO_MANAGED_SKILL_STORE_ROOT_HEADER,
   VESLO_ORG_ID_HEADER,
+  VESLO_RUNTIME_SKILL_OPERATION_ID_HEADER,
   VESLO_SEND_TRACE_ID_HEADER,
   VESLO_SESSION_ID_HEADER as GATEWAY_SESSION_ID_HEADER,
+  VESLO_SKILL_AUTHORIZATION_REVISION_HEADER,
+  VESLO_SKILL_VIEW_REVISION_HEADER,
   VESLO_USER_ID_HEADER,
   VESLO_WORKSPACE_ID_HEADER as GATEWAY_WORKSPACE_ID_HEADER,
 } from "./request-headers.js";
@@ -186,6 +198,7 @@ import {
 } from "./debug-log-pipeline.js";
 import { validateDebugLogBatch } from "./debug-log-events.js";
 import { ReloadEventStore } from "./events.js";
+import { startReloadWatchers } from "./reload-watcher.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, vesloConfigPath } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
@@ -1269,6 +1282,232 @@ export function startServer(config: ServerConfig) {
     stop: (closeActiveConnections?: boolean) => void;
   };
   const server = Bun.serve(serverOptions) as StoppableServer;
+  const watcherReloadTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const watcherReloadInFlight = new Set<string>();
+  const watcherReloadDirty = new Set<string>();
+  const watcherReloadCircuitOpenUntil = new Map<string, number>();
+  const watcherReloadOperationIds = new Map<string, string>();
+  // A filesystem/policy hint supersedes an in-flight candidate for its
+  // workspace. This only fences local asynchronous work; policy itself
+  // remains the durable source of truth.
+  const watcherReloadGenerations = new Map<string, number>();
+  // A long active run must not make a skill change disappear after the bounded
+  // polling window. Keep only the newest workspace identity and resume from
+  // the lifecycle owner's terminal/idle notification.
+  const watcherReloadAwaitingIdle = new Map<string, WorkspaceInfo>();
+  let watcherReloadsStopped = false;
+  const scheduleWatcherSkillReload = (
+    workspace: WorkspaceInfo,
+    blockedAttempt = 0,
+    failedAttempt = 0,
+    delayMs = 0,
+    resetScheduledDelay = false,
+  ): void => {
+    const generation = watcherReloadGenerations.get(workspace.id) ?? 0;
+    const scheduled = watcherReloadTimers.get(workspace.id);
+    if (scheduled && resetScheduledDelay) {
+      clearTimeout(scheduled);
+      watcherReloadTimers.delete(workspace.id);
+    }
+    if (
+      watcherReloadsStopped ||
+      watcherReloadTimers.has(workspace.id) ||
+      watcherReloadInFlight.has(workspace.id)
+    ) return;
+    const circuitOpenUntil = watcherReloadCircuitOpenUntil.get(workspace.id) ?? 0;
+    const now = Date.now();
+    // A retry queued by the budget-exhaustion path is the circuit's wake-up.
+    // Do not discard it just because the circuit is still open at scheduling
+    // time; defer it until the circuit closes instead.
+    if (circuitOpenUntil > now) {
+      delayMs = Math.max(delayMs, circuitOpenUntil - now + 50);
+    } else if (circuitOpenUntil) {
+      watcherReloadCircuitOpenUntil.delete(workspace.id);
+    }
+    const timer = setTimeout(() => {
+      watcherReloadTimers.delete(workspace.id);
+      if (watcherReloadGenerations.get(workspace.id) !== generation) return;
+      watcherReloadInFlight.add(workspace.id);
+      void (async () => {
+        const runtimeSkillOperationId = watcherReloadOperationIds.get(workspace.id) ?? randomUUID();
+        watcherReloadOperationIds.set(workspace.id, runtimeSkillOperationId);
+        let retry: [blockedAttempt: number, failedAttempt: number, delayMs: number] | null = null;
+        let candidateView: Awaited<ReturnType<typeof prepareRuntimeSkillCandidate>> | null = null;
+        try {
+          logger.log("info", "Skill watcher reconciliation started", {
+            workspaceId: workspace.id,
+            runtimeSkillOperationId,
+            blockedAttempt,
+            failedAttempt,
+          });
+          // Candidate discovery must never overwrite the durable serving view.
+          // The direct orchestrator validates this sidecar and starts the new
+          // process from it before we atomically promote it to LKG.
+          invalidateActiveRuntimeSkillView(workspace);
+          const preparedCandidate = await prepareRuntimeSkillCandidate(workspace, {
+            dataDir: config.dataDir,
+            disabledSkills: await listDisabledSkills({
+              dataDir: config.dataDir,
+              workspaceId: workspace.id,
+              includeGlobal: true,
+            }),
+            workspaceId: workspace.id,
+            workspaceOwner: workspaceResourceOwner({
+              workspaceId: workspace.id,
+              root: workspace.path,
+              label: workspace.name,
+            }),
+          });
+          candidateView = preparedCandidate;
+          if (watcherReloadGenerations.get(workspace.id) !== generation) {
+            logger.log("info", "Skill watcher reconciliation superseded before reload", {
+              workspaceId: workspace.id,
+              runtimeSkillOperationId,
+              generation,
+              currentGeneration: watcherReloadGenerations.get(workspace.id) ?? null,
+              outcome: "superseded",
+              reasonCode: "candidate_superseded",
+            });
+            return;
+          }
+          const result = await conversationRunLifecycleController.reloadWorkspaceEngineIfIdle({
+            workspaceId: workspace.id,
+            reload: async () => {
+              await reloadOpencodeEngine(workspace, {
+                fallbackBaseUrl: buildOrchestratorWorkspaceOpencodeBaseUrl(
+                  config,
+                  workspace,
+                ),
+                ifRunning: true,
+                skillViewRevision: preparedCandidate.revision,
+                authorizationRevision: preparedCandidate.authorizationRevision,
+                runtimeSkillOperationId,
+                skillManifestPath: preparedCandidate.manifestPath,
+                managedSkillStoreRoot: join(config.dataDir ?? resolveVesloDataDir(), "skill-package-store"),
+              });
+            },
+          });
+          if (result.kind === "blocked") {
+            watcherReloadAwaitingIdle.set(workspace.id, workspace);
+            if (blockedAttempt >= 60) {
+              logger.log("warn", "Skill watcher reload remained blocked", {
+                workspaceId: workspace.id,
+                attempts: blockedAttempt + 1,
+                reason: result.reason,
+                reasonCode: "reload_active_run_deferred",
+                runtimeSkillOperationId,
+              });
+              return;
+            }
+            retry = [blockedAttempt + 1, failedAttempt, 1_000];
+          } else {
+            watcherReloadAwaitingIdle.delete(workspace.id);
+            watcherReloadCircuitOpenUntil.delete(workspace.id);
+            if (watcherReloadGenerations.get(workspace.id) !== generation) {
+              return;
+            }
+            await publishValidatedRuntimeSkillCandidate(preparedCandidate);
+            candidateView = null;
+            logger.log("info", "Skill watcher reconciliation settled", {
+              workspaceId: workspace.id,
+              runtimeSkillOperationId,
+              skillViewRevision: preparedCandidate.revision,
+              authorizationRevision: preparedCandidate.authorizationRevision,
+            });
+            if (watcherReloadOperationIds.get(workspace.id) === runtimeSkillOperationId) {
+              watcherReloadOperationIds.delete(workspace.id);
+            }
+          }
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          const nextFailedAttempt = failedAttempt + 1;
+          logger.log("warn", "Skill watcher reload failed", {
+            workspaceId: workspace.id,
+            attempt: nextFailedAttempt,
+            budgetRemaining: Math.max(0, 3 - nextFailedAttempt),
+            reasonCode: detail.split(":", 1)[0] || "reload_verification_failed",
+            error: detail,
+            runtimeSkillOperationId,
+          });
+          if (nextFailedAttempt < 3) {
+            retry = [
+              blockedAttempt,
+              nextFailedAttempt,
+              2 ** (nextFailedAttempt - 1) * 1_000,
+            ];
+          } else {
+            const circuitOpenUntil = Date.now() + 30_000;
+            watcherReloadCircuitOpenUntil.set(workspace.id, circuitOpenUntil);
+            logger.log("warn", "Skill watcher reconciliation budget exhausted", {
+              workspaceId: workspace.id,
+              attempts: nextFailedAttempt,
+              reasonCode: "reconcile_budget_exhausted",
+              circuitOpenUntil: new Date(circuitOpenUntil).toISOString(),
+              runtimeSkillOperationId,
+            });
+            // Resume exactly once after the circuit closes. A newer watcher or
+            // policy event supersedes this generation and clears the circuit
+            // immediately in requestWatcherSkillReconcile.
+            retry = [blockedAttempt, 0, 30_050];
+          }
+        } finally {
+          if (candidateView) await discardRuntimeSkillCandidate(candidateView);
+          watcherReloadInFlight.delete(workspace.id);
+          if (watcherReloadDirty.delete(workspace.id)) {
+            // The newest event arrived while validation/reload was in flight.
+            // It still needs a full quiet period before becoming a candidate.
+            scheduleWatcherSkillReload(workspace, 0, 0, 750, true);
+          } else if (retry) {
+            scheduleWatcherSkillReload(workspace, ...retry);
+          }
+        }
+      })();
+    }, delayMs);
+    timer.unref?.();
+    watcherReloadTimers.set(workspace.id, timer);
+  };
+  const requestWatcherSkillReconcile = (workspace: WorkspaceInfo): void => {
+    // Invalidate immediately even when a prior idle retry is queued, so the
+    // eventual publication sees the newest nested source or policy state.
+    invalidateActiveRuntimeSkillView(workspace);
+    watcherReloadCircuitOpenUntil.delete(workspace.id);
+    watcherReloadGenerations.set(
+      workspace.id,
+      (watcherReloadGenerations.get(workspace.id) ?? 0) + 1,
+    );
+    watcherReloadOperationIds.set(workspace.id, randomUUID());
+    if (watcherReloadInFlight.has(workspace.id)) {
+      watcherReloadDirty.add(workspace.id);
+    }
+    // Both filesystem and control-plane changes are hints, not stable
+    // candidates. Wait for the full quiet period before validating a view.
+    scheduleWatcherSkillReload(workspace, 0, 0, 750, true);
+  };
+  const unsubscribeWatcherReloadOnIdle = conversationRunLifecycleController.subscribeWorkspaceIdle(
+    (workspaceId) => {
+      const workspace = watcherReloadAwaitingIdle.get(workspaceId);
+      if (!workspace || watcherReloadsStopped) return;
+      // The lifecycle controller has just observed the final reservation leave
+      // this workspace. This is completion-driven rather than another
+      // unbounded active-run retry loop.
+      scheduleWatcherSkillReload(workspace);
+    },
+  );
+  const unsubscribeReloadEventReconcile = reloadEvents.subscribe((event) => {
+    if (event.reason !== "skills") return;
+    const workspace = config.workspaces.find((candidate) => candidate.id === event.workspaceId);
+    if (!workspace || workspace.workspaceType !== "local") return;
+    requestWatcherSkillReconcile(workspace);
+  });
+  const reloadWatchers = startReloadWatchers({
+    config,
+    reloadEvents,
+    logger,
+    onReloadHint: (workspace, reason) => {
+      if (reason !== "skills") return;
+      requestWatcherSkillReconcile(workspace);
+    },
+  });
   conversationRunLifecycleController.start();
   void automationRunner.start().catch((error) => {
     logger.log("error", "automation runner start failed", {
@@ -1306,6 +1545,18 @@ export function startServer(config: ServerConfig) {
   const originalStop = server.stop.bind(server);
   const stopBridge = bridgeServer ? bridgeServer.stop.bind(bridgeServer) : null;
   server.stop = (closeActiveConnections?: boolean) => {
+    watcherReloadsStopped = true;
+    for (const timer of watcherReloadTimers.values()) clearTimeout(timer);
+    watcherReloadTimers.clear();
+    watcherReloadInFlight.clear();
+    watcherReloadDirty.clear();
+    watcherReloadAwaitingIdle.clear();
+    watcherReloadCircuitOpenUntil.clear();
+    watcherReloadOperationIds.clear();
+    watcherReloadGenerations.clear();
+    unsubscribeWatcherReloadOnIdle();
+    unsubscribeReloadEventReconcile();
+    reloadWatchers.close();
     conversationRunLifecycleController.stop();
     automationRunner.stop();
     if (stopBridge) {
@@ -1364,6 +1615,22 @@ function isWorkspaceOpencodeProxyUrl(url: URL, workspaceId: string): boolean {
   }
 }
 
+export function ordinaryEngineSkillBindingAccepted(input: {
+  expectedRevision: string;
+  expectedAuthorizationRevision: string;
+  actualRevision: string;
+  actualAuthorizationRevision: string;
+}): boolean {
+  const exact =
+    input.actualRevision === input.expectedRevision &&
+    input.actualAuthorizationRevision === input.expectedAuthorizationRevision;
+  const canonicalEmpty =
+    input.actualRevision === EMPTY_SERVING_RUNTIME_SKILL_BINDING.revision &&
+    input.actualAuthorizationRevision ===
+      EMPTY_SERVING_RUNTIME_SKILL_BINDING.authorizationRevision;
+  return exact || canonicalEmpty;
+}
+
 async function fetchOpencodeJson(
   workspace: WorkspaceInfo,
   path: string,
@@ -1374,10 +1641,15 @@ async function fetchOpencodeJson(
     maxResponseBytes?: number;
     timeoutMs?: number;
     sendTraceId?: string | null;
+    /** One request-scoped id shared with app send tracing and admission. */
+    runtimeSkillOperationId?: string | null;
     conversationRunId?: string | null;
     captureEngineOwner?: (owner: ConversationWorkspaceRunEngineOwner) => void;
     /** Server-owned assertion about the published runtime skill view. */
     skillViewRevision?: string | null;
+    /** Server-owned authorization binding paired with the runtime skill view. */
+    authorizationRevision?: string | null;
+    managedSkillStoreRoot?: string | null;
     orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
   },
 ) {
@@ -1399,6 +1671,7 @@ async function fetchOpencodeJson(
       workspace.id,
     ),
   );
+  const usesOrchestratorWorkspaceProxy = isWorkspaceOpencodeProxyUrl(url, workspace.id);
 
   const headers = new Headers();
   headers.set(CONTENT_TYPE_HEADER, "application/json");
@@ -1406,16 +1679,28 @@ async function fetchOpencodeJson(
   if (sendTraceId) {
     headers.set(VESLO_SEND_TRACE_ID_HEADER, sendTraceId);
   }
+  const runtimeSkillOperationId = init.runtimeSkillOperationId?.trim() || sendTraceId;
+  if (runtimeSkillOperationId && usesOrchestratorWorkspaceProxy) {
+    headers.set(VESLO_RUNTIME_SKILL_OPERATION_ID_HEADER, runtimeSkillOperationId);
+  }
   const conversationRunId = init.conversationRunId?.trim() ?? "";
   const shouldSendConversationRunId = Boolean(
-    conversationRunId && isWorkspaceOpencodeProxyUrl(url, workspace.id),
+    conversationRunId && usesOrchestratorWorkspaceProxy,
   );
   if (shouldSendConversationRunId) {
     headers.set(VESLO_CONVERSATION_RUN_ID_HEADER, conversationRunId);
   }
   const skillViewRevision = init.skillViewRevision?.trim() ?? "";
-  if (skillViewRevision && isWorkspaceOpencodeProxyUrl(url, workspace.id)) {
-    headers.set("x-veslo-skill-view-revision", skillViewRevision);
+  if (skillViewRevision && usesOrchestratorWorkspaceProxy) {
+    headers.set(VESLO_SKILL_VIEW_REVISION_HEADER, skillViewRevision);
+  }
+  const authorizationRevision = init.authorizationRevision?.trim() ?? "";
+  if (authorizationRevision && usesOrchestratorWorkspaceProxy) {
+    headers.set(VESLO_SKILL_AUTHORIZATION_REVISION_HEADER, authorizationRevision);
+  }
+  const managedSkillStoreRoot = init.managedSkillStoreRoot?.trim() ?? "";
+  if (managedSkillStoreRoot && isWorkspaceOpencodeProxyUrl(url, workspace.id)) {
+    headers.set(VESLO_MANAGED_SKILL_STORE_ROOT_HEADER, managedSkillStoreRoot);
   }
 
   const directoryOverride = init.directory?.trim() ?? "";
@@ -1433,10 +1718,12 @@ async function fetchOpencodeJson(
 
   const timeoutMs = init.timeoutMs ?? resolveOpenCodeJsonFetchTimeoutMs();
   const requestStartedAt = Date.now();
+  const workspaceTrace = runtimeWorkspaceTraceIdentity(workspace);
   recordSendWorkflowTrace("server", "server:opencode-json:start", {
     traceId: sendTraceId || null,
     workspaceId: workspace.id,
     workspaceType: workspace.workspaceType,
+    ...workspaceTrace,
     method: init.method,
     path,
     targetUrl: url.toString(),
@@ -1468,18 +1755,91 @@ async function fetchOpencodeJson(
       response.headers.get("x-veslo-engine-slot-id")?.trim() ?? "";
     const engineOwnerId =
       response.headers.get("x-veslo-engine-owner-id")?.trim() ?? "";
+    const engineDirectoryInstanceEpochRaw =
+      response.headers.get(VESLO_ENGINE_DIRECTORY_INSTANCE_EPOCH_HEADER)?.trim() ?? "";
     const enginePidRaw =
       response.headers.get("x-veslo-engine-pid")?.trim() ?? "";
     const engineStartedAtRaw =
       response.headers.get("x-veslo-engine-started-at")?.trim() ?? "";
     const engineBaseUrl =
       response.headers.get("x-veslo-engine-base-url")?.trim() ?? "";
+    const engineSkillViewRevision =
+      response.headers.get(VESLO_ENGINE_SKILL_VIEW_REVISION_HEADER)?.trim() ?? "";
+    const engineAuthorizationRevision =
+      response.headers.get(VESLO_ENGINE_AUTHORIZATION_REVISION_HEADER)?.trim() ?? "";
+    const engineOpenCodeConfigDigest =
+      response.headers.get(VESLO_ENGINE_CONFIG_DIGEST_HEADER)?.trim() ?? "";
+    const engineBindingAccepted = ordinaryEngineSkillBindingAccepted({
+      expectedRevision: skillViewRevision,
+      expectedAuthorizationRevision: authorizationRevision,
+      actualRevision: engineSkillViewRevision,
+      actualAuthorizationRevision: engineAuthorizationRevision,
+    });
+    if (
+      response.ok &&
+      usesOrchestratorWorkspaceProxy &&
+      (skillViewRevision || authorizationRevision) &&
+      !engineBindingAccepted
+    ) {
+      recordSendWorkflowTrace(
+        "server",
+        "server:runtime-skill-admission-rejected",
+        {
+          traceId: sendTraceId || null,
+          workspaceId: workspace.id,
+          method: init.method,
+          path,
+          expectedSkillViewRevision: skillViewRevision || null,
+          expectedAuthorizationRevision: authorizationRevision || null,
+          actualSkillViewRevision: engineSkillViewRevision || null,
+          actualAuthorizationRevision: engineAuthorizationRevision || null,
+          upstreamStatus: response.status,
+        },
+      );
+    }
+    if (
+      response.ok &&
+      usesOrchestratorWorkspaceProxy &&
+      skillViewRevision &&
+      !engineBindingAccepted &&
+      engineSkillViewRevision !== skillViewRevision
+    ) {
+      throw new ApiError(
+        409,
+        "admission_binding_changed",
+        "The runtime engine is not bound to the requested skill view",
+        {
+          expectedSkillViewRevision: skillViewRevision,
+          actualSkillViewRevision: engineSkillViewRevision || null,
+        },
+      );
+    }
+    if (
+      response.ok &&
+      usesOrchestratorWorkspaceProxy &&
+      authorizationRevision &&
+      !engineBindingAccepted &&
+      engineAuthorizationRevision !== authorizationRevision
+    ) {
+      throw new ApiError(
+        409,
+        "admission_binding_changed",
+        "The runtime engine is not bound to the requested skill authorization",
+        {
+          expectedAuthorizationRevision: authorizationRevision,
+          actualAuthorizationRevision: engineAuthorizationRevision || null,
+        },
+      );
+    }
     const enginePid = Number.parseInt(enginePidRaw, 10);
     const engineStartedAt = Number.parseInt(engineStartedAtRaw, 10);
+    const engineDirectoryInstanceEpoch = Number.parseInt(engineDirectoryInstanceEpochRaw, 10);
     if (
       response.ok &&
       engineSlotId &&
-      engineOwnerId &&
+        engineOwnerId &&
+      Number.isSafeInteger(engineDirectoryInstanceEpoch) &&
+      engineDirectoryInstanceEpoch > 0 &&
       Number.isSafeInteger(enginePid) &&
       enginePid > 0 &&
       Number.isSafeInteger(engineStartedAt) &&
@@ -1489,9 +1849,13 @@ async function fetchOpencodeJson(
       init.captureEngineOwner?.({
         engineSlotId,
         engineOwnerId,
+        directoryInstanceEpoch: engineDirectoryInstanceEpoch,
         enginePid,
         engineStartedAt,
         engineBaseUrl,
+        skillViewRevision: engineSkillViewRevision || null,
+        authorizationRevision: engineAuthorizationRevision || null,
+        openCodeConfigDigest: engineOpenCodeConfigDigest || null,
       });
     }
 
@@ -1542,9 +1906,13 @@ async function fetchOpencodeJson(
       recordSendWorkflowTrace("server", "server:opencode-json:error-status", {
         traceId: sendTraceId || null,
         workspaceId: workspace.id,
+        ...workspaceTrace,
         method: init.method,
         path,
         status: response.status,
+        upstreamErrorCode: isRecordLike(json) && typeof json.error === "string" && /^[a-z0-9_-]{1,80}$/i.test(json.error)
+          ? json.error
+          : null,
         durationMs: Date.now() - requestStartedAt,
       });
       const localLifecycleBody = isRecordLike(json) ? json : null;
@@ -1596,6 +1964,7 @@ async function fetchOpencodeJson(
     recordSendWorkflowTrace("server", "server:opencode-json:done", {
       traceId: sendTraceId || null,
       workspaceId: workspace.id,
+      ...workspaceTrace,
       method: init.method,
       path,
       status: response.status,
@@ -1608,6 +1977,7 @@ async function fetchOpencodeJson(
       recordSendWorkflowTrace("server", "server:opencode-json:timeout", {
         traceId: sendTraceId || null,
         workspaceId: workspace.id,
+        ...workspaceTrace,
         method: init.method,
         path,
         timeoutMs,
@@ -1626,6 +1996,7 @@ async function fetchOpencodeJson(
     recordSendWorkflowTrace("server", "server:opencode-json:error", {
       traceId: sendTraceId || null,
       workspaceId: workspace.id,
+      ...workspaceTrace,
       method: init.method,
       path,
       error: error instanceof Error ? error.message : String(error),
@@ -1759,12 +2130,14 @@ async function performOrchestratorWorkspaceRegistration(
   const timeoutMs = resolveOpenCodeJsonFetchTimeoutMs();
   const targetUrl = `${daemonUrl}/workspaces`;
   const requestStartedAt = Date.now();
+  const workspaceTrace = runtimeWorkspaceTraceIdentity(workspace);
   recordSendWorkflowTrace(
     "server",
     "server:orchestrator-workspace-register:start",
     {
       traceId: init.sendTraceId?.trim() || null,
       workspaceId,
+      ...workspaceTrace,
       method: init.method,
       timeoutMs,
     },
@@ -1974,6 +2347,10 @@ async function fetchOpencodeJsonWithOrchestratorFallback(
   path: string,
   init: Parameters<typeof fetchOpencodeJson>[2],
 ) {
+  const routedInit = {
+    ...init,
+    managedSkillStoreRoot: init.managedSkillStoreRoot ?? join(config.dataDir ?? resolveVesloDataDir(), "skill-package-store"),
+  };
   const orchestratorBaseUrl = buildOrchestratorWorkspaceOpencodeBaseUrl(
     config,
     workspace,
@@ -1982,10 +2359,10 @@ async function fetchOpencodeJsonWithOrchestratorFallback(
     orchestratorBaseUrl &&
     workspace.baseUrl?.trim() === orchestratorBaseUrl
   ) {
-    await ensureOrchestratorWorkspaceRegistered(config, workspace, init);
+    await ensureOrchestratorWorkspaceRegistered(config, workspace, routedInit);
   }
   try {
-    return await fetchOpencodeJson(workspace, path, init);
+    return await fetchOpencodeJson(workspace, path, routedInit);
   } catch (error) {
     const fallback = orchestratorFallbackWorkspace(config, workspace);
     if (!fallback || !shouldRetryOpenCodeViaOrchestrator(error)) {
@@ -2005,8 +2382,8 @@ async function fetchOpencodeJsonWithOrchestratorFallback(
         code: error instanceof ApiError ? error.code : null,
       },
     );
-    await ensureOrchestratorWorkspaceRegistered(config, workspace, init);
-    return await fetchOpencodeJson(fallback, path, init);
+    await ensureOrchestratorWorkspaceRegistered(config, workspace, routedInit);
+    return await fetchOpencodeJson(fallback, path, routedInit);
   }
 }
 
@@ -5239,7 +5616,7 @@ function createRoutes(
   const routes: Route[] = [];
   const serializeWorkspaceForResponse = (workspace: WorkspaceInfo) =>
     serializeWorkspace(workspace, config);
-  const serverDataDir = resolveVesloDataDir();
+  const serverDataDir = config.dataDir ?? resolveVesloDataDir();
   const fileSessions = new FileSessionStore();
   const sessionArchives = createSessionArchiveStore();
   const conversationReadStore = createConversationReadStore();
@@ -5272,6 +5649,12 @@ function createRoutes(
       const scopedWorkspace = directory
         ? { ...workspace, directory }
         : workspace;
+      const runtimeSkillView =
+        scopedWorkspace.workspaceType === "local"
+          ? await readServingRuntimeSkillBinding(scopedWorkspace, {
+              dataDir: config.dataDir,
+            }) ?? EMPTY_SERVING_RUNTIME_SKILL_BINDING
+          : null;
       return await fetchOpencodeJsonWithOrchestratorFallback(
         config,
         scopedWorkspace,
@@ -5280,6 +5663,10 @@ function createRoutes(
           method: "POST",
           timeoutMs: OPENCODE_SESSION_CREATE_TIMEOUT_MS,
           sendTraceId,
+          runtimeSkillOperationId: sendTraceId,
+          skillViewRevision: runtimeSkillView?.revision ?? null,
+          authorizationRevision:
+            runtimeSkillView?.authorizationRevision ?? null,
           orchestratorRegistrationScope,
           body: {
             ...(requestedOpenCodeSessionId?.trim()
@@ -5548,24 +5935,7 @@ function createRoutes(
     });
     const runtimeSkillView =
       workspace.workspaceType === "local"
-        ? await withWorkspaceSkillLease(
-            workspace.path,
-            "conversation-runtime-skill-view",
-            async () =>
-              ensureActiveRuntimeSkillView(workspace, {
-                disabledSkills: await listDisabledSkills({
-                  dataDir: serverDataDir,
-                  workspaceId: workspace.id,
-                  includeGlobal: true,
-                }),
-                workspaceId: workspace.id,
-                workspaceOwner: workspaceResourceOwner({
-                  workspaceId: workspace.id,
-                  root: workspace.path,
-                  label: workspace.name,
-                }),
-              }),
-          )
+        ? await readServingRuntimeSkillBinding(workspace, { dataDir: config.dataDir }) ?? EMPTY_SERVING_RUNTIME_SKILL_BINDING
         : null;
     runTrace.record("server:conversation-run:opencode-submit-body", {
       workspaceId: workspace.id,
@@ -5588,8 +5958,10 @@ function createRoutes(
           timeoutMs: OPENCODE_CONVERSATION_SUBMIT_TIMEOUT_MS,
           body: opencodeRunBody,
           sendTraceId: runTrace.traceId,
+          runtimeSkillOperationId: runTrace.traceId,
           conversationRunId: runId,
           skillViewRevision: runtimeSkillView?.revision ?? null,
+          authorizationRevision: runtimeSkillView?.authorizationRevision ?? null,
           orchestratorRegistrationScope,
           captureEngineOwner,
         },
@@ -6147,6 +6519,36 @@ async function readVesloConfig(
 
 function resolveOpencodeDirectory(workspace: WorkspaceInfo): string | null {
   return workspaceConfigOwner.resolveOpencodeDirectory(workspace);
+}
+
+/**
+ * Correlates a local checkout through server and orchestrator traces without
+ * recording its filesystem path. Workspace ids can outlive a rename or move.
+ */
+function runtimeWorkspaceTraceIdentity(workspace: WorkspaceInfo): {
+  workspacePathId: string | null;
+  workspaceDirectoryId: string | null;
+  workspaceBaseUrlOrigin: string | null;
+} {
+  const identify = (value: string | null | undefined): string | null => {
+    const trimmed = value?.trim();
+    return trimmed
+      ? createHash("sha256").update(resolve(trimmed)).digest("hex").slice(0, 16)
+      : null;
+  };
+  let workspaceBaseUrlOrigin: string | null = null;
+  try {
+    workspaceBaseUrlOrigin = workspace.baseUrl?.trim()
+      ? new URL(workspace.baseUrl).origin
+      : null;
+  } catch {
+    // The request path reports malformed URLs; diagnostics must never throw.
+  }
+  return {
+    workspacePathId: identify(workspace.path),
+    workspaceDirectoryId: identify(workspace.directory),
+    workspaceBaseUrlOrigin,
+  };
 }
 
 async function resolveConversationReadDirectory(

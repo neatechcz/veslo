@@ -176,7 +176,7 @@ export function resolveManagedAiProviderRoutingTarget(input: {
     }
     return {
       baseUrl: activeBaseUrl,
-      engineBaseUrl: engineBaseUrl || activeBaseUrl,
+      engineBaseUrl: input.requireEngineBaseUrl ? engineBaseUrl : activeBaseUrl,
       serverClientToken: activeToken,
     };
   }

@@ -2,11 +2,25 @@ import { describe, expect, test } from "bun:test";
 
 import {
   buildEngineConfigEnv,
+  buildEngineSkillBindingResponseHeaders,
   buildEngineSkillIsolationEnv,
   buildEngineSkillViewEnv,
 } from "../engine-launch-contract.js";
 
 describe("engine launch config contract", () => {
+  test("confirms the selected engine Skills binding without requiring a run owner", () => {
+    expect(buildEngineSkillBindingResponseHeaders({
+      skillViewRevision: "view-1",
+      authorizationRevision: "authorization-1",
+      openCodeConfigDigest: "config-1",
+    })).toEqual({
+      "x-veslo-engine-skill-view-revision": "view-1",
+      "x-veslo-engine-authorization-revision": "authorization-1",
+      "x-veslo-engine-config-digest": "config-1",
+    });
+    expect(buildEngineSkillBindingResponseHeaders({})).toEqual({});
+  });
+
   test("isolates config discovery while leaving data/auth inheritance to the caller", () => {
     expect(buildEngineConfigEnv("  C:\\veslo\\workspace-config  ")).toEqual({
       OPENCODE_CONFIG_DIR: "C:\\veslo\\workspace-config",
@@ -36,25 +50,27 @@ describe("engine launch config contract", () => {
   });
 
   test("publishes the Veslo-owned effective skill view as an explicit engine config merge", () => {
-    expect(buildEngineSkillViewEnv(" C:\\veslo\\workspace-config\\skill-staging ")).toEqual({
-      OPENCODE_CONFIG_CONTENT: JSON.stringify({ skills: { paths: ["C:\\veslo\\workspace-config\\skill-staging"] } }),
+    expect(buildEngineSkillViewEnv([" C:\\veslo\\workspace-config\\skill-a ", "C:\\veslo\\workspace-config\\skill-b"])).toEqual({
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({ skills: { paths: ["C:\\veslo\\workspace-config\\skill-a", "C:\\veslo\\workspace-config\\skill-b"] } }),
     });
-    expect(buildEngineSkillViewEnv()).toEqual({});
-    expect(buildEngineSkillViewEnv("C:\\stage", JSON.stringify({ mcp: { local: true }, skills: { urls: ["https://example.test"] } }))).toEqual({
+    expect(buildEngineSkillViewEnv()).toEqual({
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({ skills: { paths: [] } }),
+    });
+    expect(buildEngineSkillViewEnv(["C:\\skill-a"], JSON.stringify({ mcp: { local: true }, skills: { urls: ["https://example.test"] } }))).toEqual({
       OPENCODE_CONFIG_CONTENT: JSON.stringify({
         mcp: { local: true },
-        skills: { paths: ["C:\\stage"] },
+        skills: { paths: ["C:\\skill-a"] },
       }),
     });
-    expect(buildEngineSkillViewEnv(".opencode/.veslo/runtime-skills/current")).toEqual({
+    expect(buildEngineSkillViewEnv([".opencode/skills/selected"])).toEqual({
       OPENCODE_CONFIG_CONTENT: JSON.stringify({
-        skills: { paths: [".opencode/.veslo/runtime-skills/current"] },
+        skills: { paths: [".opencode/skills/selected"] },
       }),
     });
-    expect(buildEngineSkillViewEnv("C:\\stage", undefined, "C:\\config\\AGENTS.md")).toEqual({
+    expect(buildEngineSkillViewEnv([], undefined, "C:\\config\\AGENTS.md")).toEqual({
       OPENCODE_CONFIG_CONTENT: JSON.stringify({
         instructions: ["C:\\config\\AGENTS.md"],
-        skills: { paths: ["C:\\stage"] },
+        skills: { paths: [] },
       }),
     });
   });

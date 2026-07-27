@@ -56,8 +56,11 @@ export async function resolveOpencodeProxyTarget(input: {
    * Skill view the caller was promised. A request that spawns the engine must
    * hold it to the same revision an explicit activation would, otherwise the
    * handshake is enforced only on whichever path happens to start the process.
-   */
+  */
   skillViewRevision?: string;
+  authorizationRevision?: string;
+  managedSkillStoreRoot?: string;
+  skillManifestPath?: string;
 }): Promise<OpenCodeProxyTarget> {
   const method = input.method.toUpperCase();
   const isReadOnlyProbe = method === "GET" || method === "HEAD" || input.allowEngineStart === false;
@@ -117,6 +120,13 @@ export async function resolveOpencodeProxyTarget(input: {
     ...(input.skillViewRevision
       ? { skillViewRevision: input.skillViewRevision }
       : {}),
+    ...(input.authorizationRevision
+      ? { authorizationRevision: input.authorizationRevision }
+      : {}),
+    ...(input.managedSkillStoreRoot
+      ? { managedSkillStoreRoot: input.managedSkillStoreRoot }
+      : {}),
+    ...(input.skillManifestPath ? { skillManifestPath: input.skillManifestPath } : {}),
   };
   const ensured = input.pooledEngine.ensureWithStatus
     ? await input.pooledEngine.ensureWithStatus(pooledWorkspace)

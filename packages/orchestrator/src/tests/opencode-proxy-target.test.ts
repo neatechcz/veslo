@@ -204,6 +204,35 @@ describe("resolveOpencodeProxyTarget", () => {
     expect(ensureWorkspaceId).toBe("ws-a");
   });
 
+  test("pooled admission forwards both published skill binding revisions", async () => {
+    const pooled = engine("ws-a", "http://127.0.0.1:5001");
+    let ensuredWorkspace: { skillViewRevision?: string; authorizationRevision?: string } | null = null;
+
+    await resolveOpencodeProxyTarget({
+      topology: "pooled-per-workspace",
+      method: "POST",
+      workspaceId: "ws-a",
+      workspacePath: "/repo/a",
+      skillViewRevision: "view-42",
+      authorizationRevision: "authorization-42",
+      pooledEngine: {
+        getRunning: () => pooled,
+        ensure: async () => pooled,
+        ensureWithStatus: async (workspace) => {
+          ensuredWorkspace = workspace;
+          return { engine: pooled, spawned: false };
+        },
+      },
+    });
+
+    expect(ensuredWorkspace).toMatchObject({
+      id: "ws-a",
+      path: "/repo/a",
+      skillViewRevision: "view-42",
+      authorizationRevision: "authorization-42",
+    });
+  });
+
   test("pooled mode reports a process created by this request", async () => {
     const pooled = engine("ws-a", "http://127.0.0.1:5001");
 

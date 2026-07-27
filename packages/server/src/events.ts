@@ -1,11 +1,14 @@
 import type { ReloadEvent, ReloadReason, ReloadTrigger } from "./types.js";
 import { shortId } from "./utils.js";
 
+export type ReloadEventListener = (event: ReloadEvent) => void;
+
 export class ReloadEventStore {
   private events: ReloadEvent[] = [];
   private seq = 0;
   private maxSize: number;
   private lastRecorded: Map<string, number> = new Map();
+  private listeners = new Set<ReloadEventListener>();
 
   constructor(maxSize = 200) {
     this.maxSize = maxSize;
@@ -24,6 +27,16 @@ export class ReloadEventStore {
     this.events.push(event);
     if (this.events.length > this.maxSize) {
       this.events.splice(0, this.events.length - this.maxSize);
+    }
+
+    for (const listener of this.listeners) {
+      // A diagnostic/reconcile consumer must never turn a successfully
+      // recorded control-plane event into a failed mutation response.
+      try {
+        listener(event);
+      } catch {
+        // The event remains available to polling clients and later work.
+      }
     }
 
     return event;
@@ -50,5 +63,14 @@ export class ReloadEventStore {
 
   cursor(): number {
     return this.seq;
+  }
+
+  /**
+   * Event consumers own follow-up work; recording remains synchronous and
+   * durable for polling clients even when a consumer is absent or removed.
+   */
+  subscribe(listener: ReloadEventListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 }

@@ -3,7 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::engine::doctor::resolve_engine_path;
 use crate::engine::manager::EngineManager;
@@ -484,6 +484,52 @@ fn append_send_workflow_trace_event(app: &AppHandle, message: &str, payload: Opt
         }
         append_send_workflow_trace_line(path, &line);
     }
+}
+
+/// Persist a native desktop runtime phase into the same redacted NDJSON stream
+/// as webview send traces. Native activation may be blocked before control
+/// returns to the app, so returning timings only at the end loses the reason
+/// for a cold-start gap.
+pub(crate) fn record_desktop_runtime_trace(
+    app: &AppHandle,
+    event: &str,
+    payload: serde_json::Value,
+) {
+    if !should_emit_send_workflow_trace(
+        true,
+        crate::runtime_preferences::pilot_runtime_diagnostics_enabled(),
+        crate::runtime_preferences::runtime_diagnostics_enabled(app).unwrap_or(false),
+    ) {
+        return;
+    }
+
+    let mut entry = serde_json::Map::new();
+    entry.insert(
+        "schema".to_string(),
+        serde_json::Value::String("send-workflow/v1".to_string()),
+    );
+    entry.insert(
+        "source".to_string(),
+        serde_json::Value::String("desktop-runtime".to_string()),
+    );
+    entry.insert(
+        "event".to_string(),
+        serde_json::Value::String(event.to_string()),
+    );
+    entry.insert(
+        "ts".to_string(),
+        serde_json::Value::from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        ),
+    );
+    if let serde_json::Value::Object(values) = payload {
+        entry.extend(values);
+    }
+    let encoded = serde_json::Value::Object(entry).to_string();
+    append_send_workflow_trace_event(app, event, Some(&encoded));
 }
 
 #[tauri::command]

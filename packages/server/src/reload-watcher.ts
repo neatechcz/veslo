@@ -3,7 +3,7 @@ import { readdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 import type { ReloadEventStore } from "./events.js";
-import type { ReloadReason, ReloadTrigger, ServerConfig, WorkspaceInfo } from "./types.js";
+import type { ReloadEvent, ReloadReason, ReloadTrigger, ServerConfig, WorkspaceInfo } from "./types.js";
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -21,6 +21,12 @@ export function startReloadWatchers(input: {
   reloadEvents: ReloadEventStore;
   logger?: Logger | null;
   debounceMs?: number;
+  onReloadEvent?: (workspace: WorkspaceInfo, event: ReloadEvent) => void;
+  onReloadHint?: (
+    workspace: WorkspaceInfo,
+    reason: ReloadReason,
+    trigger?: ReloadTrigger,
+  ) => void;
 }): { close: () => void } {
   const { config, reloadEvents } = input;
   const logger = input.logger ?? null;
@@ -31,7 +37,14 @@ export function startReloadWatchers(input: {
   for (const workspace of config.workspaces) {
     try {
       closers.push(
-        startWorkspaceReloadWatcher({ workspace, reloadEvents, logger, debounceMs }),
+        startWorkspaceReloadWatcher({
+          workspace,
+          reloadEvents,
+          logger,
+          debounceMs,
+          onReloadEvent: input.onReloadEvent,
+          onReloadHint: input.onReloadHint,
+        }),
       );
     } catch (error) {
       logger?.log("warn", "Reload watcher failed to start", {
@@ -66,6 +79,12 @@ function startWorkspaceReloadWatcher(input: {
   reloadEvents: ReloadEventStore;
   logger: Logger | null;
   debounceMs: number;
+  onReloadEvent?: (workspace: WorkspaceInfo, event: ReloadEvent) => void;
+  onReloadHint?: (
+    workspace: WorkspaceInfo,
+    reason: ReloadReason,
+    trigger?: ReloadTrigger,
+  ) => void;
 }): () => void {
   const { workspace, reloadEvents, logger, debounceMs } = input;
   const root = resolve(workspace.path);
@@ -79,7 +98,14 @@ function startWorkspaceReloadWatcher(input: {
   };
 
   const record = (reason: ReloadReason, trigger?: ReloadTrigger) => {
-    reloadEvents.recordDebounced(workspace.id, reason, trigger, debounceMs);
+    input.onReloadHint?.(workspace, reason, trigger);
+    const event = reloadEvents.recordDebounced(
+      workspace.id,
+      reason,
+      trigger,
+      debounceMs,
+    );
+    if (event) input.onReloadEvent?.(workspace, event);
   };
 
   // Watch the workspace root for top-level config files.
@@ -116,8 +142,16 @@ function startWorkspaceReloadWatcher(input: {
             return;
           }
 
-          // If .opencode is created/removed, rescan the relevant trees.
-          if (name === ".opencode") {
+          // If a supported skill-root parent is created or removed, rescan the
+          // relevant trees so roots introduced after startup are watched too.
+          if ([".opencode", ".claude", ".agents", ".agent"].includes(name)) {
+            if (name !== ".opencode") {
+              record("skills", {
+                type: "skill",
+                action: "updated",
+                path: join(root, name),
+              });
+            }
             for (const tree of trees) tree.scheduleRescan();
           }
         },
@@ -126,8 +160,17 @@ function startWorkspaceReloadWatcher(input: {
         logger?.log("warn", "Reload watcher root error", {
           workspaceId: workspace.id,
           workspacePath: root,
+          reasonCode: "watcher_overflow",
           error: error instanceof Error ? error.message : String(error),
         });
+        // A watcher error means its event stream is no longer authoritative.
+        // Publish a conservative skills hint and rebuild every recursive tree.
+        record("skills", {
+          type: "skill",
+          action: "updated",
+          path: root,
+        });
+        for (const tree of trees) tree.scheduleRescan();
       });
     } catch (error) {
       logger?.log("warn", "Reload watcher root failed", {
@@ -149,8 +192,32 @@ function startWorkspaceReloadWatcher(input: {
       triggerType: "skill",
       debounceMs,
       logger,
+      onReloadEvent: input.onReloadEvent,
+      onReloadHint: input.onReloadHint,
     }),
   );
+  // The effective runtime view accepts all four workspace-local skill roots.
+  // Watch each one recursively so a direct-source edit is scoped to its own
+  // workspace instead of being discovered only on a later unrelated reload.
+  for (const rootDir of [
+    join(root, ".claude", "skills"),
+    join(root, ".agents", "skills"),
+    join(root, ".agent", "skills"),
+  ]) {
+    trees.push(
+      createDirectoryTreeWatcher({
+        rootDir,
+        workspace,
+        reloadEvents,
+        reason: "skills",
+        triggerType: "skill",
+        debounceMs,
+        logger,
+        onReloadEvent: input.onReloadEvent,
+        onReloadHint: input.onReloadHint,
+      }),
+    );
+  }
   trees.push(
     createDirectoryTreeWatcher({
       rootDir: join(opencodeRoot, "commands"),
@@ -160,6 +227,8 @@ function startWorkspaceReloadWatcher(input: {
       triggerType: "command",
       debounceMs,
       logger,
+      onReloadEvent: input.onReloadEvent,
+      onReloadHint: input.onReloadHint,
     }),
   );
   trees.push(
@@ -171,6 +240,8 @@ function startWorkspaceReloadWatcher(input: {
       triggerType: "plugin",
       debounceMs,
       logger,
+      onReloadEvent: input.onReloadEvent,
+      onReloadHint: input.onReloadHint,
     }),
   );
   trees.push(
@@ -182,6 +253,8 @@ function startWorkspaceReloadWatcher(input: {
       triggerType: "agent",
       debounceMs,
       logger,
+      onReloadEvent: input.onReloadEvent,
+      onReloadHint: input.onReloadHint,
     }),
   );
   trees.push(
@@ -193,6 +266,8 @@ function startWorkspaceReloadWatcher(input: {
       triggerType: "agent",
       debounceMs,
       logger,
+      onReloadEvent: input.onReloadEvent,
+      onReloadHint: input.onReloadHint,
     }),
   );
 
@@ -212,6 +287,12 @@ function createDirectoryTreeWatcher(input: {
   triggerType: ReloadTrigger["type"];
   debounceMs: number;
   logger: Logger | null;
+  onReloadEvent?: (workspace: WorkspaceInfo, event: ReloadEvent) => void;
+  onReloadHint?: (
+    workspace: WorkspaceInfo,
+    reason: ReloadReason,
+    trigger?: ReloadTrigger,
+  ) => void;
 }): DirectoryTreeWatcher {
   const { rootDir, workspace, reloadEvents, reason, triggerType, debounceMs, logger } = input;
   const resolvedRoot = resolve(rootDir);
@@ -255,7 +336,9 @@ function createDirectoryTreeWatcher(input: {
       }
     }
 
-    reloadEvents.recordDebounced(workspace.id, reason, trigger, debounceMs);
+    input.onReloadHint?.(workspace, reason, trigger);
+    const event = reloadEvents.recordDebounced(workspace.id, reason, trigger, debounceMs);
+    if (event) input.onReloadEvent?.(workspace, event);
   };
 
   const shouldIgnoreEntry = (absPath: string) => {
@@ -294,8 +377,14 @@ function createDirectoryTreeWatcher(input: {
           workspaceId: workspace.id,
           reason,
           dir,
+          reasonCode: "watcher_overflow",
           error: error instanceof Error ? error.message : String(error),
         });
+        // Treat an errored directory watcher as an overflow/missed-event
+        // boundary: trigger the same reconciliation path and rebuild the
+        // complete watched tree before relying on events again.
+        record(resolvedRoot);
+        scheduleRescan();
       });
       watchers.set(dir, watcher);
     } catch (error) {
@@ -341,7 +430,19 @@ function createDirectoryTreeWatcher(input: {
       const existsNow = existsSync(resolvedRoot);
       if (existsNow !== lastRootExists) {
         lastRootExists = existsNow;
-        reloadEvents.recordDebounced(workspace.id, reason, { type: triggerType, action: "updated", path: resolvedRoot }, debounceMs);
+        const trigger: ReloadTrigger = {
+          type: triggerType,
+          action: "updated",
+          path: resolvedRoot,
+        };
+        input.onReloadHint?.(workspace, reason, trigger);
+        const event = reloadEvents.recordDebounced(
+          workspace.id,
+          reason,
+          trigger,
+          debounceMs,
+        );
+        if (event) input.onReloadEvent?.(workspace, event);
       }
       if (!existsNow) {
         for (const watcher of watchers.values()) {

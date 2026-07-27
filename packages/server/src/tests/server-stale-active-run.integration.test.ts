@@ -102,6 +102,17 @@ afterEach(async () => {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+const boundEngineResponse = (request: Request, body: unknown) => {
+  const headers = new Headers();
+  const skillRevision = request.headers.get("x-veslo-skill-view-revision");
+  const authorizationRevision = request.headers.get("x-veslo-skill-authorization-revision");
+  if (skillRevision) headers.set("x-veslo-engine-skill-view-revision", skillRevision);
+  if (authorizationRevision) {
+    headers.set("x-veslo-engine-authorization-revision", authorizationRevision);
+  }
+  return Response.json(body, { headers });
+};
+
 async function useTempVesloDataDir(prefix: string): Promise<string> {
   const dataDir = await mkdtemp(join(tmpdir(), prefix));
   tempDirs.push(dataDir);
@@ -242,7 +253,7 @@ describe("stale active run integration", () => {
           submittedSessions.push(decodeURIComponent(promptMatch[1] ?? ""));
           submittedTimes.push(performance.now());
           submittedBodies.push(await request.json().catch(() => null));
-          return Response.json({ ok: true });
+          return boundEngineResponse(request, { ok: true });
         }
 
         return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
@@ -477,7 +488,7 @@ describe("stale active run integration", () => {
 
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-transient-idle/prompt_async") {
           submittedFollowUp += 1;
-          return Response.json({ ok: true });
+          return boundEngineResponse(request, { ok: true });
         }
 
         return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });

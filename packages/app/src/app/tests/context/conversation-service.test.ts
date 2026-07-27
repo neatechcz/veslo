@@ -489,16 +489,18 @@ function createService(options: {
   };
 }
 
-test("conversation read workspace registration is cached per client and directory", async () => {
+test("conversation read workspace registration is cached per server endpoint and directory", async () => {
   const { service, calls } = createService();
+  const firstClient = service.vesloServerClient()!;
+  const refreshedClient = { ...firstClient };
 
   assert.equal(await service.ensureConversationReadWorkspaceRegistered(
-    service.vesloServerClient()!,
+    firstClient,
     "app-ws",
     "/repo",
   ), "server-ws");
   assert.equal(await service.ensureConversationReadWorkspaceRegistered(
-    service.vesloServerClient()!,
+    refreshedClient,
     "app-ws",
     "/repo",
   ), "server-ws");

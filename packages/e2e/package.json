@@ -15,6 +15,7 @@
     "test:pilot:skill-publish": "node --import=tsx/esm ./specs/skill-publish-request.pilot.ts",
     "test:pilot:smoke": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario smoke",
     "test:pilot:packaged-smoke": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario packaged-smoke",
+    "test:pilot:runtime-empty-skills": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario runtime-empty-skills",
     "test:pilot:folder-access-consent": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario folder-access-consent",
     "test:pilot:navigation": "node --import=tsx/esm ./helpers/pilot-runner.ts --scenario navigation",
     "test:pilot:live-inference": "node --import=tsx/esm ./helpers/pilot-runner.ts --suite live-inference",

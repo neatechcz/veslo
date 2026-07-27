@@ -197,18 +197,14 @@ pub fn write_runtime_preferences(
     Ok(preferences)
 }
 
-pub fn shared_unsandboxed_engine_env_overrides(preference: Option<bool>) -> Vec<(String, String)> {
-    match preference {
-        Some(true) => vec![
-            ("VESLO_DISABLE_SANDBOX".to_string(), "1".to_string()),
-            ("VESLO_SHARED_OPENCODE_ENGINE".to_string(), "1".to_string()),
-        ],
-        Some(false) => vec![
-            ("VESLO_DISABLE_SANDBOX".to_string(), "0".to_string()),
-            ("VESLO_SHARED_OPENCODE_ENGINE".to_string(), "0".to_string()),
-        ],
-        None => Vec::new(),
-    }
+pub fn host_runtime_env_overrides(preference: Option<bool>) -> Vec<(String, String)> {
+    vec![
+        ("VESLO_DISABLE_SANDBOX".to_string(), "1".to_string()),
+        (
+            "VESLO_SHARED_OPENCODE_ENGINE".to_string(),
+            if preference == Some(true) { "1" } else { "0" }.to_string(),
+        ),
+    ]
 }
 
 pub fn runtime_diagnostics_enabled(app: &AppHandle) -> Result<bool, String> {
@@ -374,7 +370,7 @@ mod tests {
         default_shared_unsandboxed_engine_override, normalize_runtime_preferences,
         pilot_diagnostics_dir_from_value, resolve_shared_unsandboxed_engine_override,
         runtime_diagnostics_env_overrides_for_dir, runtime_diagnostics_env_overrides_from_override,
-        runtime_preferences_path_for_dir, shared_unsandboxed_engine_env_overrides,
+        host_runtime_env_overrides, runtime_preferences_path_for_dir,
         DesktopRuntimePreferences, PersistedRuntimePreferences,
     };
     use std::path::PathBuf;
@@ -426,7 +422,7 @@ mod tests {
 
     #[test]
     fn shared_unsandboxed_engine_true_sets_required_env_pair() {
-        let env = shared_unsandboxed_engine_env_overrides(Some(true));
+        let env = host_runtime_env_overrides(Some(true));
 
         assert!(env
             .iter()
@@ -438,22 +434,26 @@ mod tests {
 
     #[test]
     fn legacy_false_preference_cannot_reenable_windows_wsl2() {
-        let env = shared_unsandboxed_engine_env_overrides(Some(false));
-        let expected = "0";
+        let env = host_runtime_env_overrides(Some(false));
 
         assert!(env
             .iter()
-            .any(|(key, value)| key == "VESLO_DISABLE_SANDBOX" && value == expected));
+            .any(|(key, value)| key == "VESLO_DISABLE_SANDBOX" && value == "1"));
         assert!(env
             .iter()
-            .any(|(key, value)| key == "VESLO_SHARED_OPENCODE_ENGINE" && value == expected));
+            .any(|(key, value)| key == "VESLO_SHARED_OPENCODE_ENGINE" && value == "0"));
     }
 
     #[test]
-    fn missing_preference_does_not_override_parent_env() {
-        let env = shared_unsandboxed_engine_env_overrides(None);
+    fn missing_preference_enforces_pooled_host_runtime() {
+        let env = host_runtime_env_overrides(None);
 
-        assert!(env.is_empty());
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "VESLO_DISABLE_SANDBOX" && value == "1"));
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "VESLO_SHARED_OPENCODE_ENGINE" && value == "0"));
     }
 
     #[test]

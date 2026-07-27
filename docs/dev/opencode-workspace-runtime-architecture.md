@@ -106,6 +106,24 @@ trace surfaces:
 - Tauri dev terminal/stderr: `[ui:send-trace] <event> <json>`
 - in-memory webview buffer: `window.__vesloSendTrace`
 
+For a workspace-specific failure, correlate records using `traceId` and the
+redacted `workspacePathId` / `workspaceDirectoryId` fields. They are stable
+SHA-256 prefixes for the selected local checkout and request directory, so a
+stale workspace registration can be distinguished from a different checkout
+without writing local paths into the trace. The server records these on
+OpenCode requests and registration; the orchestrator records the corresponding
+path ids at registration, workspace resolution, skill-view validation, and
+engine spawn. Terminal lifecycle entries also carry the bounded, credential-
+redacted `terminalError` and the engine owner tuple.
+
+Desktop cold activation also writes native phases directly into the UI NDJSON
+channel with the initiating `traceId`: `desktop-runtime:prepare:entered`,
+`queue-acquired`, orchestrator registration, orchestrator activation, optional
+activation fallback, fresh-start, and final completion. These rows contain
+durations and stable workspace ids only. They distinguish a desktop-side wait
+before the orchestrator receives a request from OpenCode spawn or health time,
+even if another send later becomes the webview's active trace.
+
 Useful validation failure events include:
 
 - `sendPrompt:runtime-preflight:validation-failed`
@@ -215,11 +233,12 @@ Pooled and shared launches deliberately use different projection profiles, but
 both disable native project discovery so raw project skills cannot bypass the
 effective manifest. A pooled engine receives a workspace-private projection of
 allowed `.opencode` agents, commands, modes, plugins, and `AGENTS.md` into its
-OpenCode config directory, plus an immutable Veslo-owned staging generation of
-the effective skills. It never exposes raw global skill roots or arbitrary
-`skills.paths` from inherited configuration. The experimental shared directory
-process receives only Veslo's sanitized configuration and effective skill view,
-with no workspace launch-capability projection.
+OpenCode config directory, plus explicit absolute `skills.paths` entries for
+the validated directories selected by the effective manifest. It never exposes
+raw global skill roots or arbitrary `skills.paths` from inherited configuration.
+The experimental shared directory process still receives only Veslo's sanitized
+configuration and its separately published effective skill view, with no
+workspace launch-capability projection.
 
 The active workspace skill roots are `<workspace>/.opencode/skills`,
 `.claude/skills`, `.agents/skills`, and `.agent/skills`. Global OpenCode,
@@ -228,22 +247,22 @@ resolver uses `includeGlobal: false`. In particular, `%LOCALAPPDATA%/.claude`
 is not an implicit engine source. A `.claude/skills` directory inside the
 selected workspace is intentionally workspace-local for compatibility.
 
-Before a pooled launch consumes a staged generation, the orchestrator validates
-the manifest's canonical skill name, entrypoint, source classification, and
-physical containment in one of those workspace roots. Symlink or junction
-escapes and staging/global paths are suppressed. Each generation has a
-filesystem-fenced operation record and is leased to the concrete OpenCode
-child through its engine-owner id; cleanup may compact released generations but
-cannot delete a live lease merely because it is old or no longer current.
+Before a pooled launch consumes a direct path, the orchestrator validates the
+manifest's canonical skill name, entrypoint, source classification, physical
+containment in one of those workspace roots, and nested link containment. A
+nested `SKILL.md` that is not itself selected by the effective manifest is
+rejected before OpenCode can recursively discover it. The pooled launch has no
+copied skill generation or generation lease; its binding is the validated,
+ordered direct path list and the effective-view revision.
 
 The server and orchestrator additionally share one workspace-source lease at
 `<workspace>/.opencode/.veslo/workspace-skill-lease`. Any Veslo-owned mutation
 that can change the effective skill view (materialization, user projection,
 install, edit, delete, restore, enable-state, import, or provisioning) holds
-that lease through the matching effective-manifest publish. Engine staging and
-directory-view publication hold the same lease before reading or copying a
-manifest source. This prevents staging from observing a partially replaced
-skill directory.
+that lease through the matching effective-manifest publish. Pooled direct-path
+validation and shared directory-view publication hold the same lease before
+reading a manifest source. This prevents Veslo-owned mutation from exposing a
+partially replaced skill directory.
 
 Ownership is token- and process-fenced, and liveness is proven by a heartbeat:
 the holder bumps the owner record's mtime about once a second. A waiter reclaims
@@ -256,9 +275,11 @@ reclaimed on age, so a single crash cannot wedge a workspace permanently.
 The revision covers a skill's whole directory, not only its entrypoint: the
 entrypoint keeps a content hash while nested files contribute size and mtime, so
 resolving a view stays cheap. Anything less would call a view unchanged after an
-edit to a nested script or schema, even though staging copies that file too.
+edit to a nested script or schema, even though the direct engine can read that
+file after launch.
 
-Staging proves each copy atomic after the fact, not only before it. Comparing a
+For the experimental shared-directory topology, staging proves each copy atomic
+after the fact, not only before it. Comparing a
 source tree's signature either side of the copy is what catches a writer that
 edits a file in place: such a change copies without error and would otherwise
 yield a generation mixing pre- and post-edit content, with nothing raised. A
@@ -316,43 +337,65 @@ the desktop runtime must activate the target workspace engine before returning a
 ready engine snapshot; the app should not paper over an absent workspace engine
 with generic UI retries.
 
-Before every requested local runtime prepare (send/session creation, engine
-reload, local workspace switch, remote-to-local attach, and recovery), the app asks the
-server to publish the effective workspace skill manifest and passes its
-revision to native activation. If native activation reports `skill_view_changed`
-or `skill_view_stale`, the app performs a server-owned refresh and a prepare
-retry, for a bounded number of attempts. The workspace skill lease closes the
-race between Veslo's own writers, but an editor save, a sync client, or a branch
-switch can still land mid-activation, and those settle in well under a second —
-so the retry budget is what separates a transient conflict from a real "finish
-your edit" situation. Exhausting it is terminal for that activation: the UI must
-describe the completed recovery attempts and tell the user to finish the skill
-sync or file edit, rather than exposing the raw orchestrator `409` body. This is
-an activation-boundary rule, not a desktop-side skill resolver.
+Before requested local runtime preparation, the app may read the already
+published serving binding and pass its complete `revision` plus
+`authorizationRevision` pair to native activation. This
+read never discovers Skills or writes the serving manifest. Candidate
+resolution, validation, promotion, and registry materialization stay in the
+server-owned background reconciler, so a healthy engine may keep serving its
+existing view while Skills policy is stale or refreshing. The read is
+best-effort and coalesced; ordinary activation does not run a stale-view refresh
+and restart loop. Missing, partial, stale, or invalid binding input is resolved
+by the orchestrator to the complete canonical empty binding, so a Skills fault
+alone does not make conversation runtime unavailable.
 
-The skill view revision is enforced in every topology, including the default
-pooled one, and on reuse as well as on spawn. A caller that starts an engine —
-explicit activation, or a proxied request that starts one — passes the revision
-it was promised down to staging, which must consume exactly that revision or
-fail with `skill_view_stale`.
+The serving-binding read completes before native activation captures its input.
+It does not wait for candidate reconciliation or Skills freshness. If that read
+fails, activation receives the complete canonical empty binding rather than a
+missing binding; this prevents an empty first engine followed immediately by a
+second authorized engine and the resulting event-stream reconnect.
+
+After an engine is ready, an ordinary conversation send reads only the last
+published serving binding (from memory or the atomically published manifest).
+It must not rescan Skills, rewrite a manifest, or wait for refresh work that a
+watcher/policy reconciler has already scheduled. If no serving manifest exists,
+the direct resolver starts the canonical empty binding while background
+publication remains independent of the send.
+
+The skill view and authorization revisions are enforced as one pair in the
+default pooled topology, on reuse as well as on spawn. A caller that starts an
+engine passes the complete server-owned binding to the direct-path resolver.
+The resolver either validates that exact pair or selects canonical empty with
+`skills.paths = []`; it never substitutes a different non-empty binding.
 
 Enforcing this only at spawn would leave the contract trivially bypassable,
 because the common case is reuse. Each pooled engine therefore records the
-revision it was actually staged from, and a caller arriving with a different one
+revision it was actually launched from, and a caller arriving with a different one
 does not simply get the running process. While no run owns that engine it is
-replaced with one staged from the new view; while a run does own it the request
-fails with `skill_view_busy` rather than pulling the process out from under work
-in progress. Joining an in-flight spawn is held to the same check: the flight
-may have been started with no handshake at all, so its result is reconciled like
-any other reuse. This mirrors what the shared topology already does with its
-single engine.
+replaced with one launched from the new view; while a run does own it the request
+records the newer revision as pending and admission verifies the actual engine
+binding before dispatch. This
+keeps the active run alive without allowing a caller promised the newer revision
+to dispatch into the older binding. The first later idle ensure replaces only
+that workspace process with the pending view. Joining an in-flight spawn is held
+to the same check: the flight may have
+been started with no handshake at all, so its result is reconciled like any other
+reuse. This preserves active work without sharing a process across pooled
+workspaces.
 
-Only a caller holding a live server handshake may supply a revision.
-Pool-internal restarts — crash respawn, idle resume — deliberately spawn without
-one: they have no handshake to speak for, and replaying a remembered revision
-would convert an ordinary recovery into a permanent failure as soon as that
-revision aged out. Those restarts stage from the current published manifest,
-which the workspace skill lease already keeps internally consistent.
+The bundled direct-path compatibility gate is fail-closed: a failed selected
+path, managed-path, workspace-isolation, ambient-exclusion, or nested-asset
+check exits non-zero for the exact bundled OpenCode binary/version/hash. Runtime
+skill audit traces record the operation id, engine owner, validation phase,
+serving and expected revisions, ordered redacted path ids, and sanitized OpenCode
+config digest. Validation failures include a stable reason code and never require
+logging full local source paths.
+
+Only a caller holding a live server handshake may supply a non-empty revision.
+A pool-internal crash respawn has no authorization handshake, so it starts with
+the canonical explicit empty binding. The next server-owned request may replace
+that process with the current authorized serving binding. This prevents an old
+manifest on disk from resurrecting a revision that the server has revoked.
 
 The daemon port is a contract, not a hint. When a caller passes `--daemon-port`
 or `VESLO_DAEMON_PORT`, that caller polls exactly that port for `/health` and has
@@ -435,6 +478,12 @@ before retrying operations that have not yet created irreversible work.
 
 ### Configured vs Effective Sandbox
 
+The current desktop provider path is host-only. Managed provider config always
+uses the loopback Veslo server URL; an advertised `engineUrl` or configured WSL
+capability is diagnostic state only and must not change provider routing or
+cause an engine reload. WSL bridge routing is not part of the active runtime
+contract.
+
 `/capabilities.sandbox` is the configured local server capability. It must not
 be treated as proof that the currently running engine is actually sandboxed.
 
@@ -467,13 +516,12 @@ serve compatible directories only when its source-policy, refresh, event, and
 placement gates pass. None of these unsandboxed modes provide filesystem
 isolation beyond host permissions.
 
-When Windows WSL2 sandbox launch fails because WSL, the managed `VesloSandbox`
-distro, bubblewrap, or workspace mountability is unavailable, Veslo falls back
-to a direct host engine. The normal topology remains pooled-per-workspace:
-every workspace owns one engine slot and all conversations in that workspace
-share that slot. The process-wide `shared-unsandboxed` engine is only a
-development/diagnostic override when both `VESLO_DISABLE_SANDBOX=1` and
-`VESLO_SHARED_OPENCODE_ENGINE=1` are explicitly configured. Fresh desktop
+Current desktop launches explicitly set `VESLO_DISABLE_SANDBOX=1`; they do not
+probe, provision, or fall back from WSL. The normal topology remains
+pooled-per-workspace: every workspace owns one direct host engine slot and all
+conversations in that workspace share that slot. The process-wide
+`shared-unsandboxed` engine is only a development/diagnostic override when
+`VESLO_SHARED_OPENCODE_ENGINE=1` is explicitly configured. Fresh desktop
 profiles and legacy implicit shared preferences migrate to the pooled topology;
 an explicit override is recorded as `topologySource=explicit-diagnostic`.
 

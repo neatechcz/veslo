@@ -2,8 +2,6 @@ import { deriveConversationRunOpenCodeMessageId } from "./conversation-run-messa
 import type { RunProbeResult } from "./run-registry.js";
 
 export const RUN_ACTIVITY_PROBE_TIMEOUT_MS = 4_000;
-export const OPENCODE_SESSION_IDLE_BEFORE_ASSISTANT_COMPLETED =
-  "opencode_session_idle_before_assistant_completed";
 
 export type RunActivityProbeRecord = {
   workspaceId: string;
@@ -215,19 +213,16 @@ export function deriveRunActivityFromSessionMessages(
 ): RunProbeResult {
   const messages = readMessages(payload);
   const expectedUserMessageId = options?.expectedUserMessageId?.trim() || "";
-  const inactiveExactRunCandidate = (progressSignature: string): RunProbeResult => ({
-    active: false,
-    terminalCandidate: true,
-    terminalStatus: "failed",
-    terminalError: OPENCODE_SESSION_IDLE_BEFORE_ASSISTANT_COMPLETED,
-    activityKind: "idle",
-    waitReason: "session_idle",
+  const inactiveExactRunPending = (progressSignature: string): RunProbeResult => ({
+    active: true,
+    activityKind: "unknown",
+    waitReason: "assistant_message_open",
     progressSignature: `inactive-session:${progressSignature}`,
   });
 
   if (!messages.length) {
     if (expectedUserMessageId && options?.sessionInactiveObserved) {
-      return inactiveExactRunCandidate(`expected-user:${expectedUserMessageId}:messages-empty`);
+      return inactiveExactRunPending(`expected-user:${expectedUserMessageId}:messages-empty`);
     }
     return {
       active: true,
@@ -245,7 +240,7 @@ export function deriveRunActivityFromSessionMessages(
     });
     if (exactUserIndex < 0) {
       if (options?.sessionInactiveObserved) {
-        return inactiveExactRunCandidate(`expected-user:${expectedUserMessageId}:missing`);
+        return inactiveExactRunPending(`expected-user:${expectedUserMessageId}:missing`);
       }
       return {
         active: true,
@@ -264,7 +259,7 @@ export function deriveRunActivityFromSessionMessages(
     });
     if (!exactAssistants.length) {
       if (options?.sessionInactiveObserved) {
-        return inactiveExactRunCandidate(`expected-user:${expectedUserMessageId}:assistant-missing`);
+        return inactiveExactRunPending(`expected-user:${expectedUserMessageId}:assistant-missing`);
       }
       return {
         active: true,
@@ -312,26 +307,33 @@ export function deriveRunActivityFromSessionMessages(
     };
   }
 
+  const hasAssistantOutput = parts.some((part) =>
+    isRecord(part) &&
+    (readString(part.type) === "text" || readString(part.type) === "reasoning") &&
+    textPartLength(part) > 0
+  );
+  const hasVisibleAssistantContent = hasAssistantOutput || parts.some((part) =>
+    isRecord(part) && readString(part.type) === "tool"
+  );
+
   if (assistantMessageIsTerminal(latestInfo)) {
+    const terminalOutcome = assistantTerminalOutcome(latestInfo, options?.abortRequested === true);
     return {
       active: false,
       terminalCandidate: true,
       terminalConfirmed: Boolean(expectedUserMessageId),
-      ...assistantTerminalOutcome(latestInfo, options?.abortRequested === true),
+      ...(terminalOutcome.terminalStatus === "completed" && !hasVisibleAssistantContent
+        ? { terminalStatus: "failed" as const, terminalError: "assistant_completed_without_visible_output" }
+        : terminalOutcome),
       activityKind: "idle",
       waitReason: "session_idle",
       progressSignature,
     };
   }
 
-  const hasAssistantOutput = parts.some((part) =>
-    isRecord(part) &&
-    (readString(part.type) === "text" || readString(part.type) === "reasoning") &&
-    textPartLength(part) > 0
-  );
   if (hasAssistantOutput) {
     if (expectedUserMessageId && options?.sessionInactiveObserved) {
-      return inactiveExactRunCandidate(progressSignature);
+      return inactiveExactRunPending(progressSignature);
     }
     return {
       active: true,
@@ -342,7 +344,7 @@ export function deriveRunActivityFromSessionMessages(
   }
 
   if (expectedUserMessageId && options?.sessionInactiveObserved) {
-    return inactiveExactRunCandidate(progressSignature);
+    return inactiveExactRunPending(progressSignature);
   }
 
   return {
@@ -486,7 +488,6 @@ export function createRunActivityProbe<Engine>(deps: {
       if ("unreachable" in messageActivity) return messageActivity;
       if (
         !messageActivity.active &&
-        messageActivity.terminalError !== OPENCODE_SESSION_IDLE_BEFORE_ASSISTANT_COMPLETED &&
         !terminalEvidenceIsPostAdmission(messages.payload, record)
       ) {
         return {
@@ -503,9 +504,7 @@ export function createRunActivityProbe<Engine>(deps: {
         if (statusActivity.activityKind === "model_retry") {
           return mergeRetryStatusWithMessages(messageActivity);
         }
-        return messageActivity.activityKind === "local_tool" || messageActivity.activityKind === "assistant_output"
-          ? messageActivity
-          : statusActivity;
+        return messageActivity;
       }
       return messageActivity;
     } catch {

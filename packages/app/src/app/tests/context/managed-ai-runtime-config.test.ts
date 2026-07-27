@@ -710,7 +710,7 @@ test("runtime config sync writes managed provider config through project file pa
   assert.equal(writes[0]?.scope, "project");
   assert.equal(writes[0]?.root, "/repo");
   assert.match(writes[0]?.content ?? "", /VESLO_OPENCODE_SERVER_CLIENT_TOKEN/);
-  assert.match(writes[0]?.content ?? "", /127\.0\.0\.1:34116/);
+  assert.match(writes[0]?.content ?? "", /127\.0\.0\.1:34115/);
   assert.deepEqual(reloads, ["updated"]);
 });
 
@@ -760,7 +760,7 @@ test("cold server config containing the managed credential environment reference
   const content = formatManagedAiAccessConfig("{}", {
     profile,
     serverBaseUrl: "http://127.0.0.1:34115",
-    engineBaseUrl: "http://127.0.0.1:34116",
+    engineBaseUrl: "http://127.0.0.1:34115",
     serverClientToken: "local-client-token",
     gatewayAccessToken: "gateway-access-token",
     workspaceId: "ws-active",
@@ -899,7 +899,7 @@ test("runtime config sync does not require a gateway bearer to write local provi
     hasUsableManagedAiRuntimeConfig({
       content,
       providerId: profile.providerId,
-      gatewayBaseUrl: "http://127.0.0.1:34116",
+      gatewayBaseUrl: "http://127.0.0.1:34115",
       serverClientToken: "local-client-token",
       workspaceId: "ws-active",
     }),
@@ -977,6 +977,179 @@ test("server-owned send freshness reloads after a patch before it verifies", asy
   assert.equal(client.patched[0]?.workspaceId, "server-resolved-exact");
   assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "server-resolved-exact", ifIdle: true }]);
   assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
+});
+
+test("server send uses the exact last verified intent after a transient local config timeout", async () => {
+  const client = createVesloClient();
+  const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  const errors: Array<string | null> = [];
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    setError: (message) => errors.push(message),
+    recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
+  }));
+
+  const first = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-config-verified",
+  });
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    throw new Error(
+      "Request timed out after 10000ms: GET http://127.0.0.1:8787/workspace/ws-active/config",
+    );
+  };
+
+  const second = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-config-timeout",
+  });
+
+  assert.deepEqual(first, { kind: "verified" });
+  assert.deepEqual(second, { kind: "verified" });
+  assert.deepEqual(client.getConfigCalls, ["ws-active", "ws-active"]);
+  assert.equal(client.patched.length, 1);
+  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-active", ifIdle: true }]);
+  assert.deepEqual(errors, []);
+  const degraded = traces.find((entry) =>
+    entry.event === "managed-ai-config-sync:degraded-last-verified",
+  );
+  assert.equal(degraded?.payload.traceId, "send-config-timeout");
+  assert.equal(degraded?.payload.reason, "transient-local-config-read");
+  assert.equal(degraded?.payload.vesloWorkspaceId, "ws-active");
+});
+
+test("server send does not reuse a verified intent after authorization identity changes", async () => {
+  const client = createVesloClient();
+  let authRevision = 1;
+  const errors: Array<string | null> = [];
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    denAuthRevision: () => authRevision,
+    setError: (message) => errors.push(message),
+  }));
+
+  assert.deepEqual(await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-before-auth-change",
+  }), { kind: "verified" });
+
+  authRevision = 2;
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    throw new Error(
+      "Request timed out after 10000ms: GET http://127.0.0.1:8787/workspace/ws-active/config",
+    );
+  };
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-after-auth-change",
+  });
+
+  assert.deepEqual(outcome, {
+    kind: "failed",
+    error: "Request timed out after 10000ms: GET http://127.0.0.1:8787/workspace/ws-active/config",
+    transientLocalTransport: true,
+  });
+  assert.equal(errors.length, 1);
+});
+
+test("server API failures never degrade to a last verified config intent", async () => {
+  const client = createVesloClient();
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+  }));
+
+  assert.deepEqual(await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-before-server-error",
+  }), { kind: "verified" });
+
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    throw new VesloServerError(403, "forbidden", "Managed AI config access was revoked");
+  };
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-after-server-error",
+  });
+
+  assert.deepEqual(outcome, {
+    kind: "failed",
+    error: "Managed AI config access was revoked",
+  });
+});
+
+test("server send does not reuse an older verified intent while an exact workspace reload is pending", async () => {
+  const client = createVesloClient();
+  let currentProfile = profile;
+  const sync = createManagedAiRuntimeConfigSync(createOptions({
+    vesloServerClient: () => client,
+    managedAiAccess: () => currentProfile,
+  }));
+
+  assert.deepEqual(await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-verified-before-pending-reload",
+  }), { kind: "verified" });
+
+  currentProfile = {
+    ...profile,
+    effectiveModel: { providerID: "codex_oauth", modelID: "gpt-5.1" },
+    selectableModels: [{
+      model: { providerID: "codex_oauth", modelID: "gpt-5.1" },
+      capabilityStatus: "known",
+    }],
+  };
+  client.reloadEngine = async (workspaceId, options) => {
+    client.reloadEngineCalls.push({ workspaceId, ifIdle: options?.ifIdle === true });
+    throw new VesloServerError(409, "reload_blocked_active_runs", "Another run is active");
+  };
+  assert.deepEqual(await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-creates-pending-reload",
+  }), { kind: "verified-reload-required" });
+
+  currentProfile = profile;
+  client.getConfig = async (workspaceId) => {
+    client.getConfigCalls.push(workspaceId);
+    throw new Error(
+      "Request timed out after 10000ms: GET http://127.0.0.1:8787/workspace/ws-active/config",
+    );
+  };
+  const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
+    workspaceId: "ws-active",
+    workspaceRoot: "/repo",
+    directory: "/repo",
+    serverWorkspaceId: "ws-active",
+    traceId: "send-timeout-with-pending-reload",
+  });
+
+  assert.equal(outcome.kind, "failed");
 });
 
 test("server send joins a pending background reload when the config is already current", async () => {
@@ -1743,7 +1916,7 @@ test("inactive workspace heal does not require a gateway bearer to write local p
   );
 });
 
-test("inactive workspace heal does not apply active WSL bridge routing to other workspaces", async () => {
+test("direct desktop runtime ignores an advertised WSL bridge URL", async () => {
   const client = createVesloClient();
   const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
   const sync = createManagedAiRuntimeConfigSync(
@@ -1759,24 +1932,27 @@ test("inactive workspace heal does not apply active WSL bridge routing to other 
         clientToken: "local-client-token",
         hostToken: "local-host-token",
       }),
-      engine: () => ({ running: true, runtime: "direct", childKind: "wsl", projectDir: "/repo" }),
+      engine: () => ({ running: true, runtime: "direct", childKind: "direct", projectDir: "/repo" }),
       recordManagedAiWorkflowTrace: (event, payload) => traces.push({ event, payload }),
     }),
   );
 
-  await sync.healInactiveManagedAiWorkspaceConfigs();
+  await sync.syncActiveWorkspaceManagedAiConfig();
 
-  assert.deepEqual(client.getConfigCalls, []);
-  assert.deepEqual(client.patched, []);
-  assert.deepEqual(traces, [
-    {
-      event: "managed-baseurl.heal:skip",
-      payload: {
-        reason: "workspace-scoped-engine-routing",
-        activeWorkspaceId: "ws-active",
-        resolvedBaseUrl: "http://127.0.0.1:34115",
-        resolvedEngineBaseUrl: "http://172.20.0.1:34116",
-      },
-    },
-  ]);
+  assert.equal(client.patched.length, 1);
+  const provider = client.patched[0]?.payload.opencode?.provider as Record<string, unknown>;
+  const codex = provider?.codex_oauth as Record<string, unknown>;
+  const options = codex?.options as Record<string, unknown>;
+  assert.equal(
+    options?.baseURL,
+    "http://127.0.0.1:34115/ai-gateway/providers/codex_oauth/v1",
+  );
+  assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-active", ifIdle: true }]);
+  const preflight = traces.find((entry) => entry.event === "managed-ai-config-sync:preflight");
+  assert.equal(preflight?.payload.providerRoutingRequiresEngineBaseUrl, false);
+  assert.deepEqual(preflight?.payload.resolvedEngineBaseUrl, {
+    present: true,
+    origin: "http://127.0.0.1:34115",
+    pathname: "/",
+  });
 });

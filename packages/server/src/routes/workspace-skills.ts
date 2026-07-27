@@ -7,9 +7,13 @@ import { ApiError } from "../errors.js";
 import { requireConfiguredDenCatalogContext } from "../request-headers.js";
 import { workspaceResourceOwner } from "../resource-owner.js";
 import {
-  ensureActiveRuntimeSkillView,
+  EMPTY_SERVING_RUNTIME_SKILL_BINDING,
   invalidateActiveRuntimeSkillView,
+  readServingRuntimeSkillBinding,
+  readServingRuntimeSkillSummary,
+  resolveActiveRuntimeSkillView,
 } from "../active-runtime-skill-view.js";
+import { fenceRuntimeSkillAuthorization } from "../runtime-skill-revocation-fence.js";
 import {
   emitReloadEvent,
   ensureWritable,
@@ -79,16 +83,6 @@ export function registerWorkspaceSkillRoutes(
     workspace: WorkspaceInfo,
   ): Promise<void> => {
     invalidateActiveRuntimeSkillView(workspace);
-    await ensureActiveRuntimeSkillView(workspace, {
-      disabledSkills: await listDisabledSkills({
-        dataDir: serverDataDir,
-        workspaceId: workspace.id,
-        includeGlobal: true,
-      }),
-      workspaceId: workspace.id,
-      workspaceOwner: ownerForWorkspace(workspace),
-      forceRefresh: true,
-    });
   };
 
   const listWorkspaceRuntimeSkills = async (
@@ -133,7 +127,8 @@ export function registerWorkspaceSkillRoutes(
     }
     return (
       await withWorkspaceSkillLease(workspace.path, "runtime-skill-read", () =>
-        ensureActiveRuntimeSkillView(workspace, {
+        resolveActiveRuntimeSkillView(workspace, {
+          dataDir: serverDataDir,
           disabledSkills,
           workspaceId: workspace.id,
           workspaceOwner: ownerForWorkspace(workspace),
@@ -183,35 +178,41 @@ export function registerWorkspaceSkillRoutes(
         ctx.config,
         requireRouteParam(ctx.params, "id", "workspace id"),
       );
-      const disabledSkills = await listDisabledSkills({
-        dataDir: serverDataDir,
-        workspaceId: workspace.id,
-        includeGlobal: true,
-      });
       const body = await readOptionalJsonBody(ctx.request);
       const expectedRevision =
         typeof body?.expectedRevision === "string"
           ? body.expectedRevision
           : undefined;
-      const forceRefresh = body?.forceRefresh === true;
-      const view = await withWorkspaceSkillLease(
-        workspace.path,
-        "runtime-skill-view",
-        () =>
-          ensureActiveRuntimeSkillView(workspace, {
-            disabledSkills,
-            workspaceId: workspace.id,
-            workspaceOwner: ownerForWorkspace(workspace),
-            ...(expectedRevision ? { expectedRevision } : {}),
-            ...(forceRefresh ? { forceRefresh: true } : {}),
-          }),
-      );
+      const servingSummary = await readServingRuntimeSkillSummary(workspace, {
+          dataDir: serverDataDir,
+          ...(body?.forceRefresh === true ? { bypassCache: true } : {}),
+        });
+      if (!servingSummary || body?.forceRefresh === true) {
+        emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+          type: "skill",
+          action: "updated",
+          path: ".opencode/veslo.runtime.skills.json",
+        });
+      }
+      const summary = servingSummary ?? {
+          ...EMPTY_SERVING_RUNTIME_SKILL_BINDING,
+          generatedAt: new Date(0).toISOString(),
+          activeCount: 0,
+          items: [],
+        };
+      if (expectedRevision && expectedRevision !== summary.revision) {
+        throw new ApiError(409, "skill_view_stale", "The serving runtime skill view is stale", {
+          expectedRevision,
+          actualRevision: summary.revision,
+        });
+      }
       return jsonResponse({
         ready: true,
-        revision: view.revision,
-        generatedAt: view.generatedAt,
-        activeCount: view.skills.length,
-        items: view.skills,
+        revision: summary.revision,
+        authorizationRevision: summary.authorizationRevision,
+        generatedAt: summary.generatedAt,
+        activeCount: summary.activeCount,
+        items: summary.items,
       });
     },
   );
@@ -241,7 +242,8 @@ export function registerWorkspaceSkillRoutes(
           workspace.path,
           "runtime-skill-resolve",
           async () =>
-            ensureActiveRuntimeSkillView(workspace, {
+            resolveActiveRuntimeSkillView(workspace, {
+              dataDir: serverDataDir,
               disabledSkills: await listDisabledSkills({
                 dataDir: serverDataDir,
                 workspaceId: workspace.id,
@@ -576,6 +578,12 @@ export function registerWorkspaceSkillRoutes(
         workspace.path,
         "workspace-skill-delete",
         async () => {
+          const binding = await readServingRuntimeSkillBinding(workspace, { dataDir: serverDataDir });
+          if (binding) await fenceRuntimeSkillAuthorization({
+            dataDir: serverDataDir,
+            workspaceId: workspace.id,
+            authorizationRevision: binding.authorizationRevision,
+          });
           const result = instancePath
             ? await deleteSkillAtPathRecoverable(
                 workspace.path,

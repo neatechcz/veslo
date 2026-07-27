@@ -1,6 +1,6 @@
 import type { ConversationSubmitSkillCommandResolver } from "./conversation-submit-draft-resolution.js";
 import { workspaceResourceOwner } from "./resource-owner.js";
-import { ensureActiveRuntimeSkillView } from "./active-runtime-skill-view.js";
+import { resolveActiveRuntimeSkillView } from "./active-runtime-skill-view.js";
 import { listDisabledSkills } from "./skill-enabled-overrides.js";
 import { resolveSkillMatch } from "./skill-resolver.js";
 import { withWorkspaceSkillLease } from "./workspace-skill-lease.js";
@@ -22,7 +22,8 @@ export function createConversationSubmitSkillCommandResolver(_input: {
         workspace.path,
         "conversation-skill-command-resolution",
         () =>
-          ensureActiveRuntimeSkillView(workspace, {
+          resolveActiveRuntimeSkillView(workspace, {
+            ...(_input.dataDir ? { dataDir: _input.dataDir } : {}),
             disabledSkills,
             workspaceId: workspace.id,
             workspaceOwner: workspaceResourceOwner({

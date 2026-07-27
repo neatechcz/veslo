@@ -1,7 +1,9 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::commands::opencode_router::opencodeRouter_start;
-use crate::commands::orchestrator::reconcile_orchestrator_workspaces;
+use crate::commands::orchestrator::{
+    reconcile_orchestrator_workspaces, RuntimeSkillBindingInput, WorkspaceActivationTrace,
+};
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
@@ -537,7 +539,8 @@ pub async fn runtime_prepare_workspace(
     project_dir: String,
     workspace_id: Option<String>,
     workspace_name: Option<String>,
-    skill_view_revision: Option<String>,
+    trace_id: Option<String>,
+    skill_binding: Option<RuntimeSkillBindingInput>,
     reason: Option<String>,
     force_fresh_runtime: Option<bool>,
     prefer_sidecar: Option<bool>,
@@ -553,7 +556,8 @@ pub async fn runtime_prepare_workspace(
             project_dir,
             workspace_id,
             workspace_name,
-            skill_view_revision,
+            trace_id,
+            skill_binding,
             reason,
             force_fresh_runtime,
             prefer_sidecar,
@@ -577,7 +581,8 @@ fn runtime_prepare_workspace_blocking(
     project_dir: String,
     workspace_id: Option<String>,
     workspace_name: Option<String>,
-    skill_view_revision: Option<String>,
+    trace_id: Option<String>,
+    skill_binding: Option<RuntimeSkillBindingInput>,
     reason: Option<String>,
     force_fresh_runtime: Option<bool>,
     prefer_sidecar: Option<bool>,
@@ -602,10 +607,29 @@ fn runtime_prepare_workspace_blocking(
     let requested_action =
         workspace_runtime_prepare_action(&runtime, &reason, force_fresh_runtime.unwrap_or(false));
     let mut action = requested_action;
+    let prepare_started = std::time::Instant::now();
+    let trace_id = trace_id.unwrap_or_default().trim().to_string();
+    let trace = (!trace_id.is_empty()).then_some(WorkspaceActivationTrace {
+        trace_id: trace_id.as_str(),
+        workspace_id: workspace_id.as_deref(),
+        reason: reason.as_str(),
+        requested_action: requested_action.as_str(),
+    });
+    if let Some(trace) = trace.as_ref() {
+        trace.record(&app, "desktop-runtime:prepare:entered", None);
+    }
+    let queue_wait_started = std::time::Instant::now();
     let start_queue = app.state::<EngineManager>().start_queue.clone();
     let _start_permit = start_queue
         .lock()
         .map_err(|_| "engine start queue mutex poisoned".to_string())?;
+    if let Some(trace) = trace.as_ref() {
+        trace.record(
+            &app,
+            "desktop-runtime:prepare:queue-acquired",
+            Some(queue_wait_started.elapsed().as_millis()),
+        );
+    }
 
     if action == WorkspaceRuntimePrepareAction::OrchestratorActivate {
         match crate::commands::orchestrator::orchestrator_workspace_activate_blocking(
@@ -614,7 +638,8 @@ fn runtime_prepare_workspace_blocking(
             project_dir.clone(),
             workspace_id.clone(),
             workspace_name.clone(),
-            skill_view_revision.clone(),
+            skill_binding.clone(),
+            trace,
         ) {
             Ok(_) => {
                 let engine = engine_info(
@@ -623,25 +648,37 @@ fn runtime_prepare_workspace_blocking(
                     workspace_id.clone(),
                     Some(project_dir),
                 );
+                if let Some(trace) = trace.as_ref() {
+                    trace.record(
+                        &app,
+                        "desktop-runtime:prepare:done",
+                        Some(prepare_started.elapsed().as_millis()),
+                    );
+                }
                 return Ok(workspace_runtime_prepare_result(action, &reason, engine));
             }
             Err(error) => {
-                // A revision mismatch is a deliberate fail-closed response
-                // from the orchestrator. Do not hide it behind a fresh daemon
-                // start: the client must refresh its server-owned skill view
-                // and retry activation with the newly published revision.
-                if error.contains("skill_view_stale") || error.contains("skill_view_changed") {
-                    return Err(error);
-                }
+                // Ordinary activation is fail-open-to-canonical-empty for Skills.
+                // Current orchestrators resolve stale or incomplete bindings before
+                // this boundary. If an older or unhealthy daemon still returns such
+                // an error, treat it like any other failed activation and recover the
+                // core runtime instead of surfacing a Skills-only runtime failure.
                 eprintln!(
                     "[runtime_prepare_workspace] orchestrator activate failed, falling back to fresh start: {error}"
                 );
+                if let Some(trace) = trace.as_ref() {
+                    trace.record(&app, "desktop-runtime:prepare:activation-fallback", None);
+                }
                 action = WorkspaceRuntimePrepareAction::FreshStart;
             }
         }
     }
 
-    let engine = engine_start_reserved(
+    if let Some(trace) = trace.as_ref() {
+        trace.record(&app, "desktop-runtime:prepare:fresh-start:start", None);
+    }
+    let fresh_start_started = std::time::Instant::now();
+    let engine = match engine_start_reserved(
         app.clone(),
         app.state::<EngineManager>(),
         app.state::<OrchestratorManager>(),
@@ -654,7 +691,26 @@ fn runtime_prepare_workspace_blocking(
         workspace_paths,
         max_engines,
         idle_suspend_ms,
-    )?;
+    ) {
+        Ok(engine) => engine,
+        Err(error) => {
+            if let Some(trace) = trace.as_ref() {
+                trace.record(
+                    &app,
+                    "desktop-runtime:prepare:fresh-start:error",
+                    Some(fresh_start_started.elapsed().as_millis()),
+                );
+            }
+            return Err(error);
+        }
+    };
+    if let Some(trace) = trace.as_ref() {
+        trace.record(
+            &app,
+            "desktop-runtime:prepare:fresh-start:daemon-ready",
+            Some(fresh_start_started.elapsed().as_millis()),
+        );
+    }
 
     let engine = if runtime == EngineRuntime::Orchestrator {
         // Fresh orchestrator start only boots the daemon; activate spawns the workspace engine.
@@ -664,7 +720,8 @@ fn runtime_prepare_workspace_blocking(
             project_dir.clone(),
             workspace_id.clone(),
             workspace_name.clone(),
-            skill_view_revision,
+            skill_binding,
+            trace,
         )?;
         engine_info(
             app.state::<EngineManager>(),
@@ -675,6 +732,14 @@ fn runtime_prepare_workspace_blocking(
     } else {
         engine
     };
+
+    if let Some(trace) = trace.as_ref() {
+        trace.record(
+            &app,
+            "desktop-runtime:prepare:done",
+            Some(prepare_started.elapsed().as_millis()),
+        );
+    }
 
     Ok(workspace_runtime_prepare_result(action, &reason, engine))
 }

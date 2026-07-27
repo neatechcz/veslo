@@ -1,10 +1,9 @@
-import type { EngineInfo, WorkspaceInfo } from "../lib/tauri";
+import type { EngineInfo, RuntimeSkillBinding, WorkspaceInfo } from "../lib/tauri";
 import { batch } from "solid-js";
 import { workspaceSetActive, workspaceVesloRead } from "../lib/tauri";
 import { isTauriRuntime } from "../utils";
 import type { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { isPassiveLocalBrowseActivationOrigin } from "./workspace-activation-controller";
-import { prepareRuntimeWithSkillViewRefresh } from "./workspace-skill-materialization";
 import type {
   StartupPreference,
   WorkspaceConnectionState,
@@ -57,7 +56,7 @@ export type WorkspaceLocalActivationDeps = {
     workspace: WorkspaceInfo,
     options: { reason: string },
   ) => Promise<boolean>;
-  runtimeSkillViewRevision?: (workspaceId: string) => string | null;
+  runtimeSkillBinding?: (workspaceId: string) => RuntimeSkillBinding | null;
   clearDisplayedSessionState: (
     reason:
       | "remote_to_local_workspace_changed"
@@ -402,18 +401,9 @@ export function createWorkspaceLocalActivation(
       },
     );
     try {
-      const skillsReady =
-        await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
-          reason: "workspace-attach-local",
-        });
-      if (!skillsReady) {
-        const message =
-          "Workspace skills could not be prepared before connecting to the local engine. Resolve any Skills sync error and try again.";
-        localFailureMessage = message;
-        deps.setError(message);
-        deps.updateWorkspaceConnectionState(id, { status: "error", message });
-        return false;
-      }
+      await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
+        reason: "workspace-attach-local",
+      });
       const prepareRuntime = async () =>
         await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
           workspacePath: next.path,
@@ -421,15 +411,9 @@ export function createWorkspaceLocalActivation(
           workspaceName: next.displayName?.trim() || next.name?.trim() || null,
           reason: "workspace-attach-local",
           navigate: false,
-          skillViewRevision: deps.runtimeSkillViewRevision?.(next.id) ?? null,
+          skillBinding: deps.runtimeSkillBinding?.(next.id) ?? null,
         });
-      connectedToLocalHost = await prepareRuntimeWithSkillViewRefresh({
-        prepare: prepareRuntime,
-        refresh: async ({ reason }) =>
-          await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
-            reason,
-          }),
-      });
+      connectedToLocalHost = await prepareRuntime();
       deps.wsDebug("activate:remote->local:prepareRuntime:done", {
         ok: connectedToLocalHost,
         ms: Date.now() - prepareStartedAt,
@@ -564,11 +548,9 @@ export function createWorkspaceLocalActivation(
     deps.setBusyStartedAt(Date.now());
 
     try {
-      const skillsReady =
-        await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
-          reason: "workspace-restart",
-        });
-      if (!skillsReady) return "failed";
+      await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
+        reason: "workspace-restart",
+      });
       const runtime = deps.resolveEngineRuntime();
       deps.wsLog("[workspace:activate] STEP 5 — runtime =", runtime);
       deps.wsLog(
@@ -588,15 +570,9 @@ export function createWorkspaceLocalActivation(
               ? "workspace-orchestrator-switch"
               : "workspace-restart",
           navigate: false,
-          skillViewRevision: deps.runtimeSkillViewRevision?.(next.id) ?? null,
+          skillBinding: deps.runtimeSkillBinding?.(next.id) ?? null,
         });
-      const ok = await prepareRuntimeWithSkillViewRefresh({
-        prepare: prepareRuntime,
-        refresh: async ({ reason }) =>
-          await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
-            reason,
-          }),
-      });
+      const ok = await prepareRuntime();
       if (!ok) {
         deps.setError("Failed to reconnect after worker switch");
         return "failed";

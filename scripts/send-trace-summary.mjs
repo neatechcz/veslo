@@ -236,7 +236,14 @@ function summarizeTraceFiles(filePaths) {
         if (entry.status !== undefined && entry.status !== null) current.statuses.add(String(entry.status));
         if (entry.outcome !== undefined && entry.outcome !== null) current.statuses.add(`outcome:${entry.outcome}`);
 
-        const at = typeof entry.at === "string" ? entry.at : null;
+        // Native desktop phases write directly into the NDJSON sink while the
+        // invoking webview is blocked. They carry the same epoch timestamp as
+        // app rows but cannot depend on browser-side ISO formatting.
+        const at = typeof entry.at === "string"
+          ? entry.at
+          : Number.isFinite(entry.ts)
+            ? new Date(entry.ts).toISOString()
+            : null;
         if (at && (!current.firstAt || at < current.firstAt)) current.firstAt = at;
         if (at && (!current.lastAt || at > current.lastAt)) current.lastAt = at;
 

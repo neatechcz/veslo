@@ -3,11 +3,19 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
-  ensureActiveRuntimeSkillView,
+  EMPTY_SERVING_RUNTIME_SKILL_BINDING,
   invalidateActiveRuntimeSkillView,
+  prepareRuntimeSkillCandidate,
+  publishValidatedRuntimeSkillCandidate,
+  readServingRuntimeSkillBinding,
+  resolveActiveRuntimeSkillView,
   resetActiveRuntimeSkillViewsForTests,
   setActiveRuntimeSkillViewBeforePublicationForTests,
 } from "../active-runtime-skill-view.js";
+import {
+  fenceRuntimeSkillAuthorization,
+  isRuntimeSkillAuthorizationFenced,
+} from "../runtime-skill-revocation-fence.js";
 
 const roots: string[] = [];
 
@@ -19,27 +27,62 @@ async function workspaceFixture() {
   return { id: "workspace-a", name: "Fixture", path, workspaceType: "local" as const };
 }
 
+async function publishFixtureView(
+  workspace: Awaited<ReturnType<typeof workspaceFixture>>,
+) {
+  const candidate = await prepareRuntimeSkillCandidate(workspace);
+  await publishValidatedRuntimeSkillCandidate(candidate);
+  return candidate;
+}
+
 afterEach(async () => {
   resetActiveRuntimeSkillViewsForTests();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-test("active runtime view reuses a published revision and writes an atomic manifest", async () => {
-  const workspace = await workspaceFixture();
-  const first = await ensureActiveRuntimeSkillView(workspace);
-  const second = await ensureActiveRuntimeSkillView(workspace);
+test("canonical empty serving binding is stable and explicit", () => {
+  expect(EMPTY_SERVING_RUNTIME_SKILL_BINDING).toEqual({
+    revision: "empty-direct-skill-view/v1",
+    authorizationRevision: "empty-direct-skill-authorization/v1",
+  });
+});
 
-  expect(second.revision).toBe(first.revision);
-  expect(second.generatedAt).toBe(first.generatedAt);
+test("validated promotion writes an atomic serving manifest", async () => {
+  const workspace = await workspaceFixture();
+  const first = await publishFixtureView(workspace);
+
   const manifest = JSON.parse(await readFile(join(workspace.path, ".opencode", "veslo.runtime.skills.json"), "utf8"));
-  expect(manifest.schemaVersion).toBe(2);
+  expect(manifest.schemaVersion).toBe(3);
   expect(manifest.revision).toBe(first.revision);
+  expect(manifest.authorizationRevision).toBe(first.authorizationRevision);
   expect(manifest.entries.map((entry: { name: string }) => entry.name)).toEqual(["example"]);
+});
+
+test("a managed skill is represented exactly once in the active runtime manifest", async () => {
+  const workspace = await workspaceFixture();
+  const managedDir = join(workspace.path, ".opencode", "skills", "veslo-managed", "managed-example");
+  await mkdir(managedDir, { recursive: true });
+  await writeFile(
+    join(managedDir, "SKILL.md"),
+    "---\nname: managed-example\ndescription: Managed example\n---\n",
+    "utf8",
+  );
+  await writeFile(
+    join(managedDir, ".veslo-managed.json"),
+    JSON.stringify({ installationId: "managed-example-1", source: "organization", removalPolicy: "locked" }),
+    "utf8",
+  );
+
+  await publishFixtureView(workspace);
+  const manifest = JSON.parse(await readFile(join(workspace.path, ".opencode", "veslo.runtime.skills.json"), "utf8"));
+  const managedEntries = manifest.entries.filter((entry: { name: string }) => entry.name === "managed-example");
+
+  expect(managedEntries).toHaveLength(1);
 });
 
 test("a nested file change moves the revision, not just the entrypoint", async () => {
   const workspace = await workspaceFixture();
-  const first = await ensureActiveRuntimeSkillView(workspace);
+  const first = await publishFixtureView(workspace);
 
   // The orchestrator stages the whole skill directory, so a revision that only
   // tracked SKILL.md would call this view unchanged and launch an engine over
@@ -48,66 +91,184 @@ test("a nested file change moves the revision, not just the entrypoint", async (
   await mkdir(assets, { recursive: true });
   await writeFile(join(assets, "schema.json"), JSON.stringify({ v: 1 }), "utf8");
   invalidateActiveRuntimeSkillView(workspace);
-  const afterAdd = await ensureActiveRuntimeSkillView(workspace);
+  const afterAdd = await publishFixtureView(workspace);
   expect(afterAdd.revision).not.toBe(first.revision);
 
   await writeFile(join(assets, "schema.json"), JSON.stringify({ v: 2, padded: true }), "utf8");
   invalidateActiveRuntimeSkillView(workspace);
-  const afterEdit = await ensureActiveRuntimeSkillView(workspace);
+  const afterEdit = await publishFixtureView(workspace);
   expect(afterEdit.revision).not.toBe(afterAdd.revision);
+  expect(afterEdit.authorizationRevision).toBe(first.authorizationRevision);
 });
 
 test("explicit invalidation produces a new view after a workspace mutation", async () => {
   const workspace = await workspaceFixture();
-  const first = await ensureActiveRuntimeSkillView(workspace);
+  const first = await publishFixtureView(workspace);
   await writeFile(join(workspace.path, ".opencode", "skills", "example", "SKILL.md"), "---\nname: example\ndescription: Changed\n---\n", "utf8");
   invalidateActiveRuntimeSkillView(workspace);
-  const next = await ensureActiveRuntimeSkillView(workspace);
+  const next = await publishFixtureView(workspace);
 
   expect(next.revision).not.toBe(first.revision);
   expect(next.skills[0]?.description).toBe("Changed");
 });
 
-test("force refresh rebuilds the manifest after an out-of-band workspace change", async () => {
+test("serving binding stays readable after invalidation without rediscovering Skills", async () => {
   const workspace = await workspaceFixture();
-  const first = await ensureActiveRuntimeSkillView(workspace);
-  await writeFile(join(workspace.path, ".opencode", "skills", "example", "SKILL.md"), "---\nname: example\ndescription: Force refreshed\n---\n");
+  const first = await publishFixtureView(workspace);
+  await writeFile(
+    join(workspace.path, ".opencode", "skills", "example", "SKILL.md"),
+    "---\nname: example\ndescription: Changed after publication\n---\n",
+    "utf8",
+  );
+  invalidateActiveRuntimeSkillView(workspace);
 
-  const refreshed = await ensureActiveRuntimeSkillView(workspace, { forceRefresh: true });
+  await expect(readServingRuntimeSkillBinding(workspace)).resolves.toEqual({
+    revision: first.revision,
+    authorizationRevision: first.authorizationRevision,
+  });
+});
+
+test("candidate manifest cannot replace the serving LKG until validation promotes it", async () => {
+  const workspace = await workspaceFixture();
+  const serving = await publishFixtureView(workspace);
+  await writeFile(join(workspace.path, ".opencode", "skills", "example", "SKILL.md"), "---\nname: example\ndescription: Candidate\n---\n", "utf8");
+  const candidate = await prepareRuntimeSkillCandidate(workspace);
+
+  expect(candidate.revision).not.toBe(serving.revision);
+  await expect(readServingRuntimeSkillBinding(workspace)).resolves.toEqual({
+    revision: serving.revision,
+    authorizationRevision: serving.authorizationRevision,
+  });
+
+  await publishValidatedRuntimeSkillCandidate(candidate);
+  await expect(readServingRuntimeSkillBinding(workspace)).resolves.toEqual({
+    revision: candidate.revision,
+    authorizationRevision: candidate.authorizationRevision,
+  });
+  await expect(readFile(candidate.manifestPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("resolve-only inventory never overwrites serving LKG", async () => {
+  const workspace = await workspaceFixture();
+  const serving = await publishFixtureView(workspace);
+  await writeFile(
+    join(workspace.path, ".opencode", "skills", "example", "SKILL.md"),
+    "---\nname: example\ndescription: Resolve only\n---\n",
+    "utf8",
+  );
+
+  const resolved = await resolveActiveRuntimeSkillView(workspace);
+
+  expect(resolved.revision).not.toBe(serving.revision);
+  await expect(readServingRuntimeSkillBinding(workspace)).resolves.toEqual({
+    revision: serving.revision,
+    authorizationRevision: serving.authorizationRevision,
+  });
+});
+
+test("a superseded candidate cannot publish and its sidecar is removed", async () => {
+  const workspace = await workspaceFixture();
+  const serving = await publishFixtureView(workspace);
+  await writeFile(
+    join(workspace.path, ".opencode", "skills", "example", "SKILL.md"),
+    "---\nname: example\ndescription: Candidate\n---\n",
+    "utf8",
+  );
+  const candidate = await prepareRuntimeSkillCandidate(workspace);
+  invalidateActiveRuntimeSkillView(workspace);
+
+  await expect(publishValidatedRuntimeSkillCandidate(candidate)).rejects.toMatchObject({
+    code: "candidate_superseded",
+  });
+  await expect(readServingRuntimeSkillBinding(workspace)).resolves.toEqual({
+    revision: serving.revision,
+    authorizationRevision: serving.authorizationRevision,
+  });
+  await expect(readFile(candidate.manifestPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("candidate promotion CAS rejects an invalidation that arrives before commit", async () => {
+  const workspace = await workspaceFixture();
+  const serving = await publishFixtureView(workspace);
+  await writeFile(
+    join(workspace.path, ".opencode", "skills", "example", "SKILL.md"),
+    "---\nname: example\ndescription: Candidate race\n---\n",
+    "utf8",
+  );
+  const candidate = await prepareRuntimeSkillCandidate(workspace);
+  setActiveRuntimeSkillViewBeforePublicationForTests(async () => {
+    invalidateActiveRuntimeSkillView(workspace);
+  });
+
+  await expect(publishValidatedRuntimeSkillCandidate(candidate)).rejects.toMatchObject({
+    code: "candidate_superseded",
+  });
+  await expect(readServingRuntimeSkillBinding(workspace)).resolves.toEqual({
+    revision: serving.revision,
+    authorizationRevision: serving.authorizationRevision,
+  });
+});
+
+test("persisted revocation fence rejects an otherwise durable old serving binding", async () => {
+  const workspace = await workspaceFixture();
+  const dataDir = await mkdtemp(join(process.env.TEMP ?? ".", "veslo-runtime-fence-"));
+  roots.push(dataDir);
+  const serving = await publishFixtureView(workspace);
+  await fenceRuntimeSkillAuthorization({
+    dataDir,
+    workspaceId: workspace.id,
+    authorizationRevision: serving.authorizationRevision,
+  });
+
+  await expect(readServingRuntimeSkillBinding(workspace, { dataDir })).resolves.toBeNull();
+});
+
+test("revocation fence never forgets an old authorization revision", async () => {
+  const dataDir = await mkdtemp(join(process.env.TEMP ?? ".", "veslo-runtime-fence-history-"));
+  roots.push(dataDir);
+  for (let index = 0; index < 130; index += 1) {
+    await fenceRuntimeSkillAuthorization({
+      dataDir,
+      workspaceId: "workspace-history",
+      authorizationRevision: `authorization-${index}`,
+    });
+  }
+
+  await expect(isRuntimeSkillAuthorizationFenced({
+    dataDir,
+    workspaceId: "workspace-history",
+    authorizationRevision: "authorization-0",
+  })).resolves.toBe(true);
+});
+
+test("validated promotion can explicitly re-authorize a recurring policy hash", async () => {
+  const workspace = await workspaceFixture();
+  const dataDir = await mkdtemp(join(process.env.TEMP ?? ".", "veslo-runtime-fence-reauthorize-"));
+  roots.push(dataDir);
+  const serving = await publishFixtureView(workspace);
+  await fenceRuntimeSkillAuthorization({
+    dataDir,
+    workspaceId: workspace.id,
+    authorizationRevision: serving.authorizationRevision,
+  });
+  invalidateActiveRuntimeSkillView(workspace);
+  const candidate = await prepareRuntimeSkillCandidate(workspace, { dataDir });
+
+  await publishValidatedRuntimeSkillCandidate(candidate);
+
+  await expect(readServingRuntimeSkillBinding(workspace, { dataDir })).resolves.toEqual({
+    revision: candidate.revision,
+    authorizationRevision: candidate.authorizationRevision,
+  });
+});
+
+test("a new validated candidate advances serving after an out-of-band workspace change", async () => {
+  const workspace = await workspaceFixture();
+  const first = await publishFixtureView(workspace);
+  await writeFile(join(workspace.path, ".opencode", "skills", "example", "SKILL.md"), "---\nname: example\ndescription: Force refreshed\n---\n");
+  invalidateActiveRuntimeSkillView(workspace);
+  const refreshed = await publishFixtureView(workspace);
 
   expect(refreshed.revision).not.toBe(first.revision);
   expect(refreshed.skills[0]?.description).toBe("Force refreshed");
-});
-
-test("invalidation prevents an older in-flight resolver from publishing over the new view", async () => {
-  const workspace = await workspaceFixture();
-  let releaseFirstPublication!: () => void;
-  const firstPublicationBlocked = new Promise<void>((resolve) => {
-    releaseFirstPublication = resolve;
-  });
-  let publicationCount = 0;
-  let signalFirstPublication!: () => void;
-  const firstPublicationReached = new Promise<void>((resolve) => {
-    signalFirstPublication = resolve;
-  });
-  setActiveRuntimeSkillViewBeforePublicationForTests(async () => {
-    publicationCount += 1;
-    if (publicationCount === 1) {
-      signalFirstPublication();
-      await firstPublicationBlocked;
-    }
-  });
-
-  const staleFlight = ensureActiveRuntimeSkillView(workspace);
-  await firstPublicationReached;
-  await writeFile(join(workspace.path, ".opencode", "skills", "example", "SKILL.md"), "---\nname: example\ndescription: Fresh\n---\n", "utf8");
-  invalidateActiveRuntimeSkillView(workspace);
-  const currentFlight = ensureActiveRuntimeSkillView(workspace);
-  releaseFirstPublication();
-
-  const [staleResult, currentResult] = await Promise.all([staleFlight, currentFlight]);
-  expect(staleResult.revision).toBe(currentResult.revision);
-  expect(currentResult.skills[0]?.description).toBe("Fresh");
-  const manifest = JSON.parse(await readFile(join(workspace.path, ".opencode", "veslo.runtime.skills.json"), "utf8"));
-  expect(manifest.revision).toBe(currentResult.revision);
 });

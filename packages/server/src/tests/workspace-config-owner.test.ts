@@ -166,9 +166,17 @@ describe("workspace-config-owner", () => {
       return new Response(JSON.stringify({ error: "engine_not_running" }), { status: 503 });
     }) as typeof fetch;
     try {
-      await expect(reloadOpencodeEngine(workspace, { ifRunning: true }))
+      await expect(reloadOpencodeEngine(workspace, {
+        ifRunning: true,
+        skillViewRevision: "runtime-view-42",
+        authorizationRevision: "authorization-42",
+        runtimeSkillOperationId: "operation-42",
+      }))
         .resolves.toEqual({ kind: "not-running" });
       expect(new Headers(headers).get("x-veslo-engine-if-running")).toBe("1");
+      expect(new Headers(headers).get("x-veslo-skill-view-revision")).toBe("runtime-view-42");
+      expect(new Headers(headers).get("x-veslo-skill-authorization-revision")).toBe("authorization-42");
+      expect(new Headers(headers).get("x-veslo-runtime-skill-operation-id")).toBe("operation-42");
     } finally {
       globalThis.fetch = previousFetch;
     }

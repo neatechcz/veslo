@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
 import {
-  ensureActiveRuntimeSkillView,
   invalidateActiveRuntimeSkillView,
 } from "../active-runtime-skill-view.js";
 import { getPlatformManagedPersonalGlobalSkillSet } from "../platform-managed-skills.js";
@@ -23,8 +22,6 @@ import {
   resolveWorkspace,
 } from "../route-helpers.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
-import { workspaceResourceOwner } from "../resource-owner.js";
-import { listDisabledSkills } from "../skill-enabled-overrides.js";
 import {
   downloadSkillPackageFromRegistry,
   getWorkspaceSkillSetFromRegistry,
@@ -37,9 +34,14 @@ import {
   materializePersonalGlobalSkillSet,
   materializeWorkspaceSkillSet,
   readSkillMaterializationManifest,
+  skillMaterializationIntegrityMatches,
   type SkillSetMaterializationResult,
 } from "../skill-materializer.js";
 import type { SkillPackageArchive } from "../skill-packages.js";
+import {
+  cacheSkillPackageArchive,
+  getOrCacheSkillPackageArchive,
+} from "../skill-package-cache.js";
 import {
   personalGlobalManagedSkillsRoot,
   userGlobalSkillRootsForMutation,
@@ -58,7 +60,12 @@ import {
 } from "../user-skill-store.js";
 import { shortId } from "../utils.js";
 import { withWorkspaceSkillLease } from "../workspace-skill-lease.js";
-import { writeWorkspaceSkillLockfile } from "../workspace-skill-lockfile.js";
+import {
+  compareWorkspaceSkillLockfile,
+  readWorkspaceSkillLockfile,
+  workspaceSkillLockfilePath,
+  writeWorkspaceSkillLockfile,
+} from "../workspace-skill-lockfile.js";
 import {
   resolveWorkspaceSkillSet,
   type WorkspaceSkillRegistryInstallation,
@@ -210,6 +217,24 @@ const materializationMatchesDesired = (
   entry.removalPolicy === desired.removalPolicy &&
   entry.target === desired.target;
 
+async function materializationManifestMatches(
+  rootDir: string,
+  desired: WorkspaceSkillMaterialization[],
+  loadPackage: (skill: WorkspaceSkillMaterialization) => Promise<SkillPackageArchive>,
+): Promise<boolean> {
+  const manifest = await readSkillMaterializationManifest(rootDir);
+  if (manifest?.entries.length !== desired.length) return false;
+  const matches = await Promise.all(desired.map(async (skill) =>
+    manifest.entries.some((entry) => materializationMatchesDesired(entry, skill)) &&
+    skillMaterializationIntegrityMatches({
+      rootDir,
+      skill,
+      archive: await loadPackage(skill),
+    })
+  ));
+  return matches.every(Boolean);
+}
+
 async function buildWorkspaceSkillMaterializationStatus(
   config: ServerConfig,
   workspace: WorkspaceInfo,
@@ -334,48 +359,44 @@ async function buildWorkspaceSkillMaterializationStatusForRequest(
   ctx: RequestContext,
   workspace: WorkspaceInfo,
 ) {
-  const baseUrl = skillRegistryRequestBaseUrl(ctx);
-  const registryConfigured = Boolean(baseUrl);
-  if (!registryConfigured) {
-    return buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
-      registryConfigured: false,
-      workspaceRegistryConfigured: false,
-      status: "not-configured",
-      reloadRequired: false,
-    });
-  }
-
-  try {
-    await getWorkspaceSkillSetFromRegistry({
-      ...skillRegistryRequestInput(ctx),
-      workspaceId: workspace.id,
-    });
-    return buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
-      registryConfigured: true,
-      workspaceRegistryConfigured: true,
-      status: "pending",
-      reloadRequired: true,
-    });
-  } catch (error) {
-    if (isWorkspaceSkillRegistryNotFound(error)) {
-      return buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
-        registryConfigured: true,
-        workspaceRegistryConfigured: false,
-        status: "not-configured",
-        reloadRequired: false,
-        registryError: error,
-      });
-    }
-    if (isSkillRegistryApiError(error)) {
-      return buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
-        registryConfigured: true,
-        status: "degraded",
-        reloadRequired: false,
-        registryError: error,
-      });
-    }
-    throw error;
-  }
+  // This is configuration state, not a request-scoped registry probe. A
+  // status poll must remain useful for callers that do not carry Den headers
+  // and must never turn those headers into control-plane work.
+  const registryConfigured = Boolean(skillRegistryBaseUrl(ctx.config));
+  // A status poll is an observation of local materialization state. Fetching
+  // the desired set here turned every inventory refresh and runtime preflight
+  // into control-plane work, which then manufactured `reloadRequired` even
+  // when the serving view was already usable. Registry events and explicit
+  // Skills actions own refresh/materialization instead.
+  const [manifest, lockfile] = await Promise.all([
+    readSkillMaterializationManifest(workspaceManagedSkillsRoot(workspace.path)),
+    readWorkspaceSkillLockfile(workspace.path),
+  ]);
+  const localRevisionMatches = Boolean(
+    lockfile &&
+    manifest &&
+    manifest.entries.length === lockfile.entries.length &&
+    lockfile.entries.every((locked) => manifest.entries.some((entry) =>
+      entry.installationId === locked.installationId &&
+      entry.skillId === locked.skillId &&
+      entry.versionId === locked.versionId &&
+      entry.name === locked.name &&
+      entry.packageSha256 === locked.packageSha256
+    )),
+  );
+  return buildWorkspaceSkillMaterializationStatus(ctx.config, workspace, {
+    registryConfigured,
+    workspaceRegistryConfigured: registryConfigured && Boolean(lockfile),
+    status: !registryConfigured
+      ? "not-configured"
+      : localRevisionMatches
+        ? "current"
+        : "stale",
+    reloadRequired: false,
+  }).then((status) => ({
+    ...status,
+    servingRevision: lockfile?.skillSetRevision ?? null,
+  }));
 }
 
 async function buildGlobalSkillMaterializationStatus(config: ServerConfig) {
@@ -568,6 +589,7 @@ function assertNoPlatformManagedPersonalGlobalNameConflicts(input: {
 async function fetchRegistryWorkspaceMaterializations(
   ctx: RequestContext,
   workspace: WorkspaceInfo,
+  serverDataDir?: string,
 ): Promise<{
   materializations: WorkspaceSkillMaterialization[];
   conflicts: WorkspaceSkillConflict[];
@@ -609,6 +631,34 @@ async function fetchRegistryWorkspaceMaterializations(
     workspaceType: "local",
   };
   let personalGlobalSyncRequired = false;
+  const resolveRegistryPackage = async (input: {
+    versionId: string;
+    expectedPackageSha256?: string | null;
+    registryContext: Parameters<typeof downloadSkillPackageFromRegistry>[0]["registryContext"];
+  }): Promise<SkillPackageArchive> => {
+    const expectedPackageSha256 = input.expectedPackageSha256?.trim();
+    const download = async () =>
+      (
+        await downloadSkillPackageFromRegistry({
+          ...registryInput,
+          versionId: input.versionId,
+          registryContext: input.registryContext,
+        })
+      ).package;
+    if (expectedPackageSha256) {
+      return getOrCacheSkillPackageArchive({
+        ...(serverDataDir ? { dataDir: serverDataDir } : {}),
+        packageSha256: expectedPackageSha256,
+        fetchPackage: download,
+      });
+    }
+    const archive = await download();
+    await cacheSkillPackageArchive({
+      archive,
+      ...(serverDataDir ? { dataDir: serverDataDir } : {}),
+    });
+    return archive;
+  };
   const addRegistryInstallation = async (
     installation: (typeof skillSet.skills)[number],
     targetWorkspace: WorkspaceInfo,
@@ -618,9 +668,10 @@ async function fetchRegistryWorkspaceMaterializations(
     seenInstallationIds.add(installation.installationId);
     const versionId =
       installation.desiredVersionId?.trim() || installation.versionId;
-    const packageResponse = await downloadSkillPackageFromRegistry({
-      ...registryInput,
+    const archive = await resolveRegistryPackage({
       versionId,
+      expectedPackageSha256:
+        installation.desiredPackageSha256 ?? installation.packageSha256,
       registryContext: {
         ...(targetWorkspace.id === "personal-global"
           ? {}
@@ -638,13 +689,13 @@ async function fetchRegistryWorkspaceMaterializations(
     const workspaceInstallation = registryInstallationToWorkspaceInstallation({
       installation,
       workspace: targetWorkspace,
-      packageResponse,
+      packageResponse: { versionId, package: archive },
       ...registryIdentityPayload(registryInput),
     });
     registryInstallations.push(workspaceInstallation);
     packagesByInstallationId.set(
       workspaceInstallation.installationId,
-      packageResponse.package,
+      archive,
     );
   };
 
@@ -890,19 +941,6 @@ export function registerSkillMaterializationRoutes(
     workspace: WorkspaceInfo,
   ): Promise<void> => {
     invalidateActiveRuntimeSkillView(workspace);
-    await ensureActiveRuntimeSkillView(workspace, {
-      disabledSkills: await listDisabledSkills({
-        dataDir: serverDataDir,
-        workspaceId: workspace.id,
-        includeGlobal: true,
-      }),
-      workspaceId: workspace.id,
-      workspaceOwner: workspaceResourceOwner({
-        workspaceId: workspace.id,
-        root: workspace.path,
-        label: workspace.name,
-      }),
-    });
   };
   const migrateLegacyProjectionOrFail = async (workspace: WorkspaceInfo) => {
     const result = await migrateLegacyRegistrySkillProjections({
@@ -1169,6 +1207,7 @@ export function registerSkillMaterializationRoutes(
         materializationInput = await fetchRegistryWorkspaceMaterializations(
           ctx,
           workspace,
+          serverDataDir,
         );
       } catch (error) {
         if (isWorkspaceSkillRegistryNotFound(error)) {
@@ -1212,6 +1251,89 @@ export function registerSkillMaterializationRoutes(
             }
             return archive;
           };
+          const responseMaterializations = [
+            ...workspaceMaterializations,
+            ...personalGlobalMaterializations,
+          ];
+          const lockfileEntries = workspaceMaterializations.map((skill) => ({
+            skillId: skill.skillId,
+            installationId: skill.installationId,
+            versionId: skill.versionId,
+            name: skill.name,
+            packageSha256: skill.packageSha256,
+          }));
+          const desiredLockfile = {
+            workspaceId: workspace.id,
+            skillSetId,
+            skillSetRevision,
+            entries: lockfileEntries,
+          };
+          const [workspaceMatches, lockfile] = await Promise.all([
+            materializationManifestMatches(
+              workspaceManagedSkillsRoot(workspace.path),
+              workspaceMaterializations,
+              loadPackage,
+            ),
+            readWorkspaceSkillLockfile(workspace.path),
+          ]);
+          const personalGlobalMatches =
+            !personalGlobalSyncRequired ||
+            (
+              await Promise.all([
+                materializationManifestMatches(
+                  personalGlobalManagedSkillsRoot(),
+                  personalGlobalMaterializations,
+                  loadPackage,
+                ),
+                materializationManifestMatches(
+                  workspaceRegistryPersonalSkillsRoot(workspace.path),
+                  personalGlobalMaterializations.map((skill) => ({
+                    ...skill,
+                    target: "workspace" as const,
+                  })),
+                  async (skill) =>
+                    loadPackage({ ...skill, target: "personal-global" }),
+                ),
+              ])
+            ).every(Boolean);
+
+          // A repeated sync for the identical desired set is an observation,
+          // not a runtime transition. The first successful sync already
+          // published the serving view; do not invalidate or republish it,
+          // and do not emit a reload that would interrupt an unrelated run.
+          if (
+            workspaceMatches &&
+            personalGlobalMatches &&
+            compareWorkspaceSkillLockfile(lockfile, desiredLockfile).matches
+          ) {
+            const legacyProjectionMigration =
+              await migrateLegacyProjectionOrFail(workspace);
+            if (
+              legacyProjectionMigration.migratedSkillNames.length === 0 &&
+              legacyProjectionMigration.backupDirs.length === 0
+            ) {
+              return jsonResponse({
+                workspaceId: workspace.id,
+                status: "synced",
+                synced: true,
+                reloadRequired: false,
+                registryConfigured: true,
+                rootDir: workspaceManagedSkillsRoot(workspace.path),
+                globalRootDir: personalGlobalManagedSkillsRoot(),
+                globalProjectionRootDir: workspaceRegistryPersonalSkillsRoot(
+                  workspace.path,
+                ),
+                lockfilePath: workspaceSkillLockfilePath(workspace.path),
+                materializedSkills: responseMaterializations.map(
+                  materializationSummaryPayload,
+                ),
+                conflicts,
+                removedSkillNames: [],
+                backupDirs: [],
+                legacyProjectionMigration,
+              });
+            }
+          }
 
           const workspaceResult = await materializeWorkspaceSkillSet({
             workspaceRoot: workspace.path,
@@ -1253,25 +1375,11 @@ export function registerSkillMaterializationRoutes(
           }
           const legacyProjectionMigration =
             await migrateLegacyProjectionOrFail(workspace);
-          const responseMaterializations = [
-            ...workspaceMaterializations,
-            ...personalGlobalMaterializations,
-          ];
-          const lockfileEntries = workspaceMaterializations.map((skill) => ({
-            skillId: skill.skillId,
-            installationId: skill.installationId,
-            versionId: skill.versionId,
-            name: skill.name,
-            packageSha256: skill.packageSha256,
-          }));
           const lockfilePath = await writeWorkspaceSkillLockfile(
             workspace.path,
             {
               schemaVersion: 1,
-              workspaceId: workspace.id,
-              skillSetId,
-              skillSetRevision,
-              entries: lockfileEntries,
+              ...desiredLockfile,
             },
           );
 

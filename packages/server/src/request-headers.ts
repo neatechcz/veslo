@@ -23,6 +23,15 @@ export const VESLO_GATEWAY_AUTHORIZATION_HEADER = "x-veslo-gateway-authorization
 export const VESLO_GATEWAY_TOKEN_HEADER = "x-veslo-gateway-token";
 export const VESLO_SESSION_ID_HEADER = "x-veslo-session-id";
 export const VESLO_WORKSPACE_ID_HEADER = "x-veslo-workspace-id";
+export const VESLO_RUNTIME_SKILL_OPERATION_ID_HEADER = "x-veslo-runtime-skill-operation-id";
+export const VESLO_SKILL_VIEW_REVISION_HEADER = "x-veslo-skill-view-revision";
+export const VESLO_SKILL_AUTHORIZATION_REVISION_HEADER = "x-veslo-skill-authorization-revision";
+export const VESLO_SKILL_MANIFEST_PATH_HEADER = "x-veslo-skill-manifest-path";
+export const VESLO_MANAGED_SKILL_STORE_ROOT_HEADER = "x-veslo-managed-skill-store-root";
+export const VESLO_ENGINE_DIRECTORY_INSTANCE_EPOCH_HEADER = "x-veslo-engine-directory-instance-epoch";
+export const VESLO_ENGINE_SKILL_VIEW_REVISION_HEADER = "x-veslo-engine-skill-view-revision";
+export const VESLO_ENGINE_AUTHORIZATION_REVISION_HEADER = "x-veslo-engine-authorization-revision";
+export const VESLO_ENGINE_CONFIG_DIGEST_HEADER = "x-veslo-engine-config-digest";
 export const OPENCODE_DIRECTORY_HEADER = "x-opencode-directory";
 
 export const HOP_BY_HOP_REQUEST_HEADERS = [

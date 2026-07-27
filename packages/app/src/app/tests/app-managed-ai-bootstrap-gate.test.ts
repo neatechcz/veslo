@@ -90,8 +90,8 @@ test("managed AI bootstrap routes desktop local providers through the local Vesl
   );
   assert.match(
     runtimeConfigSource,
-    /requiresManagedAiEngineBaseUrl\(\{[\s\S]*?requiresEngineBridgeUrl: runtimeSandboxState\.requiresEngineBridgeUrl,[\s\S]*?configuredSandboxEnabled: runtimeSandboxState\.configuredEnabled,[\s\S]*?configuredSandboxBackend: runtimeSandboxState\.configuredBackend,[\s\S]*?effectiveSandboxBackend: runtimeSandboxState\.effectiveBackend,[\s\S]*?childKind: runtimeSandboxState\.childKind,[\s\S]*?\}\)/s,
-    "managed AI routing should require a bridge URL from the runtime sandbox verdict instead of inferring it from an existing URL",
+    /const providerRoutingRequiresEngineBaseUrl = false;/,
+    "normal desktop managed AI routing must not require or publish a WSL bridge URL",
   );
   assert.match(
     runtimeConfigSource,

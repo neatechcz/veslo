@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { resolveVesloDataDir } from "./audit.js";
@@ -67,7 +68,32 @@ export async function cacheSkillPackageArchive(input: CacheSkillPackageArchiveIn
   const archive = validateArchiveForCache(input.archive);
   const path = skillPackageCachePath(input.dataDir, archive.packageSha256);
   await mkdir(skillPackageCacheDir(input.dataDir), { recursive: true });
-  await writeFile(path, `${JSON.stringify(archive)}\n`, "utf8");
+  // Content-addressed archives are immutable once validated. Never replace a
+  // healthy entry merely because another sync requested the same digest.
+  const existing = await readCachedSkillPackageArchive({
+    ...(input.dataDir !== undefined ? { dataDir: input.dataDir } : {}),
+    packageSha256: archive.packageSha256,
+  });
+  if (existing) return path;
+
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(archive)}\n`, "utf8");
+    // A corrupt cache entry is not a trusted immutable source. Remove it
+    // before atomic promotion; competing writers converge on the same bytes.
+    await rm(path, { force: true });
+    await rename(temporaryPath, path);
+  } catch (error) {
+    // Another concurrent sync may have promoted the identical digest between
+    // our existence check and rename. Trust only a freshly revalidated entry.
+    const concurrent = await readCachedSkillPackageArchive({
+      ...(input.dataDir !== undefined ? { dataDir: input.dataDir } : {}),
+      packageSha256: archive.packageSha256,
+    });
+    if (!concurrent) throw error;
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
   return path;
 }
 

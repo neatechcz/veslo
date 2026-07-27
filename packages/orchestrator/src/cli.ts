@@ -45,7 +45,13 @@ import {
 } from "./opencode-project-api.js";
 import { proxyToEngine } from "./router-proxy.js";
 import { classifySharedProxyUpstreamError } from "./proxy-upstream-health-policy.js";
-import { createRunStore, type RunEngineOwner, type RunKind, type RunRecord } from "./run-store.js";
+import {
+  createRunStore,
+  isTerminalRunStatus,
+  type RunEngineOwner,
+  type RunKind,
+  type RunRecord,
+} from "./run-store.js";
 import { createOrchestratorShutdown } from "./shutdown.js";
 import {
   createRunRegistry,
@@ -69,15 +75,15 @@ import { ensureOpencodeManagedTools as ensureOpencodeManagedToolsRuntime } from 
 import { migrateLegacyWorkspaceConfigDir } from "./workspace-runtime-migration.js";
 import {
   buildEngineConfigEnv,
+  buildEngineSkillBindingResponseHeaders,
   buildEngineSkillIsolationEnv,
   buildEngineSkillViewEnv,
 } from "./engine-launch-contract.js";
 import {
-  claimEngineSkillGeneration,
+  EMPTY_DIRECT_AUTHORIZATION_REVISION,
+  EMPTY_DIRECT_SKILL_VIEW_REVISION,
   publishDirectorySkillView,
-  releaseEngineSkillGeneration,
-  stageEngineSkillView,
-  type EngineSkillGenerationLease,
+  resolveOrdinaryDirectEngineSkillView,
 } from "./engine-skill-staging.js";
 import { DirectorySkillViewLifecycle, type DirectorySkillViewInstance } from "./directory-skill-view-lifecycle.js";
 import { inspectDirectoryScopedConfigProfile } from "./directory-scoped-placement.js";
@@ -2715,10 +2721,15 @@ function shellQuote(arg: string): string {
 async function startOpencode(options: {
   bin: string;
   workspace: string;
+  workspaceId?: string;
   /** Workspace whose effective skill manifest should feed the engine view. */
   skillWorkspace?: string;
   /** Server-published revision that staging must consume exactly. */
   skillViewRevision?: string;
+  /** Server-published authorization binding that staging must consume exactly. */
+  authorizationRevision?: string;
+  managedSkillStoreRoot?: string;
+  skillManifestPath?: string;
   /**
    * A static relative root resolved by OpenCode from each request directory.
    * This is only valid for the capability-gated shared directory topology.
@@ -2753,6 +2764,9 @@ async function startOpencode(options: {
   effectiveSandboxBackend: string;
   sandboxMode: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
   sandboxFallbackReason: string | null;
+  skillViewRevision: string | null;
+  authorizationRevision: string | null;
+  openCodeConfigDigest: string;
 }> {
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
   for (const origin of options.corsOrigins) {
@@ -2787,13 +2801,17 @@ async function startOpencode(options: {
     : null;
 
   const directoryScopedSkillPath = options.directoryScopedSkillPath?.trim() || undefined;
-  let skillGenerationLease: EngineSkillGenerationLease | undefined;
-  let skillViewPath: string;
+  let skillViewPaths: string[];
+  let servingSkillRevision: string | null = null;
+  let authorizationRevision: string | null = null;
+  let selectedSkillNames: string[] = [];
+  let skillSourceModes: string[] = [];
   if (directoryScopedSkillPath) {
     if (isAbsolute(directoryScopedSkillPath)) {
       throw new Error("directory-scoped shared skill path must be relative");
     }
-    skillViewPath = directoryScopedSkillPath;
+    skillViewPaths = [directoryScopedSkillPath];
+    skillSourceModes = ["directory-scoped"];
     options.logger.info(
       "engine directory-scoped skill path prepared",
       { workspace: options.workspace, skillPath: directoryScopedSkillPath },
@@ -2804,39 +2822,58 @@ async function startOpencode(options: {
       skillPath: directoryScopedSkillPath,
     });
   } else {
-    const skillStagingRoot = join(
-      options.configDir ?? join(options.workspace, ".veslo", "opencode-runtime"),
-      "skill-staging",
-    );
-    const skillStaging = await stageEngineSkillView({
-      workspace: options.skillWorkspace ?? options.workspace,
-      stagingRoot: skillStagingRoot,
-      requireEffectiveManifest: true,
-      ...(options.engineOwnerId ? { engineOwnerId: options.engineOwnerId } : {}),
-      ...(options.skillViewRevision ? { expectedRevision: options.skillViewRevision } : {}),
+    const resolution = await resolveOrdinaryDirectEngineSkillView({
+        workspace: options.skillWorkspace ?? options.workspace,
+        ...(options.skillViewRevision ? { expectedRevision: options.skillViewRevision } : {}),
+        ...(options.authorizationRevision
+          ? { expectedAuthorizationRevision: options.authorizationRevision }
+          : {}),
+        ...(options.managedSkillStoreRoot
+          ? { managedSkillStoreRoot: options.managedSkillStoreRoot }
+          : {}),
+        ...(options.skillManifestPath ? { manifestPath: options.skillManifestPath } : {}),
+      });
+    const skillView = resolution.view;
+    writeSkillAuditTrace("orchestrator:runtime-skill-resolution-detail", {
+      operationId: options.runId,
+      workspaceId: options.workspaceId ?? null,
+      engineOwnerId: options.engineOwnerId ?? null,
+      phase: "direct-view-resolve",
+      requestedRevision: options.skillViewRevision ?? null,
+      requestedAuthorizationRevision: options.authorizationRevision ?? null,
+      result: resolution.result,
+      resolvedRevision: skillView.revision,
+      resolvedAuthorizationRevision: skillView.authorizationRevision,
+      fallbackReason: resolution.fallbackReason,
+      reconciliationScheduled: false,
     });
-    skillGenerationLease = skillStaging.generationLease;
-    skillViewPath = skillStaging.stagingRoot;
+    skillViewPaths = skillView.skillPaths;
+    servingSkillRevision = skillView.revision;
+    authorizationRevision = skillView.authorizationRevision;
+    selectedSkillNames = skillView.selected.map((skill) => skill.name);
+    skillSourceModes = skillView.source === "empty"
+      ? ["empty"]
+      : skillView.selected.map((skill) => skill.className);
     options.logger.info(
-      "engine skill staging prepared",
+      "engine direct skill view prepared",
       {
         workspace: options.workspace,
         skillWorkspace: options.skillWorkspace ?? options.workspace,
-        stagingRoot: skillStaging.stagingRoot,
-        source: skillStaging.source,
-        materialized: skillStaging.materialized,
-        suppressed: skillStaging.suppressed,
+        source: skillView.source,
+        revision: skillView.revision,
+        selected: skillView.selected.map((skill) => skill.name),
+        suppressed: skillView.suppressed,
       },
       "opencode",
     );
-    writeSkillAuditTrace("orchestrator:skill-staging", {
-      workspace: options.workspace,
-      skillWorkspace: options.skillWorkspace ?? options.workspace,
-      stagingRoot: skillStaging.stagingRoot,
-      source: skillStaging.source,
-      materialized: skillStaging.materialized,
-      materializedDetails: skillStaging.materializedDetails,
-      suppressed: skillStaging.suppressed,
+    writeSkillAuditTrace("orchestrator:direct-skill-view", {
+      operationId: options.runId,
+      engineOwnerId: options.engineOwnerId ?? null,
+      phase: "direct-view-resolve",
+      source: skillView.source,
+      revision: skillView.revision,
+      selected: selectedSkillNames,
+      suppressed: skillView.suppressed,
     });
   }
   try {
@@ -2848,12 +2885,17 @@ async function startOpencode(options: {
     await fileExists(join(options.configDir, "AGENTS.md"))
     ? join(options.configDir, "AGENTS.md")
     : undefined;
+  const engineSkillViewEnv = buildEngineSkillViewEnv(
+    skillViewPaths,
+    process.env.OPENCODE_CONFIG_CONTENT,
+    projectInstructionPath,
+  );
 
   const env = {
     ...process.env,
     OPENCODE_CLIENT: "veslo-orchestrator",
     ...buildEngineSkillIsolationEnv(configPath, options.skillIsolationProfile),
-    ...buildEngineSkillViewEnv(skillViewPath, process.env.OPENCODE_CONFIG_CONTENT, projectInstructionPath),
+    ...engineSkillViewEnv,
     VESLO: "1",
     VESLO_RUN_ID: options.runId,
     VESLO_LOG_FORMAT: options.logFormat,
@@ -2883,6 +2925,34 @@ async function startOpencode(options: {
       ? { OPENCODE_ROUTER_HEALTH_PORT: String(options.opencodeRouterHealthPort) }
       : {}),
   };
+  const orderedSkillPathIds = skillViewPaths.map((skillPath) =>
+    createHash("sha256")
+      .update(resolve(options.skillWorkspace ?? options.workspace, skillPath))
+      .digest("hex")
+      .slice(0, 16)
+  );
+  // The same config text can be assembled from different discovery modes.
+  // Bind those modes explicitly so a diagnostic tuple identifies the actual
+  // direct-path contract, not merely its rendered OpenCode JSON.
+  const openCodeConfigDigest = createHash("sha256")
+    .update(JSON.stringify({
+      config: engineSkillViewEnv.OPENCODE_CONFIG_CONTENT ?? "",
+      orderedSkillPathIds,
+      skillSourceModes,
+      skillIsolationProfile: options.skillIsolationProfile,
+    }))
+    .digest("hex");
+  writeSkillAuditTrace("orchestrator:engine-skill-binding", {
+    operationId: options.runId,
+    engineOwnerId: options.engineOwnerId ?? null,
+    phase: "config-built",
+    servingRevision: servingSkillRevision,
+    expectedRevision: options.skillViewRevision ?? null,
+    selectedSkillNames,
+    orderedSkillPathIds,
+    skillSourceModes,
+    openCodeConfigDigest,
+  });
 
   // VESLO_DISABLE_SANDBOX=1 is a hard kill switch: it bypasses platform
   // backend resolution entirely, including the Windows WSL2 sandbox branch.
@@ -3049,24 +3119,7 @@ async function startOpencode(options: {
       env,
     });
   }
-  if (skillGenerationLease) {
-    try {
-      if (!child.pid) throw new Error("skill_generation_invalid: spawned engine has no pid");
-      child.once("exit", () => {
-        void releaseEngineSkillGeneration(skillGenerationLease!).catch(() => undefined);
-      });
-      await claimEngineSkillGeneration(skillGenerationLease, child.pid);
-      if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error("skill_generation_invalid: spawned engine exited before generation lease claim");
-      }
-    } catch (error) {
-      await stopChild(child).catch(() => undefined);
-      await releaseEngineSkillGeneration(skillGenerationLease).catch(() => undefined);
-      throw error;
-    }
-    }
   } catch (error) {
-    if (skillGenerationLease) await releaseEngineSkillGeneration(skillGenerationLease).catch(() => undefined);
     throw error;
   }
 
@@ -3179,9 +3232,11 @@ async function startOpencode(options: {
     effectiveSandboxBackend: sandbox?.name ?? "none",
     sandboxMode,
     sandboxFallbackReason,
+    skillViewRevision: servingSkillRevision,
+    authorizationRevision,
+    openCodeConfigDigest,
   };
   } catch (error) {
-    if (skillGenerationLease) await releaseEngineSkillGeneration(skillGenerationLease).catch(() => undefined);
     throw error;
   }
 }
@@ -4152,6 +4207,15 @@ async function runRouterDaemon(args: ParsedArgs) {
       traceFile: runtimeTraceFile,
       ...payload,
     });
+  // Workspace ids may survive a move or an older registration. Keep a stable
+  // path correlation key in traces, while the trace writer continues to redact
+  // any human-readable filesystem path it already receives.
+  const workspacePathTraceId = (input: string | null | undefined): string | null => {
+    const value = input?.trim();
+    return value
+      ? createHash("sha256").update(normalizeWorkspacePath(resolve(value))).digest("hex").slice(0, 16)
+      : null;
+  };
   traceRuntime("orchestrator:daemon-start", {
     cliVersion,
     logFormat,
@@ -4445,7 +4509,7 @@ async function runRouterDaemon(args: ParsedArgs) {
   });
 
   const runEngineOwnerFromEngine = (
-    engine: Pick<EngineProcess, "workspaceId" | "engineOwnerId" | "pid" | "spawnedAt" | "baseUrl"> | null | undefined,
+    engine: Pick<EngineProcess, "workspaceId" | "engineOwnerId" | "directoryInstanceEpoch" | "pid" | "spawnedAt" | "baseUrl"> | null | undefined,
   ): RunEngineOwner =>
     engine
       ? {
@@ -4551,6 +4615,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         const startedAt = Date.now();
         traceRuntime("orchestrator:workspace-resolve:start", {
           workspaceId: ws.id,
+          workspacePathId: workspacePathTraceId(ws.path),
           workspacePath: ws.path ?? null,
         });
         const workdir = await ensureWorkspace(ws.path ?? "");
@@ -4606,6 +4671,9 @@ async function runRouterDaemon(args: ParsedArgs) {
         });
         traceRuntime("orchestrator:workspace-resolve:done", {
           workspaceId: ws.id,
+          workspacePathId: workspacePathTraceId(ws.path),
+          workdirPathId: workspacePathTraceId(workdir),
+          configDirPathId: workspacePathTraceId(configDir),
           workdir,
           configDir,
           configFiles,
@@ -4614,6 +4682,9 @@ async function runRouterDaemon(args: ParsedArgs) {
         });
         writeSendWorkflowTrace("orchestrator:workspace-resolve:done", {
           workspaceId: ws.id,
+          workspacePathId: workspacePathTraceId(ws.path),
+          workdirPathId: workspacePathTraceId(workdir),
+          configDirPathId: workspacePathTraceId(configDir),
           workspacePath: ws.path ?? null,
           workdir,
           configDir,
@@ -4622,21 +4693,65 @@ async function runRouterDaemon(args: ParsedArgs) {
         });
         return { workdir, configDir };
       },
-      spawnEngine: async ({ workspaceId, engineOwnerId, workdir, configDir, port, skillViewRevision }) => {
+      validateSkillView: async ({ path: workspacePath, skillViewRevision, authorizationRevision, managedSkillStoreRoot, skillManifestPath }) => {
+        if (!workspacePath || (!skillViewRevision && !authorizationRevision)) return;
+        const traceInput = {
+          workspacePathId: workspacePathTraceId(workspacePath),
+          skillViewRevision: skillViewRevision ?? null,
+          authorizationRevision: authorizationRevision ?? null,
+          hasCandidateManifest: Boolean(skillManifestPath),
+          hasManagedSkillStore: Boolean(managedSkillStoreRoot),
+        };
+        traceRuntime("orchestrator:skill-view-validation:start", traceInput);
+        try {
+          const resolution = await resolveOrdinaryDirectEngineSkillView({
+            workspace: workspacePath,
+            ...(skillViewRevision ? { expectedRevision: skillViewRevision } : {}),
+            ...(authorizationRevision ? { expectedAuthorizationRevision: authorizationRevision } : {}),
+            ...(managedSkillStoreRoot ? { managedSkillStoreRoot } : {}),
+            ...(skillManifestPath ? { manifestPath: skillManifestPath } : {}),
+          });
+          const view = resolution.view;
+          traceRuntime("orchestrator:skill-view-validation:done", {
+            ...traceInput,
+            resolvedRevision: view.revision,
+            resolvedAuthorizationRevision: view.authorizationRevision,
+            source: view.source,
+            selectedSkillCount: view.selected.length,
+            fallbackReason: resolution.fallbackReason,
+          });
+        } catch (error) {
+          traceRuntime("orchestrator:skill-view-validation:failed", {
+            ...traceInput,
+            error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+          });
+          throw error;
+        }
+      },
+      spawnEngine: async ({ workspaceId, engineOwnerId, workdir, configDir, port, skillViewRevision, authorizationRevision, managedSkillStoreRoot, skillManifestPath }) => {
         const startedAt = Date.now();
         traceRuntime("orchestrator:engine-spawn:start", {
           workspaceId,
+          workdirPathId: workspacePathTraceId(workdir),
+          configDirPathId: workspacePathTraceId(configDir),
           workdir,
           configDir,
           port,
           opencodeBin: opencodeBinary.bin,
           skillViewRevision: skillViewRevision ?? null,
+          authorizationRevision: authorizationRevision ?? null,
         });
-        const spawned = await startOpencode({
+        let spawned: Awaited<ReturnType<typeof startOpencode>>;
+        try {
+          spawned = await startOpencode({
           bin: opencodeBinary.bin,
           workspace: workdir,
+          workspaceId,
           configDir,
           ...(skillViewRevision ? { skillViewRevision } : {}),
+          ...(authorizationRevision ? { authorizationRevision } : {}),
+          ...(managedSkillStoreRoot ? { managedSkillStoreRoot } : {}),
+          ...(skillManifestPath ? { skillManifestPath } : {}),
           skillIsolationProfile: "normal",
           hotReload: opencodeHotReload,
           bindHost: opencodeHost,
@@ -4649,8 +4764,22 @@ async function runRouterDaemon(args: ParsedArgs) {
           logger,
           runId: `${runId}-${workspaceId.slice(-8)}`,
           engineOwnerId,
-          logFormat,
-        });
+            logFormat,
+          });
+        } catch (error) {
+          traceRuntime("orchestrator:engine-spawn:failed", {
+            workspaceId,
+            engineOwnerId,
+            workdirPathId: workspacePathTraceId(workdir),
+            configDirPathId: workspacePathTraceId(configDir),
+            skillViewRevision: skillViewRevision ?? null,
+            authorizationRevision: authorizationRevision ?? null,
+            hasCandidateManifest: Boolean(skillManifestPath),
+            error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+            durationMs: Date.now() - startedAt,
+          });
+          throw error;
+        }
         // opencodeHost is the *bind* address (often 0.0.0.0 so the engine is
         // reachable from the host machine + LAN). The pool/proxy fetches this
         // baseUrl as a client, where 0.0.0.0 is meaningless — Node's fetch
@@ -4663,6 +4792,8 @@ async function runRouterDaemon(args: ParsedArgs) {
           (opencodeHost === "0.0.0.0" || opencodeHost === "::" ? "127.0.0.1" : opencodeHost);
         traceRuntime("orchestrator:engine-spawn:done", {
           workspaceId,
+          workdirPathId: workspacePathTraceId(workdir),
+          configDirPathId: workspacePathTraceId(configDir),
           workdir,
           configDir,
           port,
@@ -4673,6 +4804,9 @@ async function runRouterDaemon(args: ParsedArgs) {
           effectiveSandboxBackend: spawned.effectiveSandboxBackend,
           sandboxMode: spawned.sandboxMode,
           sandboxFallbackReason: spawned.sandboxFallbackReason,
+          skillViewRevision: spawned.skillViewRevision,
+          authorizationRevision: spawned.authorizationRevision,
+          openCodeConfigDigest: spawned.openCodeConfigDigest,
           connectHost: spawned.connectHost ?? null,
           clientHost,
           durationMs: Date.now() - startedAt,
@@ -4686,6 +4820,9 @@ async function runRouterDaemon(args: ParsedArgs) {
           effectiveSandboxBackend: spawned.effectiveSandboxBackend,
           sandboxMode: spawned.sandboxMode,
           sandboxFallbackReason: spawned.sandboxFallbackReason,
+          skillViewRevision: spawned.skillViewRevision,
+          authorizationRevision: spawned.authorizationRevision,
+          openCodeConfigDigest: spawned.openCodeConfigDigest,
         };
       },
       waitForHealthy: async (baseUrl) => {
@@ -4757,6 +4894,64 @@ async function runRouterDaemon(args: ParsedArgs) {
     },
     config: { maxEngines, idleSuspendMs },
   });
+
+  const resolveOrdinaryPooledSkillBinding = async (input: {
+    workspaceId: string;
+    workspacePath: string;
+    requestedRevision?: string;
+    requestedAuthorizationRevision?: string;
+    managedSkillStoreRoot?: string;
+    skillManifestPath?: string;
+  }) => {
+    const current = pool.get(input.workspaceId);
+    const completeRequest = Boolean(
+      input.requestedRevision && input.requestedAuthorizationRevision,
+    );
+    const currentIsReusable = Boolean(
+      current &&
+        (current.state === "ready" || current.state === "idle") &&
+        current.skillViewRevision &&
+        current.authorizationRevision &&
+        completeRequest &&
+        current.authorizationRevision === input.requestedAuthorizationRevision,
+    );
+    if (currentIsReusable && current) {
+      return {
+        revision: current.skillViewRevision!,
+        authorizationRevision: current.authorizationRevision!,
+        result: "healthy-engine" as const,
+        fallbackReason:
+          current.skillViewRevision === input.requestedRevision
+            ? null
+            : "content_stale_reused",
+      };
+    }
+
+    const resolution = await resolveOrdinaryDirectEngineSkillView({
+      workspace: input.workspacePath,
+      ...(input.requestedRevision
+        ? { expectedRevision: input.requestedRevision }
+        : {}),
+      ...(input.requestedAuthorizationRevision
+        ? {
+            expectedAuthorizationRevision:
+              input.requestedAuthorizationRevision,
+          }
+        : {}),
+      ...(input.managedSkillStoreRoot
+        ? { managedSkillStoreRoot: input.managedSkillStoreRoot }
+        : {}),
+      ...(input.skillManifestPath
+        ? { manifestPath: input.skillManifestPath }
+        : {}),
+    });
+    return {
+      revision: resolution.view.revision!,
+      authorizationRevision: resolution.view.authorizationRevision!,
+      result: resolution.result,
+      fallbackReason: resolution.fallbackReason,
+    };
+  };
 
   let sharedSkillView: { workspaceId: string; workspacePath: string; revision?: string } | null = null;
   let sharedSkillViewQueue: Promise<void> = Promise.resolve();
@@ -5329,6 +5524,14 @@ async function runRouterDaemon(args: ParsedArgs) {
       const value = body[key];
       return typeof value === "string" ? value.trim() : "";
     };
+    const redactTerminalErrorForTrace = (value: string | null | undefined): string | null => {
+      const text = value?.trim() ?? "";
+      return text
+        ? text
+          .replace(/\b(bearer|authorization|token|api[_-]?key|password)\b\s*(?:=|:)?\s*\S+/gi, "$1=[redacted]")
+          .slice(0, 300)
+        : null;
+    };
     const parseRunKind = (value: unknown): RunKind | null => {
       if (value === "prompt" || value === "command" || value === "shell" || value === "summarize") {
         return value;
@@ -5485,6 +5688,16 @@ async function runRouterDaemon(args: ParsedArgs) {
           createdAt: existing?.createdAt ?? nowMs(),
           lastUsedAt: nowMs(),
         };
+        traceRuntime("orchestrator:workspace-registration:resolved", {
+          workspaceId: id,
+          requestedId: requestedId || null,
+          serverWorkspaceId: requestedServerWorkspaceId || null,
+          appWorkspaceId: requestedAppWorkspaceId || null,
+          requestedPathId: workspacePathTraceId(pathInput),
+          resolvedPathId: workspacePathTraceId(resolved),
+          existingWorkspaceId: existing?.id ?? null,
+          legacyWorkspaceIds: legacyIds,
+        });
         for (const legacyId of legacyIds) {
           await pool.forget(legacyId);
         }
@@ -5570,22 +5783,53 @@ async function runRouterDaemon(args: ParsedArgs) {
             ? requestedSkillViewRevisionHeader[0]
             : requestedSkillViewRevisionHeader
         )?.trim() || undefined;
+        const requestedAuthorizationRevisionHeader = req.headers["x-veslo-skill-authorization-revision"];
+        const requestedAuthorizationRevision = (
+          Array.isArray(requestedAuthorizationRevisionHeader)
+            ? requestedAuthorizationRevisionHeader[0]
+            : requestedAuthorizationRevisionHeader
+        )?.trim() || undefined;
+        const managedSkillStoreRootHeader = req.headers["x-veslo-managed-skill-store-root"];
+        const managedSkillStoreRoot = (
+          Array.isArray(managedSkillStoreRootHeader)
+            ? managedSkillStoreRootHeader[0]
+            : managedSkillStoreRootHeader
+        )?.trim() || join(dataDir, "skill-package-store");
+        const skillManifestPathHeader = req.headers["x-veslo-skill-manifest-path"];
+        const skillManifestPath = (
+          Array.isArray(skillManifestPathHeader) ? skillManifestPathHeader[0] : skillManifestPathHeader
+        )?.trim() || undefined;
+        const runtimeSkillOperationIdHeader = req.headers["x-veslo-runtime-skill-operation-id"];
+        const runtimeSkillOperationId = (
+          Array.isArray(runtimeSkillOperationIdHeader)
+            ? runtimeSkillOperationIdHeader[0]
+            : runtimeSkillOperationIdHeader
+        )?.trim() || randomUUID();
         if (workspace.workspaceType === "local" && workspace.path) {
           const workspaceTopology = await resolveWorkspaceEngineTopology(workspace);
+          const previousPooledEngine = workspaceTopology === "pooled-per-workspace"
+            ? pool.get(workspace.id)
+            : undefined;
           const ensureStartedAt = Date.now();
           traceRuntime("orchestrator:activate-ensure:start", {
             workspaceId: workspace.id,
             workspacePath: workspace.path,
+            runtimeSkillOperationId: runtimeSkillOperationId ?? null,
           });
+          let pooledSkillResolution: Awaited<
+            ReturnType<typeof resolveOrdinaryPooledSkillBinding>
+          > | null = null;
           try {
-            const ensured = workspaceTopology === "shared-directory-scoped"
-              ? (await ensureDirectorySkillView({
+            let ensured;
+            if (workspaceTopology === "shared-directory-scoped") {
+              await ensureDirectorySkillView({
                     workspaceId: workspace.id,
                     workspacePath: workspace.path,
                     requestedRevision: requestedSkillViewRevision,
-                  }), await sharedOpenCodeEngine!.ensureStarted(`activate ${workspace.id}`))
-              : workspaceTopology === "shared-unsandboxed"
-                ? (await ensureSharedSkillView(
+                  });
+              ensured = await sharedOpenCodeEngine!.ensureStarted(`activate ${workspace.id}`);
+            } else if (workspaceTopology === "shared-unsandboxed") {
+              ensured = (await ensureSharedSkillView(
                     workspace.id,
                     workspace.path,
                     `activate ${workspace.id}`,
@@ -5615,17 +5859,33 @@ async function runRouterDaemon(args: ParsedArgs) {
                         });
                       }
                     },
-                  )).engine
-                : await pool.ensure({
+                  )).engine;
+            } else {
+              pooledSkillResolution = await resolveOrdinaryPooledSkillBinding({
+                workspaceId: workspace.id,
+                workspacePath: workspace.path,
+                ...(requestedSkillViewRevision
+                  ? { requestedRevision: requestedSkillViewRevision }
+                  : {}),
+                ...(requestedAuthorizationRevision
+                  ? {
+                      requestedAuthorizationRevision:
+                        requestedAuthorizationRevision,
+                    }
+                  : {}),
+                managedSkillStoreRoot,
+                ...(skillManifestPath ? { skillManifestPath } : {}),
+              });
+              ensured = await pool.ensure({
                     id: workspace.id,
                     path: workspace.path,
-                    // The desktop only sends this after a fresh server publish,
-                    // so a pooled spawn is held to the same revision the two
-                    // shared topologies already enforce.
-                    ...(requestedSkillViewRevision
-                      ? { skillViewRevision: requestedSkillViewRevision }
-                      : {}),
+                    skillViewRevision: pooledSkillResolution.revision,
+                    authorizationRevision:
+                      pooledSkillResolution.authorizationRevision,
+                    managedSkillStoreRoot,
+                    ...(skillManifestPath ? { skillManifestPath } : {}),
                   });
+            }
             traceRuntime("orchestrator:activate-ensure:done", {
               workspaceId: workspace.id,
               workspacePath: workspace.path,
@@ -5636,7 +5896,46 @@ async function runRouterDaemon(args: ParsedArgs) {
               baseUrl: ensured.baseUrl,
               childKind: ensured.childKind ?? "direct",
               durationMs: Date.now() - ensureStartedAt,
+              runtimeSkillOperationId: runtimeSkillOperationId ?? null,
             });
+            if (workspaceTopology === "pooled-per-workspace") {
+              const resolvedRevision = ensured.skillViewRevision ?? null;
+              const resolvedAuthorizationRevision =
+                ensured.authorizationRevision ?? null;
+              const resolvedEmpty =
+                resolvedRevision === EMPTY_DIRECT_SKILL_VIEW_REVISION &&
+                resolvedAuthorizationRevision ===
+                  EMPTY_DIRECT_AUTHORIZATION_REVISION;
+              const requestedEmpty =
+                requestedSkillViewRevision === EMPTY_DIRECT_SKILL_VIEW_REVISION &&
+                requestedAuthorizationRevision ===
+                  EMPTY_DIRECT_AUTHORIZATION_REVISION;
+              const reusedHealthyEngine =
+                previousPooledEngine?.engineOwnerId === ensured.engineOwnerId;
+              writeSkillAuditTrace("orchestrator:runtime-skill-resolution", {
+                operationId: runtimeSkillOperationId ?? null,
+                workspaceId: workspace.id,
+                engineOwnerId: ensured.engineOwnerId,
+                enginePid: ensured.pid,
+                phase: "activation",
+                requestedRevision: requestedSkillViewRevision ?? null,
+                requestedAuthorizationRevision:
+                  requestedAuthorizationRevision ?? null,
+                result: reusedHealthyEngine
+                  ? "healthy-engine"
+                  : resolvedEmpty
+                    ? "empty"
+                    : "serving",
+                resolvedRevision,
+                resolvedAuthorizationRevision,
+                fallbackReason:
+                  pooledSkillResolution?.fallbackReason ??
+                  (resolvedEmpty && requestedEmpty
+                    ? "no_authorized_skills"
+                    : null),
+                reconciliationScheduled: false,
+              });
+            }
             const prime = sharedMcpPrime as { workspaceId: string; workspacePath: string } | null;
             if (prime && workspaceTopology === "shared-unsandboxed") {
               const flight = sharedMcpRuntimePrimeFlights.start({
@@ -5855,6 +6154,19 @@ async function runRouterDaemon(args: ParsedArgs) {
             send(404, { error: "run not found" });
             return;
           }
+          if (isTerminalRunStatus(active.record.status)) {
+            traceRuntime("orchestrator:run-lifecycle:terminal-status", {
+              workspaceId: workspace.id,
+              conversationId,
+              runId: active.record.runId,
+              status: active.record.status,
+              terminalError: redactTerminalErrorForTrace(active.record.error),
+              engineOwnerId: active.record.engineOwnerId,
+              enginePid: active.record.enginePid,
+              activityKind: active.record.activityKind,
+              waitReason: active.record.waitReason,
+            });
+          }
           send(200, lifecycleRunPayload(active.record, {
             stale: active.stale,
             noProgressSeconds: active.noProgressSeconds,
@@ -5868,6 +6180,19 @@ async function runRouterDaemon(args: ParsedArgs) {
         if (!reconciled) {
           send(404, { error: "run not found" });
           return;
+        }
+        if (isTerminalRunStatus(reconciled.record.status)) {
+          traceRuntime("orchestrator:run-lifecycle:terminal-status", {
+            workspaceId: workspace.id,
+            conversationId,
+            runId: reconciled.record.runId,
+            status: reconciled.record.status,
+            terminalError: redactTerminalErrorForTrace(reconciled.record.error),
+            engineOwnerId: reconciled.record.engineOwnerId,
+            enginePid: reconciled.record.enginePid,
+            activityKind: reconciled.record.activityKind,
+            waitReason: reconciled.record.waitReason,
+          });
         }
         send(200, lifecycleRunPayload(reconciled.record, {
           stale: reconciled.stale,
@@ -5918,6 +6243,22 @@ async function runRouterDaemon(args: ParsedArgs) {
             ? requestedSkillViewRevisionHeader[0]
             : requestedSkillViewRevisionHeader
         )?.trim() || undefined;
+        const requestedAuthorizationRevisionHeader = req.headers["x-veslo-skill-authorization-revision"];
+        const requestedAuthorizationRevision = (
+          Array.isArray(requestedAuthorizationRevisionHeader)
+            ? requestedAuthorizationRevisionHeader[0]
+            : requestedAuthorizationRevisionHeader
+        )?.trim() || undefined;
+        const managedSkillStoreRootHeader = req.headers["x-veslo-managed-skill-store-root"];
+        const managedSkillStoreRoot = (
+          Array.isArray(managedSkillStoreRootHeader)
+            ? managedSkillStoreRootHeader[0]
+            : managedSkillStoreRootHeader
+        )?.trim() || join(dataDir, "skill-package-store");
+        const skillManifestPathHeader = req.headers["x-veslo-skill-manifest-path"];
+        const skillManifestPath = (
+          Array.isArray(skillManifestPathHeader) ? skillManifestPathHeader[0] : skillManifestPathHeader
+        )?.trim() || undefined;
         const workflowBase = {
           traceId: sendTraceId || null,
           workspaceId: ws.id,
@@ -5941,6 +6282,10 @@ async function runRouterDaemon(args: ParsedArgs) {
         // permanent drain and violate abort isolation.
         const directoryRefreshBypass = proxyMethod === "POST" && /\/abort\/?$/.test(restPath);
         let proxyTarget: Awaited<ReturnType<typeof resolveOpencodeProxyTarget>>;
+        let pooledSkillResolution: Awaited<
+          ReturnType<typeof resolveOrdinaryPooledSkillBinding>
+        > | null = null;
+        const runtimeSkillDecisionOperationId = sendTraceId || randomUUID();
         let expectedSharedSkillView: { workspaceId: string; workspaceRoot: string; revision?: string } | null = null;
         let directorySkillView: DirectorySkillViewInstance | null = null;
         const ensureStartedAt = Date.now();
@@ -5986,6 +6331,28 @@ async function runRouterDaemon(args: ParsedArgs) {
               ...(conversationRunId ? { excludeRunId: conversationRunId } : {}),
             });
           }
+          if (
+            workspaceTopology === "pooled-per-workspace" &&
+            proxyMethod !== "GET" &&
+            proxyMethod !== "HEAD" &&
+            !requireRunningEngine
+          ) {
+            pooledSkillResolution = await resolveOrdinaryPooledSkillBinding({
+              workspaceId: ws.id,
+              workspacePath: ws.path,
+              ...(requestedSkillViewRevision
+                ? { requestedRevision: requestedSkillViewRevision }
+                : {}),
+              ...(requestedAuthorizationRevision
+                ? {
+                    requestedAuthorizationRevision:
+                      requestedAuthorizationRevision,
+                  }
+                : {}),
+              managedSkillStoreRoot,
+              ...(skillManifestPath ? { skillManifestPath } : {}),
+            });
+          }
           proxyTarget = await resolveOpencodeProxyTarget({
             topology: workspaceTopology,
             method: proxyMethod,
@@ -5994,9 +6361,23 @@ async function runRouterDaemon(args: ParsedArgs) {
             workspacePath: ws.path,
             pooledEngine: pool,
             sharedEngine: sharedOpenCodeEngine ?? undefined,
-            ...(requestedSkillViewRevision
-              ? { skillViewRevision: requestedSkillViewRevision }
+            ...(pooledSkillResolution?.revision ?? requestedSkillViewRevision
+              ? {
+                  skillViewRevision:
+                    pooledSkillResolution?.revision ??
+                    requestedSkillViewRevision!,
+                }
               : {}),
+            ...(pooledSkillResolution?.authorizationRevision ??
+            requestedAuthorizationRevision
+              ? {
+                  authorizationRevision:
+                    pooledSkillResolution?.authorizationRevision ??
+                    requestedAuthorizationRevision!,
+                }
+              : {}),
+            managedSkillStoreRoot,
+            ...(skillManifestPath ? { skillManifestPath } : {}),
           });
           if (!proxyTarget.engine) {
             const isEngineStarting = proxyTarget.unavailableReason === "starting";
@@ -6064,6 +6445,29 @@ async function runRouterDaemon(args: ParsedArgs) {
               workspaceId: ws.id,
             });
             return;
+          }
+          if (
+            workspaceTopology === "pooled-per-workspace" &&
+            pooledSkillResolution
+          ) {
+            writeSkillAuditTrace("orchestrator:runtime-skill-resolution", {
+              operationId: runtimeSkillDecisionOperationId,
+              workspaceId: ws.id,
+              engineOwnerId: proxyTarget.engine.engineOwnerId,
+              enginePid: proxyTarget.engine.pid,
+              phase: "proxy-admission",
+              requestedRevision: requestedSkillViewRevision ?? null,
+              requestedAuthorizationRevision:
+                requestedAuthorizationRevision ?? null,
+              result: proxyTarget.spawnedByRequest
+                ? pooledSkillResolution.result
+                : "healthy-engine",
+              resolvedRevision: proxyTarget.engine.skillViewRevision ?? null,
+              resolvedAuthorizationRevision:
+                proxyTarget.engine.authorizationRevision ?? null,
+              fallbackReason: pooledSkillResolution.fallbackReason,
+              reconciliationScheduled: false,
+            });
           }
           traceRuntime("orchestrator:proxy-ensure:done", {
             traceId: sendTraceId || null,
@@ -6158,7 +6562,9 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
         const engine = proxyTarget.engine;
-        const engineOwnerResponseHeaders: Record<string, string> = {};
+        const engineResponseHeaders = buildEngineSkillBindingResponseHeaders(
+          engine,
+        );
         if (conversationRunId && proxyMethod !== "GET" && proxyMethod !== "HEAD") {
           const owner = runEngineOwnerFromEngine(engine);
           try {
@@ -6198,11 +6604,19 @@ async function runRouterDaemon(args: ParsedArgs) {
               owner.engineStartedAt !== null &&
               owner.engineBaseUrl
             ) {
-              engineOwnerResponseHeaders["x-veslo-engine-slot-id"] = owner.engineSlotId ?? ws.id;
-              engineOwnerResponseHeaders["x-veslo-engine-owner-id"] = owner.engineOwnerId;
-              engineOwnerResponseHeaders["x-veslo-engine-pid"] = String(owner.enginePid);
-              engineOwnerResponseHeaders["x-veslo-engine-started-at"] = String(owner.engineStartedAt);
-              engineOwnerResponseHeaders["x-veslo-engine-base-url"] = owner.engineBaseUrl;
+              engineResponseHeaders["x-veslo-engine-slot-id"] = owner.engineSlotId ?? ws.id;
+              engineResponseHeaders["x-veslo-engine-owner-id"] = owner.engineOwnerId;
+              const directoryInstanceEpoch = engine.directoryInstanceEpoch;
+              if (
+                typeof directoryInstanceEpoch === "number" &&
+                Number.isSafeInteger(directoryInstanceEpoch) &&
+                directoryInstanceEpoch > 0
+              ) {
+                engineResponseHeaders["x-veslo-engine-directory-instance-epoch"] = String(directoryInstanceEpoch);
+              }
+              engineResponseHeaders["x-veslo-engine-pid"] = String(owner.enginePid);
+              engineResponseHeaders["x-veslo-engine-started-at"] = String(owner.engineStartedAt);
+              engineResponseHeaders["x-veslo-engine-base-url"] = owner.engineBaseUrl;
             }
           } catch (err) {
             const detail = err instanceof Error ? err.message : String(err);
@@ -6386,7 +6800,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           targetBaseUrl: engine.baseUrl,
           targetPath: restPath,
           targetSearch,
-          responseHeaders: engineOwnerResponseHeaders,
+          responseHeaders: engineResponseHeaders,
           sandboxBackend: pathMapping.backend,
           rewriteEnginePaths,
           engineDirectory,
@@ -6479,7 +6893,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           targetBaseUrl: engine.baseUrl,
           targetPath: restPath,
           targetSearch,
-          responseHeaders: engineOwnerResponseHeaders,
+          responseHeaders: engineResponseHeaders,
           headersTimeoutMs: opencodeProxyHeadersTimeoutMs,
           injectHeaders,
           stripIncomingHeaders: [

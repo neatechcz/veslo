@@ -44,14 +44,14 @@ test("engine store delegates host start and reload reconnect flow to the shared 
 
   assert.match(
     source,
-    /const prepareRuntime = async \(\) => await localRuntimeLifecycle\.startHost\(\{[\s\S]*await prepareRuntimeWithSkillViewRefresh\(\{[\s\S]*prepare: prepareRuntime,/s,
-    "startHost should delegate engine start to the shared lifecycle and bridge one skill-view refresh retry",
+    /const prepareRuntime = async \(\) => await localRuntimeLifecycle\.startHost\(\{[\s\S]*const ok = await prepareRuntime\(\);/s,
+    "startHost should delegate engine start to the shared lifecycle without a Skills retry loop",
   );
 
   assert.match(
     source,
-    /const prepareRuntime = async \(\) => await localRuntimeLifecycle\.restartWorkspaceRuntime\(\{[\s\S]*await prepareRuntimeWithSkillViewRefresh\(\{[\s\S]*prepare: prepareRuntime,/s,
-    "reloadWorkspaceEngine should delegate reconnect orchestration to the shared lifecycle and bridge one skill-view refresh retry",
+    /const prepareRuntime = async \(\) => await localRuntimeLifecycle\.restartWorkspaceRuntime\(\{[\s\S]*const ok = await prepareRuntime\(\);/s,
+    "reloadWorkspaceEngine should delegate reconnect orchestration without a Skills retry loop",
   );
 });
 

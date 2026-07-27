@@ -325,9 +325,13 @@ class QueueHarness implements ConversationRunQueueStore {
       state: input.state ?? "starting",
       engineSlotId: previous?.engineSlotId ?? null,
       engineOwnerId: previous?.engineOwnerId ?? null,
+      directoryInstanceEpoch: previous?.directoryInstanceEpoch ?? null,
       enginePid: previous?.enginePid ?? null,
       engineStartedAt: previous?.engineStartedAt ?? null,
       engineBaseUrl: previous?.engineBaseUrl ?? null,
+      skillViewRevision: previous?.skillViewRevision ?? null,
+      authorizationRevision: previous?.authorizationRevision ?? null,
+      openCodeConfigDigest: previous?.openCodeConfigDigest ?? null,
       createdAt: previous?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
@@ -347,6 +351,7 @@ class QueueHarness implements ConversationRunQueueStore {
       previous.engineOwnerId &&
       (previous.engineSlotId !== owner.engineSlotId ||
         previous.engineOwnerId !== owner.engineOwnerId ||
+        previous.directoryInstanceEpoch !== (owner.directoryInstanceEpoch ?? null) ||
         previous.enginePid !== owner.enginePid ||
         previous.engineStartedAt !== owner.engineStartedAt ||
         previous.engineBaseUrl !== owner.engineBaseUrl)
@@ -931,6 +936,7 @@ test("server stop calls the lifecycle controller stop hook", async () => {
     reloadWorkspaceEngineIfIdle: async () => {
       throw new Error("reloadWorkspaceEngineIfIdle should not be called by the shutdown fixture");
     },
+    subscribeWorkspaceIdle: () => () => {},
     scheduleQueueDrain: () => {
       throw new Error("scheduleQueueDrain should not be called by the shutdown fixture");
     },
@@ -1314,6 +1320,32 @@ test("guarded workspace reload blocks an admitted run and succeeds after termina
   expect(reloads).toBe(1);
 });
 
+test("workspace idle subscribers are notified once when the final run reaches terminal state", async () => {
+  const { controller, lifecycle } = controllerHarness();
+  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  const idleWorkspaces: string[] = [];
+  const unsubscribe = controller.subscribeWorkspaceIdle((workspaceId) => {
+    idleWorkspaces.push(workspaceId);
+  });
+
+  await controller.submitRun(submitInput());
+  await controller.reconcileConversationRunLifecycle({
+    workspace: submitInput().workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "test-terminal-release",
+  });
+  await controller.reconcileConversationRunLifecycle({
+    workspace: submitInput().workspace,
+    conversationId: "conv-a",
+    runId: "run-reserved",
+    reason: "test-terminal-release-repeat",
+  });
+  unsubscribe();
+
+  expect(idleWorkspaces).toEqual(["ws_1"]);
+});
+
 test("terminal release is idempotent for guarded workspace reload", async () => {
   const { controller, lifecycle } = controllerHarness();
   lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
@@ -1592,6 +1624,41 @@ test("lifecycle reconcile trace includes active run diagnostics", async () => {
     activityKind: "unknown",
     waitReason: "assistant_message_open",
     noProgressSeconds: 17,
+  });
+});
+
+test("lifecycle reconcile trace records a redacted terminal failure and engine binding", async () => {
+  const { controller, lifecycle, traceEntries, workspaces } = controllerHarness();
+  lifecycle.statusResult = {
+    runId: "run-failed",
+    status: "failed",
+    stale: false,
+    error: "provider rejected request: api_key=secret-value",
+    engineSlotId: "slot-a",
+    engineOwnerId: "owner-a",
+    engineOwnerState: "attached",
+    enginePid: 4242,
+    engineStartedAt: 123,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-failed",
+    reason: "accepted",
+  });
+
+  expect(
+    traceEntries.find((entry) => entry.event === "server:conversation-run:lifecycle-reconcile"),
+  ).toMatchObject({
+    runId: "run-failed",
+    status: "failed",
+    terminalError: "provider rejected request: api_key=[redacted]",
+    engineSlotId: "slot-a",
+    engineOwnerId: "owner-a",
+    engineOwnerState: "attached",
+    enginePid: 4242,
+    engineStartedAt: 123,
   });
 });
 

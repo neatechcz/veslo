@@ -348,7 +348,7 @@ test("shouldEnsureManagedAiLocalGateway starts the desktop local gateway for sig
   );
 });
 
-test("resolveManagedAiProviderRoutingTarget keeps the UI URL separate from the engine URL", () => {
+test("resolveManagedAiProviderRoutingTarget ignores an unused engine bridge URL for normal desktop routing", () => {
   assert.deepEqual(
     resolveManagedAiProviderRoutingTarget({
       isDesktopRuntime: true,
@@ -361,7 +361,7 @@ test("resolveManagedAiProviderRoutingTarget keeps the UI URL separate from the e
     }),
     {
       baseUrl: "http://127.0.0.1:8787",
-      engineBaseUrl: "http://engine-host.internal:8787",
+      engineBaseUrl: "http://127.0.0.1:8787",
       serverClientToken: "local-client-token",
     },
   );

@@ -520,8 +520,8 @@ test("workspace activation delegates local runtime reuse and restart flows to th
 
   assert.match(
     source,
-    /const prepareRuntime = async \(\) => await deps\.localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{[\s\S]*connectedToLocalHost = await prepareRuntimeWithSkillViewRefresh\(\{[\s\S]*prepare: prepareRuntime,/s,
-    "remote-to-local reuse should delegate to the backend-owned prepare helper and bridge one skill-view refresh retry",
+    /const prepareRuntime = async \(\) =>[\s\S]*deps\.localRuntimeLifecycle\.prepareWorkspaceRuntime\(\{[\s\S]*connectedToLocalHost = await prepareRuntime\(\);/s,
+    "remote-to-local reuse should delegate once to the backend-owned prepare helper",
   );
 
   assert.match(

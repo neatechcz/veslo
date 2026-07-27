@@ -3,7 +3,6 @@ import { basename, resolve } from "node:path";
 
 import { recordAudit, readAuditEntries, readLastAudit } from "../audit.js";
 import {
-  ensureActiveRuntimeSkillView,
   evictActiveRuntimeSkillView,
   invalidateActiveRuntimeSkillView,
 } from "../active-runtime-skill-view.js";
@@ -25,8 +24,6 @@ import {
   resolveWorkspace,
 } from "../route-helpers.js";
 import { addRoute, type RequestContext, type Route } from "../routing.js";
-import { workspaceResourceOwner } from "../resource-owner.js";
-import { listDisabledSkills } from "../skill-enabled-overrides.js";
 import type { ReloadTrigger, ServerConfig, WorkspaceInfo } from "../types.js";
 import { materializeUserGlobalSkillsForWorkspace } from "../user-skill-store.js";
 import { shortId } from "../utils.js";
@@ -143,20 +140,6 @@ export function registerWorkspaceManagementRoutes(
     workspace: WorkspaceInfo,
   ): Promise<void> => {
     invalidateActiveRuntimeSkillView(workspace);
-    await ensureActiveRuntimeSkillView(workspace, {
-      disabledSkills: await listDisabledSkills({
-        dataDir: serverDataDir,
-        workspaceId: workspace.id,
-        includeGlobal: true,
-      }),
-      workspaceId: workspace.id,
-      workspaceOwner: workspaceResourceOwner({
-        workspaceId: workspace.id,
-        root: workspace.path,
-        label: workspace.name,
-      }),
-      forceRefresh: true,
-    });
   };
 
   addRoute(routes, "GET", "/workspaces", "client", async (ctx) => {

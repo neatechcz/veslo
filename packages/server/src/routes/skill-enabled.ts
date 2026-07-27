@@ -1,10 +1,10 @@
 import { ApiError } from "../errors.js";
 import {
-  ensureActiveRuntimeSkillView,
   invalidateActiveRuntimeSkillView,
+  readServingRuntimeSkillBinding,
 } from "../active-runtime-skill-view.js";
+import { fenceRuntimeSkillAuthorization } from "../runtime-skill-revocation-fence.js";
 import { addRoute, type Route } from "../routing.js";
-import { workspaceResourceOwner } from "../resource-owner.js";
 import {
   emitReloadEvent,
   ensureWritable,
@@ -67,20 +67,6 @@ export function registerSkillEnabledRoutes(
     workspace: WorkspaceInfo,
   ): Promise<void> => {
     invalidateActiveRuntimeSkillView(workspace);
-    await ensureActiveRuntimeSkillView(workspace, {
-      disabledSkills: await listDisabledSkills({
-        dataDir: serverDataDir,
-        workspaceId: workspace.id,
-        includeGlobal: true,
-      }),
-      workspaceId: workspace.id,
-      workspaceOwner: workspaceResourceOwner({
-        workspaceId: workspace.id,
-        root: workspace.path,
-        label: workspace.name,
-      }),
-      forceRefresh: true,
-    });
   };
   const withWorkspaceSkillLeases = async <T>(
     workspaces: WorkspaceInfo[],
@@ -156,6 +142,16 @@ export function registerSkillEnabledRoutes(
     const result = await withWorkspaceSkillLeases(
       affectedWorkspaces,
       async () => {
+        if (!enabled) {
+          for (const affectedWorkspace of affectedWorkspaces) {
+            const binding = await readServingRuntimeSkillBinding(affectedWorkspace, { dataDir: serverDataDir });
+            if (binding) await fenceRuntimeSkillAuthorization({
+              dataDir: serverDataDir,
+              workspaceId: affectedWorkspace.id,
+              authorizationRevision: binding.authorizationRevision,
+            });
+          }
+        }
         const result = await setSkillEnabledState({
           dataDir: serverDataDir,
           target,

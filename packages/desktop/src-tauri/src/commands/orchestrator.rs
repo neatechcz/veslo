@@ -27,6 +27,47 @@ const ORCHESTRATOR_WORKSPACE_ACTIVATE_TIMEOUT_MS: u64 = 95_000;
 const DETACHED_VESLO_READY_TIMEOUT_MS: u64 = 30_000;
 const DETACHED_VESLO_READY_POLL_MS: u64 = 200;
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSkillBindingInput {
+    pub revision: String,
+    pub authorization_revision: String,
+}
+
+#[derive(Clone, Copy)]
+pub struct WorkspaceActivationTrace<'a> {
+    pub trace_id: &'a str,
+    pub workspace_id: Option<&'a str>,
+    pub reason: &'a str,
+    pub requested_action: &'a str,
+}
+
+impl WorkspaceActivationTrace<'_> {
+    pub(crate) fn record(&self, app: &AppHandle, event: &str, duration_ms: Option<u128>) {
+        let mut payload = serde_json::json!({
+            "traceId": self.trace_id,
+            "workspaceId": self.workspace_id,
+            "reason": self.reason,
+            "requestedAction": self.requested_action,
+        });
+        if let Some(duration_ms) = duration_ms {
+            payload["durationMs"] = serde_json::Value::from(duration_ms as u64);
+        }
+        crate::commands::misc::record_desktop_runtime_trace(app, event, payload);
+    }
+}
+
+impl RuntimeSkillBindingInput {
+    fn normalized(&self) -> Option<(&str, &str)> {
+        let revision = self.revision.trim();
+        let authorization_revision = self.authorization_revision.trim();
+        if revision.is_empty() || authorization_revision.is_empty() {
+            return None;
+        }
+        Some((revision, authorization_revision))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct DetachedVesloReadyProbe {
     stage: &'static str,
@@ -251,7 +292,7 @@ mod tests {
     use super::{
         detached_veslo_optional_ready_probes, detached_veslo_probe_url,
         detached_veslo_ready_probes, orchestrator_workspace_registration_payload,
-        resolve_live_base_url_from_status, DetachedVesloReadyProbe,
+        resolve_live_base_url_from_status, DetachedVesloReadyProbe, RuntimeSkillBindingInput,
     };
     use crate::types::{OrchestratorDaemonState, OrchestratorStatus};
 
@@ -323,6 +364,27 @@ mod tests {
         assert_eq!(payload["appWorkspaceId"], "app-ws");
         assert!(payload["serverWorkspaceId"].is_null());
         assert!(payload["vesloWorkspaceId"].is_null());
+    }
+
+    #[test]
+    fn runtime_skill_binding_is_forwarded_only_as_a_complete_pair() {
+        let complete = RuntimeSkillBindingInput {
+            revision: " view-1 ".to_string(),
+            authorization_revision: " auth-1 ".to_string(),
+        };
+        assert_eq!(complete.normalized(), Some(("view-1", "auth-1")));
+
+        let missing_revision = RuntimeSkillBindingInput {
+            revision: " ".to_string(),
+            authorization_revision: "auth-1".to_string(),
+        };
+        assert_eq!(missing_revision.normalized(), None);
+
+        let missing_authorization = RuntimeSkillBindingInput {
+            revision: "view-1".to_string(),
+            authorization_revision: " ".to_string(),
+        };
+        assert_eq!(missing_authorization.normalized(), None);
     }
 
     #[test]
@@ -638,7 +700,7 @@ pub async fn orchestrator_workspace_activate(
     workspace_path: String,
     workspace_id: Option<String>,
     name: Option<String>,
-    skill_view_revision: Option<String>,
+    skill_binding: Option<RuntimeSkillBindingInput>,
 ) -> Result<OrchestratorWorkspace, String> {
     let (base_url, workspace_path, workspace_id, server_workspace_id) =
         resolve_workspace_activation(&app, &manager, &workspace_path, workspace_id)?;
@@ -655,7 +717,9 @@ pub async fn orchestrator_workspace_activate(
             workspace_id.as_deref(),
             server_workspace_id.as_deref(),
             name.as_deref(),
-            skill_view_revision.as_deref(),
+            skill_binding.as_ref(),
+            None,
+            None,
         )
     })
     .await
@@ -690,15 +754,41 @@ fn activate_workspace_blocking(
     workspace_id: Option<&str>,
     server_workspace_id: Option<&str>,
     name: Option<&str>,
-    skill_view_revision: Option<&str>,
+    skill_binding: Option<&RuntimeSkillBindingInput>,
+    trace: Option<&WorkspaceActivationTrace<'_>>,
+    app: Option<&AppHandle>,
 ) -> Result<OrchestratorWorkspace, String> {
-    let added = register_workspace_with_orchestrator(
+    let registration_started = Instant::now();
+    if let (Some(trace), Some(app)) = (trace, app) {
+        trace.record(app, "desktop-runtime:orchestrator-registration:start", None);
+    }
+    let added = match register_workspace_with_orchestrator(
         base_url,
         workspace_path,
         workspace_id,
         server_workspace_id,
         name,
-    )?;
+    ) {
+        Ok(added) => added,
+        Err(error) => {
+            if let (Some(trace), Some(app)) = (trace, app) {
+                trace.record(
+                    app,
+                    "desktop-runtime:orchestrator-registration:error",
+                    Some(registration_started.elapsed().as_millis()),
+                );
+            }
+            return Err(error);
+        }
+    };
+    if let (Some(trace), Some(app)) = (trace, app) {
+        trace.record(
+            app,
+            "desktop-runtime:orchestrator-registration:done",
+            Some(registration_started.elapsed().as_millis()),
+        );
+        trace.record(app, "desktop-runtime:orchestrator-activate:start", None);
+    }
     let activate_url = format!(
         "{}/workspaces/{}/activate",
         base_url.trim_end_matches('/'),
@@ -717,11 +807,13 @@ fn activate_workspace_blocking(
     let request = agent
         .post(&activate_url)
         .set("Content-Type", "application/json");
-    let request = match skill_view_revision
-        .map(str::trim)
-        .filter(|revision| !revision.is_empty())
-    {
-        Some(revision) => request.set("x-veslo-skill-view-revision", revision),
+    let request = match skill_binding.and_then(RuntimeSkillBindingInput::normalized) {
+        Some((revision, authorization_revision)) => {
+            request.set("x-veslo-skill-view-revision", revision).set(
+                "x-veslo-skill-authorization-revision",
+                authorization_revision,
+            )
+        }
         None => request,
     };
     match request.send_string("") {
@@ -731,6 +823,13 @@ fn activate_workspace_blocking(
                 r.status(),
                 started.elapsed().as_millis()
             );
+            if let (Some(trace), Some(app)) = (trace, app) {
+                trace.record(
+                    app,
+                    "desktop-runtime:orchestrator-activate:done",
+                    Some(started.elapsed().as_millis()),
+                );
+            }
         }
         Err(ureq::Error::Status(code, response)) => {
             let body = response.into_string().unwrap_or_default();
@@ -739,6 +838,13 @@ fn activate_workspace_blocking(
                 "[veslo:http] IN  {code} ({}ms) {activate_url} (orchestrator.activate) body={excerpt:?}",
                 started.elapsed().as_millis()
             );
+            if let (Some(trace), Some(app)) = (trace, app) {
+                trace.record(
+                    app,
+                    "desktop-runtime:orchestrator-activate:error",
+                    Some(started.elapsed().as_millis()),
+                );
+            }
             return Err(format!(
                 "Failed to activate workspace: status {code}: {excerpt}"
             ));
@@ -749,6 +855,13 @@ fn activate_workspace_blocking(
                 started.elapsed().as_millis(),
                 t.to_string()
             );
+            if let (Some(trace), Some(app)) = (trace, app) {
+                trace.record(
+                    app,
+                    "desktop-runtime:orchestrator-activate:error",
+                    Some(started.elapsed().as_millis()),
+                );
+            }
             return Err(format!(
                 "Failed to activate workspace: transport error: {t}"
             ));
@@ -763,7 +876,8 @@ pub fn orchestrator_workspace_activate_blocking(
     workspace_path: String,
     workspace_id: Option<String>,
     name: Option<String>,
-    skill_view_revision: Option<String>,
+    skill_binding: Option<RuntimeSkillBindingInput>,
+    trace: Option<WorkspaceActivationTrace<'_>>,
 ) -> Result<OrchestratorWorkspace, String> {
     let (base_url, workspace_path, workspace_id, server_workspace_id) =
         resolve_workspace_activation(app, manager, &workspace_path, workspace_id)?;
@@ -773,7 +887,9 @@ pub fn orchestrator_workspace_activate_blocking(
         workspace_id.as_deref(),
         server_workspace_id.as_deref(),
         name.as_deref(),
-        skill_view_revision.as_deref(),
+        skill_binding.as_ref(),
+        trace.as_ref(),
+        Some(app),
     )
 }
 
@@ -867,7 +983,7 @@ pub fn orchestrator_start_detached(
 
     let shared_unsandboxed_engine =
         crate::runtime_preferences::read_shared_unsandboxed_engine_override(&app)?;
-    for (key, value) in crate::runtime_preferences::shared_unsandboxed_engine_env_overrides(
+    for (key, value) in crate::runtime_preferences::host_runtime_env_overrides(
         shared_unsandboxed_engine,
     ) {
         command = command.env(key, value);

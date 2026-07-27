@@ -77,3 +77,19 @@ test("summarizeTraceFiles recovers glued JSON objects from older corrupted NDJSO
     assert.equal(summary.traces.find((trace) => trace.key === "send_b")?.count, 1);
   });
 });
+
+test("summarizeTraceFiles orders native desktop phases using their epoch timestamp", () => {
+  withTempDir((dir) => {
+    const uiFile = join(dir, "send-workflow-trace.ui.ndjson");
+    writeFileSync(
+      uiFile,
+      `${JSON.stringify({ ts: 1_785_194_301_640, traceId: "send_native", event: "desktop-runtime:prepare:entered" })}\n`,
+      "utf8",
+    );
+
+    const summary = summarizeTraceFiles([uiFile]);
+    const trace = summary.traces.find((entry) => entry.key === "send_native");
+    assert.equal(trace?.firstAt, "2026-07-27T23:18:21.640Z");
+    assert.equal(trace?.lastAt, "2026-07-27T23:18:21.640Z");
+  });
+});

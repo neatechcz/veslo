@@ -262,9 +262,29 @@ Server-controlled registry package materialization is a local server responsibil
 - `POST /skills/materialization/sync-global`
   Requires host or owner auth. Materializes platform-managed personal-global skills even when no registry is configured. When registry is configured, also downloads desired user-skill registry installations and matching user-global rollout policies, validates package archives, writes server-controlled user skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
 - `GET /workspace/:id/skills/materialization`
-  Requires client auth. Returns local server-controlled skill materialization status for the workspace.
+  Requires client auth. Returns local server-controlled skill materialization
+  status without querying the registry. A manifest and lockfile that agree on
+  the last synchronized skill-set revision report `current`; missing or
+  inconsistent local revision evidence reports `stale`. The response includes
+  `servingRevision`, keeps `reloadRequired: false`, and does not put ordinary
+  runtime startup on the registry control-plane path.
 - `POST /workspace/:id/skills/materialization/sync`
-  Requires host or owner auth. Downloads the desired registry workspace skill set and matching selected-workspace rollout policies, validates package archives, writes server-controlled runtime skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run.
+  Requires host or owner auth. Downloads the desired registry workspace skill set and matching selected-workspace rollout policies, validates package archives, writes server-controlled runtime skill directories, returns any resolver `conflicts`, and returns `pending` without mutating files when the caller reports an active run. An identical revision is a no-op only when its manifest, lockfile, managed marker, and package files all match; missing or corrupted files are repaired and trigger reload.
+- `POST /workspace/:id/skills/runtime-view`
+  Reads only the last validated serving binding (or the canonical empty binding)
+  and returns both `revision` and `authorizationRevision` as one indivisible
+  runtime identity.
+  It never discovers Skills or publishes a candidate. Filesystem and policy
+  changes are reconciled through candidate validation and atomic promotion in
+  the server-owned background lifecycle.
+
+Ordinary conversation admission may receive a safer canonical-empty engine
+binding when the requested serving view becomes unusable between the server
+read and engine start. That exact empty pair is accepted and persisted as the
+actual engine owner binding. Any different non-empty binding remains an
+admission error. A fenced authorization revision is never returned as serving;
+new admission receives canonical empty while an already attached run is allowed
+to reach its terminal boundary.
 
 Registry materialization errors should carry scrubbed registry diagnostics such
 as `registryAction`, `registryResource`, `registryScope`, `registryPath`,

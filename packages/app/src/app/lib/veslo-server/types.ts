@@ -162,6 +162,7 @@ export type VesloWorkspaceList = {
 export type VesloRuntimeSkillView = {
   ready: boolean;
   revision: string;
+  authorizationRevision: string;
   generatedAt: string;
   activeCount: number;
   items: VesloSkillItem[];

@@ -1,6 +1,6 @@
-import { readdir, readFile, writeFile, mkdir, rename, rm, stat } from "node:fs/promises";
+import { renameSync, type Dirent } from "node:fs";
+import { readdir, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import type { Dirent } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { TextDecoder } from "node:util";
 import { localUserResourceOwner, workspaceResourceOwner } from "./resource-owner.js";
@@ -35,6 +35,7 @@ import {
 } from "./skill-roots.js";
 import { recordSkillAudit } from "./skill-audit-trace.js";
 import { workspaceEffectiveSkillManifestPath } from "./workspace-files.js";
+import { readImmutableManagedSkillEntrypoint } from "./skill-materializer.js";
 
 const MANAGED_MARKER_FILE = ".veslo-managed.json";
 const MANAGED_SKILL_SOURCES = new Set(["personal", "workspace", "organization", "platform"]);
@@ -58,6 +59,8 @@ export interface SkillRemovalJournalContext {
 }
 
 export type ListSkillsOptions = {
+  /** Veslo-owned package store; required when serving managed immutable bytes. */
+  dataDir?: string;
   includeGlobal?: boolean;
   includeDisabled?: boolean;
   /** Internal/runtime callers may need all candidates before policy resolution. */
@@ -424,13 +427,24 @@ export async function writeEffectiveSkillManifest(
   workspaceRoot: string,
   skills: SkillItem[],
   revision: string,
+  options: {
+    authorizationRevision?: string;
+    manifestPath?: string;
+    /** Synchronous CAS guard run immediately before the atomic rename. */
+    commitGuard?: () => void;
+  } = {},
 ): Promise<void> {
-  const path = workspaceEffectiveSkillManifestPath(workspaceRoot);
+  const path = options.manifestPath
+    ? resolve(options.manifestPath)
+    : workspaceEffectiveSkillManifestPath(workspaceRoot);
   const payload = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     generatedAt: new Date().toISOString(),
     workspaceRoot: resolve(workspaceRoot),
     revision,
+    ...(options.authorizationRevision
+      ? { authorizationRevision: options.authorizationRevision }
+      : {}),
     entries: skills.map((item) => ({
       name: item.name,
       path: resolve(item.path),
@@ -442,9 +456,13 @@ export async function writeEffectiveSkillManifest(
   try {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    await rename(temporaryPath, path);
+    options.commitGuard?.();
+    // Keep the CAS check and atomic replacement in one JS turn. An async
+    // rename would allow a newer invalidation to interleave after the guard.
+    renameSync(temporaryPath, path);
   } catch (error) {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
+    if (error instanceof ApiError) throw error;
     throw new ApiError(503, "skill_manifest_unavailable", "Unable to publish the active runtime skill manifest", {
       cause: error instanceof Error ? error.message : String(error),
     });
@@ -460,7 +478,17 @@ export async function resolveActiveWorkspaceSkills(
     includeGlobal: false,
     includeDuplicates: true,
   });
-  const result = resolveActiveSkillCandidates(candidates);
+  const servingCandidates = (await Promise.all(candidates.map(async (item) => {
+    const packageSha256 = item.registry?.packageSha256?.trim();
+    if (!packageSha256) return item;
+    const immutableEntrypoint = await readImmutableManagedSkillEntrypoint({
+      packageSha256,
+      skillName: item.name,
+      ...(options.dataDir !== undefined ? { dataDir: options.dataDir } : {}),
+    });
+    return immutableEntrypoint ? { ...item, path: immutableEntrypoint } : null;
+  }))).filter((item): item is SkillItem => item !== null);
+  const result = resolveActiveSkillCandidates(servingCandidates);
   recordSkillAudit("active-runtime-resolution", {
     workspaceRoot,
     candidateCount: candidates.length,
@@ -481,11 +509,7 @@ export async function listActiveWorkspaceSkills(
   workspaceRoot: string,
   options: Omit<ListSkillsOptions, "includeGlobal" | "globalOwner"> = {},
 ): Promise<SkillItem[]> {
-  const result = await resolveActiveWorkspaceSkills(workspaceRoot, options);
-  // Compatibility wrapper for callers that have not moved to the revisioned
-  // active-view service yet. Runtime launch paths must use that service.
-  await writeEffectiveSkillManifest(workspaceRoot, result, "legacy-unrevisioned");
-  return result;
+  return await resolveActiveWorkspaceSkills(workspaceRoot, options);
 }
 
 export const prepareSkillContent = (payload: { name: string; content: string; description?: string }): string => {

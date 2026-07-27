@@ -10,7 +10,6 @@ import {
   extractManagedApiKey,
   formatManagedAiAccessConfig,
   hasUsableManagedAiRuntimeConfig,
-  requiresManagedAiEngineBaseUrl,
   resolveManagedAiAccessBundleState,
   resolveManagedAiProviderRoutingTarget,
   shouldPreserveManagedAiConfig,
@@ -29,6 +28,7 @@ import {
   type VesloUserAiAccess,
   type VesloServerStatus,
 } from "../lib/veslo-server";
+import { isLocalVesloTransportError } from "../lib/veslo-server/request-broker";
 import {
   formatConfigWithDefaultModel,
   parseDefaultModelFromConfig,
@@ -271,7 +271,7 @@ export type ManagedAiConfigSyncOutcome =
   | { kind: "verified-reload-required" }
   | { kind: "skipped-pending" }
   | { kind: "cancelled" }
-  | { kind: "failed"; error: string };
+  | { kind: "failed"; error: string; transientLocalTransport?: boolean };
 
 export type ManagedAiServerReloadPresentation =
   | { kind: "idle" }
@@ -317,6 +317,23 @@ function hashRuntimeAuthorizationCachePart(value?: string | null): string {
 
 function normalizeManagedAiRouteFingerprintUrl(value?: string | null): string {
   return (value?.trim() ?? "").replace(/\/+$/, "");
+}
+
+function isLoopbackManagedAiConfigUrl(value?: string | null): boolean {
+  try {
+    const hostname = new URL(value?.trim() ?? "").hostname.toLowerCase();
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
+function isTransientLocalManagedAiConfigError(error: unknown, baseUrl?: string | null): boolean {
+  return (
+    !(error instanceof VesloServerError) &&
+    isLoopbackManagedAiConfigUrl(baseUrl) &&
+    isLocalVesloTransportError(error)
+  );
 }
 
 function managedAiAccessConfigFingerprint(profile: ManagedAiAccessProfile | null | undefined): string {
@@ -435,6 +452,7 @@ export function createManagedAiRuntimeConfigSync(
     deps.runtimeAuthorizationPrimeSuccessTtlMs ?? RUNTIME_AUTH_PRIME_SUCCESS_TTL_MS,
   );
   const lastKnownConfigSnapshotByWs = new Map<string, string>();
+  const lastVerifiedConfigIntentByScope = new Map<string, string>();
   const inactiveWorkspaceBaseUrlHealedFor = new Map<string, string>();
   const pendingServerReloads = new Map<string, {
     client: ManagedAiRuntimeConfigVesloClient;
@@ -524,6 +542,7 @@ export function createManagedAiRuntimeConfigSync(
   const clearManagedConfigTracking = () => {
     setLastManagedAiConfigAppliedForServerToken("");
     lastKnownConfigSnapshotByWs.clear();
+    lastVerifiedConfigIntentByScope.clear();
     inactiveWorkspaceBaseUrlHealedFor.clear();
   };
 
@@ -647,18 +666,10 @@ export function createManagedAiRuntimeConfigSync(
       workspaceRoot: targetWorkspaceRoot || null,
       directory: targetWorkspaceRoot || null,
     });
-    const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
-      isDesktopRuntime: deps.isTauriRuntime(),
-      workspaceType: workspaceKind(workspace),
-      engineBaseUrl: providerRoutingEngineBaseUrl,
-      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
-      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
-      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
-      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
-      childKind: runtimeSandboxState.childKind,
-      sandboxEnabled: runtimeSandboxState.isSandboxed,
-      sandboxBackend: runtimeSandboxState.effectiveBackend,
-    });
+    // The current desktop runtime is host-only. Keep engineUrl observable for
+    // diagnostics, but never let a stale WSL bridge address enter OpenCode's
+    // managed provider config or trigger a config flip after engine startup.
+    const providerRoutingRequiresEngineBaseUrl = false;
     const gatewayClient = deps.gatewayVesloServerClient();
     const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
       isDesktopRuntime: deps.isTauriRuntime(),
@@ -1388,13 +1399,22 @@ export function createManagedAiRuntimeConfigSync(
     } catch (error) {
       if (options?.isCancelled?.()) return { kind: "cancelled" };
       const message = error instanceof Error ? error.message : deps.safeStringify(error);
+      const transientLocalTransport =
+        options?.reason === "send-preflight" &&
+        canUseVesloServerBase &&
+        Boolean(vesloWorkspaceId) &&
+        isTransientLocalManagedAiConfigError(error, vesloClient?.baseUrl);
       deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:error", {
         ...configSyncTracePayload,
         ...vesloServerErrorTraceDetails(error),
+        transientLocalTransport,
         message,
       });
-      deps.setError(deps.addOpencodeCacheHint(message));
-      return { kind: "failed", error: message };
+      return {
+        kind: "failed",
+        error: message,
+        ...(transientLocalTransport ? { transientLocalTransport: true } : {}),
+      };
     } finally {
       releaseManagedAiBootstrap?.();
     }
@@ -1481,7 +1501,34 @@ export function createManagedAiRuntimeConfigSync(
             latestManagedAiConfigSyncFingerprintByScope.get(intent.scopeKey) !== intent.fingerprint),
       }))
       .then(
-        (outcome) => {
+        (rawOutcome) => {
+          const exactServerWorkspaceId = options?.serverSendTarget?.serverWorkspaceId.trim() ?? "";
+          const canUseLastVerifiedIntent =
+            reason === "send-preflight" &&
+            Boolean(exactServerWorkspaceId) &&
+            rawOutcome.kind === "failed" &&
+            rawOutcome.transientLocalTransport === true &&
+            lastVerifiedConfigIntentByScope.get(intent.scopeKey) === intent.fingerprint &&
+            !pendingServerReloads.has(exactServerWorkspaceId);
+          const outcome: ManagedAiConfigSyncOutcome = canUseLastVerifiedIntent
+            ? { kind: "verified" }
+            : rawOutcome;
+          if (canUseLastVerifiedIntent && rawOutcome.kind === "failed") {
+            deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:degraded-last-verified", {
+              traceId,
+              workspaceId: options?.serverSendTarget?.workspaceId ?? null,
+              vesloWorkspaceId: exactServerWorkspaceId,
+              reason: "transient-local-config-read",
+              message: rawOutcome.error,
+              intentHash: hashRuntimeAuthorizationCachePart(intent.fingerprint),
+              descriptorHash: intent.descriptorHash,
+            });
+          }
+          if (outcome.kind === "verified") {
+            lastVerifiedConfigIntentByScope.set(intent.scopeKey, intent.fingerprint);
+          } else if (outcome.kind === "failed") {
+            deps.setError(deps.addOpencodeCacheHint(outcome.error));
+          }
           if (managedAiConfigSyncInFlight.get(flightKey)?.promise === promise) {
             managedAiConfigSyncInFlight.delete(flightKey);
           }
@@ -2108,18 +2155,7 @@ export function createManagedAiRuntimeConfigSync(
     if (!providerRoutingLocalHost?.baseUrl) return;
     const gatewayClient = deps.gatewayVesloServerClient();
     const runtimeSandboxState = resolveRuntimeSandboxStateForTarget();
-    const providerRoutingRequiresEngineBaseUrl = requiresManagedAiEngineBaseUrl({
-      isDesktopRuntime: deps.isTauriRuntime(),
-      workspaceType: "local",
-      engineBaseUrl: providerRoutingLocalHost.engineUrl ?? "",
-      requiresEngineBridgeUrl: runtimeSandboxState.requiresEngineBridgeUrl,
-      configuredSandboxEnabled: runtimeSandboxState.configuredEnabled,
-      configuredSandboxBackend: runtimeSandboxState.configuredBackend,
-      effectiveSandboxBackend: runtimeSandboxState.effectiveBackend,
-      childKind: runtimeSandboxState.childKind,
-      sandboxEnabled: runtimeSandboxState.isSandboxed,
-      sandboxBackend: runtimeSandboxState.effectiveBackend,
-    });
+    const providerRoutingRequiresEngineBaseUrl = false;
     const providerRoutingTarget = resolveManagedAiProviderRoutingTarget({
       isDesktopRuntime: deps.isTauriRuntime(),
       workspaceType: "local",

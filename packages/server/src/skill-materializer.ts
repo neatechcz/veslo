@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { resolveVesloDataDir } from "./audit.js";
 import { ApiError } from "./errors.js";
 import { validateSkillPackageManifest } from "./skill-package-model.js";
+import { cacheSkillPackageArchive, readCachedSkillPackageArchive } from "./skill-package-cache.js";
 import type { SkillPackageArchive } from "./skill-packages.js";
 import { unpackSkillPackage } from "./skill-packages.js";
 import {
@@ -395,6 +396,20 @@ const materializationFieldsMatch = (
 
 const backupRoot = (dataDirOverride?: string): string => join(dataDir(dataDirOverride), "skill-materialization-backups");
 
+/**
+ * Verified managed package bytes live outside mutable workspace projections.
+ * The workspace projection remains management metadata only; runtime callers
+ * can use this digest-addressed directory without inheriting a user-writable
+ * directory name as their source of truth.
+ */
+export function immutableManagedSkillDir(
+  dataDirOverride: string | undefined,
+  packageSha256: string,
+  skillName: string,
+): string {
+  return join(dataDir(dataDirOverride), "skill-package-store", normalizeSha256(packageSha256), skillName.trim());
+}
+
 const createBackup = async (targetDir: string, skillName: string, dataDirOverride?: string): Promise<string | undefined> => {
   if (!(await exists(targetDir))) return undefined;
   const backupDir = join(backupRoot(dataDirOverride), `${skillName}-${Date.now()}-${randomUUID()}`);
@@ -433,6 +448,73 @@ const archiveFilesMatchTarget = async (targetDir: string, archive: SkillPackageA
   }
   return true;
 };
+
+export async function skillMaterializationIntegrityMatches(input: {
+  rootDir: string;
+  skill: WorkspaceSkillMaterialization;
+  archive: SkillPackageArchive;
+}): Promise<boolean> {
+  try {
+    const skill = normalizeSkill(input.skill);
+    const archive = assertArchiveMatchesSkill(input.archive, skill);
+    const targetDir = join(input.rootDir, skill.name);
+    const marker = await readSkillMarker(targetDir).catch(() => null);
+    return Boolean(
+      marker &&
+      materializationFieldsMatch(marker, skill) &&
+      await archiveFilesMatchTarget(targetDir, archive),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function ensureImmutableManagedSkillPackage(input: {
+  skill: WorkspaceSkillMaterialization;
+  archive: SkillPackageArchive;
+  dataDir?: string;
+}): Promise<string> {
+  const skill = normalizeSkill(input.skill);
+  const archive = assertArchiveMatchesSkill(input.archive, skill);
+  await cacheSkillPackageArchive({
+    archive,
+    ...(input.dataDir !== undefined ? { dataDir: input.dataDir } : {}),
+  });
+  const targetDir = immutableManagedSkillDir(input.dataDir, archive.packageSha256, skill.name);
+  if (await archiveFilesMatchTarget(targetDir, archive)) return targetDir;
+  // unpackSkillPackage promotes through its own temporary directory. A partial
+  // or tampered digest directory is never a serving source.
+  await unpackSkillPackage({ archive, targetDir });
+  if (!(await archiveFilesMatchTarget(targetDir, archive))) {
+    await rm(targetDir, { recursive: true, force: true });
+    throw new Error(`Immutable managed package verification failed for ${skill.name}`);
+  }
+  return targetDir;
+}
+
+/** Return a serving entrypoint only when the cached digest still verifies it. */
+export async function readImmutableManagedSkillEntrypoint(input: {
+  packageSha256: string;
+  skillName: string;
+  dataDir?: string;
+}): Promise<string | null> {
+  try {
+    const packageSha256 = normalizeSha256(input.packageSha256);
+    const skillName = input.skillName.trim();
+    validateSkillName(skillName);
+    const archive = await readCachedSkillPackageArchive({
+      packageSha256,
+      ...(input.dataDir !== undefined ? { dataDir: input.dataDir } : {}),
+    });
+    if (!archive) return null;
+    const skillDir = immutableManagedSkillDir(input.dataDir, packageSha256, skillName);
+    if (!(await archiveFilesMatchTarget(skillDir, archive))) return null;
+    const entrypoint = join(skillDir, SKILL_ENTRYPOINT);
+    return await exists(entrypoint) ? entrypoint : null;
+  } catch {
+    return null;
+  }
+}
 
 const manifestEntryForSkill = (
   rootDir: string,
@@ -538,6 +620,12 @@ export async function materializeSkillPackageToRoot(
   const targetDir = join(rootDir, skill.name);
   const existingManifest = await readSkillMaterializationManifest(rootDir);
   const existingMarker = await readSkillMarker(targetDir).catch(() => null);
+
+  await ensureImmutableManagedSkillPackage({
+    skill,
+    archive,
+    ...(input.dataDir !== undefined ? { dataDir: input.dataDir } : {}),
+  });
 
   if ((await exists(targetDir)) && !(await targetIsManaged(targetDir, skill, existingManifest))) {
     throw new Error(`Refusing to overwrite unmanaged skill directory: ${targetDir}`);

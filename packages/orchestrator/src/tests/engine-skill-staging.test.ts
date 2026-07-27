@@ -4,16 +4,21 @@ import {
   readFile,
   rename,
   rm,
+  symlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  EMPTY_DIRECT_AUTHORIZATION_REVISION,
+  EMPTY_DIRECT_SKILL_VIEW_REVISION,
   claimEngineSkillGeneration,
   __engineSkillStagingTestHooks,
   promoteDirectorySkillView,
   publishDirectorySkillView,
+  resolveDirectEngineSkillView,
+  resolveOrdinaryDirectEngineSkillView,
   releaseEngineSkillGeneration,
   stageEngineSkillView,
 } from "../engine-skill-staging.js";
@@ -198,6 +203,293 @@ afterEach(async () => {
 });
 
 describe("engine skill staging", () => {
+  test("uses a canonical empty binding when no effective manifest exists", async () => {
+    const input = await fixture();
+    await rm(join(input.workspace, ".opencode", "veslo.runtime.skills.json"), { force: true });
+
+    const view = await resolveDirectEngineSkillView({ workspace: input.workspace });
+
+    expect(view).toMatchObject({
+      revision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+      authorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+      skillPaths: [],
+      source: "empty",
+      selected: [],
+    });
+  });
+
+  test("an explicit empty recovery binding ignores a stale serving manifest", async () => {
+    const input = await fixture();
+
+    const view = await resolveDirectEngineSkillView({
+      workspace: input.workspace,
+      expectedRevision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+      expectedAuthorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+    });
+
+    expect(view).toMatchObject({
+      revision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+      authorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+      skillPaths: [],
+      source: "empty",
+    });
+  });
+
+  test.if(process.platform === "win32")(
+    "resolves a serving manifest when Tauri supplies an extended-length workspace path",
+    async () => {
+      const input = await fixture();
+      const revision = "direct-view-extended-path";
+      const authorizationRevision = "authorization-extended-path";
+      await writeFile(
+        join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+        JSON.stringify({
+          schemaVersion: 3,
+          workspaceRoot: input.workspace,
+          revision,
+          authorizationRevision,
+          entries: [{
+            name: "local-tool",
+            path: join(input.workspace, ".opencode", "skills", "local-tool", "SKILL.md"),
+            source: "workspace-local",
+          }],
+        }),
+        "utf8",
+      );
+
+      const view = await resolveDirectEngineSkillView({
+        workspace: `\\\\?\\${input.workspace}`,
+        expectedRevision: revision,
+        expectedAuthorizationRevision: authorizationRevision,
+      });
+
+      expect(view).toMatchObject({
+        revision,
+        authorizationRevision,
+        source: "effective-manifest",
+        selected: [{ name: "local-tool" }],
+      });
+    },
+  );
+
+  test("ordinary runtime falls back to canonical empty for missing or partial bindings", async () => {
+    const input = await fixture();
+
+    await expect(resolveOrdinaryDirectEngineSkillView({
+      workspace: input.workspace,
+    })).resolves.toMatchObject({
+      result: "empty",
+      fallbackReason: "binding_missing",
+      view: {
+        revision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+        authorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+        skillPaths: [],
+      },
+    });
+
+    await expect(resolveOrdinaryDirectEngineSkillView({
+      workspace: input.workspace,
+      expectedRevision: "direct-view-a",
+    })).resolves.toMatchObject({
+      result: "empty",
+      fallbackReason: "binding_incomplete",
+      view: { skillPaths: [] },
+    });
+  });
+
+  test("ordinary runtime falls back to canonical empty when a requested manifest is stale", async () => {
+    const input = await fixture();
+
+    await expect(resolveOrdinaryDirectEngineSkillView({
+      workspace: input.workspace,
+      expectedRevision: "missing-view",
+      expectedAuthorizationRevision: "missing-authorization",
+    })).resolves.toMatchObject({
+      result: "empty",
+      fallbackReason: "skill_view_stale",
+      view: {
+        revision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+        authorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+        skillPaths: [],
+      },
+    });
+  });
+
+  test("ordinary runtime identifies an explicit canonical empty binding as no authorized skills", async () => {
+    const input = await fixture();
+
+    await expect(resolveOrdinaryDirectEngineSkillView({
+      workspace: input.workspace,
+      expectedRevision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+      expectedAuthorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+    })).resolves.toMatchObject({
+      result: "empty",
+      fallbackReason: "no_authorized_skills",
+      view: {
+        revision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+        authorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+        skillPaths: [],
+      },
+    });
+  });
+
+  test("resolves individual selected source directories without creating a staging generation", async () => {
+    const input = await fixture();
+    const localSkill = join(input.workspace, ".opencode", "skills", "local-tool", "SKILL.md");
+    const personalSkill = join(input.workspace, ".opencode", "skills", "veslo-user", "personal-tool", "SKILL.md");
+    await writeFile(
+      join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+      JSON.stringify({
+        schemaVersion: 3,
+        workspaceRoot: input.workspace,
+        revision: "direct-view-a",
+        authorizationRevision: "authorization-a",
+        entries: [
+          { name: "local-tool", path: localSkill, source: "workspace-local" },
+          { name: "personal-tool", path: personalSkill, source: "user-imported" },
+        ],
+      }),
+      "utf8",
+    );
+
+    const view = await resolveDirectEngineSkillView({
+      workspace: input.workspace,
+      expectedRevision: "direct-view-a",
+    });
+
+    expect(view).toMatchObject({
+      revision: "direct-view-a",
+      authorizationRevision: "authorization-a",
+      source: "effective-manifest",
+      selected: [
+        { name: "local-tool", sourcePath: localSkill, className: "workspace-local" },
+        { name: "personal-tool", sourcePath: personalSkill, className: "user-imported" },
+      ],
+    });
+    expect(view.skillPaths).toEqual([
+      join(input.workspace, ".opencode", "skills", "local-tool"),
+      join(input.workspace, ".opencode", "skills", "veslo-user", "personal-tool"),
+    ]);
+    await expect(resolveDirectEngineSkillView({
+      workspace: input.workspace,
+      expectedAuthorizationRevision: "authorization-other",
+    })).rejects.toThrow("skill_authorization_stale");
+  });
+
+  test("validates an explicit candidate manifest without reading or replacing serving LKG", async () => {
+    const input = await fixture();
+    const localSkill = join(input.workspace, ".opencode", "skills", "local-tool", "SKILL.md");
+    const servingPath = join(input.workspace, ".opencode", "veslo.runtime.skills.json");
+    const candidatePath = join(input.workspace, ".opencode", `veslo.runtime.skills.candidate.${"a".repeat(64)}.json`);
+    await writeFile(servingPath, JSON.stringify({
+      schemaVersion: 3, workspaceRoot: input.workspace, revision: "serving", authorizationRevision: "serving-auth", entries: [],
+    }), "utf8");
+    await writeFile(candidatePath, JSON.stringify({
+      schemaVersion: 3, workspaceRoot: input.workspace, revision: "candidate", authorizationRevision: "candidate-auth",
+      entries: [{ name: "local-tool", path: localSkill, source: "workspace-local" }],
+    }), "utf8");
+
+    const view = await resolveDirectEngineSkillView({
+      workspace: input.workspace,
+      manifestPath: candidatePath,
+      expectedRevision: "candidate",
+      expectedAuthorizationRevision: "candidate-auth",
+    });
+
+    expect(view.selected).toEqual([{ name: "local-tool", sourcePath: localSkill, className: "workspace-local" }]);
+    expect(JSON.parse(await readFile(servingPath, "utf8")).revision).toBe("serving");
+  });
+
+  test("admits an immutable managed source only below the configured digest store", async () => {
+    const input = await fixture();
+    const managedStore = join(dirname(input.workspace), "skill-package-store");
+    const digest = "a".repeat(64);
+    const skillPath = join(managedStore, digest, "managed-tool", "SKILL.md");
+    await mkdir(dirname(skillPath), { recursive: true });
+    await writeFile(skillPath, "managed\n", "utf8");
+    await writeFile(
+      join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+      JSON.stringify({
+        schemaVersion: 3,
+        workspaceRoot: input.workspace,
+        revision: "managed-direct-view",
+        authorizationRevision: "managed-authorization",
+        entries: [{ name: "managed-tool", path: skillPath, source: "policy-enforced" }],
+      }),
+      "utf8",
+    );
+
+    await expect(resolveDirectEngineSkillView({ workspace: input.workspace }))
+      .rejects.toThrow("outside_authorized_root");
+    await expect(resolveDirectEngineSkillView({
+      workspace: input.workspace,
+      managedSkillStoreRoot: managedStore,
+    })).resolves.toMatchObject({ skillPaths: [dirname(skillPath)] });
+  });
+
+  test("rejects an unselected nested SKILL.md before direct OpenCode discovery", async () => {
+    const input = await fixture();
+    const skillDir = join(input.workspace, ".opencode", "skills", "local-tool");
+    const skillPath = join(skillDir, "SKILL.md");
+    await mkdir(join(skillDir, "nested"), { recursive: true });
+    await writeFile(join(skillDir, "nested", "SKILL.md"), "nested\n", "utf8");
+    await writeFile(
+      join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        workspaceRoot: input.workspace,
+        revision: "direct-view-nested",
+        entries: [{ name: "local-tool", path: skillPath, source: "workspace-local" }],
+      }),
+      "utf8",
+    );
+
+    await expect(resolveDirectEngineSkillView({ workspace: input.workspace }))
+      .rejects.toThrow("direct_path_nested_skill_rejected");
+  });
+
+  test("rejects a partially invalid manifest instead of serving its remaining paths as that revision", async () => {
+    const input = await fixture();
+    const localSkill = join(input.workspace, ".opencode", "skills", "local-tool", "SKILL.md");
+    await writeFile(
+      join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+      JSON.stringify({
+        schemaVersion: 3,
+        workspaceRoot: input.workspace,
+        revision: "direct-view-partial",
+        authorizationRevision: "authorization-partial",
+        entries: [
+          { name: "local-tool", path: localSkill, source: "workspace-local" },
+          { name: "missing-tool", path: join(input.workspace, ".opencode", "skills", "missing-tool", "SKILL.md"), source: "workspace-local" },
+        ],
+      }),
+      "utf8",
+    );
+
+    await expect(resolveDirectEngineSkillView({ workspace: input.workspace }))
+      .rejects.toThrow("skill_view_invalid: missing-tool:missing_source");
+  });
+
+  test("rejects a directory link cycle before direct OpenCode discovery", async () => {
+    const input = await fixture();
+    const skillDir = join(input.workspace, ".opencode", "skills", "local-tool");
+    const skillPath = join(skillDir, "SKILL.md");
+    await symlink(skillDir, join(skillDir, "cycle"), "junction");
+    await writeFile(
+      join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        workspaceRoot: input.workspace,
+        revision: "direct-view-cycle",
+        entries: [{ name: "local-tool", path: skillPath, source: "workspace-local" }],
+      }),
+      "utf8",
+    );
+
+    await expect(resolveDirectEngineSkillView({ workspace: input.workspace }))
+      .rejects.toThrow("direct_path_link_cycle");
+  });
+
   test("materializes only deterministic effective candidates and suppresses conflicts", async () => {
     const input = await fixture();
     const result = await stageEngineSkillView(input);

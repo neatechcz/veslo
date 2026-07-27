@@ -357,6 +357,10 @@ export function createConversationService<Client extends ConversationServiceClie
     object,
     Map<string, ConversationWorkspaceRegistrationFlight>
   >();
+  const conversationWorkspaceRegistrationCacheByEndpoint = new Map<
+    string,
+    Map<string, ConversationWorkspaceRegistrationFlight>
+  >();
   let conversationWorkspaceRegistrationFlightSequence = 0;
 
   const resolveConversationServerWorkspaceId = (workspaceIdRaw: string) => {
@@ -506,6 +510,16 @@ export function createConversationService<Client extends ConversationServiceClie
   };
 
   const conversationWorkspaceRegistrationCacheFor = (serverClient: Client) => {
+    const endpoint = normalizeBaseUrlForCompare(serverClient.baseUrl);
+    if (endpoint) {
+      let cache = conversationWorkspaceRegistrationCacheByEndpoint.get(endpoint);
+      if (!cache) {
+        cache = new Map<string, ConversationWorkspaceRegistrationFlight>();
+        conversationWorkspaceRegistrationCacheByEndpoint.set(endpoint, cache);
+      }
+      return cache;
+    }
+
     const key = serverClient as object;
     let cache = conversationWorkspaceRegistrationCacheByClient.get(key);
     if (!cache) {
@@ -542,8 +556,22 @@ export function createConversationService<Client extends ConversationServiceClie
 
     const resolveLocalOpencodeRegistration = async () => {
       if (!deps.isTauriRuntime()) return null;
+      const startedAt = performance.now();
+      deps.recordSendTrace("conversation-workspace-registration:engine-info:start", {
+        traceId: options.traceId?.trim() || null,
+        caller: options.caller ?? (requireLiveOpencodeBaseUrl ? "submit" : "read"),
+        workspaceId,
+      });
       try {
         const info = await deps.engineInfo(workspaceId, workspaceRootRaw || targetDirectoryRaw);
+        deps.recordSendTrace("conversation-workspace-registration:engine-info:end", {
+          traceId: options.traceId?.trim() || null,
+          caller: options.caller ?? (requireLiveOpencodeBaseUrl ? "submit" : "read"),
+          workspaceId,
+          outcome: "ok",
+          hasBaseUrl: Boolean(info.baseUrl?.trim()),
+          durationMs: Math.max(0, performance.now() - startedAt),
+        });
         const resolvedBaseUrl = normalizeBaseUrlForCompare(info.baseUrl);
         if (!resolvedBaseUrl) return null;
         return {
@@ -553,6 +581,14 @@ export function createConversationService<Client extends ConversationServiceClie
           opencodePassword: info.opencodePassword?.trim() || null,
         };
       } catch (error) {
+        deps.recordSendTrace("conversation-workspace-registration:engine-info:end", {
+          traceId: options.traceId?.trim() || null,
+          caller: options.caller ?? (requireLiveOpencodeBaseUrl ? "submit" : "read"),
+          workspaceId,
+          outcome: "error",
+          errorType: error instanceof Error ? error.name : "unknown",
+          durationMs: Math.max(0, performance.now() - startedAt),
+        });
         deps.wsDebug("conversation-read:engine-info:failed", {
           workspaceId,
           directory: targetDirectory,
@@ -597,6 +633,38 @@ export function createConversationService<Client extends ConversationServiceClie
       : readRegistrationCacheKey;
     const traceId = options.traceId?.trim() || null;
     const caller = options.caller ?? (requireLiveOpencodeBaseUrl ? "submit" : "read");
+    const traceRegistrationRequest = async <T>(
+      step: "workspace-list" | "workspace-register",
+      request: () => Promise<T>,
+    ): Promise<T> => {
+      const startedAt = performance.now();
+      deps.recordSendTrace(`conversation-workspace-registration:${step}:start`, {
+        traceId,
+        caller,
+        workspaceId,
+      });
+      try {
+        const result = await request();
+        deps.recordSendTrace(`conversation-workspace-registration:${step}:end`, {
+          traceId,
+          caller,
+          workspaceId,
+          outcome: "ok",
+          durationMs: Math.max(0, performance.now() - startedAt),
+        });
+        return result;
+      } catch (error) {
+        deps.recordSendTrace(`conversation-workspace-registration:${step}:end`, {
+          traceId,
+          caller,
+          workspaceId,
+          outcome: "error",
+          errorType: error instanceof Error ? error.name : "unknown",
+          durationMs: Math.max(0, performance.now() - startedAt),
+        });
+        throw error;
+      }
+    };
     const recordRegistrationFlight = (
       action: "start" | "join" | "cache-hit" | "settle" | "reject",
       flightId: string,
@@ -686,7 +754,10 @@ export function createConversationService<Client extends ConversationServiceClie
         allowHostAuthRefresh: boolean,
       ): Promise<ConversationWorkspaceRegistrationResult> => {
         try {
-          const listed = await activeClient.listWorkspaces();
+          const listed = await traceRegistrationRequest(
+            "workspace-list",
+            () => activeClient.listWorkspaces(),
+          );
           const existing = findMatchingWorkspace(listed.items);
           if (existing && matchesRegistration(existing, opencodeRegistration)) {
             return { id: existing.id, cacheable: true };
@@ -703,14 +774,17 @@ export function createConversationService<Client extends ConversationServiceClie
         }
 
         try {
-          const added = await activeClient.addLocalWorkspace({
-            path: workspaceRootRaw || targetDirectoryRaw,
-            name: workspace.name?.trim() || undefined,
-            baseUrl: opencodeRegistration?.baseUrl ?? undefined,
-            directory: opencodeRegistration?.directory || targetDirectoryRaw,
-            opencodeUsername: opencodeRegistration?.opencodeUsername ?? undefined,
-            opencodePassword: opencodeRegistration?.opencodePassword ?? undefined,
-          });
+          const added = await traceRegistrationRequest(
+            "workspace-register",
+            () => activeClient.addLocalWorkspace({
+              path: workspaceRootRaw || targetDirectoryRaw,
+              name: workspace.name?.trim() || undefined,
+              baseUrl: opencodeRegistration?.baseUrl ?? undefined,
+              directory: opencodeRegistration?.directory || targetDirectoryRaw,
+              opencodeUsername: opencodeRegistration?.opencodeUsername ?? undefined,
+              opencodePassword: opencodeRegistration?.opencodePassword ?? undefined,
+            }),
+          );
           const registered = findMatchingWorkspace(added.items);
           if (registered && matchesRegistration(registered, opencodeRegistration)) {
             return { id: registered.id, cacheable: true };

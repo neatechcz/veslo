@@ -18,7 +18,6 @@ import {
 } from "../utils";
 import { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
 import { CLOUD_ONLY_MODE } from "../lib/cloud-policy";
-import { prepareRuntimeWithSkillViewRefresh } from "../context/workspace-skill-materialization";
 import { t, currentLocale } from "../../i18n";
 import type { OpencodeAuth } from "../lib/opencode";
 import type { WorkspaceRouting } from "../context/workspace-routing";
@@ -30,6 +29,7 @@ import {
   runtimePrepareWorkspace,
   type EngineDoctorResult,
   type EngineInfo,
+  type RuntimeSkillBinding,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { currentLocale as __vesloIndirectLocale, t as __vesloIndirectT } from "../../i18n";
@@ -104,7 +104,7 @@ export interface EngineStoreDeps {
     workspace: WorkspaceInfo,
     options: { reason: string },
   ) => Promise<boolean>;
-  runtimeSkillViewRevision?: (workspaceId: string) => string | null;
+  runtimeSkillBinding?: (workspaceId: string) => RuntimeSkillBinding | null;
 }
 
 export function createEngineStore(deps: EngineStoreDeps) {
@@ -290,22 +290,16 @@ export function createEngineStore(deps: EngineStoreDeps) {
         workspaceId: activeWorkspaceMatchesStartPath ? activeLocalWorkspace?.id : undefined,
         reason: "host-start",
         navigate: optionsOverride?.navigate ?? true,
-        skillViewRevision: activeWorkspaceMatchesStartPath
-          ? deps.runtimeSkillViewRevision?.(activeLocalWorkspace!.id) ?? null
+        skillBinding: activeWorkspaceMatchesStartPath
+          ? deps.runtimeSkillBinding?.(activeLocalWorkspace!.id) ?? null
           : null,
       });
       if (activeLocalWorkspace && activeWorkspaceMatchesStartPath && deps.syncWorkspaceSkillMaterializationBeforeRuntime) {
-        const skillsReady = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(activeLocalWorkspace, {
+        await deps.syncWorkspaceSkillMaterializationBeforeRuntime(activeLocalWorkspace, {
           reason: "host-start",
         });
-        if (!skillsReady) return false;
       }
-      const ok = activeLocalWorkspace && activeWorkspaceMatchesStartPath && deps.syncWorkspaceSkillMaterializationBeforeRuntime
-        ? await prepareRuntimeWithSkillViewRefresh({
-            prepare: prepareRuntime,
-            refresh: async ({ reason }) => await deps.syncWorkspaceSkillMaterializationBeforeRuntime!(activeLocalWorkspace, { reason }),
-          })
-        : await prepareRuntime();
+      const ok = await prepareRuntime();
       if (!ok) return false;
 
       deps.markOnboardingComplete();
@@ -395,22 +389,16 @@ export function createEngineStore(deps: EngineStoreDeps) {
         workspaceName: activeLocalWorkspace?.displayName?.trim() || activeLocalWorkspace?.name?.trim() || null,
         reason: runtime === "veslo-orchestrator" ? "engine-reload-orchestrator" : "engine-reload",
         forceFreshRuntime: true,
-        skillViewRevision: activeLocalWorkspace
-          ? deps.runtimeSkillViewRevision?.(activeLocalWorkspace.id) ?? null
+        skillBinding: activeLocalWorkspace
+          ? deps.runtimeSkillBinding?.(activeLocalWorkspace.id) ?? null
           : null,
       });
       if (activeLocalWorkspace && deps.syncWorkspaceSkillMaterializationBeforeRuntime) {
-        const skillsReady = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(activeLocalWorkspace, {
+        await deps.syncWorkspaceSkillMaterializationBeforeRuntime(activeLocalWorkspace, {
           reason: "engine-reload",
         });
-        if (!skillsReady) return false;
       }
-      const ok = activeLocalWorkspace && deps.syncWorkspaceSkillMaterializationBeforeRuntime
-        ? await prepareRuntimeWithSkillViewRefresh({
-            prepare: prepareRuntime,
-            refresh: async ({ reason }) => await deps.syncWorkspaceSkillMaterializationBeforeRuntime!(activeLocalWorkspace, { reason }),
-          })
-        : await prepareRuntime();
+      const ok = await prepareRuntime();
       if (!ok) {
         deps.setError("Failed to reconnect after reload");
         return false;

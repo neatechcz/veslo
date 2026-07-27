@@ -61,13 +61,13 @@ test("local workspace activation lives in a scoped activation module", () => {
   );
   assert.match(
     localSource,
-    /async function reconnectRemoteToLocalHost\([\s\S]*await deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(next, \{[\s\S]*reason: "workspace-attach-local"[\s\S]*prepareRuntimeWithSkillViewRefresh\(\{[\s\S]*prepare: prepareRuntime,/s,
-    "remote-to-local attachment must materialize skills and bridge one changed-view refresh before preparing the engine",
+    /async function reconnectRemoteToLocalHost\([\s\S]*await deps\.syncWorkspaceSkillMaterializationBeforeRuntime\(next, \{[\s\S]*reason: "workspace-attach-local"[\s\S]*connectedToLocalHost = await prepareRuntime\(\);/s,
+    "remote-to-local attachment may schedule skill preparation but must prepare the engine only once",
   );
   assert.match(
     localSource,
-    /let localFailureMessage: string \| null = null;[\s\S]*message: localFailureMessage \?\? deps\.indirectT\(/s,
-    "remote-to-local attachment should keep the concrete skill recovery error in workspace connection state",
+    /let localFailureMessage: string \| null = null;[\s\S]*message:\s*localFailureMessage \?\?\s*deps\.indirectT\(/s,
+    "remote-to-local attachment should keep the concrete runtime error in workspace connection state",
   );
   assert.match(
     localSource,

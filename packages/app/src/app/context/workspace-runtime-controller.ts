@@ -1,7 +1,7 @@
 import type { Accessor } from "solid-js";
 
 import type { OpencodeAuth } from "../lib/opencode";
-import type { EngineInfo, WorkspaceInfo } from "../lib/tauri";
+import type { EngineInfo, RuntimeSkillBinding, WorkspaceInfo } from "../lib/tauri";
 import type { Client, WorkspaceConnectionState } from "../types";
 import { createSingleFlight } from "../utils";
 import type { createLocalRuntimeLifecycle } from "../utils/local-runtime-lifecycle";
@@ -9,7 +9,6 @@ import { withTimeoutOrThrow } from "../utils/promise-timeout";
 import type { ConnectToServer } from "./workspace-types";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import type { WorkspaceLifecycleEvent } from "./workspace-lifecycle-state";
-import { prepareRuntimeWithSkillViewRefresh } from "./workspace-skill-materialization";
 
 const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
 const CONNECT_LOAD_SESSIONS_TIMEOUT_MS = 20_000;
@@ -36,6 +35,7 @@ function isEngineStartingRoutingError(detail: string | null): boolean {
 
 export type WorkspaceRuntimeControllerDeps = {
   activeWorkspaceId: Accessor<string>;
+  activeSendTraceId?: () => string | null;
   workspaces: Accessor<WorkspaceInfo[]>;
   workspacesHydrated: Accessor<boolean>;
   routing: {
@@ -81,7 +81,7 @@ export type WorkspaceRuntimeControllerDeps = {
     workspace: WorkspaceInfo,
     options: { reason: string },
   ) => Promise<boolean>;
-  runtimeSkillViewRevision?: (workspaceId: string) => string | null;
+  runtimeSkillBinding?: (workspaceId: string) => RuntimeSkillBinding | null;
   probeWorkspaceApiReady?: (input: {
     workspaceId: string;
     workspacePath: string;
@@ -313,6 +313,11 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       : workspace.id || workspace.path;
 
     return await ensureEngineForWorkspaceSingleFlight(singleFlightKey, async () => {
+      // A shared activation can outlive the currently focused send. Capture its
+      // owner once, then pass it through native work rather than consulting the
+      // mutable global trace id at completion time.
+      const runtimeTraceId = deps.activeSendTraceId?.()?.trim() || null;
+      const runtimeTrace = runtimeTraceId ? { traceId: runtimeTraceId } : {};
       const runtime = deps.resolveEngineRuntime();
       deps.dispatchLifecycle?.({
         type: "runtime-starting",
@@ -322,6 +327,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
       });
       deps.wsLog("[workspace:ensureEngine] starting engine for browsing mode", { id, path: workspace.path });
       recordSendWorkflowTrace("workspace-runtime", "ensure-engine:start", {
+        ...runtimeTrace,
         workspaceId: id,
         workspacePath: workspace.path,
         workspaceType: workspace.workspaceType,
@@ -359,6 +365,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
         if (workspace.workspaceType === "local" && deps.syncManagedAiRuntimeConfigBeforeRuntime) {
           const configStartedAt = Date.now();
           recordSendWorkflowTrace("workspace-runtime", "ensure-engine:managed-ai-config:start", {
+            ...runtimeTrace,
             workspaceId: id,
             workspacePath: workspace.path,
             reason: ensureReason,
@@ -372,6 +379,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
             if (!managedAiConfigReady) {
               const message = "Managed AI access was not ready before runtime start";
               recordSendWorkflowTrace("workspace-runtime", "ensure-engine:managed-ai-config:not-ready", {
+                ...runtimeTrace,
                 workspaceId: id,
                 reason: ensureReason,
                 durationMs: Date.now() - configStartedAt,
@@ -385,6 +393,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
               return false;
             }
             recordSendWorkflowTrace("workspace-runtime", "ensure-engine:managed-ai-config:done", {
+              ...runtimeTrace,
               workspaceId: id,
               reason: ensureReason,
               durationMs: Date.now() - configStartedAt,
@@ -392,6 +401,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           } catch (error) {
             const message = messageFromUnknownError(error, deps.safeStringify);
             recordSendWorkflowTrace("workspace-runtime", "ensure-engine:managed-ai-config:error", {
+              ...runtimeTrace,
               workspaceId: id,
               reason: ensureReason,
               durationMs: Date.now() - configStartedAt,
@@ -407,65 +417,41 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           }
         }
 
-        const skillSyncMaxAttempts = isRuntimeRecovery ? 6 : 1;
         const skillSyncReason = isRuntimeRecovery ? "runtime-recovery" : "browse-attach";
-        let skillsReady = false;
-        for (let attempt = 1; attempt <= skillSyncMaxAttempts; attempt += 1) {
-          skillsReady = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
-            reason: skillSyncReason,
-          });
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skills-ready", {
-            workspaceId: id,
-            skillsReady,
-            reason: ensureReason,
-            attempt,
-            maxAttempts: skillSyncMaxAttempts,
-          });
-          if (skillsReady) break;
-          if (attempt < skillSyncMaxAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
-        }
-        if (!skillsReady) {
-          deps.dispatchLifecycle?.({
-            type: "failed",
-            workspaceId: id,
-            message: "Workspace skills were not ready before runtime start",
-          });
-          return false;
-        }
+        await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
+          reason: skillSyncReason,
+        });
+        recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skill-binding-selected", {
+          ...runtimeTrace,
+          workspaceId: id,
+          reason: ensureReason,
+          skillBinding: deps.runtimeSkillBinding?.(workspace.id) ?? null,
+        });
 
         const prepareReason = ensureReason;
         const startedAt = Date.now();
         recordSendWorkflowTrace("workspace-runtime", "ensure-engine:prepare-runtime:start", {
+          ...runtimeTrace,
           workspaceId: id,
           workspacePath: workspace.path,
           runtime,
           reason: prepareReason,
           forceFreshRuntime,
-          skillViewRevision: deps.runtimeSkillViewRevision?.(workspace.id) ?? null,
+          skillBinding: deps.runtimeSkillBinding?.(workspace.id) ?? null,
         });
         const prepareRuntime = async () => await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
           workspacePath: workspace.path,
           workspaceId: workspace.id,
           workspaceName: workspace.displayName?.trim() || workspace.name?.trim() || null,
+          traceId: runtimeTraceId,
           reason: prepareReason,
           connectMode: "quiet",
           forceFreshRuntime,
-          skillViewRevision: deps.runtimeSkillViewRevision?.(workspace.id) ?? null,
+          skillBinding: deps.runtimeSkillBinding?.(workspace.id) ?? null,
         });
-        const ok = await prepareRuntimeWithSkillViewRefresh({
-          prepare: prepareRuntime,
-          refresh: async ({ reason }) => await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, { reason }),
-          onRetry: ({ conflict }) => {
-            recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skill-view-refresh", {
-              workspaceId: id,
-              reason: prepareReason,
-              cause: conflict,
-            });
-          },
-        });
+        const ok = await prepareRuntime();
         recordSendWorkflowTrace("workspace-runtime", "ensure-engine:prepare-runtime:done", {
+          ...runtimeTrace,
           workspaceId: id,
           ok,
           durationMs: Date.now() - startedAt,

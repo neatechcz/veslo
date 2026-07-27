@@ -22,6 +22,11 @@ export const RUNTIME_ENGINE_STATES = [
 
 export type RuntimeEngineState = (typeof RUNTIME_ENGINE_STATES)[number];
 
+export type RuntimeSkillBinding = {
+  revision: string;
+  authorizationRevision: string;
+};
+
 export type EngineInfo = {
   running: boolean;
   runtime: "direct" | "veslo-orchestrator";
@@ -515,7 +520,8 @@ export async function runtimePrepareWorkspace(input: {
   projectDir: string;
   workspaceId?: string | null;
   workspaceName?: string | null;
-  skillViewRevision?: string | null;
+  traceId?: string | null;
+  skillBinding?: RuntimeSkillBinding | null;
   reason?: string | null;
   forceFreshRuntime?: boolean;
   preferSidecar?: boolean;
@@ -529,7 +535,8 @@ export async function runtimePrepareWorkspace(input: {
     projectDir: input.projectDir,
     workspaceId: input.workspaceId ?? null,
     workspaceName: input.workspaceName ?? null,
-    skillViewRevision: input.skillViewRevision ?? null,
+    traceId: input.traceId ?? null,
+    skillBinding: input.skillBinding ?? null,
     reason: input.reason ?? null,
     forceFreshRuntime: input.forceFreshRuntime ?? false,
     preferSidecar: input.preferSidecar ?? false,
@@ -785,13 +792,13 @@ export async function orchestratorWorkspaceActivate(input: {
   workspacePath: string;
   workspaceId?: string | null;
   name?: string | null;
-  skillViewRevision?: string | null;
+  skillBinding?: RuntimeSkillBinding | null;
 }): Promise<OrchestratorWorkspace> {
   return invoke<OrchestratorWorkspace>("orchestrator_workspace_activate", {
     workspacePath: input.workspacePath,
     workspaceId: input.workspaceId ?? null,
     name: input.name ?? null,
-    skillViewRevision: input.skillViewRevision ?? null,
+    skillBinding: input.skillBinding ?? null,
   });
 }
 

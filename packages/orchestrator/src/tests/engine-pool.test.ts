@@ -188,6 +188,7 @@ describe("EnginePool", () => {
       expect(engine.workspaceId).toBe("a");
       expect(engine.engineOwnerId).not.toBe("a");
       expect(engine.engineOwnerId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(engine.directoryInstanceEpoch).toBe(1);
       expect(engine.pid).toBeGreaterThan(0);
       expect(engine.baseUrl).toMatch(/^http:\/\//);
       expect(engine.workdir).toBe("/tmp/a");
@@ -423,9 +424,10 @@ describe("EnginePool", () => {
     }
   });
 
-  test("a run owning the engine blocks a skill view swap instead of killing it", async () => {
+  test("a run owning the engine defers a skill view swap until idle", async () => {
+    let active = true;
     const h = harness({
-      hasActiveRuns: () => true,
+      hasActiveRuns: () => active,
     });
     try {
       const first = await h.pool.ensure({
@@ -434,17 +436,102 @@ describe("EnginePool", () => {
         skillViewRevision: "revision-one",
       });
 
-      await expect(
-        h.pool.ensure({
-          id: "a",
-          path: "/tmp/a",
-          skillViewRevision: "revision-two",
-        }),
-      ).rejects.toThrow(/skill_view_busy/);
+      await expect(h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-two",
+      })).rejects.toThrow("skill_view_busy");
 
-      // The in-flight work keeps its process.
+      // The in-flight work keeps its process, but a fresh admission for the
+      // newer view is rejected instead of being handed the old binding.
       expect(h.pool.get("a")?.pid).toBe(first.pid);
+      expect(h.pool.get("a")?.pendingSkillViewRevision).toBe("revision-two");
       expect(h.counters.spawns).toBe(1);
+
+      active = false;
+      const refreshed = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      expect(refreshed.pid).not.toBe(first.pid);
+      expect(refreshed.skillViewRevision).toBe("revision-two");
+      expect(h.counters.spawns).toBe(2);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("an invalid replacement view leaves the healthy engine running", async () => {
+    const h = harness({
+      isProcessAlive: () => true,
+      spawnEngine: async ({ port, skillViewRevision }) => {
+        h.counters.spawns += 1;
+        const child = spawnLongLivedChild();
+        h.registry.push(child);
+        return {
+          child,
+          baseUrl: `http://127.0.0.1:${port}`,
+          skillViewRevision: skillViewRevision ?? null,
+        };
+      },
+      validateSkillView: async ({ skillViewRevision }) => {
+        if (skillViewRevision === "revision-invalid") {
+          throw new Error("direct_path_nested_skill_rejected: a");
+        }
+      },
+    });
+    try {
+      const first = await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-one",
+      });
+      expect(first.skillViewRevision).toBe("revision-one");
+
+      await expect(h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-invalid",
+      })).rejects.toThrow("direct_path_nested_skill_rejected");
+
+      expect(h.pool.get("a")?.pid).toBe(first.pid);
+      expect(h.pool.get("a")?.skillViewRevision).toBe("revision-one");
+      expect(h.counters.spawns).toBe(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a changed authorization binding replaces an otherwise matching skill view", async () => {
+    const h = harness({
+      isProcessAlive: () => true,
+      spawnEngine: async ({ port, skillViewRevision, authorizationRevision }) => {
+        h.counters.spawns += 1;
+        const child = spawnLongLivedChild();
+        h.registry.push(child);
+        return {
+          child,
+          baseUrl: `http://127.0.0.1:${port}`,
+          skillViewRevision: skillViewRevision ?? null,
+          authorizationRevision: authorizationRevision ?? null,
+        };
+      },
+    });
+    try {
+      const first = await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-one",
+        authorizationRevision: "authorization-one",
+      });
+      const refreshed = await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-one",
+        authorizationRevision: "authorization-two",
+      });
+
+      expect(refreshed.pid).not.toBe(first.pid);
+      expect(refreshed.skillViewRevision).toBe("revision-one");
+      expect(refreshed.authorizationRevision).toBe("authorization-two");
+      expect(h.counters.spawns).toBe(2);
     } finally {
       await h.cleanup();
     }
@@ -516,13 +603,13 @@ describe("EnginePool", () => {
     }
   });
 
-  test("a crash respawn does not replay the original caller's revision", async () => {
-    const seen: Array<string | undefined> = [];
+  test("a crash respawn uses the explicit isolated empty binding", async () => {
+    const seen: Array<{ revision?: string; authorization?: string }> = [];
     const timers = new FakeTimers();
     const h = harness(
       {
-        spawnEngine: async ({ port, skillViewRevision }) => {
-          seen.push(skillViewRevision);
+        spawnEngine: async ({ port, skillViewRevision, authorizationRevision }) => {
+          seen.push({ revision: skillViewRevision, authorization: authorizationRevision });
           const child = spawnLongLivedChild();
           h.registry.push(child);
           return { child, baseUrl: `http://127.0.0.1:${port}` };
@@ -548,9 +635,13 @@ describe("EnginePool", () => {
       timers.advance(50);
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      // Recovery has no live handshake. Replaying a remembered revision would
-      // turn an ordinary restart into a permanent failure once it aged out.
-      expect(seen).toEqual(["revision-abc", undefined]);
+      expect(seen).toEqual([
+        { revision: "revision-abc", authorization: undefined },
+        {
+          revision: "empty-direct-skill-view/v1",
+          authorization: "empty-direct-skill-authorization/v1",
+        },
+      ]);
       expect(h.pool.get("a")?.state).toBe("ready");
     } finally {
       await h.cleanup();
@@ -568,6 +659,7 @@ describe("EnginePool", () => {
       expect(second.workspaceId).toBe("a");
       expect(second.engineOwnerId).not.toBe(firstOwnerId);
       expect(second.engineOwnerId).not.toBe("a");
+      expect(second.directoryInstanceEpoch).toBe((first.directoryInstanceEpoch ?? 0) + 1);
     } finally {
       await h.cleanup();
     }
@@ -687,6 +779,7 @@ describe("EnginePool", () => {
       const snap = h.pool.snapshot();
       expect(snap).toHaveLength(1);
       expect(snap[0]?.workspaceId).toBe("a");
+      expect(snap[0]?.directoryInstanceEpoch).toBe(1);
       expect(snap[0]?.childKind).toBe("direct");
       expect((snap[0] as Record<string, unknown>).child).toBeUndefined();
       expect(() => JSON.stringify(snap)).not.toThrow();

@@ -411,7 +411,7 @@ pub fn build_orchestrator_env_overrides(
     }
 
     env.extend(
-        crate::runtime_preferences::shared_unsandboxed_engine_env_overrides(
+        crate::runtime_preferences::host_runtime_env_overrides(
             shared_unsandboxed_engine,
         ),
     );

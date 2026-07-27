@@ -1,5 +1,7 @@
 .tmp-opencode-home/
 .tmp-veslo-home/
+.tmp-opencode-home-pilot/
+.tmp-veslo-home-pilot/
 .tmp-tauri-pilot-runtime/
 .tmp-skill-registry-fixture.json
 .tmp-live-feedback-youtrack/

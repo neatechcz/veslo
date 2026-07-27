@@ -2,6 +2,7 @@ import type { OpencodeAuth } from "../lib/opencode";
 import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 import type {
   EngineInfo,
+  RuntimeSkillBinding,
   WorkspaceInfo,
   WorkspaceRuntimePrepareResult,
 } from "../lib/tauri";
@@ -27,12 +28,14 @@ export type LocalRuntimeReconnectOptions = {
   workspacePath: string;
   workspaceId?: string;
   workspaceName?: string | null;
+  /** Immutable owner of this preparation flight; never read the mutable active send later. */
+  traceId?: string | null;
   reason: string;
   connectMode?: LocalRuntimeConnectMode;
   navigate?: boolean;
   quiet?: boolean;
   forceFreshRuntime?: boolean;
-  skillViewRevision?: string | null;
+  skillBinding?: RuntimeSkillBinding | null;
 };
 
 export interface LocalRuntimeLifecycleDeps {
@@ -55,9 +58,10 @@ export interface LocalRuntimeLifecycleDeps {
       projectDir: string;
       workspaceId?: string | null;
       workspaceName?: string | null;
+      traceId?: string | null;
       reason?: string | null;
       forceFreshRuntime?: boolean;
-      skillViewRevision?: string | null;
+      skillBinding?: RuntimeSkillBinding | null;
     },
   ) => Promise<WorkspaceRuntimePrepareResult>;
   activateVesloHostWorkspace: (workspacePath: string) => Promise<unknown>;
@@ -163,7 +167,9 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
     options: LocalRuntimeReconnectOptions,
     payload: Record<string, unknown> = {},
   ) => {
+    const traceId = options.traceId?.trim() ?? "";
     recordSendWorkflowTrace("local-runtime-lifecycle", event, {
+      ...(traceId ? { traceId } : {}),
       workspaceId: options.workspaceId ?? null,
       workspacePath: options.workspacePath,
       reason: options.reason,
@@ -239,9 +245,10 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       projectDir: string;
       workspaceId?: string | null;
       workspaceName?: string | null;
+      traceId?: string | null;
       reason?: string | null;
       forceFreshRuntime?: boolean;
-      skillViewRevision?: string | null;
+      skillBinding?: RuntimeSkillBinding | null;
     },
     options: LocalRuntimeReconnectOptions,
     timeoutMs: number,
@@ -476,9 +483,10 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
           projectDir: options.workspacePath,
           workspaceId: options.workspaceId?.trim() || null,
           workspaceName: options.workspaceName?.trim() || null,
+          traceId: options.traceId?.trim() || null,
           reason: options.reason,
           forceFreshRuntime: options.forceFreshRuntime === true,
-          skillViewRevision: options.skillViewRevision ?? null,
+          skillBinding: options.skillBinding ?? null,
         },
         options,
         timeoutMs,
@@ -508,7 +516,7 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
       | "reason"
       | "connectMode"
       | "navigate"
-      | "skillViewRevision"
+      | "skillBinding"
     >,
   ) {
     return await prepareWorkspaceRuntime({

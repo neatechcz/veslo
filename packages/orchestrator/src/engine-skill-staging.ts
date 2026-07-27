@@ -11,11 +11,14 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { withWorkspaceSkillLease } from "./workspace-skill-lease.js";
+import { stripExtendedWindowsPathPrefix } from "./workspace-id.js";
 
 const ENTRYPOINT = "SKILL.md";
+export const EMPTY_DIRECT_SKILL_VIEW_REVISION = "empty-direct-skill-view/v1";
+export const EMPTY_DIRECT_AUTHORIZATION_REVISION = "empty-direct-skill-authorization/v1";
 const MARKER = ".veslo-managed.json";
 const STAGING_MANIFEST = ".veslo-engine-skill-staging.json";
 const GENERATION_RECORD = ".veslo-engine-skill-generation.json";
@@ -381,9 +384,10 @@ async function sourceTreeSignature(dir: string): Promise<string> {
 }
 
 type EffectiveSkillManifest = {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   workspaceRoot: string;
   revision?: string;
+  authorizationRevision?: string;
   entries: Array<{
     name: string;
     path: string;
@@ -404,6 +408,41 @@ export type EngineSkillStagingResult = {
   suppressed: Array<{ name: string; reason: string }>;
   generationLease?: EngineSkillGenerationLease;
 };
+
+/**
+ * A validated serving view for pooled direct-host engines. Unlike the legacy
+ * staging result, its paths point at the selected source directories and no
+ * workspace content has been copied into the runtime state directory.
+ */
+export type DirectEngineSkillView = {
+  revision: string | null;
+  authorizationRevision: string | null;
+  skillPaths: string[];
+  source: "effective-manifest" | "empty";
+  selected: Array<{
+    name: string;
+    sourcePath: string;
+    className: Candidate["className"];
+  }>;
+  suppressed: Array<{ name: string; reason: string }>;
+};
+
+export type OrdinaryDirectEngineSkillResolution = {
+  view: DirectEngineSkillView;
+  result: "serving" | "empty";
+  fallbackReason: string | null;
+};
+
+function emptyDirectEngineSkillView(): DirectEngineSkillView {
+  return {
+    revision: EMPTY_DIRECT_SKILL_VIEW_REVISION,
+    authorizationRevision: EMPTY_DIRECT_AUTHORIZATION_REVISION,
+    skillPaths: [],
+    source: "empty",
+    selected: [],
+    suppressed: [],
+  };
+}
 
 export type DirectorySkillViewPublishResult = EngineSkillStagingResult & {
   /**
@@ -619,17 +658,22 @@ async function cleanupStagingGenerations(
 
 async function readEffectiveManifest(
   workspace: string,
+  manifestPath?: string,
 ): Promise<EffectiveSkillManifest | null> {
   try {
+    const resolvedManifestPath = manifestPath
+      ? resolve(stripExtendedWindowsPathPrefix(manifestPath))
+      : join(workspace, ".opencode", "veslo.runtime.skills.json");
+    const candidateRoot = join(workspace, ".opencode");
+    const isServingManifest = resolvedManifestPath === join(candidateRoot, "veslo.runtime.skills.json");
+    const isCandidateManifest = /^veslo\.runtime\.skills\.candidate\.[a-f0-9]{64}\.json$/i.test(basename(resolvedManifestPath));
+    if (!isServingManifest && (!isCandidateManifest || dirname(resolvedManifestPath) !== candidateRoot)) return null;
     const parsed = JSON.parse(
-      await readFile(
-        join(workspace, ".opencode", "veslo.runtime.skills.json"),
-        "utf8",
-      ),
+      await readFile(resolvedManifestPath, "utf8"),
     ) as EffectiveSkillManifest;
     if (
-      (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) ||
-      resolve(parsed.workspaceRoot) !== workspace ||
+      (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2 && parsed.schemaVersion !== 3) ||
+      resolve(stripExtendedWindowsPathPrefix(parsed.workspaceRoot)) !== workspace ||
       !Array.isArray(parsed.entries)
     )
       return null;
@@ -642,6 +686,7 @@ async function readEffectiveManifest(
 async function discoverEffectiveManifestCandidates(
   workspace: string,
   manifest: EffectiveSkillManifest,
+  managedSkillStoreRoot?: string,
 ): Promise<{
   candidates: Candidate[];
   suppressed: EngineSkillStagingResult["suppressed"];
@@ -655,6 +700,9 @@ async function discoverEffectiveManifestCandidates(
       suppressed: [{ name: "<manifest>", reason: "missing_source" }],
     };
   const authorizedWorkspaceRoot: string = workspacePhysical;
+  const managedStorePhysical = managedSkillStoreRoot
+    ? await realpath(stripExtendedWindowsPathPrefix(managedSkillStoreRoot)).catch(() => null)
+    : null;
   const sourceRoots = [
     join(workspace, ".opencode", "skills"),
     join(workspace, ".claude", "skills"),
@@ -695,9 +743,17 @@ async function discoverEffectiveManifestCandidates(
       suppressed.push({ name: entry.name, reason: "invalid_manifest" });
       continue;
     }
-    const sourcePath = resolve(entry.path);
+    const sourcePath = resolve(stripExtendedWindowsPathPrefix(entry.path));
+    const sourceIsWorkspaceLocal = isWithin(workspace, sourcePath);
+    const managedRelative = managedStorePhysical && isWithin(managedStorePhysical, sourcePath)
+      ? relative(managedStorePhysical, sourcePath).replace(/\\/g, "/")
+      : null;
+    const sourceIsManagedImmutable = Boolean(
+      managedRelative &&
+      new RegExp(`^[a-f0-9]{64}/${entry.name}/${ENTRYPOINT}$`, "i").test(managedRelative),
+    );
     if (
-      !isWithin(workspace, sourcePath) ||
+      (!sourceIsWorkspaceLocal && !sourceIsManagedImmutable) ||
       sourcePath.toLowerCase().split(/[\\/]/).pop() !== ENTRYPOINT.toLowerCase()
     ) {
       suppressed.push({ name: entry.name, reason: "outside_authorized_root" });
@@ -711,13 +767,19 @@ async function discoverEffectiveManifestCandidates(
       suppressed.push({ name: entry.name, reason: "missing_source" });
       continue;
     }
-    if (
-      !physicalRoots.some(
+    if (sourceIsWorkspaceLocal && !physicalRoots.some(
         (root) =>
           isWithin(root, physicalSourceDir) &&
           isWithin(root, physicalSourcePath),
-      )
-    ) {
+      )) {
+      suppressed.push({ name: entry.name, reason: "symlink_escape" });
+      continue;
+    }
+    if (sourceIsManagedImmutable && !(
+      managedStorePhysical &&
+      isWithin(managedStorePhysical, physicalSourceDir) &&
+      isWithin(managedStorePhysical, physicalSourcePath)
+    )) {
       suppressed.push({ name: entry.name, reason: "symlink_escape" });
       continue;
     }
@@ -737,6 +799,157 @@ async function discoverEffectiveManifestCandidates(
     });
   }
   return { candidates, suppressed };
+}
+
+async function assertNoUnauthorizedNestedSkillEntrypoints(
+  candidate: Candidate,
+  selectedEntrypoints: ReadonlySet<string>,
+): Promise<void> {
+  const root = await realpath(candidate.sourceDir);
+  const visitedDirectories = new Set<string>([root]);
+  const walk = async (current: string): Promise<void> => {
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = join(current, entry.name);
+      const physical = await realpath(entryPath);
+      const info = await stat(physical);
+      if (info.isDirectory() && visitedDirectories.has(physical)) {
+        throw new Error(`direct_path_link_cycle: ${candidate.name}`);
+      }
+      if (!isWithin(root, physical)) {
+        throw new Error(`direct_path_link_escape: ${candidate.name}`);
+      }
+      if (info.isDirectory()) {
+        visitedDirectories.add(physical);
+        await walk(physical);
+        continue;
+      }
+      if (
+        entry.name.toLowerCase() === ENTRYPOINT.toLowerCase() &&
+        !selectedEntrypoints.has(physical)
+      ) {
+        throw new Error(`direct_path_nested_skill_rejected: ${candidate.name}`);
+      }
+    }
+  };
+  await walk(root);
+}
+
+/**
+ * Resolves the server-published effective manifest into individual direct
+ * OpenCode paths. The manifest remains the policy boundary; this routine only
+ * validates its selected directories before they reach OpenCode discovery.
+ */
+export async function resolveDirectEngineSkillView(input: {
+  workspace: string;
+  expectedRevision?: string;
+  expectedAuthorizationRevision?: string;
+  managedSkillStoreRoot?: string;
+  manifestPath?: string;
+}): Promise<DirectEngineSkillView> {
+  const workspace = resolve(stripExtendedWindowsPathPrefix(input.workspace));
+  if (
+    input.expectedRevision === EMPTY_DIRECT_SKILL_VIEW_REVISION &&
+    input.expectedAuthorizationRevision === EMPTY_DIRECT_AUTHORIZATION_REVISION
+  ) {
+    return emptyDirectEngineSkillView();
+  }
+  const manifest = await readEffectiveManifest(workspace, input.manifestPath);
+  if (input.expectedRevision && manifest?.revision !== input.expectedRevision) {
+    throw new Error(
+      `skill_view_stale: expected ${input.expectedRevision}, received ${manifest?.revision ?? "none"}`,
+    );
+  }
+  if (
+    input.expectedAuthorizationRevision &&
+    manifest?.authorizationRevision !== input.expectedAuthorizationRevision
+  ) {
+    throw new Error(
+      `skill_authorization_stale: expected ${input.expectedAuthorizationRevision}, received ${manifest?.authorizationRevision ?? "none"}`,
+    );
+  }
+  if (!manifest) {
+    return emptyDirectEngineSkillView();
+  }
+
+  const { candidates, suppressed } = await discoverEffectiveManifestCandidates(
+    workspace,
+    manifest,
+    input.managedSkillStoreRoot,
+  );
+  if (suppressed.length > 0) {
+    const first = suppressed
+      .slice()
+      .sort((left, right) => left.name.localeCompare(right.name) || left.reason.localeCompare(right.reason))[0];
+    throw new Error(`skill_view_invalid: ${first?.name ?? "<manifest>"}:${first?.reason ?? "invalid_manifest"}`);
+  }
+  const selectedEntrypoints = new Set(await Promise.all(
+    candidates.map(async (candidate) =>
+      await realpath(candidate.sourcePath).catch(() => resolve(candidate.sourcePath))),
+  ));
+  for (const candidate of candidates) {
+    await assertNoUnauthorizedNestedSkillEntrypoints(candidate, selectedEntrypoints);
+  }
+  return {
+    revision: manifest.revision ?? null,
+    authorizationRevision: manifest.authorizationRevision ?? null,
+    skillPaths: candidates.map((candidate) => candidate.sourceDir),
+    source: candidates.length > 0 ? "effective-manifest" : "empty",
+    selected: candidates.map((candidate) => ({
+      name: candidate.name,
+      sourcePath: candidate.sourcePath,
+      className: candidate.className,
+    })),
+    suppressed: suppressed.sort((left, right) =>
+      left.name.localeCompare(right.name) || left.reason.localeCompare(right.reason),
+    ),
+  };
+}
+
+/**
+ * Ordinary conversation runtime is fail-open-to-empty for Skills. A caller
+ * must present the complete server-owned binding pair to enable any skill;
+ * absent, partial, stale, or invalid input resolves to the isolated canonical
+ * empty view instead of becoming an engine-start failure.
+ */
+export async function resolveOrdinaryDirectEngineSkillView(input: {
+  workspace: string;
+  expectedRevision?: string;
+  expectedAuthorizationRevision?: string;
+  managedSkillStoreRoot?: string;
+  manifestPath?: string;
+}): Promise<OrdinaryDirectEngineSkillResolution> {
+  const hasRevision = Boolean(input.expectedRevision?.trim());
+  const hasAuthorizationRevision = Boolean(
+    input.expectedAuthorizationRevision?.trim(),
+  );
+  if (!hasRevision || !hasAuthorizationRevision) {
+    return {
+      view: emptyDirectEngineSkillView(),
+      result: "empty",
+      fallbackReason:
+        hasRevision === hasAuthorizationRevision
+          ? "binding_missing"
+          : "binding_incomplete",
+    };
+  }
+
+  try {
+    const view = await resolveDirectEngineSkillView(input);
+    return {
+      view,
+      result: view.source === "empty" ? "empty" : "serving",
+      fallbackReason:
+        view.source === "empty" ? "no_authorized_skills" : null,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      view: emptyDirectEngineSkillView(),
+      result: "empty",
+      fallbackReason: detail.split(":", 1)[0] || "skill_view_invalid",
+    };
+  }
 }
 
 const candidateClass = async (

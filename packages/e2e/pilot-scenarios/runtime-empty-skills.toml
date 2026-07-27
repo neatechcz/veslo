@@ -1,0 +1,267 @@
+[scenario]
+name = "runtime-empty-skills"
+fail_fast = true
+global_timeout_ms = 180000
+
+[[step]]
+name = "root exists"
+action = "wait"
+target = "#root"
+timeout_ms = 15000
+
+[[step]]
+name = "empty skills still allow a real workspace runtime action"
+action = "eval"
+timeout_ms = 150000
+script = '''
+const invoke = window.__TAURI_INTERNALS__?.invoke;
+if (typeof invoke !== "function") throw new Error("Tauri invoke bridge is unavailable.");
+
+const EMPTY_REVISION = "empty-direct-skill-view/v1";
+const EMPTY_AUTHORIZATION = "empty-direct-skill-authorization/v1";
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const normalize = (value) => typeof value === "string" ? value.trim() : "";
+const trimBaseUrl = (value) => normalize(value).replace(/\/+$/, "");
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+};
+const waitUntil = async (predicate, { timeout, interval = 500, message }) => {
+  const deadline = Date.now() + timeout;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await predicate();
+    if (latest) return latest;
+    await sleep(interval);
+  }
+  throw new Error(`${message}. Latest=${JSON.stringify(latest)}`);
+};
+const readJson = async (response, label) => {
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text.trim() ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`${label} returned invalid JSON: ${text.slice(0, 1000)}`);
+  }
+  if (!response.ok) {
+    throw new Error(`${label} failed ${response.status}: ${text.slice(0, 1000)}`);
+  }
+  return payload;
+};
+
+const finish = (status, detail) => {
+  const marker = document.createElement("div");
+  marker.dataset.testid = "runtime-empty-skills-finished";
+  marker.dataset.status = status;
+  marker.dataset.detail = detail;
+  marker.hidden = true;
+  document.body.append(marker);
+};
+
+void (async () => {
+try {
+
+const server = await waitUntil(async () => {
+  const info = await invoke("veslo_server_info").catch(() => null);
+  const baseUrl = trimBaseUrl(info?.baseUrl);
+  const clientToken = normalize(info?.clientToken);
+  const hostToken = normalize(info?.hostToken);
+  if (!info?.running || !baseUrl || !clientToken || !hostToken) return false;
+  const health = await fetch(`${baseUrl}/health`).catch(() => null);
+  return health?.ok ? { baseUrl, clientToken, hostToken } : false;
+}, {
+  timeout: 90000,
+  message: "Local Veslo server did not become ready",
+});
+
+const bootstrap = await waitUntil(async () => {
+  const value = await invoke("workspace_bootstrap").catch(() => null);
+  return Array.isArray(value?.workspaces) && value.workspaces.length > 0 ? value : false;
+}, {
+  timeout: 45000,
+  message: "Workspace bootstrap did not expose a workspace",
+});
+const workspace = bootstrap.workspaces.find((entry) => entry.id === bootstrap.activeId)
+  ?? bootstrap.workspaces[0];
+const workspaceId = normalize(workspace?.id);
+const workspacePath = normalize(workspace?.path || workspace?.directory);
+assert(workspaceId && workspacePath, `Workspace identity is incomplete: ${JSON.stringify(workspace)}`);
+
+const serverHeaders = {
+  authorization: `Bearer ${server.clientToken}`,
+  "x-veslo-host-token": server.hostToken,
+  accept: "application/json",
+  "content-type": "application/json",
+};
+const runtimeView = await readJson(await fetch(
+  `${server.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/skills/runtime-view`,
+  { method: "POST", headers: serverHeaders, body: "{}" },
+), "runtime skill view");
+assert(runtimeView?.activeCount === 0,
+  `E2E workspace is not empty: ${JSON.stringify(runtimeView)}`);
+assert(runtimeView?.revision === EMPTY_REVISION,
+  `Empty runtime revision is not canonical: ${JSON.stringify(runtimeView)}`);
+assert(runtimeView?.authorizationRevision === EMPTY_AUTHORIZATION,
+  `Empty authorization revision is not canonical: ${JSON.stringify(runtimeView)}`);
+
+const prepared = await invoke("runtime_prepare_workspace", {
+  projectDir: workspacePath,
+  workspaceId,
+  workspaceName: normalize(workspace?.displayName || workspace?.name) || null,
+  skillBinding: {
+    revision: runtimeView.revision,
+    authorizationRevision: runtimeView.authorizationRevision,
+  },
+  reason: "runtime-empty-skills-e2e",
+  forceFreshRuntime: false,
+  preferSidecar: true,
+  opencodeBinPath: null,
+  runtime: "veslo-orchestrator",
+  workspacePaths: [workspacePath],
+});
+assert(prepared?.ok === true,
+  `Workspace runtime preparation failed: ${JSON.stringify(prepared)}`);
+
+const engine = await waitUntil(async () => {
+  const info = await invoke("engine_info", {
+    workspaceId,
+    workspacePath,
+  }).catch(() => null);
+  return info?.running && trimBaseUrl(info?.baseUrl) ? info : false;
+}, {
+  timeout: 90000,
+  interval: 750,
+  message: `Workspace engine did not become ready after empty binding. Prepared=${JSON.stringify(prepared)}`,
+});
+
+const runtimeProxyBaseUrl = `${server.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode`;
+await readJson(await fetch(`${runtimeProxyBaseUrl}/global/health`, {
+  headers: serverHeaders,
+}), "OpenCode health through workspace runtime");
+
+const session = await readJson(await fetch(
+  `${runtimeProxyBaseUrl}/session`,
+  {
+    method: "POST",
+    headers: serverHeaders,
+    body: JSON.stringify({ title: `Empty skills runtime ${Date.now()}` }),
+  },
+), "OpenCode session create");
+const created = session?.data ?? session;
+assert(normalize(created?.id), `Runtime action did not create a session: ${JSON.stringify(session)}`);
+
+const brokenPrepared = await invoke("runtime_prepare_workspace", {
+  projectDir: workspacePath,
+  workspaceId,
+  workspaceName: normalize(workspace?.displayName || workspace?.name) || null,
+  skillBinding: {
+    revision: "missing-runtime-view-e2e",
+    authorizationRevision: "missing-runtime-authorization-e2e",
+  },
+  reason: "runtime-broken-skills-e2e",
+  forceFreshRuntime: false,
+  preferSidecar: true,
+  opencodeBinPath: null,
+  runtime: "veslo-orchestrator",
+  workspacePaths: [workspacePath],
+});
+assert(brokenPrepared?.ok === true,
+  `Broken Skills binding blocked runtime preparation: ${JSON.stringify(brokenPrepared)}`);
+const degradedSession = await readJson(await fetch(
+  `${runtimeProxyBaseUrl}/session`,
+  {
+    method: "POST",
+    headers: serverHeaders,
+    body: JSON.stringify({ title: `Broken skills fallback ${Date.now()}` }),
+  },
+), "OpenCode session create after broken Skills binding");
+assert(normalize((degradedSession?.data ?? degradedSession)?.id),
+  `Broken Skills fallback did not allow a runtime action: ${JSON.stringify(degradedSession)}`);
+
+await readJson(await fetch(
+  `${server.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/skills`,
+  {
+    method: "POST",
+    headers: serverHeaders,
+    body: JSON.stringify({
+      name: "runtime-e2e-skill",
+      description: "Runtime binding acceptance fixture",
+      content: "Use this skill only as a deterministic runtime binding fixture.",
+    }),
+  },
+), "workspace skill upsert");
+// The runtime-view request is an activation boundary, not a status polling API.
+// Give the workspace-scoped watcher one quiet period and read the serving
+// decision once; repeated POST polling would itself keep invalidating the
+// candidate under test.
+await sleep(5000);
+const servingView = await readJson(await fetch(
+  `${server.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/skills/runtime-view`,
+  { method: "POST", headers: serverHeaders, body: "{}" },
+), "non-empty runtime skill view");
+assert(servingView?.activeCount === 1,
+  `Authorized workspace skill was not promoted: ${JSON.stringify(servingView)}`);
+assert(
+  normalize(servingView?.revision) &&
+    normalize(servingView?.authorizationRevision) &&
+    servingView.revision !== EMPTY_REVISION &&
+    servingView.authorizationRevision !== EMPTY_AUTHORIZATION,
+  `Non-empty runtime binding is invalid: ${JSON.stringify(servingView)}`,
+);
+const servingPrepared = await invoke("runtime_prepare_workspace", {
+  projectDir: workspacePath,
+  workspaceId,
+  workspaceName: normalize(workspace?.displayName || workspace?.name) || null,
+  skillBinding: {
+    revision: servingView.revision,
+    authorizationRevision: servingView.authorizationRevision,
+  },
+  reason: "runtime-serving-skills-e2e",
+  forceFreshRuntime: false,
+  preferSidecar: true,
+  opencodeBinPath: null,
+  runtime: "veslo-orchestrator",
+  workspacePaths: [workspacePath],
+});
+assert(servingPrepared?.ok === true,
+  `Valid Skills binding blocked runtime preparation: ${JSON.stringify(servingPrepared)}`);
+const servingSession = await readJson(await fetch(
+  `${server.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/conversations`,
+  {
+    method: "POST",
+    headers: serverHeaders,
+    body: JSON.stringify({
+      directory: workspacePath,
+      title: `Serving skills runtime ${Date.now()}`,
+    }),
+  },
+), "Veslo conversation create with serving Skills binding");
+const servingCreated = servingSession?.data ?? servingSession;
+assert(normalize(servingCreated?.conversationId) && normalize(servingCreated?.opencodeSessionId),
+  `Valid Skills binding did not allow a runtime action: ${JSON.stringify(servingSession)}`);
+finish("pass", normalize(servingCreated.conversationId));
+} catch (error) {
+  finish("fail", error?.message || String(error));
+}
+})();
+true;
+'''
+
+[[step]]
+name = "empty-skills runtime action finishes"
+action = "wait"
+target = "[data-testid='runtime-empty-skills-finished']"
+timeout_ms = 150000
+
+[[step]]
+name = "empty-skills runtime action passed"
+action = "eval"
+timeout_ms = 10000
+script = '''
+const marker = document.querySelector("[data-testid='runtime-empty-skills-finished']");
+if (!(marker instanceof HTMLElement)) throw new Error("Empty-skills completion marker is missing.");
+if (marker.dataset.status !== "pass") {
+  throw new Error(marker.dataset.detail || "Empty-skills runtime action failed.");
+}
+true;
+'''

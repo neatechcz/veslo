@@ -597,30 +597,13 @@ fn resolve_managed_ai_base_url() -> String {
 }
 
 fn default_server_sandbox_backend_for_platform() -> &'static str {
-    if cfg!(windows) {
-        "windows-wsl2"
-    } else if cfg!(target_os = "macos") {
-        "mac-sandbox-exec"
-    } else {
-        "none"
-    }
+    "none"
 }
 
 fn resolve_server_sandbox_backend_from_env(
-    explicit_backend: Option<&str>,
-    disable_sandbox: Option<&str>,
+    _explicit_backend: Option<&str>,
+    _disable_sandbox: Option<&str>,
 ) -> String {
-    if parse_env_flag(disable_sandbox) {
-        return "none".to_string();
-    }
-
-    if let Some(value) = explicit_backend
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return value.to_string();
-    }
-
     default_server_sandbox_backend_for_platform().to_string()
 }
 
@@ -632,16 +615,9 @@ pub fn resolve_server_sandbox_backend() -> String {
 }
 
 pub fn resolve_server_sandbox_backend_for_runtime_preference(
-    shared_unsandboxed_engine: Option<bool>,
+    _shared_unsandboxed_engine: Option<bool>,
 ) -> String {
-    match shared_unsandboxed_engine {
-        Some(true) => "none".to_string(),
-        Some(false) => resolve_server_sandbox_backend_from_env(
-            env::var(VESLO_SANDBOX_BACKEND_ENV).ok().as_deref(),
-            Some("0"),
-        ),
-        None => resolve_server_sandbox_backend(),
-    }
+    "none".to_string()
 }
 
 fn server_cwd_from_app_data_dir(
@@ -746,7 +722,7 @@ pub fn spawn_veslo_server(
         secrets_file_path.to_string_lossy().to_string(),
     );
     command = command.env(VESLO_SANDBOX_BACKEND_ENV, sandbox_backend);
-    for (key, value) in crate::runtime_preferences::shared_unsandboxed_engine_env_overrides(
+    for (key, value) in crate::runtime_preferences::host_runtime_env_overrides(
         shared_unsandboxed_engine,
     ) {
         command = command.env(key, value);
@@ -1169,10 +1145,10 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_backend_prefers_explicit_env() {
+    fn sandbox_backend_ignores_retired_wsl_env() {
         let resolved = resolve_server_sandbox_backend_from_env(Some(" windows-wsl2 "), None);
 
-        assert_eq!(resolved, "windows-wsl2");
+        assert_eq!(resolved, "none");
     }
 
     #[test]
@@ -1186,13 +1162,7 @@ mod tests {
     fn sandbox_backend_defaults_by_platform() {
         let resolved = resolve_server_sandbox_backend_from_env(None, None);
 
-        if cfg!(windows) {
-            assert_eq!(resolved, "windows-wsl2");
-        } else if cfg!(target_os = "macos") {
-            assert_eq!(resolved, "mac-sandbox-exec");
-        } else {
-            assert_eq!(resolved, "none");
-        }
+        assert_eq!(resolved, "none");
     }
 
     #[test]
@@ -1203,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_backend_runtime_preference_false_ignores_disable_env() {
+    fn sandbox_backend_runtime_preference_false_stays_host_only() {
         let _lock = ENV_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -1213,6 +1183,6 @@ mod tests {
 
         let resolved = resolve_server_sandbox_backend_for_runtime_preference(Some(false));
 
-        assert_eq!(resolved, "windows-wsl2");
+        assert_eq!(resolved, "none");
     }
 }

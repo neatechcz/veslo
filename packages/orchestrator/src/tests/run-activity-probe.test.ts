@@ -152,8 +152,13 @@ describe("run activity probe payload parsing", () => {
   test("completed assistant as latest message is inactive", () => {
     expect(deriveRunActivityFromSessionMessages([
       user(),
-      assistant({ completed: 2_000 }),
-    ])).toMatchObject({ active: false, activityKind: "idle", waitReason: "session_idle" });
+      assistant({ completed: 2_000, parts: [{ type: "text", text: "Done" }] }),
+    ])).toMatchObject({
+      active: false,
+      terminalStatus: "completed",
+      activityKind: "idle",
+      waitReason: "session_idle",
+    });
   });
 
   test("assistant error or finish is terminal even when completed time is missing", () => {
@@ -164,7 +169,13 @@ describe("run activity probe payload parsing", () => {
     expect(deriveRunActivityFromSessionMessages([
       user(),
       assistant({ finish: "stop" }),
-    ])).toMatchObject({ active: false, activityKind: "idle", waitReason: "session_idle" });
+    ])).toMatchObject({
+      active: false,
+      terminalStatus: "failed",
+      terminalError: "assistant_completed_without_visible_output",
+      activityKind: "idle",
+      waitReason: "session_idle",
+    });
   });
 
   test("normalizes unsupported attachment errors and uses durable abort intent", () => {
@@ -195,7 +206,11 @@ describe("run activity probe payload parsing", () => {
   test("exact terminal assistant is definitive for the admitted run", () => {
     expect(deriveRunActivityFromSessionMessages([
       user("msg-admitted"),
-      assistant({ parentID: "msg-admitted", finish: "stop" }),
+      assistant({
+        parentID: "msg-admitted",
+        finish: "stop",
+        parts: [{ type: "text", text: "Done" }],
+      }),
     ], { expectedUserMessageId: "msg-admitted" })).toMatchObject({
       active: false,
       terminalCandidate: true,
@@ -204,7 +219,7 @@ describe("run activity probe payload parsing", () => {
     });
   });
 
-  test("inactive OpenCode session turns an unfinished exact run into a stable failure candidate", () => {
+  test("inactive OpenCode session keeps an unfinished exact run pending", () => {
     expect(deriveRunActivityFromSessionMessages([
       user("msg-admitted"),
       assistant({ parentID: "msg-admitted" }),
@@ -212,11 +227,9 @@ describe("run activity probe payload parsing", () => {
       expectedUserMessageId: "msg-admitted",
       sessionInactiveObserved: true,
     })).toMatchObject({
-      active: false,
-      terminalCandidate: true,
-      terminalStatus: "failed",
-      terminalError: "opencode_session_idle_before_assistant_completed",
-      waitReason: "session_idle",
+      active: true,
+      activityKind: "unknown",
+      waitReason: "assistant_message_open",
     });
   });
 
@@ -428,15 +441,13 @@ describe("run activity probe HTTP behavior", () => {
     });
 
     await expect(probe({ ...record, kind: "prompt", clientMessageId })).resolves.toMatchObject({
-      active: false,
-      terminalCandidate: true,
-      terminalStatus: "failed",
-      terminalError: "opencode_session_idle_before_assistant_completed",
-      waitReason: "session_idle",
+      active: true,
+      activityKind: "unknown",
+      waitReason: "assistant_message_open",
     });
   });
 
-  test("missing session status entry is authoritative inactive evidence for an unfinished exact run", async () => {
+  test("missing session status entry keeps an unfinished exact run pending", async () => {
     const admissionMessageId = "msg_f946e8a160003a693ab36fcd8e";
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),
@@ -459,10 +470,9 @@ describe("run activity probe HTTP behavior", () => {
       clientMessageId: "client-current",
       opencodeMessageId: admissionMessageId,
     })).resolves.toMatchObject({
-      active: false,
-      terminalCandidate: true,
-      terminalStatus: "failed",
-      terminalError: "opencode_session_idle_before_assistant_completed",
+      active: true,
+      activityKind: "unknown",
+      waitReason: "assistant_message_open",
     });
   });
 
@@ -674,6 +684,63 @@ describe("run activity probe HTTP behavior", () => {
 });
 
 describe("run activity probe with registry reconciliation", () => {
+  test("keeps an unfinished admitted answer running after two idle polls", async () => {
+    const store = createMemoryRunStore();
+    const admissionMessageId = "msg-admitted-long-answer";
+    const probeRunActivity = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: mockFetch(async (input) => {
+        if (String(input).endsWith("/session/status")) {
+          return Response.json({ "sess-a": { type: "idle" } });
+        }
+        return Response.json([
+          user(admissionMessageId),
+          assistant({
+            id: "msg-assistant-in-progress",
+            parentID: admissionMessageId,
+            parts: [{ type: "text", text: "A long answer is still being written." }],
+          }),
+        ]);
+      }),
+    });
+    const registry = createRunRegistry({
+      store,
+      probeRunActivity: probeRunActivity,
+      now: (() => {
+        let current = 10_000;
+        return () => current += 100;
+      })(),
+    });
+
+    await registry.register({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-idle-race",
+      engineSessionId: "sess-a",
+      clientMessageId: "client-long-answer",
+      opencodeMessageId: admissionMessageId,
+      directory: "/tmp/workspace-a",
+      kind: "prompt",
+    });
+
+    const firstPoll = await registry.get("ws-a", "run-idle-race");
+    const secondPoll = await registry.get("ws-a", "run-idle-race");
+
+    expect(firstPoll?.record).toMatchObject({
+      status: "running",
+      activityKind: "unknown",
+      waitReason: "assistant_message_open",
+    });
+    expect(secondPoll?.record).toMatchObject({
+      status: "running",
+      error: null,
+    });
+  });
+
   test("idle OpenCode status releases a stale active DB row before registering the next run", async () => {
     const store = createMemoryRunStore();
     const probeRunActivity = createRunActivityProbe({
@@ -685,7 +752,14 @@ describe("run activity probe with registry reconciliation", () => {
       fetchImpl: mockFetch(async (input) =>
         String(input).endsWith("/session/status")
           ? Response.json({ "sess-a": { type: "idle" } })
-          : Response.json([user(), assistant({ created: 2_000, completed: 3_000 })]),
+          : Response.json([
+              user(),
+              assistant({
+                created: 2_000,
+                completed: 3_000,
+                parts: [{ type: "text", text: "Done" }],
+              }),
+            ]),
       ),
     });
     const registry = createRunRegistry({

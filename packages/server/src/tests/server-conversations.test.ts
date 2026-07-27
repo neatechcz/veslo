@@ -6,6 +6,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER } from "../orchestrator-lifecycle-client.js";
 import { createConversationRunQueueStore } from "../conversation-run-queue-store.js";
+import {
+  prepareRuntimeSkillCandidate,
+  publishValidatedRuntimeSkillCandidate,
+} from "../active-runtime-skill-view.js";
 import { startServer } from "../server.js";
 
 const runningServers: Array<{ stop?: (closeActiveConnections?: boolean) => void }> = [];
@@ -16,6 +20,17 @@ const expectOpenCodeAdmissionMessageId = (value: unknown) => {
   expect(typeof value).toBe("string");
   expect(value as string).toMatch(/^msg_[0-9a-f]{26}$/);
   expect(value as string).not.toMatch(/^msg_veslo_/);
+};
+
+const boundEngineResponse = (request: Request, body: unknown) => {
+  const headers = new Headers();
+  const skillRevision = request.headers.get("x-veslo-skill-view-revision");
+  const authorizationRevision = request.headers.get("x-veslo-skill-authorization-revision");
+  if (skillRevision) headers.set("x-veslo-engine-skill-view-revision", skillRevision);
+  if (authorizationRevision) {
+    headers.set("x-veslo-engine-authorization-revision", authorizationRevision);
+  }
+  return Response.json(body, { headers });
 };
 
 const removeTempDir = async (dir: string) => {
@@ -644,7 +659,7 @@ describe("conversation routes", () => {
             return Response.json({ error: "workspace not found" }, { status: 404 });
           }
           createdSessionCount += 1;
-          return Response.json({
+          return boundEngineResponse(request, {
             id: `sess-private-created-${createdSessionCount}`,
             title: body?.title ?? "Private first submit",
             directory: body?.directory ?? workspaceRoot,
@@ -659,7 +674,7 @@ describe("conversation routes", () => {
           if (!registeredWorkspaces.has(workspaceId)) {
             return Response.json({ error: "workspace not found" }, { status: 404 });
           }
-          return Response.json({ ok: true });
+          return boundEngineResponse(request, { ok: true });
         }
         return Response.json({ error: "unexpected orchestrator route", path: url.pathname }, { status: 404 });
       },
@@ -2840,8 +2855,27 @@ describe("conversation routes", () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-conversations-orchestrator-"));
     tempDirs.push(workspaceRoot);
     await useTempVesloDataDir();
+    await mkdir(join(workspaceRoot, ".opencode", "skills", "example"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(workspaceRoot, ".opencode", "skills", "example", "SKILL.md"),
+      "---\nname: example\ndescription: Example\n---\n",
+      "utf8",
+    );
+    const servingCandidate = await prepareRuntimeSkillCandidate({
+      id: "ws_orch",
+      name: "Orchestrated",
+      path: workspaceRoot,
+      workspaceType: "local",
+    });
+    await publishValidatedRuntimeSkillCandidate(servingCandidate);
 
     let upstreamPath = "";
+    const receivedSkillBindings: Array<{
+      revision: string | null;
+      authorizationRevision: string | null;
+    }> = [];
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -2849,7 +2883,13 @@ describe("conversation routes", () => {
         const url = new URL(request.url);
         upstreamPath = url.pathname;
         if (request.method === "POST" && url.pathname === "/workspace/ws_orch/opencode/session") {
-          return Response.json({
+          receivedSkillBindings.push({
+            revision: request.headers.get("x-veslo-skill-view-revision"),
+            authorizationRevision: request.headers.get(
+              "x-veslo-skill-authorization-revision",
+            ),
+          });
+          return boundEngineResponse(request, {
             id: "sess-orch",
             title: "Orchestrated",
             directory: workspaceRoot,
@@ -2893,6 +2933,10 @@ describe("conversation routes", () => {
 
     expect(response.status).toBe(201);
     expect(upstreamPath).toBe("/workspace/ws_orch/opencode/session");
+    expect(receivedSkillBindings[0]).toEqual({
+      revision: servingCandidate.revision,
+      authorizationRevision: servingCandidate.authorizationRevision,
+    });
     const payload = await response.json() as { id: string; opencodeSessionId: string };
     expect(payload.id).toBe("sess-orch");
     expect(payload.opencodeSessionId).toBe("sess-orch");
@@ -2922,7 +2966,7 @@ describe("conversation routes", () => {
         const url = new URL(request.url);
         orchestratorPath = url.pathname;
         if (request.method === "POST" && url.pathname === "/workspace/ws_orch_stale/opencode/session") {
-          return Response.json({
+          return boundEngineResponse(request, {
             id: "sess-orch-stale",
             title: "Orchestrated stale",
             directory: workspaceRoot,
@@ -2998,7 +3042,7 @@ describe("conversation routes", () => {
         const url = new URL(request.url);
         orchestratorPath = url.pathname;
         if (request.method === "POST" && url.pathname === "/workspace/ws_orch_unable_connect/opencode/session") {
-          return Response.json({
+          return boundEngineResponse(request, {
             id: "sess-orch-unable-connect",
             title: "Orchestrated unable connect",
             directory: workspaceRoot,
@@ -3072,7 +3116,7 @@ describe("conversation routes", () => {
         const url = new URL(request.url);
         orchestratorPath = url.pathname;
         if (request.method === "POST" && url.pathname === "/workspace/ws_empty_mount/opencode/session") {
-          return Response.json({
+          return boundEngineResponse(request, {
             id: "sess-empty-mount",
             title: "Recovered empty mount",
             directory: workspaceRoot,
@@ -4089,7 +4133,7 @@ describe("conversation routes", () => {
           receivedDirectoryHeaders.push(request.headers.get("x-opencode-directory") ?? "");
           const receivedBody = await request.json() as Record<string, unknown>;
           receivedBodies.push(receivedBody);
-          return Response.json({
+          return boundEngineResponse(request, {
             id: "sess-created",
             title: receivedBody.title,
             directory: receivedBody.directory,
@@ -4556,7 +4600,7 @@ describe("conversation routes", () => {
         });
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
           events.push("engine-create-session");
-          return Response.json({
+          return boundEngineResponse(request, {
             id: "sess-created",
             title: body?.title,
             directory: body?.directory,
@@ -4569,7 +4613,7 @@ describe("conversation routes", () => {
           if (submitShouldFail) {
             return Response.json({ error: "submit failed" }, { status: 500 });
           }
-          return Response.json({ ok: true });
+          return boundEngineResponse(request, { ok: true });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-created/abort") {
           events.push("engine-abort");
@@ -4954,7 +4998,7 @@ describe("conversation routes", () => {
           ? await request.json().catch(() => null) as Record<string, unknown> | null
           : null;
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
-          return Response.json({
+          return boundEngineResponse(request, {
             id: "sess-watch",
             title: body?.title,
             directory: body?.directory,
@@ -4975,7 +5019,7 @@ describe("conversation routes", () => {
           }).catch((error) => {
             providerFetchError = error instanceof Error ? error.message : String(error);
           });
-          return Response.json({ ok: true });
+          return boundEngineResponse(request, { ok: true });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-watch/abort") {
           abortRequests.push(url.searchParams.get("directory") ?? "");
@@ -5160,7 +5204,7 @@ describe("conversation routes", () => {
           : null;
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
           sessionIndex += 1;
-          return Response.json({
+          return boundEngineResponse(request, {
             id: `sess-ambiguous-${sessionIndex}`,
             title: body?.title,
             directory: body?.directory,
@@ -5169,7 +5213,7 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "POST" && url.pathname.match(/^\/workspace\/ws_1\/opencode\/session\/sess-ambiguous-\d+\/prompt_async$/)) {
-          return Response.json({ ok: true });
+          return boundEngineResponse(request, { ok: true });
         }
         if (request.method === "POST" && url.pathname.endsWith("/abort")) {
           return Response.json({ ok: true, aborted: true });
@@ -5373,7 +5417,7 @@ describe("conversation routes", () => {
           ? await request.json().catch(() => null) as Record<string, unknown> | null
           : null;
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
-          return Response.json({
+          return boundEngineResponse(request, {
             id: "sess-placeholder-watch",
             title: body?.title,
             directory: body?.directory,
@@ -5399,7 +5443,7 @@ describe("conversation routes", () => {
           }).catch((error) => {
             providerFetchError = error instanceof Error ? error.message : String(error);
           });
-          return Response.json({ ok: true });
+          return boundEngineResponse(request, { ok: true });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-placeholder-watch/abort") {
           abortRequests.push(url.searchParams.get("directory") ?? "");
@@ -5581,7 +5625,7 @@ describe("conversation routes", () => {
           ? await request.json().catch(() => null) as Record<string, unknown> | null
           : null;
         if (request.method === "POST" && url.pathname === "/workspace/ws_target/opencode/session") {
-          return Response.json({
+          return boundEngineResponse(request, {
             id: "sess-target",
             title: body?.title,
             directory: body?.directory,
@@ -5590,7 +5634,7 @@ describe("conversation routes", () => {
           });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_stale/opencode/session") {
-          return Response.json({
+          return boundEngineResponse(request, {
             id: "sess-stale",
             title: body?.title,
             directory: body?.directory,
@@ -5600,7 +5644,7 @@ describe("conversation routes", () => {
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_stale/opencode/session/sess-stale/prompt_async") {
           stalePromptSubmitted = true;
-          return Response.json({ ok: true });
+          return boundEngineResponse(request, { ok: true });
         }
         if (request.method === "POST" && url.pathname === "/workspace/ws_target/opencode/session/sess-target/prompt_async") {
           void fetch(`http://127.0.0.1:${serverPort}/ai-gateway/providers/codex_oauth/v1/chat/completions`, {
@@ -5618,7 +5662,7 @@ describe("conversation routes", () => {
           }).catch((error) => {
             providerFetchError = error instanceof Error ? error.message : String(error);
           });
-          return Response.json({ ok: true });
+          return boundEngineResponse(request, { ok: true });
         }
         if (request.method === "POST" && url.pathname.endsWith("/abort")) {
           return Response.json({ ok: true, aborted: true });

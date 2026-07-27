@@ -54,9 +54,13 @@ export type ConversationWorkspaceRunReservation = {
   state: "starting" | "active";
   engineSlotId: string | null;
   engineOwnerId: string | null;
+  directoryInstanceEpoch: number | null;
   enginePid: number | null;
   engineStartedAt: number | null;
   engineBaseUrl: string | null;
+  skillViewRevision: string | null;
+  authorizationRevision: string | null;
+  openCodeConfigDigest: string | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -64,9 +68,13 @@ export type ConversationWorkspaceRunReservation = {
 export type ConversationWorkspaceRunEngineOwner = {
   engineSlotId: string;
   engineOwnerId: string;
+  directoryInstanceEpoch?: number | null;
   enginePid: number;
   engineStartedAt: number;
   engineBaseUrl: string;
+  skillViewRevision?: string | null;
+  authorizationRevision?: string | null;
+  openCodeConfigDigest?: string | null;
 };
 
 export type ConversationRunQueueStore = {
@@ -153,9 +161,13 @@ type WorkspaceRunReservationRow = {
   state: string;
   engine_slot_id: string | null;
   engine_owner_id: string | null;
+  directory_instance_epoch: number | null;
   engine_pid: number | null;
   engine_started_at: number | null;
   engine_base_url: string | null;
+  skill_view_revision: string | null;
+  authorization_revision: string | null;
+  opencode_config_digest: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -226,9 +238,13 @@ function createDatabase(dbPath: string): Database {
       state TEXT NOT NULL,
       engine_slot_id TEXT,
       engine_owner_id TEXT,
+      directory_instance_epoch INTEGER,
       engine_pid INTEGER,
       engine_started_at INTEGER,
       engine_base_url TEXT,
+      skill_view_revision TEXT,
+      authorization_revision TEXT,
+      opencode_config_digest TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (workspace_id, run_id)
@@ -259,9 +275,13 @@ function ensureQueueSchema(db: Database): void {
   };
   addReservationColumn("engine_slot_id", "TEXT");
   addReservationColumn("engine_owner_id", "TEXT");
+  addReservationColumn("directory_instance_epoch", "INTEGER");
   addReservationColumn("engine_pid", "INTEGER");
   addReservationColumn("engine_started_at", "INTEGER");
   addReservationColumn("engine_base_url", "TEXT");
+  addReservationColumn("skill_view_revision", "TEXT");
+  addReservationColumn("authorization_revision", "TEXT");
+  addReservationColumn("opencode_config_digest", "TEXT");
   const legacyRows = db.query<QueueRow, []>(
     `SELECT * FROM conversation_run_queue
      WHERE request_hash IS NULL OR request_hash = ''`,
@@ -371,11 +391,18 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
     state: row.state === "active" ? "active" : "starting",
     engineSlotId: row.engine_slot_id?.trim() || null,
     engineOwnerId: row.engine_owner_id?.trim() || null,
+    directoryInstanceEpoch:
+      typeof row.directory_instance_epoch === "number" && Number.isSafeInteger(row.directory_instance_epoch)
+        ? row.directory_instance_epoch
+        : null,
     enginePid: typeof row.engine_pid === "number" && Number.isFinite(row.engine_pid) ? row.engine_pid : null,
     engineStartedAt: typeof row.engine_started_at === "number" && Number.isFinite(row.engine_started_at)
       ? row.engine_started_at
       : null,
     engineBaseUrl: row.engine_base_url?.trim() || null,
+    skillViewRevision: row.skill_view_revision?.trim() || null,
+    authorizationRevision: row.authorization_revision?.trim() || null,
+    openCodeConfigDigest: row.opencode_config_digest?.trim() || null,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -763,16 +790,23 @@ export function createConversationRunQueueStore(options?: {
         const normalizedSlotId = normalizeText(owner.engineSlotId);
         const normalizedOwnerId = normalizeText(owner.engineOwnerId);
         const normalizedBaseUrl = normalizeText(owner.engineBaseUrl);
+        const normalizedSkillViewRevision = normalizeText(owner.skillViewRevision);
+        const normalizedAuthorizationRevision = normalizeText(owner.authorizationRevision);
+        const normalizedOpenCodeConfigDigest = normalizeText(owner.openCodeConfigDigest);
         if (!normalizedWorkspaceId || !normalizedRunId || !normalizedSlotId || !normalizedOwnerId || !normalizedBaseUrl) return null;
         const timestamp = now();
         const result = db.query(
           `UPDATE conversation_workspace_run_reservation
            SET engine_slot_id = ?3,
                engine_owner_id = ?4,
-               engine_pid = ?5,
-               engine_started_at = ?6,
-               engine_base_url = ?7,
-               updated_at = ?8
+               directory_instance_epoch = ?5,
+               engine_pid = ?6,
+               engine_started_at = ?7,
+               engine_base_url = ?8,
+               skill_view_revision = ?9,
+               authorization_revision = ?10,
+               opencode_config_digest = ?11,
+               updated_at = ?12
            WHERE workspace_id = ?1
              AND run_id = ?2
              AND (
@@ -780,9 +814,13 @@ export function createConversationRunQueueStore(options?: {
              OR (
                  engine_slot_id = ?3
                  AND engine_owner_id = ?4
-                 AND engine_pid = ?5
-                 AND engine_started_at = ?6
-                 AND engine_base_url = ?7
+                 AND COALESCE(directory_instance_epoch, -1) = COALESCE(?5, -1)
+                 AND engine_pid = ?6
+                 AND engine_started_at = ?7
+                 AND engine_base_url = ?8
+                 AND COALESCE(skill_view_revision, '') = ?9
+                 AND COALESCE(authorization_revision, '') = ?10
+                 AND COALESCE(opencode_config_digest, '') = ?11
                )
              )`,
         ).run(
@@ -790,9 +828,13 @@ export function createConversationRunQueueStore(options?: {
           normalizedRunId,
           normalizedSlotId,
           normalizedOwnerId,
+          owner.directoryInstanceEpoch ?? null,
           owner.enginePid,
           owner.engineStartedAt,
           normalizedBaseUrl,
+          normalizedSkillViewRevision,
+          normalizedAuthorizationRevision,
+          normalizedOpenCodeConfigDigest,
           timestamp,
         );
         if (result.changes !== 1) return null;

@@ -255,6 +255,7 @@ export type ConversationRunLifecycleController = {
     workspaceId: string;
     reload: () => Promise<void>;
   }): Promise<{ kind: "reloaded" } | { kind: "blocked"; reason: "active-runs" | "reconciliation-pending" }>;
+  subscribeWorkspaceIdle(listener: (workspaceId: string) => void): () => void;
   start(): void;
   stop(): void;
   snapshotForTests(): ConversationRunLifecycleSnapshot;
@@ -379,9 +380,24 @@ function reconcileDiagnosticsFromKeys(
 function lifecycleStatusTraceFields(
   status: LifecycleRunStatusResult | null | undefined,
 ): Record<string, unknown> {
+  const rawError = status?.error?.trim() ?? "";
+  // Terminal OpenCode/provider messages are operationally valuable, but must
+  // remain safe for the always-on local workflow trace. Keep the bounded
+  // reason while masking the common credential-bearing assignment forms.
+  const terminalError = rawError
+    ? rawError
+      .replace(/\b(bearer|authorization|token|api[_-]?key|password)\b\s*(?:=|:)?\s*\S+/gi, "$1=[redacted]")
+      .slice(0, 300)
+    : null;
   return {
+    terminalError,
     clientMessageId: status?.clientMessageId ?? null,
     origin: status?.origin ?? null,
+    engineSlotId: status?.engineSlotId ?? null,
+    engineOwnerId: status?.engineOwnerId ?? null,
+    engineOwnerState: status?.engineOwnerState ?? null,
+    enginePid: status?.enginePid ?? null,
+    engineStartedAt: status?.engineStartedAt ?? null,
     activityKind: status?.activityKind ?? null,
     waitReason: status?.waitReason ?? null,
     lastUsefulProgressAt: status?.lastUsefulProgressAt ?? null,
@@ -428,6 +444,7 @@ export function createConversationRunLifecycleController(
   const workspaceExecutionGateTails = new Map<string, Promise<void>>();
   const workspaceRunReservations = new Map<string, Map<string, ConversationWorkspaceRunReservation>>();
   const workspaceReconciliationPending = new Set<string>();
+  const workspaceIdleListeners = new Set<(workspaceId: string) => void>();
   const engineLossEvents = new Map<string, ConversationRunEngineLossResult>();
   const pendingEngineLosses = new Map<string, ConversationRunEngineLossNotification>();
   let started = false;
@@ -491,9 +508,13 @@ export function createConversationRunLifecycleController(
       state: "starting" as const,
       engineSlotId: null,
       engineOwnerId: null,
+      directoryInstanceEpoch: null,
       enginePid: null,
       engineStartedAt: null,
       engineBaseUrl: null,
+      skillViewRevision: null,
+      authorizationRevision: null,
+      openCodeConfigDigest: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -518,6 +539,19 @@ export function createConversationRunLifecycleController(
       reservations.set(runId, next);
     } else if (previous) {
       reservations.set(runId, { ...previous, state: "active", updatedAt: Date.now() });
+    }
+  };
+
+  const notifyWorkspaceIdle = (workspaceId: string) => {
+    for (const listener of workspaceIdleListeners) {
+      try {
+        listener(workspaceId);
+      } catch (error) {
+        recordTrace("server:conversation-run:workspace-idle-listener-error", {
+          workspaceId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   };
 
@@ -568,6 +602,7 @@ export function createConversationRunLifecycleController(
     if (reservations?.size === 0) {
       workspaceRunReservations.delete(workspaceId);
       workspaceReconciliationPending.delete(workspaceId);
+      notifyWorkspaceIdle(workspaceId);
     }
     const persisted = options.queueStore?.releaseWorkspaceRun(workspaceId, runId) ?? false;
     void reason;
@@ -1753,6 +1788,10 @@ export function createConversationRunLifecycleController(
         await input.reload();
         return { kind: "reloaded" as const };
       });
+    },
+    subscribeWorkspaceIdle(listener) {
+      workspaceIdleListeners.add(listener);
+      return () => workspaceIdleListeners.delete(listener);
     },
     start() {
       if (started) return;

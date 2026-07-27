@@ -120,7 +120,7 @@ const bundleDir = resolve(
   "bundle",
   "msi",
 );
-const msiFiles = requireMsiFiles(bundleDir);
+const msiFiles = requireMsiFiles(bundleDir, version);
 const msiSource = msiFiles[0];
 const msiPath = join(outputDir, basename(msiSource));
 copyFileSync(msiSource, msiPath);
@@ -170,12 +170,15 @@ console.log(`MSI: ${msiPath}`);
 console.log(`Launcher: ${launcherPath}`);
 console.log(`SHA-256: ${sha256}`);
 
-function requireMsiFiles(bundlePath) {
+function requireMsiFiles(bundlePath, expectedVersion) {
   const files = readdirSync(bundlePath)
     .filter((name) => name.toLowerCase().endsWith(".msi"))
+    .filter((name) => name.includes(`_${expectedVersion}_`))
     .map((name) => join(bundlePath, name));
   if (files.length !== 1) {
-    throw new Error(`Expected exactly one MSI in ${bundlePath}, found ${files.length}`);
+    throw new Error(
+      `Expected exactly one MSI for version ${expectedVersion} in ${bundlePath}, found ${files.length}`,
+    );
   }
   return files;
 }
