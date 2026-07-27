@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile, mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 describe("migrateLegacyWorkspaceConfigDir", () => {
-  test("copies the first existing legacy config dir to the new server-owned id", async () => {
+  test("detects the first existing legacy config dir without copying it", async () => {
     const dataDir = await tempRoot("config-migrate");
     const legacyDir = join(dataDir, "opencode-config", "app-ws");
     await mkdir(legacyDir, { recursive: true });
@@ -31,12 +31,13 @@ describe("migrateLegacyWorkspaceConfigDir", () => {
     });
 
     expect(result).toMatchObject({
-      migrated: true,
+      migrated: false,
       sourceWorkspaceId: "app-ws",
-      reason: "migrated",
+      reason: "legacy_detected",
     });
-    const copied = await readFile(join(dataDir, "opencode-config", "server-ws", "opencode.json"), "utf8");
-    expect(JSON.parse(copied)).toEqual({ model: "test-model" });
+    await expect(stat(join(dataDir, "opencode-config", "server-ws"))).rejects.toThrow();
+    expect(await stat(legacyDir)).toBeTruthy();
+    expect(await Bun.file(join(legacyDir, "opencode.json")).text()).toContain("test-model");
   });
 
   test("does not overwrite an existing server-owned config dir", async () => {

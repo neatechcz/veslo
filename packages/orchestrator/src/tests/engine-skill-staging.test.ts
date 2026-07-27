@@ -1,7 +1,13 @@
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
-import { promoteDirectorySkillView, publishDirectorySkillView, stageEngineSkillView } from "../engine-skill-staging.js";
+import {
+  claimEngineSkillGeneration,
+  promoteDirectorySkillView,
+  publishDirectorySkillView,
+  releaseEngineSkillGeneration,
+  stageEngineSkillView,
+} from "../engine-skill-staging.js";
 
 const roots: string[] = [];
 
@@ -17,6 +23,11 @@ async function fixture(): Promise<{ workspace: string; stagingRoot: string }> {
   await mkdir(join(workspace, ".opencode", "skills", "veslo-managed", "local-policy-collision"), { recursive: true });
   await mkdir(join(workspace, ".opencode", "skills", "local-policy-collision"), { recursive: true });
   await writeFile(join(workspace, ".opencode", "skills", "local-tool", "SKILL.md"), "local\n");
+  await mkdir(join(workspace, ".opencode", "skills", "local-tool", "scripts", "ooxml", "schemas", "ISO-IEC29500-4_2016"), { recursive: true });
+  await writeFile(
+    join(workspace, ".opencode", "skills", "local-tool", "scripts", "ooxml", "schemas", "ISO-IEC29500-4_2016", "shared-customXmlDataProperties.xsd"),
+    "schema\n",
+  );
   await writeFile(join(workspace, ".opencode", "skills", "veslo-user", "local-tool", "SKILL.md"), "imported\n");
   await writeFile(join(workspace, ".opencode", "skills", "veslo-user", "personal-tool", "SKILL.md"), "personal\n");
   await writeFile(join(workspace, ".opencode", "skills", "veslo-managed", "policy-tool", "SKILL.md"), "policy\n");
@@ -103,12 +114,12 @@ describe("engine skill staging", () => {
     expect(await Bun.file(join(result.stagingRoot, "local-policy-collision", "SKILL.md")).exists()).toBe(false);
   });
 
-  test("does not independently scan .agents outside the server effective manifest", async () => {
+  test("admits a workspace .agents skill as a workspace-local source", async () => {
     const input = await fixture();
     await mkdir(join(input.workspace, ".agents", "skills", "ambient-agent"), { recursive: true });
     await writeFile(join(input.workspace, ".agents", "skills", "ambient-agent", "SKILL.md"), "ambient\n");
     const result = await stageEngineSkillView(input);
-    expect(result.materialized).not.toContain("ambient-agent");
+    expect(result.materialized).toContain("ambient-agent");
   });
 
   test("materializes an .agents skill when the server effective manifest explicitly includes it", async () => {
@@ -138,12 +149,110 @@ describe("engine skill staging", () => {
     expect(await readFile(join(result.stagingRoot, "agents-manifest", "SKILL.md"), "utf8")).toBe("agents manifest skill\n");
   });
 
+  test("rejects a manifest entry whose source is outside the workspace skill roots", async () => {
+    const input = await fixture();
+    const externalSkill = join(input.stagingRoot, "external", "foreign-skill");
+    await mkdir(externalSkill, { recursive: true });
+    const externalEntrypoint = join(externalSkill, "SKILL.md");
+    await writeFile(externalEntrypoint, "must stay external\n");
+    await writeFile(
+      join(input.workspace, ".opencode", "veslo.runtime.skills.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        workspaceRoot: input.workspace,
+        revision: "external-entry",
+        entries: [{ name: "foreign-skill", path: externalEntrypoint, source: "workspace-local" }],
+      }),
+    );
+
+    const result = await stageEngineSkillView({
+      ...input,
+      requireEffectiveManifest: true,
+      expectedRevision: "external-entry",
+    });
+
+    expect(result.materialized).toEqual([]);
+    expect(result.suppressed).toContainEqual({ name: "foreign-skill", reason: "outside_authorized_root" });
+    expect(await Bun.file(join(result.stagingRoot, "foreign-skill", "SKILL.md")).exists()).toBe(false);
+  });
+
+  test("recovers a lock owned by a provably dead process", async () => {
+    const input = await fixture();
+    const lockDir = join(input.stagingRoot, ".lock");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(
+      join(lockDir, "owner.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        token: "dead-owner",
+        processId: -1,
+        processInstanceId: "dead-instance",
+        processStartedAt: 0,
+        stagingOperationId: "dead-operation",
+        acquiredAt: new Date(0).toISOString(),
+        heartbeatAt: new Date(0).toISOString(),
+      }),
+    );
+
+    const result = await stageEngineSkillView(input);
+
+    expect(result.materialized).toContain("local-tool");
+    expect(await Bun.file(lockDir).exists()).toBe(false);
+  });
+
+  test("keeps a generation leased to an engine until explicit release", async () => {
+    const input = await fixture();
+    const staged = await stageEngineSkillView({ ...input, engineOwnerId: "engine-owner-a" });
+    expect(staged.generationLease).toBeDefined();
+    const lease = staged.generationLease!;
+
+    await claimEngineSkillGeneration(lease, process.pid);
+    const leased = JSON.parse(await readFile(join(lease.generationRoot, ".veslo-engine-skill-generation.json"), "utf8"));
+    expect(leased.state).toBe("leased");
+    expect(leased.childPid).toBe(process.pid);
+
+    await releaseEngineSkillGeneration(lease);
+    const released = JSON.parse(await readFile(join(lease.generationRoot, ".veslo-engine-skill-generation.json"), "utf8"));
+    expect(released.state).toBe("released");
+  });
+
+  test("never treats an unclaimed generation as an orphaned engine lease", async () => {
+    const input = await fixture();
+    const staged = await stageEngineSkillView({ ...input, engineOwnerId: "engine-owner-a" });
+    const recordPath = join(staged.stagingRoot, ".veslo-engine-skill-generation.json");
+    const record = JSON.parse(await readFile(recordPath, "utf8"));
+    await writeFile(recordPath, JSON.stringify({
+      ...record,
+      processId: -1,
+      state: "ready",
+      updatedAt: new Date(0).toISOString(),
+    }));
+
+    await stageEngineSkillView(input);
+
+    expect(await Bun.file(join(staged.stagingRoot, "local-tool", "SKILL.md")).exists()).toBe(true);
+  });
+
   test("cleans stale staging generations while retaining the current view", async () => {
     const input = await fixture();
     for (let index = 0; index < 5; index += 1) await stageEngineSkillView(input);
     const generations = await readdir(join(input.stagingRoot, "generations"), { withFileTypes: true });
     expect(generations.filter((entry) => entry.isDirectory()).length).toBeLessThanOrEqual(3);
     expect(await Bun.file(join(input.stagingRoot, "current.json")).exists()).toBe(true);
+  });
+
+  test("serializes concurrent staging without copy failures", async () => {
+    const input = await fixture();
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => stageEngineSkillView(input)),
+    );
+
+    const latest = results.at(-1)!;
+    expect(await readFile(
+      join(latest.stagingRoot, "local-tool", "scripts", "ooxml", "schemas", "ISO-IEC29500-4_2016", "shared-customXmlDataProperties.xsd"),
+      "utf8",
+    )).toBe("schema\n");
+    expect(await readFile(join(latest.stagingRoot, "local-tool", "SKILL.md"), "utf8")).toBe("local\n");
   });
 
   test("publishes a stable workspace-local root for a specific effective revision", async () => {

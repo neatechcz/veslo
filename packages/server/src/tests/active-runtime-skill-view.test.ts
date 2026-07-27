@@ -48,6 +48,17 @@ test("explicit invalidation produces a new view after a workspace mutation", asy
   expect(next.skills[0]?.description).toBe("Changed");
 });
 
+test("force refresh rebuilds the manifest after an out-of-band workspace change", async () => {
+  const workspace = await workspaceFixture();
+  const first = await ensureActiveRuntimeSkillView(workspace);
+  await writeFile(join(workspace.path, ".opencode", "skills", "example", "SKILL.md"), "---\nname: example\ndescription: Force refreshed\n---\n");
+
+  const refreshed = await ensureActiveRuntimeSkillView(workspace, { forceRefresh: true });
+
+  expect(refreshed.revision).not.toBe(first.revision);
+  expect(refreshed.skills[0]?.description).toBe("Force refreshed");
+});
+
 test("invalidation prevents an older in-flight resolver from publishing over the new view", async () => {
   const workspace = await workspaceFixture();
   let releaseFirstPublication!: () => void;

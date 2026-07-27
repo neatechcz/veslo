@@ -72,7 +72,13 @@ import {
   buildEngineSkillIsolationEnv,
   buildEngineSkillViewEnv,
 } from "./engine-launch-contract.js";
-import { publishDirectorySkillView, stageEngineSkillView } from "./engine-skill-staging.js";
+import {
+  claimEngineSkillGeneration,
+  publishDirectorySkillView,
+  releaseEngineSkillGeneration,
+  stageEngineSkillView,
+  type EngineSkillGenerationLease,
+} from "./engine-skill-staging.js";
 import { DirectorySkillViewLifecycle, type DirectorySkillViewInstance } from "./directory-skill-view-lifecycle.js";
 import { inspectDirectoryScopedConfigProfile } from "./directory-scoped-placement.js";
 import { syncWorkspaceOpencodeConfigToConfigDir } from "./workspace-opencode-config-mirror.js";
@@ -2732,6 +2738,7 @@ async function startOpencode(options: {
   corsOrigins: string[];
   logger: Logger;
   runId: string;
+  engineOwnerId?: string;
   logFormat: LogFormat;
   opencodeRouterHealthPort?: number;
   /** F4Ú4 — wrap engine spawn in OS-level sandbox. When omitted, sandbox is
@@ -2780,6 +2787,7 @@ async function startOpencode(options: {
     : null;
 
   const directoryScopedSkillPath = options.directoryScopedSkillPath?.trim() || undefined;
+  let skillGenerationLease: EngineSkillGenerationLease | undefined;
   let skillViewPath: string;
   if (directoryScopedSkillPath) {
     if (isAbsolute(directoryScopedSkillPath)) {
@@ -2804,8 +2812,10 @@ async function startOpencode(options: {
       workspace: options.skillWorkspace ?? options.workspace,
       stagingRoot: skillStagingRoot,
       requireEffectiveManifest: true,
+      ...(options.engineOwnerId ? { engineOwnerId: options.engineOwnerId } : {}),
       ...(options.skillViewRevision ? { expectedRevision: options.skillViewRevision } : {}),
     });
+    skillGenerationLease = skillStaging.generationLease;
     skillViewPath = skillStaging.stagingRoot;
     options.logger.info(
       "engine skill staging prepared",
@@ -2829,6 +2839,7 @@ async function startOpencode(options: {
       suppressed: skillStaging.suppressed,
     });
   }
+  try {
   if (!options.configDir) {
     throw new Error("Veslo requires an OpenCode config directory for skill-policy closure");
   }
@@ -2972,7 +2983,8 @@ async function startOpencode(options: {
       sandbox = null;
     }
   }
-  if (sandbox && launch) {
+  try {
+    if (sandbox && launch) {
     options.logger.info(
       "engine spawn (sandboxed)",
       {
@@ -3012,7 +3024,7 @@ async function startOpencode(options: {
       stdio: ["ignore", "pipe", "pipe"],
       env: launch.env,
     });
-  } else {
+    } else {
     options.logger.info(
       "engine spawn (unsandboxed)",
       {
@@ -3037,6 +3049,27 @@ async function startOpencode(options: {
       env,
     });
   }
+  if (skillGenerationLease) {
+    try {
+      if (!child.pid) throw new Error("skill_generation_invalid: spawned engine has no pid");
+      child.once("exit", () => {
+        void releaseEngineSkillGeneration(skillGenerationLease!).catch(() => undefined);
+      });
+      await claimEngineSkillGeneration(skillGenerationLease, child.pid);
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new Error("skill_generation_invalid: spawned engine exited before generation lease claim");
+      }
+    } catch (error) {
+      await stopChild(child).catch(() => undefined);
+      await releaseEngineSkillGeneration(skillGenerationLease).catch(() => undefined);
+      throw error;
+    }
+    }
+  } catch (error) {
+    if (skillGenerationLease) await releaseEngineSkillGeneration(skillGenerationLease).catch(() => undefined);
+    throw error;
+  }
+
   options.logger.info(
     "engine child spawned",
     {
@@ -3147,6 +3180,10 @@ async function startOpencode(options: {
     sandboxMode,
     sandboxFallbackReason,
   };
+  } catch (error) {
+    if (skillGenerationLease) await releaseEngineSkillGeneration(skillGenerationLease).catch(() => undefined);
+    throw error;
+  }
 }
 
 function resolveConfiguredSandboxBackend(): WorkerSandbox["name"] | "none" {
@@ -4508,12 +4545,14 @@ async function runRouterDaemon(args: ParsedArgs) {
               workspaceId: ws.id,
               legacyWorkspaceIds: ws.legacyWorkspaceIds,
             });
-            if (migration.migrated) {
-              traceRuntime("orchestrator:workspace-config-dir:migrated", {
+            if (migration.sourceDir) {
+              traceRuntime("orchestrator:workspace-config-dir:legacy-detected", {
                 workspaceId: ws.id,
                 sourceWorkspaceId: migration.sourceWorkspaceId,
                 sourceDir: migration.sourceDir,
                 targetDir: migration.targetDir,
+                migrated: migration.migrated,
+                reason: migration.reason,
               });
             }
           } catch (error) {
@@ -4566,7 +4605,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         });
         return { workdir, configDir };
       },
-      spawnEngine: async ({ workspaceId, workdir, configDir, port }) => {
+      spawnEngine: async ({ workspaceId, engineOwnerId, workdir, configDir, port }) => {
         const startedAt = Date.now();
         traceRuntime("orchestrator:engine-spawn:start", {
           workspaceId,
@@ -4590,6 +4629,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
           logger,
           runId: `${runId}-${workspaceId.slice(-8)}`,
+          engineOwnerId,
           logFormat,
         });
         // opencodeHost is the *bind* address (often 0.0.0.0 so the engine is
@@ -4725,7 +4765,7 @@ async function runRouterDaemon(args: ParsedArgs) {
                   }),
               });
             },
-            spawnEngine: async ({ workspaceId, workdir, configDir, port }) => {
+            spawnEngine: async ({ workspaceId, engineOwnerId, workdir, configDir, port }) => {
               const startedAt = Date.now();
               traceRuntime("orchestrator:shared-engine-spawn:start", {
                 workspaceId,
@@ -4755,6 +4795,7 @@ async function runRouterDaemon(args: ParsedArgs) {
                 corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
                 logger,
                 runId: `${runId}-shared`,
+                engineOwnerId,
                 logFormat,
                 sandbox: null,
               });
@@ -5618,6 +5659,10 @@ async function runRouterDaemon(args: ParsedArgs) {
               send(409, { error: "skill_view_stale", message: detail });
               return;
             }
+            if (detail.startsWith("skill_view_changed:")) {
+              send(409, { error: "skill_view_changed", message: "Workspace skill sources changed during engine staging; refresh and retry" });
+              return;
+            }
             send(502, { error: "engine spawn failed", detail });
             return;
           }
@@ -6026,6 +6071,13 @@ async function runRouterDaemon(args: ParsedArgs) {
               error: "skill_view_stale",
               message: "Runtime skill view is stale; refresh the workspace skill view and retry",
               detail,
+            });
+            return;
+          }
+          if (detail.startsWith("skill_view_changed:")) {
+            send(409, {
+              error: "skill_view_changed",
+              message: "Workspace skill sources changed during engine staging; refresh and retry",
             });
             return;
           }
@@ -7329,6 +7381,7 @@ async function runStart(args: ParsedArgs) {
         corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
         logger,
         runId,
+        engineOwnerId: randomUUID(),
         logFormat,
         opencodeRouterHealthPort: opencodeRouterEnabled ? opencodeRouterHealthPort : undefined,
       });

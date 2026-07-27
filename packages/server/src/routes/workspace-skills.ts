@@ -127,11 +127,13 @@ export function registerWorkspaceSkillRoutes(
     });
     const body = await readOptionalJsonBody(ctx.request);
     const expectedRevision = typeof body?.expectedRevision === "string" ? body.expectedRevision : undefined;
+    const forceRefresh = body?.forceRefresh === true;
     const view = await ensureActiveRuntimeSkillView(workspace, {
       disabledSkills,
       workspaceId: workspace.id,
       workspaceOwner: ownerForWorkspace(workspace),
       ...(expectedRevision ? { expectedRevision } : {}),
+      ...(forceRefresh ? { forceRefresh: true } : {}),
     });
     return jsonResponse({
       ready: true,

@@ -210,7 +210,7 @@ test("workspace registry not configured status skips sync without blocking runti
 test("runtime skill preparation uses the revisioned active view before launch", () => {
   assert.match(
     source,
-    /const ensureActiveRuntimeManifest[\s\S]*client\.prepareRuntimeSkillView\(workspaceId\)/s,
+    /const ensureActiveRuntimeManifest[\s\S]*client\.prepareRuntimeSkillView\(\s*workspaceId,/s,
     "runtime startup must prepare the server-owned active view before the orchestrator stages skills",
   );
 });
@@ -239,6 +239,35 @@ test("local-only runtime still prepares the active view before engine startup", 
 
   assert.equal(ready, true);
   assert.equal(prepared, 1);
+});
+
+test("skill view changed forces a fresh active manifest before retrying runtime", async () => {
+  let options: { forceRefresh?: boolean } | undefined;
+  const gate = createGate({
+    client: {
+      getWorkspaceSkillMaterializationStatus: async () => ({
+        registryConfigured: false,
+        workspaceRegistryConfigured: false,
+        status: "not-configured",
+        reloadRequired: false,
+      }),
+      prepareRuntimeSkillView: async (
+        _workspaceId: string,
+        nextOptions?: { forceRefresh?: boolean },
+      ) => {
+        options = nextOptions;
+        return { ready: true, revision: "view-2", generatedAt: "2026-07-27T00:00:00.000Z", activeCount: 1, items: [{ name: "workspace-only" }] };
+      },
+    },
+  });
+
+  const ready = await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "skill-view-changed-retry" },
+  );
+
+  assert.equal(ready, true);
+  assert.deepEqual(options, { forceRefresh: true });
 });
 
 test("degraded workspace materialization status skips sync without blocking runtime", async () => {

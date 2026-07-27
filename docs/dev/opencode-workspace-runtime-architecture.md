@@ -215,9 +215,32 @@ Pooled and shared launches deliberately use different projection profiles, but
 both disable native project discovery so raw project skills cannot bypass the
 effective manifest. A pooled engine receives a workspace-private projection of
 allowed `.opencode` agents, commands, modes, plugins, and `AGENTS.md` into its
-OpenCode config directory; it never copies `.opencode/skills`. The experimental
-shared directory process receives only Veslo's sanitized configuration and
-effective skill view, with no workspace launch-capability projection.
+OpenCode config directory, plus an immutable Veslo-owned staging generation of
+the effective skills. It never exposes raw global skill roots or arbitrary
+`skills.paths` from inherited configuration. The experimental shared directory
+process receives only Veslo's sanitized configuration and effective skill view,
+with no workspace launch-capability projection.
+
+The active workspace skill roots are `<workspace>/.opencode/skills`,
+`.claude/skills`, `.agents/skills`, and `.agent/skills`. Global OpenCode,
+Claude, and agent roots are management/import sources only; the active runtime
+resolver uses `includeGlobal: false`. In particular, `%LOCALAPPDATA%/.claude`
+is not an implicit engine source. A `.claude/skills` directory inside the
+selected workspace is intentionally workspace-local for compatibility.
+
+Before a pooled launch consumes a staged generation, the orchestrator validates
+the manifest's canonical skill name, entrypoint, source classification, and
+physical containment in one of those workspace roots. Symlink or junction
+escapes and staging/global paths are suppressed. Each generation has a
+filesystem-fenced operation record and is leased to the concrete OpenCode
+child through its engine-owner id; cleanup may compact released generations but
+cannot delete a live lease merely because it is old or no longer current.
+
+Legacy workspace config directories are detection-only during activation. Veslo
+records the legacy identity for diagnostics, leaves the old tree untouched, and
+creates the new config directory from the current workspace mirror and managed
+dependency setup. Runtime staging generations, locks, tools, and unknown files
+are never copied as migration state.
 
 Directory placement is pinned when a workspace first enters the experimental
 shard and remains immutable for that orchestrator generation. Editing a
@@ -226,7 +249,13 @@ shared processes; applying a different placement requires a controlled runtime
 restart/drain. Directory view publication, registration, and refresh are
 single-flight per workspace root. A failed publish restores the last ready
 lifecycle state, while a failed disposal keeps admission closed and retries
-after the active work has drained.
+after the active work has drained. Skill staging and generation cleanup are
+also single-flight per staging root, including the copy from a completed
+generation into a published directory view. The filesystem lock is fenced by
+an operation token and process identity; a live owner is never displaced by
+an age-based timeout. Foreground engine activation and crash recovery share
+the same per-workspace spawn flight, and the resulting engine owner id is
+carried through the generation lease.
 
 Runtime prepare is a readiness contract. After a fresh orchestrator daemon start,
 the desktop runtime must activate the target workspace engine before returning a

@@ -25,6 +25,10 @@ export type ActiveRuntimeSkillView = {
 };
 
 type RuntimeOptions = Omit<ListSkillsOptions, "includeGlobal" | "globalOwner" | "includeDisabled">;
+type EnsureRuntimeSkillViewOptions = RuntimeOptions & {
+  expectedRevision?: string;
+  forceRefresh?: boolean;
+};
 type CacheEntry = ActiveRuntimeSkillView & { expiresAt: number };
 type Flight = { generation: number; promise: Promise<ActiveRuntimeSkillView | null> };
 
@@ -96,9 +100,17 @@ function assertExpectedRevision(view: ActiveRuntimeSkillView, expectedRevision?:
 
 export async function ensureActiveRuntimeSkillView(
   workspace: WorkspaceInfo,
-  options: RuntimeOptions & { expectedRevision?: string } = {},
+  options: EnsureRuntimeSkillViewOptions = {},
 ): Promise<ActiveRuntimeSkillView> {
   const key = cacheKey(workspace.id, workspace.path);
+  if (options.forceRefresh) {
+    cache.delete(key);
+    generations.set(key, generationFor(key) + 1);
+    recordSkillAudit("active-runtime-view-invalidated", {
+      workspaceId: workspace.id,
+      reason: "force_refresh",
+    });
+  }
   for (;;) {
     const generation = generationFor(key);
     const now = Date.now();

@@ -154,7 +154,10 @@ export function createWorkspaceSkillMaterializationGate(
           trace("active-manifest-unsupported");
           return;
         }
-        const active = await client.prepareRuntimeSkillView(workspaceId);
+        const active = await client.prepareRuntimeSkillView(
+          workspaceId,
+          context?.reason === "skill-view-changed-retry" ? { forceRefresh: true } : undefined,
+        );
         runtimeViewRevisions.set(workspaceId, active.revision);
         trace("active-manifest-ready", { activeCount: active.activeCount, revision: active.revision });
       };

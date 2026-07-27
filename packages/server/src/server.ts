@@ -28,7 +28,7 @@ import {
   readSkillAtPath,
   updateSkillAtPath,
 } from "./skills.js";
-import { ensureActiveRuntimeSkillView } from "./active-runtime-skill-view.js";
+import { ensureActiveRuntimeSkillView, invalidateActiveRuntimeSkillView } from "./active-runtime-skill-view.js";
 import { installHubSkill } from "./skill-hub.js";
 import {
   listSkillRemovals,
@@ -1267,8 +1267,12 @@ async function fetchOpencodeJson(
         response.status === 409 &&
         (localLifecycleError === "shared_engine_skill_view_busy" ||
           localLifecycleError === "shared_engine_skill_view_stale" ||
-          localLifecycleError === "skill_view_stale")
+          localLifecycleError === "skill_view_stale" ||
+          localLifecycleError === "skill_view_changed")
       ) {
+        if (localLifecycleError === "skill_view_changed" && workspace.workspaceType === "local") {
+          invalidateActiveRuntimeSkillView(workspace);
+        }
         throw new ApiError(409, localLifecycleError, typeof localLifecycleBody?.message === "string"
           ? localLifecycleBody.message
           : "The local OpenCode runtime rejected the skill view", {

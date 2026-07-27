@@ -50,6 +50,7 @@ export type EngineEnsureResult = {
 
 export type EngineSpawnContext = {
   workspaceId: string;
+  engineOwnerId: string;
   workdir: string;
   configDir: string;
   port: number;
@@ -439,14 +440,27 @@ export class EnginePool {
     // promise. `pending.set` runs synchronously before any `await` so
     // concurrent `ensure(sameWorkspace)` calls share one spawn (preserves
     // F2Ú1 race semantics).
+    const promise = this.startPending(workspace, true);
+    return { engine: await promise, spawned: true };
+  }
+
+  /**
+   * Register a workspace start before its first await. Foreground activation
+   * and crash recovery must share this flight so they cannot stage the same
+   * workspace concurrently.
+   */
+  private startPending(workspace: EngineWorkspace, evictLru: boolean): Promise<EngineProcess> {
+    const existing = this.pending.get(workspace.id);
+    if (existing) return existing;
+
     const promise = (async () => {
-      await this.evictLruIfNeeded(workspace.id);
+      if (evictLru) await this.evictLruIfNeeded(workspace.id);
       return await this.spawn(workspace);
     })().finally(() => {
-      this.pending.delete(workspace.id);
+      if (this.pending.get(workspace.id) === promise) this.pending.delete(workspace.id);
     });
     this.pending.set(workspace.id, promise);
-    return { engine: await promise, spawned: true };
+    return promise;
   }
 
   async suspend(workspaceId: string, reason = "unspecified"): Promise<void> {
@@ -678,6 +692,7 @@ export class EnginePool {
     const { workdir, configDir } = await this.deps.resolveWorkspace(workspace);
     const port = await this.deps.findFreePort();
     const spawnedAt = this.deps.now();
+    const engineOwnerId = randomUUID();
     writeSpawnDiag("engine-spawn-start", {
       workspaceId: workspace.id,
       workdir,
@@ -708,6 +723,7 @@ export class EnginePool {
       sandboxFallbackReason,
     } = await this.deps.spawnEngine({
       workspaceId: workspace.id,
+      engineOwnerId,
       workdir,
       configDir,
       port,
@@ -717,7 +733,7 @@ export class EnginePool {
     const existing = this.engines.get(workspace.id);
     const engine: EngineProcess = {
       workspaceId: workspace.id,
-      engineOwnerId: randomUUID(),
+      engineOwnerId,
       pid: child.pid ?? 0,
       port,
       baseUrl,
@@ -960,13 +976,22 @@ export class EnginePool {
   private async respawn(workspaceId: string): Promise<void> {
     const engine = this.engines.get(workspaceId);
     if (!engine) return;
+    const existingPending = this.pending.get(workspaceId);
+    if (existingPending) {
+      try {
+        await existingPending;
+      } catch {
+        // The foreground caller owns the original failure response.
+      }
+      return;
+    }
     this.emit(workspaceId, "restart-attempt");
     // Reconstruct EngineWorkspace from saved fields. workdir was set by
     // resolveWorkspace; we don't have original path here, but workdir IS the
     // resolved path so passing it as path is correct for re-resolution.
     const workspace: EngineWorkspace = { id: workspaceId, path: engine.workdir };
     try {
-      await this.spawn(workspace);
+      await this.startPending(workspace, false);
     } catch (err) {
       // spawn throws when waitForHealthy fails. Manually trigger handleExit
       // semantics — but `lastSuccessfulRunStartedAt` was reset to 0 inside

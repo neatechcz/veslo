@@ -464,13 +464,15 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           ok = await prepareRuntime();
         } catch (error) {
           const detail = messageFromUnknownError(error, deps.safeStringify);
-          if (!detail.includes("skill_view_stale")) throw error;
-          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skill-view-stale", {
+          const skillViewChanged = detail.includes("skill_view_changed");
+          if (!skillViewChanged && !detail.includes("skill_view_stale")) throw error;
+          recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skill-view-refresh", {
             workspaceId: id,
             reason: prepareReason,
+            cause: skillViewChanged ? "skill_view_changed" : "skill_view_stale",
           });
           const refreshed = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
-            reason: "skill-view-stale-retry",
+            reason: skillViewChanged ? "skill-view-changed-retry" : "skill-view-stale-retry",
           });
           if (!refreshed) throw error;
           ok = await prepareRuntime();

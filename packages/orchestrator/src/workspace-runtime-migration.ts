@@ -1,4 +1,4 @@
-import { cp, mkdir, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
 export type WorkspaceConfigDirMigrationInput = {
@@ -12,7 +12,7 @@ export type WorkspaceConfigDirMigrationResult = {
   targetDir: string;
   sourceDir: string | null;
   sourceWorkspaceId: string | null;
-  reason: "migrated" | "target_exists" | "source_missing" | "invalid_input";
+  reason: "legacy_detected" | "target_exists" | "source_missing" | "invalid_input";
 };
 
 function normalizeId(value: string | null | undefined): string {
@@ -60,14 +60,12 @@ export async function migrateLegacyWorkspaceConfigDir(
     const sourceDir = join(dataDir, "opencode-config", legacyId);
     if (!(await isDirectory(sourceDir))) continue;
 
-    await mkdir(join(dataDir, "opencode-config"), { recursive: true });
-    await cp(sourceDir, targetDir, { recursive: true, force: false, errorOnExist: false });
     return {
-      migrated: true,
+      migrated: false,
       targetDir,
       sourceDir,
       sourceWorkspaceId: legacyId,
-      reason: "migrated",
+      reason: "legacy_detected",
     };
   }
 

@@ -7,6 +7,14 @@ function readRepoFile(relativePath) {
   return readFileSync(resolve(import.meta.dirname, "../..", relativePath), "utf8");
 }
 
+function extractWorkflowJob(workflow, jobName) {
+  const match = workflow.match(
+    new RegExp(`\\r?\\n  ${jobName}:\\r?\\n([\\s\\S]*?)(?=\\r?\\n  [A-Za-z0-9_-]+:\\r?\\n|$)`),
+  );
+  assert.ok(match, `expected workflow job ${jobName}`);
+  return match[1];
+}
+
 test("production release workflow only builds macOS and Windows desktop targets", () => {
   const workflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
 
@@ -103,14 +111,17 @@ test("desktop build workflow no longer runs Linux app builds", () => {
 });
 
 test("production desktop workflows compile user diagnostic capture for the production domain", () => {
-  for (const workflowPath of [
-    ".github/workflows/build-desktop.yml",
-    ".github/workflows/build-windows-msi.yml",
-    ".github/workflows/release-macos-aarch64.yml",
-  ]) {
+  for (const workflowPath of [".github/workflows/build-desktop.yml", ".github/workflows/build-windows-msi.yml"]) {
     const workflow = readRepoFile(workflowPath);
     assert.match(workflow, /VESLO_USER_DIAGNOSTIC_CAPTURE:\s*"1"/);
     assert.match(workflow, /VESLO_DEPLOYMENT_DOMAIN:\s*veslo\.work/);
+  }
+
+  const productionWorkflow = readRepoFile(".github/workflows/release-macos-aarch64.yml");
+  for (const jobName of ["publish-tauri", "publish-tauri-windows"]) {
+    const job = extractWorkflowJob(productionWorkflow, jobName);
+    assert.match(job, /VESLO_USER_DIAGNOSTIC_CAPTURE:\s*"1"/, `${jobName} must compile user diagnostic capture`);
+    assert.match(job, /VESLO_DEPLOYMENT_DOMAIN:\s*veslo\.work/, `${jobName} must use the production domain`);
   }
 });
 

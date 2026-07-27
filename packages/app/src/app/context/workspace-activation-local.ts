@@ -450,9 +450,10 @@ export function createWorkspaceLocalActivation(deps: WorkspaceLocalActivationDep
         ok = await prepareRuntime();
       } catch (error) {
         const message = error instanceof Error ? error.message : deps.safeStringify(error);
-        if (!message.includes("skill_view_stale")) throw error;
+        const skillViewChanged = message.includes("skill_view_changed");
+        if (!skillViewChanged && !message.includes("skill_view_stale")) throw error;
         const refreshed = await deps.syncWorkspaceSkillMaterializationBeforeRuntime(next, {
-          reason: "skill-view-stale-retry",
+          reason: skillViewChanged ? "skill-view-changed-retry" : "skill-view-stale-retry",
         });
         if (!refreshed) throw error;
         ok = await prepareRuntime();

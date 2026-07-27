@@ -155,13 +155,18 @@ export function createSkillsClient(context: SkillsClientContext) {
   const { baseUrl, token, hostToken, requestJson, timeouts } = context;
 
   return {
-    prepareRuntimeView: (workspaceId: string, options?: { expectedRevision?: string }) =>
-      requestJson<VesloRuntimeSkillView>(baseUrl, `${workspacePath(workspaceId)}/skills/runtime-view`, {
+    prepareRuntimeView: (workspaceId: string, options?: { expectedRevision?: string; forceRefresh?: boolean }) => {
+      const body = {
+        ...(options?.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
+        ...(options?.forceRefresh ? { forceRefresh: true } : {}),
+      };
+      return requestJson<VesloRuntimeSkillView>(baseUrl, `${workspacePath(workspaceId)}/skills/runtime-view`, {
         token,
         hostToken,
         method: "POST",
-        ...(options?.expectedRevision ? { body: { expectedRevision: options.expectedRevision } } : {}),
-      }),
+        ...(Object.keys(body).length > 0 ? { body } : {}),
+      });
+    },
 
     list: (workspaceId: string, options?: { includeGlobal?: boolean; includeDisabled?: boolean }) => {
       const queryParams = new URLSearchParams();

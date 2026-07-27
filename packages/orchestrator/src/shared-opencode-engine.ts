@@ -193,6 +193,7 @@ export class SharedOpenCodeEngine {
     await this.deps.prepareRuntime?.();
     const port = await this.deps.findFreePort();
     const now = this.deps.now();
+    const engineOwnerId = randomUUID();
     let spawned: EngineSpawnResult | null = null;
 
     this.deps.log?.("shared opencode spawn start", {
@@ -206,6 +207,7 @@ export class SharedOpenCodeEngine {
     try {
       spawned = await this.deps.spawnEngine({
         workspaceId: this.workspaceId,
+        engineOwnerId,
         workdir: this.runtimeDirectory,
         configDir: this.configDirectory,
         port,
@@ -213,7 +215,7 @@ export class SharedOpenCodeEngine {
       const pid = spawned.child.pid ?? 0;
       const engine: EngineProcess = {
         workspaceId: this.workspaceId,
-        engineOwnerId: randomUUID(),
+        engineOwnerId,
         pid,
         port,
         baseUrl: spawned.baseUrl,

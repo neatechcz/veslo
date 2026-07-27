@@ -311,6 +311,42 @@ describe("EnginePool", () => {
     }
   });
 
+  test("foreground ensure joins an in-flight crash respawn", async () => {
+    let releaseRespawn!: () => void;
+    let respawnStarted!: () => void;
+    const respawnReady = new Promise<void>((resolve) => { respawnStarted = resolve; });
+    const respawnGate = new Promise<void>((resolve) => { releaseRespawn = resolve; });
+    const h = harness({
+      spawnEngine: async ({ port }) => {
+        h.counters.spawns++;
+        if (h.counters.spawns === 2) {
+          respawnStarted();
+          await respawnGate;
+        }
+        const child = spawnLongLivedChild();
+        h.registry.push(child);
+        return { child, baseUrl: `http://127.0.0.1:${port}` };
+      },
+    }, { restartBackoffBaseMs: 0, idleSweepIntervalMs: 999_999, healthIntervalMs: 999_999 });
+    try {
+      const first = await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      await stopChild(first.child);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+
+      await respawnReady;
+      const joined = h.pool.ensureWithStatus({ id: "a", path: "/tmp/a" });
+      releaseRespawn();
+      const result = await joined;
+
+      expect(result.spawned).toBe(false);
+      expect(result.engine.pid).not.toBe(first.pid);
+      expect(h.counters.spawns).toBe(2);
+    } finally {
+      releaseRespawn();
+      await h.cleanup();
+    }
+  });
+
   test("ensureWithStatus marks only the request that starts a shared pending spawn", async () => {
     const h = harness();
     try {
