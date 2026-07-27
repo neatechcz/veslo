@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 
 import { ApiError } from "./errors.js";
 import { recordSkillAudit } from "./skill-audit-trace.js";
@@ -50,6 +50,40 @@ function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+/**
+ * Metadata signature of everything under a skill, not just its entrypoint.
+ *
+ * The orchestrator stages the whole skill directory, so a revision derived from
+ * `SKILL.md` alone would call a view unchanged after an edit to a nested script
+ * or schema — and the engine would then be launched against content nobody
+ * agreed to. Metadata only: the entrypoint keeps its content hash, while nested
+ * files are compared by size and mtime so resolving a view stays cheap.
+ */
+async function nestedSourceSignature(skillDir: string): Promise<string | null> {
+  const entries: string[] = [];
+  const walk = async (current: string, prefix: string): Promise<void> => {
+    const listing = await readdir(current, { withFileTypes: true });
+    listing.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of listing) {
+      const absolute = join(current, entry.name);
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        entries.push(`d ${relative}`);
+        await walk(absolute, relative);
+        continue;
+      }
+      const info = await stat(absolute);
+      entries.push(`f ${relative} ${info.size} ${info.mtimeMs}`);
+    }
+  };
+  try {
+    await walk(skillDir, "");
+  } catch {
+    return null;
+  }
+  return createHash("sha256").update(entries.join("\n")).digest("hex");
+}
+
 async function sourceFingerprint(
   workspace: WorkspaceInfo,
   skills: SkillItem[],
@@ -65,6 +99,7 @@ async function sourceFingerprint(
         size: metadata.size,
         mtimeMs: metadata.mtimeMs,
         contentHash,
+        treeHash: await nestedSourceSignature(dirname(resolve(skill.path))),
         enabled: skill.enabled !== false,
         source: skill.registry?.source ?? null,
         removalPolicy: skill.registry?.removalPolicy ?? null,

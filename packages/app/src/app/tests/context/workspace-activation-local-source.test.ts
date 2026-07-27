@@ -34,7 +34,9 @@ test("local workspace activation lives in a scoped activation module", () => {
   );
   assert.match(
     localSource,
-    /const error = e instanceof Error \? e\.message : deps\.safeStringify\(e\);[\s\S]*if \(error\.startsWith\("workspace_registry_unsynced:"\)\) \{[\s\S]*deps\.setError\(deps\.addOpencodeCacheHint\(error\)\);/s,
+    // Whitespace-tolerant: this guards the error-handling path, not the
+    // formatter's current line-wrapping choice.
+    /const error =\s*e instanceof Error \? e\.message : deps\.safeStringify\(e\);[\s\S]*if \(error\.startsWith\("workspace_registry_unsynced:"\)\) \{[\s\S]*deps\.setError\(deps\.addOpencodeCacheHint\(error\)\);/s,
     "local workspace activation should surface Veslo registry sync failures to the UI",
   );
   assert.match(

@@ -37,6 +37,26 @@ test("active runtime view reuses a published revision and writes an atomic manif
   expect(manifest.entries.map((entry: { name: string }) => entry.name)).toEqual(["example"]);
 });
 
+test("a nested file change moves the revision, not just the entrypoint", async () => {
+  const workspace = await workspaceFixture();
+  const first = await ensureActiveRuntimeSkillView(workspace);
+
+  // The orchestrator stages the whole skill directory, so a revision that only
+  // tracked SKILL.md would call this view unchanged and launch an engine over
+  // content nobody agreed to.
+  const assets = join(workspace.path, ".opencode", "skills", "example", "assets");
+  await mkdir(assets, { recursive: true });
+  await writeFile(join(assets, "schema.json"), JSON.stringify({ v: 1 }), "utf8");
+  invalidateActiveRuntimeSkillView(workspace);
+  const afterAdd = await ensureActiveRuntimeSkillView(workspace);
+  expect(afterAdd.revision).not.toBe(first.revision);
+
+  await writeFile(join(assets, "schema.json"), JSON.stringify({ v: 2, padded: true }), "utf8");
+  invalidateActiveRuntimeSkillView(workspace);
+  const afterEdit = await ensureActiveRuntimeSkillView(workspace);
+  expect(afterEdit.revision).not.toBe(afterAdd.revision);
+});
+
 test("explicit invalidation produces a new view after a workspace mutation", async () => {
   const workspace = await workspaceFixture();
   const first = await ensureActiveRuntimeSkillView(workspace);

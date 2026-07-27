@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   cp,
   mkdir,
@@ -7,6 +7,8 @@ import {
   realpath,
   rename,
   rm,
+  stat,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -19,9 +21,22 @@ const STAGING_MANIFEST = ".veslo-engine-skill-staging.json";
 const GENERATION_RECORD = ".veslo-engine-skill-generation.json";
 const STAGING_LOCK_DIR = ".lock";
 const STAGING_LOCK_OWNER = "owner.json";
+const STAGING_LOCK_RECOVERY_DIR = ".recovery";
 const GENERATION_RETENTION = 3;
 const STAGING_LOCK_WAIT_MS = 50;
 const STAGING_LOCK_TIMEOUT_MS = 15_000;
+/**
+ * Liveness protocol, matching the workspace skill lease that wraps this lock:
+ * the holder bumps the owner file's mtime, and a waiter reclaims the lock when
+ * the owner is gone or has stopped bumping it. A pid probe alone cannot survive
+ * pid reuse, and an owner record is not written atomically with the lock
+ * directory, so both staleness paths are required to keep one crash from
+ * wedging a staging root permanently.
+ */
+const STAGING_LOCK_HEARTBEAT_MS = 1_000;
+const STAGING_LOCK_STALE_MS = 8_000;
+const STAGING_LOCK_ABANDONED_GRACE_MS = 3_000;
+const STAGING_LOCK_RECOVERY_FENCE_STALE_MS = 8_000;
 const ORPHAN_GENERATION_RECOVERY_MS = 30_000;
 const SOURCE_CHANGE_RETRY_ATTEMPTS = 3;
 const SOURCE_CHANGE_RETRY_DELAY_MS = 50;
@@ -81,6 +96,10 @@ type StagingLockOwner = {
   processStartedAt: number;
   stagingOperationId: string;
   acquiredAt: string;
+  /**
+   * Diagnostic only, for a human reading a stuck lock. Liveness is proven by the
+   * owner file's mtime, which the holder bumps without rewriting the record.
+   */
   heartbeatAt: string;
 };
 
@@ -117,38 +136,108 @@ async function readLockOwner(
   }
 }
 
-async function recoverDeadFilesystemLock(
+async function pathAgeMs(path: string): Promise<number | null> {
+  try {
+    return Date.now() - (await stat(path)).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+async function stagingLockOwnerIsUnusable(
   lockDir: string,
-  observedOwner: StagingLockOwner,
+  owner: StagingLockOwner,
 ): Promise<boolean> {
-  const recoveryDir = join(lockDir, ".recovery");
+  if (!processIsAlive(owner.processId)) return true;
+  const heartbeatAgeMs = await pathAgeMs(join(lockDir, STAGING_LOCK_OWNER));
+  return heartbeatAgeMs !== null && heartbeatAgeMs >= STAGING_LOCK_STALE_MS;
+}
+
+/**
+ * Serialize recovery so two waiters cannot both delete the lock and hand it to
+ * two different winners. A fence left behind by a process that died mid-recovery
+ * is itself reclaimed on age.
+ */
+async function acquireStagingRecoveryFence(lockDir: string): Promise<boolean> {
+  const recoveryDir = join(lockDir, STAGING_LOCK_RECOVERY_DIR);
   try {
     await mkdir(recoveryDir);
+    return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-    return false;
-  }
-
-  let removed = false;
-  try {
-    const current = await readLockOwner(lockDir);
-    if (
-      !current ||
-      current.token !== observedOwner.token ||
-      current.processInstanceId !== observedOwner.processInstanceId ||
-      processIsAlive(current.processId)
-    ) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
+    const fenceAgeMs = await pathAgeMs(recoveryDir);
+    if (fenceAgeMs === null || fenceAgeMs < STAGING_LOCK_RECOVERY_FENCE_STALE_MS)
+      return false;
+    await rm(recoveryDir, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+    try {
+      await mkdir(recoveryDir);
+      return true;
+    } catch {
       return false;
     }
+  }
+}
+
+async function recoverStagingLock(
+  lockDir: string,
+  stillUnusable: () => Promise<boolean>,
+): Promise<boolean> {
+  if (!(await acquireStagingRecoveryFence(lockDir))) return false;
+  const recoveryDir = join(lockDir, STAGING_LOCK_RECOVERY_DIR);
+  let removed = false;
+  try {
+    if (!(await stillUnusable())) return false;
     await rm(lockDir, { recursive: true, force: true });
     removed = true;
     return true;
+  } catch {
+    return false;
   } finally {
     if (!removed)
       await rm(recoveryDir, { recursive: true, force: true }).catch(
         () => undefined,
       );
   }
+}
+
+async function recoverDeadFilesystemLock(
+  lockDir: string,
+  observedOwner: StagingLockOwner,
+): Promise<boolean> {
+  return recoverStagingLock(lockDir, async () => {
+    const current = await readLockOwner(lockDir);
+    if (
+      !current ||
+      current.token !== observedOwner.token ||
+      current.processInstanceId !== observedOwner.processInstanceId
+    ) {
+      return false;
+    }
+    return stagingLockOwnerIsUnusable(lockDir, current);
+  });
+}
+
+/**
+ * The lock directory and its owner record are two filesystem operations. A crash
+ * between them leaves a lock nobody can prove ownership of, which without this
+ * path would fail every later acquisition until someone deleted it by hand.
+ */
+async function recoverAbandonedFilesystemLock(
+  lockDir: string,
+): Promise<boolean> {
+  const abandonedAgeMs = await pathAgeMs(lockDir);
+  if (
+    abandonedAgeMs === null ||
+    abandonedAgeMs < STAGING_LOCK_ABANDONED_GRACE_MS
+  ) {
+    return false;
+  }
+  return recoverStagingLock(
+    lockDir,
+    async () => (await readLockOwner(lockDir)) === null,
+  );
 }
 
 async function acquireFilesystemLock(
@@ -168,20 +257,27 @@ async function acquireFilesystemLock(
     heartbeatAt: new Date().toISOString(),
   };
 
+  const ownerFile = join(lockDir, STAGING_LOCK_OWNER);
   for (;;) {
     let created = false;
     try {
       await mkdir(lockDir);
       created = true;
-      await writeFile(
-        join(lockDir, STAGING_LOCK_OWNER),
-        `${JSON.stringify(owner)}\n`,
-        "utf8",
-      );
+      await writeFile(ownerFile, `${JSON.stringify(owner)}\n`, "utf8");
+      // Bump the mtime rather than rewriting the record: a waiter must never
+      // read a half-written owner and mistake it for an abandoned lock.
+      const heartbeat = setInterval(() => {
+        const now = new Date();
+        void utimes(ownerFile, now, now).catch(() => undefined);
+      }, STAGING_LOCK_HEARTBEAT_MS);
+      heartbeat.unref?.();
       return async () => {
+        clearInterval(heartbeat);
         const current = await readLockOwner(lockDir);
-        if (current?.token === token)
-          await rm(lockDir, { recursive: true, force: true });
+        // A missing or corrupt record still belongs to us: we created the
+        // directory and never released it.
+        if (current && current.token !== token) return;
+        await rm(lockDir, { recursive: true, force: true });
       };
     } catch (error) {
       if (created)
@@ -192,17 +288,25 @@ async function acquireFilesystemLock(
       if (code !== "EEXIST" && code !== "ENOTEMPTY") throw error;
 
       const current = await readLockOwner(lockDir);
-      if (
-        current &&
-        !processIsAlive(current.processId) &&
-        (await recoverDeadFilesystemLock(lockDir, current))
-      ) {
+      if (current) {
+        if (
+          (await stagingLockOwnerIsUnusable(lockDir, current)) &&
+          (await recoverDeadFilesystemLock(lockDir, current))
+        ) {
+          continue;
+        }
+      } else if (await recoverAbandonedFilesystemLock(lockDir)) {
         continue;
       }
-      if (Date.now() >= deadline)
+
+      if (Date.now() >= deadline) {
+        const heldBy = current
+          ? ` (held by pid ${current.processId} since ${current.acquiredAt})`
+          : " (lock has no readable owner record)";
         throw new Error(
-          "skill_staging_busy: another orchestrator owns the staging lock",
+          `skill_staging_busy: another orchestrator owns the staging lock${heldBy}`,
         );
+      }
       await delay(STAGING_LOCK_WAIT_MS);
     }
   }
@@ -244,6 +348,37 @@ type Candidate = {
   removalPolicy: "locked" | "user_removable";
   sourcePath: string;
 };
+
+/**
+ * Cheap recursive signature of a skill's source tree.
+ *
+ * The copy is recursive but the staleness check upstream only covers each
+ * skill's entrypoint, and `cp` only reports a source that vanished. An editor
+ * or sync client rewriting a nested file in place therefore produces a
+ * generation mixing pre- and post-edit content, with nothing raised. Comparing
+ * this signature either side of the copy is what turns that into an explicit
+ * `skill_view_changed`. Metadata only: no file contents are read.
+ */
+async function sourceTreeSignature(dir: string): Promise<string> {
+  const entries: string[] = [];
+  const walk = async (current: string, prefix: string): Promise<void> => {
+    const listing = await readdir(current, { withFileTypes: true });
+    listing.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of listing) {
+      const absolute = join(current, entry.name);
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        entries.push(`d ${relative}`);
+        await walk(absolute, relative);
+        continue;
+      }
+      const info = await stat(absolute);
+      entries.push(`f ${relative} ${info.size} ${info.mtimeMs}`);
+    }
+  };
+  await walk(dir, "");
+  return createHash("sha256").update(entries.join("\n")).digest("hex");
+}
 
 type EffectiveSkillManifest = {
   schemaVersion: 1 | 2;
@@ -826,16 +961,38 @@ async function stageEngineSkillViewUnlocked(input: {
     );
     for (const candidate of selected) {
       try {
+        // Signature first, then the hook: that ordering lets a test stand in
+        // for a writer that mutates the source *during* the copy window.
+        const before = await sourceTreeSignature(candidate.sourceDir);
         await beforeCandidateCopyForTests?.(candidate);
         await cp(candidate.sourceDir, join(generationRoot, candidate.name), {
           recursive: true,
           force: true,
         });
+        // A source that merely *changed* under us copies without error and
+        // yields a torn generation, so the copy must be proven atomic after
+        // the fact rather than only guarded before it.
+        if ((await sourceTreeSignature(candidate.sourceDir)) !== before) {
+          throw new SkillViewChangedError(candidate.name);
+        }
       } catch (error) {
+        if (error instanceof SkillViewChangedError) throw error;
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "ENOENT" || code === "ENOTDIR")
           throw new SkillViewChangedError(candidate.name);
         throw error;
+      }
+    }
+
+    // The server may have republished while this generation was being built.
+    // Staging the old view under a revision the caller no longer holds is the
+    // same defect as staging a torn tree, so it fails the same handshake.
+    if (input.expectedRevision) {
+      const settled = await readEffectiveManifest(workspace);
+      if (settled?.revision !== input.expectedRevision) {
+        throw new Error(
+          `skill_view_stale: expected ${input.expectedRevision}, received ${settled?.revision ?? "none"} after staging`,
+        );
       }
     }
     const materialized = selected.map((candidate) => candidate.name);

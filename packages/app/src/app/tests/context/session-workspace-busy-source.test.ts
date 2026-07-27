@@ -13,7 +13,9 @@ const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8"
 test("background SSE events update scoped runtime state without merging messages into the active store", () => {
   assert.match(
     sessionSource,
-    /onSessionBusyChange\?: \(sessionId: string, busy: boolean, workspaceId\?: string\) => void;/,
+    // Whitespace-tolerant: this guards the callback's shape, not the
+    // formatter's current line-wrapping choice.
+    /onSessionBusyChange\?:\s*\(\s*sessionId: string,\s*busy: boolean,\s*workspaceId\?: string,?\s*\) => void;/,
     "session busy callback should carry the source workspace id",
   );
   assert.match(

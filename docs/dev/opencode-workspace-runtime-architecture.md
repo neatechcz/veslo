@@ -253,6 +253,16 @@ reuse, which a liveness probe alone cannot detect. An ownerless acquisition, or 
 recovery fence left behind by a process that died mid-recovery, is likewise
 reclaimed on age, so a single crash cannot wedge a workspace permanently.
 
+Engine staging takes a second, narrower filesystem lock on the staging root,
+always inside the workspace lease and never the other way round; helpers invoked
+while it is held use the explicit unlocked variants. That lock follows the same
+liveness and recovery protocol as the workspace lease — heartbeat by owner-file
+mtime, reclaim on a dead owner, a stopped heartbeat, an ownerless directory, or
+a stale recovery fence. Both locks need every one of those paths: a lock
+directory and its owner record are two separate filesystem operations, so a
+crash between them leaves a lock nobody can prove ownership of, and without
+age-based reclaim that single crash wedges the staging root permanently.
+
 The lease is re-entrant within one process: a code path that already holds it for
 a workspace runs nested acquisitions inline. Acquiring it twice for the same
 workspace root would otherwise queue the inner acquisition behind the outer one
@@ -305,6 +315,20 @@ your edit" situation. Exhausting it is terminal for that activation: the UI must
 describe the completed recovery attempts and tell the user to finish the skill
 sync or file edit, rather than exposing the raw orchestrator `409` body. This is
 an activation-boundary rule, not a desktop-side skill resolver.
+
+The skill view revision is enforced in every topology, including the default
+pooled one. A caller that spawns an engine — explicit activation, or a proxied
+request that starts one — passes the revision it was promised down to staging,
+which must consume exactly that revision or fail with `skill_view_stale`. An
+engine therefore cannot quietly start on a different skill set than the one
+already shown to the user.
+
+Only a caller holding a live server handshake may supply a revision.
+Pool-internal restarts — crash respawn, idle resume — deliberately spawn without
+one: they have no handshake to speak for, and replaying a remembered revision
+would convert an ordinary recovery into a permanent failure as soon as that
+revision aged out. Those restarts stage from the current published manifest,
+which the workspace skill lease already keeps internally consistent.
 
 The daemon port is a contract, not a hint. When a caller passes `--daemon-port`
 or `VESLO_DAEMON_PORT`, that caller polls exactly that port for `/health` and has

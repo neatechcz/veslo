@@ -4622,7 +4622,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         });
         return { workdir, configDir };
       },
-      spawnEngine: async ({ workspaceId, engineOwnerId, workdir, configDir, port }) => {
+      spawnEngine: async ({ workspaceId, engineOwnerId, workdir, configDir, port, skillViewRevision }) => {
         const startedAt = Date.now();
         traceRuntime("orchestrator:engine-spawn:start", {
           workspaceId,
@@ -4630,11 +4630,13 @@ async function runRouterDaemon(args: ParsedArgs) {
           configDir,
           port,
           opencodeBin: opencodeBinary.bin,
+          skillViewRevision: skillViewRevision ?? null,
         });
         const spawned = await startOpencode({
           bin: opencodeBinary.bin,
           workspace: workdir,
           configDir,
+          ...(skillViewRevision ? { skillViewRevision } : {}),
           skillIsolationProfile: "normal",
           hotReload: opencodeHotReload,
           bindHost: opencodeHost,
@@ -4723,6 +4725,10 @@ async function runRouterDaemon(args: ParsedArgs) {
       stopChild,
       findFreePort: () => findFreePort(opencodeHost),
       isProcessAlive,
+      // A skill view change may replace an idle workspace engine, but must not
+      // pull the process out from under a run that is already using it.
+      hasActiveRuns: (engineOwnerId) =>
+        runStore.activeForEngineOwner(engineOwnerId).length > 0,
       log: (msg, attrs) => {
         logger.info(msg, attrs, "engine-pool");
         traceRuntime(runtimeTraceEventName("engine-pool", msg), attrs ?? {});
@@ -5610,7 +5616,16 @@ async function runRouterDaemon(args: ParsedArgs) {
                       }
                     },
                   )).engine
-                : await pool.ensure({ id: workspace.id, path: workspace.path });
+                : await pool.ensure({
+                    id: workspace.id,
+                    path: workspace.path,
+                    // The desktop only sends this after a fresh server publish,
+                    // so a pooled spawn is held to the same revision the two
+                    // shared topologies already enforce.
+                    ...(requestedSkillViewRevision
+                      ? { skillViewRevision: requestedSkillViewRevision }
+                      : {}),
+                  });
             traceRuntime("orchestrator:activate-ensure:done", {
               workspaceId: workspace.id,
               workspacePath: workspace.path,
@@ -5669,6 +5684,14 @@ async function runRouterDaemon(args: ParsedArgs) {
                 error: "directory_skill_view_refresh_deferred",
                 message: "Workspace skill view is waiting for its active run to become idle",
                 retryAfterMs,
+              });
+              return;
+            }
+            if (detail.startsWith("skill_view_busy:")) {
+              send(409, {
+                error: "skill_view_busy",
+                message: "Workspace engine is running a job staged from a different skill view",
+                retryAfterMs: 250,
               });
               return;
             }
@@ -5971,6 +5994,9 @@ async function runRouterDaemon(args: ParsedArgs) {
             workspacePath: ws.path,
             pooledEngine: pool,
             sharedEngine: sharedOpenCodeEngine ?? undefined,
+            ...(requestedSkillViewRevision
+              ? { skillViewRevision: requestedSkillViewRevision }
+              : {}),
           });
           if (!proxyTarget.engine) {
             const isEngineStarting = proxyTarget.unavailableReason === "starting";
@@ -6087,6 +6113,14 @@ async function runRouterDaemon(args: ParsedArgs) {
             send(409, {
               error: "shared_engine_skill_view_busy",
               message: "Shared engine skill view cannot switch while a run is active",
+            });
+            return;
+          }
+          if (detail.startsWith("skill_view_busy:")) {
+            send(409, {
+              error: "skill_view_busy",
+              message: "Workspace engine is running a job staged from a different skill view",
+              retryAfterMs: 250,
             });
             return;
           }

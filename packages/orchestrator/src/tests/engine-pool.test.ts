@@ -295,6 +295,202 @@ describe("EnginePool", () => {
     }
   });
 
+  test("a caller's skill view revision reaches the spawn", async () => {
+    const seen: Array<string | undefined> = [];
+    const h = harness({
+      spawnEngine: async ({ port, skillViewRevision }) => {
+        seen.push(skillViewRevision);
+        const child = spawnLongLivedChild();
+        h.registry.push(child);
+        return { child, baseUrl: `http://127.0.0.1:${port}` };
+      },
+    });
+    try {
+      await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-abc",
+      });
+      expect(seen).toEqual(["revision-abc"]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a caller without a handshake spawns without a revision", async () => {
+    const seen: Array<string | undefined> = [];
+    const h = harness({
+      spawnEngine: async ({ port, skillViewRevision }) => {
+        seen.push(skillViewRevision);
+        const child = spawnLongLivedChild();
+        h.registry.push(child);
+        return { child, baseUrl: `http://127.0.0.1:${port}` };
+      },
+    });
+    try {
+      await h.pool.ensure({ id: "a", path: "/tmp/a" });
+      expect(seen).toEqual([undefined]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("reusing a running engine with a different revision restages it", async () => {
+    const seen: Array<string | undefined> = [];
+    const h = harness({
+      spawnEngine: async ({ port, skillViewRevision }) => {
+        seen.push(skillViewRevision);
+        const child = spawnLongLivedChild();
+        h.registry.push(child);
+        return { child, baseUrl: `http://127.0.0.1:${port}` };
+      },
+    });
+    try {
+      const first = await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-one",
+      });
+      const second = await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-two",
+      });
+
+      expect(seen).toEqual(["revision-one", "revision-two"]);
+      expect(second.pid).not.toBe(first.pid);
+      expect(second.skillViewRevision).toBe("revision-two");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("reusing a running engine with the same revision does not restage it", async () => {
+    const h = harness();
+    try {
+      const first = await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-one",
+      });
+      const second = await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-one",
+      });
+
+      expect(second.pid).toBe(first.pid);
+      expect(h.counters.spawns).toBe(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a revision-bearing ensure that joins a handshake-free spawn restages it", async () => {
+    const seen: Array<string | undefined> = [];
+    let releaseSpawn!: () => void;
+    const spawnGate = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const h = harness({
+      spawnEngine: async ({ port, skillViewRevision }) => {
+        seen.push(skillViewRevision);
+        if (seen.length === 1) await spawnGate;
+        const child = spawnLongLivedChild();
+        h.registry.push(child);
+        return { child, baseUrl: `http://127.0.0.1:${port}` };
+      },
+    });
+    try {
+      // A spawn already in flight without any handshake.
+      const withoutHandshake = h.pool.ensure({ id: "a", path: "/tmp/a" });
+      // A caller holding a fresh server view joins that same flight.
+      const withHandshake = h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-two",
+      });
+      releaseSpawn();
+
+      await withoutHandshake;
+      const joined = await withHandshake;
+
+      // Joining is not proof the flight staged our view; it had none.
+      expect(seen).toEqual([undefined, "revision-two"]);
+      expect(joined.skillViewRevision).toBe("revision-two");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a run owning the engine blocks a skill view swap instead of killing it", async () => {
+    const h = harness({
+      hasActiveRuns: () => true,
+    });
+    try {
+      const first = await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-one",
+      });
+
+      await expect(
+        h.pool.ensure({
+          id: "a",
+          path: "/tmp/a",
+          skillViewRevision: "revision-two",
+        }),
+      ).rejects.toThrow(/skill_view_busy/);
+
+      // The in-flight work keeps its process.
+      expect(h.pool.get("a")?.pid).toBe(first.pid);
+      expect(h.counters.spawns).toBe(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  test("a crash respawn does not replay the original caller's revision", async () => {
+    const seen: Array<string | undefined> = [];
+    const timers = new FakeTimers();
+    const h = harness(
+      {
+        spawnEngine: async ({ port, skillViewRevision }) => {
+          seen.push(skillViewRevision);
+          const child = spawnLongLivedChild();
+          h.registry.push(child);
+          return { child, baseUrl: `http://127.0.0.1:${port}` };
+        },
+      },
+      {
+        restartBackoffBaseMs: 50,
+        idleSweepIntervalMs: 999_999,
+        healthIntervalMs: 999_999,
+      },
+      timers,
+    );
+    try {
+      const first = await h.pool.ensure({
+        id: "a",
+        path: "/tmp/a",
+        skillViewRevision: "revision-abc",
+      });
+      await stopChild(first.child);
+      // Let the child's exit handler run before the backoff timer fires.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      timers.advance(50);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Recovery has no live handshake. Replaying a remembered revision would
+      // turn an ordinary restart into a permanent failure once it aged out.
+      expect(seen).toEqual(["revision-abc", undefined]);
+      expect(h.pool.get("a")?.state).toBe("ready");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
   test("engine recreation creates a new process-generation owner", async () => {
     const h = harness();
     try {

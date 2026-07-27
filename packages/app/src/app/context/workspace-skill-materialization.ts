@@ -27,12 +27,21 @@ export type WorkspaceSkillMaterializationGateDeps = {
   wsDebug: (label: string, payload?: unknown) => void;
 };
 
-export type RuntimeSkillViewConflict = "skill_view_changed" | "skill_view_stale";
+export type RuntimeSkillViewConflict =
+  | "skill_view_changed"
+  | "skill_view_stale"
+  | "skill_view_deferred";
 
 export type RuntimeSkillViewRefreshContext = {
   conflict: RuntimeSkillViewConflict;
-  reason: "skill-view-changed-retry" | "skill-view-stale-retry";
+  reason:
+    | "skill-view-changed-retry"
+    | "skill-view-stale-retry"
+    | "skill-view-deferred-retry";
 };
+
+const DEFERRED_REFRESH_FALLBACK_MS = 250;
+const DEFERRED_REFRESH_MAX_WAIT_MS = 5_000;
 
 /**
  * A failed refresh should not expose the orchestrator's raw 409 envelope to
@@ -45,14 +54,17 @@ export class RuntimeSkillViewRefreshError extends Error {
 
   constructor(conflict: RuntimeSkillViewConflict, phase: "refresh" | "retry") {
     const changed = conflict === "skill_view_changed";
+    const deferred = conflict === "skill_view_deferred";
     super(
-      phase === "refresh"
-        ? changed
-          ? "Workspace skills changed while Veslo was starting the engine. Veslo could not refresh the skill view, so the engine was not started. Resolve any Skills sync error and try again."
-          : "The workspace skill view was out of date. Veslo could not refresh it, so the engine was not started. Try again after the workspace finishes loading."
-        : changed
-          ? "Workspace skills kept changing while Veslo was starting the engine. Veslo refreshed the skill view and retried, but the files changed again each time. Finish the skill sync or file edit, then try again."
-          : "The workspace skill view was refreshed, but it became stale again before the engine started. Try again after the workspace finishes loading.",
+      deferred
+        ? "Veslo is still finishing an active run before it can apply this workspace's skills, so the engine was not started. Wait for the run to end and try again."
+        : phase === "refresh"
+          ? changed
+            ? "Workspace skills changed while Veslo was starting the engine. Veslo could not refresh the skill view, so the engine was not started. Resolve any Skills sync error and try again."
+            : "The workspace skill view was out of date. Veslo could not refresh it, so the engine was not started. Try again after the workspace finishes loading."
+          : changed
+            ? "Workspace skills kept changing while Veslo was starting the engine. Veslo refreshed the skill view and retried, but the files changed again each time. Finish the skill sync or file edit, then try again."
+            : "The workspace skill view was refreshed, but it became stale again before the engine started. Try again after the workspace finishes loading.",
     );
     this.name = "RuntimeSkillViewRefreshError";
     this.code = conflict;
@@ -62,9 +74,28 @@ export class RuntimeSkillViewRefreshError extends Error {
 
 export function runtimeSkillViewConflict(error: unknown): RuntimeSkillViewConflict | null {
   const message = error instanceof Error ? error.message : safeStringify(error);
+  // Order matters: these envelopes also carry a skill view revision, so match
+  // their own markers before the generic ones.
+  if (message.includes("directory_skill_view_refresh_deferred")) return "skill_view_deferred";
+  // The engine is mid-run on an older view. Like a deferred refresh, the only
+  // remedy is waiting for it to go idle — not re-resolving a healthy view.
+  if (message.includes("skill_view_busy")) return "skill_view_deferred";
   if (message.includes("skill_view_changed")) return "skill_view_changed";
   if (message.includes("skill_view_stale")) return "skill_view_stale";
   return null;
+}
+
+/**
+ * A deferred refresh is the orchestrator draining an active run before it
+ * republishes a directory-scoped view. Nothing is wrong and there is nothing to
+ * refresh; the caller is told how long to wait. Honour that hint instead of
+ * surfacing a transient drain as a failed activation.
+ */
+export function runtimeSkillViewRetryAfterMs(error: unknown): number {
+  const message = error instanceof Error ? error.message : safeStringify(error);
+  const parsed = Number(/"retryAfterMs"\s*:\s*(\d+)/.exec(message)?.[1]);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFERRED_REFRESH_FALLBACK_MS;
+  return Math.min(parsed, DEFERRED_REFRESH_MAX_WAIT_MS);
 }
 
 /**
@@ -87,8 +118,12 @@ export async function prepareRuntimeWithSkillViewRefresh<T>(input: {
   refresh: (context: RuntimeSkillViewRefreshContext) => Promise<boolean>;
   onRetry?: (context: RuntimeSkillViewRefreshContext) => void;
   retryLimit?: number;
+  /** Injectable so tests do not pay the orchestrator's real drain hint. */
+  wait?: (ms: number) => Promise<void>;
 }): Promise<T> {
   const retryLimit = input.retryLimit ?? RUNTIME_SKILL_VIEW_RETRY_LIMIT;
+  const wait =
+    input.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   // The UI explains the conflict the user actually hit first; a later attempt
   // failing as "stale" instead of "changed" is noise from the same root cause.
   let firstConflict: RuntimeSkillViewConflict | null = null;
@@ -105,9 +140,21 @@ export async function prepareRuntimeWithSkillViewRefresh<T>(input: {
       }
       const context: RuntimeSkillViewRefreshContext = {
         conflict,
-        reason: conflict === "skill_view_changed" ? "skill-view-changed-retry" : "skill-view-stale-retry",
+        reason:
+          conflict === "skill_view_changed"
+            ? "skill-view-changed-retry"
+            : conflict === "skill_view_deferred"
+              ? "skill-view-deferred-retry"
+              : "skill-view-stale-retry",
       };
       input.onRetry?.(context);
+      // A drain is not a stale view: the orchestrator is finishing an active run
+      // before it republishes. Waiting is the whole remedy, and asking the
+      // server to re-resolve would only invalidate a view that is already fine.
+      if (conflict === "skill_view_deferred") {
+        await wait(runtimeSkillViewRetryAfterMs(error));
+        continue;
+      }
       let refreshed = false;
       try {
         refreshed = await input.refresh(context);

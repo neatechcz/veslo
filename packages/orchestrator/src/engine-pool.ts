@@ -41,6 +41,17 @@ export type EngineWorkspace = {
   id: string;
   path?: string;
   legacyWorkspaceIds?: string[];
+  /**
+   * Effective skill view the caller was promised by the server. Staging must
+   * consume exactly this revision, so a spawn cannot silently hand the engine a
+   * different skill set than the one the caller already showed the user.
+   *
+   * Only a caller acting on a fresh server handshake may set it. Pool-internal
+   * restarts (crash respawn, idle resume) deliberately leave it undefined:
+   * they have no live handshake, and replaying a remembered revision would turn
+   * an ordinary recovery into a permanent failure once that revision aged out.
+   */
+  skillViewRevision?: string;
 };
 
 export type EngineEnsureResult = {
@@ -54,6 +65,8 @@ export type EngineSpawnContext = {
   workdir: string;
   configDir: string;
   port: number;
+  /** Revision staging must consume exactly; absent for pool-internal restarts. */
+  skillViewRevision?: string;
 };
 
 export type EngineSpawnResult = {
@@ -83,6 +96,13 @@ export type EngineProcess = {
   sandboxMode?: "resolved" | "explicit-none" | "disabled-by-env" | "unavailable" | "launch-fallback";
   sandboxFallbackReason?: string | null;
   state: EngineState;
+  /**
+   * Skill view this process was actually staged from, or undefined when it was
+   * started without a handshake (pool-internal restart). Recording it is what
+   * lets a later caller notice that reusing this engine would silently serve a
+   * skill set the server has since replaced.
+   */
+  skillViewRevision?: string;
   spawnedAt: number;
   lastActivityAt: number;
   child: ChildProcess;
@@ -157,6 +177,12 @@ export type EnginePoolDeps = {
   stopChild: (child: ChildProcess) => Promise<void>;
   findFreePort: () => Promise<number>;
   isProcessAlive: (pid: number) => boolean;
+  /**
+   * Whether a run currently owns this engine generation. A skill view change
+   * may replace an idle engine, but must never pull the process out from under
+   * work in progress. Absent = treat every engine as idle.
+   */
+  hasActiveRuns?: (engineOwnerId: string) => boolean;
   now?: () => number;
   log?: EnginePoolLogger;
   /** F2Ú4 — injectable timer API for fake-timer tests. Default uses global setInterval/setTimeout. */
@@ -260,6 +286,7 @@ export class EnginePool {
       stopChild: deps.stopChild,
       findFreePort: deps.findFreePort,
       isProcessAlive: deps.isProcessAlive,
+      hasActiveRuns: deps.hasActiveRuns,
       now: deps.now ?? (() => Date.now()),
       log: deps.log,
       schedule: deps.schedule ?? {
@@ -377,7 +404,13 @@ export class EnginePool {
     if (inflight) {
       this.deps.log?.("engine ensure pending reuse", { workspaceId: workspace.id });
       writeSpawnDiag("ensure-pending-reuse", { workspaceId: workspace.id });
-      return { engine: await inflight, spawned: false };
+      // Joining an in-flight spawn is not proof it is staging *our* view: the
+      // flight may have been started without a handshake, or with an older one.
+      // Let it finish, then hold its result to the same check as any reuse.
+      const joined = await inflight;
+      const reconciled = await this.reconcileSkillView(workspace, joined);
+      if (reconciled) return { engine: reconciled, spawned: true };
+      return { engine: joined, spawned: false };
     }
 
     const existing = this.engines.get(workspace.id);
@@ -386,6 +419,8 @@ export class EnginePool {
         (existing.state === "ready" || existing.state === "idle") &&
         (this.deps.isProcessAlive(existing.pid) || !!this.deps.healthCheck);
       if (alive) {
+        const reconciled = await this.reconcileSkillView(workspace, existing);
+        if (reconciled) return { engine: reconciled, spawned: true };
         existing.lastActivityAt = this.deps.now();
         this.deps.log?.("engine ensure ready reuse", {
           workspaceId: workspace.id,
@@ -442,6 +477,70 @@ export class EnginePool {
     // F2Ú1 race semantics).
     const promise = this.startPending(workspace, true);
     return { engine: await promise, spawned: true };
+  }
+
+  /**
+   * Hold a reusable engine to the caller's promised skill view.
+   *
+   * Returns a freshly spawned engine when the running one had to be replaced,
+   * or null when the existing engine may be reused as-is. Mirrors what the
+   * shared topology already does for its single engine: replace it while idle,
+   * refuse while a run owns it. Without this, the revision is enforced only on
+   * cold start and any reuse silently serves the previous skill set.
+   */
+  private async reconcileSkillView(
+    workspace: EngineWorkspace,
+    engine: EngineProcess,
+  ): Promise<EngineProcess | null> {
+    const requested = workspace.skillViewRevision;
+    // No handshake to enforce. Pool-internal restarts land here, and so does
+    // any caller that legitimately has no server-published view yet.
+    if (!requested) return null;
+    if (engine.skillViewRevision === requested) return null;
+
+    if (this.deps.hasActiveRuns?.(engine.engineOwnerId)) {
+      this.deps.log?.("engine skill view busy", {
+        workspaceId: workspace.id,
+        engineOwnerId: engine.engineOwnerId,
+        engineRevision: engine.skillViewRevision ?? null,
+        requestedRevision: requested,
+      });
+      writeSpawnDiag("ensure-skill-view-busy", {
+        workspaceId: workspace.id,
+        engineRevision: engine.skillViewRevision ?? null,
+        requestedRevision: requested,
+      });
+      throw new Error(
+        "skill_view_busy: workspace engine is running a job staged from a different skill view",
+      );
+    }
+
+    this.deps.log?.("engine skill view restart", {
+      workspaceId: workspace.id,
+      engineOwnerId: engine.engineOwnerId,
+      engineRevision: engine.skillViewRevision ?? null,
+      requestedRevision: requested,
+    });
+    writeSpawnDiag("ensure-skill-view-restart", {
+      workspaceId: workspace.id,
+      engineRevision: engine.skillViewRevision ?? null,
+      requestedRevision: requested,
+    });
+
+    if (this.engines.get(workspace.id) === engine) {
+      this.engines.delete(workspace.id);
+    }
+    if (engine.child && this.deps.isProcessAlive(engine.pid)) {
+      try {
+        await this.deps.stopChild(engine.child);
+      } catch (err) {
+        this.deps.log?.("engine cleanup on skill view restart failed", {
+          workspaceId: workspace.id,
+          error: String(err),
+        });
+      }
+    }
+    return await this.startPending(workspace, true);
   }
 
   /**
@@ -727,6 +826,9 @@ export class EnginePool {
       workdir,
       configDir,
       port,
+      ...(workspace.skillViewRevision
+        ? { skillViewRevision: workspace.skillViewRevision }
+        : {}),
     });
     const childKind = spawnedChildKind ?? "direct";
 
@@ -745,6 +847,9 @@ export class EnginePool {
       ...(effectiveSandboxBackend !== undefined ? { effectiveSandboxBackend } : {}),
       ...(sandboxMode !== undefined ? { sandboxMode } : {}),
       ...(sandboxFallbackReason !== undefined ? { sandboxFallbackReason } : {}),
+      ...(workspace.skillViewRevision
+        ? { skillViewRevision: workspace.skillViewRevision }
+        : {}),
       state: "spawning",
       spawnedAt,
       lastActivityAt: spawnedAt,

@@ -388,6 +388,65 @@ test("a conflict that clears on the second retry still starts the engine", async
   assert.equal(refreshes, 2);
 });
 
+test("a deferred directory refresh waits for its hint instead of refreshing", async () => {
+  const waits: number[] = [];
+  const refreshReasons: string[] = [];
+  let prepares = 0;
+
+  const result = await prepareRuntimeWithSkillViewRefresh({
+    prepare: async () => {
+      prepares += 1;
+      if (prepares === 1) {
+        throw new Error(
+          'Failed to activate workspace: status 409: {"error":"directory_skill_view_refresh_deferred","retryAfterMs":250}',
+        );
+      }
+      return "ready";
+    },
+    refresh: async ({ reason }) => {
+      refreshReasons.push(reason);
+      return true;
+    },
+    wait: async (ms) => {
+      waits.push(ms);
+    },
+  });
+
+  assert.equal(result, "ready");
+  assert.equal(prepares, 2);
+  assert.deepEqual(waits, [250]);
+  // A drain needs time, not a re-resolve; refreshing would invalidate a good view.
+  assert.deepEqual(refreshReasons, []);
+});
+
+test("a deferred refresh hint is clamped and falls back when absent", async () => {
+  const waits: number[] = [];
+  let prepares = 0;
+
+  await assert.rejects(
+    prepareRuntimeWithSkillViewRefresh({
+      prepare: async () => {
+        prepares += 1;
+        throw new Error(
+          prepares === 1
+            ? 'status 409: {"error":"directory_skill_view_refresh_deferred"}'
+            : 'status 409: {"error":"directory_skill_view_refresh_deferred","retryAfterMs":900000}',
+        );
+      },
+      refresh: async () => true,
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+    }),
+    (error: unknown) =>
+      error instanceof RuntimeSkillViewRefreshError &&
+      error.code === "skill_view_deferred",
+  );
+
+  assert.deepEqual(waits, [250, 5000]);
+  assert.equal(prepares, 3);
+});
+
 test("the retry budget is bounded and reports the first conflict", async () => {
   let prepares = 0;
 

@@ -4,6 +4,7 @@ import {
   readFile,
   rename,
   rm,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -441,6 +442,103 @@ describe("engine skill staging", () => {
         heartbeatAt: new Date(0).toISOString(),
       }),
     );
+
+    const result = await stageEngineSkillView(input);
+
+    expect(result.materialized).toContain("local-tool");
+    expect(await Bun.file(lockDir).exists()).toBe(false);
+  });
+
+  test("an in-place nested edit during the copy is reported as a changed view", async () => {
+    const input = await fixture();
+    let mutations = 0;
+    __engineSkillStagingTestHooks.setBeforeCandidateCopy(async (candidate) => {
+      // A sync client or editor rewriting a nested file without removing it.
+      // `cp` succeeds, so only an after-the-fact check can catch the tear.
+      // Keep writing so every retry sees it and the failure is conclusive.
+      mutations += 1;
+      await mkdir(join(candidate.sourceDir, "assets"), { recursive: true });
+      await writeFile(
+        join(candidate.sourceDir, "assets", "schema.json"),
+        JSON.stringify({ changed: mutations, at: Date.now() }),
+        "utf8",
+      );
+    });
+
+    await expect(stageEngineSkillView(input)).rejects.toThrow(
+      /skill_view_changed/,
+    );
+    expect(mutations).toBeGreaterThan(1);
+  });
+
+  test("a settled source still stages after a transient in-place edit", async () => {
+    const input = await fixture();
+    let mutated = false;
+    __engineSkillStagingTestHooks.setBeforeCandidateCopy(async (candidate) => {
+      if (mutated) return;
+      mutated = true;
+      await mkdir(join(candidate.sourceDir, "assets"), { recursive: true });
+      await writeFile(
+        join(candidate.sourceDir, "assets", "schema.json"),
+        JSON.stringify({ changed: true }),
+        "utf8",
+      );
+    });
+
+    // One disturbance must not fail the launch; the retry is the remedy.
+    const result = await stageEngineSkillView(input);
+    expect(result.materialized).toContain("local-tool");
+  });
+
+  test("recovers a staging lock whose owner pid is alive but whose heartbeat stopped", async () => {
+    const input = await fixture();
+    const lockDir = join(input.stagingRoot, ".lock");
+    await mkdir(lockDir, { recursive: true });
+    const ownerFile = join(lockDir, "owner.json");
+    // A live pid the lock does not actually belong to — what pid reuse looks
+    // like to a waiter. Only the stopped heartbeat reveals it.
+    await writeFile(
+      ownerFile,
+      JSON.stringify({
+        schemaVersion: 1,
+        token: "reused-pid-owner",
+        processId: process.pid,
+        processInstanceId: "some-other-orchestrator",
+        processStartedAt: 0,
+        stagingOperationId: "abandoned-operation",
+        acquiredAt: new Date(0).toISOString(),
+        heartbeatAt: new Date(0).toISOString(),
+      }),
+    );
+    await utimes(ownerFile, new Date(0), new Date(0));
+
+    const result = await stageEngineSkillView(input);
+
+    expect(result.materialized).toContain("local-tool");
+    expect(await Bun.file(lockDir).exists()).toBe(false);
+  });
+
+  test("recovers a staging lock left without a readable owner record", async () => {
+    const input = await fixture();
+    const lockDir = join(input.stagingRoot, ".lock");
+    await mkdir(lockDir, { recursive: true });
+    // A crash between creating the lock directory and writing its owner record.
+    await utimes(lockDir, new Date(0), new Date(0));
+
+    const result = await stageEngineSkillView(input);
+
+    expect(result.materialized).toContain("local-tool");
+    expect(await Bun.file(lockDir).exists()).toBe(false);
+  });
+
+  test("a recovery fence left by a crashed recovery does not wedge the staging root", async () => {
+    const input = await fixture();
+    const lockDir = join(input.stagingRoot, ".lock");
+    const fenceDir = join(lockDir, ".recovery");
+    await mkdir(fenceDir, { recursive: true });
+    // Age the fence before the lock: creating a child bumps the parent's mtime.
+    await utimes(fenceDir, new Date(0), new Date(0));
+    await utimes(lockDir, new Date(0), new Date(0));
 
     const result = await stageEngineSkillView(input);
 
