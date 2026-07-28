@@ -3,6 +3,7 @@ import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { validateMcpServerName } from "../mcp-validation";
 import { isTauriRuntime } from "../utils/paths";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
+import { createEngineInfoLoader } from "./engine-info-loader";
 import type { ComposerAttachment, ComposerDraft, ComposerPart, ModelRef, SkillInventoryRegistryMetadata } from "../types";
 import type { OpencodeConfigFile, ScheduledJob, WorkspaceInfo } from "./tauri-types";
 
@@ -516,6 +517,10 @@ export type WorkspaceRuntimePrepareResult = {
   engine: EngineInfo;
 };
 
+const loadEngineInfo = createEngineInfoLoader<EngineInfo>((input) =>
+  invoke<EngineInfo>("engine_info", input),
+);
+
 /**
  * Starts only the local orchestrator control plane needed by a server-owned
  * submit. It never activates the target workspace engine.
@@ -863,10 +868,7 @@ export async function engineInfo(
   workspaceId?: string,
   workspacePath?: string,
 ): Promise<EngineInfo> {
-  return invoke<EngineInfo>("engine_info", {
-    workspaceId: workspaceId ?? null,
-    workspacePath: workspacePath ?? null,
-  });
+  return loadEngineInfo(workspaceId, workspacePath);
 }
 
 export type OrchestratorEngineSnapshot = {

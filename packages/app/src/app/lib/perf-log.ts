@@ -1,3 +1,5 @@
+import { createBatchedDiagnosticSink } from "./batched-diagnostic-sink";
+
 export type PerfLogRecord = {
   id: number;
   at: string;
@@ -38,6 +40,52 @@ const NATIVE_RUNTIME_PERF_SCOPES = new Set([
   "workspace.mcp",
   "workspace.requests",
 ]);
+
+type RuntimePerfNativeLogger = (
+  scope: string,
+  message: string,
+  payload: Record<string, unknown>,
+) => void;
+
+let runtimePerfNativeLoggerForTests: RuntimePerfNativeLogger | null = null;
+
+const nativeRuntimePerfSink = createBatchedDiagnosticSink<PerfLogRecord>({
+  maxEntries: 24,
+  delayMs: 100,
+  flush: (entries) => {
+    const payload = {
+      schema: "runtime-perf/v1",
+      entries,
+    };
+    if (runtimePerfNativeLoggerForTests) {
+      runtimePerfNativeLoggerForTests("runtime-perf", "batch", payload);
+      return;
+    }
+    void import("./tauri")
+      .then((mod) =>
+        mod.logUiEvent("runtime-perf", "batch", payload),
+      )
+      .catch(() => {});
+  },
+});
+
+export function setRuntimePerfNativeLoggerForTests(
+  logger: RuntimePerfNativeLogger | null,
+) {
+  runtimePerfNativeLoggerForTests = logger;
+}
+
+let nativeRuntimePerfFlushHandlersInstalled = false;
+
+function installNativeRuntimePerfFlushHandlers() {
+  if (nativeRuntimePerfFlushHandlersInstalled) return;
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  nativeRuntimePerfFlushHandlersInstalled = true;
+  window.addEventListener("pagehide", nativeRuntimePerfSink.flush);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") nativeRuntimePerfSink.flush();
+  });
+}
 
 export const perfNow = () => {
   if (typeof performance !== "undefined" && typeof performance.now === "function") {
@@ -87,9 +135,8 @@ export const recordPerfLog = (
   root.__vesloPerfLogs = logs;
 
   if (NATIVE_RUNTIME_PERF_SCOPES.has(scope)) {
-    void import("./tauri")
-      .then((mod) => mod.logUiEvent("runtime-perf", `${scope}:${event}`, entry))
-      .catch(() => {});
+    installNativeRuntimePerfFlushHandlers();
+    nativeRuntimePerfSink.enqueue(entry);
   }
 
   try {

@@ -97,6 +97,19 @@ test(
   }, { pilot: true }),
 );
 
+test(
+  "forced diagnostic traces use the shared batch sink while runtime diagnostics remain enabled",
+  withTraceWindow(null, (target) => {
+    recordSendWorkflowTrace("ui-effect-trace", "ui-effect-trace:benchmark", undefined, {
+      developerMode: false,
+      force: true,
+    });
+
+    assert.equal(target.__vesloSendWorkflowTrace?.length, 1);
+    assert.equal(target.__vesloSendWorkflowTrace?.[0]?.source, "ui-effect-trace");
+  }),
+);
+
 test("a credential scheme prefix does not leave the secret behind", () => {
   const sanitized = sanitizeSendWorkflowTracePayload({
     header: "authorization: Bearer sk-live-should-not-survive",

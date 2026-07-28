@@ -127,7 +127,10 @@ buffer or the shared native workflow trace. Raw paths, URLs, prompts,
 credential fields, and nested equivalents are replaced with a fixed redacted
 value. App and composer local buffers feed that sink once; the sink coalesces
 short batches before crossing Tauri IPC, so diagnostics do not create one native
-write per renderer event. Correlate app events by `traceId` and
+write per renderer event. Runtime performance events use the same bounded
+delivery rule, while UI-effect incident and benchmark records enter the shared
+workflow sink instead of opening their own native IPC lane. Both queues flush
+on renderer teardown. Correlate app events by `traceId` and
 stable workspace identifiers; never recover a path from diagnostics.
 
 For a failed send, the app also retains at most 16 persisted workspace-keyed
@@ -590,6 +593,14 @@ Expected behavior:
 Do not build a separate conversation model only for sandboxed execution.
 
 ## First Message Flow
+
+For a local server-owned submit, the desktop first ensures only the admission
+daemon/control transport. This does not activate an OpenCode workspace engine.
+If the locally owned Veslo server is healthy, the app reuses it for the submit;
+it must not restart that server merely because admission transport was just
+established. Concurrent status reads for the same normalized workspace join one
+native `engine_info` request, but completed reads are never cached, so later
+calls observe the current orchestrator generation.
 
 1. The user writes a message in a new or existing conversation.
 2. The app records pending submission state locally, shows run progress, and

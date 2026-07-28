@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createUiEffectTrace } from "../../lib/ui-effect-trace.js";
+
+const source = readFileSync(new URL("../../lib/ui-effect-trace.ts", import.meta.url), "utf8");
+
+test("UI effect trace uses the shared send-workflow batch sink", () => {
+  assert.match(source, /recordSendWorkflowTrace\("ui-effect-trace", event, payload,/);
+  assert.doesNotMatch(source, /logUiEvent\(/);
+});
 
 test("UI effect trace keeps normal events local and persists one bounded incident window", () => {
   let now = 10_000;

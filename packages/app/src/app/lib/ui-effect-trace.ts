@@ -1,4 +1,4 @@
-import { logUiEvent } from "./tauri";
+import { recordSendWorkflowTrace } from "./send-workflow-trace";
 
 const TRACE_LIMIT = 240;
 const INCIDENT_WINDOW_MS = 5_000;
@@ -29,7 +29,10 @@ const envUiEffectTraceEnabled = () => {
 export function createUiEffectTrace(options: UiEffectTraceOptions) {
   const now = options.now ?? (() => Date.now());
   const schedule = options.schedule ?? ((callback, delayMs) => window.setTimeout(callback, delayMs));
-  const persist = options.persist ?? ((event, payload) => logUiEvent("send-workflow-trace", event, payload));
+  const persist = options.persist ?? ((event, payload) =>
+    recordSendWorkflowTrace("ui-effect-trace", event, payload, {
+      force: true,
+    }));
   const entries: UiEffectTraceEntry[] = [];
   const pendingIncidentKinds = new Set<string>();
 

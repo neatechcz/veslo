@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveServerOwnedSubmitTransportTarget } from "../../context/server-owned-submit-transport.js";
+import {
+  ensureServerOwnedSubmitTransport,
+  resolveServerOwnedSubmitTransportTarget,
+} from "../../context/server-owned-submit-transport.js";
 
 const localWorkspace = {
   id: "ws-local",
@@ -52,4 +55,53 @@ test("server-owned submit transport fails closed for an unknown local target", (
     }),
     { kind: "unavailable", reason: "workspace-not-found" },
   );
+});
+
+test("server-owned submit transport reuses a healthy local server after daemon admission", async () => {
+  const admissions: Array<Record<string, string>> = [];
+  const serverEnsures: Array<Record<string, unknown>> = [];
+  const ready = await ensureServerOwnedSubmitTransport({
+    isTauriRuntime: true,
+    targetWorkspace: { workspaceId: "ws-local" },
+    workspaces: [localWorkspace],
+    ensureAdmissionTransport: async (input) => {
+      admissions.push(input);
+    },
+    ensureLocalVesloServerRunning: async (input) => {
+      serverEnsures.push(input);
+      return true;
+    },
+  });
+
+  assert.equal(ready, true);
+  assert.deepEqual(admissions, [
+    { workspaceId: "ws-local", workspacePath: "C:/work/local" },
+  ]);
+  assert.deepEqual(serverEnsures, [
+    { requireRuntimeChainReady: false },
+  ]);
+  assert.equal(
+    Object.hasOwn(serverEnsures[0] ?? {}, "forceRestart"),
+    false,
+    "admission transport must not restart a healthy server",
+  );
+});
+
+test("server-owned submit transport does not ensure the server when admission daemon startup fails", async () => {
+  let serverEnsures = 0;
+  const ready = await ensureServerOwnedSubmitTransport({
+    isTauriRuntime: true,
+    targetWorkspace: { workspaceId: "ws-local" },
+    workspaces: [localWorkspace],
+    ensureAdmissionTransport: async () => {
+      throw new Error("daemon unavailable");
+    },
+    ensureLocalVesloServerRunning: async () => {
+      serverEnsures += 1;
+      return true;
+    },
+  });
+
+  assert.equal(ready, false);
+  assert.equal(serverEnsures, 0);
 });

@@ -203,8 +203,10 @@ const pilotTraceEnabled = (): boolean => {
 
 function sendWorkflowTraceEnabled(options?: {
   developerMode?: boolean;
+  force?: boolean;
 }): boolean {
   if (runtimeDiagnosticsDisabled()) return false;
+  if (options?.force === true) return true;
   if (
     options?.developerMode === false &&
     supportDiagnosticsOverride() !== true &&
@@ -228,7 +230,7 @@ export function recordSendWorkflowTrace(
   source: string,
   event: string,
   payload?: Record<string, unknown>,
-  options?: { developerMode?: boolean },
+  options?: { developerMode?: boolean; force?: boolean },
 ) {
   if (!sendWorkflowTraceEnabled(options)) return;
   if (typeof window === "undefined") return;
