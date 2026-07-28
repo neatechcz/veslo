@@ -596,11 +596,13 @@ Do not build a separate conversation model only for sandboxed execution.
 
 For a local server-owned submit, the desktop first ensures only the admission
 daemon/control transport. This does not activate an OpenCode workspace engine.
-If the locally owned Veslo server is healthy, the app reuses it for the submit;
-it must not restart that server merely because admission transport was just
-established. Concurrent status reads for the same normalized workspace join one
-native `engine_info` request, but completed reads are never cached, so later
-calls observe the current orchestrator generation.
+The app then recreates the locally owned Veslo server once so it inherits that
+daemon generation's lifecycle URL and token before it submits a run. A healthy
+server from before daemon admission is not lifecycle-compatible: reusing it
+would skip run registration and make the orchestrator reject owner attachment.
+Concurrent status reads for the same normalized workspace join one native
+`engine_info` request, but completed reads are never cached, so later calls
+observe the current orchestrator generation.
 
 1. The user writes a message in a new or existing conversation.
 2. The app records pending submission state locally, shows run progress, and

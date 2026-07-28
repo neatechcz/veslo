@@ -32,6 +32,7 @@ export type EnsureServerOwnedSubmitTransportInput = {
   }) => Promise<unknown>;
   ensureLocalVesloServerRunning: (input: {
     requireRuntimeChainReady: false;
+    forceRestart: true;
   }) => Promise<boolean>;
   recordTrace?: TransportTrace;
 };
@@ -67,10 +68,10 @@ export function resolveServerOwnedSubmitTransportTarget(input: {
 }
 
 /**
- * A server-owned first submit needs the desktop admission daemon, but a
- * healthy local Veslo server is already the HTTP endpoint that will receive
- * the submit. Reuse it after the daemon ensure; restarting it here would
- * discard the just-established control plane and add cold-start latency.
+ * A server-owned first submit needs the desktop admission daemon and a Veslo
+ * server configured with that daemon's current lifecycle token. Recreate the
+ * local server after daemon admission so its run registration and the proxy
+ * share one lifecycle owner generation.
  */
 export async function ensureServerOwnedSubmitTransport(
   input: EnsureServerOwnedSubmitTransportInput,
@@ -113,6 +114,7 @@ export async function ensureServerOwnedSubmitTransport(
   try {
     const ready = await input.ensureLocalVesloServerRunning({
       requireRuntimeChainReady: false,
+      forceRestart: true,
     });
     trace("runtime-readiness:admission-transport:end", {
       workspaceId,

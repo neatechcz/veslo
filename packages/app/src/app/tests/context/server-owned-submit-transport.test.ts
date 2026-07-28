@@ -57,7 +57,7 @@ test("server-owned submit transport fails closed for an unknown local target", (
   );
 });
 
-test("server-owned submit transport reuses a healthy local server after daemon admission", async () => {
+test("server-owned submit transport rebinds the local server after daemon admission", async () => {
   const admissions: Array<Record<string, string>> = [];
   const serverEnsures: Array<Record<string, unknown>> = [];
   const ready = await ensureServerOwnedSubmitTransport({
@@ -78,13 +78,8 @@ test("server-owned submit transport reuses a healthy local server after daemon a
     { workspaceId: "ws-local", workspacePath: "C:/work/local" },
   ]);
   assert.deepEqual(serverEnsures, [
-    { requireRuntimeChainReady: false },
+    { requireRuntimeChainReady: false, forceRestart: true },
   ]);
-  assert.equal(
-    Object.hasOwn(serverEnsures[0] ?? {}, "forceRestart"),
-    false,
-    "admission transport must not restart a healthy server",
-  );
 });
 
 test("server-owned submit transport does not ensure the server when admission daemon startup fails", async () => {
