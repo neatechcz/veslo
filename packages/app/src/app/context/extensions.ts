@@ -80,6 +80,10 @@ export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 type ListLocalSkillsScoped = (projectDir: string, scope: LocalSkillListScope) => Promise<LocalSkillCard[]>;
 type SkillInventoryRefreshResult = "published" | "stale" | "failed" | "aborted";
 type LocalSkillInventoryWorkspace = { id: string; label: string; path: string };
+type SkillInventoryRefreshOptions = {
+  force?: boolean;
+  workspaceIds?: readonly string[];
+};
 type ManagedSkillMutationTarget = SkillMutationTarget & {
   registry?: SkillInstance["registry"];
   restoreTarget?: SkillInstance["restoreTarget"];
@@ -797,14 +801,23 @@ export function createExtensionsStore(options: {
     }
   };
 
-  async function refreshSkillInventory(optionsOverride?: { force?: boolean }) {
+  async function refreshSkillInventory(optionsOverride?: SkillInventoryRefreshOptions) {
     let forceRefresh = optionsOverride?.force === true;
+    const workspaceIdScope = Array.from(
+      new Set(
+        (optionsOverride?.workspaceIds ?? [])
+          .map((workspaceId) => workspaceId.trim())
+          .filter(Boolean),
+      ),
+    ).sort();
+    const workspaceIdScopeSet = new Set(workspaceIdScope);
     const traceId = `skills-inventory-${nextSkillInventoryTraceId++}`;
     const refreshStartedAt = performance.now();
     const trace = (event: string, payload?: Record<string, unknown>) =>
       recordSendWorkflowTrace("skills-inventory", event, {
         traceId,
         force: forceRefresh,
+        workspaceScopeCount: workspaceIdScope.length,
         ...payload,
       });
     const phase = async <T>(name: string, action: () => Promise<T>, payload?: Record<string, unknown>) => {
@@ -850,6 +863,7 @@ export function createExtensionsStore(options: {
       const seenPaths = new Set<string>();
       const result: LocalSkillInventoryWorkspace[] = [];
       for (const workspace of [...configured, ...extras]) {
+        if (workspaceIdScopeSet.size > 0 && !workspaceIdScopeSet.has(workspace.id)) continue;
         const pathKey = workspace.path.replace(/[/\\]+$/, "");
         if (seenIds.has(workspace.id) || seenPaths.has(pathKey)) continue;
         seenIds.add(workspace.id);
@@ -1163,6 +1177,7 @@ export function createExtensionsStore(options: {
           revision: revisions.hubSkillsRevision,
         },
         localRevision: revisions.localSkillsRevision,
+        workspaceScope: workspaceIdScope,
         workspaces: workspacesForContext.map((workspace) => ({
           id: workspace.id,
           label: workspace.label,
@@ -1180,6 +1195,7 @@ export function createExtensionsStore(options: {
           contextKey: hubContextKey,
         },
         localRevision,
+        workspaceScope: workspaceIdScope,
         workspaces: workspacesForContext.map((workspace) => ({
           id: workspace.id,
           label: workspace.label,
@@ -1202,10 +1218,13 @@ export function createExtensionsStore(options: {
     for (;;) {
       const inFlight = refreshSkillInventoryInFlight;
       if (inFlight) {
-        const rerunAfterInFlight = forceRefresh;
+        const requestedRefreshContextKey = getCurrentSkillInventoryRefreshContextKey();
+        const joinsSameContext = inFlight.contextKey === requestedRefreshContextKey;
+        const rerunAfterInFlight = forceRefresh && joinsSameContext;
         if (rerunAfterInFlight) refreshSkillInventoryForceQueued = true;
         trace("skills-inventory:join-in-flight", {
           inFlightContextKey: inFlight.contextKey,
+          joinsSameContext,
           rerunQueued: rerunAfterInFlight,
         });
         const result = await inFlight.promise;
@@ -1213,6 +1232,9 @@ export function createExtensionsStore(options: {
           result,
           durationMs: Math.round(performance.now() - refreshStartedAt),
         });
+        if (!joinsSameContext || getCurrentSkillInventoryRefreshContextKey() !== inFlight.contextKey) {
+          continue;
+        }
         if (result === "failed" || result === "aborted") {
           if (inFlight.contextKey && getCurrentSkillInventoryRefreshContextKey() !== inFlight.contextKey) continue;
           return;
@@ -1394,9 +1416,11 @@ export function createExtensionsStore(options: {
               workspace: item.workspaceInstances.map((instance) => instance.path),
               hub: item.hubItem?.name ?? null,
             })),
-            activeWorkspaceSkills: Object.values(workspaceSkillsByWorkspaceId).flatMap((entry) =>
-              entry.skills.map((item) => ({ name: item.name, path: item.path, registry: item.registry?.source ?? null })),
-            ),
+            activeWorkspaceSkills: Object.values(workspaceSkillsByWorkspaceId)
+              .filter((entry) => entry.workspace.id === options.activeWorkspaceId().trim())
+              .flatMap((entry) =>
+                entry.skills.map((item) => ({ name: item.name, path: item.path, registry: item.registry?.source ?? null })),
+              ),
             importCandidates: skillImportCandidates().map((item) => ({
               id: item.id,
               name: item.name,

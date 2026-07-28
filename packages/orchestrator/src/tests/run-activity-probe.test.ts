@@ -684,7 +684,7 @@ describe("run activity probe HTTP behavior", () => {
 });
 
 describe("run activity probe with registry reconciliation", () => {
-  test("keeps an unfinished admitted answer running after two idle polls", async () => {
+  test("completes a stable admitted answer after two explicit idle polls", async () => {
     const store = createMemoryRunStore();
     const admissionMessageId = "msg-admitted-long-answer";
     const probeRunActivity = createRunActivityProbe({
@@ -732,11 +732,11 @@ describe("run activity probe with registry reconciliation", () => {
 
     expect(firstPoll?.record).toMatchObject({
       status: "running",
-      activityKind: "unknown",
-      waitReason: "assistant_message_open",
+      activityKind: "idle",
+      waitReason: "session_idle",
     });
     expect(secondPoll?.record).toMatchObject({
-      status: "running",
+      status: "completed",
       error: null,
     });
   });

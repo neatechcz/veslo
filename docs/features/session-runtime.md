@@ -136,8 +136,15 @@ run on the first reconciliation read; it does not wait for a second polling inte
 omits inactive sessions from `/session/status`. When that authoritative inactive state is paired with
 an unfinished exact admitted assistant, reconciliation records a failure candidate and requires the
 same evidence twice before releasing the run, so a short status/transcript race cannot create a false
-failure while an orphaned run cannot remain active forever. A reported `busy` session continues to
-own long-running model, tool, and assistant work without an arbitrary wall-clock timeout.
+failure while an orphaned run cannot remain active forever. Conversely, visible assistant text from
+the exact admitted turn plus an explicit `idle` status is a completion candidate even if its provider
+omitted a finish marker; it also requires two stable observations. A missing status entry is not that
+completion signal. A reported `busy` session continues to own long-running model, tool, and assistant
+work without an arbitrary wall-clock timeout.
+
+If bounded reconciliation finally fails an otherwise unresolved active run, the server requests a
+terminal transcript ingest before recording the failed lifecycle state. That preserves a completed
+answer for recovery when the engine response arrived but its terminal lifecycle signal did not.
 
 The visible run indicator, Stop control, and Escape stop shortcut use the same session-scoped
 projection. A non-stale lifecycle `running` result stays active even if a transient SSE observation

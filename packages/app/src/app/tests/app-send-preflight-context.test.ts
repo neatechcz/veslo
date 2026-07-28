@@ -53,7 +53,7 @@ test("sendPrompt carries a preflight context into first-session creation", () =>
   );
   assert.match(
     bridgePrepareSource,
-    /const sendRuntimePreparation = await deps\.prepareSendRuntimeForSend\("sendPrompt", input\.sendPreflight\);[\s\S]*if \(!sendRuntimePreparation\.ok\) \{/,
+    /const sendRuntimePreparation = await deps\.prepareSendRuntimeForSend\(\s*"sendPrompt",\s*input\.sendPreflight,?\s*\);[\s\S]*if \(!sendRuntimePreparation\.ok\) \{/,
     "compatibility bridge prepare should delegate runtime and managed AI readiness to the send readiness owner and consume its typed result",
   );
   const prepareStart = runtimeReadinessSource.indexOf("async function prepareSendRuntimeForSend(");
@@ -92,17 +92,37 @@ test("createSessionAndOpen skips duplicate preflight gates when sendPrompt alrea
 
   assert.match(
     createSource,
-    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\) \{[\s\S]*deps\.recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
-    "createSessionAndOpen should log and skip the duplicate managed AI gate",
+    /const managedAiPreflightDecision =\s*resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),/,
+    "createSessionAndOpen should resolve the managed-AI preflight decision",
   );
   assert.match(
     createSource,
-    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightEnginePrepared: Boolean\(createPreflight\.enginePrepared\),[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\) \{[\s\S]*deps\.recordSendTrace\("createSessionAndOpen:health-skip"/,
-    "createSessionAndOpen should log and skip the duplicate runtime preparation step",
+    /if \(serverSubmitOwnsManagedAiAdmission\) \{[\s\S]*createSessionAndOpen:server-submit-managed-ai-admission-skip/,
+    "createSessionAndOpen should leave managed-AI admission to the server for server-owned writes",
+  );
+  assert.match(
+    createSource,
+    /else if \(managedAiPreflightDecision\.type === "skip"\) \{[\s\S]*deps\.recordSendTrace\("createSessionAndOpen:managed-ai-bootstrap-skip"/,
+    "createSessionAndOpen should retain the duplicate managed-AI gate skip branch",
+  );
+  assert.match(
+    createSource,
+    /const runtimeHealthPreflightDecision =\s*resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightEnginePrepared: Boolean\(createPreflight\.enginePrepared\),[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),/,
+    "createSessionAndOpen should resolve the runtime-health preflight decision",
+  );
+  assert.match(
+    createSource,
+    /if \(serverSubmitOwnsFirstMessageAdmission\) \{[\s\S]*deps\.ensureServerOwnedSubmitTransportReady\(/,
+    "createSessionAndOpen should use server admission for server-owned writes",
+  );
+  assert.match(
+    createSource,
+    /else if \(runtimeHealthPreflightDecision\.type === "skip"\) \{[\s\S]*deps\.recordSendTrace\("createSessionAndOpen:health-skip"/,
+    "createSessionAndOpen should preserve the duplicate-runtime skip branch",
   );
   assert.ok(
-    createSource.indexOf("const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision") <
-      createSource.indexOf("const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision"),
+    createSource.indexOf("const runtimeHealthPreflightDecision") <
+      createSource.indexOf("const managedAiPreflightDecision"),
     "createSessionAndOpen should prepare runtime before managed AI routing",
   );
 });
@@ -125,7 +145,7 @@ test("send runtime preflight skips duplicate health only for an explicitly healt
   );
   assert.match(
     wrapperSource,
-    /return \(await ensureLocalRuntimeReachableForSendResult\(reason, preflightOrTraceId\)\)\.ok;/,
+    /return \(\s*await ensureLocalRuntimeReachableForSendResult\(reason, preflightOrTraceId\)\s*\)\.ok;/,
     "the public boolean helper should delegate to the typed runtime readiness result",
   );
   assert.match(
@@ -138,7 +158,7 @@ test("send runtime preflight skips duplicate health only for an explicitly healt
 test("app wires runtime recovery options through the workspace runtime owner", () => {
   assert.match(
     appSource,
-    /ensureEngineForWorkspace: \(workspaceId, options\) => workspaceStore\.ensureEngineForWorkspace\(workspaceId, options\)/,
+    /ensureEngineForWorkspace: \(workspaceId, options\) =>\s*workspaceStore\.ensureEngineForWorkspace\(workspaceId, options\)/,
     "send runtime readiness must not drop reason/loadSessions options at the app boundary",
   );
   assert.match(

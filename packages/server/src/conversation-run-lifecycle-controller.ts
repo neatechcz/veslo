@@ -831,6 +831,41 @@ export function createConversationRunLifecycleController(
     });
   };
 
+  const requestTerminalTranscriptIngest = (
+    input: ConversationRunLifecycleScheduleReconcileInput,
+    status: LifecycleRunStatus,
+    source: "lifecycle-terminal" | "reconcile-exhausted",
+  ) => {
+    const directory = input.directory?.trim() ?? "";
+    const opencodeSessionId = input.opencodeSessionId?.trim() ?? "";
+    if (!directory || !opencodeSessionId || !options.ingestTerminalTranscript) return;
+    void options.ingestTerminalTranscript({
+      workspace: input.workspace,
+      directory,
+      opencodeSessionId,
+      runId: input.runId,
+    }).then(() => {
+      recordTrace("server:conversation-run:terminal-transcript-ingest", {
+        workspaceId: input.workspace.id,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        opencodeSessionId,
+        status,
+        source,
+      });
+    }).catch((error) => {
+      recordTrace("server:conversation-run:terminal-transcript-ingest-error", {
+        workspaceId: input.workspace.id,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        opencodeSessionId,
+        status,
+        source,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  };
+
   const markLifecycleFailed = async (
     input: ConversationRunLifecycleSubmitInput,
     lifecycleOwner: OrchestratorLifecycleClient | null,
@@ -1113,6 +1148,7 @@ export function createConversationRunLifecycleController(
           ...lifecycleStatusTraceFields(status),
         });
         if (shouldFinalizeExhaustedActiveLifecycleRun(status)) {
+          requestTerminalTranscriptIngest(input, "failed", "reconcile-exhausted");
           await lifecycleOwner.markFailed(
             input.workspace.id,
             status?.runId?.trim() || runId,
@@ -1222,33 +1258,7 @@ export function createConversationRunLifecycleController(
             });
           });
         }
-        const directory = input.directory?.trim() ?? "";
-        const opencodeSessionId = input.opencodeSessionId?.trim() ?? "";
-        if (directory && opencodeSessionId && options.ingestTerminalTranscript) {
-          void options.ingestTerminalTranscript({
-              workspace: input.workspace,
-              directory,
-              opencodeSessionId,
-              runId,
-            }).then(() => {
-            recordTrace("server:conversation-run:terminal-transcript-ingest", {
-              workspaceId: input.workspace.id,
-              conversationId,
-              runId,
-              opencodeSessionId,
-              status: status.status,
-            });
-          }).catch((error) => {
-            recordTrace("server:conversation-run:terminal-transcript-ingest-error", {
-              workspaceId: input.workspace.id,
-              conversationId,
-              runId,
-              opencodeSessionId,
-              status: status.status,
-              message: error instanceof Error ? error.message : String(error),
-            });
-          });
-        }
+        requestTerminalTranscriptIngest(input, status.status, "lifecycle-terminal");
         scheduleQueueDrain(input.workspace.id, conversationId, 0);
         return;
       }

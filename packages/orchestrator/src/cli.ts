@@ -2337,6 +2337,21 @@ const TRACE_PATH_KEYS = new Set([
   "workdir", "configDir", "skillDir", "rootDir", "dataDir", "traceFile", "file", "manifestPath", "engineDirectory",
 ]);
 
+// Loopback endpoints are implementation detail and rotate whenever an engine
+// restarts. Keep the durable engine owner tuple and binding digests in traces,
+// but never persist an endpoint that could be copied into a later request.
+const TRACE_ENDPOINT_KEYS = new Set([
+  "baseUrl", "daemonUrl", "engineBaseUrl", "opencodeBaseUrl", "port", "daemonPort", "opencodePort",
+  "enginePort", "clientHost", "connectHost",
+]);
+
+// Upstream errors frequently embed the response body. Event names, status,
+// owner identity, and typed error fields remain useful for causality; the raw
+// prose does not belong in a durable local trace.
+const TRACE_PRIVATE_TEXT_KEYS = new Set([
+  "error", "message", "body", "responseBody", "upstreamBody", "bodyExcerpt", "responseExcerpt",
+]);
+
 function redactTracePath(value: string): string {
   if (!isAbsolute(value) && !/^[A-Za-z]:[\\/]/.test(value) && !value.startsWith("\\\\")) return value;
   return "[redacted]";
@@ -2344,11 +2359,14 @@ function redactTracePath(value: string): string {
 
 function sanitizeTracePayload(value: unknown, key?: string): unknown {
   if (typeof value === "string") {
+    if (key && TRACE_PRIVATE_TEXT_KEYS.has(key)) return "[redacted]";
     if (key === "search" || key === "targetSearch") {
       return value.replace(/directory=[^&]*/gi, "directory=[redacted]");
     }
+    if (key && TRACE_ENDPOINT_KEYS.has(key)) return "[redacted]";
     return key && TRACE_PATH_KEYS.has(key) ? redactTracePath(value) : value;
   }
+  if (typeof value === "number" && key && TRACE_ENDPOINT_KEYS.has(key)) return "[redacted]";
   if (Array.isArray(value)) return value.map((item) => sanitizeTracePayload(item));
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, sanitizeTracePayload(childValue, childKey)]));
@@ -4732,6 +4750,7 @@ async function runRouterDaemon(args: ParsedArgs) {
         const startedAt = Date.now();
         traceRuntime("orchestrator:engine-spawn:start", {
           workspaceId,
+          engineOwnerId,
           workdirPathId: workspacePathTraceId(workdir),
           configDirPathId: workspacePathTraceId(configDir),
           workdir,
@@ -4792,6 +4811,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           (opencodeHost === "0.0.0.0" || opencodeHost === "::" ? "127.0.0.1" : opencodeHost);
         traceRuntime("orchestrator:engine-spawn:done", {
           workspaceId,
+          engineOwnerId,
           workdirPathId: workspacePathTraceId(workdir),
           configDirPathId: workspacePathTraceId(configDir),
           workdir,
@@ -6494,6 +6514,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           }
           traceRuntime("orchestrator:proxy-ensure:done", {
             traceId: sendTraceId || null,
+            runtimeSkillOperationId: runtimeSkillDecisionOperationId,
             workspaceId: ws.id,
             workspacePath: ws.path,
             engineTopology: workspaceTopology,
@@ -6502,6 +6523,11 @@ async function runRouterDaemon(args: ParsedArgs) {
             method: req.method,
             path: url.pathname,
             state: proxyTarget.engine.state,
+            engineOwnerId: proxyTarget.engine.engineOwnerId,
+            directoryInstanceEpoch: proxyTarget.engine.directoryInstanceEpoch ?? null,
+            skillViewRevision: proxyTarget.engine.skillViewRevision ?? null,
+            authorizationRevision: proxyTarget.engine.authorizationRevision ?? null,
+            openCodeConfigDigest: proxyTarget.engine.openCodeConfigDigest ?? null,
             pid: proxyTarget.engine.pid,
             port: proxyTarget.engine.port,
             baseUrl: proxyTarget.engine.baseUrl,
@@ -6510,9 +6536,15 @@ async function runRouterDaemon(args: ParsedArgs) {
           });
           writeSendWorkflowTrace("orchestrator:proxy-ensure:done", {
             ...workflowBase,
+            runtimeSkillOperationId: runtimeSkillDecisionOperationId,
             engineKind: proxyTarget.engineKind,
             spawnedByRequest: proxyTarget.spawnedByRequest,
             state: proxyTarget.engine.state,
+            engineOwnerId: proxyTarget.engine.engineOwnerId,
+            directoryInstanceEpoch: proxyTarget.engine.directoryInstanceEpoch ?? null,
+            skillViewRevision: proxyTarget.engine.skillViewRevision ?? null,
+            authorizationRevision: proxyTarget.engine.authorizationRevision ?? null,
+            openCodeConfigDigest: proxyTarget.engine.openCodeConfigDigest ?? null,
             pid: proxyTarget.engine.pid,
             port: proxyTarget.engine.port,
             baseUrl: proxyTarget.engine.baseUrl,

@@ -367,10 +367,10 @@ pub fn desktop_runtime_preferences_write(
 #[cfg(test)]
 mod tests {
     use super::{
-        default_shared_unsandboxed_engine_override, normalize_runtime_preferences,
-        pilot_diagnostics_dir_from_value, resolve_shared_unsandboxed_engine_override,
-        runtime_diagnostics_env_overrides_for_dir, runtime_diagnostics_env_overrides_from_override,
-        host_runtime_env_overrides, runtime_preferences_path_for_dir,
+        default_shared_unsandboxed_engine_override, host_runtime_env_overrides,
+        normalize_runtime_preferences, pilot_diagnostics_dir_from_value,
+        resolve_shared_unsandboxed_engine_override, runtime_diagnostics_env_overrides_for_dir,
+        runtime_diagnostics_env_overrides_from_override, runtime_preferences_path_for_dir,
         DesktopRuntimePreferences, PersistedRuntimePreferences,
     };
     use std::path::PathBuf;

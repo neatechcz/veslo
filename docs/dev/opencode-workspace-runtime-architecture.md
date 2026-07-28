@@ -648,9 +648,12 @@ before they can update the scoped session status, for foreground and background
 workspace streams alike.
 
 The session capabilities sidebar projects the app-owned shared skill inventory;
-it never triggers its own filesystem scan. The app shell loads that inventory
-for an active local workspace so a first opened session can show global and
-workspace skills immediately.
+it never triggers its own filesystem scan. Full inventory refresh, including
+all configured local workspaces, is requested when the Skills dashboard opens
+and after explicit skill mutations. Ordinary workspace activation must not
+start that full background scan or delay the first session interaction. It may
+schedule a bounded global-plus-active-workspace refresh for the sidebar, but
+that work remains detached from runtime preparation and prompt sending.
 
 If any step fails, store the failure at the narrowest correct level:
 

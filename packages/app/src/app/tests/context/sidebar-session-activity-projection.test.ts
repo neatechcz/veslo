@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { projectSidebarSessionActivity } from "../../context/sidebar-session-activity-projection";
+import {
+  projectSidebarSessionActivity,
+  sameSidebarSessionActivity,
+} from "../../context/sidebar-session-activity-projection";
 import { scopedSessionStatusKey } from "../../lib/scoped-session-status";
 
 const row = (workspaceId = "ws-a", sessionId = "ses-a") => ({
@@ -103,4 +106,13 @@ test("failed current lifecycle is inactive error and stale terminal is ignored",
     diagnostics: { [key]: { status: "completed", stale: true, runId: "run-a", sessionId: "ses-a", workspaceId: "ws-a", conversationId: "conv-ses-a" } },
   });
   assert.equal(stale["ws-a:ses-a"]?.active, true);
+});
+
+test("activity equality only changes the affected sidebar row", () => {
+  const idle = { active: false, phase: "idle" as const, source: null };
+  const running = { active: true, phase: "running" as const, source: "lifecycle" as const };
+
+  assert.equal(sameSidebarSessionActivity(idle, { ...idle }), true);
+  assert.equal(sameSidebarSessionActivity(idle, running), false);
+  assert.equal(sameSidebarSessionActivity(running, undefined), false);
 });

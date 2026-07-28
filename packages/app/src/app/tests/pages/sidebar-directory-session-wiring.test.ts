@@ -211,7 +211,7 @@ test("dashboard view props expose unread session ids", () => {
 test("dashboard view props expose the sidebar activity projection", () => {
   assert.match(
     dashboardSource,
-    /sidebarSessionActivityByRowKey: Record<string, SidebarSessionActivity>;/,
+    /sidebarSessionActivityForRowKey: SidebarSessionActivityForRowKey;/,
     "DashboardViewProps should expose the sole sidebar activity input",
   );
 });
@@ -227,13 +227,13 @@ test("session wires unread session ids into WorkspaceSessionList", () => {
 test("dashboard and session wire the same activity projection into WorkspaceSessionList", () => {
   assert.match(
     dashboardSource,
-    /sidebarSessionActivityByRowKey=\{props\.sidebarSessionActivityByRowKey\}/,
+    /sidebarSessionActivityForRowKey=\{props\.sidebarSessionActivityForRowKey\}/,
     "Dashboard should pass the activity projection into WorkspaceSessionList",
   );
 
   assert.match(
     sessionSource,
-    /sidebarSessionActivityByRowKey:\s*props\.sidebarSessionActivityByRowKey/,
+    /sidebarSessionActivityForRowKey:\s*props\.sidebarSessionActivityForRowKey/,
     "Session should pass the same activity projection into WorkspaceSessionList",
   );
 });

@@ -212,6 +212,7 @@ function createHarness(
     displayedConversationStillMatches: () => true,
     engineReady: () => true,
     ensureLocalRuntimeReachableForSend: async () => true,
+    ensureServerOwnedSubmitTransportReady: async () => true,
     emitFlowProgress: (event) => {
       progressEvents.push(event.type);
       busyState = event.type !== "flow.idle";
@@ -1495,7 +1496,7 @@ test("session send workflow keeps missing-binding recovery separate from one tra
   let submitAttempts = 0;
   let runtimeRecoveryCalls = 0;
   const harness = createHarness({
-    ensureLocalRuntimeReachableForSend: async (event, preflight) => {
+    ensureServerOwnedSubmitTransportReady: async (event, preflight) => {
       runtimeRecoveryCalls += 1;
       assert.equal(event, "sendPrompt");
       assert.equal(preflight.targetWorkspace?.workspaceId, "ws-active");
@@ -1571,7 +1572,7 @@ test("session send workflow keeps missing-binding recovery separate from one tra
 test("missing live binding recovery does not replay an unavailable undefined retry", async () => {
   let submitAttempts = 0;
   const harness = createHarness({
-    ensureLocalRuntimeReachableForSend: async () => true,
+    ensureServerOwnedSubmitTransportReady: async () => true,
     resolveSelectedSessionBrowseScope: (sessionId) =>
       sessionId === "sess-target"
         ? {
@@ -1619,7 +1620,7 @@ test("missing live binding recovery failure disposes provisional ownership once"
       provisionalDisposals += 1;
       return true;
     },
-    ensureLocalRuntimeReachableForSend: async () => false,
+    ensureServerOwnedSubmitTransportReady: async () => false,
     displayedConversationStillMatches: () => false,
     resolveSelectedSessionBrowseScope: (sessionId) =>
       sessionId === "sess-target"

@@ -399,17 +399,30 @@ pub fn veslo_server_restart(
         .lock()
         .ok()
         .and_then(|state| state.health_port);
-    let lifecycle_config = opencode_url.as_deref().and_then(|url| {
-        let trimmed = url.trim();
-        let prefix = trimmed.find("/workspace/")?;
-        let daemon_url = trimmed[..prefix].trim_end_matches('/').to_string();
-        let auth = read_orchestrator_auth(&orchestrator::resolve_orchestrator_data_dir())?;
-        let token = auth
-            .lifecycle_token
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())?;
-        Some((daemon_url, token))
-    });
+    let lifecycle_config = {
+        let daemon_url = opencode_url
+            .as_deref()
+            .and_then(|url| {
+                let trimmed = url.trim();
+                let prefix = trimmed.find("/workspace/")?;
+                Some(trimmed[..prefix].trim_end_matches('/').to_string())
+            })
+            .or_else(|| {
+                let data_dir = orchestrator::resolve_orchestrator_data_dir();
+                let status = orchestrator::resolve_orchestrator_status(&data_dir, None);
+                status
+                    .daemon
+                    .map(|daemon| format!("http://127.0.0.1:{}", daemon.port))
+            });
+        daemon_url.and_then(|daemon_url| {
+            let auth = read_orchestrator_auth(&orchestrator::resolve_orchestrator_data_dir())?;
+            let token = auth
+                .lifecycle_token
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())?;
+            Some((daemon_url, token))
+        })
+    };
 
     start_veslo_server(
         &app,

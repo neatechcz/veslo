@@ -722,9 +722,9 @@ pub fn spawn_veslo_server(
         secrets_file_path.to_string_lossy().to_string(),
     );
     command = command.env(VESLO_SANDBOX_BACKEND_ENV, sandbox_backend);
-    for (key, value) in crate::runtime_preferences::host_runtime_env_overrides(
-        shared_unsandboxed_engine,
-    ) {
+    for (key, value) in
+        crate::runtime_preferences::host_runtime_env_overrides(shared_unsandboxed_engine)
+    {
         command = command.env(key, value);
     }
     for (key, value) in crate::runtime_preferences::runtime_diagnostics_env_overrides(app)? {

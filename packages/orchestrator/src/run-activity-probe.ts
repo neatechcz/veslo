@@ -209,6 +209,7 @@ export function deriveRunActivityFromSessionMessages(
     expectedUserMessageId?: string | null;
     abortRequested?: boolean;
     sessionInactiveObserved?: boolean;
+    sessionExplicitlyIdle?: boolean;
   },
 ): RunProbeResult {
   const messages = readMessages(payload);
@@ -332,6 +333,21 @@ export function deriveRunActivityFromSessionMessages(
   }
 
   if (hasAssistantOutput) {
+    // A visible response tied to this exact admitted user message is safe to
+    // complete once OpenCode explicitly reports the session idle. Some
+    // OpenCode/provider paths persist the response without a finish marker;
+    // return a non-authoritative candidate so the registry still requires two
+    // stable probes before it terminalizes the run.
+    if (expectedUserMessageId && options?.sessionExplicitlyIdle) {
+      return {
+        active: false,
+        terminalCandidate: true,
+        terminalStatus: "completed",
+        activityKind: "idle",
+        waitReason: "session_idle",
+        progressSignature: `inactive-session:${progressSignature}`,
+      };
+    }
     if (expectedUserMessageId && options?.sessionInactiveObserved) {
       return inactiveExactRunPending(progressSignature);
     }
@@ -368,11 +384,17 @@ function mergeRetryStatusWithMessages(messages: RunProbeResult): RunProbeResult 
   };
 }
 
-function sessionInactiveIsObserved(payload: unknown, engineSessionId: string): boolean {
+function sessionExplicitlyIdleIsObserved(payload: unknown, engineSessionId: string): boolean {
   if (!isRecord(payload)) return false;
-  if (!Object.prototype.hasOwnProperty.call(payload, engineSessionId)) return true;
+  if (!Object.prototype.hasOwnProperty.call(payload, engineSessionId)) return false;
   const status = payload[engineSessionId];
   return isRecord(status) && readString(status.type) === "idle";
+}
+
+function sessionInactiveIsObserved(payload: unknown, engineSessionId: string): boolean {
+  if (!isRecord(payload)) return false;
+  return !Object.prototype.hasOwnProperty.call(payload, engineSessionId) ||
+    sessionExplicitlyIdleIsObserved(payload, engineSessionId);
 }
 
 function latestMessageCreatedAt(payload: unknown): number | null {
@@ -466,9 +488,11 @@ export function createRunActivityProbe<Engine>(deps: {
       const status = await fetchJson(engine, record, "/session/status");
       let statusActivity: RunProbeResult | null = null;
       let sessionInactiveObserved = false;
+      let sessionExplicitlyIdle = false;
       if (status.ok) {
         statusActivity = deriveRunActivityFromSessionStatus(status.payload, record.engineSessionId);
         sessionInactiveObserved = sessionInactiveIsObserved(status.payload, record.engineSessionId);
+        sessionExplicitlyIdle = sessionExplicitlyIdleIsObserved(status.payload, record.engineSessionId);
       } else if (status.status !== 404) {
         return { unreachable: true };
       }
@@ -484,6 +508,7 @@ export function createRunActivityProbe<Engine>(deps: {
         expectedUserMessageId: expectedUserMessageIdForRecord(record),
         abortRequested: record.abortRequested === true,
         sessionInactiveObserved,
+        sessionExplicitlyIdle,
       });
       if ("unreachable" in messageActivity) return messageActivity;
       if (

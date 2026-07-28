@@ -516,6 +516,20 @@ export type WorkspaceRuntimePrepareResult = {
   engine: EngineInfo;
 };
 
+/**
+ * Starts only the local orchestrator control plane needed by a server-owned
+ * submit. It never activates the target workspace engine.
+ */
+export async function runtimeEnsureAdmissionTransport(input: {
+  workspaceId?: string | null;
+  workspacePath: string;
+}): Promise<EngineInfo> {
+  return invoke<EngineInfo>("runtime_ensure_admission_transport", {
+    workspaceId: input.workspaceId ?? null,
+    workspacePath: input.workspacePath,
+  });
+}
+
 export async function runtimePrepareWorkspace(input: {
   projectDir: string;
   workspaceId?: string | null;

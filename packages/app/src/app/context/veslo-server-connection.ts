@@ -148,6 +148,8 @@ export type CheckVesloServerOptions = {
 export type EnsureLocalVesloServerRunningOptions = {
   ignoreStartupPreference?: boolean;
   requireRuntimeChainReady?: boolean;
+  /** Recreate the owned server so a newly available daemon lifecycle config is picked up. */
+  forceRestart?: boolean;
 };
 
 export type VesloServerProbeResult = {
@@ -977,6 +979,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
         ? "ignore-startup"
         : "respect-startup",
       requireRuntimeChainReady ? "runtime-chain" : "server-only",
+      options?.forceRestart === true ? "force-restart" : "reuse",
     ].join(":");
     const inFlight = ensureLocalVesloServerRunningInFlight.get(ensureKey);
     if (inFlight) {
@@ -998,7 +1001,7 @@ export function createVesloServerConnection(deps: VesloServerConnectionDeps) {
       }
 
       const liveInfo = resolveRunningVesloServerHostInfo(info);
-      if (liveInfo?.baseUrl?.trim()) {
+      if (liveInfo?.baseUrl?.trim() && options?.forceRestart !== true) {
         const result = await checkVesloServer(
           liveInfo.baseUrl.trim(),
           liveInfo.clientToken?.trim() || undefined,

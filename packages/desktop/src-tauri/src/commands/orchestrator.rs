@@ -1008,9 +1008,9 @@ pub fn orchestrator_start_detached(
 
     let shared_unsandboxed_engine =
         crate::runtime_preferences::read_shared_unsandboxed_engine_override(&app)?;
-    for (key, value) in crate::runtime_preferences::host_runtime_env_overrides(
-        shared_unsandboxed_engine,
-    ) {
+    for (key, value) in
+        crate::runtime_preferences::host_runtime_env_overrides(shared_unsandboxed_engine)
+    {
         command = command.env(key, value);
     }
     for (key, value) in crate::runtime_preferences::runtime_diagnostics_env_overrides(&app)? {

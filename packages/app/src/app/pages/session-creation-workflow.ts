@@ -26,8 +26,7 @@ import type {
 } from "../lib/veslo-server";
 import type { PendingSidebarSessionMetadata, View } from "../types";
 
-export type SessionCreationPreflightContext =
-  SendRuntimePreflightContext &
+export type SessionCreationPreflightContext = SendRuntimePreflightContext &
   ConversationSendPreflightContext<VesloServerClient>;
 
 export type SessionCreationWorkflowCreateOptions = {
@@ -40,7 +39,9 @@ export type SessionCreationWorkflowCreateOptions = {
   submitOrigin?: string | null;
   submitSource?: string | null;
   onSubmitResult?: (result: VesloConversationSubmitResult) => void;
-  onSubmittedRunMaterialized?: (input: MaterializedSubmittedConversationRun) => boolean;
+  onSubmittedRunMaterialized?: (
+    input: MaterializedSubmittedConversationRun,
+  ) => boolean;
   onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
   preflight?: SessionCreationPreflightContext;
 };
@@ -96,12 +97,20 @@ export type SessionCreationWorkflowOptions = {
   baseUrl: () => string;
   currentView: () => View;
   developerMode: () => boolean;
-  createSendPreflightContext: (sendTraceId?: string | null) => SessionCreationPreflightContext;
+  createSendPreflightContext: (
+    sendTraceId?: string | null,
+  ) => SessionCreationPreflightContext;
   ensureLocalRuntimeReachableForSend: (
     reason: "createSessionAndOpen",
     preflight: SendRuntimePreflightContext,
   ) => Promise<boolean>;
-  ensureManagedAiBootstrapReady: (preflight: SendRuntimePreflightContext) => Promise<boolean>;
+  ensureServerOwnedSubmitTransportReady: (
+    reason: "createSessionAndOpen",
+    preflight: SendRuntimePreflightContext,
+  ) => Promise<boolean>;
+  ensureManagedAiBootstrapReady: (
+    preflight: SendRuntimePreflightContext,
+  ) => Promise<boolean>;
   isWorkspaceClientStaleError: (error: unknown) => error is {
     entryWorkspaceId?: string | null;
     currentWorkspaceId?: string | null;
@@ -126,7 +135,9 @@ export type SessionCreationWorkflowOptions = {
     result: SessionCreationResult,
     options: SessionCreationWorkflowCreateOptions,
   ) => void;
-  applyCreatedSessionTransition: (result: SessionCreationResult) => Promise<void>;
+  applyCreatedSessionTransition: (
+    result: SessionCreationResult,
+  ) => Promise<void>;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
   reloadBusy: () => boolean;
   resolveRuntimeSandboxStateForTarget: (
@@ -135,9 +146,14 @@ export type SessionCreationWorkflowOptions = {
   resolveSendTargetWorkspaceScope: (
     scope: null,
   ) => SendTargetWorkspaceScope | null;
-  resolveWorkspaceRootForConversationScope: (workspaceId: string, directory: string) => string;
+  resolveWorkspaceRootForConversationScope: (
+    workspaceId: string,
+    directory: string,
+  ) => string;
   routedClient: (workspaceId?: string | null) => unknown;
-  routedClientForSendTarget: (targetWorkspace?: SendRuntimePreflightTargetWorkspace | null) => unknown;
+  routedClientForSendTarget: (
+    targetWorkspace?: SendRuntimePreflightTargetWorkspace | null,
+  ) => unknown;
   safeStringify: (value: unknown) => string;
   sendTraceStep: <T>(
     event: string,
@@ -198,19 +214,29 @@ export function createSessionCreationWorkflow(
       result.status !== "blocked" &&
       result.status !== "failed"
     ) {
-      throw new Error(`Conversation submit returned ${result.status} before session materialization was complete.`);
+      throw new Error(
+        `Conversation submit returned ${result.status} before session materialization was complete.`,
+      );
     }
     const materialized = result.materializedSession;
-    if (!materialized || typeof materialized !== "object" || Array.isArray(materialized)) {
+    if (
+      !materialized ||
+      typeof materialized !== "object" ||
+      Array.isArray(materialized)
+    ) {
       if (result.status === "blocked" || result.status === "failed") {
         throw new SubmitStoppedSessionMaterializationError(result.message);
       }
-      throw new Error("Conversation submit did not return a materialized session.");
+      throw new Error(
+        "Conversation submit did not return a materialized session.",
+      );
     }
     const session = materialized as CreatedSession;
     const sessionId = typeof session.id === "string" ? session.id.trim() : "";
     if (!sessionId) {
-      throw new Error("Conversation submit returned a materialized session without an id.");
+      throw new Error(
+        "Conversation submit returned a materialized session without an id.",
+      );
     }
     return {
       ...session,
@@ -228,7 +254,10 @@ export function createSessionCreationWorkflow(
     const blockAppDuringCreate = options.blockAppDuringCreate ?? true;
     const pendingSidebarSession = options.pendingSession ?? null;
     const preflight = options.preflight;
-    const sendTraceId = options.sendTraceId?.trim() || preflight?.traceId || deps.activeSendTraceId();
+    const sendTraceId =
+      options.sendTraceId?.trim() ||
+      preflight?.traceId ||
+      deps.activeSendTraceId();
     const tracePayload = sendTraceId ? { traceId: sendTraceId } : undefined;
     const pendingTargetWorkspace = pendingSidebarSession?.workspaceId?.trim()
       ? {
@@ -248,7 +277,8 @@ export function createSessionCreationWorkflow(
       clientMessageId &&
       deps.submitConversationFromVesloWriteApi,
     );
-    const serverSubmitOwnsManagedAiAdmission = serverSubmitOwnsFirstMessageAdmission;
+    const serverSubmitOwnsManagedAiAdmission =
+      serverSubmitOwnsFirstMessageAdmission;
     deps.recordSendTrace("createSessionAndOpen:start", {
       ...(tracePayload ?? {}),
       connectingWorkspaceId: deps.workspace.connectingWorkspaceId(),
@@ -258,14 +288,21 @@ export function createSessionCreationWorkflow(
       targetWorkspaceRoot: targetWorkspace?.workspaceRoot ?? null,
       targetDirectory: targetWorkspace?.directory ?? null,
       hasClient: Boolean(deps.routedClient()),
-      serverSubmitOwnsRuntimeAdmission: false,
+      serverSubmitOwnsRuntimeAdmission: serverSubmitOwnsFirstMessageAdmission,
       serverSubmitOwnsFirstMessageAdmission,
       serverSubmitOwnsManagedAiAdmission,
     });
 
-    const connectingWorkspaceId = deps.workspace.connectingWorkspaceId()?.trim() ?? "";
-    if (connectingWorkspaceId && (!targetWorkspace || connectingWorkspaceId === targetWorkspace.workspaceId)) {
-      warn("[createSessionAndOpen] Blocked: workspace switch in progress", { connectingWorkspaceId });
+    const connectingWorkspaceId =
+      deps.workspace.connectingWorkspaceId()?.trim() ?? "";
+    if (
+      connectingWorkspaceId &&
+      (!targetWorkspace ||
+        connectingWorkspaceId === targetWorkspace.workspaceId)
+    ) {
+      warn("[createSessionAndOpen] Blocked: workspace switch in progress", {
+        connectingWorkspaceId,
+      });
       deps.recordSendTrace("createSessionAndOpen:blocked-connecting", {
         ...(tracePayload ?? {}),
         connectingWorkspaceId,
@@ -275,25 +312,51 @@ export function createSessionCreationWorkflow(
       return undefined;
     }
     if (connectingWorkspaceId) {
-      deps.recordSendTrace("createSessionAndOpen:ignore-unrelated-connecting-workspace", {
-        ...(tracePayload ?? {}),
-        connectingWorkspaceId,
-        targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
-      });
+      deps.recordSendTrace(
+        "createSessionAndOpen:ignore-unrelated-connecting-workspace",
+        {
+          ...(tracePayload ?? {}),
+          connectingWorkspaceId,
+          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+        },
+      );
     }
 
-    const createPreflight = preflight ?? deps.createSendPreflightContext(sendTraceId);
-    createPreflight.targetWorkspace = createPreflight.targetWorkspace ?? targetWorkspace;
+    const createPreflight =
+      preflight ?? deps.createSendPreflightContext(sendTraceId);
+    createPreflight.targetWorkspace =
+      createPreflight.targetWorkspace ?? targetWorkspace;
     if (!(createPreflight.conversationWorkspaceByDirectory instanceof Map)) {
       createPreflight.conversationWorkspaceByDirectory = new Map();
     }
-    createPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
+    createPreflight.effectiveSandbox =
+      deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
     let createRuntimeReady = true;
-    const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision({
-      preflightEnginePrepared: Boolean(createPreflight.enginePrepared),
-      preflightRuntimeHealthOk: Boolean(createPreflight.runtimeHealthOk),
-    });
-    if (runtimeHealthPreflightDecision.type === "skip") {
+    const runtimeHealthPreflightDecision =
+      resolveCreateSessionRuntimeHealthPreflightDecision({
+        preflightEnginePrepared: Boolean(createPreflight.enginePrepared),
+        preflightRuntimeHealthOk: Boolean(createPreflight.runtimeHealthOk),
+      });
+    if (serverSubmitOwnsFirstMessageAdmission) {
+      createRuntimeReady = await deps.sendTraceStep(
+        "createSessionAndOpen:ensure-server-submit-transport",
+        () =>
+          deps.ensureServerOwnedSubmitTransportReady(
+            "createSessionAndOpen",
+            createPreflight,
+          ),
+        {
+          ...(tracePayload ?? {}),
+          activeWorkspaceId: deps.workspace.activeWorkspaceId().trim(),
+          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+          workspaceType: deps.workspace.activeWorkspaceDisplay().workspaceType,
+        },
+      );
+      // Server admission, not a prior routed client, is the readiness proof for
+      // the first server-owned write.
+      createPreflight.runtimeHealthOk = false;
+      createPreflight.enginePrepared = false;
+    } else if (runtimeHealthPreflightDecision.type === "skip") {
       deps.recordSendTrace("createSessionAndOpen:health-skip", {
         ...(tracePayload ?? {}),
         reason: runtimeHealthPreflightDecision.reason,
@@ -302,7 +365,11 @@ export function createSessionCreationWorkflow(
     } else {
       createRuntimeReady = await deps.sendTraceStep(
         "createSessionAndOpen:ensure-local-runtime-reachable",
-        () => deps.ensureLocalRuntimeReachableForSend("createSessionAndOpen", createPreflight),
+        () =>
+          deps.ensureLocalRuntimeReachableForSend(
+            "createSessionAndOpen",
+            createPreflight,
+          ),
         {
           ...(tracePayload ?? {}),
           activeWorkspaceId: deps.workspace.activeWorkspaceId().trim(),
@@ -316,20 +383,30 @@ export function createSessionCreationWorkflow(
       }
     }
     if (!createRuntimeReady) {
-      deps.recordSendTrace("createSessionAndOpen:blocked-runtime-unreachable", tracePayload);
+      deps.recordSendTrace(
+        "createSessionAndOpen:blocked-runtime-unreachable",
+        tracePayload,
+      );
       deps.setError("Local runtime is not ready yet.");
       return undefined;
     }
-    createPreflight.enginePrepared = true;
-    createPreflight.effectiveSandbox = deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
-    const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision({
-      preflightManagedAiReady: Boolean(createPreflight.managedAiReady),
-    });
-    if (serverSubmitOwnsManagedAiAdmission) {
-      deps.recordSendTrace("createSessionAndOpen:server-submit-managed-ai-admission-skip", {
-        ...(tracePayload ?? {}),
-        targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+    if (!serverSubmitOwnsFirstMessageAdmission) {
+      createPreflight.enginePrepared = true;
+    }
+    createPreflight.effectiveSandbox =
+      deps.resolveRuntimeSandboxStateForTarget(targetWorkspace);
+    const managedAiPreflightDecision =
+      resolveCreateSessionManagedAiPreflightDecision({
+        preflightManagedAiReady: Boolean(createPreflight.managedAiReady),
       });
+    if (serverSubmitOwnsManagedAiAdmission) {
+      deps.recordSendTrace(
+        "createSessionAndOpen:server-submit-managed-ai-admission-skip",
+        {
+          ...(tracePayload ?? {}),
+          targetWorkspaceId: targetWorkspace?.workspaceId ?? null,
+        },
+      );
     } else if (managedAiPreflightDecision.type === "skip") {
       deps.recordSendTrace("createSessionAndOpen:managed-ai-bootstrap-skip", {
         ...(tracePayload ?? {}),
@@ -348,17 +425,24 @@ export function createSessionCreationWorkflow(
         },
       );
       if (!managedAiReady) {
-        deps.recordSendTrace("createSessionAndOpen:blocked-managed-ai-bootstrap", tracePayload);
+        deps.recordSendTrace(
+          "createSessionAndOpen:blocked-managed-ai-bootstrap",
+          tracePayload,
+        );
         return undefined;
       }
       createPreflight.managedAiReady = true;
     }
     const requiresRoutedRuntimeClient =
-      !serverSubmitOwnsFirstMessageAdmission || Boolean(createPreflight.runtimeHealthOk);
+      !serverSubmitOwnsFirstMessageAdmission ||
+      Boolean(createPreflight.runtimeHealthOk);
     if (requiresRoutedRuntimeClient) {
       const client = deps.routedClientForSendTarget(targetWorkspace);
       if (!client) {
-        deps.recordSendTrace("createSessionAndOpen:blocked-no-client", tracePayload);
+        deps.recordSendTrace(
+          "createSessionAndOpen:blocked-no-client",
+          tracePayload,
+        );
         deps.setError("Local runtime is not ready yet.");
         return undefined;
       }
@@ -371,7 +455,10 @@ export function createSessionCreationWorkflow(
       deps.workspace.activeWorkspaceRoot().trim();
     if (!sessionDirectory) {
       warn("[createSessionAndOpen] Blocked: activeWorkspaceRoot is empty");
-      deps.recordSendTrace("createSessionAndOpen:blocked-empty-root", tracePayload);
+      deps.recordSendTrace(
+        "createSessionAndOpen:blocked-empty-root",
+        tracePayload,
+      );
       deps.setError("Workspace directory is not available. Please try again.");
       return undefined;
     }
@@ -392,7 +479,10 @@ export function createSessionCreationWorkflow(
     mark("start", {
       baseUrl: deps.baseUrl(),
       workspace: sessionDirectory || null,
-      workspaceId: targetWorkspace?.workspaceId || deps.workspace.activeWorkspaceId().trim() || null,
+      workspaceId:
+        targetWorkspace?.workspaceId ||
+        deps.workspace.activeWorkspaceId().trim() ||
+        null,
     });
 
     await deps.sendTraceStep(
@@ -412,21 +502,31 @@ export function createSessionCreationWorkflow(
       const initialSessionTitle = initialTitle.trim();
       mark("session:create:start");
       const traceCreateFailure = (
-        event: "createSessionAndOpen:create-error" | "createSessionAndOpen:create-retry-error",
+        event:
+          | "createSessionAndOpen:create-error"
+          | "createSessionAndOpen:create-retry-error",
         error: unknown,
         extra?: Record<string, unknown>,
       ) => {
         deps.recordSendTrace(event, {
           ...(tracePayload ?? {}),
-          message: error instanceof Error ? error.message : deps.safeStringify(error),
+          message:
+            error instanceof Error ? error.message : deps.safeStringify(error),
           ...(extra ?? {}),
         });
       };
 
-      const activeWorkspaceId = targetWorkspace?.workspaceId || deps.workspace.activeWorkspaceId().trim();
+      const activeWorkspaceId =
+        targetWorkspace?.workspaceId ||
+        deps.workspace.activeWorkspaceId().trim();
       if (!activeWorkspaceId) {
-        const missingWorkspaceError = new Error("Workspace id is required for session creation.");
-        traceCreateFailure("createSessionAndOpen:create-error", missingWorkspaceError);
+        const missingWorkspaceError = new Error(
+          "Workspace id is required for session creation.",
+        );
+        traceCreateFailure(
+          "createSessionAndOpen:create-error",
+          missingWorkspaceError,
+        );
         mark("session:create:error", { error: missingWorkspaceError.message });
         throw missingWorkspaceError;
       }
@@ -437,50 +537,67 @@ export function createSessionCreationWorkflow(
         "current",
         Extract<VesloConversationSubmitResult, { status: "submitted" }>
       >();
-      const createViaVeslo = async (retry: boolean): Promise<CreatedSession> => {
+      const createViaVeslo = async (
+        retry: boolean,
+      ): Promise<CreatedSession> => {
         const retryPayload = retry ? { retry: true } : {};
-        const vesloCreated = submitDraft && clientMessageId && submitConversation
-          ? await (async () => {
-            const submitResult = await deps.sendTraceStep(
-              "createSessionAndOpen:veslo-conversation-submit-materialize",
-              () => submitConversation(
-                activeWorkspaceId,
-                sessionDirectory,
-                {
-                  clientMessageId,
-                  origin: options.submitOrigin?.trim() || "session:normal",
-                  source: options.submitSource?.trim() || null,
-                  target: {
-                    directory: sessionDirectory,
-                    pendingClientSessionId: pendingSidebarSession?.id ?? null,
+        const vesloCreated =
+          submitDraft && clientMessageId && submitConversation
+            ? await (async () => {
+                const submitResult = await deps.sendTraceStep(
+                  "createSessionAndOpen:veslo-conversation-submit-materialize",
+                  () =>
+                    submitConversation(
+                      activeWorkspaceId,
+                      sessionDirectory,
+                      {
+                        clientMessageId,
+                        origin:
+                          options.submitOrigin?.trim() || "session:normal",
+                        source: options.submitSource?.trim() || null,
+                        target: {
+                          directory: sessionDirectory,
+                          pendingClientSessionId:
+                            pendingSidebarSession?.id ?? null,
+                        },
+                        draft: submitDraft,
+                        options: options.submitOptions,
+                      },
+                      createPreflight,
+                    ),
+                  {
+                    ...(tracePayload ?? {}),
+                    workspaceId: activeWorkspaceId,
+                    sessionDirectory,
+                    clientMessageId,
+                    ...retryPayload,
                   },
-                  draft: submitDraft,
-                  options: options.submitOptions,
+                );
+                if (submitResult) options.onSubmitResult?.(submitResult);
+                if (submitResult?.status === "submitted") {
+                  materializedSubmittedRuns.set("current", submitResult);
+                }
+                return createdSessionFromSubmitResult(submitResult);
+              })()
+            : await deps.sendTraceStep(
+                "createSessionAndOpen:veslo-conversation-create",
+                () =>
+                  deps.createConversationFromVesloWriteApi(
+                    activeWorkspaceId,
+                    sessionDirectory,
+                    initialSessionTitle || undefined,
+                    createPreflight,
+                  ),
+                {
+                  ...(tracePayload ?? {}),
+                  workspaceId: activeWorkspaceId,
+                  sessionDirectory,
+                  ...retryPayload,
                 },
-                createPreflight,
-              ),
-              {
-                ...(tracePayload ?? {}),
-                workspaceId: activeWorkspaceId,
-                sessionDirectory,
-                clientMessageId,
-                ...retryPayload,
-              },
-            );
-            if (submitResult) options.onSubmitResult?.(submitResult);
-            if (submitResult?.status === "submitted") {
-              materializedSubmittedRuns.set("current", submitResult);
-            }
-            return createdSessionFromSubmitResult(submitResult);
-          })()
-          : await deps.sendTraceStep(
-            "createSessionAndOpen:veslo-conversation-create",
-            () => deps.createConversationFromVesloWriteApi(
-              activeWorkspaceId,
-              sessionDirectory,
-              initialSessionTitle || undefined,
-              createPreflight,
-            ),
+              );
+        if (!vesloCreated) {
+          deps.recordSendTrace(
+            "createSessionAndOpen:conversation-create-unavailable",
             {
               ...(tracePayload ?? {}),
               workspaceId: activeWorkspaceId,
@@ -488,23 +605,28 @@ export function createSessionCreationWorkflow(
               ...retryPayload,
             },
           );
-        if (!vesloCreated) {
-          deps.recordSendTrace("createSessionAndOpen:conversation-create-unavailable", {
-            ...(tracePayload ?? {}),
-            workspaceId: activeWorkspaceId,
-            sessionDirectory,
-            ...retryPayload,
-          });
-          throw new Error("Conversation service is unavailable for session creation.");
+          throw new Error(
+            "Conversation service is unavailable for session creation.",
+          );
         }
         return vesloCreated;
       };
 
-      const recoverRuntimeBeforeCreateRetry = async (firstError: unknown): Promise<boolean> => {
-        const recoverable = shouldRecoverLocalRuntimeFromHealthError(firstError, deps.safeStringify);
-        traceCreateFailure("createSessionAndOpen:create-error", firstError, { recoverable });
+      const recoverRuntimeBeforeCreateRetry = async (
+        firstError: unknown,
+      ): Promise<boolean> => {
+        const recoverable = shouldRecoverLocalRuntimeFromHealthError(
+          firstError,
+          deps.safeStringify,
+        );
+        traceCreateFailure("createSessionAndOpen:create-error", firstError, {
+          recoverable,
+        });
         mark("session:create:error", {
-          error: firstError instanceof Error ? firstError.message : deps.safeStringify(firstError),
+          error:
+            firstError instanceof Error
+              ? firstError.message
+              : deps.safeStringify(firstError),
           recoverable,
         });
         if (!recoverable || createPreflight.forceRecovery) {
@@ -515,12 +637,30 @@ export function createSessionCreationWorkflow(
         createPreflight.forceRecovery = true;
         createPreflight.runtimeHealthOk = false;
         createPreflight.enginePrepared = false;
-        deps.recordSendTrace("createSessionAndOpen:create-runtime-recovery-start", tracePayload);
-        const recovered = await deps.ensureLocalRuntimeReachableForSend("createSessionAndOpen", createPreflight);
-        deps.recordSendTrace("createSessionAndOpen:create-runtime-recovery-result", {
-          ...(tracePayload ?? {}),
-          recovered,
-        });
+        deps.recordSendTrace(
+          "createSessionAndOpen:create-runtime-recovery-start",
+          tracePayload,
+        );
+        const recovered = serverSubmitOwnsFirstMessageAdmission
+          ? await deps.ensureServerOwnedSubmitTransportReady(
+              "createSessionAndOpen",
+              createPreflight,
+            )
+          : await deps.ensureLocalRuntimeReachableForSend(
+              "createSessionAndOpen",
+              createPreflight,
+            );
+        if (serverSubmitOwnsFirstMessageAdmission) {
+          createPreflight.runtimeHealthOk = false;
+          createPreflight.enginePrepared = false;
+        }
+        deps.recordSendTrace(
+          "createSessionAndOpen:create-runtime-recovery-result",
+          {
+            ...(tracePayload ?? {}),
+            recovered,
+          },
+        );
         return recovered;
       };
 
@@ -543,18 +683,23 @@ export function createSessionCreationWorkflow(
             mark("session:create:retry");
             return { session: await createViaVeslo(true), retried: true };
           } catch (retryError) {
-            traceCreateFailure("createSessionAndOpen:create-retry-error", retryError);
+            traceCreateFailure(
+              "createSessionAndOpen:create-retry-error",
+              retryError,
+            );
             throw retryError;
           }
         }
       };
 
-      const { session: createdSession, retried: createRetried } = await createWithOneRuntimeRecovery();
+      const { session: createdSession, retried: createRetried } =
+        await createWithOneRuntimeRecovery();
       deps.recordSendTrace("createSessionAndOpen:create-ok", {
         ...(tracePayload ?? {}),
         sessionDirectory,
         conversationId: createdSession.conversationId ?? null,
-        opencodeSessionId: createdSession.opencodeSessionId ?? createdSession.id,
+        opencodeSessionId:
+          createdSession.opencodeSessionId ?? createdSession.id,
         ...(createRetried ? { retry: true } : {}),
       });
       mark("session:create:ok", createRetried ? { retry: true } : undefined);
@@ -566,11 +711,17 @@ export function createSessionCreationWorkflow(
         activeWorkspaceId: deps.workspace.activeWorkspaceId(),
       });
       const createdWorkspaceRoot = createdWorkspaceId
-        ? deps.resolveWorkspaceRootForConversationScope(createdWorkspaceId, sessionDirectory)
+        ? deps.resolveWorkspaceRootForConversationScope(
+            createdWorkspaceId,
+            sessionDirectory,
+          )
         : sessionDirectory;
       const handoff: MaterializedSessionHandoff | null = clientMessageId
         ? createMaterializedSessionHandoff({
-            workspaceId: createdWorkspaceId || targetWorkspace?.workspaceId || deps.workspace.activeWorkspaceId().trim(),
+            workspaceId:
+              createdWorkspaceId ||
+              targetWorkspace?.workspaceId ||
+              deps.workspace.activeWorkspaceId().trim(),
             workspaceRoot: createdWorkspaceRoot,
             directory: sessionDirectory,
             pendingSessionKey: pendingSidebarSession?.id ?? null,
@@ -578,7 +729,8 @@ export function createSessionCreationWorkflow(
             clientMessageId,
             sendTraceId: sendTraceId || null,
             conversationId: createdSession.conversationId ?? null,
-            opencodeSessionId: createdSession.opencodeSessionId ?? createdSession.id,
+            opencodeSessionId:
+              createdSession.opencodeSessionId ?? createdSession.id,
           })
         : null;
       const creationResult: SessionCreationResult = {
@@ -608,7 +760,8 @@ export function createSessionCreationWorkflow(
       }
       if (applyEffects) {
         deps.applyCreatedSessionState(creationResult, options);
-        const materializedSubmittedRun = materializedSubmittedRuns.get("current");
+        const materializedSubmittedRun =
+          materializedSubmittedRuns.get("current");
         if (materializedSubmittedRun) {
           creationResult.transition.skipTranscriptRead =
             options.onSubmittedRunMaterialized?.({
@@ -643,10 +796,14 @@ export function createSessionCreationWorkflow(
     } catch (error) {
       deps.finishPerf(perfEnabled, "session.create", "error", startedAt, {
         runId,
-        error: error instanceof Error ? error.message : deps.safeStringify(error),
+        error:
+          error instanceof Error ? error.message : deps.safeStringify(error),
       });
       if (error instanceof SubmitStoppedSessionMaterializationError) {
-        deps.recordSendTrace("createSessionAndOpen:submit-stopped-materialization", tracePayload);
+        deps.recordSendTrace(
+          "createSessionAndOpen:submit-stopped-materialization",
+          tracePayload,
+        );
         return undefined;
       }
       if (deps.isWorkspaceClientStaleError(error)) {
@@ -657,7 +814,8 @@ export function createSessionCreationWorkflow(
         });
         return undefined;
       }
-      const message = error instanceof Error ? error.message : deps.unknownErrorMessage();
+      const message =
+        error instanceof Error ? error.message : deps.unknownErrorMessage();
       deps.recordSendTrace("createSessionAndOpen:error", {
         ...(tracePayload ?? {}),
         message,

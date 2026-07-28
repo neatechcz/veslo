@@ -471,10 +471,7 @@ fn redact_send_workflow_trace_value(value: &mut serde_json::Value) {
                 // exact signal a causality audit needs. A bool or null cannot
                 // leak a credential, so keep it and redact everything else.
                 if is_private_send_workflow_trace_key(key)
-                    && !matches!(
-                        child,
-                        serde_json::Value::Bool(_) | serde_json::Value::Null
-                    )
+                    && !matches!(child, serde_json::Value::Bool(_) | serde_json::Value::Null)
                 {
                     *child = serde_json::Value::String("[redacted]".to_string());
                 } else {

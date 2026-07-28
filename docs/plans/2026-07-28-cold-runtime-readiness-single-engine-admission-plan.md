@@ -1,7 +1,7 @@
 ---
 title: Cold Runtime Readiness and Single-Engine Admission Plan
-status: proposed
-done: false
+status: implemented
+done: true
 date: 2026-07-28
 issue: unlinked
 scope: local desktop cold first-message and missing-live-binding server-owned submit admission
@@ -22,6 +22,18 @@ resolves a different serving binding and replaces that engine immediately.
 This is a readiness-boundary problem, not a reason to make fresh Skills a
 foreground send dependency. The desired result is one engine generation for
 one server-owned cold admission, using the binding that owns that admission.
+
+## Implementation disposition
+
+Implemented on 2026-07-28. The app now establishes only a daemon-backed
+workspace proxy descriptor before a server-owned write; the server then owns
+the single binding-aware engine admission. The pre-HTTP missing-binding path
+uses the same port, while post-HTTP transport replay remains independent.
+
+Focused app, server, orchestrator, and desktop-native checks cover this
+contract. Desktop E2E and installed-app evidence remain intentionally deferred
+to the requester-owned live-installation check; they are not missing
+repository implementation work.
 
 ## Confirmed causal chain
 
@@ -49,12 +61,34 @@ The second submit used B without replacement and was fast. This identifies
 duplicate cold admission, rather than ordinary warm prompt latency, as the
 direct optimization target.
 
+### Registration constraint to preserve
+
+The present write preflight calls workspace registration with
+`requireLiveOpencodeBaseUrl: true`, and its registration cache is keyed by that
+base URL. This is a real contract: silently dropping the URL requirement would
+weaken stale-binding protection.
+
+For an orchestrated workspace, however, this is not necessarily a requirement
+for a ready OpenCode process. Desktop `engine_info` exposes the workspace
+orchestrator proxy URL as soon as the daemon is available; the proxy lazily
+admits the engine on its first request. Therefore CRR must distinguish a
+daemon-provided proxy transport descriptor from an app-routed, ready OpenCode
+client. The implementation must prove which is available on the cold path
+before changing the registration contract or introducing a server-owned
+replacement registration API.
+
 ## Terminology and ownership
 
 ```text
 service-ready
   Local Veslo server is reachable with valid local credentials. It is not
   evidence that any workspace engine exists.
+
+admission-transport-ready
+  The server can reach the local control-plane needed to perform a
+  server-owned workspace admission. It does not itself activate a workspace
+  engine or choose a Skill binding. Existing server-only readiness may provide
+  this state, but only focused evidence can establish that it does.
 
 process-ready
   A specific OpenCode process answered its process health endpoint. It is not
@@ -65,12 +99,12 @@ execution-ready
   server-owned session/write on the matching engine generation.
 ```
 
-| Boundary | Owner | Responsibility |
-| --- | --- | --- |
-| Desktop | local process bootstrap | Bring the local service/daemon chain up without activating a workspace engine for a server-owned write. |
-| App | user intent and presentation | Request service readiness, submit once, and only present state; it does not choose a Skill view or declare execution ready from a routed client. |
-| Server | admission and serving binding | Read the durable serving binding or canonical empty fallback and perform the server-owned session/write. |
-| Orchestrator | engine generation | Start or reuse exactly the engine admitted for that binding, fence incompatible active runs, and expose the accepted generation. |
+| Boundary     | Owner                         | Responsibility                                                                                                                                               |
+| ------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Desktop      | local process bootstrap       | Establish admission-transport readiness without activating a workspace engine for a server-owned write.                                                      |
+| App          | user intent and presentation  | Request admission-transport readiness, submit once, and only present state; it does not choose a Skill view or declare execution ready from a routed client. |
+| Server       | admission and serving binding | Read the durable serving binding or canonical empty fallback and perform the server-owned session/write.                                                     |
+| Orchestrator | engine generation             | Start or reuse exactly the engine admitted for that binding, fence incompatible active runs, and expose the accepted generation.                             |
 
 ## Non-negotiable invariants
 
@@ -81,22 +115,36 @@ execution-ready
 3. A canonical empty binding remains a valid fail-open fallback, but it must
    not cause a disposable preliminary engine when the same server-owned write
    will immediately admit a different already-serving binding.
-4. A successful process `/global/health` response is `process-ready`, not
+4. Every newly admitted write runs only on an engine whose Skill-view and
+   authorization revisions equal the server-admitted binding. A stale engine
+   may serve only the run already bound to it; it must never be silently reused
+   for a newer write merely to reduce engine generations.
+5. Engine owner, directory-instance epoch, and OpenCode config digest are
+   binding evidence in traces and response handling. They do not substitute
+   for the server's revision and authorization admission handshake.
+6. A successful process `/global/health` response is `process-ready`, not
    `execution-ready`.
-5. The first server-owned `POST /session` is the admission/readiness proof for
+7. The first server-owned `POST /session` is the admission/readiness proof for
    the first message; do not add a competing app-side `GET /session` gate.
-6. Reads, workspace browsing, passive event attachment, and abort remain
+8. Reads, workspace browsing, passive event attachment, and abort remain
    non-starting. They must not acquire an engine just to prove readiness.
-7. Existing pre-HTTP missing-live-binding recovery and post-HTTP transport
+9. Existing pre-HTTP missing-live-binding recovery and post-HTTP transport
    replay remain separate bounded paths with the original `clientMessageId`.
-8. No trace persists raw workspace paths, engine URLs, prompts, credentials,
-   or upstream response bodies.
+10. A server-owned write registration may use the daemon-provided workspace
+    proxy descriptor required by the existing safe registration contract, but
+    must not require a ready engine, create an app-routed client, or select a
+    binding. The descriptor must remain bound to the correct workspace and may
+    not be reused as an arbitrary or stale engine URL.
+11. No trace persists raw workspace paths, engine URLs, prompts, credentials,
+    or upstream response bodies.
 
 ## Target flow
 
 ```text
 server-owned first message
-  -> ensure local service/daemon transport only
+  -> ensure admission transport only
+  -> obtain only the daemon proxy descriptor if current safe registration needs it
+  -> register/resolve workspace without a ready app-routed engine
   -> submit one server-owned request with same clientMessageId
   -> server reads serving binding (or canonical empty fallback)
   -> orchestrator admits one matching engine generation
@@ -105,16 +153,30 @@ server-owned first message
   -> app attaches presentation/client state after acceptance
 ```
 
-The app must not require a routed OpenCode client before this first submit.
-The server already owns the first-message conversation materialization and is
-the only boundary that can consistently choose the effective binding.
+The app must not require a ready routed OpenCode client or a workspace engine
+before this first submit. It may obtain the daemon proxy descriptor strictly
+to satisfy the existing workspace-registration contract. The server already
+owns first-message conversation materialization and is the only boundary that
+can consistently choose the effective binding.
 
 ## CRR00 — Deterministic causal characterization
 
-state: pending
-done: false
+state: implemented
+done: true
 
 Owner: app/server/orchestrator test boundary
+
+### Confirmed evidence
+
+The development capture has already established the production-shaped causal
+chain: one workspace, two engine owners, canonical empty then serving Skill
+revisions, and a detached probe against the displaced generation. CRR00 is
+not a second request to rediscover that cause.
+
+Its remaining purpose is a deterministic regression test and a narrow answer
+to whether current server-only bootstrap is admission-transport-ready. CRR00
+does not block CRR01a implementation, but it blocks both CRR01b creation and
+the `implemented` disposition of CRR01a.
 
 ### Required work
 
@@ -125,9 +187,17 @@ Owner: app/server/orchestrator test boundary
    displaced generation can produce the detached probe failure.
 3. Capture only safe identity fields: trace ID, workspace ID, binding digest,
    engine owner/generation, operation phase, status class, and elapsed time.
-4. Record whether a server-only bootstrap can guarantee the local submit
-   transport without activating a workspace engine. If it cannot, specify the
-   smallest desktop-owned daemon-only port required by CRR01.
+4. Record whether current server-only bootstrap can guarantee
+   admission-transport readiness without activating a workspace engine. If it
+   cannot, specify the smallest desktop-owned daemon-only port required by
+   CRR01b.
+5. Independently prove the registration boundary: with the daemon available
+   and no ready workspace engine, determine whether `engine_info` yields the
+   workspace proxy descriptor and whether the current write registration plus
+   server-owned submit accepts it. Preserve the base-URL-keyed stale-binding
+   protection when it does. Only if this proof fails may CRR01a introduce a
+   distinct server-owned registration contract; document its owner and
+   migration rather than silently making writes URL-agnostic.
 
 ### Acceptance evidence
 
@@ -137,12 +207,12 @@ Owner: app/server/orchestrator test boundary
 - It identifies the exact owner that must establish service-ready state before
   server submission.
 
-## CRR01 — Server-owned cold admission preflight
+## CRR01a — App server-owned cold admission preflight
 
-state: pending
-done: false
+state: implemented
+done: true
 
-Owner: desktop app/runtime composition boundary
+Owner: desktop app and server-owned submit composition boundary
 
 ### Required implementation
 
@@ -150,18 +220,39 @@ Owner: desktop app/runtime composition boundary
    Its contract is service/daemon reachability only; it must not call workspace
    engine activation, select a Skill binding, create a routed OpenCode client,
    load sessions, or run Managed AI configuration.
-2. Reuse the existing server-only local-server readiness capability where it
-   is sufficient. If a local daemon must be started before the server can
-   submit, expose one desktop-owned daemon-only operation instead of reusing
-   workspace runtime preparation.
-3. In the server-owned first-message path, call this narrow dependency in
+2. Start by adapting the existing server-only local-server readiness capability
+   behind that narrow dependency. It is not assumed to establish
+   admission-transport readiness until CRR00 proves it; CRR01b owns the
+   conditional native extension.
+3. Preserve the current write-registration identity guarantee. If CRR00 proves
+   the daemon exposes the workspace proxy descriptor before engine admission,
+   use that descriptor for registration while keeping the base-URL-keyed cache;
+   it is not a routed-client or process-ready requirement. If it does not,
+   stop CRR01a at this boundary and implement the explicit owner-approved
+   server-owned registration contract identified by CRR00. Do not make the
+   existing registration URL-agnostic or reuse a prior engine URL.
+4. In the server-owned first-message path, call this narrow dependency in
    place of full local runtime reachability when no live routed client exists.
-4. Keep `runtimeHealthOk` false for this route until server-owned admission
+5. Apply the same rule to the pre-HTTP retry of that same first-message
+   creation. It must not reintroduce a canonical-empty workspace activation
+   after a stale-token or missing-binding failure.
+6. Keep `runtimeHealthOk` false for this route until server-owned admission
    succeeds. Consequently, do not require an app-routed client before the
    server-owned first submit.
-5. After a successful submit, allow normal routed-client attachment and event
+7. After a successful submit, allow normal routed-client attachment and event
    presentation to converge against the accepted engine generation.
-6. Keep legacy/non-server-owned conversation creation behavior unchanged.
+8. Keep legacy/non-server-owned conversation creation behavior unchanged.
+
+### Call-site matrix
+
+| Call site                                                             | CRR handling                                                               |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| First server-owned conversation submit with no routed client          | CRR01a: admission-transport only, then server-owned session admission.     |
+| Pre-HTTP retry of that first creation                                 | CRR01a: same admission-transport rule and original `clientMessageId`.      |
+| Existing server-owned session with exact missing-live-binding failure | CRR02: reevaluate engine-only recovery against the server-admission owner. |
+| Existing healthy session and its post-HTTP transport replay           | Unchanged by CRR01a.                                                       |
+| Legacy/non-server-owned conversation creation                         | Unchanged by CRR01a.                                                       |
+| Browsing, reads, event attachment, and abort                          | Unchanged and non-starting.                                                |
 
 ### Non-goals
 
@@ -173,7 +264,8 @@ Owner: desktop app/runtime composition boundary
 
 ### Acceptance evidence
 
-1. A cold server-owned first message creates at most one engine generation.
+1. For one fixed admitted binding, a cold server-owned first message creates
+   at most one engine generation.
 2. No app-side workspace activation or routed-client requirement precedes its
    server-owned session materialization.
 3. The accepted `/session` and prompt use one matching binding and engine
@@ -181,17 +273,53 @@ Owner: desktop app/runtime composition boundary
 4. If no serving binding exists, canonical empty starts one engine and still
    permits the server-owned send.
 5. Managed AI bootstrap/configuration remains absent from this narrow path.
+6. Registration either succeeds from a daemon proxy descriptor with no ready
+   engine, or uses the separately specified server-owned registration contract;
+   no stale prior URL is accepted as a substitute.
+
+## CRR01b — Conditional daemon-only admission transport
+
+state: implemented
+done: true
+
+Owner: desktop native/runtime boundary
+
+### Entry condition
+
+Implement this step only if CRR00 proves that the current server-only
+bootstrap can reach the Veslo server but cannot perform a server-owned
+admission without first activating a workspace engine.
+
+### Required implementation
+
+1. Expose one desktop-owned operation that starts or validates only the local
+   daemon/control-plane needed for server-owned submit transport.
+2. It must not register or activate a workspace, select a Skill binding,
+   create an OpenCode client, or report a workspace as execution-ready.
+3. Wire it behind CRR01a's narrow dependency; do not reuse full workspace
+   preparation or make the app select an engine mode.
+4. Provide a bounded timeout, explicit failure classification, and safe trace
+   fields that distinguish server reachability from admission transport.
+
+### Acceptance evidence
+
+- Cold server-owned first submit reaches server admission without a preliminary
+  workspace engine generation.
+- A failed daemon-only operation leaves no workspace engine, routed client, or
+  false `runtimeHealthOk` state behind.
+- Legacy workspace preparation and read-only paths retain their current owner
+  and behavior.
 
 ## CRR02 — Existing-session missing-binding alignment
 
-state: pending
-done: false
+state: implemented
+done: true
 
 Owner: desktop app/server-owned submit boundary
 
 ### Required implementation
 
-1. Re-evaluate the PRR01 missing-live-binding recovery against the CRR01
+1. Re-evaluate the PRR01 missing-live-binding recovery against the CRR01a
    transport port. When the server-owned submit is capable of admitting the
    correct binding itself, recovery must not proactively create a canonical
    empty workspace engine.
@@ -213,18 +341,21 @@ Owner: desktop app/server-owned submit boundary
 
 ## CRR03 — Readiness state and causal diagnostics
 
-state: pending
-done: false
+state: implemented
+done: true
 
 Owner: desktop diagnostics and orchestrator tracing
 
 ### Required implementation
 
-1. Make readiness traces distinguish `service-ready`, `process-ready`, and
-   `execution-ready`; do not use one ambiguous `ready` result for all three.
+1. Make readiness traces distinguish `service-ready`,
+   `admission-transport-ready`, `process-ready`, and `execution-ready`; do
+   not use one ambiguous `ready` result for all four.
 2. Emit one engine-generation transition record for replacement, with safe
-   previous/new owner identity, previous/new binding digest, replacement
-   reason, triggering operation ID, and elapsed duration.
+   previous/new owner identity, previous/new Skill-view and authorization
+   revision digests, replacement reason, triggering operation ID, and elapsed
+   duration. A legitimate changed/revoked binding must remain distinguishable
+   from an avoidable duplicate start for one unchanged binding.
 3. Record detached app probes as diagnostic only, including the generation
    they targeted when known. A rejected detached probe must never overwrite a
    later accepted server-owned readiness state.
@@ -243,15 +374,15 @@ Owner: desktop diagnostics and orchestrator tracing
 
 ## CRR04 — Focused verification and rollout boundary
 
-state: pending
-done: false
+state: implemented
+done: true
 
 Owner: affected package maintainers
 
 ### Required verification
 
-1. Focused app tests for server-owned first-message preflight, missing-binding
-   recovery, UI switch cleanup, and one transport replay.
+1. Focused app tests for server-owned first-message preflight and retry,
+   missing-binding recovery, UI switch cleanup, and one transport replay.
 2. Focused orchestrator tests for one binding-admitted engine generation and
    safe replacement diagnostics.
 3. Focused server tests for serving-binding/canonical-empty admission and
@@ -270,7 +401,9 @@ Stop and revert the scoped CRR implementation if focused or requester-supplied
 runtime evidence shows any of the following:
 
 1. more than one accepted prompt for a single `clientMessageId`;
-2. more than one cold engine generation for an unchanged admitted binding;
+2. more than one cold engine generation for an unchanged admitted binding, or
+   a newer write silently executes on the old binding instead of being fenced
+   or safely re-admitted;
 3. a server-owned first message cannot submit when the app has no routed
    client but the local service transport is reachable;
 4. browsing, reads, or abort begin starting engines;
@@ -287,6 +420,8 @@ Each CRR step may change to `done: true` only with its acceptance evidence and
 an explicit disposition of `implemented`, `production-verified`, `disproved`,
 `externally-blocked`, `superseded`, or `tracked-separately`.
 
-The document remains `done: false` until CRR00 through CRR04 each has a final
-disposition. A later installed-app capture may promote the applicable steps to
-`production-verified` without broadening the repository implementation scope.
+All CRR00--CRR04 steps are implemented. CRR01b was required: existing
+server-only bootstrap did not establish a daemon-backed workspace proxy
+descriptor on a cold workspace. A later installed-app capture may promote the
+applicable steps to `production-verified` without broadening the repository
+implementation scope.

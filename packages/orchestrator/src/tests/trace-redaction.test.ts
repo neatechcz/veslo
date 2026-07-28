@@ -15,6 +15,11 @@ describe("orchestrator diagnostic trace redaction", () => {
     expect(cliSource).toContain('key === "search" || key === "targetSearch"');
     expect(cliSource).toContain('directory=[redacted]');
     expect(cliSource).toContain('return "[redacted]";');
+    expect(cliSource).toContain("TRACE_ENDPOINT_KEYS");
+    expect(cliSource).toContain("TRACE_PRIVATE_TEXT_KEYS");
+    expect(cliSource).toContain('"engineBaseUrl"');
+    expect(cliSource).toContain('"daemonPort"');
+    expect(cliSource).toContain('"upstreamBody"');
     expect(cliSource).not.toContain("<local>/${tail || basename(value)}");
   });
 });

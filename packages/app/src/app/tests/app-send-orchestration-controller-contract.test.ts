@@ -58,7 +58,7 @@ test("app delegates send orchestration decisions to the send orchestration contr
 test("sendPrompt uses the controller to decide busy ownership", () => {
   assert.match(
     sendPromptSource(),
-    /const sendPromptBusyOwnership = deps\.resolveSendPromptBusyOwnership\(\{ sessionId: sessionID \}\);[\s\S]*const blockAppDuringPromptSend = sendPromptBusyOwnership\.ownsBusy;/,
+    /const sendPromptBusyOwnership = deps\.resolveSendPromptBusyOwnership\(\{\s*sessionId: sessionID,?\s*\}\);[\s\S]*const blockAppDuringPromptSend = sendPromptBusyOwnership\.ownsBusy;/,
     "sendPrompt busy ownership should be delegated",
   );
 });
@@ -93,13 +93,33 @@ test("createSessionAndOpen uses the controller to skip duplicate send preflight 
 
   assert.match(
     createSource,
-    /const managedAiPreflightDecision = resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),[\s\S]*\}\);[\s\S]*if \(managedAiPreflightDecision\.type === "skip"\)/,
-    "createSessionAndOpen managed AI preflight decision should be delegated",
+    /const managedAiPreflightDecision =\s*resolveCreateSessionManagedAiPreflightDecision\(\{[\s\S]*preflightManagedAiReady: Boolean\(createPreflight\.managedAiReady\),/,
+    "createSessionAndOpen should delegate the managed-AI preflight decision",
+  );
+  assert.match(
+    createSource,
+    /if \(serverSubmitOwnsManagedAiAdmission\) \{[\s\S]*createSessionAndOpen:server-submit-managed-ai-admission-skip/,
+    "createSessionAndOpen should leave managed-AI admission to the server for server-owned writes",
+  );
+  assert.match(
+    createSource,
+    /else if \(managedAiPreflightDecision\.type === "skip"\)/,
+    "createSessionAndOpen should retain the legacy managed-AI skip branch",
   );
 
   assert.match(
     createSource,
-    /const runtimeHealthPreflightDecision = resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightEnginePrepared: Boolean\(createPreflight\.enginePrepared\),[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),[\s\S]*\}\);[\s\S]*if \(runtimeHealthPreflightDecision\.type === "skip"\)/,
-    "createSessionAndOpen runtime health preflight decision should be delegated",
+    /const runtimeHealthPreflightDecision =\s*resolveCreateSessionRuntimeHealthPreflightDecision\(\{[\s\S]*preflightEnginePrepared: Boolean\(createPreflight\.enginePrepared\),[\s\S]*preflightRuntimeHealthOk: Boolean\(createPreflight\.runtimeHealthOk\),/,
+    "createSessionAndOpen should delegate the runtime-health preflight decision",
+  );
+  assert.match(
+    createSource,
+    /if \(serverSubmitOwnsFirstMessageAdmission\) \{[\s\S]*deps\.ensureServerOwnedSubmitTransportReady\(/,
+    "createSessionAndOpen should use server admission for server-owned writes",
+  );
+  assert.match(
+    createSource,
+    /else if \(runtimeHealthPreflightDecision\.type === "skip"\)/,
+    "createSessionAndOpen should retain the legacy runtime-health branch",
   );
 });

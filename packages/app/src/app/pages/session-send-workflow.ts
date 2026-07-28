@@ -426,6 +426,10 @@ export type SessionSendWorkflowOptions = {
     event: "sendPrompt",
     preflight: SessionSendPreflightContext,
   ) => Promise<boolean>;
+  ensureServerOwnedSubmitTransportReady: (
+    event: "sendPrompt",
+    preflight: SessionSendPreflightContext,
+  ) => Promise<boolean>;
   ensureSelectedSessionWorkspaceActiveForSend: (
     sessionId: string,
     sendTraceId?: string | null,
@@ -2039,7 +2043,7 @@ export function createSessionSendWorkflow(
               );
               let recovered = false;
               try {
-                recovered = await deps.ensureLocalRuntimeReachableForSend(
+                recovered = await deps.ensureServerOwnedSubmitTransportReady(
                   "sendPrompt",
                   sendPreflight,
                 );

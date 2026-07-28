@@ -75,7 +75,7 @@ import ShareWorkspaceModal from "../components/share-workspace-modal";
 import SidebarAdvancedNav from "../components/session/sidebar-advanced-nav";
 import SidebarDashboardNav from "../components/session/sidebar-dashboard-nav";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
-import type { SidebarSessionActivity } from "../context/sidebar-session-activity-projection";
+import type { SidebarSessionActivityForRowKey } from "../context/sidebar-session-activity-projection";
 import type { SidebarSessionOpenTarget } from "../components/session/workspace-session-list-model";
 import TitlebarMenuToggles from "../components/titlebar-menu-toggles";
 import {
@@ -208,7 +208,7 @@ export type DashboardViewProps = {
   subagentDecorationsBySessionId: Record<string, SidebarSubagentDecoration>;
   archivedSessionIds: string[];
   sessionStatusById: Record<string, string>;
-  sidebarSessionActivityByRowKey: Record<string, SidebarSessionActivity>;
+  sidebarSessionActivityForRowKey: SidebarSessionActivityForRowKey;
   busySessionByWorkspaceId?: WorkspaceBusyMap;
   archiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
   unarchiveSession: (workspaceId: string, sessionId: string, target?: SidebarSessionOpenTarget) => Promise<void> | void;
@@ -892,7 +892,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 activeWorkspaceId={props.activeWorkspaceId}
                 selectedSessionId={props.selectedSessionId}
                 selectedSessionKey={props.activeUiConversationRef?.key ?? null}
-                sidebarSessionActivityByRowKey={props.sidebarSessionActivityByRowKey}
+                sidebarSessionActivityForRowKey={props.sidebarSessionActivityForRowKey}
                 allowSelectedParentExpansion={false}
                 connectingWorkspaceId={props.connectingWorkspaceId}
                 pendingPermissionCountByWs={props.pendingPermissionCountByWs}

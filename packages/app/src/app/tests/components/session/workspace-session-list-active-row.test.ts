@@ -37,7 +37,7 @@ test("recent and by-project session rows both use the helper and aria-current", 
 test("active background session rows render a loading spinner", () => {
   assert.match(
     source,
-    /const isProjectedRowActive = \(row: FlatSessionRow\) =>[\s\S]*sidebarSessionActivityByRowKey\?\.\[row\.rowKey\]\?\.active/,
+    /const isProjectedRowActive = \(row: FlatSessionRow\) =>[\s\S]*sidebarSessionActivityForRowKey\?\.\(row\.rowKey\)\?\.active/,
     "session rows should derive activity from the sole sidebar projection",
   );
   assert.match(source, /const rowForcesProjectOpen = \(row: FlatSessionRow\) =>[\s\S]*return isProjectedRowActive\(row\);/);

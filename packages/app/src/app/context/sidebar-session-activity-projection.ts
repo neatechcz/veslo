@@ -11,6 +11,17 @@ export type SidebarSessionActivity = {
   source: "lifecycle" | "terminal-lifecycle" | "session-status" | "workspace-busy" | null;
 };
 
+export type SidebarSessionActivityForRowKey = (rowKey: string) => SidebarSessionActivity | null;
+
+export function sameSidebarSessionActivity(
+  left: SidebarSessionActivity | null | undefined,
+  right: SidebarSessionActivity | null | undefined,
+) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.active === right.active && left.phase === right.phase && left.source === right.source;
+}
+
 const activeLifecycle = new Set(["submitted", "running", "blocked"]);
 const terminalLifecycle = new Set(["completed", "failed", "aborted"]);
 

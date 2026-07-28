@@ -25,6 +25,7 @@ use crate::veslo_server::{
     manager::VesloServerManager, persisted_veslo_server_plugin_state_path, start_veslo_server,
 };
 use crate::workspace::server_client::reconcile_server_workspaces;
+use crate::workspace::validation::{validate_workspace_path, ValidationMode};
 use serde::Serialize;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
@@ -90,6 +91,220 @@ fn workspace_runtime_prepare_result(
         action: action.as_str().to_string(),
         reason: reason.to_string(),
         engine,
+    }
+}
+
+fn live_orchestrator_daemon_port(data_dir: &str) -> Option<u16> {
+    let status = orchestrator::resolve_orchestrator_status(data_dir, None);
+    let port = status.daemon.as_ref()?.port;
+    let base_url = format!("http://127.0.0.1:{port}");
+    orchestrator::fetch_orchestrator_health(&base_url)
+        .ok()
+        .filter(|health| health.ok)
+        .and_then(|health| health.daemon.map(|daemon| daemon.port))
+}
+
+fn forward_orchestrator_events(
+    app: &AppHandle,
+    mut rx: tauri::async_runtime::Receiver<CommandEvent>,
+    orchestrator_state_handle: Arc<Mutex<OrchestratorState>>,
+) {
+    let orchestrator_forwarder = app
+        .try_state::<std::sync::Arc<crate::debug_logs_forwarder::DebugLogsForwarder>>()
+        .map(|state| state.inner().clone());
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(line_bytes) => {
+                    let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    if let Some(forwarder) = orchestrator_forwarder.as_ref() {
+                        forwarder.append(
+                            "orchestrator",
+                            crate::debug_logs_forwarder::LogStream::Stdout,
+                            &line,
+                        );
+                    }
+                    if let Ok(mut state) = orchestrator_state_handle.lock() {
+                        let next =
+                            state.last_stdout.as_deref().unwrap_or_default().to_string() + &line;
+                        state.last_stdout = Some(truncate_output(&next, 8000));
+                    }
+                }
+                CommandEvent::Stderr(line_bytes) => {
+                    let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    if let Some(forwarder) = orchestrator_forwarder.as_ref() {
+                        forwarder.append(
+                            "orchestrator",
+                            crate::debug_logs_forwarder::LogStream::Stderr,
+                            &line,
+                        );
+                    }
+                    if let Ok(mut state) = orchestrator_state_handle.lock() {
+                        let next =
+                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &line;
+                        state.last_stderr = Some(truncate_output(&next, 8000));
+                    }
+                }
+                CommandEvent::Terminated(payload) => {
+                    if let Ok(mut state) = orchestrator_state_handle.lock() {
+                        state.child_exited = true;
+                        state.last_exit_code = payload.code;
+                    }
+                }
+                CommandEvent::Error(message) => {
+                    if let Some(forwarder) = orchestrator_forwarder.as_ref() {
+                        forwarder.append(
+                            "orchestrator",
+                            crate::debug_logs_forwarder::LogStream::Stderr,
+                            &message,
+                        );
+                    }
+                    if let Ok(mut state) = orchestrator_state_handle.lock() {
+                        state.child_exited = true;
+                        state.last_exit_code = Some(-1);
+                        let next =
+                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &message;
+                        state.last_stderr = Some(truncate_output(&next, 8000));
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
+fn start_admission_transport_daemon(
+    app: &AppHandle,
+    orchestrator_manager: &OrchestratorManager,
+    veslo_manager: &VesloServerManager,
+    workspace_path: &str,
+) -> Result<(), String> {
+    let data_dir = orchestrator::resolve_orchestrator_data_dir();
+    if live_orchestrator_daemon_port(&data_dir).is_some() {
+        let has_lifecycle_token = orchestrator::read_orchestrator_auth(&data_dir)
+            .and_then(|auth| auth.lifecycle_token)
+            .is_some_and(|token| !token.trim().is_empty());
+        if has_lifecycle_token {
+            return Ok(());
+        }
+        return Err("A running admission daemon is missing its lifecycle credentials.".to_string());
+    }
+
+    let resource_dir = app.path().resource_dir().ok();
+    let current_bin_dir = tauri::process::current_binary(&app.env())
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+    let (program, in_path, notes) = resolve_engine_path(
+        !crate::supervised_process::external_runtime_binaries_allowed(),
+        resource_dir.as_deref(),
+        current_bin_dir.as_deref(),
+    );
+    if in_path && !crate::supervised_process::external_runtime_binaries_allowed() {
+        let notes_text = notes.join("\n");
+        return Err(format!(
+            "Bundled OpenCode sidecar is unavailable; refusing to run OpenCode from PATH in release. Set {}=1 only for a developer override.\n\nNotes:\n{notes_text}",
+            crate::supervised_process::ALLOW_EXTERNAL_RUNTIME_BINARIES_ENV
+        ));
+    }
+    let Some(program) = program else {
+        return Err("OpenCode CLI is unavailable for admission transport.".to_string());
+    };
+
+    let daemon_host = "127.0.0.1".to_string();
+    let daemon_port = find_free_port()?;
+    let lifecycle_token = Uuid::new_v4().to_string();
+    let veslo_client_token = current_or_new_veslo_client_token(veslo_manager);
+    let opencode_username = Some("opencode".to_string());
+    let opencode_password = Some(Uuid::new_v4().to_string());
+    let veslo_server_state_path = persisted_veslo_server_plugin_state_path(app)
+        .ok()
+        .map(|path| path.to_string_lossy().to_string());
+    let shared_unsandboxed_engine =
+        crate::runtime_preferences::read_shared_unsandboxed_engine_override(app)?;
+    let options = OrchestratorSpawnOptions {
+        data_dir: data_dir.clone(),
+        daemon_host: daemon_host.clone(),
+        daemon_port,
+        opencode_bin: program.to_string_lossy().to_string(),
+        opencode_host: resolve_opencode_bind_host(),
+        // The daemon requires a workdir argument, but it does not start an
+        // engine until a later proxy admission request reaches it.
+        opencode_workdir: workspace_path.to_string(),
+        opencode_port: Some(find_free_port()?),
+        opencode_username: opencode_username.clone(),
+        opencode_password: opencode_password.clone(),
+        veslo_token: Some(veslo_client_token),
+        lifecycle_token: Some(lifecycle_token.clone()),
+        cors: Some("*".to_string()),
+        veslo_server_state_path,
+        max_engines: None,
+        idle_suspend_ms: None,
+        shared_unsandboxed_engine,
+    };
+    let (rx, child) = orchestrator::spawn_orchestrator_daemon(app, &options)?;
+    let state_handle = orchestrator_manager.inner.clone();
+    {
+        let mut state = state_handle
+            .lock()
+            .map_err(|_| "orchestrator mutex poisoned".to_string())?;
+        state.child = Some(child);
+        state.child_exited = false;
+        state.last_exit_code = None;
+        state.data_dir = Some(data_dir.clone());
+        state.last_stdout = None;
+        state.last_stderr = None;
+    }
+    if let Err(error) = orchestrator::write_orchestrator_auth(
+        &data_dir,
+        opencode_username.as_deref(),
+        opencode_password.as_deref(),
+        Some(lifecycle_token.as_str()),
+        Some(workspace_path),
+    ) {
+        if let Ok(mut state) = state_handle.lock() {
+            OrchestratorManager::stop_locked(
+                &mut state,
+                OrchestratorShutdownAttribution::new(
+                    "admission_transport_auth_persist_failed",
+                    "runtime_ensure_admission_transport",
+                ),
+            );
+        }
+        return Err(format!(
+            "Admission transport credentials could not be persisted: {error}"
+        ));
+    }
+    forward_orchestrator_events(app, rx, state_handle.clone());
+
+    let started = std::time::Instant::now();
+    let timeout_ms = std::env::var("VESLO_ORCHESTRATOR_START_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value >= 1_000)
+        .unwrap_or(180_000);
+    loop {
+        let base_url = format!("http://{daemon_host}:{daemon_port}");
+        if orchestrator::fetch_orchestrator_health(&base_url).is_ok_and(|health| health.ok) {
+            return Ok(());
+        }
+        let elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        let child_exited = state_handle
+            .lock()
+            .map(|state| state.child_exited)
+            .unwrap_or(true);
+        if child_exited || elapsed_ms >= timeout_ms {
+            if let Ok(mut state) = state_handle.lock() {
+                OrchestratorManager::stop_locked(
+                    &mut state,
+                    OrchestratorShutdownAttribution::new(
+                        "admission_transport_start_failed",
+                        "runtime_ensure_admission_transport",
+                    ),
+                );
+            }
+            return Err("Admission transport daemon did not become ready.".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
 }
 
@@ -571,6 +786,44 @@ pub async fn engine_info(
     })
     .await
     .unwrap_or(fallback))
+}
+
+/// Establish only the local control plane required for a server-owned submit.
+/// It intentionally does not register or activate a workspace engine.
+#[tauri::command]
+pub fn runtime_ensure_admission_transport(
+    app: AppHandle,
+    manager: State<EngineManager>,
+    orchestrator_manager: State<OrchestratorManager>,
+    veslo_manager: State<VesloServerManager>,
+    workspace_id: Option<String>,
+    workspace_path: String,
+) -> Result<EngineInfo, String> {
+    let workspace_path =
+        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
+            .to_string_lossy()
+            .to_string();
+    let start_queue = manager.start_queue.clone();
+    let _start_permit = start_queue
+        .lock()
+        .map_err(|_| "engine start queue mutex poisoned".to_string())?;
+    start_admission_transport_daemon(&app, &orchestrator_manager, &veslo_manager, &workspace_path)?;
+    let engine = engine_info_blocking(
+        manager.inner.clone(),
+        orchestrator_manager.inner.clone(),
+        workspace_id,
+        Some(workspace_path),
+    );
+    if engine
+        .base_url
+        .as_deref()
+        .is_none_or(|url| url.trim().is_empty())
+    {
+        return Err(
+            "Admission transport started without a workspace proxy descriptor.".to_string(),
+        );
+    }
+    Ok(engine)
 }
 
 #[tauri::command]

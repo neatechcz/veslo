@@ -24,7 +24,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../../types";
 import type { WorkspaceActivationOptions } from "../../context/workspace-types";
-import type { SidebarSessionActivity } from "../../context/sidebar-session-activity-projection";
+import type { SidebarSessionActivityForRowKey } from "../../context/sidebar-session-activity-projection";
 import {
   getWorkspaceTaskLoadErrorDisplay,
 } from "../../utils";
@@ -112,7 +112,7 @@ type Props = {
   pendingSelectedSessionId?: string | null;
   pendingSelectedWorkspaceId?: string | null;
   suspendProjectReorder?: boolean;
-  sidebarSessionActivityByRowKey?: Record<string, SidebarSessionActivity>;
+  sidebarSessionActivityForRowKey?: SidebarSessionActivityForRowKey;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -1842,7 +1842,7 @@ export default function WorkspaceSessionList(props: Props) {
   ].map((value) => value.trim()).filter(Boolean);
 
   const isProjectedRowActive = (row: FlatSessionRow) =>
-    props.sidebarSessionActivityByRowKey?.[row.rowKey]?.active ?? false;
+    props.sidebarSessionActivityForRowKey?.(row.rowKey)?.active ?? false;
 
   const rowForcesProjectOpen = (row: FlatSessionRow) => {
     const selectedSessionKey = props.selectedSessionKey?.trim() ?? "";

@@ -1568,8 +1568,13 @@ test("lifecycle reconcile fails stale active runs after poll budget exhaustion a
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 
-test("lifecycle reconcile finalizes unresolved non-stale active runs after poll budget exhaustion", async () => {
-  const { controller, lifecycle, timers, workspaces } = controllerHarness();
+test("lifecycle reconcile ingests an unresolved active transcript before poll budget failure", async () => {
+  const ingestedRunIds: string[] = [];
+  const { controller, lifecycle, timers, workspaces } = controllerHarness({
+    ingestTerminalTranscript: async ({ runId }) => {
+      ingestedRunIds.push(runId);
+    },
+  });
   lifecycle.statusResult = {
     runId: "run-active",
     status: "running",
@@ -1583,6 +1588,8 @@ test("lifecycle reconcile finalizes unresolved non-stale active runs after poll 
     workspace: workspaces[0]!,
     conversationId: "conv-a",
     runId: "run-active",
+    directory: "/tmp/workspace-a",
+    opencodeSessionId: "sess-a",
     reason: "accepted",
     attempt: 2,
   });
@@ -1590,6 +1597,7 @@ test("lifecycle reconcile finalizes unresolved non-stale active runs after poll 
   expect(lifecycle.calls).toContain(
     "markFailed:ws_1:run-active:run lifecycle reconcile exhausted while active status remained unresolved",
   );
+  expect(ingestedRunIds).toEqual(["run-active"]);
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 

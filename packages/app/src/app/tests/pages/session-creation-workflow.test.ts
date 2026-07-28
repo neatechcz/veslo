@@ -39,7 +39,9 @@ function session(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-function sessionPreflight(overrides: Partial<SessionCreationPreflightContext> = {}): SessionCreationPreflightContext {
+function sessionPreflight(
+  overrides: Partial<SessionCreationPreflightContext> = {},
+): SessionCreationPreflightContext {
   return {
     traceId: "trace-test",
     managedAiReady: false,
@@ -52,7 +54,9 @@ function sessionPreflight(overrides: Partial<SessionCreationPreflightContext> = 
   };
 }
 
-function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}): Harness {
+function createHarness(
+  overrides: Partial<SessionCreationWorkflowOptions> = {},
+): Harness {
   const actions: string[] = [];
   const progressEvents: SessionFlowProgressEvent["type"][] = [];
   const events: string[] = [];
@@ -66,18 +70,25 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
     baseUrl: () => "http://127.0.0.1:4096",
     currentView: () => "session",
     developerMode: () => false,
-    createSendPreflightContext: (sendTraceId) => sessionPreflight({
-      traceId: sendTraceId?.trim() || "trace-created",
-    }),
+    createSendPreflightContext: (sendTraceId) =>
+      sessionPreflight({
+        traceId: sendTraceId?.trim() || "trace-created",
+      }),
     ensureLocalRuntimeReachableForSend: async () => {
       actions.push("ensure-runtime");
+      return true;
+    },
+    ensureServerOwnedSubmitTransportReady: async () => {
+      actions.push("ensure-server-submit-transport");
       return true;
     },
     ensureManagedAiBootstrapReady: async () => {
       actions.push("ensure-managed-ai");
       return true;
     },
-    isWorkspaceClientStaleError: (_error): _error is {
+    isWorkspaceClientStaleError: (
+      _error,
+    ): _error is {
       entryWorkspaceId?: string | null;
       currentWorkspaceId?: string | null;
     } => false,
@@ -118,7 +129,8 @@ function createHarness(overrides: Partial<SessionCreationWorkflowOptions> = {}):
     reloadBusy: () => false,
     resolveRuntimeSandboxStateForTarget: () => ({}) as never,
     resolveSendTargetWorkspaceScope: () => targetWorkspace,
-    resolveWorkspaceRootForConversationScope: (_workspaceId, directory) => directory,
+    resolveWorkspaceRootForConversationScope: (_workspaceId, directory) =>
+      directory,
     routedClient: () => ({}),
     routedClientForSendTarget: () => ({}),
     safeStringify: (value) => JSON.stringify(value),
@@ -162,10 +174,15 @@ test("session creation blocks while the target workspace is still connecting", a
   const result = await workflow.createSessionAndOpen("hello");
 
   assert.equal(result, undefined);
-  assert.deepEqual(harness.errors, ["Please wait for the workspace switch to complete."]);
+  assert.deepEqual(harness.errors, [
+    "Please wait for the workspace switch to complete.",
+  ]);
   assert.deepEqual(harness.progressEvents, []);
   assert.ok(harness.events.includes("createSessionAndOpen:blocked-connecting"));
-  assert.doesNotMatch(harness.actions.join("\n"), /create-conversation|select:/);
+  assert.doesNotMatch(
+    harness.actions.join("\n"),
+    /create-conversation|select:/,
+  );
 });
 
 test("session creation reuses send preflight readiness without rerunning runtime gates", async () => {
@@ -187,31 +204,49 @@ test("session creation reuses send preflight readiness without rerunning runtime
   assert.equal(preflight.enginePrepared, true);
   assert.equal(preflight.managedAiReady, true);
   assert.ok(harness.events.includes("createSessionAndOpen:health-skip"));
-  assert.ok(harness.events.includes("createSessionAndOpen:managed-ai-bootstrap-skip"));
-  assert.doesNotMatch(harness.actions.join("\n"), /ensure-runtime|ensure-managed-ai/);
+  assert.ok(
+    harness.events.includes("createSessionAndOpen:managed-ai-bootstrap-skip"),
+  );
+  assert.doesNotMatch(
+    harness.actions.join("\n"),
+    /ensure-runtime|ensure-managed-ai/,
+  );
 });
 
-test("session creation prepares runtime before first server submit", async () => {
-  const observedPreflights: Array<SessionCreationPreflightContext | undefined> = [];
-  const runtimePreflightSnapshots: Array<{ enginePrepared: boolean; managedAiReady: boolean }> = [];
-  const routedClientTargets: Array<string | null> = [];
+test("session creation uses server-owned transport instead of preparing a routed runtime", async () => {
+  const observedPreflights: Array<SessionCreationPreflightContext | undefined> =
+    [];
+  const transportPreflightSnapshots: Array<{
+    enginePrepared: boolean;
+    runtimeHealthOk: boolean;
+    managedAiReady: boolean;
+  }> = [];
   const harness = createHarness({
-    ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
-      runtimePreflightSnapshots.push({
+    ensureLocalRuntimeReachableForSend: async () => {
+      throw new Error("first server submit must not prepare a routed runtime");
+    },
+    ensureServerOwnedSubmitTransportReady: async (_reason, preflight) => {
+      transportPreflightSnapshots.push({
         enginePrepared: Boolean(preflight.enginePrepared),
+        runtimeHealthOk: Boolean(preflight.runtimeHealthOk),
         managedAiReady: Boolean(preflight.managedAiReady),
       });
-      preflight.runtimeHealthOk = true;
       return true;
     },
     ensureManagedAiBootstrapReady: async () => {
-      throw new Error("managed AI gate should not run before server submit materialization");
+      throw new Error(
+        "managed AI gate should not run before server submit materialization",
+      );
     },
-    routedClientForSendTarget: (target) => {
-      routedClientTargets.push(target?.workspaceId?.trim() || null);
-      return {};
+    routedClientForSendTarget: () => {
+      throw new Error("first server submit must not require a routed client");
     },
-    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input, preflight) => {
+    submitConversationFromVesloWriteApi: async (
+      _workspaceId,
+      _directory,
+      input,
+      preflight,
+    ) => {
       observedPreflights.push(preflight);
       return {
         status: "submitted",
@@ -249,15 +284,101 @@ test("session creation prepares runtime before first server submit", async () =>
   });
 
   assert.equal(result, "sess-submit");
-  assert.deepEqual(runtimePreflightSnapshots, [{ enginePrepared: false, managedAiReady: false }]);
-  assert.deepEqual(routedClientTargets, ["ws-main"]);
+  assert.deepEqual(transportPreflightSnapshots, [
+    {
+      enginePrepared: false,
+      runtimeHealthOk: false,
+      managedAiReady: false,
+    },
+  ]);
   assert.equal(observedPreflights.length, 1);
-  assert.equal(observedPreflights[0]?.runtimeHealthOk, true);
-  assert.equal(observedPreflights[0]?.enginePrepared, true);
+  assert.equal(observedPreflights[0]?.runtimeHealthOk, false);
+  assert.equal(observedPreflights[0]?.enginePrepared, false);
   assert.equal(observedPreflights[0]?.managedAiReady, false);
-  assert.equal(harness.events.includes("createSessionAndOpen:server-submit-runtime-admission-skip"), false);
-  assert.ok(harness.events.includes("createSessionAndOpen:server-submit-managed-ai-admission-skip"));
-  assert.doesNotMatch(harness.actions.join("\n"), /ensure-managed-ai|create-conversation/);
+  assert.ok(
+    harness.events.includes(
+      "createSessionAndOpen:server-submit-managed-ai-admission-skip",
+    ),
+  );
+  assert.doesNotMatch(
+    harness.actions.join("\n"),
+    /ensure-runtime|ensure-managed-ai|create-conversation/,
+  );
+});
+
+test("first server submit retries pre-HTTP recovery through server-owned transport with the same message id", async () => {
+  const messageIds: string[] = [];
+  const transportPreflights: Array<{
+    forceRecovery: boolean;
+    runtimeHealthOk: boolean;
+    enginePrepared: boolean;
+  }> = [];
+  let attempts = 0;
+  const harness = createHarness({
+    ensureLocalRuntimeReachableForSend: async () => {
+      throw new Error(
+        "first server submit recovery must not prepare an engine",
+      );
+    },
+    ensureServerOwnedSubmitTransportReady: async (_reason, preflight) => {
+      transportPreflights.push({
+        forceRecovery: preflight.forceRecovery === true,
+        runtimeHealthOk: preflight.runtimeHealthOk === true,
+        enginePrepared: preflight.enginePrepared === true,
+      });
+      return true;
+    },
+    submitConversationFromVesloWriteApi: async (
+      _workspaceId,
+      _directory,
+      input,
+      preflight,
+    ) => {
+      messageIds.push(input.clientMessageId);
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("connection reset before submit");
+      }
+      assert.equal(preflight?.runtimeHealthOk, false);
+      assert.equal(preflight?.enginePrepared, false);
+      return {
+        status: "submitted",
+        workspaceId: "ws-main",
+        conversationId: "conv-submit",
+        opencodeSessionId: "open-submit",
+        runId: "run-submit",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+        materializedSession: {
+          ...session({ id: "sess-submit" }),
+          conversationId: "conv-submit",
+          opencodeSessionId: "open-submit",
+        },
+      };
+    },
+  });
+  const workflow = createSessionCreationWorkflow(harness.options);
+
+  const result = await workflow.createSessionAndOpen("hello", {
+    clientMessageId: "client-submit",
+    submitDraft: {
+      mode: "prompt",
+      text: "hello",
+      resolvedText: "hello",
+      parts: [{ type: "text", text: "hello" }],
+      command: null,
+      attachments: [],
+    },
+    preflight: sessionPreflight({ traceId: "trace-submit", targetWorkspace }),
+  });
+
+  assert.equal(result, "sess-submit");
+  assert.deepEqual(messageIds, ["client-submit", "client-submit"]);
+  assert.deepEqual(transportPreflights, [
+    { forceRecovery: false, runtimeHealthOk: false, enginePrepared: false },
+    { forceRecovery: true, runtimeHealthOk: false, enginePrepared: false },
+  ]);
+  assert.doesNotMatch(harness.actions.join("\n"), /ensure-runtime/);
 });
 
 test("submitted first runs are admitted after materialization and before selection", async () => {
@@ -267,9 +388,15 @@ test("submitted first runs are admitted after materialization and before selecti
       phaseOrder.push("state");
     },
     applyCreatedSessionTransition: async (result) => {
-      phaseOrder.push(`transition:${String(result.transition.skipTranscriptRead === true)}`);
+      phaseOrder.push(
+        `transition:${String(result.transition.skipTranscriptRead === true)}`,
+      );
     },
-    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input) => ({
+    submitConversationFromVesloWriteApi: async (
+      _workspaceId,
+      _directory,
+      input,
+    ) => ({
       status: "submitted",
       workspaceId: "server-ws-main",
       conversationId: "conv-submit",
@@ -309,10 +436,10 @@ test("submitted first runs are admitted after materialization and before selecti
   assert.deepEqual(phaseOrder, ["state", "admit", "transition:true"]);
 });
 
-test("session creation blocks first server submit when runtime preparation fails", async () => {
+test("session creation blocks first server submit when server-owned transport is unavailable", async () => {
   let submitCalled = false;
   const harness = createHarness({
-    ensureLocalRuntimeReachableForSend: async () => false,
+    ensureServerOwnedSubmitTransportReady: async () => false,
     submitConversationFromVesloWriteApi: async () => {
       submitCalled = true;
       throw new Error("submit should not run without a prepared runtime");
@@ -339,21 +466,39 @@ test("session creation blocks first server submit when runtime preparation fails
 
   assert.equal(result, undefined);
   assert.equal(submitCalled, false);
-  assert.ok(harness.events.includes("createSessionAndOpen:blocked-runtime-unreachable"));
+  assert.ok(
+    harness.events.includes("createSessionAndOpen:blocked-runtime-unreachable"),
+  );
   assert.deepEqual(harness.errors, ["Local runtime is not ready yet."]);
 });
 
-test("session creation blocks first server submit when prepared local runtime has no routed client", async () => {
+test("session creation lets first server submit proceed without a routed client", async () => {
   let submitCalled = false;
   const harness = createHarness({
-    ensureLocalRuntimeReachableForSend: async (_reason, preflight) => {
-      preflight.runtimeHealthOk = true;
-      return true;
-    },
+    ensureServerOwnedSubmitTransportReady: async () => true,
     routedClientForSendTarget: () => null,
-    submitConversationFromVesloWriteApi: async () => {
+    submitConversationFromVesloWriteApi: async (
+      _workspaceId,
+      _directory,
+      input,
+      preflight,
+    ) => {
       submitCalled = true;
-      throw new Error("submit should not run without a routed runtime client");
+      assert.equal(preflight?.runtimeHealthOk, false);
+      return {
+        status: "submitted",
+        workspaceId: "ws-main",
+        conversationId: "conv-submit",
+        opencodeSessionId: "open-submit",
+        runId: "run-submit",
+        clientMessageId: input.clientMessageId,
+        draftDisposition: "clear",
+        materializedSession: {
+          ...session({ id: "sess-submit" }),
+          conversationId: "conv-submit",
+          opencodeSessionId: "open-submit",
+        },
+      };
     },
   });
   const workflow = createSessionCreationWorkflow(harness.options);
@@ -375,10 +520,13 @@ test("session creation blocks first server submit when prepared local runtime ha
     }),
   });
 
-  assert.equal(result, undefined);
-  assert.equal(submitCalled, false);
-  assert.ok(harness.events.includes("createSessionAndOpen:blocked-no-client"));
-  assert.deepEqual(harness.errors, ["Local runtime is not ready yet."]);
+  assert.equal(result, "sess-submit");
+  assert.equal(submitCalled, true);
+  assert.equal(
+    harness.events.includes("createSessionAndOpen:blocked-no-client"),
+    false,
+  );
+  assert.deepEqual(harness.errors, [null]);
 });
 
 test("session creation lets first server submit proceed without a routed client when runtime health is skipped", async () => {
@@ -394,13 +542,22 @@ test("session creation lets first server submit proceed without a routed client 
       return true;
     },
     ensureManagedAiBootstrapReady: async () => {
-      throw new Error("managed AI gate should not run before server submit materialization");
+      throw new Error(
+        "managed AI gate should not run before server submit materialization",
+      );
     },
     resolveSendTargetWorkspaceScope: () => remoteTargetWorkspace,
     routedClientForSendTarget: () => {
-      throw new Error("routed client should not be required when local runtime health was skipped");
+      throw new Error(
+        "routed client should not be required when local runtime health was skipped",
+      );
     },
-    submitConversationFromVesloWriteApi: async (_workspaceId, _directory, input, preflight) => {
+    submitConversationFromVesloWriteApi: async (
+      _workspaceId,
+      _directory,
+      input,
+      preflight,
+    ) => {
       submitCalled = true;
       assert.equal(preflight?.runtimeHealthOk, false);
       return {
@@ -446,7 +603,11 @@ test("session creation lets first server submit proceed without a routed client 
 
   assert.equal(result, "sess-remote-submit");
   assert.equal(submitCalled, true);
-  assert.ok(harness.events.includes("createSessionAndOpen:server-submit-managed-ai-admission-skip"));
+  assert.ok(
+    harness.events.includes(
+      "createSessionAndOpen:server-submit-managed-ai-admission-skip",
+    ),
+  );
 });
 
 test("session creation opens a materialized session when first server submit failed after create", async () => {
@@ -462,12 +623,17 @@ test("session creation opens a materialized session when first server submit fai
       clientMessageId: "client-failed-after-create",
       pendingClientSessionId: "pending-failed-after-create",
       materializedSession: {
-        ...session({ id: "sess-failed-after-create", title: "Failed after create" }),
+        ...session({
+          id: "sess-failed-after-create",
+          title: "Failed after create",
+        }),
         conversationId: "conv-failed-after-create",
         opencodeSessionId: "open-failed-after-create",
       },
       draftDisposition: "restore",
-      debugTrace: [{ source: "server", event: "run_submit_failed_after_materialization" }],
+      debugTrace: [
+        { source: "server", event: "run_submit_failed_after_materialization" },
+      ],
     }),
   });
   const workflow = createSessionCreationWorkflow(harness.options);
@@ -520,12 +686,14 @@ test("typed first-submit rejection does not become a raw session creation error"
       text: "",
       resolvedText: "",
       parts: [],
-      attachments: [{
-        name: "message.msg",
-        mimeType: "application/octet-stream",
-        kind: "file",
-        dataUrl: "data:application/octet-stream;base64,AA==",
-      }],
+      attachments: [
+        {
+          name: "message.msg",
+          mimeType: "application/octet-stream",
+          kind: "file",
+          dataUrl: "data:application/octet-stream;base64,AA==",
+        },
+      ],
     },
     clientMessageId: "client-msg-rejected",
     onSubmitResult: (submitResult) => submitResults.push(submitResult),
@@ -534,7 +702,11 @@ test("typed first-submit rejection does not become a raw session creation error"
   assert.equal(result, undefined);
   assert.equal(submitResults.length, 1);
   assert.deepEqual(harness.errors, [null]);
-  assert.ok(harness.events.includes("createSessionAndOpen:submit-stopped-materialization"));
+  assert.ok(
+    harness.events.includes(
+      "createSessionAndOpen:submit-stopped-materialization",
+    ),
+  );
   assert.doesNotMatch(harness.actions.join("\n"), /set-sessions|select:|go:/);
 });
 
@@ -550,7 +722,12 @@ test("session creation passes the prepared create preflight to conversation crea
       return true;
     },
     resolveRuntimeSandboxStateForTarget: () => ({ mode: "test" }),
-    createConversationFromVesloWriteApi: async (_workspaceId, _directory, _title, preflight) => {
+    createConversationFromVesloWriteApi: async (
+      _workspaceId,
+      _directory,
+      _title,
+      preflight,
+    ) => {
       observedPreflight = preflight;
       return {
         ...session(),
@@ -570,7 +747,10 @@ test("session creation passes the prepared create preflight to conversation crea
   assert.equal(observedPreflight?.managedAiReady, true);
   assert.deepEqual(observedPreflight?.targetWorkspace, targetWorkspace);
   assert.deepEqual(observedPreflight?.effectiveSandbox, { mode: "test" });
-  assert.equal(observedPreflight?.conversationWorkspaceByDirectory instanceof Map, true);
+  assert.equal(
+    observedPreflight?.conversationWorkspaceByDirectory instanceof Map,
+    true,
+  );
 });
 
 test("session creation recovers a stale local Veslo bearer during first create", async () => {
@@ -587,7 +767,9 @@ test("session creation recovers a stale local Veslo bearer during first create",
     createConversationFromVesloWriteApi: async () => {
       createCalls += 1;
       if (createCalls === 1) {
-        throw new Error('{"code":"unauthorized","message":"Invalid bearer token"}');
+        throw new Error(
+          '{"code":"unauthorized","message":"Invalid bearer token"}',
+        );
       }
       return {
         ...session({ id: "sess-recovered" }),
@@ -603,8 +785,16 @@ test("session creation recovers a stale local Veslo bearer during first create",
   assert.equal(result, "sess-recovered");
   assert.equal(createCalls, 2);
   assert.deepEqual(ensureForceRecoveryValues, [false, true]);
-  assert.ok(harness.events.includes("createSessionAndOpen:create-runtime-recovery-start"));
-  assert.ok(harness.events.includes("createSessionAndOpen:create-runtime-recovery-result"));
+  assert.ok(
+    harness.events.includes(
+      "createSessionAndOpen:create-runtime-recovery-start",
+    ),
+  );
+  assert.ok(
+    harness.events.includes(
+      "createSessionAndOpen:create-runtime-recovery-result",
+    ),
+  );
   assert.ok(harness.events.includes("createSessionAndOpen:create-ok"));
 });
 
@@ -620,8 +810,16 @@ test("session creation can return a backend result without route or sidebar effe
   assert.equal(result?.workspaceScope.workspaceId, "ws-main");
   assert.equal(result?.workspaceScope.directory, "/repo");
   assert.equal(result?.handoff, null);
-  assert.deepEqual(harness.actions, ["ensure-runtime", "ensure-managed-ai", "abort-refreshes", "create-conversation"]);
-  assert.doesNotMatch(harness.actions.join("\n"), /set-sessions|materialize-sidebar|select:|go:/);
+  assert.deepEqual(harness.actions, [
+    "ensure-runtime",
+    "ensure-managed-ai",
+    "abort-refreshes",
+    "create-conversation",
+  ]);
+  assert.doesNotMatch(
+    harness.actions.join("\n"),
+    /set-sessions|materialize-sidebar|select:|go:/,
+  );
 });
 
 test("session creation materializes sidebar state and own-navigation guard before selecting", async () => {
@@ -651,5 +849,9 @@ test("session creation materializes sidebar state and own-navigation guard befor
     order,
     /create-conversation[\s\S]*remember-scope[\s\S]*set-sessions[\s\S]*materialize-sidebar[\s\S]*own:sess-created[\s\S]*select:sess-created[\s\S]*own:sess-created[\s\S]*go:sess-created/,
   );
-  assert.deepEqual(harness.progressEvents, ["session.creating", "session.loading", "flow.idle"]);
+  assert.deepEqual(harness.progressEvents, [
+    "session.creating",
+    "session.loading",
+    "flow.idle",
+  ]);
 });

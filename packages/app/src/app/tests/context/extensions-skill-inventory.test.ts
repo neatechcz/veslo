@@ -1548,6 +1548,20 @@ test("extensions store exposes an app-wide skill inventory from global, workspac
         assert.equal(hubSkill?.hubItem?.description, "Planning from hub");
         assert.equal(hubSkill?.hubItem?.source.path, "skills/planning");
         assert.equal(store.skillInventoryStatus(), null);
+
+        await store.refreshSkillInventory({ workspaceIds: ["ws-alpha"] });
+
+        assert.deepEqual(localCalls.slice(3), [
+          { projectDir: "", scope: "global" },
+          { projectDir: "/workspaces/alpha", scope: "workspace" },
+        ]);
+        assert.equal(
+          store.skillInventory()
+            .find((item) => item.name === "deploy")
+            ?.workspaceInstances.some((instance) => instance.workspaceId === "ws-beta"),
+          false,
+          "active-workspace refresh must not enumerate another workspace",
+        );
       } finally {
         dispose();
       }

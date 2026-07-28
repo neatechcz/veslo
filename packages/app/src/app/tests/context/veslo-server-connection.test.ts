@@ -692,6 +692,53 @@ test("local server-only ensure does not require runtimeChain readiness before ru
   });
 });
 
+test("forced server-only ensure restarts the owned server after daemon admission transport starts", async () => {
+  let restartCalls = 0;
+  const factory: VesloServerConnectionClientFactory = () => ({
+    baseUrl: "http://127.0.0.1:8787",
+    health: async () => ({ ok: true, version: "test", uptimeMs: 1 }),
+    capabilities: async () => capabilities(),
+  } as any);
+
+  await createRoot(async (dispose) => {
+    try {
+      const connection = createVesloServerConnection({
+        startupPreference: () => "local",
+        opencodeBaseUrl: () => "",
+        authenticatedAccountId: () => null,
+        cloudEnvironment: {},
+        documentVisible: () => false,
+        developerMode: () => false,
+        isTauriRuntime: () => true,
+        workspace: {
+          workspacesHydrated: () => true,
+          activeWorkspaceDisplay: () => ({ workspaceType: "local" }),
+          activeWorkspaceId: () => "ws-a",
+          activeWorkspaceRoot: () => "/tmp/ws-a",
+        },
+        vesloServerInfo: async () => runningHostInfo(),
+        vesloServerRestart: async () => {
+          restartCalls += 1;
+          return runningHostInfo();
+        },
+        createClient: factory,
+      });
+
+      assert.equal(
+        await connection.ensureLocalVesloServerRunning({
+          ignoreStartupPreference: true,
+          requireRuntimeChainReady: false,
+          forceRestart: true,
+        }),
+        true,
+      );
+      assert.equal(restartCalls, 1);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("local ensure single-flights each readiness mode independently", async () => {
   let infoCalls = 0;
   let releaseInfo: (() => void) | null = null;

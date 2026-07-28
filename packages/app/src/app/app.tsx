@@ -80,7 +80,10 @@ import { createPendingSessionDraftController } from "./context/pending-session-d
 import { createSessionFlowFacade } from "./context/session-flow-facade";
 import { createSessionFlowProgressPresenter } from "./context/session-flow-progress-presenter";
 import { createSidebarSessionActivityTokenModel } from "./context/sidebar-session-activity-token";
-import { projectSidebarSessionActivity } from "./context/sidebar-session-activity-projection";
+import {
+  projectSidebarSessionActivity,
+} from "./context/sidebar-session-activity-projection";
+import { createSidebarSessionActivityStore } from "./context/sidebar-session-activity-store";
 import {
   buildRecentRows,
   sidebarSessionOpenTargetForRow,
@@ -145,6 +148,7 @@ import {
   type SessionCreationWorkflowCreateOptions,
 } from "./pages/session-creation-workflow";
 import { createSessionSendWorkflow } from "./pages/session-send-workflow";
+import { resolveServerOwnedSubmitTransportTarget } from "./context/server-owned-submit-transport";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { createSoulDataStore } from "./pages/soul-data-store";
 import { isPendingSessionInstanceKey } from "./components/session/pending-session-instance-model";
@@ -331,6 +335,7 @@ import {
   readOpencodeConfig,
   writeOpencodeConfig,
   engineInfo,
+  runtimeEnsureAdmissionTransport,
   workspaceBootstrap,
   workspaceVesloRead,
   vesloServerInfo,
@@ -1108,7 +1113,8 @@ export default function App() {
         .current()
         ?.lastManagedAiRuntimeAuthorizationPrimeDiagnostic() ?? null,
     onConversationRuntimeConfirmed: (workspaceId) => {
-      if (workspaceStore.activeWorkspaceId().trim() !== workspaceId.trim()) return;
+      if (workspaceStore.activeWorkspaceId().trim() !== workspaceId.trim())
+        return;
       setEngineReady(true);
       recordSendTrace("conversation-runtime-confirmed", {
         workspaceId,
@@ -2197,6 +2203,62 @@ export default function App() {
     };
   };
 
+  const ensureServerOwnedSubmitTransportReady = async (
+    preflight: SendRuntimePreflightContext,
+  ) => {
+    const target = resolveServerOwnedSubmitTransportTarget({
+      isTauriRuntime: isTauriRuntime(),
+      targetWorkspace: preflight.targetWorkspace,
+      workspaces: workspaceStore.workspaces(),
+    });
+    if (target.kind === "skip") {
+      recordSendTrace("runtime-readiness:admission-transport:skipped", {
+        traceId: preflight.traceId ?? null,
+        reason: target.reason,
+      });
+      return true;
+    }
+    if (target.kind === "unavailable") {
+      recordSendTrace("runtime-readiness:admission-transport:unavailable", {
+        traceId: preflight.traceId ?? null,
+        reason: target.reason,
+      });
+      return false;
+    }
+    const { workspaceId, workspacePath } = target;
+    recordSendTrace("runtime-readiness:admission-transport:start", {
+      traceId: preflight.traceId ?? null,
+      workspaceId,
+      readiness: "admission-transport-starting",
+    });
+    try {
+      await runtimeEnsureAdmissionTransport({ workspaceId, workspacePath });
+    } catch (error) {
+      recordSendTrace("runtime-readiness:admission-transport:error", {
+        traceId: preflight.traceId ?? null,
+        workspaceId,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      return false;
+    }
+    recordSendTrace("runtime-readiness:admission-transport:daemon-ready", {
+      traceId: preflight.traceId ?? null,
+      workspaceId,
+      readiness: "admission-transport-ready",
+    });
+    const ready = await ensureLocalVesloServerRunning({
+      requireRuntimeChainReady: false,
+      forceRestart: true,
+    });
+    recordSendTrace("runtime-readiness:admission-transport:end", {
+      traceId: preflight.traceId ?? null,
+      workspaceId,
+      ready,
+      readiness: ready ? "service-ready" : "service-unavailable",
+    });
+    return ready;
+  };
+
   const sessionSendWorkflow = createSessionSendWorkflow({
     armConversationRunProvisional,
     disposeConversationRunProvisional,
@@ -2234,6 +2296,10 @@ export default function App() {
     ensureLocalRuntimeReachableForSend: (event, preflight) =>
       ensureLocalRuntimeReachableForSend(
         event,
+        preflight as SendRuntimePreflightContext,
+      ),
+    ensureServerOwnedSubmitTransportReady: (_event, preflight) =>
+      ensureServerOwnedSubmitTransportReady(
         preflight as SendRuntimePreflightContext,
       ),
     emitFlowProgress: (event) => sessionFlowProgressPresenter.emit(event),
@@ -3205,15 +3271,13 @@ export default function App() {
     const workspaceId = workspaceStore.activeWorkspaceId().trim();
     const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
     const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
-    return workspaceType === "local" && workspaceId && workspaceRoot
-      ? `${workspaceId}\u0000${workspaceRoot}`
-      : null;
+    return workspaceType === "local" && workspaceId && workspaceRoot ? workspaceId : null;
   });
   createEffect(
-    on(activeLocalSkillInventoryContext, (context) => {
-      if (!context) return;
-      void refreshSkillInventory().catch((error: unknown) =>
-        reportError(error, "skills.refreshInventory.bootstrap"),
+    on(activeLocalSkillInventoryContext, (workspaceId) => {
+      if (!workspaceId) return;
+      void refreshSkillInventory({ workspaceIds: [workspaceId] }).catch((error: unknown) =>
+        reportError(error, "skills.refreshInventory.active-workspace"),
       );
     }),
   );
@@ -3724,35 +3788,24 @@ export default function App() {
       workspaceStore.isPrivateWorkspacePath,
     ),
   );
-  const sidebarSessionActivityShadow = createMemo(() =>
-    projectSidebarSessionActivity({
+  const sidebarSessionActivityStore = createSidebarSessionActivityStore();
+  const sidebarSessionActivityForRowKey =
+    sidebarSessionActivityStore.activityForRowKey;
+  let sidebarSessionActivityShadowInitialized = false;
+  createEffect(() => {
+    const next = projectSidebarSessionActivity({
       rows: sidebarSessionActivityRows(),
       sessionStatusById: activeSessionStatusById(),
       workspaceBusy: busySessionByWorkspaceId(),
       diagnostics: conversationRunDiagnosticsBySessionKey(),
       tokens: sidebarActivityTokenByScopedSessionKey(),
-    }),
-  );
-  let previousSidebarSessionActivityShadow: Record<
-    string,
-    { active: boolean; phase: string; source: string | null }
-  > = {};
-  let sidebarSessionActivityShadowInitialized = false;
-  createEffect(() => {
-    const next = sidebarSessionActivityShadow();
+    });
+    const changes = sidebarSessionActivityStore.reconcile(next);
     if (!sidebarSessionActivityShadowInitialized) {
       sidebarSessionActivityShadowInitialized = true;
-      previousSidebarSessionActivityShadow = next;
       return;
     }
-    const rowKeys = new Set([
-      ...Object.keys(previousSidebarSessionActivityShadow),
-      ...Object.keys(next),
-    ]);
-    for (const rowKey of rowKeys) {
-      const previous = previousSidebarSessionActivityShadow[rowKey] ?? null;
-      const current = next[rowKey] ?? null;
-      if (JSON.stringify(previous) === JSON.stringify(current)) continue;
+    for (const { rowKey, previous, current } of changes) {
       if (!previous?.active && !current?.active) continue;
       recordSendWorkflowTrace(
         "sidebar-session-activity",
@@ -3764,7 +3817,6 @@ export default function App() {
         },
       );
     }
-    previousSidebarSessionActivityShadow = next;
   });
 
   const pendingSidebarSessionToItem = (
@@ -5340,6 +5392,8 @@ export default function App() {
     developerMode,
     createSendPreflightContext,
     ensureLocalRuntimeReachableForSend,
+    ensureServerOwnedSubmitTransportReady: (_event, preflight) =>
+      ensureServerOwnedSubmitTransportReady(preflight),
     ensureManagedAiBootstrapReady,
     isWorkspaceClientStaleError,
     managedAiBootstrapBusy,
@@ -5704,8 +5758,6 @@ export default function App() {
     busy,
     busyLabel,
   });
-  const sidebarSessionActivityByRowKey = sidebarSessionActivityShadow;
-
   const appViewProps = createAppViewProps({
     connectedVersion,
     developerMode,
@@ -5789,7 +5841,7 @@ export default function App() {
     subagentDecorationsBySessionId,
     archivedSessionIds,
     activeSessionStatusById,
-    sidebarSessionActivityByRowKey,
+    sidebarSessionActivityForRowKey,
     conversationRunDiagnosticsBySessionKey,
     busySessionByWorkspaceId,
     archiveSidebarSessionAndClearActive,

@@ -233,24 +233,12 @@ test("app session capabilities project local skills from the shared inventory su
   assert.doesNotMatch(source, /listLocalSkillsScoped\(directory,\s*"workspace"\)/);
 });
 
-test("app shell bootstraps the shared local skill inventory outside the session sidebar", () => {
+test("workspace activation refreshes only the active workspace skill inventory", () => {
   const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 
   assert.match(
     appSource,
-    /const activeLocalSkillInventoryContext = createMemo\(\(\) => \{[\s\S]*workspaceType === "local" && workspaceId && workspaceRoot[\s\S]*createEffect\([\s\S]*on\(activeLocalSkillInventoryContext,[\s\S]*void refreshSkillInventory\(\)\.catch\(\(error: unknown\) =>[\s\S]*"skills\.refreshInventory\.bootstrap"/,
-    "the app shell should react to a local workspace context and populate the shared inventory while the session sidebar remains read-only",
-  );
-
-  const workspaceStoreIndex = appSource.indexOf("const workspaceStore = createWorkspaceStore({");
-  const workspaceStoreBindIndex = appSource.indexOf("lateWorkspaceStore.bind(workspaceStore);");
-  const skillBootstrapIndex = appSource.indexOf("const activeLocalSkillInventoryContext = createMemo(() => {");
-
-  assert.ok(workspaceStoreIndex >= 0, "the workspace store should be initialized in the app shell");
-  assert.ok(workspaceStoreBindIndex > workspaceStoreIndex, "the workspace store should be bound after initialization");
-  assert.ok(
-    skillBootstrapIndex > workspaceStoreBindIndex,
-    "the skill bootstrap must not read workspaceStore before it is initialized and bound",
+    /const activeLocalSkillInventoryContext = createMemo\(\(\) => \{[\s\S]*workspaceType === "local" && workspaceId && workspaceRoot[\s\S]*void refreshSkillInventory\(\{ workspaceIds: \[workspaceId\] \}\)\.catch\(\(error: unknown\) =>[\s\S]*"skills\.refreshInventory\.active-workspace"/,
   );
 });
 
