@@ -3452,6 +3452,19 @@ test("queue drain completion marks rejected active drains as errors on the curre
   );
 });
 
+test("successful send trace does not serialize the global runtime error", () => {
+  assert.doesNotMatch(
+    sessionConversationFlowSource,
+    /error:\s*deps\.runtime\.error\(\)/,
+    "a successful send result must not carry an unrelated global error into the trace",
+  );
+  assert.match(
+    sessionConversationFlowSource,
+    /const runtimeErrorPresent = !submitResult\.accepted && Boolean\(deps\.runtime\.error\(\)\);/,
+    "rejected sends should retain a safe boolean diagnostic instead",
+  );
+});
+
 test("existing-chat submit failures use the optimistic timeline row as their only visible owner", () => {
   assert.equal(submitFailureHasTimelineOwner({
     showOptimisticSubmit: true,

@@ -77,6 +77,8 @@ describe("proxy upstream shared-engine health policy", () => {
     expect(cliSource).toContain("isShuttingDown: routerShutdownStarted");
     expect(cliSource).toContain("shutdown: healthPolicy.shutdown");
     expect(cliSource).toContain("nonFatalEngineError: healthPolicy.nonFatalEngineError");
+    expect(cliSource).toContain("const expectedEventStreamClose = healthPolicy.eventStream && healthPolicy.nonFatalEngineError;");
+    expect(cliSource).toContain('"orchestrator:event-stream:closed"');
     expect(cliSource).toContain("usesSharedOpenCodeEngine(workspaceTopology) && healthPolicy.markSharedEngineUnhealthy");
   });
 });

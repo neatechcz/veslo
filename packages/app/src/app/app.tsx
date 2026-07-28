@@ -1107,6 +1107,14 @@ export default function App() {
       lateManagedAiRuntimeConfig
         .current()
         ?.lastManagedAiRuntimeAuthorizationPrimeDiagnostic() ?? null,
+    onConversationRuntimeConfirmed: (workspaceId) => {
+      if (workspaceStore.activeWorkspaceId().trim() !== workspaceId.trim()) return;
+      setEngineReady(true);
+      recordSendTrace("conversation-runtime-confirmed", {
+        workspaceId,
+        source: "server-submit",
+      });
+    },
     activeSendTraceId,
     recordSendTrace,
     sendTraceStep,

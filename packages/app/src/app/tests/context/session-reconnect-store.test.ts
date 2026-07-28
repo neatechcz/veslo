@@ -24,6 +24,29 @@ test("session store exposes reconnect notice callback and outage episode tracker
   );
 });
 
+test("selecting a session resumes only recovery work that actually needs foreground help", () => {
+  const selectSessionFacade = sessionFacadeSource.match(
+    /const selectSession = async \([\s\S]*?return result;\s*\n\s*};/,
+  )?.[0];
+
+  assert.ok(selectSessionFacade, "session facade should keep a scoped selectSession wrapper");
+  assert.match(
+    selectSessionFacade,
+    /resumeExhaustedWatchForSession\(/,
+    "selection should resume an exhausted watch for the selected session",
+  );
+  assert.match(
+    selectSessionFacade,
+    /retryTerminalTranscriptRecoveryForSession\(/,
+    "selection should retry an unavailable terminal transcript for the selected session",
+  );
+  assert.doesNotMatch(
+    selectSessionFacade,
+    /retryAcceptedRunForSession\(/,
+    "selection must not restart a healthy accepted-run watch",
+  );
+});
+
 test("disconnect scheduling marks outage once and emits reconnecting once", () => {
   assert.match(
     eventStreamSource,

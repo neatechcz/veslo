@@ -124,6 +124,12 @@ durations and stable workspace ids only. They distinguish a desktop-side wait
 before the orchestrator receives a request from OpenCode spawn or health time,
 even if another send later becomes the webview's active trace.
 
+An expected transient close of an OpenCode `/event` stream is recorded as
+`orchestrator:event-stream:closed`, with `shutdown` and a stable close reason;
+it is not a `proxy-upstream:error` and does not make the engine unhealthy.
+Successful send-result rows do not serialize global runtime error text. Rejected
+rows retain only the safe `runtimeErrorPresent` boolean.
+
 Useful validation failure events include:
 
 - `sendPrompt:runtime-preflight:validation-failed`

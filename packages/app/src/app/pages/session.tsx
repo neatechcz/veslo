@@ -1753,7 +1753,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
-    if (!props.developerMode) return;
+    if (!sessionUiDiagnosticEnabled()) return;
     if (typeof window === "undefined") return;
 
     let expectedAt = perfNow() + MAIN_THREAD_LAG_INTERVAL_MS;
@@ -1763,14 +1763,18 @@ export default function SessionView(props: SessionViewProps) {
       expectedAt = now + MAIN_THREAD_LAG_INTERVAL_MS;
       if (lagMs < MAIN_THREAD_LAG_WARN_MS) return;
 
-      recordPerfLog(true, "session.main-thread", "lag", {
+      const payload = {
         lagMs,
         sessionID: props.selectedSessionId,
         status: props.sessionStatus,
         messageCount: props.messages.length,
         partCount: totalPartCount(),
         renderedMessageCount: displayedEffectiveMessages().length,
-      });
+        documentVisibility: typeof document === "undefined" ? null : document.visibilityState,
+        documentHasFocus: typeof document === "undefined" ? null : document.hasFocus(),
+      };
+      recordPerfLog(true, "session.main-thread", "lag", payload);
+      recordSendTrace("session-ui:main-thread-lag", payload);
     }, MAIN_THREAD_LAG_INTERVAL_MS);
 
     onCleanup(() => {

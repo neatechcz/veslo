@@ -1,4 +1,4 @@
-# Fix 62: Managed AI Config Freshness Timeout Degradation
+# Fix 62: Managed AI Config Admission and Runtime Recovery Noise
 
 Date: 2026-07-28
 
@@ -12,22 +12,29 @@ Managed AI configuration freshness failed: Request timed out after 10000ms:
 GET http://127.0.0.1:8787/workspace/<workspace-id>/config
 ```
 
-The change is limited to the app-owned managed-config admission boundary.
+The change is limited to the app-owned managed-config and runtime-presentation
+boundaries.
 Desktop E2E and manual installed-runtime verification remain user-owned and are
 not claimed by this fix.
 
 ## Root cause
 
 Every server-owned send created a new freshness flight and unconditionally read
-the current workspace config. The existing last-known snapshot was consulted
-only after that read succeeded, so a transient loopback transport timeout was
-converted into a hard preflight failure even when the same configuration had
-already been verified and used successfully in the current app process.
+the current workspace config. This put a redundant loopback read on the critical
+path of every prompt. When the renderer was delayed, the JavaScript timeout was
+also delayed and the nominal 10-second request could complete much later.
+
+Separately, the first healthy SSE connection was treated as reconnect recovery,
+and a successful lazy server submit did not update the legacy active-workspace
+runtime indicator. This produced recovery work and diagnostics that looked like
+a fallback even though no outage had occurred.
 
 ## Implemented behavior
 
 - Successful managed-config synchronization records the complete verified
   intent for its workspace scope.
+- A later send with the exact same verified intent and no pending server reload
+  skips the redundant config read.
 - A send-preflight loopback transport failure may continue only when that
   complete intent is unchanged and no reload is pending for the exact server
   workspace.
@@ -38,9 +45,15 @@ already been verified and used successfully in the current app process.
   tracking reset when server identity, token, or managed access changes.
 - Authorization changes, server API responses such as `403`, missing prior
   verification, and pending config reloads remain fail-closed.
-- The original config-read error remains in diagnostics. A successful degraded
-  admission emits `managed-ai-config-sync:degraded-last-verified` with the send
-  trace and safe intent hashes. The next send performs a fresh config read.
+- Required config reads emit separate start and completion events with duration
+  and deadline-overrun metadata.
+- Runtime diagnostics record main-thread stalls with document visibility/focus,
+  allowing a slow server response to be distinguished from a suspended or busy
+  renderer.
+- Initial SSE `live` does not trigger reconnect recovery. Recovery resumes only
+  after a non-live state was observed for the same workspace.
+- A successful `submitted` result confirms legacy runtime readiness for the
+  active workspace. Queued or merely materialized work does not.
 
 ## Validation
 
@@ -53,24 +66,23 @@ pnpm --filter @neatech/veslo-ui typecheck
 git diff --check
 ```
 
-Results:
+Results from this implementation pass:
 
-- `46/46` managed-config tests passed.
-- `125/125` focused managed-config, conversation-service, and send-readiness
-  tests passed.
-- App typecheck passed.
-- A transient timeout with an exact verified intent proceeds without setting a
-  user-visible config error.
-- Changed authorization identity and explicit server authorization failure are
-  covered as fail-closed cases.
-- The repository-wide `pnpm check` still fails in pre-existing app source-shape
-  assertions around session folder access and composer-key ownership. The
-  focused tests and typecheck for this fix pass; the unrelated dirty app-shell
-  assertions were not changed here.
+- `87/87` focused app tests passed, covering exact-intent reuse,
+  authorization and pending-reload invalidation, initial-live reconnect
+  handling, submitted-versus-queued readiness, and runtime lag telemetry.
+- App TypeScript validation passed. The repository lint and all workspace
+  typechecks also passed inside `pnpm check`.
+- `git diff --check` passed with line-ending warnings only.
+- The full repository gate did not complete: the app unit lane remained open in
+  the pre-existing full managed-config test process after its preceding tests
+  had passed. The stuck test processes started by this verification were
+  terminated; this is not recorded as a green `pnpm check`.
 
 ## Remaining verification
 
-Run the normal desktop flow against the same workspace and confirm that a
-transient `/workspace/:id/config` timeout produces the degraded trace event and
-the prompt still reaches OpenCode. This manual E2E evidence is intentionally not
-claimed here.
+Run the normal desktop flow against the same workspace and confirm that the
+second unchanged send has no config GET, the initial live stream has no recovery
+episode, and any remaining long pause has either config-read duration or
+`session-ui:main-thread-lag` evidence. This manual E2E evidence is intentionally
+not claimed here.

@@ -1475,6 +1475,24 @@ export function createManagedAiRuntimeConfigSync(
       }
       return outcome;
     }
+    const exactServerWorkspaceId = options?.serverSendTarget?.serverWorkspaceId.trim() ?? "";
+    if (
+      reason === "send-preflight" &&
+      exactServerWorkspaceId &&
+      lastVerifiedConfigIntentByScope.get(intent.scopeKey) === intent.fingerprint &&
+      !pendingServerReloads.has(exactServerWorkspaceId)
+    ) {
+      const outcome: ManagedAiConfigSyncOutcome = { kind: "verified" };
+      recordFlight("completed-intent-skip", null, outcome);
+      deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:verified-intent-fast-path", {
+        traceId,
+        workspaceId: options?.serverSendTarget?.workspaceId ?? null,
+        vesloWorkspaceId: exactServerWorkspaceId,
+        intentHash: hashRuntimeAuthorizationCachePart(intent.fingerprint),
+        descriptorHash: intent.descriptorHash,
+      });
+      return outcome;
+    }
     if (
       reason === "active-workspace" &&
       intent.authority.kind !== "pending" &&
@@ -1502,7 +1520,6 @@ export function createManagedAiRuntimeConfigSync(
       }))
       .then(
         (rawOutcome) => {
-          const exactServerWorkspaceId = options?.serverSendTarget?.serverWorkspaceId.trim() ?? "";
           const canUseLastVerifiedIntent =
             reason === "send-preflight" &&
             Boolean(exactServerWorkspaceId) &&
@@ -1888,14 +1905,44 @@ export function createManagedAiRuntimeConfigSync(
     configSyncTracePayload: Record<string, unknown>;
     isCurrentManagedAiConfigSync: () => boolean;
   }): Promise<VesloServerConfigSyncResult> {
-    const config = await input.vesloClient.getConfig(input.vesloWorkspaceId);
-    if (!input.isCurrentManagedAiConfigSync()) return { kind: "unchanged" };
+    const readStartedAt = now();
+    deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current:start", {
+      ...input.configSyncTracePayload,
+      configSource: "veslo-server-config",
+      vesloWorkspaceId: input.vesloWorkspaceId,
+    });
+    let config: Awaited<ReturnType<ManagedAiRuntimeConfigVesloClient["getConfig"]>>;
+    try {
+      config = await input.vesloClient.getConfig(input.vesloWorkspaceId);
+    } catch (error) {
+      deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current:error", {
+        ...input.configSyncTracePayload,
+        configSource: "veslo-server-config",
+        vesloWorkspaceId: input.vesloWorkspaceId,
+        readDurationMs: Math.max(0, now() - readStartedAt),
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      throw error;
+    }
+    const readDurationMs = Math.max(0, now() - readStartedAt);
+    if (!input.isCurrentManagedAiConfigSync()) {
+      deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current:discarded", {
+        ...input.configSyncTracePayload,
+        configSource: "veslo-server-config",
+        vesloWorkspaceId: input.vesloWorkspaceId,
+        readDurationMs,
+        reason: "superseded-sync",
+      });
+      return { kind: "unchanged" };
+    }
     const readTimestamp = new Date(now()).toISOString();
     const currentOpencodeContent = JSON.stringify(config.opencode ?? {}, null, 2);
     deps.recordManagedAiWorkflowTrace("managed-ai-config-sync:read-current", {
       ...input.configSyncTracePayload,
       configSource: "veslo-server-config",
       readTimestamp,
+      readDurationMs,
+      exceededDefaultRequestDeadline: readDurationMs > 10_000,
       currentBytes: currentOpencodeContent.length,
     });
 

@@ -86,6 +86,11 @@ test("temporary runtime UI diagnostic is gated to developer mode or explicit mut
     /const tempRuntimeUiDiagnosticBadge =[\s\S]*<Show when=\{props\.developerMode\}>[\s\S]*TEMP UI marker/s,
     "the temporary runtime UI badge must be hidden outside developer mode",
   );
+  assert.match(
+    sessionSource,
+    /createEffect\(\(\) => \{\s*if \(!sessionUiDiagnosticEnabled\(\)\) return;[\s\S]*recordSendTrace\("session-ui:main-thread-lag", payload\)/s,
+    "main-thread stalls should be captured by the same opt-in runtime diagnostic",
+  );
 });
 
 test("session switch records browse scope and routes immediately without arming a preloader", () => {

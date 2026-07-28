@@ -42,6 +42,22 @@ export function createReconnectState(input: {
 
 export const reconnectStateBlocksSend = (_state: ReconnectState | null | undefined): boolean => false;
 
+export function createReconnectRecoveryTracker() {
+  const pendingWorkspaceKeys = new Set<string>();
+  const workspaceKey = (workspaceId?: string | null) => workspaceId?.trim() || "__active__";
+
+  return {
+    observe(state: ReconnectState): boolean {
+      const key = workspaceKey(state.workspaceId);
+      if (state.status !== "live") {
+        pendingWorkspaceKeys.add(key);
+        return false;
+      }
+      return pendingWorkspaceKeys.delete(key);
+    },
+  };
+}
+
 export function shouldRecoverEventStreamRuntime(input: {
   recoveryAvailable: boolean;
   textMatchedRuntimeError: boolean;

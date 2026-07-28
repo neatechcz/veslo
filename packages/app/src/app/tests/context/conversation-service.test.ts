@@ -347,6 +347,7 @@ function createService(options: {
     runId?: string | null;
   }> = [];
   const runtimeAuthorizationCalls: unknown[] = [];
+  const runtimeConfirmedWorkspaceIds: string[] = [];
   const runIds = new Map<string, string>();
   const lifecycleRunIds = new Map<string, string>();
   const rememberRunId = (
@@ -456,6 +457,7 @@ function createService(options: {
       return kind === "failed" ? { kind, error: "config sync failed" } : { kind };
     },
     managedAiRuntimeAuthorizationPrimeDiagnostic: () => options.runtimeAuthorizationDiagnostic ?? null,
+    onConversationRuntimeConfirmed: (workspaceId) => runtimeConfirmedWorkspaceIds.push(workspaceId),
     activeSendTraceId: () => null,
     recordSendTrace: (event, payload) => {
       sendTraces.push({ event, payload });
@@ -484,6 +486,7 @@ function createService(options: {
     rememberedLifecycleRuns,
     sendTraces,
     runtimeAuthorizationCalls,
+    runtimeConfirmedWorkspaceIds,
     setRunConversationResult,
     setSubmitConversationResult,
   };
@@ -1363,7 +1366,7 @@ test("latest lifecycle resolution fails closed when the selected session lacks a
 });
 
 test("conversation run remembers submitted run ids under Veslo and UI identities", async () => {
-  const { service, rememberedRuns, rememberedScopes } = createService();
+  const { service, rememberedRuns, rememberedScopes, runtimeConfirmedWorkspaceIds } = createService();
 
   const result = await service.submitConversationRunViaVesloWriteApi("sess-a", {
     kind: "prompt_async",
@@ -1381,10 +1384,18 @@ test("conversation run remembers submitted run ids under Veslo and UI identities
   assert.deepEqual(rememberedScopes.map((scope) => scope.sessionId), ["open-a", "sess-a"]);
   assert.equal(rememberedScopes[0]?.conversationId, "conv-a");
   assert.equal(rememberedScopes[1]?.conversationId, "conv-a");
+  assert.deepEqual(runtimeConfirmedWorkspaceIds, ["app-ws"]);
 });
 
 test("conversation submit keeps queued run scope without replacing active run ownership", async () => {
-  const { service, rememberedRuns, rememberedScopes, setSubmitConversationResult, sendTraces } = createService();
+  const {
+    service,
+    rememberedRuns,
+    rememberedScopes,
+    setSubmitConversationResult,
+    sendTraces,
+    runtimeConfirmedWorkspaceIds,
+  } = createService();
   setSubmitConversationResult({
     status: "queued",
     workspaceId: "server-ws",
@@ -1437,6 +1448,7 @@ test("conversation submit keeps queued run scope without replacing active run ow
   assert.ok(rememberedScopes.every((scope) => scope.conversationId === "conv-submit"));
   assert.ok(rememberedScopes.every((scope) => scope.opencodeSessionId === "open-submit"));
   assert.deepEqual(rememberedRuns, []);
+  assert.deepEqual(runtimeConfirmedWorkspaceIds, []);
   assert.ok(sendTraces.some((entry) =>
     entry.event === "submitConversationFromVesloWriteApi:conversation-scope-remembered" &&
     entry.payload?.aliasCount === 5

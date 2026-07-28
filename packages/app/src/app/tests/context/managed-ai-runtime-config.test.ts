@@ -979,7 +979,7 @@ test("server-owned send freshness reloads after a patch before it verifies", asy
   assert.deepEqual(sync.managedAiServerReloadPresentation(), { kind: "idle" });
 });
 
-test("server send uses the exact last verified intent after a transient local config timeout", async () => {
+test("server send reuses the exact verified intent without rereading local config", async () => {
   const client = createVesloClient();
   const traces: Array<{ event: string; payload: Record<string, unknown> }> = [];
   const errors: Array<string | null> = [];
@@ -1013,16 +1013,19 @@ test("server send uses the exact last verified intent after a transient local co
 
   assert.deepEqual(first, { kind: "verified" });
   assert.deepEqual(second, { kind: "verified" });
-  assert.deepEqual(client.getConfigCalls, ["ws-active", "ws-active"]);
+  assert.deepEqual(client.getConfigCalls, ["ws-active"]);
   assert.equal(client.patched.length, 1);
   assert.deepEqual(client.reloadEngineCalls, [{ workspaceId: "ws-active", ifIdle: true }]);
   assert.deepEqual(errors, []);
-  const degraded = traces.find((entry) =>
-    entry.event === "managed-ai-config-sync:degraded-last-verified",
+  const fastPath = traces.find((entry) =>
+    entry.event === "managed-ai-config-sync:verified-intent-fast-path",
   );
-  assert.equal(degraded?.payload.traceId, "send-config-timeout");
-  assert.equal(degraded?.payload.reason, "transient-local-config-read");
-  assert.equal(degraded?.payload.vesloWorkspaceId, "ws-active");
+  assert.equal(fastPath?.payload.traceId, "send-config-timeout");
+  assert.equal(fastPath?.payload.vesloWorkspaceId, "ws-active");
+  assert.equal(
+    traces.some((entry) => entry.event === "managed-ai-config-sync:degraded-last-verified"),
+    false,
+  );
 });
 
 test("server send does not reuse a verified intent after authorization identity changes", async () => {
@@ -1821,6 +1824,15 @@ test("active server config sync records a completed intent after a write", async
   assert.equal(decisions[0]?.payload.readTimestamp, "2026-07-07T08:00:00.000Z");
   assert.equal(decisions[0]?.payload.cachedSnapshotMatches, false);
   assert.equal(decisions[0]?.payload.redactedServerConfigMatches, false);
+  const readStart = traces.find((entry) =>
+    entry.event === "managed-ai-config-sync:read-current:start",
+  );
+  const readComplete = traces.find((entry) =>
+    entry.event === "managed-ai-config-sync:read-current",
+  );
+  assert.equal(readStart?.payload.vesloWorkspaceId, "ws-active");
+  assert.equal(typeof readComplete?.payload.readDurationMs, "number");
+  assert.equal(typeof readComplete?.payload.exceededDefaultRequestDeadline, "boolean");
 
   const completedSkip = traces.find((entry) =>
     entry.event === "managed-ai-config-sync:flight" &&

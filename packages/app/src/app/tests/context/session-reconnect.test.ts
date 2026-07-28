@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   beginOutageEpisode,
   clearOutageEpisode,
+  createReconnectRecoveryTracker,
   createReconnectState,
   isRunningStatus,
   reconnectStateBlocksSend,
@@ -11,6 +12,19 @@ import {
   shouldShowReconnected,
   shouldShowReconnecting,
 } from "../../context/session-reconnect.js";
+
+test("initial live connection is not classified as reconnect recovery", () => {
+  const tracker = createReconnectRecoveryTracker();
+  assert.equal(tracker.observe(createReconnectState({ status: "live", workspaceId: "ws-a" })), false);
+});
+
+test("live connection resumes accepted watches only after an outage in the same workspace", () => {
+  const tracker = createReconnectRecoveryTracker();
+  assert.equal(tracker.observe(createReconnectState({ status: "reconnecting", workspaceId: "ws-a" })), false);
+  assert.equal(tracker.observe(createReconnectState({ status: "live", workspaceId: "ws-b" })), false);
+  assert.equal(tracker.observe(createReconnectState({ status: "live", workspaceId: "ws-a" })), true);
+  assert.equal(tracker.observe(createReconnectState({ status: "live", workspaceId: "ws-a" })), false);
+});
 
 test("beginOutageEpisode captures running sessions including retry states", () => {
   const state = beginOutageEpisode({ a: "running", b: "retry", c: "idle" });

@@ -6757,7 +6757,10 @@ async function runRouterDaemon(args: ParsedArgs) {
         const upstreamStartedAt = Date.now();
         let upstreamTraceClosed = false;
         const finishUpstreamTrace = (
-          event: "orchestrator:proxy-upstream:done" | "orchestrator:proxy-upstream:error",
+          event:
+            | "orchestrator:proxy-upstream:done"
+            | "orchestrator:proxy-upstream:error"
+            | "orchestrator:event-stream:closed",
           payload: Record<string, unknown>,
         ) => {
           if (upstreamTraceClosed) return;
@@ -6932,13 +6935,26 @@ async function runRouterDaemon(args: ParsedArgs) {
               errorMessage: err.message,
               isShuttingDown: routerShutdownStarted,
             });
-            finishUpstreamTrace("orchestrator:proxy-upstream:error", {
-              statusCode: res.statusCode,
-              error: err.message,
-              eventStream: healthPolicy.eventStream,
-              shutdown: healthPolicy.shutdown,
-              nonFatalEngineError: healthPolicy.nonFatalEngineError,
-            });
+            const expectedEventStreamClose = healthPolicy.eventStream && healthPolicy.nonFatalEngineError;
+            finishUpstreamTrace(
+              expectedEventStreamClose
+                ? "orchestrator:event-stream:closed"
+                : "orchestrator:proxy-upstream:error",
+              expectedEventStreamClose
+                ? {
+                    statusCode: res.statusCode,
+                    eventStream: true,
+                    shutdown: healthPolicy.shutdown,
+                    closeReason: healthPolicy.shutdown ? "router_shutdown" : "upstream_socket_closed",
+                  }
+                : {
+                    statusCode: res.statusCode,
+                    error: err.message,
+                    eventStream: healthPolicy.eventStream,
+                    shutdown: healthPolicy.shutdown,
+                    nonFatalEngineError: healthPolicy.nonFatalEngineError,
+                  },
+            );
             if (usesSharedOpenCodeEngine(workspaceTopology) && healthPolicy.markSharedEngineUnhealthy) {
               void sharedOpenCodeEngine?.markUnhealthy("proxy-upstream-error", err);
             }

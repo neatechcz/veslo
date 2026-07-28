@@ -1599,6 +1599,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           ? deps.transport.replaceUserMessageAsync(options.replaceMessageId, draft, replaceOptions)
           : deps.transport.sendPromptAsync(draft, promptSendOptions)
         );
+        const runtimeErrorPresent = !submitResult.accepted && Boolean(deps.runtime.error());
         deps.trace.recordSendTrace("sendPromptImmediate:result", {
           sendTraceId: options.sendTraceId ?? null,
           clientMessageId,
@@ -1608,7 +1609,7 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           status: submitResult.status,
           code: submitResult.code ?? null,
           draftDisposition: submitResult.draftDisposition,
-          error: deps.runtime.error(),
+          ...(submitResult.accepted ? {} : { runtimeErrorPresent }),
           expectedSessionKey: expectedSessionKey ?? null,
           targetSessionId: transportTargetSessionId,
           reason: options.reason ?? "normal",

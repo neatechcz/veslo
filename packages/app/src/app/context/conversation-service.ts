@@ -287,6 +287,7 @@ export type ConversationServiceDeps<Client extends ConversationServiceClient = C
     input: ManagedAiServerSendTarget,
   ) => Promise<ManagedAiConfigSyncOutcome>;
   managedAiRuntimeAuthorizationPrimeDiagnostic?: () => ManagedAiRuntimeAuthPrimeDiagnostic | null;
+  onConversationRuntimeConfirmed?: (workspaceId: string) => void;
   activeSendTraceId: () => string | null;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
   sendTraceStep: <T>(
@@ -362,6 +363,17 @@ export function createConversationService<Client extends ConversationServiceClie
     Map<string, ConversationWorkspaceRegistrationFlight>
   >();
   let conversationWorkspaceRegistrationFlightSequence = 0;
+
+  const notifyConversationRuntimeConfirmed = (workspaceId: string) => {
+    try {
+      deps.onConversationRuntimeConfirmed?.(workspaceId);
+    } catch (error) {
+      deps.recordSendTrace("conversation-runtime-confirmed:notification-failed", {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
 
   const resolveConversationServerWorkspaceId = (workspaceIdRaw: string) => {
     const workspaceId = workspaceIdRaw.trim();
@@ -1288,6 +1300,9 @@ export function createConversationService<Client extends ConversationServiceClie
         traceId: preflight?.traceId ?? null,
       });
     }
+    if (result.status === "submitted") {
+      notifyConversationRuntimeConfirmed(workspaceId);
+    }
     return result;
   };
 
@@ -1483,6 +1498,7 @@ export function createConversationService<Client extends ConversationServiceClie
         uiSessionId: normalizedSessionId,
         runId: result.runId,
       });
+      notifyConversationRuntimeConfirmed(workspaceId);
     }
     return result;
   };

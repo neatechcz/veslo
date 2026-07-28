@@ -68,7 +68,11 @@ import {
   type SessionRunDiagnostic,
 } from "./session-lifecycle-recovery";
 import { createSessionWorkspaceCacheController } from "./session-workspace-cache";
-import type { ReconnectNotice, ReconnectState } from "./session-reconnect";
+import {
+  createReconnectRecoveryTracker,
+  type ReconnectNotice,
+  type ReconnectState,
+} from "./session-reconnect";
 import type { TranscriptProjectionScope } from "./transcript-projection-store";
 import {
   currentLocale as __vesloIndirectLocale,
@@ -1251,10 +1255,6 @@ export function createSessionStore(options: {
       resolveSessionWorkspaceId(sessionId),
     );
     const result = await selectSessionFromController(sessionId, selectOptions);
-    lifecycleRecoveryController?.retryAcceptedRunForSession(
-      sessionId,
-      resolveSessionWorkspaceId(sessionId),
-    );
     lifecycleRecoveryController?.retryTerminalTranscriptRecoveryForSession(
       sessionId,
       resolveSessionWorkspaceId(sessionId),
@@ -1318,6 +1318,7 @@ export function createSessionStore(options: {
     setStore("todos", id, next);
   };
 
+  const reconnectRecoveryTracker = createReconnectRecoveryTracker();
   eventStreamController = createSessionEventStreamController({
     store,
     setStore,
@@ -1332,11 +1333,14 @@ export function createSessionStore(options: {
     onReconnectNotice: options.onReconnectNotice,
     onReconnectState: (state) => {
       options.onReconnectState?.(state);
+      const recoveredFromOutage = reconnectRecoveryTracker.observe(state);
       if (state.status === "live") {
         lifecycleRecoveryController?.resumeExhaustedWatches(state.workspaceId);
-        lifecycleRecoveryController?.resumeAcceptedRunsForWorkspace(
-          state.workspaceId,
-        );
+        if (recoveredFromOutage) {
+          lifecycleRecoveryController?.resumeAcceptedRunsForWorkspace(
+            state.workspaceId,
+          );
+        }
         void lifecycleRecoveryController?.probeSelectedConversationLatestRun();
       }
     },
