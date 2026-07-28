@@ -83,6 +83,7 @@ type LocalSkillInventoryWorkspace = { id: string; label: string; path: string };
 type SkillInventoryRefreshOptions = {
   force?: boolean;
   workspaceIds?: readonly string[];
+  reason?: string;
 };
 type ManagedSkillMutationTarget = SkillMutationTarget & {
   registry?: SkillInstance["registry"];
@@ -803,6 +804,7 @@ export function createExtensionsStore(options: {
 
   async function refreshSkillInventory(optionsOverride?: SkillInventoryRefreshOptions) {
     let forceRefresh = optionsOverride?.force === true;
+    const refreshReason = optionsOverride?.reason?.trim() || "unspecified";
     const workspaceIdScope = Array.from(
       new Set(
         (optionsOverride?.workspaceIds ?? [])
@@ -817,6 +819,7 @@ export function createExtensionsStore(options: {
       recordSendWorkflowTrace("skills-inventory", event, {
         traceId,
         force: forceRefresh,
+        reason: refreshReason,
         workspaceScopeCount: workspaceIdScope.length,
         ...payload,
       });
@@ -1262,7 +1265,10 @@ export function createExtensionsStore(options: {
         !refreshSkillInventoryForceQueued &&
         skillInventoryLoaded &&
         !hubRefreshInFlightForCurrentContext
-      ) return;
+      ) {
+        trace("skills-inventory:cached", { workspaceCount: localWorkspaces.length });
+        return;
+      }
 
       const refreshOptions = forceRefresh || refreshSkillInventoryForceQueued ? { force: true } : undefined;
       refreshSkillInventoryForceQueued = false;

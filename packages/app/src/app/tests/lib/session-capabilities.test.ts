@@ -233,13 +233,25 @@ test("app session capabilities project local skills from the shared inventory su
   assert.doesNotMatch(source, /listLocalSkillsScoped\(directory,\s*"workspace"\)/);
 });
 
-test("workspace activation refreshes only the active workspace skill inventory", () => {
+test("session selection refreshes only the selected local workspace skill inventory", () => {
   const appSource = readFileSync(new URL("../../app.tsx", import.meta.url), "utf8");
 
   assert.match(
     appSource,
-    /const activeLocalSkillInventoryContext = createMemo\(\(\) => \{[\s\S]*workspaceType === "local" && workspaceId && workspaceRoot[\s\S]*void refreshSkillInventory\(\{ workspaceIds: \[workspaceId\] \}\)\.catch\(\(error: unknown\) =>[\s\S]*"skills\.refreshInventory\.active-workspace"/,
+    /const activeLocalSkillInventoryContext = createMemo\(\(\) => \{[\s\S]*void refreshSkillInventory\(\{[\s\S]*workspaceIds: \[workspaceId\],[\s\S]*reason: "active-workspace",[\s\S]*\}\)\.catch\(\(error: unknown\) =>[\s\S]*"skills\.refreshInventory\.active-workspace"/,
   );
+  assert.match(
+    appSource,
+    /const selectedSessionLocalSkillInventoryContext = createMemo\(\(\) => \{[\s\S]*resolveSelectedSessionBrowseScope\(sessionId\)[\s\S]*workspace\?\.workspaceType === "local" && workspaceId && workspaceRoot[\s\S]*void refreshSkillInventory\(\{[\s\S]*workspaceIds: \[workspaceId\],[\s\S]*reason: "selected-session",[\s\S]*\}\)\.catch\(\(error: unknown\) =>[\s\S]*"skills\.refreshInventory\.selected-session"/,
+  );
+});
+
+test("skill inventory traces retain the trigger and distinguish cached no-work refreshes", () => {
+  const source = readFileSync(new URL("../../context/extensions.ts", import.meta.url), "utf8");
+
+  assert.match(source, /const refreshReason = optionsOverride\?\.reason\?\.trim\(\) \|\| "unspecified"/);
+  assert.match(source, /reason: refreshReason,/);
+  assert.match(source, /trace\("skills-inventory:cached", \{ workspaceCount: localWorkspaces\.length \}\)/);
 });
 
 test("session capabilities cache loads by selected chat directory", async () => {

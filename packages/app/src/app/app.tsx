@@ -3233,8 +3233,37 @@ export default function App() {
   createEffect(
     on(activeLocalSkillInventoryContext, (workspaceId) => {
       if (!workspaceId) return;
-      void refreshSkillInventory({ workspaceIds: [workspaceId] }).catch((error: unknown) =>
+      void refreshSkillInventory({
+        workspaceIds: [workspaceId],
+        reason: "active-workspace",
+      }).catch((error: unknown) =>
         reportError(error, "skills.refreshInventory.active-workspace"),
+      );
+    }),
+  );
+
+  const selectedSessionLocalSkillInventoryContext = createMemo(() => {
+    const sessionId = selectedSessionId()?.trim() ?? "";
+    const sessionScope = sessionId
+      ? resolveSelectedSessionBrowseScope(sessionId)
+      : null;
+    const workspaceId = sessionScope?.workspaceId?.trim() ?? "";
+    const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId);
+    const workspaceRoot =
+      sessionScope?.workspaceRoot?.trim() ||
+      sessionScope?.directory?.trim() || "";
+    return workspace?.workspaceType === "local" && workspaceId && workspaceRoot
+      ? workspaceId
+      : null;
+  });
+  createEffect(
+    on(selectedSessionLocalSkillInventoryContext, (workspaceId) => {
+      if (!workspaceId) return;
+      void refreshSkillInventory({
+        workspaceIds: [workspaceId],
+        reason: "selected-session",
+      }).catch((error: unknown) =>
+        reportError(error, "skills.refreshInventory.selected-session"),
       );
     }),
   );
