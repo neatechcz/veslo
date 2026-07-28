@@ -45,7 +45,7 @@ test("pending draft sends snapshot selected target metadata and fall back to the
 
   assert.match(
     pendingSnapshotSource,
-    /const pendingDraftMeta = deps\.activePendingDraftMeta\(\);[\s\S]*meta: pendingDraftMeta,[\s\S]*draftId: pendingDraftMeta\?\.id\?\.trim\(\) \|\| GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,/s,
+    /const pendingDraftMeta = deps\.activePendingDraftMeta\(\);[\s\S]*meta: pendingDraftMeta,[\s\S]*draftId:\s*pendingDraftMeta\?\.id\?\.trim\(\) \|\| GLOBAL_UNPUBLISHED_PENDING_DRAFT_ID,/s,
     "first-send cleanup should use the selected pending metadata and still delete the global draft record if metadata is unavailable",
   );
 });
@@ -55,17 +55,17 @@ test("successful pending draft sends consume the pending draft only after the pr
   const bridgeSource = conversationRunCompatibilityBridgeSource();
   assert.match(
     source,
-    /const consumePendingDraftAfterAcceptedSend = async \(clearDisplayedPendingDraftState: boolean\) => \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*deps\.composerDraftCommands\.deleteDraft\(pendingDraftStorageKey\);[\s\S]*\};/s,
+    /const consumePendingDraftAfterAcceptedSend = async \(\s*clearDisplayedPendingDraftState: boolean,?\s*\) => \{[\s\S]*const pendingDraftStorageKey = pendingDraftSendState\.key;[\s\S]*const pendingDraftId = pendingDraftSendState\.draftId;[\s\S]*if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{[\s\S]*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*\}[\s\S]*deps\.composerDraftCommands\.deleteDraft\(pendingDraftStorageKey\);[\s\S]*\};/s,
     "pending drafts should be deleted and cleared through the accepted-send cleanup helper",
   );
   assert.match(
     bridgeSource,
-    /await runConversationOrFail\(\s*\{[\s\S]*kind: "prompt_async",[\s\S]*\}\);\s*\}\s*await input\.consumePendingDraftAfterAcceptedSend\(input\.sendTargetStillDisplayed\(\)\);[\s\S]*deps\.finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*deps\.recordSendTrace\("sendPrompt:success"[\s\S]*return true;/s,
+    /await runConversationOrFail\(\s*\{[\s\S]*kind: "prompt_async",[\s\S]*\}\);\s*\}\s*await input\.consumePendingDraftAfterAcceptedSend\(\s*input\.sendTargetStillDisplayed\(\),?\s*\);[\s\S]*deps\.finishPerf\(perfEnabled, "session\.prompt", "done", startedAt, \{[\s\S]*\}\);\s*deps\.recordSendTrace\("sendPrompt:success"[\s\S]*return true;/s,
     "compatibility bridge should consume pending drafts only after the prompt handoff succeeds",
   );
   assert.match(
     source,
-    /deps\.recordSendTrace\("sendPrompt:server-submit-first-success"[\s\S]*deps\.emitLiveTranscriptPolicyEvent\(\{[\s\S]*reason: "sendPrompt:success",[\s\S]*await consumePendingDraftAfterAcceptedSend\(true\);[\s\S]*return sessionSubmitResultFromConversationSubmit\(serverFirstSubmitResult\);/s,
+    /deps\.recordSendTrace\("sendPrompt:server-submit-first-success"[\s\S]*deps\.emitLiveTranscriptPolicyEvent\(\{[\s\S]*reason: "sendPrompt:success",[\s\S]*await consumePendingDraftAfterAcceptedSend\(true\);[\s\S]*return sessionSubmitResultFromConversationSubmit\(\s*serverFirstSubmitResult,?\s*\);/s,
     "first-session server submit success should consume pending drafts after the typed success result",
   );
 });
@@ -117,7 +117,7 @@ test("failed pending draft sends restore the pending draft route instead of leav
 test("pending draft cleanup failures are handled separately from prompt handoff success", () => {
   assert.match(
     sendPromptSource(),
-    /if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{\s*try \{[\s\S]*const deleted = await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*if \(!deleted\) \{[\s\S]*deps\.markPendingDraftConsumed\(pendingDraftId\);[\s\S]*console\.warn\([\s\S]*\} else \{[\s\S]*deps\.clearConsumedPendingDraftId\(pendingDraftId\);[\s\S]*\}[\s\S]*\} catch \(error\) \{[\s\S]*deps\.markPendingDraftConsumed\(pendingDraftId\);[\s\S]*deps\.reportError\(error, "pendingDrafts\.consume"\);[\s\S]*\}\s*\}/s,
+    /if \(pendingDraftId && deps\.isTauriRuntime\(\)\) \{\s*try \{[\s\S]*const deleted =\s*await deps\.pendingSessionDraftsDelete\(pendingDraftId\);[\s\S]*if \(!deleted\) \{[\s\S]*deps\.markPendingDraftConsumed\(pendingDraftId\);[\s\S]*console\.warn\([\s\S]*\} else \{[\s\S]*deps\.clearConsumedPendingDraftId\(pendingDraftId\);[\s\S]*\}[\s\S]*\} catch \(error\) \{[\s\S]*deps\.markPendingDraftConsumed\(pendingDraftId\);[\s\S]*deps\.reportError\(error, "pendingDrafts\.consume"\);[\s\S]*\}\s*\}/s,
     "pending-draft cleanup should report delete errors without converting a successful prompt handoff into a send failure",
   );
 });
@@ -133,7 +133,7 @@ test("slash command sends preassign the message id used for optimistic display",
   assert.match(commandBranch, /commandMessageIDToClear = input\.sendCorrelation\.clientMessageId;/);
   assert.match(
     commandBranch,
-    /deps\.sessionStoreSetCommandDisplay\(commandMessageID,\s*command\.name,\s*command\.arguments\);/,
+    /deps\.sessionStoreSetCommandDisplay\(\s*commandMessageID,\s*command\.name,\s*command\.arguments,?\s*\);/,
   );
   assert.match(commandBranch, /messageID:\s*commandMessageID/);
 });
@@ -158,7 +158,7 @@ test("first pending draft send materializes workspace and session without global
 
   assert.match(
     source,
-    /const sendPromptBusyOwnership = deps\.resolveSendPromptBusyOwnership\(\{ sessionId: sessionID \}\);[\s\S]*const blockAppDuringPromptSend = sendPromptBusyOwnership\.ownsBusy;/,
+    /const sendPromptBusyOwnership = deps\.resolveSendPromptBusyOwnership\(\s*\{\s*sessionId: sessionID,?\s*\},?\s*\);[\s\S]*const blockAppDuringPromptSend = sendPromptBusyOwnership\.ownsBusy;/,
     "a brand-new pending draft send should be identifiable so workspace/session materialization can stay scoped to the session view",
   );
   assert.match(

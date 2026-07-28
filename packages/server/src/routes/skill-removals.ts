@@ -274,7 +274,7 @@ export function registerSkillRemovalRoutes(
   const refreshWorkspaceRuntimeSkillView = async (
     workspace: WorkspaceInfo,
   ): Promise<void> => {
-    invalidateActiveRuntimeSkillView(workspace);
+    invalidateActiveRuntimeSkillView(workspace, "skill-restore");
   };
 
   addRoute(routes, "GET", "/skill-removals", "hostOrClient", async (ctx) => {
@@ -404,7 +404,7 @@ export function registerSkillRemovalRoutes(
               configuredWorkspace.id,
             );
             if (resolved.workspaceType === "local")
-              invalidateActiveRuntimeSkillView(resolved);
+              invalidateActiveRuntimeSkillView(resolved, "skill-removal");
             emitReloadEvent(
               ctx.reloadEvents,
               resolved,
@@ -578,7 +578,7 @@ export function registerSkillRemovalRoutes(
             configuredWorkspace.id,
           );
           if (resolved.workspaceType === "local")
-            invalidateActiveRuntimeSkillView(resolved);
+            invalidateActiveRuntimeSkillView(resolved, "skill-removal");
           emitReloadEvent(ctx.reloadEvents, resolved, "skills", reloadTrigger);
         } catch {
           // Skip workspaces that are no longer authorized for this server.

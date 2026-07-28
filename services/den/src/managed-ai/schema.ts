@@ -10,14 +10,14 @@ const timestamps = {
     .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
 }
 
-export const CoreTableNames = {
+export const ManagedAiTableNames = {
   credential_record: "credential_record",
   credential_secret: "credential_secret",
   credential_binding: "credential_binding",
   session_lease: "session_lease",
   credential_health_event: "credential_health_event",
   credential_usage_event: "credential_usage_event",
-  audit_event: "audit_event",
+  audit_event: "ai_gateway_audit_event",
   user_ai_access_policy: "user_ai_access_policy",
 } as const
 
@@ -28,7 +28,7 @@ export type CredentialType = (typeof CredentialType)[number]
 export type CredentialState = (typeof CredentialState)[number]
 
 export const credentialRecordTable = mysqlTable(
-  CoreTableNames.credential_record,
+  ManagedAiTableNames.credential_record,
   {
     id: idColumn().primaryKey(),
     name: varchar("name", { length: 255 }),
@@ -43,7 +43,7 @@ export const credentialRecordTable = mysqlTable(
 )
 
 export const credentialSecretTable = mysqlTable(
-  CoreTableNames.credential_secret,
+  ManagedAiTableNames.credential_secret,
   {
     secret_ref: varchar("secret_ref", { length: 255 }).primaryKey(),
     iv: text("iv").notNull(),
@@ -54,7 +54,7 @@ export const credentialSecretTable = mysqlTable(
 )
 
 export const credentialBindingTable = mysqlTable(
-  CoreTableNames.credential_binding,
+  ManagedAiTableNames.credential_binding,
   {
     id: idColumn().primaryKey(),
     owner_user_id: varchar("owner_user_id", { length: 64 }).notNull(),
@@ -69,7 +69,7 @@ export const credentialBindingTable = mysqlTable(
 )
 
 export const sessionLeaseTable = mysqlTable(
-  CoreTableNames.session_lease,
+  ManagedAiTableNames.session_lease,
   {
     id: idColumn().primaryKey(),
     owner_user_id: varchar("owner_user_id", { length: 64 }).notNull(),
@@ -86,7 +86,7 @@ export const sessionLeaseTable = mysqlTable(
 )
 
 export const credentialHealthEventTable = mysqlTable(
-  CoreTableNames.credential_health_event,
+  ManagedAiTableNames.credential_health_event,
   {
     id: idColumn().primaryKey(),
     credential_record_id: varchar("credential_record_id", { length: 64 }).notNull(),
@@ -99,7 +99,7 @@ export const credentialHealthEventTable = mysqlTable(
 )
 
 export const credentialUsageEventTable = mysqlTable(
-  CoreTableNames.credential_usage_event,
+  ManagedAiTableNames.credential_usage_event,
   {
     id: idColumn().primaryKey(),
     owner_user_id: varchar("owner_user_id", { length: 64 }).notNull(),
@@ -125,8 +125,8 @@ export const credentialUsageEventTable = mysqlTable(
   ],
 )
 
-export const auditEventTable = mysqlTable(
-  CoreTableNames.audit_event,
+export const managedAiAuditEventTable = mysqlTable(
+  ManagedAiTableNames.audit_event,
   {
     id: idColumn().primaryKey(),
     actor_user_id: varchar("actor_user_id", { length: 64 }),
@@ -145,7 +145,7 @@ export const auditEventTable = mysqlTable(
 )
 
 export const userAiAccessPolicyTable = mysqlTable(
-  CoreTableNames.user_ai_access_policy,
+  ManagedAiTableNames.user_ai_access_policy,
   {
     id: idColumn().primaryKey(),
     user_id: varchar("user_id", { length: 64 }).notNull(),

@@ -43,8 +43,13 @@ test("composer creates a trace id before parent send handoff", () => {
   assert.ok(onSendIndex > traceIdIndex, "trace id should exist before the parent send handoff");
   assert.match(
     composerSource,
-    /logUiEvent\("send-trace", `composer:\$\{event\}`, entry\);/,
-    "composer send trace entries should be forwarded to Tauri stderr",
+    /recordSendWorkflowTrace\("composer", event, safePayload\);/,
+    "composer send trace entries should use the shared native workflow trace sink",
+  );
+  assert.doesNotMatch(
+    composerSource,
+    /logUiEvent\("send-trace"/,
+    "composer must not duplicate the shared workflow trace over Tauri IPC",
   );
 });
 

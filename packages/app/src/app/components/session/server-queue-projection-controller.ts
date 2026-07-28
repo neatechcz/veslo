@@ -43,6 +43,18 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
   let pollingScope: ServerQueuedRunProjectionScope | null = null;
   let pollingAttempt = 0;
   const disposal = new Set<true>();
+  /**
+   * Polling is guarded by its timer, but the immediate refresh path was not.
+   * Reactive callers fire it in bursts and every call started its own fetch: a
+   * captured profile showed 124 callers coalescing onto a single queue GET
+   * inside one stalled frame. Coalescing at the transport hides the duplicate
+   * request but not the per-caller continuation work, so the burst still has to
+   * be paid. One in-flight refresh per scope is the cheaper contract.
+   */
+  const inFlightByScope = new Map<string, Promise<ServerQueueProjectionRefreshResult>>();
+
+  const scopeKey = (scope: ServerQueuedRunProjectionScope) =>
+    `${scope.uiConversationKey}\u0000${serverQueuedRunScopeKey(scope.workspaceId, scope.conversationId)}`;
 
   const stopPolling = () => {
     if (timer !== null) clearTimer(timer);
@@ -56,10 +68,25 @@ export function createServerQueueProjectionController(options: ServerQueueProjec
     stopPolling();
   };
 
-  const refresh = async (
+  const refresh = (
     requestedScope = options.getScope(),
   ): Promise<ServerQueueProjectionRefreshResult> => {
-    if (disposal.has(true) || !requestedScope) return { kind: "unavailable" };
+    if (disposal.has(true) || !requestedScope) {
+      return Promise.resolve({ kind: "unavailable" } as const);
+    }
+    const key = scopeKey(requestedScope);
+    const existing = inFlightByScope.get(key);
+    if (existing) return existing;
+    const flight = refreshUncoalesced(requestedScope).finally(() => {
+      if (inFlightByScope.get(key) === flight) inFlightByScope.delete(key);
+    });
+    inFlightByScope.set(key, flight);
+    return flight;
+  };
+
+  const refreshUncoalesced = async (
+    requestedScope: ServerQueuedRunProjectionScope,
+  ): Promise<ServerQueueProjectionRefreshResult> => {
 
     let items: VesloConversationQueueItem[] | null;
     try {

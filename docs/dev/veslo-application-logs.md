@@ -199,6 +199,12 @@ writes the mirror under the normal `support-diagnostics` log directory. This
 builder is intentionally separate from public release workflows and must not
 be used as a release-signing substitute.
 
+Send-workflow and skill-audit NDJSON are safe correlation surfaces, not raw
+request dumps: paths, URLs, prompts, credential fields, and free-form exception
+text are redacted before writing. Use trace IDs, workspace IDs, and
+status fields to correlate events; never add an ad-hoc payload dump to diagnose
+an incident.
+
 ## Den Debug-Log Ingest
 
 Den accepts uploaded debug-log batches at `POST /v1/internal/debug-logs` for server-to-server `veslo-server` shipping and at `POST /v1/desktop-diagnostics` for signed-in desktop fallback diagnostics when the local server is unavailable or not a trusted carrier. Both routes write to the application-queryable debug-log store: metadata is queryable, while payload content is encrypted and returned only through admin read paths.

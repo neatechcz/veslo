@@ -54,7 +54,7 @@ test("attachment staging self-heals a missing server workspace once before faili
 
   const bridgeSource = conversationRunCompatibilityBridgeSource();
   const appStagingCallIndex = bridgeSource.search(
-    /deps\.stageAttachmentsIntoSessionDirectory\(resolvedDraft, materializedSessionID, input\.sendPreflight\)/,
+    /deps\.sendTraceStep\(\s*"sendPrompt:stage-attachments",\s*\(\)\s*=>\s*deps\.stageAttachmentsIntoSessionDirectory\(\s*resolvedDraft,\s*materializedSessionID,\s*input\.sendPreflight,?\s*\)/s,
   );
   const promptAsyncIndex = bridgeSource.indexOf('kind: "prompt_async"');
   assert.notEqual(appStagingCallIndex, -1, "send workflow should call the staging module");

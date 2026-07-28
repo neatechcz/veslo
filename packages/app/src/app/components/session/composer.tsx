@@ -6,8 +6,11 @@ import { ArrowUp, File as FileIcon, Loader2, Paperclip, Square, Terminal, X, Zap
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 import type { SessionSubmitResult } from "../../lib/session-send-contract";
-import { logUiEvent, readClipboardFilePaths } from "../../lib/tauri";
-import { recordSendWorkflowTrace } from "../../lib/send-workflow-trace";
+import { readClipboardFilePaths } from "../../lib/tauri";
+import {
+  recordSendWorkflowTrace,
+  sanitizeSendWorkflowTracePayload,
+} from "../../lib/send-workflow-trace";
 import { currentLocale, t, useTranslate } from "../../../i18n";
 import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer, isFileDragTransfer } from "../../utils/data-transfer-files";
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
@@ -110,11 +113,14 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
     const logs = root.__vesloSendTrace ?? [];
     const id = (root.__vesloSendTraceSeq ?? 0) + 1;
     root.__vesloSendTraceSeq = id;
+    const safePayload = sanitizeSendWorkflowTracePayload(payload) as
+      | Record<string, unknown>
+      | undefined;
     const traceId =
-      typeof payload?.traceId === "string"
-        ? payload.traceId
-        : typeof payload?.sendTraceId === "string"
-          ? payload.sendTraceId
+      typeof safePayload?.traceId === "string"
+        ? safePayload.traceId
+        : typeof safePayload?.sendTraceId === "string"
+          ? safePayload.sendTraceId
           : undefined;
     const perfMs = Math.round(perfNow() * 100) / 100;
     const startPerfMsById = root.__vesloSendTraceStartPerfMsById ?? (root.__vesloSendTraceStartPerfMsById = {});
@@ -131,14 +137,12 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
       source: "composer",
       ...(traceId ? { traceId } : {}),
       event,
-      ...(payload ?? {}),
+      ...(safePayload ?? {}),
     };
     logs.push(entry);
     if (logs.length > 500) logs.splice(0, logs.length - 500);
     root.__vesloSendTrace = logs;
-    recordSendWorkflowTrace("composer", event, payload);
-    console.log(`[SENDTRACE] composer:${event}`, entry);
-    logUiEvent("send-trace", `composer:${event}`, entry);
+    recordSendWorkflowTrace("composer", event, safePayload);
   } catch {
     // ignore
   }

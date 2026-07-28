@@ -109,6 +109,28 @@ test("ordinary runtime never requests a force refresh", async () => {
   assert.deepEqual(options, [undefined]);
 });
 
+test("engine-only recovery selects a local binding without waiting for Skills", async () => {
+  let requests = 0;
+  const gate = createGate({
+    prepareRuntimeSkillView: async () => {
+      requests += 1;
+      throw new Error("this request must not run during engine-only recovery");
+    },
+  });
+
+  const ready = await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "runtime-recovery", skipServingViewRefresh: true },
+  );
+
+  assert.equal(ready, true);
+  assert.equal(requests, 0);
+  assert.deepEqual(gate.runtimeSkillBinding("workspace-1", "/repo"), {
+    revision: "empty-direct-skill-view/v1",
+    authorizationRevision: "empty-direct-skill-authorization/v1",
+  });
+});
+
 test("an older server without the manifest endpoint remains compatible", async () => {
   const labels: string[] = [];
   const gate = createGate({
@@ -143,4 +165,159 @@ test("a failed serving-view refresh never blocks ordinary runtime", async () => 
     authorizationRevision: "empty-direct-skill-authorization/v1",
   });
   assert.ok(labels.includes("skills:materialization:failed"));
+});
+
+test("a binding resolved for another path is treated as absent", async () => {
+  const gate = createGate({
+    prepareRuntimeSkillView: async () => ({
+      ready: true,
+      revision: "view-1",
+      authorizationRevision: "authorization-1",
+      generatedAt: "2026-07-28T00:00:00.000Z",
+      activeCount: 1,
+      items: [],
+    }),
+  });
+
+  await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "send-preflight" },
+  );
+
+  assert.deepEqual(gate.runtimeSkillBinding("workspace-1", "/repo"), {
+    revision: "view-1",
+    authorizationRevision: "authorization-1",
+  });
+  // Same id, different path: a reused or repointed workspace must re-resolve
+  // rather than inherit a view that was never agreed for it.
+  assert.equal(gate.runtimeSkillBinding("workspace-1", "/other-repo"), null);
+});
+
+test("forgetting a workspace clears its runtime binding", async () => {
+  const gate = createGate({
+    prepareRuntimeSkillView: async () => ({
+      ready: true,
+      revision: "view-1",
+      authorizationRevision: "authorization-1",
+      generatedAt: "2026-07-28T00:00:00.000Z",
+      activeCount: 1,
+      items: [],
+    }),
+  });
+
+  await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "send-preflight" },
+  );
+  assert.notEqual(gate.runtimeSkillBinding("workspace-1"), null);
+
+  gate.forgetWorkspaceRuntimeBinding("workspace-1");
+  assert.equal(gate.runtimeSkillBinding("workspace-1"), null);
+});
+
+test("a slow preparation cannot publish over a newer one", async () => {
+  let releaseSlow!: () => void;
+  const slowGate = new Promise<void>((resolve) => {
+    releaseSlow = resolve;
+  });
+  let calls = 0;
+  const gate = createGate({
+    prepareRuntimeSkillView: async () => {
+      calls += 1;
+      if (calls === 1) {
+        await slowGate;
+        return {
+          ready: true,
+          revision: "stale-view",
+          authorizationRevision: "stale-authorization",
+          generatedAt: "2026-07-28T00:00:00.000Z",
+          activeCount: 0,
+          items: [],
+        };
+      }
+      return {
+        ready: true,
+        revision: "current-view",
+        authorizationRevision: "current-authorization",
+        generatedAt: "2026-07-28T00:00:01.000Z",
+        activeCount: 1,
+        items: [],
+      };
+    },
+  });
+
+  // Distinct paths so the two preparations do not share a single flight.
+  const slow = gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo" } as any,
+    { reason: "send-preflight" },
+  );
+  await gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/repo-moved" } as any,
+    { reason: "send-preflight" },
+  );
+  assert.deepEqual(gate.runtimeSkillBinding("workspace-1", "/repo-moved"), {
+    revision: "current-view",
+    authorizationRevision: "current-authorization",
+  });
+
+  releaseSlow();
+  await slow;
+
+  // The late arrival belongs to a superseded epoch and must not win.
+  assert.deepEqual(gate.runtimeSkillBinding("workspace-1", "/repo-moved"), {
+    revision: "current-view",
+    authorizationRevision: "current-authorization",
+  });
+});
+
+test("forgetting a workspace fences an in-flight binding before the id is reused", async () => {
+  let releaseOld!: () => void;
+  const oldBlocked = new Promise<void>((resolve) => {
+    releaseOld = resolve;
+  });
+  let calls = 0;
+  const gate = createGate({
+    prepareRuntimeSkillView: async () => {
+      calls += 1;
+      if (calls === 1) {
+        await oldBlocked;
+        return {
+          ready: true,
+          revision: "old-view",
+          authorizationRevision: "old-authorization",
+          generatedAt: "2026-07-28T00:00:00.000Z",
+          activeCount: 1,
+          items: [],
+        };
+      }
+      return {
+        ready: true,
+        revision: "new-view",
+        authorizationRevision: "new-authorization",
+        generatedAt: "2026-07-28T00:00:01.000Z",
+        activeCount: 1,
+        items: [],
+      };
+    },
+  });
+
+  const old = gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/old" } as any,
+    { reason: "send-preflight" },
+  );
+  await Promise.resolve();
+  gate.forgetWorkspaceRuntimeBinding("workspace-1");
+  const replacement = gate.syncWorkspaceSkillMaterializationBeforeRuntime(
+    { id: "workspace-1", workspaceType: "local", path: "/new" } as any,
+    { reason: "send-preflight" },
+  );
+
+  releaseOld();
+  await Promise.all([old, replacement]);
+
+  assert.deepEqual(gate.runtimeSkillBinding("workspace-1", "/new"), {
+    revision: "new-view",
+    authorizationRevision: "new-authorization",
+  });
+  assert.equal(gate.runtimeSkillBinding("workspace-1", "/old"), null);
 });

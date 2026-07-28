@@ -20,7 +20,7 @@ const sessionStoreSource = readFileSync(new URL("./session.ts", import.meta.url)
 test("lifecycle recovery traces are mirrored into the enabled dev-runtime send trace", () => {
   assert.match(
     sessionStoreSource,
-    /function recordSessionLifecycleRecoveryTrace\(event: string, payload\?: Record<string, unknown>\) \{\s*recordSessionStatusTrace\(event, payload\);\s*recordSendWorkflowTrace\("session-lifecycle-recovery", event, payload\);\s*\}/s,
+    /function recordSessionLifecycleRecoveryTrace\(\s*event: string,\s*payload\?: Record<string, unknown>,?\s*\) \{\s*recordSessionStatusTrace\(event, payload\);\s*recordSendWorkflowTrace\("session-lifecycle-recovery", event, payload\);\s*\}/s,
   );
   assert.match(
     sessionStoreSource,
@@ -1665,6 +1665,7 @@ test("a new send invalidates an in-flight terminal transcript recovery for the s
   });
   const hydrated: string[] = [];
   const settled: string[] = [];
+  let recoverySignal: AbortSignal | undefined;
   const controller = createSessionLifecycleRecoveryController({
     sessionStatusById: () => ({}),
     selectedSessionId: () => "ses-a",
@@ -1674,7 +1675,10 @@ test("a new send invalidates an in-flight terminal transcript recovery for the s
       status: "completed",
       stale: false,
     }),
-    recoverConversationTranscript: async () => recovery,
+    recoverConversationTranscript: async (_scope, signal) => {
+      recoverySignal = signal;
+      return recovery;
+    },
     hydrateConversationTranscript: (snapshot) => hydrated.push(snapshot.sessionId),
     onTerminalTranscriptRecoverySettled: (scope) => settled.push(scope.runId),
     setSessionStatusForWorkspace: () => {},
@@ -1689,11 +1693,13 @@ test("a new send invalidates an in-flight terminal transcript recovery for the s
     clientMessageId: "msg-old",
   });
   await waitForAsyncPoll();
+  assert.equal(recoverySignal?.aborted, false);
 
   assert.equal(controller.invalidateTerminalTranscriptRecoveriesForConversation({
     workspaceId: "ws-a",
     conversationId: "conv-a",
   }), 1);
+  assert.equal(recoverySignal?.aborted, true);
   resolveRecovery({
     workspaceId: "ws-a",
     sessionId: "ses-a",

@@ -296,6 +296,25 @@ mod tests {
     };
     use crate::types::{OrchestratorDaemonState, OrchestratorStatus};
 
+    #[test]
+    fn detached_orchestrator_diagnostics_do_not_interpolate_paths_or_urls() {
+        let source = include_str!("orchestrator.rs");
+        let start = source
+            .rfind("pub fn orchestrator_start_detached(")
+            .expect("detached orchestrator start should exist");
+        let end = source[start..]
+            .find("\n#[tauri::command]")
+            .map(|offset| start + offset)
+            .unwrap_or(source.len());
+        let function = &source[start..end];
+
+        assert!(function.contains("workspaceId={workspace_log_id}"));
+        assert!(function.contains("error=redacted"));
+        assert!(function.contains("warning=redacted"));
+        assert!(!function.contains("workspacePath={workspace_path}"));
+        assert!(!function.contains("url={veslo_url}"));
+    }
+
     fn status(running: bool, base_url: Option<&str>) -> OrchestratorStatus {
         OrchestratorStatus {
             running,
@@ -951,13 +970,19 @@ pub fn orchestrator_start_detached(
         validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
             .to_string_lossy()
             .to_string();
+    let workspace_identity = workspace_identity_for_registered_path(&app, &workspace_path);
+    let workspace_log_id = workspace_identity
+        .app_workspace_id
+        .as_deref()
+        .or(workspace_identity.server_workspace_id.as_deref())
+        .unwrap_or("registered-workspace");
 
     let host_run_id = run_id
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     eprintln!(
-        "[orchestrator-detached][at={start_ts}][runId={host_run_id}][stage=entry] workspacePath={workspace_path}"
+        "[orchestrator-detached][at={start_ts}][runId={host_run_id}][stage=entry] workspaceId={workspace_log_id}"
     );
 
     let port = allocate_free_port()?;
@@ -1041,7 +1066,7 @@ pub fn orchestrator_start_detached(
         Ok(elapsed_ms) => elapsed_ms,
         Err(message) => {
             eprintln!(
-                "[orchestrator-detached][at={}][runId={host_run_id}][stage=timeout] ready wait failed error={message}",
+                "[orchestrator-detached][at={}][runId={host_run_id}][stage=timeout] ready wait failed error=redacted",
                 now_ms()
             );
             return Err(message);
@@ -1050,13 +1075,14 @@ pub fn orchestrator_start_detached(
 
     for warning in probe_detached_veslo_optional_ready(&veslo_url, &token) {
         eprintln!(
-            "[orchestrator-detached][at={}][runId={host_run_id}][stage=optional-readiness] {warning}",
+            "[orchestrator-detached][at={}][runId={host_run_id}][stage=optional-readiness] warning=redacted",
             now_ms()
         );
+        let _ = warning;
     }
 
     eprintln!(
-        "[orchestrator-detached][at={}][runId={host_run_id}][stage=complete] detached host ready in {}ms url={veslo_url}",
+        "[orchestrator-detached][at={}][runId={host_run_id}][stage=complete] detached host ready in {}ms",
         now_ms(),
         ready_elapsed_ms
     );

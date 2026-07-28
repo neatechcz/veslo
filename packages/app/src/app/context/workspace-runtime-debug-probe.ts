@@ -13,6 +13,7 @@ export type WorkspaceRuntimeDiagnosisEntry = {
 };
 
 export type WorkspaceRuntimeDebugRoot = {
+  __vesloSendFailureSnapshots?: Record<string, unknown>;
   __vesloSendTrace?: Array<Record<string, unknown>>;
   __vesloWorkspaceRuntimeSnapshot?: () => Promise<unknown>;
   __vesloWorkspaceRuntimeDiff?: () => Promise<unknown>;

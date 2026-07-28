@@ -79,9 +79,12 @@ export type WorkspaceRuntimeControllerDeps = {
   }) => Promise<boolean>;
   syncWorkspaceSkillMaterializationBeforeRuntime: (
     workspace: WorkspaceInfo,
-    options: { reason: string },
+    options: { reason: string; skipServingViewRefresh?: boolean },
   ) => Promise<boolean>;
-  runtimeSkillBinding?: (workspaceId: string) => RuntimeSkillBinding | null;
+  runtimeSkillBinding?: (
+    workspaceId: string,
+    workspacePath?: string,
+  ) => RuntimeSkillBinding | null;
   probeWorkspaceApiReady?: (input: {
     workspaceId: string;
     workspacePath: string;
@@ -107,6 +110,8 @@ export type EnsureEngineForWorkspaceOptions = {
   reason?: string;
   loadSessions?: boolean;
   forceFreshRuntime?: boolean;
+  skipManagedAiConfig?: boolean;
+  skipServingViewRefresh?: boolean;
 };
 
 export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControllerDeps) {
@@ -286,6 +291,8 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
     const shouldLoadSessions = options.loadSessions !== false;
     const isRuntimeRecovery = ensureReason.includes("runtime-recovery");
     const forceFreshRuntime = options.forceFreshRuntime === true || isRuntimeRecovery;
+    const skipManagedAiConfig = options.skipManagedAiConfig === true;
+    const skipServingViewRefresh = options.skipServingViewRefresh === true;
     if (!deps.workspacesHydrated()) {
       const start = Date.now();
       while (!deps.workspacesHydrated() && Date.now() - start < 5_000) {
@@ -335,6 +342,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
         reason: ensureReason,
         loadSessions: shouldLoadSessions,
         forceFreshRuntime,
+        skipManagedAiConfig,
         workspacesHydrated: deps.workspacesHydrated(),
       });
 
@@ -362,7 +370,11 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           return false;
         }
 
-        if (workspace.workspaceType === "local" && deps.syncManagedAiRuntimeConfigBeforeRuntime) {
+        if (
+          workspace.workspaceType === "local" &&
+          !skipManagedAiConfig &&
+          deps.syncManagedAiRuntimeConfigBeforeRuntime
+        ) {
           const configStartedAt = Date.now();
           recordSendWorkflowTrace("workspace-runtime", "ensure-engine:managed-ai-config:start", {
             ...runtimeTrace,
@@ -415,17 +427,28 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
             });
             return false;
           }
+        } else if (workspace.workspaceType === "local" && skipManagedAiConfig) {
+          recordSendWorkflowTrace(
+            "workspace-runtime",
+            "ensure-engine:managed-ai-config:skipped",
+            {
+              ...runtimeTrace,
+              workspaceId: id,
+              reason: ensureReason,
+            },
+          );
         }
 
         const skillSyncReason = isRuntimeRecovery ? "runtime-recovery" : "browse-attach";
         await deps.syncWorkspaceSkillMaterializationBeforeRuntime(workspace, {
           reason: skillSyncReason,
+          ...(skipServingViewRefresh ? { skipServingViewRefresh: true } : {}),
         });
         recordSendWorkflowTrace("workspace-runtime", "ensure-engine:skill-binding-selected", {
           ...runtimeTrace,
           workspaceId: id,
           reason: ensureReason,
-          skillBinding: deps.runtimeSkillBinding?.(workspace.id) ?? null,
+          skillBinding: deps.runtimeSkillBinding?.(workspace.id, workspace.path) ?? null,
         });
 
         const prepareReason = ensureReason;
@@ -437,7 +460,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           runtime,
           reason: prepareReason,
           forceFreshRuntime,
-          skillBinding: deps.runtimeSkillBinding?.(workspace.id) ?? null,
+          skillBinding: deps.runtimeSkillBinding?.(workspace.id, workspace.path) ?? null,
         });
         const prepareRuntime = async () => await deps.localRuntimeLifecycle.prepareWorkspaceRuntime({
           workspacePath: workspace.path,
@@ -447,7 +470,7 @@ export function createWorkspaceRuntimeController(deps: WorkspaceRuntimeControlle
           reason: prepareReason,
           connectMode: "quiet",
           forceFreshRuntime,
-          skillBinding: deps.runtimeSkillBinding?.(workspace.id) ?? null,
+          skillBinding: deps.runtimeSkillBinding?.(workspace.id, workspace.path) ?? null,
         });
         const ok = await prepareRuntime();
         recordSendWorkflowTrace("workspace-runtime", "ensure-engine:prepare-runtime:done", {

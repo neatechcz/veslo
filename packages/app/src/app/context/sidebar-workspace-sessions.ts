@@ -151,6 +151,15 @@ const sidebarSessionItemsEqual = (left: SidebarSessionItem[], right: SidebarSess
   return true;
 };
 
+// Session-store sync observes OpenCode's stream, where `updated` advances for
+// every transcript heartbeat. A fresh sidebar read is a different boundary:
+// its activity timestamp is visible UI data and must replace a stale row.
+const sidebarReadSessionItemsEqual = (left: SidebarSessionItem[], right: SidebarSessionItem[]) => {
+  if (!sidebarSessionItemsEqual(left, right)) return false;
+  return left.every((item, index) =>
+    (item.time?.updated ?? 0) === (right[index]?.time?.updated ?? 0));
+};
+
 const sidebarItemActivity = (item: SidebarSessionItem) =>
   item.time?.updated ?? item.time?.created ?? 0;
 
@@ -474,18 +483,28 @@ export function createSidebarWorkspaceSessions(options: SidebarWorkspaceSessions
       nextCount: preserveExisting ? existingRows.length : input.items.length,
     });
     if (!preserveExisting) {
-      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: input.items }));
+      setSidebarSessionsByWorkspaceId((prev) => {
+        const currentRows = prev[id] ?? [];
+        if (sidebarReadSessionItemsEqual(currentRows, input.items)) return prev;
+        return { ...prev, [id]: input.items };
+      });
     }
     if (input.available) {
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" as const }));
-      setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+      setSidebarSessionStatusByWorkspaceId((prev) =>
+        prev[id] === "ready" ? prev : { ...prev, [id]: "ready" as const },
+      );
+      setSidebarSessionErrorByWorkspaceId((prev) =>
+        prev[id] === null ? prev : { ...prev, [id]: null },
+      );
     } else {
       const reason = input.reason?.trim() || "unavailable";
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "error" as const }));
-      setSidebarSessionErrorByWorkspaceId((prev) => ({
-        ...prev,
-        [id]: sidebarReadUnavailableMessage(reason),
-      }));
+      const error = sidebarReadUnavailableMessage(reason);
+      setSidebarSessionStatusByWorkspaceId((prev) =>
+        prev[id] === "error" ? prev : { ...prev, [id]: "error" as const },
+      );
+      setSidebarSessionErrorByWorkspaceId((prev) =>
+        prev[id] === error ? prev : { ...prev, [id]: error },
+      );
     }
   };
 

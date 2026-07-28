@@ -35,7 +35,25 @@ const DEFAULT_PENDING_ID = "active";
 
 const normalize = (value: string | null | undefined) => value?.trim() ?? "";
 
-const encodeKeyPart = (value: string) => encodeURIComponent(value);
+/**
+ * Each conversation key encodes six or seven parts, and the sidebar builds one
+ * per row on every render. The distinct values are a small, stable set —
+ * workspace ids, roots, directories, session ids — so encoding them repeatedly
+ * was pure waste: a captured profile attributed 383 ms of main-thread time to
+ * this call. The cache is bounded and cleared wholesale, since these keys live
+ * as long as the workspaces they name.
+ */
+const ENCODED_KEY_PART_CACHE_LIMIT = 4096;
+const encodedKeyParts = new Map<string, string>();
+
+const encodeKeyPart = (value: string) => {
+  const cached = encodedKeyParts.get(value);
+  if (cached !== undefined) return cached;
+  const encoded = encodeURIComponent(value);
+  if (encodedKeyParts.size >= ENCODED_KEY_PART_CACHE_LIMIT) encodedKeyParts.clear();
+  encodedKeyParts.set(value, encoded);
+  return encoded;
+};
 
 const decodeKeyPart = (value: string) => {
   try {

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto"
 
 import { desc } from "drizzle-orm"
 
-import { auditEventTable } from "../schema.js"
+import { managedAiAuditEventTable } from "../schema.js"
+import { withManagedAiAuditSchema } from "./schema-availability.js"
 import type {
   AuditEventRecord,
   AuditRepository,
@@ -14,26 +15,32 @@ export class MySqlAuditRepository implements AuditRepository {
   constructor(private readonly db: any) {}
 
   async recordEvent(input: RecordAuditEventInput): Promise<void> {
-    await this.db.insert(auditEventTable).values({
-      id: createAuditEventId(input),
-      actor_user_id: input.actorUserId ?? null,
-      entity_type: input.entityType,
-      entity_id: input.entityId,
-      action: input.action,
-      result: input.result,
-      summary: input.summary ?? null,
-      created_at: new Date(),
-    })
+    await withManagedAiAuditSchema(() =>
+      this.db.insert(managedAiAuditEventTable).values({
+        id: createAuditEventId(input),
+        actor_user_id: input.actorUserId ?? null,
+        entity_type: input.entityType,
+        entity_id: input.entityId,
+        action: input.action,
+        result: input.result,
+        summary: input.summary ?? null,
+        created_at: new Date(),
+      }),
+    )
   }
 
   async listEvents(input: ListAuditEventsInput): Promise<AuditEventRecord[]> {
-    const rows = await this.db
-      .select()
-      .from(auditEventTable)
-      .orderBy(desc(auditEventTable.created_at))
-      .limit(input.limit)
+    const rows = await withManagedAiAuditSchema<
+      (typeof managedAiAuditEventTable.$inferSelect)[]
+    >(() =>
+      this.db
+        .select()
+        .from(managedAiAuditEventTable)
+        .orderBy(desc(managedAiAuditEventTable.created_at))
+        .limit(input.limit),
+    )
 
-    return rows.map((row: typeof auditEventTable.$inferSelect) => ({
+    return rows.map((row: typeof managedAiAuditEventTable.$inferSelect) => ({
       id: row.id,
       timestamp: toIsoString(row.created_at),
       actor: row.actor_user_id ?? "system",

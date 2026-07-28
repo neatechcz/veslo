@@ -117,17 +117,38 @@ const resolveAuthHeader = (auth?: OpencodeAuth) => {
   return encoded ? `Basic ${encoded}` : null;
 };
 
+/**
+ * The orchestrator records the send trace id on every proxied request. Without
+ * it a proxy event — including one that reports no running engine — cannot be
+ * tied back to the send that caused it, and correlation falls back to matching
+ * timestamps across three separate trace files by hand.
+ */
+const SEND_TRACE_ID_HEADER = "X-Veslo-Send-Trace-Id";
+
+const activeSendTraceId = (): string | null => {
+  if (typeof window === "undefined") return null;
+  const value = (window as { __vesloActiveSendTraceId?: string | null })
+    .__vesloActiveSendTraceId;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+};
+
 const createTauriFetch = (auth?: OpencodeAuth) => {
   const authHeader = resolveAuthHeader(auth);
   const addAuth = (headers: Headers) => {
     if (!authHeader || headers.has("Authorization")) return;
     headers.set("Authorization", authHeader);
   };
+  const addSendTrace = (headers: Headers) => {
+    if (headers.has(SEND_TRACE_ID_HEADER)) return;
+    const traceId = activeSendTraceId();
+    if (traceId) headers.set(SEND_TRACE_ID_HEADER, traceId);
+  };
 
   return (input: RequestInfo | URL, init?: RequestInit) => {
     if (input instanceof Request) {
       const headers = new Headers(input.headers);
       addAuth(headers);
+      addSendTrace(headers);
       const request = new Request(input, { headers });
       return fetchWithTimeout(
         auditedTauriFetch,
@@ -139,6 +160,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
 
     const headers = new Headers(init?.headers);
     addAuth(headers);
+    addSendTrace(headers);
     return fetchWithTimeout(
       auditedTauriFetch,
       input,

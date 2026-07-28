@@ -441,7 +441,13 @@ export function createLocalRuntimeLifecycle(deps: LocalRuntimeLifecycleDeps) {
 
     if (shouldSkipQuietConnectForOrchestratorState(activeInfo)) return false;
 
-    if (!baseUrl) return true;
+    if (!baseUrl) {
+      recordEngineInfoPollTrace("engine-info-poll:live-binding-unavailable", {
+        engineState: activeInfo.engineState ?? null,
+        running: activeInfo.running,
+      });
+      return false;
+    }
 
     if ((options.connectMode ?? "server") === "quiet") {
       return await deps.connectQuiet(

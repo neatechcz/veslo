@@ -18,13 +18,37 @@ type NavigatorWithUserAgentData = Navigator & {
   };
 };
 
-function browserPlatform() {
+type BrowserPlatformFlags = {
+  isMac: boolean;
+  isWindows: boolean;
+};
+
+let cachedPlatformFlags: BrowserPlatformFlags | null = null;
+
+function browserPlatformFlags(): BrowserPlatformFlags | null {
+  if (cachedPlatformFlags) return cachedPlatformFlags;
+  if (typeof navigator === "undefined") return null;
+
   const candidateNavigator = navigator as NavigatorWithUserAgentData;
-  return typeof candidateNavigator.userAgentData?.platform === "string"
-    ? candidateNavigator.userAgentData.platform
-    : typeof navigator.platform === "string"
-      ? navigator.platform
-      : "";
+  const userAgentData = candidateNavigator.userAgentData;
+  const userAgentDataPlatform = userAgentData?.platform;
+  const platform =
+    typeof userAgentDataPlatform === "string"
+      ? userAgentDataPlatform
+      : typeof navigator.platform === "string"
+        ? navigator.platform
+        : "";
+  const userAgent = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
+  const flags = {
+    isWindows: /windows/i.test(platform) || /windows/i.test(userAgent),
+    isMac: /mac/i.test(platform) || /macintosh/i.test(userAgent),
+  };
+
+  // Tauri exposes userAgentData, but its navigator bridge is expensive enough
+  // to matter in path-heavy reactive work. Cache only that browser-native
+  // capability; test/SSR fallbacks without it stay dynamic.
+  if (userAgentData) cachedPlatformFlags = flags;
+  return flags;
 }
 
 export function isTauriRuntime() {
@@ -46,26 +70,48 @@ export function isTauriRuntime() {
 }
 
 export function isWindowsPlatform() {
-  if (typeof navigator === "undefined") return false;
-
-  const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
-  const platform = browserPlatform();
-
-  return /windows/i.test(platform) || /windows/i.test(ua);
+  return browserPlatformFlags()?.isWindows ?? false;
 }
 
 export function isMacPlatform() {
-  if (typeof navigator === "undefined") return false;
-
-  const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
-  const platform = browserPlatform();
-
-  return /mac/i.test(platform) || /macintosh/i.test(ua);
+  return browserPlatformFlags()?.isMac ?? false;
 }
+
+/**
+ * Path normalization is pure, deterministic, and called from the sidebar's
+ * per-row key and root helpers, so it runs once per row per render. A captured
+ * profile attributed 3.8 s of main-thread time to this function and a further
+ * 1.5 s to the platform lookup beneath it, which together dominated every other
+ * cost in the trace and froze the UI.
+ *
+ * The distinct input set is small — workspace roots and session directories —
+ * so memoizing collapses that to a single computation per path. The cache is
+ * bounded and dropped wholesale rather than evicted per entry, because these
+ * keys are stable for a session and the cheapest correct policy is to keep them
+ * until the set grows unreasonable.
+ */
+const PATH_NORMALIZATION_CACHE_LIMIT = 4096;
+
+function memoizedPathValue<T>(cache: Map<string, T>, key: string, compute: () => T): T {
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const value = compute();
+  if (cache.size >= PATH_NORMALIZATION_CACHE_LIMIT) cache.clear();
+  cache.set(key, value);
+  return value;
+}
+
+const directoryQueryPathCache = new Map<string, string>();
 
 export function normalizeDirectoryQueryPath(input?: string | null) {
   const trimmed = (input ?? "").trim();
   if (!trimmed) return "";
+  return memoizedPathValue(directoryQueryPathCache, trimmed, () =>
+    normalizeDirectoryQueryPathUncached(trimmed),
+  );
+}
+
+function normalizeDirectoryQueryPathUncached(trimmed: string) {
   const unified = trimmed
     .replace(/^\\\\\?\\UNC\\/i, "//")
     .replace(/^\\\\\?\\/i, "")
@@ -115,15 +161,37 @@ function workspaceAliasToRootPath(input: string, root: string) {
   return normalized;
 }
 
+const directoryPlatformPathCache = new Map<string, string>();
+
 function normalizeDirectoryPathForPlatform(input: string | null | undefined, windows: boolean) {
   const normalized = normalizeDirectoryQueryPath(input);
   if (!normalized) return "";
-  const comparable = windows ? wslMountPathToWindowsDirectoryPath(normalized) ?? normalized : normalized;
-  return windows ? comparable.toLowerCase() : comparable;
+  // The platform flag is stable for the page, but keep it in the key so a
+  // cached value can never be served for the wrong platform.
+  return memoizedPathValue(
+    directoryPlatformPathCache,
+    `${windows ? "w" : "p"}\u0000${normalized}`,
+    () => {
+      const comparable = windows
+        ? wslMountPathToWindowsDirectoryPath(normalized) ?? normalized
+        : normalized;
+      return windows ? comparable.toLowerCase() : comparable;
+    },
+  );
 }
 
+const directoryPathCache = new Map<string, string>();
+
 export function normalizeDirectoryPath(input?: string | null) {
-  return normalizeDirectoryPathForPlatform(input, isWindowsPlatform());
+  const trimmed = (input ?? "").trim();
+  if (!trimmed) return "";
+  // Cache on the raw input so the platform lookup and both normalization steps
+  // are skipped entirely on a repeat. This is the entry point the sidebar calls
+  // several times per row per render, and the platform flag cannot change
+  // within a page, so it does not belong in the key here.
+  return memoizedPathValue(directoryPathCache, trimmed, () =>
+    normalizeDirectoryPathForPlatform(trimmed, isWindowsPlatform()),
+  );
 }
 
 export type DirectoryQueryPathMode = "auto" | "sandbox" | "non-sandbox";

@@ -473,6 +473,7 @@ export async function resolveActiveWorkspaceSkills(
   workspaceRoot: string,
   options: Omit<ListSkillsOptions, "includeGlobal" | "globalOwner"> = {},
 ): Promise<SkillItem[]> {
+  const startedAt = Date.now();
   const candidates = await collectSkillItems(workspaceRoot, {
     ...options,
     includeGlobal: false,
@@ -493,6 +494,9 @@ export async function resolveActiveWorkspaceSkills(
     workspaceRoot,
     candidateCount: candidates.length,
     activeCount: result.length,
+    // Resolution walks the workspace skill roots. Without a duration there is
+    // no way to price the work a discarded candidate threw away.
+    durationMs: Date.now() - startedAt,
     active: result.map((item) => ({ name: item.name, path: item.path, source: activeSkillClass(item) })),
   });
   return result;

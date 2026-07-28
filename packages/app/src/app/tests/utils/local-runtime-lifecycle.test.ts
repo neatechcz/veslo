@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { OpencodeAuth } from "../../lib/opencode";
-import type { EngineInfo, WorkspaceRuntimePrepareResult } from "../../lib/tauri";
+import type {
+  EngineInfo,
+  WorkspaceRuntimePrepareResult,
+} from "../../lib/tauri";
 import { createLocalRuntimeLifecycle } from "../../utils/local-runtime-lifecycle.js";
 
 function makeEngineInfo(overrides: Partial<EngineInfo> = {}): EngineInfo {
@@ -61,7 +64,10 @@ function createHarness(options?: {
   const calls: string[] = [];
   const snapshots: EngineInfo[] = [];
   const authSnapshots: Array<OpencodeAuth | null> = [];
-  const readInfoRequests: Array<{ workspaceId?: string; workspacePath?: string }> = [];
+  const readInfoRequests: Array<{
+    workspaceId?: string;
+    workspacePath?: string;
+  }> = [];
   const serverConnections: Array<{
     baseUrl: string;
     directory?: string;
@@ -87,9 +93,12 @@ function createHarness(options?: {
   }> = [];
 
   const runtime = options?.runtime ?? "direct";
-  const startInfo = options?.startInfo ?? makeEngineInfo({ runtime, projectDir: "/tmp/demo" });
+  const startInfo =
+    options?.startInfo ?? makeEngineInfo({ runtime, projectDir: "/tmp/demo" });
   const prepareInfo = options?.prepareInfo ?? startInfo;
-  const infoSnapshot = options?.infoSnapshot ?? makeEngineInfo({ runtime, projectDir: "/tmp/demo" });
+  const infoSnapshot =
+    options?.infoSnapshot ??
+    makeEngineInfo({ runtime, projectDir: "/tmp/demo" });
   const infoSnapshots = [...(options?.infoSnapshots ?? [])];
 
   const lifecycle = createLocalRuntimeLifecycle({
@@ -120,9 +129,10 @@ function createHarness(options?: {
       }
       return {
         ok: true,
-        action: input.forceFreshRuntime === true || input.runtime === "direct"
-          ? "fresh_start"
-          : "orchestrator_activate",
+        action:
+          input.forceFreshRuntime === true || input.runtime === "direct"
+            ? "fresh_start"
+            : "orchestrator_activate",
         reason: input.reason ?? "",
         engine: prepareInfo,
       };
@@ -131,9 +141,21 @@ function createHarness(options?: {
       calls.push(`activateHost:${workspacePath}`);
       return null;
     },
-    connectToServer: async (baseUrl, directory, context, auth, connectOptions) => {
+    connectToServer: async (
+      baseUrl,
+      directory,
+      context,
+      auth,
+      connectOptions,
+    ) => {
       calls.push(`connectToServer:${context?.reason ?? "none"}`);
-      serverConnections.push({ baseUrl, directory, context, auth, connectOptions });
+      serverConnections.push({
+        baseUrl,
+        directory,
+        context,
+        auth,
+        connectOptions,
+      });
       return options?.serverConnectResult ?? true;
     },
     connectQuiet: async (baseUrl, directory, auth, context) => {
@@ -214,20 +236,45 @@ test("runtime preparation fails fast when native prepare exceeds the UI timeout"
         ok: true,
         action: "fresh_start",
         reason: input.reason ?? "",
-        engine: makeEngineInfo({ runtime: input.runtime, projectDir: input.projectDir }),
+        engine: makeEngineInfo({
+          runtime: input.runtime,
+          projectDir: input.projectDir,
+        }),
       };
     },
   });
 
   await assert.rejects(
-    () => harness.lifecycle.restartWorkspaceRuntime({
-      workspacePath: "/tmp/slow",
-      workspaceId: "ws-slow",
-      reason: "createSessionAndOpen-runtime-recovery",
-    }),
+    () =>
+      harness.lifecycle.restartWorkspaceRuntime({
+        workspacePath: "/tmp/slow",
+        workspaceId: "ws-slow",
+        reason: "createSessionAndOpen-runtime-recovery",
+      }),
     /Timed out waiting for local runtime prepare after 10ms/,
   );
   await new Promise((resolve) => setTimeout(resolve, 50));
+});
+
+test("runtime preparation never succeeds without a live OpenCode base URL", async () => {
+  const harness = createHarness({
+    runtime: "direct",
+    prepareInfo: makeEngineInfo({
+      runtime: "direct",
+      baseUrl: "",
+      projectDir: "/tmp/unbound",
+    }),
+  });
+
+  const ok = await harness.lifecycle.restartWorkspaceRuntime({
+    workspacePath: "/tmp/unbound",
+    reason: "send-runtime-recovery",
+    connectMode: "quiet",
+  });
+
+  assert.equal(ok, false);
+  assert.deepEqual(harness.serverConnections, []);
+  assert.deepEqual(harness.quietConnections, []);
 });
 
 test("queued send recovery starts after stalled warmup times out", async () => {
@@ -243,16 +290,21 @@ test("queued send recovery starts after stalled warmup times out", async () => {
         ok: true,
         action: "fresh_start",
         reason: input.reason ?? "",
-        engine: makeEngineInfo({ runtime: input.runtime, projectDir: input.projectDir }),
+        engine: makeEngineInfo({
+          runtime: input.runtime,
+          projectDir: input.projectDir,
+        }),
       };
     },
   });
 
-  const first = harness.lifecycle.restartWorkspaceRuntime({
-    workspacePath: "/tmp/slow-boot",
-    workspaceId: "ws-boot",
-    reason: "boot-warmup",
-  }).catch((error: unknown) => error);
+  const first = harness.lifecycle
+    .restartWorkspaceRuntime({
+      workspacePath: "/tmp/slow-boot",
+      workspaceId: "ws-boot",
+      reason: "boot-warmup",
+    })
+    .catch((error: unknown) => error);
   await waitForMicrotaskCondition(() => prepareStarts.length === 1);
   await new Promise((resolve) => setTimeout(resolve, 25));
 
@@ -264,7 +316,10 @@ test("queued send recovery starts after stalled warmup times out", async () => {
   });
 
   const [firstResult, secondResult] = await Promise.all([first, second]);
-  assert.match(String(firstResult), /Timed out waiting for local runtime prepare after 50ms/);
+  assert.match(
+    String(firstResult),
+    /Timed out waiting for local runtime prepare after 50ms/,
+  );
   assert.equal(secondResult, true);
   assert.deepEqual(prepareStarts, ["/tmp/slow-boot", "/tmp/send-recovery"]);
   await new Promise((resolve) => setTimeout(resolve, 90));
@@ -289,7 +344,10 @@ test("runtime preparation queue includes quiet reconnect before queued recovery 
       prepareStarts.push(`${input.reason ?? ""}:${input.projectDir}`);
       return {
         ok: true,
-        action: input.forceFreshRuntime === true ? "fresh_start" : "orchestrator_activate",
+        action:
+          input.forceFreshRuntime === true
+            ? "fresh_start"
+            : "orchestrator_activate",
         reason: input.reason ?? "",
         engine: makeEngineInfo({
           runtime: input.runtime,
@@ -401,7 +459,10 @@ test("orchestrator quiet reconnect waits through starting engine info state", as
   assert.equal(ok, true);
   assert.equal(harness.readInfoRequests.length, 1);
   assert.equal(harness.quietConnections.length, 1);
-  assert.equal(harness.quietConnections[0]?.baseUrl, "http://127.0.0.1:7777/workspace/ws-a/opencode");
+  assert.equal(
+    harness.quietConnections[0]?.baseUrl,
+    "http://127.0.0.1:7777/workspace/ws-a/opencode",
+  );
   assert.deepEqual(
     harness.snapshots.map((snapshot) => snapshot.engineState ?? null),
     ["starting", "ready"],
@@ -636,7 +697,10 @@ test("restartWorkspaceRuntime activates orchestrator with the requested workspac
   });
 
   assert.equal(ok, true);
-  assert.equal(harness.calls[0], "prepareRuntime:/tmp/private-profile:veslo-orchestrator:ws-target:ensure-engine:false");
+  assert.equal(
+    harness.calls[0],
+    "prepareRuntime:/tmp/private-profile:veslo-orchestrator:ws-target:ensure-engine:false",
+  );
   assert.deepEqual(harness.readInfoRequests, []);
   assert.equal(harness.quietConnections[0]?.context?.workspaceId, "ws-target");
 });
@@ -667,5 +731,7 @@ test("reattachOrchestratorWorkspace delegates to backend prepare and reuses snap
     "setEngineAuth:demo-user",
     "connectToServer:workspace-attach-local",
   ]);
-  assert.deepEqual(harness.serverConnections[0]?.connectOptions, { navigate: false });
+  assert.deepEqual(harness.serverConnections[0]?.connectOptions, {
+    navigate: false,
+  });
 });

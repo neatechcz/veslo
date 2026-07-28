@@ -66,7 +66,7 @@ export function registerSkillEnabledRoutes(
   const refreshWorkspaceRuntimeSkillView = async (
     workspace: WorkspaceInfo,
   ): Promise<void> => {
-    invalidateActiveRuntimeSkillView(workspace);
+    invalidateActiveRuntimeSkillView(workspace, "skill-enabled-state");
   };
   const withWorkspaceSkillLeases = async <T>(
     workspaces: WorkspaceInfo[],

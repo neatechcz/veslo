@@ -155,3 +155,150 @@ describe("DirectorySkillViewLifecycle", () => {
     });
   });
 });
+
+describe("DirectorySkillViewLifecycle unregister", () => {
+  test("retire waits for idle and disposes the old directory instance", async () => {
+    const active = new Set(["A"]);
+    const disposed: string[] = [];
+    let observedActiveResolve!: () => void;
+    const observedActive = new Promise<void>((resolve) => {
+      observedActiveResolve = resolve;
+    });
+    const lifecycle = new DirectorySkillViewLifecycle({
+      publish: async () => {},
+      dispose: async ({ directoryInstanceKey }) => {
+        disposed.push(directoryInstanceKey);
+      },
+      hasActiveRun: ({ directoryInstanceKey }) => {
+        const isActive = active.has(directoryInstanceKey);
+        if (isActive) observedActiveResolve();
+        return isActive;
+      },
+      retryAfterMs: 1,
+    });
+    lifecycle.register({ directoryInstanceKey: "A", skillViewRevision: "a1" });
+
+    const retirement = lifecycle.retire("A");
+    await observedActive;
+    expect(disposed).toEqual([]);
+    expect(lifecycle.get("A")).toBeNull();
+
+    active.delete("A");
+    await expect(retirement).resolves.toBe(true);
+    expect(disposed).toEqual(["A"]);
+  });
+
+  test("fences an in-flight initial publish so a reused key cannot resurrect it", async () => {
+    let releasePublish!: () => void;
+    let publishStartedResolve!: () => void;
+    const publishStarted = new Promise<void>((resolve) => {
+      publishStartedResolve = resolve;
+    });
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    const lifecycle = new DirectorySkillViewLifecycle({
+      publish: async () => {
+        publishStartedResolve();
+        await publishGate;
+      },
+      dispose: async () => {},
+      hasActiveRun: () => false,
+    });
+
+    const old = lifecycle.ensure({ directoryInstanceKey: "A", skillViewRevision: "a1" });
+    await publishStarted;
+    expect(lifecycle.unregister("A")).toBe(false);
+    const replacement = lifecycle.ensure({ directoryInstanceKey: "A", skillViewRevision: "a2" });
+
+    releasePublish();
+    await expect(old).rejects.toThrow("directory instance retired");
+    await expect(replacement).resolves.toMatchObject({
+      status: "ready",
+      instance: { directoryInstanceKey: "A", skillViewRevision: "a2", state: "ready" },
+    });
+    expect(lifecycle.get("A")).toMatchObject({ skillViewRevision: "a2", state: "ready" });
+  });
+
+  test("retire disposes after an in-flight initial publish that has no entry yet", async () => {
+    let releasePublish!: () => void;
+    let publishStartedResolve!: () => void;
+    const publishStarted = new Promise<void>((resolve) => {
+      publishStartedResolve = resolve;
+    });
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve;
+    });
+    const disposed: string[] = [];
+    const lifecycle = new DirectorySkillViewLifecycle({
+      publish: async () => {
+        publishStartedResolve();
+        await publishGate;
+      },
+      dispose: async ({ directoryInstanceKey }) => {
+        disposed.push(directoryInstanceKey);
+      },
+      hasActiveRun: () => false,
+    });
+
+    const initial = lifecycle.ensure({ directoryInstanceKey: "A", skillViewRevision: "a1" });
+    await publishStarted;
+    const retirement = lifecycle.retire("A");
+
+    releasePublish();
+    await expect(initial).rejects.toThrow("directory instance retired");
+    await expect(retirement).resolves.toBe(true);
+    expect(disposed).toEqual(["A"]);
+    expect(lifecycle.get("A")).toBeNull();
+  });
+
+  test("removes the entry so a later path reuse starts at a clean epoch", async () => {
+    const h = harness();
+    h.lifecycle.register({ directoryInstanceKey: "A", skillViewRevision: "a1" });
+    await h.lifecycle.requestRefresh({ directoryInstanceKey: "A", skillViewRevision: "a2" });
+    expect(h.lifecycle.get("A")?.directoryInstanceEpoch).toBe(1);
+
+    expect(h.lifecycle.unregister("A")).toBe(true);
+    expect(h.lifecycle.get("A")).toBeNull();
+
+    // A reused path must not inherit the retired instance's epoch.
+    h.lifecycle.register({ directoryInstanceKey: "A", skillViewRevision: "a3" });
+    expect(h.lifecycle.get("A")?.directoryInstanceEpoch).toBe(0);
+  });
+
+  test("cancels a pending retry so it cannot resurrect the entry", async () => {
+    const h = harness();
+    h.lifecycle.register({ directoryInstanceKey: "A", skillViewRevision: "a1" });
+    h.active.add("A");
+    // An active run defers the refresh and schedules a completion retry.
+    const deferred = await h.lifecycle.requestRefresh({
+      directoryInstanceKey: "A",
+      skillViewRevision: "a2",
+    });
+    expect(deferred.status).toBe("deferred");
+    expect(h.retryCallbacks.length).toBe(1);
+
+    h.lifecycle.unregister("A");
+
+    expect(h.retryCallbacks.length).toBe(0);
+    expect(h.lifecycle.get("A")).toBeNull();
+  });
+
+  test("unregistering one instance leaves the others untouched", () => {
+    const h = harness();
+    h.lifecycle.register({ directoryInstanceKey: "A", skillViewRevision: "a1" });
+    h.lifecycle.register({ directoryInstanceKey: "B", skillViewRevision: "b1" });
+
+    h.lifecycle.unregister("A");
+
+    expect(h.lifecycle.get("A")).toBeNull();
+    expect(h.lifecycle.get("B")?.skillViewRevision).toBe("b1");
+    expect(h.lifecycle.snapshot().map((entry) => entry.directoryInstanceKey)).toEqual(["B"]);
+  });
+
+  test("unregistering an unknown or blank key is a no-op", () => {
+    const h = harness();
+    expect(h.lifecycle.unregister("missing")).toBe(false);
+    expect(h.lifecycle.unregister("  ")).toBe(false);
+  });
+});

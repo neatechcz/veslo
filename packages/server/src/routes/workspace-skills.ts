@@ -82,7 +82,7 @@ export function registerWorkspaceSkillRoutes(
   const refreshWorkspaceRuntimeSkillView = async (
     workspace: WorkspaceInfo,
   ): Promise<void> => {
-    invalidateActiveRuntimeSkillView(workspace);
+    invalidateActiveRuntimeSkillView(workspace, "skill-materialization");
   };
 
   const listWorkspaceRuntimeSkills = async (

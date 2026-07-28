@@ -76,6 +76,13 @@ message and let the runtime attach the workspace and create the conversation in
 the background. Workspace activation must not be a UI-blocking precondition for
 the send action.
 
+For an existing local conversation, a missing live OpenCode binding before the
+server HTTP submit triggers at most one engine-only reachability recovery. That
+recovery uses the snapshotted workspace and the original client-message id, but
+does not refresh Managed AI configuration or authorization and never reuses a
+stale URL. Managed AI remains a server-owned submit concern after a live binding
+is available. A later transport replay is a separate, single idempotent retry.
+
 ### Send Boundary Validation
 
 The app can validate Veslo-owned send boundary payloads before treating them as
@@ -102,8 +109,7 @@ trace surfaces:
   those processes inherit the trace environment
 - timestamped runtime archive printed by startup:
   `sendWorkflowTrace=.../send-workflow-trace.ndjson`
-- webview DevTools console: `[SENDTRACE] app:<event>`
-- Tauri dev terminal/stderr: `[ui:send-trace] <event> <json>`
+- one shared native sink: `[ui:send-workflow-trace-batch] batch persisted`
 - in-memory webview buffer: `window.__vesloSendTrace`
 
 For a workspace-specific failure, correlate records using `traceId` and the
@@ -115,6 +121,25 @@ OpenCode requests and registration; the orchestrator records the corresponding
 path ids at registration, workspace resolution, skill-view validation, and
 engine spawn. Terminal lifecycle entries also carry the bounded, credential-
 redacted `terminalError` and the engine owner tuple.
+
+App-side send trace payloads are sanitized before they enter the webview
+buffer or the shared native workflow trace. Raw paths, URLs, prompts,
+credential fields, and nested equivalents are replaced with a fixed redacted
+value. App and composer local buffers feed that sink once; the sink coalesces
+short batches before crossing Tauri IPC, so diagnostics do not create one native
+write per renderer event. Correlate app events by `traceId` and
+stable workspace identifiers; never recover a path from diagnostics.
+
+For a failed send, the app also retains at most 16 persisted workspace-keyed
+failure snapshots in `window.__vesloSendFailureSnapshots`. Each keeps the first
+observed failure and the final terminal failure using only trace ID, event,
+phase, code, status, and the pre-HTTP marker. Stored values are normalized on
+read and never include a message, local path, URL, prompt, or credential.
+
+Server workflow and skill-audit NDJSON use the same boundary: sensitive
+payload keys and path/URL/credential-bearing exception text are replaced before
+the entry is written or mirrored. Keep endpoint paths, status, stable IDs, and
+trace IDs for correlation; do not bypass this writer with an ad-hoc JSON log.
 
 Desktop cold activation also writes native phases directly into the UI NDJSON
 channel with the initiating `traceId`: `desktop-runtime:prepare:entered`,
@@ -373,6 +398,25 @@ default pooled topology, on reuse as well as on spawn. A caller that starts an
 engine passes the complete server-owned binding to the direct-path resolver.
 The resolver either validates that exact pair or selects canonical empty with
 `skills.paths = []`; it never substitutes a different non-empty binding.
+
+For an existing local conversation, a connected Veslo server without a live
+OpenCode base URL is a pre-HTTP binding failure, not a reason to reuse a stale
+registration. The server-submit boundary reports that exact safe condition to
+the app. The app may perform one engine-only reachability recovery for the
+snapshotted workspace, then repeat the same idempotent server submit with its
+original `clientMessageId`. This recovery never runs Managed AI bootstrap or
+full send preparation. It also never waits for a serving-binding or Skills read:
+it reuses a matching in-memory binding or passes canonical empty to native
+activation, while serving-view refresh stays background work. A later transport failure remains a separate one-replay
+mechanism; a second preflight failure or unavailable result does not create a
+retry loop. A structured server response is terminal and is not treated as a
+transport failure eligible for replay. Browsing, status reads, and abort remain
+non-starting actions.
+
+The backend send owns its provisional run and accepted-run transition even when
+the user changes the visible conversation while it is in flight. The old send
+must still be admitted, watched, or disposed, but it must not clear the newly
+visible composer's draft or overwrite its last-prompt UI state.
 
 Enforcing this only at spawn would leave the contract trivially bypassable,
 because the common case is reuse. Each pooled engine therefore records the

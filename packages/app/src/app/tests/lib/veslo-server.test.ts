@@ -3902,7 +3902,12 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
     assert.equal(typeof client.getMyAiAccess, "function");
     assert.equal(typeof client.clearMyAiGatewayRuntimeAuthorization, "function");
 
-    const response = await client.getMyAiAccess("den-user-token", "org_123", "workspace a");
+    const response = await client.getMyAiAccess(
+      "den-user-token",
+      "org_123",
+      "workspace a",
+      "send-auth-prime-trace",
+    );
     const clearResponse = await client.clearMyAiGatewayRuntimeAuthorization();
 
     assert.deepEqual(response, {
@@ -3928,6 +3933,7 @@ test("createVesloServerClient exposes getMyAiAccess", async () => {
           "x-veslo-gateway-authorization": "Bearer den-user-token",
           "x-veslo-den-org-id": "org_123",
           "x-veslo-host-token": "veslo-host-token",
+          "x-veslo-send-trace-id": "send-auth-prime-trace",
         },
         body: null,
       },

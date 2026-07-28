@@ -83,9 +83,10 @@ export type SessionLifecycleRecoveryControllerOptions = {
     directory?: string | null;
     expectedRunId?: string | null;
     diagnosticTraceId?: string | null;
-  }) => Promise<VesloSessionTranscriptSnapshot | null>;
+  }, signal?: AbortSignal) => Promise<VesloSessionTranscriptSnapshot | null>;
   recoverAcceptedConversationTranscript?: (
     scope: SessionLifecycleRecoveryScope,
+    signal?: AbortSignal,
   ) => Promise<VesloSessionTranscriptSnapshot | null>;
   currentSelectionVersion?: () => number;
   reserveTranscriptProjection?: (
@@ -221,6 +222,7 @@ export function createSessionLifecycleRecoveryController(
     inFlight: boolean;
     automaticRetryUsed: boolean;
     retryTimer: unknown | null;
+    abortController: AbortController | null;
   };
 
   const watches = new Map<string, Watch>();
@@ -309,6 +311,7 @@ export function createSessionLifecycleRecoveryController(
     const recovery = terminalTranscriptRecoveries.get(key);
     const timer = recovery?.retryTimer;
     if (timer) clearTimer(timer);
+    recovery?.abortController?.abort();
     terminalTranscriptRecoveries.delete(key);
   };
 
@@ -451,6 +454,7 @@ export function createSessionLifecycleRecoveryController(
       const recovery = terminalTranscriptRecoveries.get(key);
       if (!recovery) return;
       recovery.inFlight = false;
+      recovery.abortController = null;
       if (recovery.automaticRetryUsed) {
         traceForScope("session-lifecycle-recovery:terminal-transcript-unavailable", scope, generation, {
           outcome: "terminal-transcript-retry-exhausted",
@@ -484,15 +488,15 @@ export function createSessionLifecycleRecoveryController(
     const shouldHydrate = transcriptSessionId && workspaceId && (admitted || source === "latest-probe" || !selectedRun);
     const useForegroundAcceptedTranscriptRecovery = admitted && isAcceptedRunVisible(scope);
     const recoverTranscript = useForegroundAcceptedTranscriptRecovery && options.recoverAcceptedConversationTranscript
-      ? () => options.recoverAcceptedConversationTranscript!(scope)
+      ? (signal: AbortSignal) => options.recoverAcceptedConversationTranscript!(scope, signal)
       : options.recoverConversationTranscript
-        ? () => options.recoverConversationTranscript!({
+        ? (signal: AbortSignal) => options.recoverConversationTranscript!({
             workspaceId,
             sessionId: transcriptSessionId,
             directory: scope.directory,
             expectedRunId: scope.runId,
             ...(scope.diagnosticTraceId?.trim() ? { diagnosticTraceId: scope.diagnosticTraceId.trim() } : {}),
-          })
+          }, signal)
         : null;
     if (shouldHydrate && key && recoverTranscript) {
       const selectionVersion = options.currentSelectionVersion?.() ?? 0;
@@ -510,6 +514,7 @@ export function createSessionLifecycleRecoveryController(
             inFlight: false,
             automaticRetryUsed: false,
             retryTimer: null,
+            abortController: null,
           };
       recovery.scope = scope;
       recovery.status = terminalStatus;
@@ -521,17 +526,21 @@ export function createSessionLifecycleRecoveryController(
         recovery.outcome !== "discarded"
       ) {
         recovery.inFlight = true;
-        void recoverTranscript().then((snapshot) => {
+        const abortController = new AbortController();
+        recovery.abortController = abortController;
+        void recoverTranscript(abortController.signal).then((snapshot) => {
           const currentRecovery = terminalTranscriptRecoveries.get(key);
           if (
             disposed ||
             currentRecovery !== recovery ||
-            recovery.generation !== generation
+            recovery.generation !== generation ||
+            abortController.signal.aborted
           ) {
             recovery.inFlight = false;
             releaseLatestProbeScope(true);
             return;
           }
+          recovery.abortController = null;
           if (!snapshot) {
             releaseLatestProbeScope();
             traceForScope("session-lifecycle-recovery:terminal-transcript-unavailable", scope, generation, {
@@ -578,12 +587,14 @@ export function createSessionLifecycleRecoveryController(
           if (
             disposed ||
             currentRecovery !== recovery ||
-            recovery.generation !== generation
+            recovery.generation !== generation ||
+            abortController.signal.aborted
           ) {
             recovery.inFlight = false;
             releaseLatestProbeScope();
             return;
           }
+          recovery.abortController = null;
           releaseLatestProbeScope();
           traceForScope("session-lifecycle-recovery:terminal-transcript-error", scope, generation, {
             transcriptSessionId,

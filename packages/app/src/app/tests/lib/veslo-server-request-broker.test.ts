@@ -6,6 +6,7 @@ import {
   isLocalVesloTransportError,
   resetVesloRequestBrokerForTests,
   runVesloJsonRequestWithBroker,
+  takeVesloRequestBrokerDelta,
 } from "../../lib/veslo-server/request-broker.js";
 
 test("Veslo request broker single-flights identical in-flight GETs", async () => {
@@ -139,4 +140,45 @@ test("Veslo transport error classifier catches local socket failures only", () =
     true,
   );
   assert.equal(isLocalVesloTransportError(new Error("Workspace is not authorized")), false);
+});
+
+test("a coalesced fan-out reports what its per-caller isolation costs", async () => {
+  resetVesloRequestBrokerForTests();
+  const payload = { items: Array.from({ length: 200 }, (_, i) => ({ i })) };
+  let releaseRun!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseRun = resolve;
+  });
+
+  const call = () =>
+    runVesloJsonRequestWithBroker({
+      method: "GET",
+      url: "http://127.0.0.1:8787/workspace/ws-a/sessions",
+      shareable: true,
+      run: async () => {
+        await gate;
+        return payload;
+      },
+    });
+
+  const callers = [call(), call(), call(), call(), call()];
+  releaseRun();
+  const results = await Promise.all(callers);
+
+  // Isolation is a specified contract, so every caller still gets its own copy.
+  assert.notEqual(results[0], results[1]);
+  assert.deepEqual(results[0], payload);
+
+  // The cost of that contract is charged per caller and is what turns a large
+  // fan-out into a frozen UI, so it has to be visible.
+  const delta = takeVesloRequestBrokerDelta();
+  assert.ok(delta, "a fan-out must produce a reportable delta");
+  assert.equal(delta.coalesced, 4);
+  assert.equal(delta.cloneCount, 5);
+  assert.ok((delta.cloneMs ?? -1) >= 0);
+  assert.equal(delta.topEndpoints[0]?.coalesced, 4);
+  assert.match(delta.topEndpoints[0]?.key ?? "", /\/workspace\/ws-a\/sessions$/);
+
+  // Consuming the delta resets it, so the next stall reports only new work.
+  assert.equal(takeVesloRequestBrokerDelta(), null);
 });

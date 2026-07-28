@@ -19,7 +19,10 @@ import {
   requestJsonRaw,
   requestMultipartRaw,
 } from "./transport";
-import { VESLO_DEN_ORG_ID_HEADER } from "./header-profiles";
+import {
+  VESLO_DEN_ORG_ID_HEADER,
+  VESLO_SEND_TRACE_ID_HEADER,
+} from "./header-profiles";
 import type {
   VesloServerCapabilities,
   VesloServerStatus,
@@ -508,7 +511,12 @@ export function createVesloServerClient(options: {
       }),
     opencodeRouterHealth: identities.health,
     opencodeRouterBindings: identities.bindings,
-    getMyAiAccess: (userToken: string, orgId?: string, workspaceId?: string) =>
+    getMyAiAccess: (
+      userToken: string,
+      orgId?: string,
+      workspaceId?: string,
+      traceId?: string,
+    ) =>
       requestJson<VesloManagedAiAccessBundle>(
         baseUrl,
         workspaceId?.trim()
@@ -518,7 +526,12 @@ export function createVesloServerClient(options: {
         token,
         hostToken,
         timeoutMs: timeouts.aiAccess,
-        extraHeaders: buildGatewayCallerHeaders(userToken, orgId),
+        extraHeaders: {
+          ...buildGatewayCallerHeaders(userToken, orgId),
+          ...(traceId?.trim()
+            ? { [VESLO_SEND_TRACE_ID_HEADER]: traceId.trim() }
+            : {}),
+        },
         },
       ),
     clearMyAiGatewayRuntimeAuthorization: () =>

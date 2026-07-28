@@ -164,6 +164,7 @@ function createOptions(
     reportError: () => undefined,
     addOpencodeCacheHint: (message) => message,
     safeStringify: (value) => JSON.stringify(value),
+    activeSendTraceId: () => null,
     recordManagedAiWorkflowTrace: () => undefined,
     createVesloServerClient: () => ({
       baseUrl: "http://127.0.0.1:34115",
@@ -191,7 +192,7 @@ test("runtime auth prime is single-flight and cached for a short success window"
   let accessCalls = 0;
   const firstAccessGate: { release?: () => void } = {};
   const traces: string[] = [];
-  const accessArguments: Array<[string, string | undefined, string | undefined]> = [];
+  const accessArguments: Array<[string, string | undefined, string | undefined, string | undefined]> = [];
   const response = {
     aiAccess: {
       id: "access-1",
@@ -208,13 +209,14 @@ test("runtime auth prime is single-flight and cached for a short success window"
     createOptions({
       now: () => now,
       runtimeAuthorizationPrimeSuccessTtlMs: 5_000,
+      activeSendTraceId: () => "send-auth-prime-trace",
       recordManagedAiWorkflowTrace: (event) => {
         traces.push(event);
       },
       createVesloServerClient: () => ({
         baseUrl: "http://127.0.0.1:34115",
-        getMyAiAccess: async (userToken, orgId, workspaceId) => {
-          accessArguments.push([userToken, orgId, workspaceId]);
+        getMyAiAccess: async (userToken, orgId, workspaceId, traceId) => {
+          accessArguments.push([userToken, orgId, workspaceId, traceId]);
           accessCalls += 1;
           if (accessCalls === 1) {
             await new Promise<void>((resolve) => {
@@ -254,9 +256,9 @@ test("runtime auth prime is single-flight and cached for a short success window"
   assert.equal(await sync.ensureManagedAiRuntimeAuthorizationForSend(), true);
   assert.equal(accessCalls, 3);
   assert.deepEqual(accessArguments, [
-    ["den-token", "org-1", "ws-active"],
-    ["den-token", "org-1", "ws-active"],
-    ["den-token", "org-1", "ws-active"],
+    ["den-token", "org-1", "ws-active", "send-auth-prime-trace"],
+    ["den-token", "org-1", "ws-active", "send-auth-prime-trace"],
+    ["den-token", "org-1", "ws-active", "send-auth-prime-trace"],
   ]);
 });
 
@@ -1071,8 +1073,10 @@ test("server send does not reuse a verified intent after authorization identity 
 
 test("server API failures never degrade to a last verified config intent", async () => {
   const client = createVesloClient();
+  let authRevision = 1;
   const sync = createManagedAiRuntimeConfigSync(createOptions({
     vesloServerClient: () => client,
+    denAuthRevision: () => authRevision,
   }));
 
   assert.deepEqual(await sync.prepareManagedAiRuntimeConfigForServerSend({
@@ -1087,6 +1091,7 @@ test("server API failures never degrade to a last verified config intent", async
     client.getConfigCalls.push(workspaceId);
     throw new VesloServerError(403, "forbidden", "Managed AI config access was revoked");
   };
+  authRevision = 2;
   const outcome = await sync.prepareManagedAiRuntimeConfigForServerSend({
     workspaceId: "ws-active",
     workspaceRoot: "/repo",

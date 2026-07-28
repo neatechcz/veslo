@@ -5,6 +5,7 @@ import {
   type ConversationWorkspaceRunReservation,
 } from "./conversation-run-queue-store.js";
 import { ApiError } from "./errors.js";
+import { lifecycleRequestApiError } from "./lifecycle-error-mapping.js";
 import {
   OrchestratorLifecycleRequestError,
   RunAlreadyActiveError,
@@ -289,26 +290,6 @@ function isActiveLifecycleStatus(status: LifecycleRunStatus | string | null | un
   return Boolean(status && ACTIVE_LIFECYCLE_STATUSES.has(status as LifecycleRunStatus));
 }
 
-function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
-  const status = error.status === 401 || error.status === 403
-    ? 503
-    : error.status === 404
-      ? 404
-      : error.status === 501
-        ? 501
-        : 503;
-  const code = status === 404
-    ? "lifecycle_not_found"
-    : status === 501
-      ? "lifecycle_unsupported"
-      : "lifecycle_unavailable";
-  return new ApiError(status, code, "Run lifecycle owner is unavailable", {
-    upstreamStatus: error.status,
-    path: error.path,
-    body: error.body,
-  });
-}
-
 function parseQueuedRunKind(kind: string): ConversationRunLifecycleKind {
   if (kind === "prompt_async" || kind === "command" || kind === "shell" || kind === "summarize") {
     return kind;
@@ -386,7 +367,7 @@ function lifecycleStatusTraceFields(
   // reason while masking the common credential-bearing assignment forms.
   const terminalError = rawError
     ? rawError
-      .replace(/\b(bearer|authorization|token|api[_-]?key|password)\b\s*(?:=|:)?\s*\S+/gi, "$1=[redacted]")
+      .replace(/\b(bearer|authorization|token|api[_-]?key|password)\b\s*(?:=|:)?\s*(?:bearer\s+|basic\s+)?\S+/gi, "$1=[redacted]")
       .slice(0, 300)
     : null;
   return {

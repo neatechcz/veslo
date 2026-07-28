@@ -8,12 +8,12 @@ use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
 };
-use crate::engine::manager::EngineManager;
+use crate::engine::manager::{EngineManager, EngineState};
 use crate::engine::spawn::{find_free_port, spawn_engine};
 use crate::env_guard::EnvVarGuard;
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
-use crate::orchestrator::manager::OrchestratorManager;
+use crate::orchestrator::manager::{OrchestratorManager, OrchestratorState};
 use crate::orchestrator::{self, OrchestratorShutdownAttribution, OrchestratorSpawnOptions};
 use crate::supervised_process::CommandEvent;
 use crate::types::{
@@ -27,6 +27,7 @@ use crate::veslo_server::{
 use crate::workspace::server_client::reconcile_server_workspaces;
 use serde::Serialize;
 use serde_json::json;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -321,10 +322,9 @@ fn should_retry_orchestrator_start(
     child_exited && attempt < max_attempts && max_attempts > 1
 }
 
-#[tauri::command]
-pub fn engine_info(
-    manager: State<EngineManager>,
-    orchestrator_manager: State<OrchestratorManager>,
+fn engine_info_blocking(
+    engine_state: Arc<Mutex<EngineState>>,
+    orchestrator_state: Arc<Mutex<OrchestratorState>>,
     workspace_id: Option<String>,
     workspace_path: Option<String>,
 ) -> EngineInfo {
@@ -335,7 +335,7 @@ pub fn engine_info(
         state_opencode_username,
         state_opencode_password,
     ) = {
-        let mut state = manager.inner.lock().expect("engine mutex poisoned");
+        let mut state = engine_state.lock().expect("engine mutex poisoned");
         let direct_snapshot = EngineManager::snapshot_locked(&mut state);
         if workspace_id.is_none()
             && state.runtime != EngineRuntime::Orchestrator
@@ -353,7 +353,7 @@ pub fn engine_info(
     };
 
     let (data_dir, orchestrator_stdout, orchestrator_stderr) =
-        if let Ok(orchestrator_state) = orchestrator_manager.inner.lock() {
+        if let Ok(orchestrator_state) = orchestrator_state.lock() {
             (
                 orchestrator_state
                     .data_dir
@@ -498,7 +498,7 @@ pub fn engine_info(
     };
 
     if running {
-        let mut state = manager.inner.lock().expect("engine mutex poisoned");
+        let mut state = engine_state.lock().expect("engine mutex poisoned");
         state.runtime = EngineRuntime::Orchestrator;
         state.project_dir = project_dir.clone();
         state.base_url = effective_base_url.clone();
@@ -527,6 +527,50 @@ pub fn engine_info(
         last_stdout: orchestrator_stdout,
         last_stderr: orchestrator_stderr,
     }
+}
+
+/// Resolving orchestrator status performs blocking local HTTP reads. Keep that
+/// work off Tauri's UI command thread: callers in the webview use this command
+/// in the send preflight, where a synchronous command can otherwise stall both
+/// the renderer and its own timeout timers.
+#[tauri::command]
+pub async fn engine_info(
+    manager: State<'_, EngineManager>,
+    orchestrator_manager: State<'_, OrchestratorManager>,
+    workspace_id: Option<String>,
+    workspace_path: Option<String>,
+) -> Result<EngineInfo, String> {
+    let engine_state = manager.inner.clone();
+    let orchestrator_state = orchestrator_manager.inner.clone();
+    let fallback = engine_state
+        .lock()
+        .map(|mut state| EngineManager::snapshot_locked(&mut state))
+        .unwrap_or_else(|_| EngineInfo {
+            running: false,
+            runtime: EngineRuntime::Direct,
+            engine_state: Some(RuntimeEngineState::Failed),
+            child_kind: None,
+            base_url: None,
+            project_dir: None,
+            hostname: None,
+            port: None,
+            opencode_username: None,
+            opencode_password: None,
+            pid: None,
+            last_stdout: None,
+            last_stderr: None,
+        });
+
+    Ok(tauri::async_runtime::spawn_blocking(move || {
+        engine_info_blocking(
+            engine_state,
+            orchestrator_state,
+            workspace_id,
+            workspace_path,
+        )
+    })
+    .await
+    .unwrap_or(fallback))
 }
 
 #[tauri::command]
@@ -642,9 +686,9 @@ fn runtime_prepare_workspace_blocking(
             trace,
         ) {
             Ok(_) => {
-                let engine = engine_info(
-                    app.state::<EngineManager>(),
-                    app.state::<OrchestratorManager>(),
+                let engine = engine_info_blocking(
+                    app.state::<EngineManager>().inner.clone(),
+                    app.state::<OrchestratorManager>().inner.clone(),
                     workspace_id.clone(),
                     Some(project_dir),
                 );
@@ -723,9 +767,9 @@ fn runtime_prepare_workspace_blocking(
             skill_binding,
             trace,
         )?;
-        engine_info(
-            app.state::<EngineManager>(),
-            app.state::<OrchestratorManager>(),
+        engine_info_blocking(
+            app.state::<EngineManager>().inner.clone(),
+            app.state::<OrchestratorManager>().inner.clone(),
             workspace_id.clone(),
             Some(project_dir),
         )

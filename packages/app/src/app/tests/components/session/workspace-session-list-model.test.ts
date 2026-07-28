@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   PRIVATE_PROJECT_GROUP_KEY,
+  buildSidebarSessionViews,
   buildProjectGroups,
   buildRecentRows,
   buildRowHierarchyLookup,
@@ -78,6 +79,59 @@ test("buildRecentRows sorts by latest activity before creation time", () => {
     rows.map((row) => row.session.id),
     ["older-but-active", "newer-but-inactive"],
   );
+});
+
+test("buildSidebarSessionViews materializes rows once for recent and project views", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+  let privatePathChecks = 0;
+  const views = buildSidebarSessionViews(
+    [
+      {
+        workspace,
+        sessions: [
+          { id: "root", title: "root", time: { created: 100, updated: 100 } },
+          { id: "child", title: "child", parentID: "root", time: { created: 110, updated: 110 } },
+        ],
+        status: "ready",
+      },
+    ],
+    () => {
+      privatePathChecks += 1;
+      return false;
+    },
+  );
+
+  assert.equal(privatePathChecks, 2);
+  assert.deepEqual(views.recentRows.map((row) => row.session.id), ["root", "child"]);
+  assert.deepEqual(views.projectGroups[0]?.sessions.map((row) => row.session.id), ["root", "child"]);
+});
+
+test("buildRecentRows does not materialize project-only workspace groups", () => {
+  const workspace = {
+    id: "workspace-1",
+    name: "workspace-1",
+    path: "/tmp/workspace-1",
+    preset: "starter",
+    workspaceType: "local" as const,
+  };
+  let privatePathChecks = 0;
+
+  const rows = buildRecentRows(
+    [{ workspace, sessions: [], status: "ready" }],
+    () => {
+      privatePathChecks += 1;
+      return false;
+    },
+  );
+
+  assert.deepEqual(rows, []);
+  assert.equal(privatePathChecks, 0);
 });
 
 test("buildRecentRows keeps subagents directly below their parent session", () => {
@@ -1306,4 +1360,81 @@ test("shouldUseExpandedNewSessionLabel expands the label at 300px", () => {
 test("shouldShowNewSessionLabelText hides text at tight sidebar widths", () => {
   assert.equal(shouldShowNewSessionLabelText(219), false);
   assert.equal(shouldShowNewSessionLabelText(220), true);
+});
+
+const identityWorkspace = {
+  id: "ws-identity",
+  name: "Identity",
+  path: "/tmp/ws-identity",
+  preset: "starter",
+  workspaceType: "local" as const,
+};
+
+const identitySession = (id: string, updated: number) => ({
+  id,
+  title: id,
+  directory: "/tmp/ws-identity/project",
+  time: { created: 100, updated },
+});
+
+const identityGroup = (sessions: ReturnType<typeof identitySession>[]) => [
+  { workspace: identityWorkspace, sessions, status: "ready" as const },
+];
+
+test("unchanged sessions keep their row object across rebuilds", () => {
+  // `<For>` reconciles on referential identity. Rebuilding every row as a new
+  // object makes Solid dispose and recreate the whole subtree even when nothing
+  // changed, which showed up as `cleanNode` dominating a stalled frame.
+  const sessions = [identitySession("a", 300), identitySession("b", 200)];
+  const first = buildRecentRows(identityGroup(sessions));
+  const second = buildRecentRows(identityGroup(sessions));
+
+  assert.equal(first.length, 2);
+  assert.equal(second.length, first.length);
+  for (let i = 0; i < first.length; i += 1) {
+    assert.equal(second[i], first[i], `row ${i} must keep its identity`);
+  }
+});
+
+test("only the changed session gets a new row object", () => {
+  const stable = identitySession("a", 300);
+  const before = identitySession("b", 200);
+  const first = buildRecentRows(identityGroup([stable, before]));
+
+  const after = identitySession("b", 250);
+  const second = buildRecentRows(identityGroup([stable, after]));
+
+  const rowFor = (rows: typeof first, id: string) =>
+    rows.find((row) => row.session.id === id);
+
+  assert.equal(rowFor(second, "a"), rowFor(first, "a"), "untouched row must be reused");
+  assert.notEqual(rowFor(second, "b"), rowFor(first, "b"), "changed row must be rebuilt");
+  assert.equal(rowFor(second, "b")?.updatedAt, 250);
+});
+
+test("a removed session does not resurrect its old row", () => {
+  const a = identitySession("a", 300);
+  const b = identitySession("b", 200);
+  buildRecentRows(identityGroup([a, b]));
+
+  const without = buildRecentRows(identityGroup([a]));
+  assert.equal(without.length, 1);
+  assert.equal(without[0]?.session.id, "a");
+
+  const restored = buildRecentRows(identityGroup([a, b]));
+  assert.equal(restored.length, 2);
+  assert.equal(restored.find((row) => row.session.id === "b")?.updatedAt, 200);
+});
+
+test("row reuse is scoped to the workspace that produced it", () => {
+  const session = identitySession("shared", 300);
+  const first = buildRecentRows(identityGroup([session]));
+
+  const otherWorkspace = { ...identityWorkspace, id: "ws-other", path: "/tmp/ws-other" };
+  const second = buildRecentRows([
+    { workspace: otherWorkspace, sessions: [session], status: "ready" as const },
+  ]);
+
+  assert.notEqual(second[0], first[0], "a different workspace must not inherit a cached row");
+  assert.equal(second[0]?.workspace.id, "ws-other");
 });

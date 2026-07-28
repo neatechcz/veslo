@@ -2231,6 +2231,11 @@ export default function App() {
     documentRuntimeStatus,
     displayedConversationStillMatches,
     engineReady,
+    ensureLocalRuntimeReachableForSend: (event, preflight) =>
+      ensureLocalRuntimeReachableForSend(
+        event,
+        preflight as SendRuntimePreflightContext,
+      ),
     emitFlowProgress: (event) => sessionFlowProgressPresenter.emit(event),
     ensureSelectedSessionWorkspaceActiveForSend: (
       sessionId,
@@ -2971,6 +2976,7 @@ export default function App() {
     reportError,
     addOpencodeCacheHint,
     safeStringify,
+    activeSendTraceId,
     recordManagedAiWorkflowTrace,
     createVesloServerClient,
     applyManagedAiAccessProfile:
@@ -3568,6 +3574,7 @@ export default function App() {
       },
       debugTail: {
         workspaceEvents: workspaceStore.workspaceDebugEvents().slice(-40),
+        sendFailureSnapshots: runtimeRoot?.__vesloSendFailureSnapshots ?? {},
         sendTrace: runtimeRoot?.__vesloSendTrace?.slice(-40) ?? [],
         busyTrace: runtimeRoot?.__vesloWorkspaceBusyTrace?.slice(-40) ?? [],
         activationLog:

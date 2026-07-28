@@ -181,14 +181,36 @@ export const formatSessionRelativeAge = (timestampMs: number, nowMs = Date.now()
   return `${Math.max(1, Math.round(delta / DAY_MS))}d`;
 };
 
+/**
+ * Constructing an `Intl.DateTimeFormat` is expensive and this runs once per
+ * sidebar row per render. A captured profile attributed 602 ms of main-thread
+ * time to this function alone, almost all of it in the constructor rather than
+ * in formatting. The formatter is immutable, so one per locale is enough.
+ */
+const sessionTimestampFormatters = new Map<string, Intl.DateTimeFormat | null>();
+
+const sessionTimestampFormatter = (locale: string): Intl.DateTimeFormat | null => {
+  const key = locale || "";
+  const cached = sessionTimestampFormatters.get(key);
+  if (cached !== undefined) return cached;
+  let formatter: Intl.DateTimeFormat | null;
+  try {
+    formatter = new Intl.DateTimeFormat(locale || undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  } catch {
+    formatter = null;
+  }
+  sessionTimestampFormatters.set(key, formatter);
+  return formatter;
+};
+
 export const formatSessionTimestampTooltip = (timestampMs: number, locale: string) => {
   const date = new Date(timestampMs);
   if (!Number.isFinite(date.getTime())) return "";
-  try {
-    return new Intl.DateTimeFormat(locale || undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
-  } catch {
-    return date.toLocaleString();
-  }
+  const formatter = sessionTimestampFormatter(locale);
+  return formatter ? formatter.format(date) : date.toLocaleString();
 };
 
 export const isProjectCollapsed = (collapsedProjects: CollapsedProjectMap, projectKey: string) =>
@@ -645,6 +667,49 @@ export const resolveSessionRowClickAction = (input: {
   };
 };
 
+/**
+ * Rows are rebuilt from scratch on every recomputation, and `<For>` reconciles
+ * on referential identity. Handing it fresh objects for unchanged rows makes
+ * Solid dispose and recreate the whole subtree, which a captured profile showed
+ * as `cleanNode` leading a stalled frame.
+ *
+ * The emitted row is therefore compared against the one emitted last time for
+ * the same key, and the previous object is reused when nothing changed.
+ * `workspace` and `session` are compared by reference because they come from
+ * upstream stores that already replace them on change; everything else is a
+ * primitive.
+ */
+const emittedRowCache = new Map<string, FlatSessionRow>();
+
+const sameFlatSessionRow = (left: FlatSessionRow, right: FlatSessionRow): boolean =>
+  left.rowKey === right.rowKey &&
+  left.workspace === right.workspace &&
+  left.session === right.session &&
+  left.status === right.status &&
+  left.error === right.error &&
+  left.parentSessionId === right.parentSessionId &&
+  left.parentRowKey === right.parentRowKey &&
+  left.rootSessionId === right.rootSessionId &&
+  left.rootRowKey === right.rootRowKey &&
+  left.nestingLevel === right.nestingLevel &&
+  left.isSubagent === right.isSubagent &&
+  left.treeActivityAt === right.treeActivityAt &&
+  left.createdAt === right.createdAt &&
+  left.updatedAt === right.updatedAt &&
+  left.activityAt === right.activityAt &&
+  left.projectRoot === right.projectRoot &&
+  left.projectLabel === right.projectLabel &&
+  left.projectTitle === right.projectTitle &&
+  left.isPrivateProject === right.isPrivateProject;
+
+const stabilizeEmittedRow = (row: FlatSessionRow): FlatSessionRow => {
+  const key = rowIdentity(row);
+  const previous = emittedRowCache.get(key);
+  if (previous && sameFlatSessionRow(previous, row)) return previous;
+  emittedRowCache.set(key, row);
+  return row;
+};
+
 const buildHierarchicalRows = (
   rows: FlatSessionRow[],
   compareRows: (a: FlatSessionRow, b: FlatSessionRow) => number,
@@ -739,15 +804,17 @@ const buildHierarchicalRows = (
     const info = resolveHierarchy(key);
     const rootRow = rowByKey.get(info.rootRowKey) ?? row;
     const contextualRow = applyPrivateRootContext(row, rootRow);
-    ordered.push({
-      ...contextualRow,
-      parentRowKey: parentByRowKey.get(key) ?? null,
-      rootSessionId: info.rootSessionId,
-      rootRowKey: info.rootRowKey,
-      nestingLevel: info.nestingLevel,
-      isSubagent: info.nestingLevel > 0,
-      treeActivityAt: treeActivityByRootKey.get(info.rootRowKey) ?? row.activityAt,
-    });
+    ordered.push(
+      stabilizeEmittedRow({
+        ...contextualRow,
+        parentRowKey: parentByRowKey.get(key) ?? null,
+        rootSessionId: info.rootSessionId,
+        rootRowKey: info.rootRowKey,
+        nestingLevel: info.nestingLevel,
+        isSubagent: info.nestingLevel > 0,
+        treeActivityAt: treeActivityByRootKey.get(info.rootRowKey) ?? row.activityAt,
+      }),
+    );
 
     const children = childrenByParentKey.get(key) ?? [];
     for (const child of children) {
@@ -821,23 +888,15 @@ export const filterVisibleProjectGroups = (
     })
     .filter((group) => group.sessions.length > 0 || group.isWorkspaceOnlyProject);
 
-export const buildRecentRows = (
-  workspaceSessionGroups: WorkspaceSessionGroup[],
-  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
-): FlatSessionRow[] => {
-  const rows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
-  return buildHierarchicalRows(rows, compareRecentRows);
-};
-
-export const buildProjectGroups = (
+const buildProjectGroupsFromRows = (
+  rows: FlatSessionRow[],
   workspaceSessionGroups: WorkspaceSessionGroup[],
   isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
 ): ProjectSessionGroup[] => {
-  const rows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
   const rowByRowKey = new Map(rows.map((row) => [rowIdentity(row), row] as const));
   const groupedRows = new Map<string, FlatSessionRow[]>();
 
-  for (const row of buildHierarchicalRows(rows, compareProjectRows)) {
+  for (const row of rows) {
     const root = rowByRowKey.get(row.rootRowKey) ?? row;
     const groupKey = projectGroupKeyForRow(root);
     const existing = groupedRows.get(groupKey);
@@ -876,4 +935,45 @@ export const buildProjectGroups = (
     .filter((group) => !sessionBackedKeys.has(group.key));
 
   return [...sessionBackedGroups, ...workspaceOnlyGroups].sort(compareProjectGroups);
+};
+
+export type SidebarSessionViews = {
+  recentRows: FlatSessionRow[];
+  projectGroups: ProjectSessionGroup[];
+};
+
+export const buildSidebarSessionViews = (
+  workspaceSessionGroups: WorkspaceSessionGroup[],
+  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
+): SidebarSessionViews => {
+  const flatRows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
+  const recentRows = buildHierarchicalRows(flatRows, compareRecentRows);
+  return {
+    recentRows,
+    projectGroups: buildProjectGroupsFromRows(
+      recentRows,
+      workspaceSessionGroups,
+      isPrivateWorkspacePath,
+    ),
+  };
+};
+
+export const buildRecentRows = (
+  workspaceSessionGroups: WorkspaceSessionGroup[],
+  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
+): FlatSessionRow[] => {
+  const rows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
+  return buildHierarchicalRows(rows, compareRecentRows);
+};
+
+export const buildProjectGroups = (
+  workspaceSessionGroups: WorkspaceSessionGroup[],
+  isPrivateWorkspacePath: (folder: string | null | undefined) => boolean = defaultPrivateWorkspacePath,
+): ProjectSessionGroup[] => {
+  const rows = collectFlatRows(workspaceSessionGroups, isPrivateWorkspacePath);
+  return buildProjectGroupsFromRows(
+    buildHierarchicalRows(rows, compareProjectRows),
+    workspaceSessionGroups,
+    isPrivateWorkspacePath,
+  );
 };

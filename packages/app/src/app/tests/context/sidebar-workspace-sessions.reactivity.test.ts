@@ -152,3 +152,85 @@ test("sidebar refresh uses one deferred send timer and cancels it with its owner
     fakeWindow.restore();
   }
 });
+
+test("unchanged sidebar read results preserve workspace group identity", behaviorTestOptions, () => {
+  createRoot((dispose) => {
+    const workspaceStore = {
+      workspaces: () => [localWorkspace],
+      activeWorkspaceId: () => localWorkspace.id,
+      connectingWorkspaceId: () => null,
+      engine: () => null,
+      isPrivateWorkspacePath: () => false,
+    } as unknown as WorkspaceStore;
+    const controller = createSidebarWorkspaceSessions({
+      workspaceStore,
+      workspaceRouting: workspaceRouting(),
+      activeWorkspaceRuntimeReady: () => true,
+      developerMode: () => false,
+      sessions: () => [],
+      sessionDirectoryOverrideById: () => ({}),
+      resolveSessionDirectory: (session) => session.directory ?? "",
+      applySessionDirectoryOverride: <T extends Session | SidebarSessionItem>(session: T) => session,
+      applyPendingInitialSessionTitle: <T extends Session | SidebarSessionItem>(session: T) => session,
+      listConversationsFromVesloReadApi: async () => ({ items: [], source: "sqlite" as const }),
+      allowLiveWorkspaceSessionList: () => false,
+      reportError: () => {},
+      wsDebug: () => {},
+    });
+    const input = {
+      workspaceId: localWorkspace.id,
+      available: true,
+      items: [{ id: "session-1", title: "Session", time: { created: 1, updated: 1 } }],
+    };
+
+    controller.applyWorkspaceSidebarReadResult(input);
+    const firstGroups = controller.sidebarWorkspaceGroups();
+    controller.applyWorkspaceSidebarReadResult({ ...input, items: [...input.items] });
+
+    assert.strictEqual(controller.sidebarWorkspaceGroups(), firstGroups);
+    dispose();
+  });
+});
+
+test("fresh sidebar reads publish a newer visible activity timestamp", behaviorTestOptions, () => {
+  createRoot((dispose) => {
+    const workspaceStore = {
+      workspaces: () => [localWorkspace],
+      activeWorkspaceId: () => localWorkspace.id,
+      connectingWorkspaceId: () => null,
+      engine: () => null,
+      isPrivateWorkspacePath: () => false,
+    } as unknown as WorkspaceStore;
+    const controller = createSidebarWorkspaceSessions({
+      workspaceStore,
+      workspaceRouting: workspaceRouting(),
+      activeWorkspaceRuntimeReady: () => true,
+      developerMode: () => false,
+      sessions: () => [],
+      sessionDirectoryOverrideById: () => ({}),
+      resolveSessionDirectory: (session) => session.directory ?? "",
+      applySessionDirectoryOverride: <T extends Session | SidebarSessionItem>(session: T) => session,
+      applyPendingInitialSessionTitle: <T extends Session | SidebarSessionItem>(session: T) => session,
+      listConversationsFromVesloReadApi: async () => ({ items: [], source: "sqlite" as const }),
+      allowLiveWorkspaceSessionList: () => false,
+      reportError: () => {},
+      wsDebug: () => {},
+    });
+    const initial = {
+      workspaceId: localWorkspace.id,
+      available: true,
+      items: [{ id: "session-1", title: "Session", time: { created: 1, updated: 1 } }],
+    };
+
+    controller.applyWorkspaceSidebarReadResult(initial);
+    const firstGroups = controller.sidebarWorkspaceGroups();
+    controller.applyWorkspaceSidebarReadResult({
+      ...initial,
+      items: [{ ...initial.items[0], time: { created: 1, updated: 2 } }],
+    });
+
+    assert.notStrictEqual(controller.sidebarWorkspaceGroups(), firstGroups);
+    assert.equal(controller.sidebarWorkspaceGroups()[0]?.sessions[0]?.time?.updated, 2);
+    dispose();
+  });
+});

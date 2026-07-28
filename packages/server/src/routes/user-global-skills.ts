@@ -87,7 +87,7 @@ export function registerUserGlobalSkillRoutes(
     const enabled = typeof body.enabled === "boolean" ? body.enabled : undefined;
     const result = await upsertUserGlobalSkill({ name, content, description, enabled }, serverDataDir);
     for (const workspace of ctx.config.workspaces) {
-      if (workspace.workspaceType === "local") invalidateActiveRuntimeSkillView(workspace);
+      if (workspace.workspaceType === "local") invalidateActiveRuntimeSkillView(workspace, "user-global-skills");
     }
 
     await recordAudit(userGlobalSkillStorePath(serverDataDir), {
@@ -124,7 +124,7 @@ export function registerUserGlobalSkillRoutes(
     }
     const result = await deleteUserGlobalSkill(name, serverDataDir);
     for (const workspace of ctx.config.workspaces) {
-      if (workspace.workspaceType === "local") invalidateActiveRuntimeSkillView(workspace);
+      if (workspace.workspaceType === "local") invalidateActiveRuntimeSkillView(workspace, "user-global-skills");
     }
 
     await recordAudit(userGlobalSkillStorePath(serverDataDir), {

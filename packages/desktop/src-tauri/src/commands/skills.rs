@@ -79,6 +79,16 @@ fn collect_project_skill_roots(project_dir: &Path) -> Vec<PathBuf> {
             roots.push(claude_root);
         }
 
+        let agents_root = dir.join(".agents").join("skills");
+        if agents_root.is_dir() {
+            roots.push(agents_root);
+        }
+
+        let legacy_agents_root = dir.join(".agent").join("skills");
+        if legacy_agents_root.is_dir() {
+            roots.push(legacy_agents_root);
+        }
+
         if dir == boundary {
             break;
         }
@@ -712,8 +722,8 @@ fn registry_metadata_from_managed_marker(skill_dir: &Path) -> Option<LocalSkillR
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_skill_roots, extract_description, registry_metadata_from_managed_marker,
-        select_skill_roots_for_scope, SkillListScope,
+        collect_project_skill_roots, collect_skill_roots, extract_description,
+        registry_metadata_from_managed_marker, select_skill_roots_for_scope, SkillListScope,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -793,6 +803,22 @@ mod tests {
             collect_skill_roots("", SkillListScope::Effective).unwrap_err(),
             "projectDir is required"
         );
+    }
+
+    #[test]
+    fn workspace_skill_roots_include_all_runtime_local_source_conventions() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = temp.path();
+        for source in [".opencode", ".claude", ".agents", ".agent"] {
+            fs::create_dir_all(root.join(source).join("skills")).expect("create skill root");
+        }
+
+        let roots = collect_project_skill_roots(root);
+
+        assert_eq!(roots.len(), 4);
+        for source in [".opencode", ".claude", ".agents", ".agent"] {
+            assert!(roots.contains(&root.join(source).join("skills")));
+        }
     }
 
     #[test]

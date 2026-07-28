@@ -42,8 +42,7 @@ import {
   directChildRowsForParent,
   descendantRowsForParent,
   filterVisibleProjectGroups,
-  buildProjectGroups,
-  buildRecentRows,
+  buildSidebarSessionViews,
   displayTimestamp,
   formatSessionRelativeAge,
   formatSessionTimestampTooltip,
@@ -641,16 +640,15 @@ export default function WorkspaceSessionList(props: Props) {
   const sessionHoverActionsSuspended = createMemo(() => Boolean(props.pendingSelectedSessionId?.trim()));
   const shouldShowSessionRow = (row: FlatSessionRow) => !isRowArchived(row);
 
-  const recentRows = createMemo<FlatSessionRow[]>(() =>
-    buildRecentRows(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
+  const sidebarSessionViews = createMemo(() =>
+    buildSidebarSessionViews(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
   );
+  const recentRows = createMemo<FlatSessionRow[]>(() => sidebarSessionViews().recentRows);
   const visibleRecentRows = createMemo<FlatSessionRow[]>(() =>
     recentRows().filter((row) => shouldShowSessionRow(row)),
   );
 
-  const projectGroups = createMemo<ProjectSessionGroup[]>(() =>
-    buildProjectGroups(props.workspaceSessionGroups, props.isPrivateWorkspacePath),
-  );
+  const projectGroups = createMemo<ProjectSessionGroup[]>(() => sidebarSessionViews().projectGroups);
   const visibleProjectGroups = createMemo<ProjectSessionGroup[]>(() =>
     filterVisibleProjectGroups(projectGroups(), shouldShowSessionRow),
   );

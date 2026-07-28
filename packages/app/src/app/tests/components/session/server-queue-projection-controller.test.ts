@@ -162,3 +162,65 @@ test("server queue projection stops polling when its scope changes or controller
   await flushAsyncWork();
   assert.equal(fetchCount, 2, "disposed controller cannot issue another request");
 });
+
+test("a burst of refreshes for one scope shares a single fetch", async () => {
+  let fetchCount = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const active = scope();
+  const controller = createServerQueueProjectionController({
+    getScope: () => active,
+    fetchScope: async () => {
+      fetchCount += 1;
+      await gate;
+      return [item("failed")];
+    },
+    replaceScope: () => undefined,
+  });
+
+  // Reactive callers fire this in bursts. Without a guard each call started its
+  // own fetch, and the transport only hid the duplicate request, not the
+  // per-caller work that followed it.
+  const bursts = [
+    controller.refresh(active),
+    controller.refresh(active),
+    controller.refresh(active),
+    controller.refreshAndPoll(active),
+    controller.refresh(active),
+  ];
+  release();
+  const results = await Promise.all(bursts);
+
+  assert.equal(fetchCount, 1);
+  assert.deepEqual(
+    results.map((result) => result.kind),
+    ["updated", "updated", "updated", "updated", "updated"],
+  );
+
+  // Once settled, a later refresh is a new fetch rather than a stale share.
+  await controller.refresh(active);
+  assert.equal(fetchCount, 2);
+  controller.dispose();
+});
+
+test("refreshes for different scopes are not shared", async () => {
+  const seen: string[] = [];
+  let current = scope("ui-a");
+  const controller = createServerQueueProjectionController({
+    getScope: () => current,
+    fetchScope: async (requested) => {
+      seen.push(requested.uiConversationKey);
+      return [];
+    },
+    replaceScope: () => undefined,
+  });
+
+  await controller.refresh(scope("ui-a"));
+  current = scope("ui-b");
+  await controller.refresh(scope("ui-b"));
+
+  assert.deepEqual(seen, ["ui-a", "ui-b"]);
+  controller.dispose();
+});

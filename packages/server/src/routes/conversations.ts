@@ -24,6 +24,10 @@ import type {
 } from "../conversation-submit-contract.js";
 import { CONVERSATION_SUBMIT_MAX_BODY_BYTES } from "../conversation-submit-attachment-staging.js";
 import { ApiError } from "../errors.js";
+import {
+  lifecycleRequestApiError,
+  lifecycleRequestDiagnostic,
+} from "../lifecycle-error-mapping.js";
 import { VESLO_SEND_TRACE_ID_HEADER } from "../request-headers.js";
 import {
   OrchestratorLifecycleRequestError,
@@ -639,7 +643,10 @@ function sanitizeConversationRunError(error: string | null): string | null {
         `${keyQuote}${key}${keyQuote}:${valueQuote}[redacted]${valueQuote}`,
     )
     .replace(
-      /\b([a-z_]*(?:token|authorization)[a-z_]*|directory|request_?body|body|prompt(?:_text)?)\b\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)/gi,
+      // The scheme prefix must be consumed with the value. Without it,
+      // `authorization: Bearer <secret>` redacts only `Bearer` and leaves the
+      // secret itself in the trace.
+      /\b([a-z_]*(?:token|authorization)[a-z_]*|directory|request_?body|body|prompt(?:_text)?)\b\s*[=:]\s*(?:bearer\s+|basic\s+)?(?:"[^"]*"|'[^']*'|[^\s,;}\]]+)/gi,
       "$1=[redacted]",
     )
     .slice(0, 500);
@@ -689,26 +696,6 @@ function serializeQueuedRunLifecycleStatus(item: ConversationRunQueueItem): Reco
     queueItemId: item.queueItemId,
     queueState: item.state,
   };
-}
-
-function lifecycleRequestApiError(error: OrchestratorLifecycleRequestError): ApiError {
-  const status = error.status === 401 || error.status === 403
-    ? 503
-    : error.status === 404
-      ? 404
-      : error.status === 501
-        ? 501
-        : 503;
-  const code = status === 404
-    ? "lifecycle_not_found"
-    : status === 501
-      ? "lifecycle_unsupported"
-      : "lifecycle_unavailable";
-  return new ApiError(status, code, "Run lifecycle owner is unavailable", {
-    upstreamStatus: error.status,
-    path: error.path,
-    body: error.body,
-  });
 }
 
 function isVesloConversationId(input: string): boolean {
@@ -1390,6 +1377,11 @@ export function registerConversationSessionRoutes(
         errorMessage: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
         errorCode: null,
         status: error instanceof OrchestratorLifecycleRequestError ? error.status : null,
+        // The upstream path and body no longer travel in the client response,
+        // so this trace is now the only place they are retained.
+        ...(error instanceof OrchestratorLifecycleRequestError
+          ? lifecycleRequestDiagnostic(error)
+          : {}),
       });
       if (error instanceof OrchestratorLifecycleRequestError) {
         throw lifecycleRequestApiError(error);

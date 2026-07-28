@@ -272,3 +272,57 @@ test("a new validated candidate advances serving after an out-of-band workspace 
   expect(refreshed.revision).not.toBe(first.revision);
   expect(refreshed.skills[0]?.description).toBe("Force refreshed");
 });
+
+async function captureSkillAudit(run: () => Promise<void> | void) {
+  const file = join(await mkdtemp(join(process.env.TEMP ?? ".", "veslo-audit-")), "audit.ndjson")
+  const previous = process.env.VESLO_SKILL_AUDIT_LOG_FILE
+  process.env.VESLO_SKILL_AUDIT_LOG_FILE = file
+  try {
+    await run()
+  } finally {
+    if (previous === undefined) delete process.env.VESLO_SKILL_AUDIT_LOG_FILE
+    else process.env.VESLO_SKILL_AUDIT_LOG_FILE = previous
+  }
+  const raw = await readFile(file, "utf8").catch(() => "")
+  return raw
+    .split(/[\r\n]+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
+test("invalidation records why it happened and which generation it produced", async () => {
+  const workspace = await workspaceFixture()
+  await publishFixtureView(workspace)
+
+  const events = await captureSkillAudit(() => {
+    invalidateActiveRuntimeSkillView(workspace, "workspace-config-patch")
+    invalidateActiveRuntimeSkillView(workspace, "skill-enabled-state")
+  })
+
+  const invalidations = events.filter((e) => e.event === "active-runtime-view-invalidated")
+  expect(invalidations).toHaveLength(2)
+  expect(invalidations[0]?.reason).toBe("workspace-config-patch")
+  expect(invalidations[1]?.reason).toBe("skill-enabled-state")
+  // A burst is only countable if each entry says which generation it produced.
+  expect(Number(invalidations[1]?.generation)).toBeGreaterThan(Number(invalidations[0]?.generation))
+  // The first invalidation dropped a real cached view; the second had none left.
+  expect(invalidations[0]?.hadCachedView).toBe(true)
+  expect(invalidations[1]?.hadCachedView).toBe(false)
+})
+
+test("candidate preparation reports the cost of work that may be discarded", async () => {
+  const workspace = await workspaceFixture()
+
+  const events = await captureSkillAudit(async () => {
+    await prepareRuntimeSkillCandidate(workspace)
+  })
+
+  const prepared = events.find((e) => e.event === "active-runtime-view-candidate-prepared")
+  expect(prepared).toBeDefined()
+  expect(typeof prepared?.durationMs).toBe("number")
+  expect(Number(prepared?.durationMs)).toBeGreaterThanOrEqual(0)
+
+  const resolution = events.find((e) => e.event === "active-runtime-resolution")
+  expect(typeof resolution?.durationMs).toBe("number")
+})

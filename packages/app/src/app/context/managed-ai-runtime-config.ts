@@ -150,7 +150,12 @@ export type ManagedAiRuntimeConfigVesloClient = {
 
 export type ManagedAiRuntimeConfigRuntimeClient = {
   baseUrl: string;
-  getMyAiAccess: (userToken: string, orgId?: string, workspaceId?: string) => Promise<{
+  getMyAiAccess: (
+    userToken: string,
+    orgId?: string,
+    workspaceId?: string,
+    traceId?: string,
+  ) => Promise<{
     aiAccess?: VesloUserAiAccess | null;
     accessToken?: string | null;
   }>;
@@ -214,6 +219,7 @@ export type ManagedAiRuntimeConfigSyncOptions = {
   reportError: (error: unknown, scope: string) => void;
   addOpencodeCacheHint: (message: string) => string;
   safeStringify: (value: unknown) => string;
+  activeSendTraceId: () => string | null;
   recordManagedAiWorkflowTrace: (event: string, payload: Record<string, unknown>) => void;
   createVesloServerClient: (input: {
     baseUrl: string;
@@ -977,6 +983,7 @@ export function createManagedAiRuntimeConfigSync(
           userToken,
           deps.denOrgId().trim(),
           runtimeWorkspaceId,
+          deps.activeSendTraceId()?.trim() || undefined,
         );
         const { profile, gatewayAccessToken, reason } = resolveManagedAiAccessBundleState({
           aiAccess: response.aiAccess,
@@ -1541,7 +1548,7 @@ export function createManagedAiRuntimeConfigSync(
               descriptorHash: intent.descriptorHash,
             });
           }
-          if (outcome.kind === "verified") {
+          if (outcome.kind === "verified" && reason === "send-preflight") {
             lastVerifiedConfigIntentByScope.set(intent.scopeKey, intent.fingerprint);
           } else if (outcome.kind === "failed") {
             deps.setError(deps.addOpencodeCacheHint(outcome.error));

@@ -73,6 +73,7 @@ import type {
   VesloServerSettings,
   VesloServerStatus,
 } from "../lib/veslo-server";
+import { takeVesloRequestBrokerDelta } from "../lib/veslo-server/request-broker";
 import { DEFAULT_VESLO_PUBLISHER_BASE_URL } from "../lib/publisher";
 import { join } from "@tauri-apps/api/path";
 import {
@@ -229,7 +230,10 @@ import SessionCenter from "./session-center";
 import { createWorkspaceShareController } from "./workspace-share-controller";
 import { formatRunElapsedDuration } from "./session-run-elapsed-label";
 import { currentLocale as __vesloCurrentLocale, t as __vesloT } from "../../i18n";
-import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
+import {
+  recordSendWorkflowTrace,
+  sanitizeSendWorkflowTracePayload,
+} from "../lib/send-workflow-trace";
 import { readSessionStatus, scopedSessionStatusKey } from "../lib/scoped-session-status";
 import type { WorkspaceBusyMap } from "../context/workspace-debug";
 import type { SessionRunDiagnostic } from "../context/session-lifecycle-recovery";
@@ -242,15 +246,18 @@ function recordSendTrace(event: string, payload?: Record<string, unknown>) {
       __vesloSendTrace?: Array<Record<string, unknown>>;
     };
     const logs = root.__vesloSendTrace ?? [];
+    const safePayload = sanitizeSendWorkflowTracePayload(payload) as
+      | Record<string, unknown>
+      | undefined;
     logs.push({
       at: new Date().toISOString(),
       source: "session-page",
       event,
-      ...(payload ?? {}),
+      ...(safePayload ?? {}),
     });
     if (logs.length > 120) logs.splice(0, logs.length - 120);
     root.__vesloSendTrace = logs;
-    recordSendWorkflowTrace("session-page", event, payload);
+    recordSendWorkflowTrace("session-page", event, safePayload);
   } catch {
     // ignore
   }
@@ -1756,15 +1763,65 @@ export default function SessionView(props: SessionViewProps) {
     if (!sessionUiDiagnosticEnabled()) return;
     if (typeof window === "undefined") return;
 
+    // A stalled renderer cannot emit anything, so the interval below only ever
+    // reports that time was lost, never to what. Long-task entries are buffered
+    // by the platform and delivered once the loop frees up, which is the one
+    // signal that survives the stall. Their shape decides where to look next: a
+    // single long task is one synchronous operation, while many short ones are
+    // a flood of work.
+    let longTasks: Array<{ startMs: number; durationMs: number; name: string }> = [];
+    let longTaskObserver: PerformanceObserver | undefined;
+    try {
+      if (typeof PerformanceObserver === "function") {
+        longTaskObserver = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            longTasks.push({
+              startMs: Math.round(entry.startTime),
+              durationMs: Math.round(entry.duration),
+              name: entry.name,
+            });
+          }
+          if (longTasks.length > 100) longTasks = longTasks.slice(-100);
+        });
+        longTaskObserver.observe({ entryTypes: ["longtask"] });
+      }
+    } catch {
+      // Long-task timing is optional; diagnostics must never break the page.
+    }
+
+    const takeLongTaskSummary = () => {
+      if (!longTasks.length) return null;
+      const observed = longTasks;
+      longTasks = [];
+      const durations = observed.map((task) => task.durationMs);
+      return {
+        count: observed.length,
+        totalMs: durations.reduce((sum, value) => sum + value, 0),
+        maxMs: Math.max(...durations),
+        // The worst offenders, newest last, so a single dominant task is obvious.
+        longest: observed
+          .slice()
+          .sort((left, right) => right.durationMs - left.durationMs)
+          .slice(0, 3),
+      };
+    };
+
     let expectedAt = perfNow() + MAIN_THREAD_LAG_INTERVAL_MS;
     const interval = setInterval(() => {
       const now = perfNow();
       const lagMs = Math.round((now - expectedAt) * 100) / 100;
       expectedAt = now + MAIN_THREAD_LAG_INTERVAL_MS;
-      if (lagMs < MAIN_THREAD_LAG_WARN_MS) return;
+      if (lagMs < MAIN_THREAD_LAG_WARN_MS) {
+        takeLongTaskSummary();
+        return;
+      }
 
       const payload = {
         lagMs,
+        longTasks: takeLongTaskSummary(),
+        // A stall inside a microtask drain is usually a coalesced request fan-out
+        // paying a deep clone per caller. These counters name the endpoint.
+        requestBroker: takeVesloRequestBrokerDelta(),
         sessionID: props.selectedSessionId,
         status: props.sessionStatus,
         messageCount: props.messages.length,
@@ -1779,6 +1836,7 @@ export default function SessionView(props: SessionViewProps) {
 
     onCleanup(() => {
       window.clearInterval(interval);
+      longTaskObserver?.disconnect();
     });
   });
 

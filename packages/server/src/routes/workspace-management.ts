@@ -5,6 +5,7 @@ import { recordAudit, readAuditEntries, readLastAudit } from "../audit.js";
 import {
   evictActiveRuntimeSkillView,
   invalidateActiveRuntimeSkillView,
+  type RuntimeSkillViewInvalidationReason,
 } from "../active-runtime-skill-view.js";
 import { ApiError } from "../errors.js";
 import {
@@ -138,8 +139,9 @@ export function registerWorkspaceManagementRoutes(
   } = dependencies;
   const refreshWorkspaceRuntimeSkillView = async (
     workspace: WorkspaceInfo,
+    reason: RuntimeSkillViewInvalidationReason,
   ): Promise<void> => {
-    invalidateActiveRuntimeSkillView(workspace);
+    invalidateActiveRuntimeSkillView(workspace, reason);
   };
 
   addRoute(routes, "GET", "/workspaces", "client", async (ctx) => {
@@ -191,7 +193,7 @@ export function registerWorkspaceManagementRoutes(
         changed &&
         (baseUrl || directory || opencodeUsername || opencodePassword)
       ) {
-        invalidateActiveRuntimeSkillView(existing);
+        invalidateActiveRuntimeSkillView(existing, "workspace-config-patch");
         ctx.config.workspaces = ctx.config.workspaces.map((entry) =>
           entry.id === id ? nextWorkspace : entry,
         );
@@ -324,7 +326,7 @@ export function registerWorkspaceManagementRoutes(
               workspaceId: workspace.id,
               dataDir: serverDataDir,
             });
-          await refreshWorkspaceRuntimeSkillView(workspace);
+          await refreshWorkspaceRuntimeSkillView(workspace, "workspace-activate");
           return { provision, userGlobalSkills };
         },
       );
@@ -466,7 +468,7 @@ export function registerWorkspaceManagementRoutes(
                 workspaceId: workspace.id,
                 dataDir: serverDataDir,
               });
-            await refreshWorkspaceRuntimeSkillView(workspace);
+            await refreshWorkspaceRuntimeSkillView(workspace, "workspace-provision");
             return { soulMaterialization, result, userGlobalSkills };
           },
         );
@@ -572,7 +574,7 @@ export function registerWorkspaceManagementRoutes(
         if (veslo) {
           await writeVesloConfig(workspace.path, veslo, true);
         }
-        if (opencode) await refreshWorkspaceRuntimeSkillView(workspace);
+        if (opencode) await refreshWorkspaceRuntimeSkillView(workspace, "workspace-config-patch");
       },
     );
 
@@ -721,7 +723,7 @@ export function registerWorkspaceManagementRoutes(
       "workspace-import",
       async () => {
         await importWorkspace(workspace, body);
-        await refreshWorkspaceRuntimeSkillView(workspace);
+        await refreshWorkspaceRuntimeSkillView(workspace, "workspace-import");
       },
     );
     await recordAudit(workspace.path, {

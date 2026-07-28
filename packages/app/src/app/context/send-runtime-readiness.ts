@@ -111,6 +111,8 @@ export type SendRuntimeReadinessDeps<
       reason?: string;
       loadSessions?: boolean;
       forceFreshRuntime?: boolean;
+      skipManagedAiConfig?: boolean;
+      skipServingViewRefresh?: boolean;
     },
   ) => Promise<boolean>;
   connectToServer: (
@@ -549,6 +551,8 @@ export function createSendRuntimeReadiness<
           deps.ensureEngineForWorkspace(targetWorkspaceId || undefined, {
             reason: `${reason}-runtime-initial-ensure`,
             loadSessions: false,
+            skipManagedAiConfig: true,
+            skipServingViewRefresh: true,
           }),
         {
           ...(tracePayload ?? {}),
@@ -608,6 +612,8 @@ export function createSendRuntimeReadiness<
             reason: `${reason}-runtime-recovery`,
             loadSessions: false,
             forceFreshRuntime: true,
+            skipManagedAiConfig: true,
+            skipServingViewRefresh: true,
           }),
         {
           ...(tracePayload ?? {}),
@@ -640,6 +646,8 @@ export function createSendRuntimeReadiness<
                 reason: `${reason}-runtime-recovery-retry`,
                 loadSessions: false,
                 forceFreshRuntime: true,
+                skipManagedAiConfig: true,
+                skipServingViewRefresh: true,
               }),
             {
               ...(tracePayload ?? {}),

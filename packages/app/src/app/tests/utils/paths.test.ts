@@ -53,6 +53,43 @@ const withWindowsPlatform = async (run: () => void | Promise<void>) => {
   }
 };
 
+test("normalizeDirectoryPath reads userAgentData once for the current navigator", () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  let navigatorReads = 0;
+  let userAgentDataReads = 0;
+  const testNavigator = {
+    get userAgentData() {
+      userAgentDataReads += 1;
+      return { platform: "Win32" };
+    },
+    platform: "Win32",
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+  };
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    get() {
+      navigatorReads += 1;
+      return testNavigator;
+    },
+  });
+
+  try {
+    assert.equal(normalizeDirectoryPath("C:\\Users\\alice\\project-0"), "c:/users/alice/project-0");
+    const readsAfterInitialization = navigatorReads;
+    for (let index = 0; index < 100; index += 1) {
+      assert.equal(normalizeDirectoryPath(`C:\\Users\\alice\\project-${index}`), `c:/users/alice/project-${index}`);
+    }
+    assert.equal(userAgentDataReads, 1);
+    assert.equal(navigatorReads, readsAfterInitialization);
+  } finally {
+    if (previous) {
+      Object.defineProperty(globalThis, "navigator", previous);
+    } else {
+      delete (globalThis as { navigator?: Navigator }).navigator;
+    }
+  }
+});
+
 test("normalizeDirectoryPath canonicalizes WSL mount paths on Windows", async () => {
   await withWindowsPlatform(() => {
     assert.equal(
@@ -150,4 +187,40 @@ test("directoryQueryPathModeFromSandbox resolves WSL sandbox capability to path 
     directoryQueryPathModeFromSandbox({ enabled: true, backend: "mac-sandbox-exec" }),
     "auto",
   );
+});
+
+test("repeated normalization of the same path is memoized and stays correct", () => {
+  // The sidebar normalizes several paths per row on every render, which a
+  // profile showed dominating main-thread time. Memoization must not change
+  // any result, including for inputs that differ only by trailing separators
+  // or extended-length prefixes.
+  const inputs = [
+    WINDOWS_WORKSPACE_PATH,
+    `\\?\${WINDOWS_WORKSPACE_PATH}`,
+    `${WINDOWS_WORKSPACE_PATH_NORMALIZED}///`,
+    "/mnt/c/users/alice/repo",
+    "",
+    "   ",
+  ];
+
+  for (const input of inputs) {
+    const first = normalizeDirectoryQueryPath(input);
+    for (let i = 0; i < 50; i += 1) {
+      assert.equal(normalizeDirectoryQueryPath(input), first);
+    }
+  }
+
+  assert.equal(normalizeDirectoryQueryPath(WINDOWS_WORKSPACE_PATH), WINDOWS_WORKSPACE_PATH_NORMALIZED);
+  assert.equal(normalizeDirectoryQueryPath(""), "");
+  assert.equal(normalizeDirectoryQueryPath("   "), "");
+  assert.equal(normalizeDirectoryQueryPath("/"), "/");
+
+  // A cached entry must never be reused across a different normalization mode.
+  const platformNormalized = normalizeDirectoryPath(WINDOWS_WORKSPACE_PATH);
+  assert.ok(
+    platformNormalized === WINDOWS_WORKSPACE_PATH_NORMALIZED ||
+      platformNormalized === WINDOWS_WORKSPACE_PATH_LOWER,
+    `unexpected platform normalization: ${platformNormalized}`,
+  );
+  assert.equal(normalizeDirectoryPath(WINDOWS_WORKSPACE_PATH), platformNormalized);
 });

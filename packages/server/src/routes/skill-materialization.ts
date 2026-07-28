@@ -940,7 +940,7 @@ export function registerSkillMaterializationRoutes(
   const publishRuntimeView = async (
     workspace: WorkspaceInfo,
   ): Promise<void> => {
-    invalidateActiveRuntimeSkillView(workspace);
+    invalidateActiveRuntimeSkillView(workspace, "skill-materialization");
   };
   const migrateLegacyProjectionOrFail = async (workspace: WorkspaceInfo) => {
     const result = await migrateLegacyRegistrySkillProjections({

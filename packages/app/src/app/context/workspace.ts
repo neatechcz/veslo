@@ -999,7 +999,17 @@ export function createWorkspaceStore(options: {
   const createScratchWorkspace = localWorkspaces.createScratchWorkspace;
   const ensureLocalWorkspaceActive = localWorkspaces.ensureLocalWorkspaceActive;
   const ensureWorkspaceForFolder = localWorkspaces.ensureWorkspaceForFolder;
-  const forgetWorkspace = localWorkspaces.forgetWorkspace;
+  const forgetLocalWorkspace = localWorkspaces.forgetWorkspace;
+  const forgetWorkspace: typeof forgetLocalWorkspace = async (
+    workspaceId,
+    ...rest
+  ) => {
+    const result = await forgetLocalWorkspace(workspaceId, ...rest);
+    // A binding must not outlive the workspace it was resolved for; scratch
+    // workspaces are created and forgotten repeatedly within one app lifetime.
+    skillMaterializationGate.forgetWorkspaceRuntimeBinding(workspaceId);
+    return result;
+  };
   const pickWorkspaceFolder = localWorkspaces.pickWorkspaceFolder;
   const updateWorkspaceDisplayName = localWorkspaces.updateWorkspaceDisplayName;
   const normalizeRoots = localWorkspaces.normalizeRoots;

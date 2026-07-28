@@ -86,7 +86,7 @@ test("send preflight records per-step latency trace entries for step 2", () => {
   );
 });
 
-test("send flow preserves UI trace id and forwards trace entries to native logs", () => {
+test("send flow preserves UI trace id and forwards each trace through the shared native sink", () => {
   assert.match(
     appSendTraceSource,
     /const createSendPreflightContext = \(traceId\?: string \| null\): AppSendPreflightContext => \(\{\s*traceId: traceId\?\.trim\(\) \|\| makeSendTraceId\(\),/,
@@ -99,8 +99,13 @@ test("send flow preserves UI trace id and forwards trace entries to native logs"
   );
   assert.match(
     appSendTraceSource,
-    /logUiEvent\("send-trace", event, entry\);/,
-    "app send trace owner should forward entries to Tauri stderr",
+    /recordSendWorkflowTrace\("app", event, safePayload\);/,
+    "app send trace owner should use the shared native workflow trace sink",
+  );
+  assert.doesNotMatch(
+    appSendTraceSource,
+    /logUiEvent\("send-trace"/,
+    "app send trace owner must not duplicate the shared workflow trace over Tauri IPC",
   );
   assert.match(
     appSendTraceSource,

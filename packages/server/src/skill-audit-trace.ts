@@ -1,5 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { basename, dirname, isAbsolute } from "node:path";
+import { dirname } from "node:path";
+
+import { sanitizeRuntimeTracePayload } from "./runtime-trace-sanitizer.js";
 
 function truthy(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
@@ -15,21 +17,6 @@ function auditFiles(): string[] {
   return Array.from(new Set([primary, mirror].filter((value): value is string => Boolean(value))));
 }
 
-const PATH_KEYS = new Set(["path", "sourcePath", "workspaceRoot", "stagingRoot", "skillDir", "rootDir"]);
-
-function redactPath(value: string): string {
-  if (!isAbsolute(value) && !/^[A-Za-z]:[\\/]/.test(value) && !value.startsWith("\\\\")) return value;
-  const tail = value.replace(/\\/g, "/").split("/").filter(Boolean).slice(-4).join("/");
-  return `<local>/${tail || basename(value)}`;
-}
-
-function sanitize(value: unknown, key?: string): unknown {
-  if (typeof value === "string") return key && PATH_KEYS.has(key) ? redactPath(value) : value;
-  if (Array.isArray(value)) return value.map((item) => sanitize(item));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [childKey, sanitize(childValue, childKey)]));
-}
-
 export function recordSkillAudit(event: string, payload: Record<string, unknown> = {}): void {
   const files = auditFiles();
   if (files.length === 0 && !truthy(process.env.VESLO_SKILL_AUDIT_LOG)) return;
@@ -39,7 +26,7 @@ export function recordSkillAudit(event: string, payload: Record<string, unknown>
     at: new Date().toISOString(),
     event,
     processPid: process.pid,
-    ...(sanitize(payload) as Record<string, unknown>),
+    ...(sanitizeRuntimeTracePayload(payload) as Record<string, unknown>),
   };
   for (const file of files) {
     try {

@@ -1,7 +1,13 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm"
 import { randomUUID } from "node:crypto"
 
-import { auditEventTable, credentialBindingTable, credentialHealthEventTable, sessionLeaseTable } from "../schema.js"
+import {
+  credentialBindingTable,
+  credentialHealthEventTable,
+  managedAiAuditEventTable,
+  sessionLeaseTable,
+} from "../schema.js"
+import { withManagedAiAuditSchema } from "../audit/schema-availability.js"
 import type { AlertActionInput, AlertRecord, AlertRepository, AlertSignalSummary } from "./repository.js"
 
 export class MySqlAlertRepository implements AlertRepository {
@@ -24,7 +30,8 @@ export class MySqlAlertRepository implements AlertRepository {
       return []
     }
 
-    const [activeLeaseRows, auditRows] = await Promise.all([
+    const [activeLeaseRows, auditRows] = await withManagedAiAuditSchema(() =>
+      Promise.all([
       this.db
         .select({
           credentialRecordId: credentialBindingTable.credential_record_id,
@@ -35,23 +42,24 @@ export class MySqlAlertRepository implements AlertRepository {
         .groupBy(credentialBindingTable.credential_record_id),
       this.db
         .select({
-          alertId: auditEventTable.entity_id,
-          actor: auditEventTable.actor_user_id,
-          action: auditEventTable.action,
-          createdAt: auditEventTable.created_at,
+          alertId: managedAiAuditEventTable.entity_id,
+          actor: managedAiAuditEventTable.actor_user_id,
+          action: managedAiAuditEventTable.action,
+          createdAt: managedAiAuditEventTable.created_at,
         })
-        .from(auditEventTable)
+        .from(managedAiAuditEventTable)
         .where(
           and(
-            eq(auditEventTable.entity_type, "alert"),
+            eq(managedAiAuditEventTable.entity_type, "alert"),
             inArray(
-              auditEventTable.entity_id,
+              managedAiAuditEventTable.entity_id,
               healthEventRows.map((row: { eventId: string }) => `alert_${row.eventId}`),
             ),
           ),
         )
-        .orderBy(desc(auditEventTable.created_at)),
-    ])
+        .orderBy(desc(managedAiAuditEventTable.created_at)),
+      ]),
+    )
 
     const activeLeasesByCredential = new Map<string, number>(
       activeLeaseRows.map((row: { credentialRecordId: string; activeLeases: number }) => [
@@ -130,16 +138,18 @@ export class MySqlAlertRepository implements AlertRepository {
       return null
     }
 
-    await this.db.insert(auditEventTable).values({
-      id: `audit_${randomUUID()}`,
-      actor_user_id: input.actorUserId,
-      entity_type: "alert",
-      entity_id: input.alertId,
-      action: input.action,
-      result: input.result,
-      summary: input.summary,
-      created_at: new Date(),
-    })
+    await withManagedAiAuditSchema(() =>
+      this.db.insert(managedAiAuditEventTable).values({
+        id: `audit_${randomUUID()}`,
+        actor_user_id: input.actorUserId,
+        entity_type: "alert",
+        entity_id: input.alertId,
+        action: input.action,
+        result: input.result,
+        summary: input.summary,
+        created_at: new Date(),
+      }),
+    )
 
     const updated = await this.listAlerts()
     return updated.find((alert) => alert.id === input.alertId) ?? null

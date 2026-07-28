@@ -14,5 +14,7 @@ describe("orchestrator diagnostic trace redaction", () => {
     expect(cliSource).toContain('"workspace"');
     expect(cliSource).toContain('key === "search" || key === "targetSearch"');
     expect(cliSource).toContain('directory=[redacted]');
+    expect(cliSource).toContain('return "[redacted]";');
+    expect(cliSource).not.toContain("<local>/${tail || basename(value)}");
   });
 });

@@ -86,6 +86,7 @@ import {
   resolveOrdinaryDirectEngineSkillView,
 } from "./engine-skill-staging.js";
 import { DirectorySkillViewLifecycle, type DirectorySkillViewInstance } from "./directory-skill-view-lifecycle.js";
+import { createWorkspaceOperationQueue } from "./workspace-operation-queue.js";
 import { inspectDirectoryScopedConfigProfile } from "./directory-scoped-placement.js";
 import { syncWorkspaceOpencodeConfigToConfigDir } from "./workspace-opencode-config-mirror.js";
 import {
@@ -2338,8 +2339,7 @@ const TRACE_PATH_KEYS = new Set([
 
 function redactTracePath(value: string): string {
   if (!isAbsolute(value) && !/^[A-Za-z]:[\\/]/.test(value) && !value.startsWith("\\\\")) return value;
-  const tail = value.replace(/\\/g, "/").split("/").filter(Boolean).slice(-4).join("/");
-  return `<local>/${tail || basename(value)}`;
+  return "[redacted]";
 }
 
 function sanitizeTracePayload(value: unknown, key?: string): unknown {
@@ -5134,6 +5134,10 @@ async function runRouterDaemon(args: ParsedArgs) {
         })
       : null;
   const directoryWorkspaceIds = new Map<string, string>();
+  // A directory lifecycle queue protects one path. Repointing the same
+  // workspace to two paths concurrently needs a second, workspace-scoped
+  // queue so both operations cannot publish competing final bindings.
+  const enqueueDirectoryWorkspaceEnsure = createWorkspaceOperationQueue();
   const directorySkillViews = engineTopology.mode === "shared-directory-scoped"
     ? new DirectorySkillViewLifecycle({
         publish: async ({ directoryInstanceKey, skillViewRevision }) => {
@@ -5200,31 +5204,50 @@ async function runRouterDaemon(args: ParsedArgs) {
     excludeRunId?: string;
   }): Promise<DirectorySkillViewInstance> => {
     if (!directorySkillViews) throw new Error("directory-scoped shared engine is not configured");
-    const directoryInstanceKey = resolve(input.workspacePath);
-    directoryWorkspaceIds.set(directoryInstanceKey, input.workspaceId);
-    const skillViewRevision = input.requestedRevision ?? await readPublishedSharedSkillViewRevision(directoryInstanceKey);
-    if (!skillViewRevision) throw new Error("skill_view_stale: missing published directory skill revision");
+    return await enqueueDirectoryWorkspaceEnsure(input.workspaceId, async () => {
+      const directoryInstanceKey = resolve(input.workspacePath);
+      // A workspace owns exactly one directory instance. When it is repointed at
+      // a new path, retire the old one instead of leaving it bound: the entry
+      // would otherwise outlive its owner, keep answering active-run checks with
+      // a workspace id that no longer lives there, and hand a reused path a
+      // stale epoch.
+      for (const [previousKey, boundWorkspaceId] of directoryWorkspaceIds) {
+        if (boundWorkspaceId !== input.workspaceId) continue;
+        if (previousKey === directoryInstanceKey) continue;
+        const removed = await directorySkillViews.retire(previousKey);
+        directoryWorkspaceIds.delete(previousKey);
+        traceRuntime("orchestrator:directory-skill-view:retired", {
+          workspaceId: input.workspaceId,
+          previousDirectoryInstanceKey: previousKey,
+          nextDirectoryInstanceKey: directoryInstanceKey,
+          removed,
+        });
+      }
+      directoryWorkspaceIds.set(directoryInstanceKey, input.workspaceId);
+      const skillViewRevision = input.requestedRevision ?? await readPublishedSharedSkillViewRevision(directoryInstanceKey);
+      if (!skillViewRevision) throw new Error("skill_view_stale: missing published directory skill revision");
 
-    const refreshed = await directorySkillViews.ensure({
-      directoryInstanceKey,
-      skillViewRevision,
-      ...(input.excludeRunId ? { excludeRunId: input.excludeRunId } : {}),
+      const refreshed = await directorySkillViews.ensure({
+        directoryInstanceKey,
+        skillViewRevision,
+        ...(input.excludeRunId ? { excludeRunId: input.excludeRunId } : {}),
+      });
+      if (refreshed.status === "deferred") {
+        throw new Error(`directory_skill_view_refresh_deferred:${refreshed.retryAfterMs}`);
+      }
+      const admission = directorySkillViews.admit(directoryInstanceKey);
+      if (!admission.admitted) {
+        throw new Error(`directory_skill_view_reload_in_progress:${admission.retryAfterMs}`);
+      }
+      traceRuntime("orchestrator:directory-skill-view:ready", {
+        workspaceId: input.workspaceId,
+        workspaceRoot: directoryInstanceKey,
+        directoryInstanceKey,
+        directoryInstanceEpoch: admission.instance.directoryInstanceEpoch,
+        skillViewRevision: admission.instance.skillViewRevision ?? null,
+      });
+      return admission.instance;
     });
-    if (refreshed.status === "deferred") {
-      throw new Error(`directory_skill_view_refresh_deferred:${refreshed.retryAfterMs}`);
-    }
-    const admission = directorySkillViews.admit(directoryInstanceKey);
-    if (!admission.admitted) {
-      throw new Error(`directory_skill_view_reload_in_progress:${admission.retryAfterMs}`);
-    }
-    traceRuntime("orchestrator:directory-skill-view:ready", {
-      workspaceId: input.workspaceId,
-      workspaceRoot: directoryInstanceKey,
-      directoryInstanceKey,
-      directoryInstanceEpoch: admission.instance.directoryInstanceEpoch,
-      skillViewRevision: admission.instance.skillViewRevision ?? null,
-    });
-    return admission.instance;
   };
   const ensureSharedSkillView = async (
     workspaceId: string,
@@ -5528,7 +5551,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       const text = value?.trim() ?? "";
       return text
         ? text
-          .replace(/\b(bearer|authorization|token|api[_-]?key|password)\b\s*(?:=|:)?\s*\S+/gi, "$1=[redacted]")
+          .replace(/\b(bearer|authorization|token|api[_-]?key|password)\b\s*(?:=|:)?\s*(?:bearer\s+|basic\s+)?\S+/gi, "$1=[redacted]")
           .slice(0, 300)
         : null;
     };

@@ -56,7 +56,10 @@ export type WorkspaceLocalActivationDeps = {
     workspace: WorkspaceInfo,
     options: { reason: string },
   ) => Promise<boolean>;
-  runtimeSkillBinding?: (workspaceId: string) => RuntimeSkillBinding | null;
+  runtimeSkillBinding?: (
+    workspaceId: string,
+    workspacePath?: string,
+  ) => RuntimeSkillBinding | null;
   clearDisplayedSessionState: (
     reason:
       | "remote_to_local_workspace_changed"
@@ -411,7 +414,7 @@ export function createWorkspaceLocalActivation(
           workspaceName: next.displayName?.trim() || next.name?.trim() || null,
           reason: "workspace-attach-local",
           navigate: false,
-          skillBinding: deps.runtimeSkillBinding?.(next.id) ?? null,
+          skillBinding: deps.runtimeSkillBinding?.(next.id, next.path) ?? null,
         });
       connectedToLocalHost = await prepareRuntime();
       deps.wsDebug("activate:remote->local:prepareRuntime:done", {
@@ -570,7 +573,7 @@ export function createWorkspaceLocalActivation(
               ? "workspace-orchestrator-switch"
               : "workspace-restart",
           navigate: false,
-          skillBinding: deps.runtimeSkillBinding?.(next.id) ?? null,
+          skillBinding: deps.runtimeSkillBinding?.(next.id, next.path) ?? null,
         });
       const ok = await prepareRuntime();
       if (!ok) {

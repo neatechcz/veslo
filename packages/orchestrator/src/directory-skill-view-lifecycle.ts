@@ -40,6 +40,8 @@ const snapshot = (instance: DirectorySkillViewInstance): DirectorySkillViewInsta
  */
 export class DirectorySkillViewLifecycle {
   private readonly entries = new Map<string, DirectorySkillViewInstance>();
+  /** Monotonic tombstones fence a retired key from late asynchronous publish. */
+  private readonly generations = new Map<string, number>();
   private readonly queues = new Map<string, Promise<void>>();
   private readonly retryTimers = new Map<string, unknown>();
   private readonly retryAfterMs: number;
@@ -77,6 +79,62 @@ export class DirectorySkillViewLifecycle {
     return instance ? snapshot(instance) : null;
   }
 
+  /**
+   * Drop a directory instance that is gone for good.
+   *
+   * Without this the map only ever grows, a removed workspace keeps its
+   * skill-view state, and a directory path that is later reused inherits the
+   * previous epoch instead of starting clean. Cancelling the retry timer is
+   * part of the same contract: a completion scheduled for a directory nobody
+   * owns would resurrect the entry it was meant to retire.
+   *
+   * Returns whether an entry was actually removed, so callers can keep their
+   * own bindings in step without re-reading the map.
+   */
+  unregister(directoryInstanceKey: string): boolean {
+    const key = directoryInstanceKey.trim();
+    if (!key) return false;
+    this.generations.set(key, this.generation(key) + 1);
+    this.clearScheduledCompletion(key);
+    // Do not delete a live queue. A newly reused key must line up behind an
+    // in-flight publication so the retiring generation cannot resurrect it.
+    return this.entries.delete(key);
+  }
+
+  /**
+   * Retire a moved directory instance without letting its in-memory OpenCode
+   * cache survive under a later path reuse. This waits behind any in-flight
+   * publish, keeps the directory closed to admission, and disposes only after
+   * its active runs have drained.
+   */
+  async retire(directoryInstanceKey: string): Promise<boolean> {
+    const key = directoryInstanceKey.trim();
+    if (!key) return false;
+    const hadEntry = this.entries.delete(key);
+    // Initial publication creates its entry only after publish succeeds. A
+    // retirement that races that first publish must still queue behind it and
+    // dispose the directory before another owner can reuse this key.
+    const hadInFlightOperation = this.queues.has(key);
+    const generation = this.generation(key) + 1;
+    this.generations.set(key, generation);
+    this.clearScheduledCompletion(key);
+    if (!hadEntry && !hadInFlightOperation) return false;
+
+    return this.enqueue(key, async () => {
+      while (
+        this.isCurrentGeneration(key, generation) &&
+        this.deps.hasActiveRun({ directoryInstanceKey: key })
+      ) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, this.retryAfterMs);
+        });
+      }
+      if (!this.isCurrentGeneration(key, generation)) return false;
+      await this.deps.dispose({ directoryInstanceKey: key });
+      return true;
+    });
+  }
+
   /** Public diagnostic snapshot; callers must not mutate lifecycle state. */
   snapshot(): DirectorySkillViewInstance[] {
     return [...this.entries.values()]
@@ -103,10 +161,13 @@ export class DirectorySkillViewLifecycle {
     const revision = input.skillViewRevision.trim();
     if (!key) throw new Error("directory instance key is required");
     if (!revision) throw new Error("skill view revision is required");
+    const generation = this.generation(key);
     return this.enqueue(key, async () => {
+      this.requireCurrentGeneration(key, generation);
       const existing = this.entries.get(key);
       if (!existing) {
         await this.deps.publish({ directoryInstanceKey: key, skillViewRevision: revision });
+        this.requireCurrentGeneration(key, generation);
         const instance: DirectorySkillViewInstance = {
           directoryInstanceKey: key,
           directoryInstanceEpoch: 0,
@@ -125,7 +186,9 @@ export class DirectorySkillViewLifecycle {
       existing.state = "draining";
       try {
         await this.deps.publish({ directoryInstanceKey: existing.directoryInstanceKey, skillViewRevision: revision });
+        this.requireCurrentGeneration(key, generation);
       } catch (error) {
+        if (!this.isCurrentGeneration(key, generation)) throw error;
         this.restore(existing, previous);
         throw error;
       }
@@ -142,7 +205,12 @@ export class DirectorySkillViewLifecycle {
   }
 
   async completeWhenIdle(directoryInstanceKey: string): Promise<DirectorySkillViewRefreshResult> {
-    return this.enqueue(directoryInstanceKey, async () => this.reloadIfIdle(this.require(directoryInstanceKey)));
+    const key = directoryInstanceKey.trim();
+    const generation = this.generation(key);
+    return this.enqueue(key, async () => {
+      this.requireCurrentGeneration(key, generation);
+      return this.reloadIfIdle(this.require(key));
+    });
   }
 
   private async reloadIfIdle(
@@ -187,11 +255,13 @@ export class DirectorySkillViewLifecycle {
   private scheduleCompletion(directoryInstanceKey: string): void {
     const key = directoryInstanceKey.trim();
     if (!key || this.retryTimers.has(key)) return;
+    const generation = this.generation(key);
     const handle = this.retryScheduler.schedule(() => {
       this.retryTimers.delete(key);
+      if (!this.isCurrentGeneration(key, generation)) return;
       void this.completeWhenIdle(key).catch((error) => {
         this.deps.onRetryError?.({ directoryInstanceKey: key, error });
-        this.scheduleCompletion(key);
+        if (this.isCurrentGeneration(key, generation)) this.scheduleCompletion(key);
       });
     }, this.retryAfterMs);
     this.retryTimers.set(key, handle);
@@ -210,6 +280,20 @@ export class DirectorySkillViewLifecycle {
     const instance = this.entries.get(key);
     if (!instance) throw new Error(`directory instance is not registered: ${key}`);
     return instance;
+  }
+
+  private generation(directoryInstanceKey: string): number {
+    return this.generations.get(directoryInstanceKey.trim()) ?? 0;
+  }
+
+  private isCurrentGeneration(directoryInstanceKey: string, generation: number): boolean {
+    return this.generation(directoryInstanceKey) === generation;
+  }
+
+  private requireCurrentGeneration(directoryInstanceKey: string, generation: number): void {
+    if (!this.isCurrentGeneration(directoryInstanceKey, generation)) {
+      throw new Error(`directory instance retired: ${directoryInstanceKey}`);
+    }
   }
 
   private async enqueue<T>(directoryInstanceKey: string, operation: () => Promise<T>): Promise<T> {

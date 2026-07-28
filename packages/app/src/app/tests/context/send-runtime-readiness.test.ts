@@ -727,6 +727,8 @@ test("local runtime readiness joins cold bootstrap before forcing recovery for a
       options: {
         reason: "createSessionAndOpen-runtime-initial-ensure",
         loadSessions: false,
+        skipManagedAiConfig: true,
+        skipServingViewRefresh: true,
       },
     },
   ]);

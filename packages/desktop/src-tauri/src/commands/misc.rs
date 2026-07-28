@@ -258,7 +258,10 @@ pub fn reset_veslo_state(
 /// production diagnostics don't require opening DevTools.
 #[tauri::command]
 pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Option<String>) {
-    let is_send_workflow_trace = scope == "send-workflow-trace";
+    let is_send_workflow_trace = matches!(
+        scope.as_str(),
+        "send-workflow-trace" | "send-workflow-trace-batch"
+    );
     if !should_emit_send_workflow_trace(
         is_send_workflow_trace,
         crate::runtime_preferences::pilot_runtime_diagnostics_enabled(),
@@ -269,10 +272,8 @@ pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Opt
     if is_send_workflow_trace {
         append_send_workflow_trace_event(&app, &message, payload.as_deref());
     }
-    let line = match payload.as_deref() {
-        Some(p) if !p.is_empty() => format!("[ui:{}] {} {}", scope, message, p),
-        _ => format!("[ui:{}] {}", scope, message),
-    };
+    let line =
+        format_ui_event_log_line(&scope, &message, payload.as_deref(), is_send_workflow_trace);
     eprintln!("{}", line);
     if let Some(forwarder) =
         app.try_state::<std::sync::Arc<crate::debug_logs_forwarder::DebugLogsForwarder>>()
@@ -282,6 +283,24 @@ pub fn log_ui_event(app: AppHandle, scope: String, message: String, payload: Opt
             crate::debug_logs_forwarder::LogStream::Stderr,
             &line,
         );
+    }
+}
+
+fn format_ui_event_log_line(
+    scope: &str,
+    message: &str,
+    payload: Option<&str>,
+    is_send_workflow_trace: bool,
+) -> String {
+    // The redacted NDJSON sink is the diagnostic authority for workflow traces.
+    // Never duplicate its potentially large payload to stderr: it adds synchronous
+    // terminal I/O and would otherwise bypass the native payload redaction boundary.
+    if is_send_workflow_trace {
+        return format!("[ui:{}] {} persisted", scope, message);
+    }
+    match payload {
+        Some(value) if !value.is_empty() => format!("[ui:{}] {} {}", scope, message, value),
+        _ => format!("[ui:{}] {}", scope, message),
     }
 }
 
@@ -360,7 +379,10 @@ fn send_workflow_trace_write_lock() -> &'static Mutex<()> {
     SEND_WORKFLOW_TRACE_WRITE_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn append_send_workflow_trace_line(path: &Path, line: &str) {
+fn append_send_workflow_trace_lines(path: &Path, lines: &[String]) {
+    if lines.is_empty() {
+        return;
+    }
     let _guard = match send_workflow_trace_write_lock().lock() {
         Ok(guard) => guard,
         Err(_) => return,
@@ -369,10 +391,19 @@ fn append_send_workflow_trace_line(path: &Path, line: &str) {
         let _ = fs::create_dir_all(parent);
     }
     if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = file.write_all(line.as_bytes());
-        let _ = file.write_all(b"\n");
+        for line in lines {
+            let _ = file.write_all(line.as_bytes());
+            let _ = file.write_all(b"\n");
+        }
         let _ = file.flush();
     }
+}
+
+/// Single-line convenience over the batched writer. Only the tests append one
+/// line at a time; production callers always have a batch.
+#[cfg(test)]
+fn append_send_workflow_trace_line(path: &Path, line: &str) {
+    append_send_workflow_trace_lines(path, &[line.to_string()]);
 }
 
 fn is_private_send_workflow_trace_key(key: &str) -> bool {
@@ -434,7 +465,17 @@ fn redact_send_workflow_trace_value(value: &mut serde_json::Value) {
         }
         serde_json::Value::Object(map) => {
             for (key, child) in map.iter_mut() {
-                if is_private_send_workflow_trace_key(key) {
+                // A private key name is matched by substring, so it also covers
+                // presence and shape flags such as `hasGatewayToken`. Those
+                // carry no secret — only whether one exists — and they are the
+                // exact signal a causality audit needs. A bool or null cannot
+                // leak a credential, so keep it and redact everything else.
+                if is_private_send_workflow_trace_key(key)
+                    && !matches!(
+                        child,
+                        serde_json::Value::Bool(_) | serde_json::Value::Null
+                    )
+                {
                     *child = serde_json::Value::String("[redacted]".to_string());
                 } else {
                     redact_send_workflow_trace_value(child);
@@ -461,19 +502,33 @@ fn redact_send_workflow_trace_payload(raw: &str) -> String {
     })
 }
 
+fn redact_send_workflow_trace_payload_lines(raw: &str) -> Vec<String> {
+    let redacted = redact_send_workflow_trace_payload(raw.trim());
+    match serde_json::from_str::<serde_json::Value>(&redacted) {
+        Ok(serde_json::Value::Array(items)) => items
+            .into_iter()
+            .filter_map(|item| item.is_object().then(|| item.to_string()))
+            .collect(),
+        _ => vec![redacted],
+    }
+}
+
 fn append_send_workflow_trace_event(app: &AppHandle, message: &str, payload: Option<&str>) {
-    let line = match payload {
-        Some(raw) if !raw.trim().is_empty() => redact_send_workflow_trace_payload(raw.trim()),
-        _ => format!(
+    let lines = match payload {
+        Some(raw) if !raw.trim().is_empty() => redact_send_workflow_trace_payload_lines(raw),
+        _ => vec![format!(
             "{{\"schema\":\"send-workflow/v1\",\"source\":\"ui\",\"event\":{}}}",
             serde_json::to_string(message).unwrap_or_else(|_| "\"ui-event\"".to_string())
-        ),
+        )],
     };
+    if lines.is_empty() {
+        return;
+    }
     let primary = resolve_send_workflow_trace_file(app);
     let mirror = resolve_send_workflow_trace_mirror_file();
 
     if let Some(path) = primary.as_deref() {
-        append_send_workflow_trace_line(path, &line);
+        append_send_workflow_trace_lines(path, &lines);
     }
     if let Some(path) = mirror.as_deref() {
         if primary
@@ -482,7 +537,7 @@ fn append_send_workflow_trace_event(app: &AppHandle, message: &str, payload: Opt
         {
             return;
         }
-        append_send_workflow_trace_line(path, &line);
+        append_send_workflow_trace_lines(path, &lines);
     }
 }
 
@@ -805,8 +860,9 @@ pub fn read_obsidian_mirror_file(
 #[cfg(test)]
 mod tests {
     use super::{
-        append_send_workflow_trace_line, normalize_obsidian_mirror_relative_path,
-        redact_send_workflow_trace_payload, sanitize_obsidian_workspace_id,
+        append_send_workflow_trace_line, format_ui_event_log_line,
+        normalize_obsidian_mirror_relative_path, redact_send_workflow_trace_payload,
+        redact_send_workflow_trace_payload_lines, sanitize_obsidian_workspace_id,
         should_emit_send_workflow_trace, update_session_directory_in_db,
     };
     use rusqlite::Connection;
@@ -846,6 +902,66 @@ mod tests {
         assert_eq!(parsed["workspacePath"], "[redacted]");
         assert_eq!(parsed["detail"], "[redacted-path]");
         assert_eq!(parsed["nested"]["directory"], "[redacted]");
+    }
+
+    #[test]
+    fn send_workflow_trace_keeps_presence_flags_while_redacting_secret_values() {
+        let raw = r#"{
+          "event":"managed-ai-access:preflight",
+          "hasGatewayToken":true,
+          "hasLocalClientToken":false,
+          "currentApiKeyPresent":true,
+          "runtimeAuthorizationOrgIdPresent":null,
+          "token":"secret-token",
+          "gatewayToken":"another-secret",
+          "tokenCount":3
+        }"#;
+
+        let redacted = redact_send_workflow_trace_payload(raw);
+        assert!(!redacted.contains("secret-token"));
+        assert!(!redacted.contains("another-secret"));
+
+        let parsed: serde_json::Value = serde_json::from_str(&redacted).expect("redacted JSON");
+        // Presence flags carry no secret and are the signal a causality audit needs.
+        assert_eq!(parsed["hasGatewayToken"], true);
+        assert_eq!(parsed["hasLocalClientToken"], false);
+        assert_eq!(parsed["currentApiKeyPresent"], true);
+        assert!(parsed["runtimeAuthorizationOrgIdPresent"].is_null());
+        // Anything that can actually hold a credential still goes.
+        assert_eq!(parsed["token"], "[redacted]");
+        assert_eq!(parsed["gatewayToken"], "[redacted]");
+        assert_eq!(parsed["tokenCount"], "[redacted]");
+    }
+
+    #[test]
+    fn send_workflow_trace_batch_keeps_ndjson_events_separate_and_redacted() {
+        let raw = r#"[
+          {"event":"first","workspacePath":"C:\\Users\\pilot-user\\workspace"},
+          {"event":"second","token":"secret-token"}
+        ]"#;
+
+        let lines = redact_send_workflow_trace_payload_lines(raw);
+        assert_eq!(lines.len(), 2);
+        assert!(lines
+            .iter()
+            .all(|line| line.starts_with('{') && line.ends_with('}')));
+        assert!(lines.iter().all(|line| !line.contains("pilot-user")));
+        assert!(lines.iter().all(|line| !line.contains("secret-token")));
+    }
+
+    #[test]
+    fn send_workflow_trace_stderr_summary_never_contains_payload() {
+        let line = format_ui_event_log_line(
+            "send-workflow-trace-batch",
+            "batch",
+            Some(
+                r#"[{"workspacePath":"C:\\Users\\pilot-user\\workspace","token":"secret-token"}]"#,
+            ),
+            true,
+        );
+        assert_eq!(line, "[ui:send-workflow-trace-batch] batch persisted");
+        assert!(!line.contains("pilot-user"));
+        assert!(!line.contains("secret-token"));
     }
 
     #[test]

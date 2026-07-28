@@ -85,6 +85,7 @@ import {
   VESLO_WORKSPACE_ID_HEADER as GATEWAY_WORKSPACE_ID_HEADER,
 } from "./request-headers.js";
 import { deploymentServiceUrl } from "./deployment-endpoints.js";
+import { sanitizeRuntimeTracePayload } from "./runtime-trace-sanitizer.js";
 import type { SoulPendingEdit } from "./soul-cache.js";
 import type { SoulDocument, SoulScope, SoulVersion } from "./soul-memory.js";
 import {
@@ -427,7 +428,7 @@ function recordSendWorkflowTrace(
     event,
     processPid: process.pid,
     processRunId: process.env.VESLO_RUN_ID?.trim() || null,
-    ...payload,
+    ...(sanitizeRuntimeTracePayload(payload) as Record<string, unknown>),
   };
   try {
     const file = resolveSendWorkflowTraceFile();
@@ -1343,7 +1344,7 @@ export function startServer(config: ServerConfig) {
           // Candidate discovery must never overwrite the durable serving view.
           // The direct orchestrator validates this sidecar and starts the new
           // process from it before we atomically promote it to LKG.
-          invalidateActiveRuntimeSkillView(workspace);
+          invalidateActiveRuntimeSkillView(workspace, "runtime-prepare");
           const preparedCandidate = await prepareRuntimeSkillCandidate(workspace, {
             dataDir: config.dataDir,
             disabledSkills: await listDisabledSkills({
@@ -1469,7 +1470,7 @@ export function startServer(config: ServerConfig) {
   const requestWatcherSkillReconcile = (workspace: WorkspaceInfo): void => {
     // Invalidate immediately even when a prior idle retry is queued, so the
     // eventual publication sees the newest nested source or policy state.
-    invalidateActiveRuntimeSkillView(workspace);
+    invalidateActiveRuntimeSkillView(workspace, "source-watcher");
     watcherReloadCircuitOpenUntil.delete(workspace.id);
     watcherReloadGenerations.set(
       workspace.id,
@@ -1935,7 +1936,7 @@ async function fetchOpencodeJson(
           localLifecycleError === "skill_view_changed" &&
           workspace.workspaceType === "local"
         ) {
-          invalidateActiveRuntimeSkillView(workspace);
+          invalidateActiveRuntimeSkillView(workspace, "skill-view-conflict");
         }
         throw new ApiError(
           409,
@@ -3509,6 +3510,10 @@ async function proxyAiGatewayRequest(input: {
       })
     : null;
   const activeRunContext = sessionResolution?.activeRunContext ?? null;
+  const traceId =
+    activeRunContext?.traceId ??
+    trimmedHeader(input.request, VESLO_SEND_TRACE_ID_HEADER) ??
+    null;
   const sessionId = input.requireSessionId
     ? (sessionResolution?.sessionId ?? "")
     : undefined;
@@ -3630,7 +3635,7 @@ async function proxyAiGatewayRequest(input: {
     );
     try {
       console.warn(
-        `[veslo:ai-gateway] session-unresolved ${JSON.stringify(unresolvedTrace)}`,
+        `[veslo:ai-gateway] session-unresolved ${JSON.stringify(sanitizeRuntimeTracePayload(unresolvedTrace))}`,
       );
     } catch {
       console.warn("[veslo:ai-gateway] session-unresolved");
@@ -3686,7 +3691,7 @@ async function proxyAiGatewayRequest(input: {
     );
     try {
       console.log(
-        `[veslo:ai-gateway] sessionless-forward ${JSON.stringify(sessionlessTrace)}`,
+        `[veslo:ai-gateway] sessionless-forward ${JSON.stringify(sanitizeRuntimeTracePayload(sessionlessTrace))}`,
       );
     } catch {
       console.log("[veslo:ai-gateway] sessionless-forward");
@@ -3714,7 +3719,7 @@ async function proxyAiGatewayRequest(input: {
   }
   recordSendWorkflowTrace("server", "server:ai-gateway:provider-hit", {
     evidenceLayer: "local-proxy-hit",
-    traceId: activeRunContext?.traceId ?? null,
+    traceId,
     requestId,
     provider,
     gatewayPath: input.gatewayPath,
@@ -3748,7 +3753,7 @@ async function proxyAiGatewayRequest(input: {
         "server",
         "server:ai-gateway:request-diagnostic",
         {
-          traceId: activeRunContext?.traceId ?? null,
+          traceId,
           requestId,
           provider,
           gatewayPath: input.gatewayPath,
@@ -3803,7 +3808,7 @@ async function proxyAiGatewayRequest(input: {
       incomingOpenCodeSessionId: incomingOpenCodeSessionIdForTrace,
       workspaceId: workspaceId ?? null,
       incomingWorkspaceId: incomingWorkspaceId ?? null,
-      traceId: activeRunContext?.traceId ?? null,
+      traceId,
       conversationId: activeRunContext?.conversationId ?? null,
       runId: activeRunContext?.runId ?? null,
       opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
@@ -3830,7 +3835,7 @@ async function proxyAiGatewayRequest(input: {
     );
     try {
       console.log(
-        `[veslo:ai-gateway] proxy-${event} ${JSON.stringify(attributes)}`,
+        `[veslo:ai-gateway] proxy-${event} ${JSON.stringify(sanitizeRuntimeTracePayload(attributes))}`,
       );
     } catch {
       console.log(`[veslo:ai-gateway] proxy-${event}`);
@@ -3853,7 +3858,7 @@ async function proxyAiGatewayRequest(input: {
       incomingOpenCodeSessionId: incomingOpenCodeSessionIdForTrace,
       workspaceId: workspaceId ?? null,
       incomingWorkspaceId: incomingWorkspaceId ?? null,
-      traceId: activeRunContext?.traceId ?? null,
+      traceId,
       conversationId: activeRunContext?.conversationId ?? null,
       runId: activeRunContext?.runId ?? null,
       opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
@@ -3899,7 +3904,7 @@ async function proxyAiGatewayRequest(input: {
       attributes,
     );
     try {
-      console.log(`[veslo:ai-gateway] proxy ${JSON.stringify(attributes)}`);
+      console.log(`[veslo:ai-gateway] proxy ${JSON.stringify(sanitizeRuntimeTracePayload(attributes))}`);
     } catch {
       console.log("[veslo:ai-gateway] proxy");
     }
@@ -3915,7 +3920,7 @@ async function proxyAiGatewayRequest(input: {
     gatewayPath: input.gatewayPath,
     sessionId: sessionId || null,
     workspaceId: workspaceId ?? null,
-    traceId: activeRunContext?.traceId ?? null,
+    traceId,
     conversationId: activeRunContext?.conversationId ?? null,
     runId: activeRunContext?.runId ?? null,
     opencodeSessionId: activeRunContext?.opencodeSessionId ?? null,
@@ -3949,7 +3954,7 @@ async function proxyAiGatewayRequest(input: {
     upstreamHeadersReceivedAt = perfMs();
     recordSendWorkflowTrace("server", "server:ai-gateway:upstream-headers", {
       evidenceLayer: "upstream-headers",
-      traceId: activeRunContext?.traceId ?? null,
+      traceId,
       requestId,
       method,
       provider,
@@ -4414,30 +4419,6 @@ function summarizeConversationRunBodyForTrace(body: Record<string, unknown>) {
   };
 }
 
-function lifecycleRequestApiError(
-  error: OrchestratorLifecycleRequestError,
-): ApiError {
-  const status =
-    error.status === 401 || error.status === 403
-      ? 503
-      : error.status === 404
-        ? 404
-        : error.status === 501
-          ? 501
-          : 503;
-  const code =
-    status === 404
-      ? "lifecycle_not_found"
-      : status === 501
-        ? "lifecycle_unsupported"
-        : "lifecycle_unavailable";
-  return new ApiError(status, code, "Run lifecycle owner is unavailable", {
-    upstreamStatus: error.status,
-    path: error.path,
-    body: error.body,
-  });
-}
-
 type ConversationRunDebugTraceEntry = {
   source: "server";
   event: string;
@@ -4494,7 +4475,7 @@ function createConversationRunTracer(request: Request) {
     recordSendWorkflowTrace("server", event, entry);
     if (enabled) {
       try {
-        console.log(`[veslo:send-flow] ${event} ${JSON.stringify(entry)}`);
+        console.log(`[veslo:send-flow] ${event} ${JSON.stringify(sanitizeRuntimeTracePayload(entry))}`);
       } catch {
         console.log(`[veslo:send-flow] ${event}`);
       }

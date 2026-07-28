@@ -214,6 +214,7 @@ export async function prepareRuntimeSkillCandidate(
   workspace: WorkspaceInfo,
   options: PrepareRuntimeSkillCandidateOptions = {},
 ): Promise<ActiveRuntimeSkillView> {
+  const startedAt = Date.now();
   const key = cacheKey(workspace.id, workspace.path);
   const validationGeneration = generationFor(key);
   const resolvedView = await resolveActiveRuntimeSkillView(workspace, options);
@@ -239,6 +240,10 @@ export async function prepareRuntimeSkillCandidate(
     workspaceId: workspace.id,
     revision: view.revision,
     activeCount: view.skills.length,
+    // Preparation walks every skill tree to fingerprint it. Most candidates are
+    // never promoted, so this is the cost of work that is usually discarded.
+    durationMs: Date.now() - startedAt,
+    generation: validationGeneration,
   });
   return view;
 }
@@ -446,11 +451,42 @@ export async function readServingRuntimeSkillSummary(
   }
 }
 
-export function invalidateActiveRuntimeSkillView(workspace: Pick<WorkspaceInfo, "id" | "path">): void {
+/**
+ * Why a serving view was dropped. Without it an invalidation burst is
+ * indistinguishable from a single change, and attributing one means correlating
+ * timestamps against another process's trace by hand.
+ */
+export type RuntimeSkillViewInvalidationReason =
+  | "workspace-activate"
+  | "workspace-config-patch"
+  | "workspace-import"
+  | "workspace-provision"
+  | "skill-enabled-state"
+  | "skill-materialization"
+  | "skill-removal"
+  | "skill-restore"
+  | "user-global-skills"
+  | "runtime-prepare"
+  | "source-watcher"
+  | "skill-view-conflict"
+  | "unspecified";
+
+export function invalidateActiveRuntimeSkillView(
+  workspace: Pick<WorkspaceInfo, "id" | "path">,
+  reason: RuntimeSkillViewInvalidationReason = "unspecified",
+): void {
   const key = cacheKey(workspace.id, workspace.path);
-  cache.delete(key);
-  generations.set(key, generationFor(key) + 1);
-  recordSkillAudit("active-runtime-view-invalidated", { workspaceId: workspace.id });
+  const hadCachedView = cache.delete(key);
+  const generation = generationFor(key) + 1;
+  generations.set(key, generation);
+  recordSkillAudit("active-runtime-view-invalidated", {
+    workspaceId: workspace.id,
+    reason,
+    // The generation makes a burst countable, and pairs an invalidation with
+    // the candidate it supersedes.
+    generation,
+    hadCachedView,
+  });
 }
 
 export function evictActiveRuntimeSkillView(workspaceId: string, workspaceRoot: string): void {
