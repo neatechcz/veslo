@@ -138,6 +138,28 @@ test("default desktop capability does not expose tauri-pilot", () => {
   );
 });
 
+test("release capability and runtime exclude the opt-in native WebDriver server", () => {
+  const defaultCapability = JSON.parse(
+    readFileSync(resolve(srcTauriDir, "capabilities/default.json"), "utf8"),
+  );
+  const cargoToml = readFileSync(resolve(srcTauriDir, "Cargo.toml"), "utf8");
+  const lib = readFileSync(resolve(srcTauriDir, "src/lib.rs"), "utf8");
+
+  assert.equal(
+    defaultCapability.permissions.includes("wdio-webdriver:default"),
+    false,
+    "the release/default capability must never expose native WebDriver",
+  );
+  assert.match(cargoToml, /webdriver = \["dep:tauri-plugin-wdio-webdriver"\]/);
+  assert.match(cargoToml, /tauri-plugin-wdio-webdriver = \{ version = "1\.2\.0", optional = true \}/);
+  assert.match(
+    lib,
+    /#\[cfg\(all\(debug_assertions, feature = "webdriver"\)\)\]\s*let builder = builder\.plugin\(tauri_plugin_wdio_webdriver::init\(\)\);/,
+    "the embedded server must be registered only for a debug WebDriver feature build",
+  );
+  assert.match(lib, /write_live_webdriver_descriptor\(app\)\?;/);
+});
+
 test("desktop sandbox environment command mirrors the server backend resolver", () => {
   const lib = readFileSync(resolve(srcTauriDir, "src/lib.rs"), "utf8");
   const misc = readFileSync(

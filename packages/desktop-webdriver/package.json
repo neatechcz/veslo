@@ -1,0 +1,13 @@
+{
+  "name": "@neatech/veslo-webdriver-live",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test ./src/*.test.mjs",
+    "test:attach": "node ./src/attach-smoke.mjs"
+  },
+  "dependencies": {
+    "webdriverio": "^9.30.0"
+  }
+}
