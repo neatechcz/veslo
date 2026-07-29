@@ -24,6 +24,60 @@ mod utils;
 mod veslo_server;
 mod workspace;
 
+#[cfg(all(debug_assertions, feature = "webdriver"))]
+fn write_live_webdriver_descriptor(app: &tauri::App) -> tauri::Result<()> {
+    const MODE: &str = "live-dev-webdriver";
+    let mode = std::env::var("VESLO_DEV_RUNTIME_MODE").unwrap_or_default();
+    if mode != MODE {
+        return Ok(());
+    }
+
+    let descriptor_path = std::env::var("VESLO_WEBDRIVER_DESCRIPTOR_PATH").map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "missing VESLO_WEBDRIVER_DESCRIPTOR_PATH",
+        )
+    })?;
+    let port = std::env::var("TAURI_WEBDRIVER_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "missing valid TAURI_WEBDRIVER_PORT",
+            )
+        })?;
+    let descriptor_path = std::path::PathBuf::from(descriptor_path);
+    let parent = descriptor_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid VESLO_WEBDRIVER_DESCRIPTOR_PATH",
+        )
+    })?;
+    std::fs::create_dir_all(parent)?;
+
+    let payload = serde_json::json!({
+        "schema": "veslo-native-webdriver/v1",
+        "mode": MODE,
+        "appPid": std::process::id(),
+        "appIdentifier": app.config().identifier,
+        "endpoint": format!("http://127.0.0.1:{port}"),
+        "startedAtUnixMs": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or_default(),
+    });
+    let temporary_path = descriptor_path.with_extension("tmp");
+    std::fs::write(&temporary_path, serde_json::to_vec_pretty(&payload)?)?;
+    std::fs::rename(&temporary_path, &descriptor_path)?;
+    eprintln!(
+        "[veslo:native-webdriver] ready pid={} endpoint=http://127.0.0.1:{port}",
+        std::process::id()
+    );
+    Ok(())
+}
+
 pub use types::*;
 
 use bootstrap_diagnostics::{
@@ -291,6 +345,9 @@ pub fn run() {
     #[cfg(all(debug_assertions, feature = "e2e"))]
     let builder = builder.plugin(tauri_plugin_pilot::init());
 
+    #[cfg(all(debug_assertions, feature = "webdriver"))]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+
     let app = builder
         .setup(|app| {
             let window_config = app.config().app.windows.first().ok_or_else(|| {
@@ -300,6 +357,9 @@ pub fn run() {
             WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                 .build()?;
+
+            #[cfg(all(debug_assertions, feature = "webdriver"))]
+            write_live_webdriver_descriptor(app)?;
 
             Ok(())
         })

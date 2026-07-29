@@ -71,6 +71,31 @@ Do not require Git Bash, `pnpm --config.script-shell`, or a POSIX shell just to
 start the app on Windows. Developers can keep using the same `pnpm dev` command
 they used before.
 
+### Live signed-in profile: native WebDriver attach
+
+For a high-fidelity, manual diagnostic of the currently signed-in development
+profile, start the normal desktop development runtime with an explicit
+loopback-only W3C WebDriver endpoint:
+
+```bash
+pnpm dev:webdriver
+```
+
+This does not create an E2E account, copied auth snapshot, isolated WebView
+profile, or second Tauri application. It uses the same dev identifier and data
+directory as `pnpm dev`. Startup prints the timestamped `runtime-info.json`;
+from a second terminal, attach the read-only smoke client to that exact file:
+
+```bash
+pnpm test:webdriver:live -- <runtime-info.json>
+```
+
+The client attaches only and closes its WebDriver session when finished; it
+does not stop or alter the app. This is not an automated E2E lane and does not
+replace the Tauri Pilot suite. The embedded endpoint is only for a trusted
+local development account: it binds to `127.0.0.1`, but W3C WebDriver itself
+does not authenticate other processes running as the same OS user.
+
 1. Verify whether app/dev processes are already running.
 2. Stop previous app/dev processes and verify they are fully stopped.
 3. Rebuild desktop artifacts from source.

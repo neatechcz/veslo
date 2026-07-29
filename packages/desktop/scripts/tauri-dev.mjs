@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,8 +18,53 @@ const serverDir = resolve(desktopDir, "..", "server");
 const tauriCli = require.resolve("@tauri-apps/cli/tauri.js");
 const DEV_PILOT_IDENTIFIER = "com.neatech.veslo.dev";
 const MANUAL_PILOT_MODE = "manual-pilot";
+const LIVE_WEBDRIVER_MODE = "live-dev-webdriver";
+const devCliArgs = process.argv.slice(2);
+const liveWebDriverRequested = devCliArgs.includes("--webdriver");
+const tauriCliArgs = devCliArgs.filter((argument) => argument !== "--webdriver");
 
 loadDotEnv({ cwd: repoRoot });
+
+function assertLiveWebDriverEnvironment(env = process.env) {
+  if (!liveWebDriverRequested) return;
+
+  const unsafeOverrides = [
+    "E2E_USE_EXISTING_PROFILE",
+    "E2E_OPENCODE_HOME",
+    "E2E_MANAGED_AI_GATEWAY_FIXTURE",
+    "VESLO_DEN_AUTH_SNAPSHOT_PATH",
+    "WEBVIEW2_USER_DATA_FOLDER",
+  ].filter((name) => env[name]?.trim());
+  if (unsafeOverrides.length > 0) {
+    throw new Error(
+      `Refusing live WebDriver mode with E2E/profile overrides: ${unsafeOverrides.join(", ")}. `
+      + "Unset them so Veslo uses the normal signed-in development profile.",
+    );
+  }
+}
+
+async function allocateLoopbackPort() {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Could not allocate a loopback WebDriver port.")));
+        return;
+      }
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolvePort(address.port);
+      });
+    });
+  });
+}
+
+assertLiveWebDriverEnvironment();
 
 const readPort = () => {
   const value = Number.parseInt(process.env.PORT ?? "", 10);
@@ -142,19 +188,28 @@ function optionalEnvValue(env, name) {
   return env[name]?.trim() || null;
 }
 
-function buildPilotCapabilityConfig() {
+function buildDevelopmentCapabilityConfig({ pilot, webdriver }) {
+  const capabilities = ["veslo-default"];
+  if (pilot) {
+    capabilities.push({
+      identifier: "veslo-dev-pilot",
+      description: "Dev-only tauri-pilot capability for manual runtime diagnostics.",
+      windows: ["main"],
+      permissions: ["pilot:default"],
+    });
+  }
+  if (webdriver) {
+    capabilities.push({
+      identifier: "veslo-dev-webdriver",
+      description: "Dev-only loopback WebDriver capability for an explicit live-profile attach.",
+      windows: ["main"],
+      permissions: ["wdio-webdriver:default"],
+    });
+  }
   return {
     app: {
       security: {
-        capabilities: [
-          "veslo-default",
-          {
-            identifier: "veslo-dev-pilot",
-            description: "Dev-only tauri-pilot capability for manual runtime diagnostics.",
-            windows: ["main"],
-            permissions: ["pilot:default"],
-          },
-        ],
+        capabilities,
       },
     },
   };
@@ -244,7 +299,30 @@ function createManualPilotRuntime(baseEnv) {
   };
 }
 
-function writeManualRuntimeInfo(runtime, env, args) {
+function createLiveWebDriverRuntime(baseEnv, pilotRuntime, webdriverPort) {
+  const configuredRunDir = baseEnv.VESLO_DEV_RUNTIME_DIR?.trim() || baseEnv.VESLO_MANUAL_RUNTIME_DIR?.trim();
+  const runDir = pilotRuntime?.runDir || resolve(configuredRunDir || defaultManualRuntimeDir());
+  const logDir = pilotRuntime?.logDir || resolve(baseEnv.TAURI_PILOT_LOG_DIR?.trim() || runDir);
+  ensureDirectory(runDir);
+  ensureDirectory(logDir);
+
+  return {
+    mode: LIVE_WEBDRIVER_MODE,
+    endpoint: `http://127.0.0.1:${webdriverPort}`,
+    port: webdriverPort,
+    descriptorPath: join(logDir, "native-webdriver.json"),
+    env: {
+      VESLO_DEV_RUNTIME_MODE: LIVE_WEBDRIVER_MODE,
+      TAURI_WEBDRIVER_PORT: String(webdriverPort),
+      VESLO_WEBDRIVER_DESCRIPTOR_PATH: join(logDir, "native-webdriver.json"),
+    },
+  };
+}
+
+function writeDevRuntimeInfo(pilotRuntime, webdriverRuntime, env, args) {
+  const runtime = webdriverRuntime ?? pilotRuntime;
+  const logDir = pilotRuntime?.logDir ?? dirname(webdriverRuntime.descriptorPath);
+  const runtimeInfoPath = pilotRuntime?.runtimeInfoPath ?? join(logDir, "runtime-info.json");
   const info = {
     schema: "veslo-dev-runtime/v1",
     mode: runtime.mode,
@@ -255,42 +333,59 @@ function writeManualRuntimeInfo(runtime, env, args) {
     viteUrl: `http://localhost:${port}`,
     dataDir,
     serverDir,
+    profile: {
+      kind: webdriverRuntime ? "existing-development" : "development",
+      isolated: false,
+      dataDir,
+      authSnapshot: false,
+    },
     tauriConfig: {
       base: "src-tauri/tauri.dev.conf.json",
-      inlinePilotCapability: true,
-      identifier: runtime.identifier,
-      cargoFeatures: ["e2e"],
+      inlinePilotCapability: Boolean(pilotRuntime),
+      inlineWebDriverCapability: Boolean(webdriverRuntime),
+      identifier: pilotRuntime?.identifier ?? DEV_PILOT_IDENTIFIER,
+      cargoFeatures: [
+        ...(pilotRuntime ? ["e2e"] : []),
+        ...(webdriverRuntime ? ["webdriver"] : []),
+      ],
     },
-    pilot: {
-      socket: runtime.pilotSocket,
-      cli: runtime.pilotCli,
+    pilot: pilotRuntime ? {
+      socket: pilotRuntime.pilotSocket,
+      cli: pilotRuntime.pilotCli,
       window: "main",
-      pingCommand: [runtime.pilotCli, "--socket", runtime.pilotSocket, "ping"],
-      stateCommand: [runtime.pilotCli, "--socket", runtime.pilotSocket, "--window", "main", "state"],
-      snapshotCommand: [runtime.pilotCli, "--socket", runtime.pilotSocket, "--window", "main", "snapshot", "-i"],
-    },
+      pingCommand: [pilotRuntime.pilotCli, "--socket", pilotRuntime.pilotSocket, "ping"],
+      stateCommand: [pilotRuntime.pilotCli, "--socket", pilotRuntime.pilotSocket, "--window", "main", "state"],
+      snapshotCommand: [pilotRuntime.pilotCli, "--socket", pilotRuntime.pilotSocket, "--window", "main", "snapshot", "-i"],
+    } : null,
+    webdriver: webdriverRuntime ? {
+      endpoint: webdriverRuntime.endpoint,
+      descriptorPath: webdriverRuntime.descriptorPath,
+      clientCommand: "pnpm test:webdriver:live -- <this-runtime-info.json>",
+    } : null,
     traces: {
-      logDir: runtime.logDir,
-      runtimeTraceFile: runtime.runtimeTraceFile,
-      sendWorkflowTraceFile: runtime.sendWorkflowTraceFile,
-      sendWorkflowTraceMirrorFile: runtime.sendWorkflowTraceMirrorFile,
+      logDir,
+      runtimeTraceFile: pilotRuntime?.runtimeTraceFile ?? null,
+      sendWorkflowTraceFile: pilotRuntime?.sendWorkflowTraceFile ?? null,
+      sendWorkflowTraceMirrorFile: pilotRuntime?.sendWorkflowTraceMirrorFile ?? null,
       sendWorkflowTraceFiles: {
-        ui: runtime.sendWorkflowTraceUiFile,
-        server: runtime.sendWorkflowTraceServerFile,
-        orchestrator: runtime.sendWorkflowTraceOrchestratorFile,
+        ui: pilotRuntime?.sendWorkflowTraceUiFile ?? null,
+        server: pilotRuntime?.sendWorkflowTraceServerFile ?? null,
+        orchestrator: pilotRuntime?.sendWorkflowTraceOrchestratorFile ?? null,
       },
       sendWorkflowTraceMirrorFiles: {
-        ui: runtime.sendWorkflowTraceUiMirrorFile,
-        server: runtime.sendWorkflowTraceServerMirrorFile,
-        orchestrator: runtime.sendWorkflowTraceOrchestratorMirrorFile,
+        ui: pilotRuntime?.sendWorkflowTraceUiMirrorFile ?? null,
+        server: pilotRuntime?.sendWorkflowTraceServerMirrorFile ?? null,
+        orchestrator: pilotRuntime?.sendWorkflowTraceOrchestratorMirrorFile ?? null,
       },
-      opencodeHealthDiagFile: runtime.opencodeHealthDiagFile,
+      opencodeHealthDiagFile: pilotRuntime?.opencodeHealthDiagFile ?? null,
     },
     env: {
       VESLO_DATA_DIR: env.VESLO_DATA_DIR,
       VESLO_SERVER_DEV_DIR: env.VESLO_SERVER_DEV_DIR,
       VESLO_SERVER_DEV_WATCH: env.VESLO_SERVER_DEV_WATCH,
       VESLO_DEV_RUNTIME_MODE: env.VESLO_DEV_RUNTIME_MODE,
+      TAURI_WEBDRIVER_PORT: env.TAURI_WEBDRIVER_PORT || null,
+      VESLO_WEBDRIVER_DESCRIPTOR_PATH: env.VESLO_WEBDRIVER_DESCRIPTOR_PATH || null,
       VESLO_TAURI_PILOT: env.VESLO_TAURI_PILOT,
       TAURI_PILOT_SOCKET: env.TAURI_PILOT_SOCKET,
       TAURI_PILOT_LOG_DIR: env.TAURI_PILOT_LOG_DIR,
@@ -312,7 +407,7 @@ function writeManualRuntimeInfo(runtime, env, args) {
     sidecars: readSidecarVersions(),
     tauriArgs: args,
   };
-  writeFileSync(runtime.runtimeInfoPath, `${JSON.stringify(info, null, 2)}\n`, "utf8");
+  writeFileSync(runtimeInfoPath, `${JSON.stringify(info, null, 2)}\n`, "utf8");
   return info;
 }
 
@@ -322,10 +417,17 @@ function printManualRuntimeInfo(info) {
   console.info(`[veslo:dev-runtime] runtimeInfo=${join(info.traces.logDir, "runtime-info.json")}`);
   console.info(`[veslo:dev-runtime] viteUrl=${info.viteUrl}`);
   console.info(`[veslo:dev-runtime] dataDir=${info.dataDir}`);
-  console.info(`[veslo:dev-runtime] tauriConfig=${info.tauriConfig.base} + inline pilot:default`);
+  console.info(`[veslo:dev-runtime] tauriConfig=${info.tauriConfig.base} + inline dev capabilities`);
   console.info(`[veslo:dev-runtime] cargoFeatures=${info.tauriConfig.cargoFeatures.join(",")}`);
-  console.info(`[veslo:dev-runtime] pilotSocket=${info.pilot.socket}`);
-  console.info(`[veslo:dev-runtime] pilotPing=${info.pilot.pingCommand.join(" ")}`);
+  if (info.pilot) {
+    console.info(`[veslo:dev-runtime] pilotSocket=${info.pilot.socket}`);
+    console.info(`[veslo:dev-runtime] pilotPing=${info.pilot.pingCommand.join(" ")}`);
+  }
+  if (info.webdriver) {
+    console.info(`[veslo:dev-runtime] webdriverEndpoint=${info.webdriver.endpoint}`);
+    console.info(`[veslo:dev-runtime] webdriverDescriptor=${info.webdriver.descriptorPath}`);
+    console.info(`[veslo:dev-runtime] webdriverAttach=${info.webdriver.clientCommand}`);
+  }
   console.info(`[veslo:dev-runtime] runtimeTrace=${info.traces.runtimeTraceFile}`);
   console.info(`[veslo:dev-runtime] sendWorkflowTrace=${info.traces.sendWorkflowTraceFile}`);
   console.info(`[veslo:dev-runtime] sendWorkflowTraceMirror=${info.traces.sendWorkflowTraceMirrorFile}`);
@@ -508,12 +610,14 @@ const baseEnv = {
   VESLO_SERVER_DEV_DIR: process.env.VESLO_SERVER_DEV_DIR?.trim() || serverDir,
 };
 const manualPilotRuntime = shouldEnableManualPilotRuntime(baseEnv) ? createManualPilotRuntime(baseEnv) : null;
-const env = manualPilotRuntime
-  ? {
-      ...baseEnv,
-      ...manualPilotRuntime.env,
-    }
-  : baseEnv;
+const liveWebDriverRuntime = liveWebDriverRequested
+  ? createLiveWebDriverRuntime(baseEnv, manualPilotRuntime, await allocateLoopbackPort())
+  : null;
+const env = {
+  ...baseEnv,
+  ...(manualPilotRuntime?.env ?? {}),
+  ...(liveWebDriverRuntime?.env ?? {}),
+};
 
 if (process.platform === "win32" && process.env.VESLO_DEV_CLEANUP !== "0") {
   const cleanupStatus = cleanupDevProcesses(["--quiet-empty"]);
@@ -527,16 +631,18 @@ const args = [
   "--config",
   "src-tauri/tauri.dev.conf.json",
   "--config",
-  ...(manualPilotRuntime
-    ? [JSON.stringify(buildPilotCapabilityConfig()), "--config"]
+  ...(manualPilotRuntime || liveWebDriverRuntime
+    ? [JSON.stringify(buildDevelopmentCapabilityConfig({ pilot: Boolean(manualPilotRuntime), webdriver: Boolean(liveWebDriverRuntime) })), "--config"]
     : []),
   JSON.stringify({ build: { devUrl: `http://localhost:${port}` } }),
-  ...(manualPilotRuntime ? ["--features", "e2e"] : []),
-  ...process.argv.slice(2),
+  ...(manualPilotRuntime || liveWebDriverRuntime
+    ? ["--features", [manualPilotRuntime ? "e2e" : null, liveWebDriverRuntime ? "webdriver" : null].filter(Boolean).join(",")]
+    : []),
+  ...tauriCliArgs,
 ];
 
-if (manualPilotRuntime) {
-  const runtimeInfo = writeManualRuntimeInfo(manualPilotRuntime, env, args);
+if (manualPilotRuntime || liveWebDriverRuntime) {
+  const runtimeInfo = writeDevRuntimeInfo(manualPilotRuntime, liveWebDriverRuntime, env, args);
   printManualRuntimeInfo(runtimeInfo);
 } else {
   console.info("[veslo:dev-runtime] mode=standard; set VESLO_TAURI_PILOT=1 to enable manual Pilot diagnostics.");

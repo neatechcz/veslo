@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "pnpm --filter @neatech/veslo dev",
+    "dev:webdriver": "pnpm --filter @neatech/veslo dev:webdriver",
     "dev:cleanup": "pnpm --filter @neatech/veslo dev:cleanup",
     "dev:ui": "pnpm --filter @neatech/veslo-ui dev",
     "dev:web": "bun scripts/dev-headless-web.ts",
@@ -35,6 +36,7 @@
     "test:session-switch": "pnpm --filter @neatech/veslo-ui test:session-switch",
     "test:fs-engine": "pnpm --filter @neatech/veslo-ui test:fs-engine",
     "test:e2e": "pnpm --filter @neatech/veslo-ui test:e2e",
+    "test:webdriver:live": "pnpm --filter @neatech/veslo-webdriver-live test:attach",
     "test:e2e:ui": "pnpm --filter @neatech/veslo-e2e test",
     "test:e2e:ui:smoke": "pnpm --filter @neatech/veslo-e2e test:pilot:smoke",
     "desktop:smoke-packaged": "node scripts/desktop-smoke-packaged.mjs",
