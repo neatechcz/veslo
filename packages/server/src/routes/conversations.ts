@@ -815,6 +815,7 @@ export function registerConversationSessionRoutes(
       ...(ctx.actor ? { actor: ctx.actor } : {}),
       workspaceId: workspace.id,
     });
+    const submitEvidence: { runTrace: ConversationRunTracer | null } = { runTrace: null };
     const submitResolvedRun: ConversationSubmitResolvedRunSubmitter = async ({
       request,
       resolvedRunInput,
@@ -834,6 +835,7 @@ export function registerConversationSessionRoutes(
         throw new ApiError(400, "invalid_payload", "Conversation submit target is required");
       }
       const runTrace = createConversationRunTracer(ctx.request);
+      submitEvidence.runTrace = runTrace;
       runTrace.record("server:conversation-submit-run:start", {
         workspaceId: workspace.id,
         conversationId: request.target?.conversationId ?? null,
@@ -1106,6 +1108,30 @@ export function registerConversationSessionRoutes(
       resolveManagedAiModelDescriptor,
       resolveDirectory: (requestedRaw) => resolveConversationReadDirectory(workspace, requestedRaw),
       submitResolvedRun,
+    });
+    const finalTrace = createConversationRunTracer(ctx.request);
+    const lifecycleStatus = result.payload.status === "submitted"
+      ? "submitted"
+      : result.payload.status === "failed"
+        ? "failed"
+        : null;
+    const firstFailureEntry = submitEvidence.runTrace?.entries.find(
+      (entry) => entry.event === "server:conversation-submit:evidence-attempt-failed",
+    );
+    const firstFailureAttemptOrdinal =
+      typeof firstFailureEntry?.attemptOrdinal === "number" && firstFailureEntry.attemptOrdinal > 0
+        ? firstFailureEntry.attemptOrdinal
+        : null;
+    const engineOwnerObserved = submitEvidence.runTrace?.entries.some(
+      (entry) => entry.event === "server:conversation-submit:evidence-engine-owner" && entry.engineOwnerObserved === true,
+    ) ?? false;
+    finalTrace.record("server:conversation-submit:evidence-final", {
+      workspaceId: workspace.id,
+      firstFailureAttemptOrdinal,
+      engineOwnerObserved,
+      submitStatus: result.payload.status,
+      draftDisposition: result.payload.draftDisposition,
+      lifecycleStatus,
     });
     return jsonResponse(result.payload, result.httpStatus);
   });

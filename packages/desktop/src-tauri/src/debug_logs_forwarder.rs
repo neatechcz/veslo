@@ -47,6 +47,23 @@ impl LogStream {
     }
 }
 
+fn structured_log_level(line: &str) -> Option<&'static str> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let object = value.as_object()?;
+    object.get("timeUnixNano")?.as_str()?;
+    let severity = object
+        .get("severityText")?
+        .as_str()?
+        .trim()
+        .to_ascii_uppercase();
+    match severity.as_str() {
+        "INFO" => Some("info"),
+        "WARN" | "WARNING" => Some("warn"),
+        "ERROR" => Some("error"),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CloudDiagnosticsContext {
     den_api_base: String,
@@ -67,6 +84,8 @@ struct DebugLogEvent {
     workspace_id: String,
     source: String,
     stream: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    level: Option<String>,
     timestamp: u128,
     #[serde(rename = "sequenceNo")]
     sequence_no: u64,
@@ -618,15 +637,25 @@ impl DebugLogsForwarder {
             return;
         }
         let trimmed = truncate_utf8_to_bytes(trimmed, MAX_LOG_LINE_BYTES);
+        let level = structured_log_level(&trimmed);
+        let mut payload = serde_json::json!({ "line": trimmed });
+        if let (Some(level), serde_json::Value::Object(payload)) = (level, &mut payload) {
+            payload.insert(
+                "level".to_string(),
+                serde_json::Value::String(level.to_string()),
+            );
+        }
         self.append_event(
             source,
             stream,
-            serde_json::json!({ "line": trimmed }),
+            payload,
+            level,
             self.cloud_context_snapshot(),
         );
         self.user_capture.observe(
             source,
             stream.as_str(),
+            level,
             &trimmed,
             self.sequence.load(Ordering::Relaxed),
             |value| sanitize_diagnostic_string(value, true),
@@ -661,6 +690,7 @@ impl DebugLogsForwarder {
             "Veslo bootstrap",
             LogStream::Diagnostic,
             serde_json::Value::Object(payload),
+            None,
             self.cloud_context_snapshot(),
         );
         if let Some(marker_payload) = ready_marker_payload {
@@ -709,6 +739,7 @@ impl DebugLogsForwarder {
         source: &str,
         stream: LogStream,
         mut payload: serde_json::Value,
+        level: Option<&str>,
         context: Option<CloudDiagnosticsContext>,
     ) {
         let timestamp = SystemTime::now()
@@ -746,6 +777,7 @@ impl DebugLogsForwarder {
                 .unwrap_or_default(),
             source: source.to_string(),
             stream: stream.as_str().to_string(),
+            level: level.map(str::to_string),
             timestamp,
             sequence_no,
             payload,
@@ -1350,6 +1382,49 @@ mod tests {
         assert!(raw.contains("\"source\":\"test\""));
         assert!(raw.contains("\"stream\":\"stdout\""));
         assert!(raw.contains("hello world"));
+    }
+
+    #[test]
+    fn structured_otlp_levels_are_preserved_without_inferring_from_plain_stream_text() {
+        let dir = tempdir().unwrap();
+        let forwarder = DebugLogsForwarder::new(dir.path().to_path_buf());
+        forwarder.append(
+            "veslo-server-shell",
+            LogStream::Stdout,
+            r#"{"timeUnixNano":"1","severityText":"INFO","body":"[redacted]"}"#,
+        );
+        forwarder.append(
+            "veslo-server-shell",
+            LogStream::Stdout,
+            r#"{"timeUnixNano":"2","severityText":"WARN","body":"[redacted]"}"#,
+        );
+        forwarder.append(
+            "veslo-server-shell",
+            LogStream::Stdout,
+            r#"{"timeUnixNano":"1","severityText":"ERROR","body":"[redacted]"}"#,
+        );
+        forwarder.append(
+            "veslo-server-shell",
+            LogStream::Stderr,
+            "plain stderr is not a severity envelope",
+        );
+
+        let raw = fs::read_to_string(dir.path().join(PENDING_FILE)).unwrap();
+        let lines = raw.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 4);
+        let info: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        let warn: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        let error: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+        let plain: serde_json::Value = serde_json::from_str(lines[3]).unwrap();
+        assert_eq!(info["level"], "info");
+        assert_eq!(warn["level"], "warn");
+        assert_eq!(error["level"], "error");
+        assert_eq!(error["payload"]["level"], "error");
+        assert!(plain.get("level").is_none());
+        assert_eq!(
+            structured_log_level("[veslo-server] ERROR not structured"),
+            None
+        );
     }
 
     #[test]

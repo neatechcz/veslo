@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -22,13 +23,34 @@ const expectOpenCodeAdmissionMessageId = (value: unknown) => {
   expect(value as string).not.toMatch(/^msg_veslo_/);
 };
 
-const boundEngineResponse = (request: Request, body: unknown) => {
+const boundEngineResponse = (
+  request: Request,
+  body: unknown,
+  engineOwner?: {
+    slotId: string;
+    ownerId: string;
+    directoryInstanceEpoch: number;
+    pid: number;
+    startedAt: number;
+    baseUrl: string;
+    configDigest: string;
+  },
+) => {
   const headers = new Headers();
   const skillRevision = request.headers.get("x-veslo-skill-view-revision");
   const authorizationRevision = request.headers.get("x-veslo-skill-authorization-revision");
   if (skillRevision) headers.set("x-veslo-engine-skill-view-revision", skillRevision);
   if (authorizationRevision) {
     headers.set("x-veslo-engine-authorization-revision", authorizationRevision);
+  }
+  if (engineOwner) {
+    headers.set("x-veslo-engine-slot-id", engineOwner.slotId);
+    headers.set("x-veslo-engine-owner-id", engineOwner.ownerId);
+    headers.set("x-veslo-engine-directory-instance-epoch", String(engineOwner.directoryInstanceEpoch));
+    headers.set("x-veslo-engine-pid", String(engineOwner.pid));
+    headers.set("x-veslo-engine-started-at", String(engineOwner.startedAt));
+    headers.set("x-veslo-engine-base-url", engineOwner.baseUrl);
+    headers.set("x-veslo-engine-config-digest", engineOwner.configDigest);
   }
   return Response.json(body, { headers });
 };
@@ -1503,6 +1525,7 @@ describe("conversation routes", () => {
 
   test("POST /workspace/:id/conversations/submit returns materialized session when first run submit fails", async () => {
     await useTempVesloDataDir();
+    setEnvVarForTest("VESLO_LOG_FORMAT", "json");
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-materialized-failed-"));
     tempDirs.push(workspaceRoot);
     const upstreamRequests: string[] = [];
@@ -1554,7 +1577,17 @@ describe("conversation routes", () => {
         }),
       });
 
-    const response = await submit();
+    const originalConsoleLog = console.log;
+    const traceLines: string[] = [];
+    console.log = (...args: unknown[]) => {
+      traceLines.push(args.map(String).join(" "));
+    };
+    let response: Response;
+    try {
+      response = await submit();
+    } finally {
+      console.log = originalConsoleLog;
+    }
     expect(response.status).toBe(200);
     const payload = await response.json() as {
       status?: string;
@@ -1573,6 +1606,30 @@ describe("conversation routes", () => {
     expect(payload.materializedSession?.id).toBe("sess-submit-created-failed");
     expect(payload.materializedSession?.conversationId).toBe(payload.conversationId);
     expect(payload.materializedSession?.opencodeSessionId).toBe("sess-submit-created-failed");
+    const attemptEvidence = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
+    const attemptStarts = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-start"));
+    const finalEvidence = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-final"));
+    expect(attemptStarts).toHaveLength(1);
+    expect(attemptStarts[0]).toContain('"executionRoute":"direct"');
+    expect(attemptEvidence).toHaveLength(1);
+    expect(finalEvidence).toHaveLength(1);
+    expect(attemptEvidence[0]).toContain('"attemptOrdinal":1');
+    expect(attemptEvidence[0]).toContain('"failureCode":"opencode_request_failed"');
+    expect(attemptEvidence[0]).not.toContain("prompt failed");
+    const structuredFailure = JSON.parse(attemptEvidence[0]) as {
+      timeUnixNano?: string;
+      severityText?: string;
+      body?: string;
+      attributes?: Record<string, unknown>;
+    };
+    expect(typeof structuredFailure.timeUnixNano).toBe("string");
+    expect(structuredFailure.severityText).toBe("ERROR");
+    expect(structuredFailure.body).toBe("server:conversation-submit:evidence-attempt-failed");
+    expect(structuredFailure.attributes?.failureCode).toBe("opencode_request_failed");
+    expect(finalEvidence[0]).toContain('"submitStatus":"failed"');
+    expect(finalEvidence[0]).toContain('"draftDisposition":"restore"');
+    expect(finalEvidence[0]).toContain('"firstFailureAttemptOrdinal":1');
+    expect(finalEvidence[0]).toContain('"engineOwnerObserved":false');
 
     const retryResponse = await submit();
     expect(retryResponse.status).toBe(200);
@@ -1738,6 +1795,516 @@ describe("conversation routes", () => {
     expect(retryResponse.status).toBe(200);
     expect(await retryResponse.json()).toEqual(payload);
     expect(upstreamRequests).toHaveLength(2);
+  });
+
+  test("POST /workspace/:id/conversations/submit keeps a durable historical binding failed when its runtime session is absent", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-historical-missing-"));
+    tempDirs.push(workspaceRoot);
+    const upstreamRequests: string[] = [];
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        upstreamRequests.push(url.pathname);
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-historical-missing",
+            title: "Historical conversation",
+            directory: workspaceRoot,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/session/sess-historical-missing/prompt_async") {
+          return Response.json({ error: "session not found" }, { status: 404 });
+        }
+        return Response.json({ error: "unexpected upstream route" }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ directory: workspaceRoot, title: "Historical conversation" }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+    expect(created.opencodeSessionId).toBe("sess-historical-missing");
+
+    const originalConsoleLog = console.log;
+    const traceLines: string[] = [];
+    console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
+    let submitResponse: Response;
+    try {
+      submitResponse = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer client-token",
+            "Content-Type": "application/json",
+            "x-veslo-send-trace-id": "historical-session-missing-trace",
+          },
+          body: JSON.stringify({
+            clientMessageId: "msg-historical-session-missing",
+            origin: "session:normal",
+            source: "enter",
+            target: {
+              conversationId: created.conversationId,
+              opencodeSessionId: created.opencodeSessionId,
+              directory: workspaceRoot,
+            },
+            draft: { mode: "prompt", text: "Continue historical chat", parts: [{ type: "text", text: "Continue historical chat" }] },
+          }),
+        },
+      );
+    } finally {
+      console.log = originalConsoleLog;
+    }
+
+    expect(submitResponse.status).toBe(200);
+    const payload = await submitResponse.json() as {
+      status?: string;
+      code?: string;
+      conversationId?: string;
+      opencodeSessionId?: string;
+      draftDisposition?: string;
+      materializedSession?: unknown;
+      debugTrace?: Array<{ upstreamCode?: string | null; upstreamStatus?: number | null }>;
+    };
+    expect(payload.status).toBe("failed");
+    expect(payload.code).toBe("opencode_request_failed");
+    expect(payload.conversationId).toBe(created.conversationId);
+    expect(payload.opencodeSessionId).toBe("sess-historical-missing");
+    expect(payload.draftDisposition).toBe("restore");
+    expect(payload.materializedSession).toBeUndefined();
+    expect(payload.debugTrace?.some((entry) => entry.upstreamCode === "opencode_request_failed")).toBe(true);
+    expect(upstreamRequests).toEqual([
+      "/session",
+      "/session/sess-historical-missing/prompt_async",
+    ]);
+
+    const attemptEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
+    const finalEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-final"));
+    expect(attemptEvidence).toContain('"upstreamStatus":404');
+    expect(attemptEvidence).not.toContain("session not found");
+    expect(finalEvidence).toContain('"submitStatus":"failed"');
+    expect(finalEvidence).toContain('"draftDisposition":"restore"');
+    expect(finalEvidence).toContain('"firstFailureAttemptOrdinal":1');
+  });
+
+  test("POST /workspace/:id/conversations/submit records direct-to-orchestrator fallback attempts in order", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-fallback-evidence-"));
+    tempDirs.push(workspaceRoot);
+    const direct = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => Response.json({ error: "stale direct mount" }, { status: 404 }),
+    });
+    runningServers.push(direct as { stop?: (closeActiveConnections?: boolean) => void });
+    const orchestratorRequests: string[] = [];
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        orchestratorRequests.push(`${request.method} ${url.pathname}`);
+        const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+        if (request.method === "POST" && url.pathname === "/workspaces") {
+          return Response.json({ ok: true, workspace: { id: "ws_1" } });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
+          return boundEngineResponse(request, {
+            id: "sess-fallback-evidence",
+            title: body?.title,
+            directory: body?.directory ?? workspaceRoot,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-fallback-evidence/prompt_async") {
+          return boundEngineResponse(request, { ok: true }, {
+            slotId: "slot-fallback-evidence",
+            ownerId: "owner-fallback-evidence",
+            directoryInstanceEpoch: 3,
+            pid: 1234,
+            startedAt: 4567,
+            baseUrl: "http://127.0.0.1:9999",
+            configDigest: "config-fallback-evidence",
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route" }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: direct.port,
+      workspaces: [{
+        id: "ws_1",
+        name: "Workspace",
+        path: workspaceRoot,
+        baseUrl: `http://127.0.0.1:${direct.port}`,
+      }],
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ directory: workspaceRoot, title: "Fallback evidence" }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+
+    const originalConsoleLog = console.log;
+    const traceLines: string[] = [];
+    console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
+    let submitResponse: Response;
+    try {
+      submitResponse = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer client-token",
+            "Content-Type": "application/json",
+            "x-veslo-send-trace-id": "fallback-attempt-evidence-trace",
+          },
+          body: JSON.stringify({
+            clientMessageId: "msg-fallback-attempt-evidence",
+            origin: "session:normal",
+            target: {
+              conversationId: created.conversationId,
+              opencodeSessionId: created.opencodeSessionId,
+              directory: workspaceRoot,
+            },
+            draft: { mode: "prompt", text: "Use fallback", parts: [{ type: "text", text: "Use fallback" }] },
+          }),
+        },
+      );
+    } finally {
+      console.log = originalConsoleLog;
+    }
+
+    expect(submitResponse.status).toBe(200);
+    expect((await submitResponse.json() as { status?: string }).status).toBe("submitted");
+    expect(orchestratorRequests).toContain("POST /workspace/ws_1/opencode/session/sess-fallback-evidence/prompt_async");
+    const attemptStarts = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-start"));
+    const failures = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
+    const engineOwnerEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-engine-owner"));
+    const finalEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-final"));
+    expect(attemptStarts).toHaveLength(2);
+    expect(attemptStarts[0]).toContain('"attemptOrdinal":1');
+    expect(attemptStarts[0]).toContain('"executionRoute":"direct"');
+    expect(attemptStarts[1]).toContain('"attemptOrdinal":2');
+    expect(attemptStarts[1]).toContain('"executionRoute":"orchestrator"');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('"attemptOrdinal":1');
+    expect(failures[0]).toContain('"upstreamStatus":404');
+    expect(engineOwnerEvidence).toContain('"engineOwnerObserved":true');
+    expect(engineOwnerEvidence).toContain('"engineOwnerId":"owner-fallback-evidence"');
+    expect(engineOwnerEvidence).not.toContain("127.0.0.1:9999");
+    expect(finalEvidence).toContain('"firstFailureAttemptOrdinal":1');
+    expect(finalEvidence).toContain('"engineOwnerObserved":true');
+    expect(finalEvidence).toContain('"submitStatus":"submitted"');
+  });
+
+  test("POST /workspace/:id/conversations/submit records one bounded transport replay", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-transport-replay-"));
+    tempDirs.push(workspaceRoot);
+    let promptRequests = 0;
+    const upstream = createHttpServer((request, response) => {
+      const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (request.method === "POST" && requestUrl.pathname === "/session") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          id: "sess-transport-replay",
+          title: "Transport replay",
+          directory: workspaceRoot,
+          time: { created: 100, updated: 100 },
+        }));
+        return;
+      }
+      if (request.method === "POST" && requestUrl.pathname === "/session/sess-transport-replay/prompt_async") {
+        promptRequests += 1;
+        if (promptRequests === 1) {
+          response.writeHead(200, {
+            "content-type": "application/json",
+            "content-length": "16",
+          });
+          response.write('{"ok":');
+          response.socket?.destroy();
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "unexpected route" }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      upstream.once("error", reject);
+      upstream.listen(0, "127.0.0.1", resolve);
+    });
+    runningServers.push({ stop: () => upstream.close() });
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("test upstream did not bind a TCP port");
+    const server = startTestServer({ workspaceRoot, upstreamPort: address.port });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ directory: workspaceRoot, title: "Transport replay" }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+
+    const originalConsoleLog = console.log;
+    const traceLines: string[] = [];
+    console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
+    let submitResponse: Response;
+    try {
+      submitResponse = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer client-token",
+            "Content-Type": "application/json",
+            "x-veslo-send-trace-id": "transport-replay-evidence-trace",
+          },
+          body: JSON.stringify({
+            clientMessageId: "msg-transport-replay-evidence",
+            origin: "session:normal",
+            target: {
+              conversationId: created.conversationId,
+              opencodeSessionId: created.opencodeSessionId,
+              directory: workspaceRoot,
+            },
+            draft: { mode: "prompt", text: "Replay exactly once", parts: [{ type: "text", text: "Replay exactly once" }] },
+          }),
+        },
+      );
+    } finally {
+      console.log = originalConsoleLog;
+    }
+
+    expect(submitResponse.status).toBe(200);
+    expect((await submitResponse.json() as { status?: string }).status).toBe("submitted");
+    expect(promptRequests).toBe(2);
+    const attemptStarts = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-start"));
+    const failures = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
+    const finalEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-final"));
+    expect(attemptStarts).toHaveLength(2);
+    expect(attemptStarts[0]).toContain('"attemptOrdinal":1');
+    expect(attemptStarts[0]).toContain('"transportReplayOrdinal":0');
+    expect(attemptStarts[1]).toContain('"attemptOrdinal":2');
+    expect(attemptStarts[1]).toContain('"transportReplayOrdinal":1');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('"attemptOrdinal":1');
+    expect(failures[0]).toContain('"failureCode":"opencode_request_failed"');
+    expect(failures[0]).toContain('"failureStage":"transport"');
+    expect(finalEvidence).toContain('"firstFailureAttemptOrdinal":1');
+    expect(finalEvidence).toContain('"submitStatus":"submitted"');
+  });
+
+  test("POST /workspace/:id/conversations/submit records a bounded upstream timeout", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-timeout-evidence-"));
+    tempDirs.push(workspaceRoot);
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/session") {
+          return Response.json({
+            id: "sess-timeout-evidence",
+            title: "Timeout evidence",
+            directory: workspaceRoot,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        return Response.json({ error: "unexpected upstream route" }, { status: 404 });
+      },
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ directory: workspaceRoot, title: "Timeout evidence" }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+
+    const nativeFetch = globalThis.fetch;
+    const upstreamPrefix = `http://127.0.0.1:${upstream.port}/`;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith(upstreamPrefix)) {
+        return Promise.reject(new DOMException("simulated timeout", "AbortError"));
+      }
+      return nativeFetch(input, init);
+    }) as typeof fetch;
+    const originalConsoleLog = console.log;
+    const traceLines: string[] = [];
+    console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
+    let submitResponse: Response;
+    try {
+      submitResponse = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer client-token",
+            "Content-Type": "application/json",
+            "x-veslo-send-trace-id": "timeout-evidence-trace",
+          },
+          body: JSON.stringify({
+            clientMessageId: "msg-timeout-evidence",
+            origin: "session:normal",
+            target: {
+              conversationId: created.conversationId,
+              opencodeSessionId: created.opencodeSessionId,
+              directory: workspaceRoot,
+            },
+            draft: { mode: "prompt", text: "Timeout once", parts: [{ type: "text", text: "Timeout once" }] },
+          }),
+        },
+      );
+    } finally {
+      globalThis.fetch = nativeFetch;
+      console.log = originalConsoleLog;
+    }
+
+    expect(submitResponse.status).toBe(200);
+    const payload = await submitResponse.json() as { status?: string; code?: string; draftDisposition?: string };
+    expect(payload.status).toBe("failed");
+    expect(payload.code).toBe("opencode_request_timeout");
+    expect(payload.draftDisposition).toBe("restore");
+    const failure = traceLines.find((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
+    const finalEvidence = traceLines.find((line) => line.includes("server:conversation-submit:evidence-final"));
+    expect(failure).toContain('"failureCode":"opencode_request_timeout"');
+    expect(failure).toContain('"failureStage":"timeout"');
+    expect(finalEvidence).toContain('"submitStatus":"failed"');
+  });
+
+  test("POST /workspace/:id/conversations/submit records an admission refusal without replay", async () => {
+    await useTempVesloDataDir();
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-admission-refusal-"));
+    tempDirs.push(workspaceRoot);
+    const orchestrator = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "POST" && url.pathname === "/workspaces") {
+          return Response.json({ ok: true, workspace: { id: "ws_1" } });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session") {
+          return boundEngineResponse(request, {
+            id: "sess-admission-refusal",
+            title: "Admission refusal",
+            directory: workspaceRoot,
+            time: { created: 100, updated: 100 },
+          });
+        }
+        if (request.method === "POST" && url.pathname === "/workspace/ws_1/opencode/session/sess-admission-refusal/prompt_async") {
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: {
+              "content-type": "application/json",
+              "x-veslo-engine-skill-view-revision": "different-serving-view",
+              "x-veslo-engine-authorization-revision": "different-authorization-view",
+            },
+          });
+        }
+        return Response.json({ error: "unexpected orchestrator route" }, { status: 404 });
+      },
+    });
+    runningServers.push(orchestrator as { stop?: (closeActiveConnections?: boolean) => void });
+    const server = startTestServer({
+      workspaceRoot,
+      upstreamPort: orchestrator.port,
+      workspaces: [{
+        id: "ws_1",
+        name: "Workspace",
+        path: workspaceRoot,
+        baseUrl: `http://127.0.0.1:${orchestrator.port}/workspace/ws_1/opencode`,
+      }],
+      orchestratorDaemonUrl: `http://127.0.0.1:${orchestrator.port}`,
+    });
+
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations`,
+      {
+        method: "POST",
+        headers: { Authorization: "Bearer client-token", "Content-Type": "application/json" },
+        body: JSON.stringify({ directory: workspaceRoot, title: "Admission refusal" }),
+      },
+    );
+    expect(createResponse.status).toBe(201);
+    const created = await createResponse.json() as { conversationId: string; opencodeSessionId: string };
+
+    const originalConsoleLog = console.log;
+    const traceLines: string[] = [];
+    console.log = (...args: unknown[]) => traceLines.push(args.map(String).join(" "));
+    let submitResponse: Response;
+    try {
+      submitResponse = await fetch(
+        `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/submit`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer client-token",
+            "Content-Type": "application/json",
+            "x-veslo-send-trace-id": "admission-refusal-evidence-trace",
+          },
+          body: JSON.stringify({
+            clientMessageId: "msg-admission-refusal-evidence",
+            origin: "session:normal",
+            target: {
+              conversationId: created.conversationId,
+              opencodeSessionId: created.opencodeSessionId,
+              directory: workspaceRoot,
+            },
+            draft: { mode: "prompt", text: "Refuse stale admission", parts: [{ type: "text", text: "Refuse stale admission" }] },
+          }),
+        },
+      );
+    } finally {
+      console.log = originalConsoleLog;
+    }
+
+    expect(submitResponse.status).toBe(200);
+    const payload = await submitResponse.json() as { status?: string; code?: string };
+    expect(payload.status).toBe("failed");
+    expect(payload.code).toBe("admission_binding_changed");
+    const attemptStarts = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-start"));
+    const failures = traceLines.filter((line) => line.includes("server:conversation-submit:evidence-attempt-failed"));
+    expect(attemptStarts).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('"failureCode":"admission_binding_changed"');
+    expect(failures[0]).toContain('"failureStage":"admission"');
+    expect(failures[0]).toContain('"transportReplayOrdinal":0');
   });
 
   test("POST /workspace/:id/conversations/submit imports verified legacy OpenCode session targets", async () => {

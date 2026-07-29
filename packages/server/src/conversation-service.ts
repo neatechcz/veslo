@@ -4,6 +4,7 @@ import type {
   ConversationReadDiagnostic,
   ConversationReadStore,
   ConversationSummary,
+  ConversationTranscriptReadPhase,
 } from "./conversation-read-store.js";
 import type {
   ConversationBinding,
@@ -96,6 +97,7 @@ export type ConversationService = {
     workspace: WorkspaceInfo;
     sessionId: string;
     directory: string | null;
+    onReadPhase?: (phase: ConversationTranscriptReadPhase, durationMs: number) => void;
   }): Promise<ConversationCanonicalTranscriptResult>;
 
   persistCanonicalTranscript(input: {
@@ -645,6 +647,7 @@ export function createConversationService(options: {
         readMode: "complete",
         directory: input.directory,
         workspace: input.workspace,
+        onReadPhase: input.onReadPhase,
       });
       return {
         workspaceId: input.workspace.id,

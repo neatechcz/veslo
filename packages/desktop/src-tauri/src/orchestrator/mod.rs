@@ -391,7 +391,7 @@ pub fn build_orchestrator_env_overrides(
     veslo_server_client_token: Option<&str>,
     shared_unsandboxed_engine: Option<bool>,
 ) -> Vec<(String, String)> {
-    let mut env = Vec::new();
+    let mut env = vec![("VESLO_LOG_FORMAT".to_string(), "json".to_string())];
 
     if let Some(path) = veslo_server_state_path {
         env.push((
@@ -591,6 +591,9 @@ mod tests {
         assert!(env.iter().any(|(key, value)| {
             key == "VESLO_SERVER_STATE_PATH" && value == state_path.to_string_lossy().as_ref()
         }));
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "VESLO_LOG_FORMAT" && value == "json"));
     }
 
     #[test]

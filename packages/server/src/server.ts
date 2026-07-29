@@ -1652,6 +1652,8 @@ async function fetchOpencodeJson(
     authorizationRevision?: string | null;
     managedSkillStoreRoot?: string | null;
     orchestratorRegistrationScope?: OrchestratorWorkspaceRegistrationScope | null;
+    onAttemptStart?: (input: { executionRoute: "direct" | "orchestrator" }) => void;
+    onAttemptFailure?: (input: { executionRoute: "direct" | "orchestrator"; error: unknown }) => void;
   },
 ) {
   const baseUrl = workspace.baseUrl?.trim() ?? "";
@@ -1673,6 +1675,7 @@ async function fetchOpencodeJson(
     ),
   );
   const usesOrchestratorWorkspaceProxy = isWorkspaceOpencodeProxyUrl(url, workspace.id);
+  const executionRoute = usesOrchestratorWorkspaceProxy ? "orchestrator" : "direct";
 
   const headers = new Headers();
   headers.set(CONTENT_TYPE_HEADER, "application/json");
@@ -1745,6 +1748,7 @@ async function fetchOpencodeJson(
   }
 
   try {
+    init.onAttemptStart?.({ executionRoute });
     const response = await fetch(url.toString(), {
       method: init.method,
       headers,
@@ -1973,7 +1977,10 @@ async function fetchOpencodeJson(
     });
     return json;
   } catch (error) {
-    if (error instanceof ApiError) throw error;
+    if (error instanceof ApiError) {
+      init.onAttemptFailure?.({ executionRoute, error });
+      throw error;
+    }
     if (timedOut || isAbortError(error)) {
       recordSendWorkflowTrace("server", "server:opencode-json:timeout", {
         traceId: sendTraceId || null,
@@ -1984,7 +1991,7 @@ async function fetchOpencodeJson(
         timeoutMs,
         durationMs: Date.now() - requestStartedAt,
       });
-      throw new ApiError(
+      const normalizedError = new ApiError(
         502,
         "opencode_request_timeout",
         "OpenCode request timed out",
@@ -1993,6 +2000,8 @@ async function fetchOpencodeJson(
           timeoutMs,
         },
       );
+      init.onAttemptFailure?.({ executionRoute, error: normalizedError });
+      throw normalizedError;
     }
     recordSendWorkflowTrace("server", "server:opencode-json:error", {
       traceId: sendTraceId || null,
@@ -2003,7 +2012,7 @@ async function fetchOpencodeJson(
       error: error instanceof Error ? error.message : String(error),
       durationMs: Date.now() - requestStartedAt,
     });
-    throw new ApiError(
+    const normalizedError = new ApiError(
       502,
       "opencode_request_failed",
       "OpenCode request failed",
@@ -2012,6 +2021,8 @@ async function fetchOpencodeJson(
         error: error instanceof Error ? error.message : String(error),
       },
     );
+    init.onAttemptFailure?.({ executionRoute, error: normalizedError });
+    throw normalizedError;
   } finally {
     clearTimeout(timeout);
   }
@@ -4453,6 +4464,39 @@ function conversationRunTraceErrorFields(
   return fields;
 }
 
+function conversationSubmitAttemptEvidence(error: unknown): Record<string, unknown> {
+  if (error instanceof ApiError) {
+    const details = isRecordLike(error.details) ? error.details : {};
+    const upstreamStatus = typeof details.status === "number" ? details.status : null;
+    return {
+      failureCode: error.code,
+      upstreamStatus,
+      failureStage: error.code === "opencode_request_timeout"
+        ? "timeout"
+        : error.code === "admission_binding_changed" || error.status === 409
+          ? "admission"
+          : upstreamStatus !== null
+            ? "upstream_response"
+            : "transport",
+    };
+  }
+  return { failureCode: null, upstreamStatus: null, failureStage: "transport" };
+}
+
+function conversationRunTraceSeverity(
+  event: string,
+  payload: Record<string, unknown>,
+): "INFO" | "ERROR" {
+  if (
+    event.endsWith(":error") ||
+    event === "server:conversation-submit:evidence-attempt-failed" ||
+    (event === "server:conversation-submit:evidence-final" && payload.submitStatus === "failed")
+  ) {
+    return "ERROR";
+  }
+  return "INFO";
+}
+
 function createConversationRunTracer(request: Request) {
   const traceId = request.headers.get(VESLO_SEND_TRACE_ID_HEADER)?.trim() || "";
   const enabled =
@@ -4475,6 +4519,15 @@ function createConversationRunTracer(request: Request) {
     recordSendWorkflowTrace("server", event, entry);
     if (enabled) {
       try {
+        if ((process.env.VESLO_LOG_FORMAT ?? "").trim().toLowerCase() === "json") {
+          console.log(JSON.stringify({
+            timeUnixNano: toUnixNano(),
+            severityText: conversationRunTraceSeverity(event, payload),
+            body: event,
+            attributes: sanitizeRuntimeTracePayload(entry),
+          }));
+          return;
+        }
         console.log(`[veslo:send-flow] ${event} ${JSON.stringify(sanitizeRuntimeTracePayload(entry))}`);
       } catch {
         console.log(`[veslo:send-flow] ${event}`);
@@ -5699,12 +5752,20 @@ function createRoutes(
     },
   });
   const transcriptIngestCoordinator = createTranscriptIngestCoordinator({
+    trace: (event, payload) => recordSendWorkflowTrace("server", `server:${event}`, payload),
     readCanonicalTranscript: async (identity) => {
       const workspace = await resolveWorkspace(config, identity.workspaceId);
       const snapshot = await conversationService.readCanonicalTranscript({
         workspace,
         sessionId: identity.opencodeSessionId,
         directory: identity.directory,
+        onReadPhase: (phase, durationMs) => {
+          recordSendWorkflowTrace("server", "server:transcript-ingest:read-phase", {
+            workspaceId: identity.workspaceId,
+            phase,
+            durationMs,
+          });
+        },
       });
       return {
         complete: snapshot.complete,
@@ -5929,6 +5990,22 @@ function createRoutes(
       skillViewRevision: runtimeSkillView?.revision ?? null,
       body: summarizeConversationRunBodyForTrace(opencodeRunBody),
     });
+    let attemptOrdinal = 0;
+    let transportReplayOrdinal = 0;
+    const recordEngineOwner = (owner: ConversationWorkspaceRunEngineOwner) => {
+      captureEngineOwner?.(owner);
+      runTrace.record("server:conversation-submit:evidence-engine-owner", {
+        workspaceId: workspace.id,
+        conversationId: target.conversationId,
+        runId,
+        engineOwnerObserved: true,
+        engineOwnerId: owner.engineOwnerId,
+        directoryInstanceEpoch: owner.directoryInstanceEpoch,
+        skillViewRevision: owner.skillViewRevision,
+        authorizationRevision: owner.authorizationRevision,
+        openCodeConfigDigest: owner.openCodeConfigDigest,
+      });
+    };
     const submitUpstream = () =>
       fetchOpencodeJsonWithOrchestratorFallback(
         config,
@@ -5944,7 +6021,29 @@ function createRoutes(
           skillViewRevision: runtimeSkillView?.revision ?? null,
           authorizationRevision: runtimeSkillView?.authorizationRevision ?? null,
           orchestratorRegistrationScope,
-          captureEngineOwner,
+          captureEngineOwner: recordEngineOwner,
+          onAttemptStart: ({ executionRoute }) => {
+            attemptOrdinal += 1;
+            runTrace.record("server:conversation-submit:evidence-attempt-start", {
+              workspaceId: workspace.id,
+              conversationId: target.conversationId,
+              runId,
+              attemptOrdinal,
+              executionRoute,
+              transportReplayOrdinal,
+            });
+          },
+          onAttemptFailure: ({ executionRoute, error }) => {
+            runTrace.record("server:conversation-submit:evidence-attempt-failed", {
+              workspaceId: workspace.id,
+              conversationId: target.conversationId,
+              runId,
+              attemptOrdinal,
+              executionRoute,
+              transportReplayOrdinal,
+              ...conversationSubmitAttemptEvidence(error),
+            });
+          },
         },
       );
     return runTrace.step(
@@ -5965,6 +6064,7 @@ function createRoutes(
               error: error instanceof Error ? error.message : String(error),
             },
           );
+          transportReplayOrdinal = 1;
           return await submitUpstream();
         }
       },

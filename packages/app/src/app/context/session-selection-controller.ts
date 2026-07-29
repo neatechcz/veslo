@@ -480,6 +480,20 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
 
     const runId = ++selectRunCounter;
     const version = selectGuard.nextVersion();
+    // Publish a joinable flight before notifying any reactive selection
+    // observers. Those observers can synchronously re-enter selectSession;
+    // registering only after the async read starts leaves a small window in
+    // which the same transcript is loaded twice.
+    let settleSharedRun: (() => void) | undefined;
+    let rejectSharedRun: ((reason?: unknown) => void) | undefined;
+    const sharedRun = new Promise<void>((resolve, reject) => {
+      settleSharedRun = resolve;
+      rejectSharedRun = reject;
+    });
+    // The originating caller awaits `run` below. This handler prevents an
+    // unhandled rejection only when a re-entrant joiner never observes it.
+    void sharedRun.catch(() => undefined);
+    selectGuard.register(selectionKey, version, sharedRun);
     deps.onSelectionStart?.(sessionID, version);
     deps.setSelectedSessionId(sessionID);
     deps.setError(null);
@@ -518,6 +532,8 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       traceSelect("transcript-read-deferred", {
         reason: "submitted-run-admitted-before-select",
       });
+      settleSharedRun?.();
+      selectGuard.cleanup(selectionKey, sharedRun);
       deps.onSessionLoadComplete?.();
       return;
     }
@@ -874,15 +890,18 @@ export function createSessionSelectionController(deps: SessionSelectionControlle
       })();
     })();
 
-    selectGuard.register(selectionKey, version, run);
     try {
       await run;
+      settleSharedRun?.();
+    } catch (error) {
+      rejectSharedRun?.(error);
+      throw error;
     } finally {
       deps.setMessageLoadBusyBySession((prev: Record<string, boolean>) => ({
         ...prev,
         [sessionID]: false,
       }));
-      selectGuard.cleanup(selectionKey, run);
+      selectGuard.cleanup(selectionKey, sharedRun);
       deps.onSessionLoadComplete?.();
     }
   }

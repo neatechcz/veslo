@@ -100,6 +100,7 @@ function makeController(options: {
   ) => Promise<SessionOfflineTranscriptLoadResult>;
   appendTranscriptSnapshot?: (input: any) => Promise<void> | void;
   sessionWarn?: (label: string, payload?: unknown) => void;
+  onSelectionStart?: (sessionId: string, selectionVersion: number) => void;
   resolveSessionWorkspaceId?: (sessionID: string) => string | null;
   transcriptObservationVersion?: (sessionID: string) => number;
 } = {}) {
@@ -141,6 +142,7 @@ function makeController(options: {
     setSelectedSessionId,
     selectSessionScopeKey: undefined,
     directoryQueryPathMode: () => "auto",
+    onSelectionStart: options.onSelectionStart,
     conversationReader: options.conversationReader,
     loadOfflineTranscript: options.loadOfflineTranscript,
     shouldBrowseSessionFromDb: options.shouldBrowseSessionFromDb,
@@ -782,6 +784,35 @@ test("selectSession does not hydrate an offline snapshot after live transcript a
       await selecting;
 
       assert.equal(hydratedSnapshots.length, 0);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("selectSession joins a re-entrant selection before starting a second transcript read", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let offlineCalls = 0;
+      let selectAgain: ((sessionId: string) => Promise<void>) | null = null;
+      let joined: Promise<void> | null = null;
+      const { controller, hydratedSnapshots } = makeController({
+        shouldBrowseSessionFromDb: () => true,
+        onSelectionStart: (sessionId) => {
+          if (!joined && selectAgain) joined = selectAgain(sessionId);
+        },
+        loadOfflineTranscript: async (sessionId) => {
+          offlineCalls += 1;
+          return makeTranscriptSnapshot(sessionId);
+        },
+      });
+      selectAgain = controller.selectSession;
+
+      const original = controller.selectSession("sess-reentrant");
+      await Promise.all([original, joined]);
+
+      assert.equal(offlineCalls, 1);
+      assert.equal(hydratedSnapshots.length, 1);
     } finally {
       dispose();
     }

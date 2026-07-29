@@ -1659,6 +1659,40 @@ test("projection transcript reads emit content-free request and settle trace eve
   assert.equal("sessionId" in (events[1]?.payload ?? {}), false);
 });
 
+test("stale projection reads stop after registration before issuing a transcript request", async () => {
+  const { service, calls, sendTraces } = createService();
+  let continuationChecks = 0;
+
+  const snapshot = await service.getTranscriptFromVesloReadApi(
+    "app-ws",
+    "sess-stale",
+    140,
+    "/repo",
+    {
+      includeLatestRunArtifacts: true,
+      caller: "passive-selection",
+      shouldContinue: () => ++continuationChecks < 3,
+    },
+  );
+
+  assert.equal(snapshot, null);
+  assert.equal(calls.some((call) => call.startsWith("getSessionTranscript:")), false);
+  const events = sendTraces.filter((entry) =>
+    entry.event.startsWith("session-transcript-projection:"),
+  );
+  assert.deepEqual(events.map((entry) => entry.event), [
+    "session-transcript-projection:request",
+    "session-transcript-projection:settle",
+  ]);
+  assert.deepEqual(
+    {
+      outcome: events[1]?.payload?.outcome,
+      phase: events[1]?.payload?.phase,
+    },
+    { outcome: "stale", phase: "after-registration" },
+  );
+});
+
 test("live transcript reads do not start the local conversation server without active recovery opt-in", async () => {
   const { service, ensureCalls, sendTraces } = createService({
     startDisconnected: true,

@@ -92,6 +92,8 @@ struct CaptureEvent {
     workspace_id: String,
     source: String,
     stream: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    level: Option<String>,
     timestamp: u128,
     sequence_no: u64,
     capture_id: String,
@@ -354,6 +356,7 @@ impl UserDiagnosticCapture {
         record: &CaptureRecord,
         source: &str,
         stream: &str,
+        level: Option<&str>,
         sequence_no: u64,
         payload: serde_json::Value,
     ) -> Result<String, String> {
@@ -364,6 +367,7 @@ impl UserDiagnosticCapture {
             workspace_id: record.workspace_id.clone().unwrap_or_default(),
             source: source.to_string(),
             stream: stream.to_string(),
+            level: level.map(str::to_string),
             timestamp: now_ns(),
             sequence_no,
             capture_id: record.capture_id.clone(),
@@ -387,7 +391,7 @@ impl UserDiagnosticCapture {
     }
 
     fn append_summary_unlocked(&self, record: &CaptureRecord) -> Result<usize, String> {
-        let serialized = self.serialize_event(record, "Veslo user capture", "diagnostic", 0, serde_json::json!({
+        let serialized = self.serialize_event(record, "Veslo user capture", "diagnostic", None, 0, serde_json::json!({
             "eventType": "user-capture:summary", "captureId": record.capture_id, "state": record.state,
             "capturedEvents": record.captured_events, "capturedBytes": record.captured_bytes,
             "droppedRetention": record.dropped_retention, "droppedBudget": record.dropped_budget,
@@ -532,6 +536,7 @@ impl UserDiagnosticCapture {
         &self,
         source: &str,
         stream: &str,
+        level: Option<&str>,
         line: &str,
         sequence_no: u64,
         sanitize: impl Fn(&str) -> String,
@@ -556,6 +561,7 @@ impl UserDiagnosticCapture {
             &record,
             source,
             stream,
+            level,
             sequence_no,
             serde_json::json!({ "line": sanitize(line) }),
         ) {
@@ -1139,17 +1145,19 @@ mod tests {
         capture.observe(
             "engine",
             "stderr",
+            Some("error"),
             "Bearer secret-token /Users/alice/project",
             1,
             |_| "Bearer [redacted] /Users/[user]/project".to_string(),
         );
-        capture.observe("unlisted", "stderr", "must not queue", 2, |value| {
+        capture.observe("unlisted", "stderr", None, "must not queue", 2, |value| {
             value.to_string()
         });
         let raw = fs::read_to_string(queue_path(dir.path(), &capture_id)).unwrap();
         assert!(raw.contains("\"captureId\":\""));
         assert!(raw.contains("Bearer [redacted]"));
         assert!(!raw.contains("must not queue"));
+        assert!(raw.contains("\"level\":\"error\""));
         assert_eq!(capture.status().captured_events, 1);
         assert_eq!(capture.status().pending_events, 2);
     }
@@ -1163,7 +1171,7 @@ mod tests {
         }
         let started = capture.start(&context()).unwrap();
         let capture_id = started.capture_id.unwrap();
-        capture.observe("engine", "stderr", "before stop", 1, |value| {
+        capture.observe("engine", "stderr", None, "before stop", 1, |value| {
             value.to_string()
         });
 
@@ -1192,6 +1200,7 @@ mod tests {
                 &record,
                 "engine",
                 "stderr",
+                None,
                 1,
                 serde_json::json!({"line":"x"}),
             )
@@ -1201,7 +1210,7 @@ mod tests {
         capture.update_latest(&capture_id, |latest| {
             latest.captured_bytes = CAPTURE_MAX_BYTES - size + 1
         });
-        capture.observe("engine", "stderr", "x", 1, |value| value.to_string());
+        capture.observe("engine", "stderr", None, "x", 1, |value| value.to_string());
         let status = capture.status();
         assert_eq!(status.state, "budget_exhausted");
         assert_eq!(status.captured_events, 0);

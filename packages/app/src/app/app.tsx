@@ -1411,6 +1411,9 @@ export default function App() {
               includeLatestRunArtifacts: true,
               caller: "passive-selection",
               sendTraceId: activeSendTraceId(),
+              shouldContinue: () =>
+                readContext.selectionVersion === currentTranscriptSelectionVersion &&
+                selectedSessionId()?.trim() === sessionId.trim(),
             }
           : undefined,
       );

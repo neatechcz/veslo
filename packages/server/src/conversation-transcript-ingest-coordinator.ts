@@ -30,6 +30,15 @@ export type TranscriptIngestCoordinatorOptions = {
   retryDelaysMs?: readonly number[];
   readTimeoutMs?: number;
   sleep?: (delayMs: number) => Promise<void>;
+  trace?: (event: string, payload: {
+    phase: string;
+    attempt?: number;
+    generation?: number;
+    outcome?: string;
+    delayMs?: number;
+    durationMs?: number;
+  }) => void;
+  now?: () => number;
 };
 
 const stableStringify = (value: unknown): string => {
@@ -53,6 +62,7 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
   const retryDelaysMs = options.retryDelaysMs ?? [0, 2_000, 8_000];
   const readTimeoutMs = options.readTimeoutMs ?? 8_000;
   const sleep = options.sleep ?? ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const now = options.now ?? Date.now;
 
   const readWithTimeout = async (identity: TranscriptIngestIdentity): Promise<CanonicalTranscriptSnapshot> => {
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -90,32 +100,71 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
     const existing = taskByKey.get(key);
     if (existing) {
       existing.generation += 1;
+      options.trace?.("transcript-ingest:flight", { phase: "join", generation: existing.generation });
       return existing.promise;
     }
 
     const task = { identity, generation: 1, promise: Promise.resolve({ kind: "incomplete", generation: 0 } as TranscriptIngestOutcome) };
+    options.trace?.("transcript-ingest:flight", { phase: "new", generation: task.generation });
     task.promise = (async () => {
       let outcome: TranscriptIngestOutcome = { kind: "exhausted", generation: task.generation };
       do {
         const observedGeneration = task.generation;
         let cycleCompleted = false;
         for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
-          if (attempt > 0) await sleep(retryDelaysMs[attempt] ?? 0);
+          if (attempt > 0) {
+            const delayMs = retryDelaysMs[attempt] ?? 0;
+            options.trace?.("transcript-ingest:retry-delay", { phase: "retry-delay", attempt: attempt + 1, delayMs });
+            const delayStartedAt = now();
+            await sleep(delayMs);
+            options.trace?.("transcript-ingest:retry-delay", {
+              phase: "retry-delay-settled",
+              attempt: attempt + 1,
+              delayMs,
+              durationMs: Math.max(0, now() - delayStartedAt),
+            });
+          }
+          let readStartedAt: number | null = null;
           try {
+            readStartedAt = now();
             const snapshot = await readWithTimeout(task.identity);
-            if (!snapshot.complete) continue;
+            const readDurationMs = Math.max(0, now() - readStartedAt);
+            if (!snapshot.complete) {
+              options.trace?.("transcript-ingest:read", {
+                phase: "incomplete",
+                attempt: attempt + 1,
+                durationMs: readDurationMs,
+              });
+              continue;
+            }
             const watermark = canonicalTranscriptWatermark(snapshot);
             if (watermarkByKey.get(key) === watermark) {
               outcome = { kind: "unchanged", generation: observedGeneration };
+              options.trace?.("transcript-ingest:cache", {
+                phase: "unchanged",
+                attempt: attempt + 1,
+                durationMs: readDurationMs,
+              });
             } else {
+              const persistStartedAt = now();
               await options.persistCanonicalTranscript(task.identity, snapshot);
               watermarkByKey.set(key, watermark);
               options.invalidateTranscriptCaches(task.identity, snapshot);
               outcome = { kind: "persisted", generation: observedGeneration };
+              options.trace?.("transcript-ingest:persistence", {
+                phase: "persisted",
+                attempt: attempt + 1,
+                durationMs: Math.max(0, now() - persistStartedAt),
+              });
             }
             cycleCompleted = true;
             break;
           } catch {
+            options.trace?.("transcript-ingest:read", {
+              phase: "error",
+              attempt: attempt + 1,
+              durationMs: readStartedAt === null ? undefined : Math.max(0, now() - readStartedAt),
+            });
             // A canonical read is a bounded recovery concern. Never turn its
             // failure into a lifecycle or queue transition.
           }
@@ -124,6 +173,7 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
           outcome = { kind: "exhausted", generation: observedGeneration };
         }
       } while (task.generation > outcome.generation);
+      options.trace?.("transcript-ingest:settle", { phase: "settle", generation: task.generation, outcome: outcome.kind });
       return { ...outcome, generation: task.generation };
     })().finally(() => {
       if (taskByKey.get(key) === task) taskByKey.delete(key);

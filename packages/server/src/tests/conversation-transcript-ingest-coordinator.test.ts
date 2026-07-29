@@ -46,10 +46,21 @@ test("transcript ingest coordinator serializes concurrent requests into one foll
 test("transcript ingest coordinator retries an incomplete canonical read with bounded delays and never persists it", async () => {
   let writes = 0;
   let reads = 0;
+  let currentMs = 0;
   const delays: number[] = [];
+  const trace: Array<{
+    event: string;
+    phase: string;
+    attempt?: number;
+    delayMs?: number;
+    durationMs?: number;
+    outcome?: string;
+    generation?: number;
+  }> = [];
   const coordinator = createTranscriptIngestCoordinator({
     readCanonicalTranscript: async () => {
       reads += 1;
+      currentMs += 25;
       return { complete: false, messages: [{ id: "partial" }], partsByMessageId: {} };
     },
     persistCanonicalTranscript: async () => {
@@ -58,7 +69,10 @@ test("transcript ingest coordinator retries an incomplete canonical read with bo
     invalidateTranscriptCaches: () => {},
     sleep: async (delayMs) => {
       delays.push(delayMs);
+      currentMs += delayMs;
     },
+    now: () => currentMs,
+    trace: (event, payload) => trace.push({ event, ...payload }),
   });
 
   await expect(coordinator.request({ ...identity, trigger: "recovery" })).resolves.toEqual({
@@ -68,6 +82,17 @@ test("transcript ingest coordinator retries an incomplete canonical read with bo
   expect(reads).toBe(3);
   expect(delays).toEqual([2_000, 8_000]);
   expect(writes).toBe(0);
+  expect(trace).toEqual([
+    { event: "transcript-ingest:flight", phase: "new", generation: 1 },
+    { event: "transcript-ingest:read", phase: "incomplete", attempt: 1, durationMs: 25 },
+    { event: "transcript-ingest:retry-delay", phase: "retry-delay", attempt: 2, delayMs: 2_000 },
+    { event: "transcript-ingest:retry-delay", phase: "retry-delay-settled", attempt: 2, delayMs: 2_000, durationMs: 2_000 },
+    { event: "transcript-ingest:read", phase: "incomplete", attempt: 2, durationMs: 25 },
+    { event: "transcript-ingest:retry-delay", phase: "retry-delay", attempt: 3, delayMs: 8_000 },
+    { event: "transcript-ingest:retry-delay", phase: "retry-delay-settled", attempt: 3, delayMs: 8_000, durationMs: 8_000 },
+    { event: "transcript-ingest:read", phase: "incomplete", attempt: 3, durationMs: 25 },
+    { event: "transcript-ingest:settle", phase: "settle", generation: 1, outcome: "exhausted" },
+  ]);
 });
 
 test("concurrent incomplete transcript requests exhaust the latest generation without looping", async () => {

@@ -309,17 +309,25 @@ describe("conversation read store DB path resolution", () => {
     setEnv("USERPROFILE", homeRoot);
 
     const store = createConversationReadStore();
+    const phases: Array<{ phase: string; durationMs: number }> = [];
     const transcript = await store.getTranscript({
       workspaceId: "ws-fallback",
       sessionId: "sess-a",
       limit: 10,
       directory: workspaceRoot,
       workspace: { id: "ws-fallback", path: workspaceRoot },
+      onReadPhase: (phase, durationMs) => phases.push({ phase, durationMs }),
     });
 
     expect(transcript.source).toBe("sqlite");
     expect(transcript.messages.map((message) => (message as { id?: string }).id)).toEqual(["msg-1"]);
     expect(transcript.partsByMessageId["msg-1"]?.length).toBe(1);
+    expect(phases.map((entry) => entry.phase)).toEqual([
+      "sqlite-open",
+      "sqlite-query",
+      "json-normalize",
+    ]);
+    expect(phases.every((entry) => entry.durationMs >= 0)).toBe(true);
   });
 
   test("uses operation-specific schema validation for listing versus transcript reads", async () => {

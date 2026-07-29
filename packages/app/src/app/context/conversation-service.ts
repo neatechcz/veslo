@@ -50,6 +50,11 @@ export function isConversationServerSubmitPreflightError(
 import type { StartupPreference } from "../types";
 import type { SendTargetWorkspaceScope } from "./workspace-session-selection";
 
+type PassiveTranscriptReadOptions = VesloSessionTranscriptReadOptions & {
+  /** App-only staleness guard; never serialized to the server. */
+  shouldContinue?: () => boolean;
+};
+
 export type ConversationServiceClient = {
   baseUrl?: string;
   listWorkspaces: () => Promise<{
@@ -1312,7 +1317,7 @@ export function createConversationService<
     sessionId: string,
     limit: number,
     directory?: string,
-    options?: VesloSessionTranscriptReadOptions,
+    options?: PassiveTranscriptReadOptions,
   ) => {
     const projectionCaller =
       options?.includeLatestRunArtifacts === true && options.caller
@@ -1332,14 +1337,25 @@ export function createConversationService<
         ...(payload ?? {}),
       });
     };
+    const staleProjection = (phase: "before-client" | "after-client" | "after-registration") => {
+      traceProjection("settle", {
+        outcome: "stale",
+        phase,
+        durationMs: Math.max(0, Date.now() - projectionStartedAt),
+      });
+      return null;
+    };
+    const shouldContinue = options?.shouldContinue ?? (() => true);
     traceProjection("request");
     try {
+      if (!shouldContinue()) return staleProjection("before-client");
       const serverClient = await resolvePassiveConversationReadClient({
         intent: "live-read",
         reason: "getTranscriptFromVesloReadApi",
         workspaceId,
         directory,
       });
+      if (!shouldContinue()) return staleProjection("after-client");
       if (!serverClient) {
         traceProjection("settle", {
           outcome: "unavailable",
@@ -1352,6 +1368,7 @@ export function createConversationService<
         workspaceId,
         directory,
       );
+      if (!shouldContinue()) return staleProjection("after-registration");
       if (!serverWorkspaceId) {
         traceProjection("settle", {
           outcome: "unavailable",

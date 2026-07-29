@@ -69,6 +69,7 @@ export type ConversationReadStore = {
     readMode?: "limited" | "complete";
     directory: string | null;
     workspace?: ConversationReadWorkspace | null;
+    onReadPhase?: (phase: ConversationTranscriptReadPhase, durationMs: number) => void;
   }): Promise<ConversationTranscriptSnapshot & {
     source: "sqlite" | "unavailable";
     complete?: boolean;
@@ -247,6 +248,8 @@ type OpenCodeDbCandidate = {
   explicit: boolean;
   source: "explicit" | "workspace-local" | "global";
 };
+
+export type ConversationTranscriptReadPhase = "sqlite-open" | "sqlite-query" | "json-normalize";
 
 function resolveOpenCodeDbCandidates(input: {
   workspaceId: string;
@@ -648,6 +651,7 @@ export function createConversationReadStore(): ConversationReadStore {
         };
       }
 
+      const openStartedAt = Date.now();
       const opened = openReadOnlyDatabase({
         workspaceId,
         directory,
@@ -655,10 +659,12 @@ export function createConversationReadStore(): ConversationReadStore {
         workspace: input.workspace,
         operation: "transcript",
       });
+      input.onReadPhase?.("sqlite-open", Math.max(0, Date.now() - openStartedAt));
       if (!opened.db) return { ...empty, source: "unavailable", diagnostic: opened.diagnostic };
       const { db, dbPath } = opened;
 
       try {
+        const queryStartedAt = Date.now();
         const { directories, lowerDirectories } = directoryLookupArgs(directory);
         const session = db
           .query<{ id: string }, Array<string>>(
@@ -710,6 +716,9 @@ export function createConversationReadStore(): ConversationReadStore {
           )
           .all(sessionId);
 
+        input.onReadPhase?.("sqlite-query", Math.max(0, Date.now() - queryStartedAt));
+
+        const normalizeStartedAt = Date.now();
         const counters: JsonParseCounters = {
           invalidMessageJsonRows: 0,
           invalidPartJsonRows: 0,
@@ -731,6 +740,7 @@ export function createConversationReadStore(): ConversationReadStore {
           if (!partsByMessageId[messageId]) partsByMessageId[messageId] = [];
           partsByMessageId[messageId].push(part);
         }
+        input.onReadPhase?.("json-normalize", Math.max(0, Date.now() - normalizeStartedAt));
 
         return {
           workspaceId,

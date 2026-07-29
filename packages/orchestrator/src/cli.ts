@@ -63,6 +63,7 @@ import {
 } from "./run-registry.js";
 import { createRunActivityProbe } from "./run-activity-probe.js";
 import { createEngineLossNotifier } from "./engine-loss-notifier.js";
+import { routerRequestObservation } from "./router-request-observability.js";
 import {
   hostDirectoryToEngineDirectory,
   resolveEnginePathMappingBackend,
@@ -5499,15 +5500,17 @@ async function runRouterDaemon(args: ParsedArgs) {
     const method = req.method ?? "GET";
     const url = new URL(req.url ?? "/", `http://${host}:${port}`);
     res.on("finish", () => {
+      const observation = routerRequestObservation({
+        method,
+        pathname: url.pathname,
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt,
+        sendTraceHeader: req.headers["x-veslo-send-trace-id"],
+        activeWorkspaceId: state.activeId,
+      });
       logger.info(
-        "Router request",
-        {
-          method,
-          path: url.pathname,
-          status: res.statusCode,
-          durationMs: Date.now() - startedAt,
-          activeId: state.activeId,
-        },
+        observation.message,
+        observation.attributes,
         "veslo-orchestrator-router",
       );
     });
