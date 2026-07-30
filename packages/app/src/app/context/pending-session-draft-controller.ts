@@ -582,6 +582,14 @@ export function createPendingSessionDraftController(deps: PendingSessionDraftCon
     const id = workspaceId.trim();
     if (!id) return false;
 
+    // Opening a draft is persisted asynchronously.  For the already-active
+    // workspace, detach the old session before that storage work begins so a
+    // prompt typed immediately after the plus click cannot be submitted into
+    // the previous conversation.
+    if (deps.workspace.activeWorkspaceId().trim() === id) {
+      deps.clearDisplayedSession?.();
+    }
+
     return await openPendingDraftWithWorkspaceActivation({
       activeWorkspaceId: deps.workspace.activeWorkspaceId(),
       getActiveWorkspaceId: () => deps.workspace.activeWorkspaceId(),

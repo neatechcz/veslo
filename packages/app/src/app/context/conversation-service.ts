@@ -350,6 +350,14 @@ export type ConversationServiceDeps<
     input: ManagedAiServerSendTarget,
   ) => Promise<ManagedAiConfigSyncOutcome>;
   managedAiRuntimeAuthorizationPrimeDiagnostic?: () => ManagedAiRuntimeAuthPrimeDiagnostic | null;
+  ensureConversationLiveEventStreamReady?: (input: {
+    workspaceId: string;
+    directory: string;
+    reason:
+      | "submitConversationFromVesloWriteApi"
+      | "submitConversationRunViaVesloWriteApi";
+    traceId?: string | null;
+  }) => Promise<boolean>;
   onConversationRuntimeConfirmed?: (workspaceId: string) => void;
   activeSendTraceId: () => string | null;
   recordSendTrace: (event: string, payload?: Record<string, unknown>) => void;
@@ -1525,6 +1533,81 @@ export function createConversationService<
     );
   };
 
+  const beginConversationLiveEventStreamFence = async (input: {
+    owner:
+      | "submitConversationFromVesloWriteApi"
+      | "submitConversationRunViaVesloWriteApi";
+    workspaceId: string;
+    directory: string;
+    traceId?: string | null;
+  }) => {
+    if (!deps.ensureConversationLiveEventStreamReady) return true;
+    const traceId = input.traceId?.trim() || "";
+    try {
+      const ready = await deps.sendTraceStep(
+        `${input.owner}:live-event-stream-fence`,
+        () =>
+          deps.ensureConversationLiveEventStreamReady!({
+            workspaceId: input.workspaceId,
+            directory: input.directory,
+            reason: input.owner,
+            traceId,
+          }),
+        {
+          ...(traceId ? { traceId } : {}),
+          workspaceId: input.workspaceId,
+          directory: input.directory,
+        },
+      );
+      deps.recordSendTrace(`${input.owner}:live-event-stream-fence:result`, {
+        ...(traceId ? { traceId } : {}),
+        workspaceId: input.workspaceId,
+        ready,
+      });
+      return ready;
+    } catch (error) {
+      // The fence is observational. Transcript recovery owns missed events, so
+      // a renderer-side stream failure must not turn an accepted prompt into a
+      // failed send.
+      deps.recordSendTrace(`${input.owner}:live-event-stream-fence:error`, {
+        ...(traceId ? { traceId } : {}),
+        workspaceId: input.workspaceId,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+      return false;
+    }
+  };
+
+  const continueConversationLiveEventStreamAttachment = (
+    input: Parameters<typeof beginConversationLiveEventStreamFence>[0],
+    initialAttempt: Promise<boolean>,
+  ) => {
+    // A cold server-owned write can admit the engine after the first
+    // best-effort subscription has inspected engineInfo. Keep trying a small,
+    // bounded number of times after admission, but never make UI acceptance
+    // depend on a renderer event stream. Transcript recovery remains the
+    // authoritative fallback for any events emitted before this attaches.
+    void (async () => {
+      let ready = await initialAttempt;
+      for (const delayMs of [250, 750]) {
+        if (ready) return;
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        ready = await beginConversationLiveEventStreamFence(input);
+      }
+      deps.recordSendTrace(`${input.owner}:live-event-stream-attachment:settled`, {
+        ...(input.traceId?.trim() ? { traceId: input.traceId.trim() } : {}),
+        workspaceId: input.workspaceId,
+        attached: ready,
+      });
+    })().catch((error) => {
+      deps.recordSendTrace(`${input.owner}:live-event-stream-attachment:error`, {
+        ...(input.traceId?.trim() ? { traceId: input.traceId.trim() } : {}),
+        workspaceId: input.workspaceId,
+        errorType: error instanceof Error ? error.name : "unknown",
+      });
+    });
+  };
+
   const submitConversationFromVesloWriteApi = async (
     workspaceId: string,
     directory: string,
@@ -1622,6 +1705,16 @@ export function createConversationService<
         ...(expectAiGatewayStart ? { expectAiGatewayStart: true } : {}),
       },
     };
+    // Begin listening before the write. During a cold start the first
+    // subscription may get a transient 503, but its reconnect loop is already
+    // running while the server-owned submit starts OpenCode. Waiting until the
+    // submit resolves loses fast session, tool, and text events.
+    const liveEventStreamFence = beginConversationLiveEventStreamFence({
+      owner: "submitConversationFromVesloWriteApi",
+      workspaceId,
+      directory,
+      traceId: preflight?.traceId ?? null,
+    });
     const result = await deps.sendTraceStep(
       "submitConversationFromVesloWriteApi:submit",
       () =>
@@ -1665,6 +1758,15 @@ export function createConversationService<
       });
     }
     if (result.status === "submitted") {
+      continueConversationLiveEventStreamAttachment(
+        {
+          owner: "submitConversationFromVesloWriteApi",
+          workspaceId,
+          directory,
+          traceId: preflight?.traceId ?? null,
+        },
+        liveEventStreamFence,
+      );
       notifyConversationRuntimeConfirmed(workspaceId);
     }
     return result;
@@ -1849,6 +1951,12 @@ export function createConversationService<
       }
     }
     const conversationId = scope?.conversationId?.trim() || normalizedSessionId;
+    const liveEventStreamFence = beginConversationLiveEventStreamFence({
+      owner: "submitConversationRunViaVesloWriteApi",
+      workspaceId,
+      directory,
+      traceId,
+    });
     const result = await deps.sendTraceStep(
       "submitConversationRunViaVesloWriteApi:run",
       () =>
@@ -1913,6 +2021,15 @@ export function createConversationService<
         uiSessionId: normalizedSessionId,
         runId: result.runId,
       });
+      continueConversationLiveEventStreamAttachment(
+        {
+          owner: "submitConversationRunViaVesloWriteApi",
+          workspaceId,
+          directory,
+          traceId,
+        },
+        liveEventStreamFence,
+      );
       notifyConversationRuntimeConfirmed(workspaceId);
     }
     return result;

@@ -1,5 +1,6 @@
 import type { MessageWithParts } from "../types";
 import { uiEffectTrace } from "../lib/ui-effect-trace";
+import { recordSendWorkflowTrace } from "../lib/send-workflow-trace";
 
 /**
  * Dev-only causal sidecar for transcript writes.
@@ -39,6 +40,10 @@ export type TranscriptProjectionBoundary = {
   revision: number;
   arrayIdentity: number;
   messageCount: number;
+  assistantMessageCount: number;
+  assistantTextPartCount: number;
+  assistantTextCharacterCount: number;
+  assistantToolPartCount: number;
 };
 
 export type TranscriptViewportInputTuple = {
@@ -137,6 +142,26 @@ const identityOf = (value: object) => {
   return identity;
 };
 
+const describeVisibleTranscriptShape = (messages: MessageWithParts[]) => {
+  let assistantMessageCount = 0;
+  let assistantTextPartCount = 0;
+  let assistantTextCharacterCount = 0;
+  let assistantToolPartCount = 0;
+  for (const message of messages) {
+    if ((message.info as { role?: unknown }).role !== "assistant") continue;
+    assistantMessageCount += 1;
+    for (const part of message.parts) {
+      const record = part as { type?: unknown; text?: unknown };
+      if (record.type === "text") {
+        assistantTextPartCount += 1;
+        if (typeof record.text === "string") assistantTextCharacterCount += record.text.length;
+      }
+      if (record.type === "tool") assistantToolPartCount += 1;
+    }
+  }
+  return { assistantMessageCount, assistantTextPartCount, assistantTextCharacterCount, assistantToolPartCount };
+};
+
 const pruneCauses = () => {
   while (causeOrder.length > MAX_CAUSES) {
     const evicted = causeOrder.shift();
@@ -178,6 +203,14 @@ export const recordTranscriptStoreWrite = (
     messageId: cause.messageId,
     partId: cause.partId ?? null,
   });
+  recordSendWorkflowTrace("session-transcript", "session-transcript:store-write", {
+    writeRevision: cause.revision,
+    owner: cause.owner,
+    target: cause.target,
+    sessionId: cause.sessionId,
+    messageId: cause.messageId,
+    partId: cause.partId ?? null,
+  });
   return cause;
 };
 
@@ -205,14 +238,20 @@ export const observeTranscriptProjectionBoundary = (
       revision: previous.revision,
       arrayIdentity: previous.arrayIdentity,
       messageCount: previous.messageCount,
+      assistantMessageCount: previous.assistantMessageCount,
+      assistantTextPartCount: previous.assistantTextPartCount,
+      assistantTextCharacterCount: previous.assistantTextCharacterCount,
+      assistantToolPartCount: previous.assistantToolPartCount,
     };
   }
+  const transcriptShape = describeVisibleTranscriptShape(messages);
   const boundary = {
     stage,
     sessionId: normalizedSessionId,
     revision: (previous?.revision ?? 0) + 1,
     arrayIdentity: identityOf(messages),
     messageCount: messages.length,
+    ...transcriptShape,
     messages,
   };
   projectionBoundaryByScope.set(key, boundary);
@@ -222,8 +261,13 @@ export const observeTranscriptProjectionBoundary = (
     revision: boundary.revision,
     arrayIdentity: boundary.arrayIdentity,
     messageCount: boundary.messageCount,
+    assistantMessageCount: boundary.assistantMessageCount,
+    assistantTextPartCount: boundary.assistantTextPartCount,
+    assistantTextCharacterCount: boundary.assistantTextCharacterCount,
+    assistantToolPartCount: boundary.assistantToolPartCount,
   };
   uiEffectTrace.record("ui-transcript:projection-boundary", snapshot);
+  recordSendWorkflowTrace("session-transcript", "session-transcript:projection-boundary", snapshot);
   return snapshot;
 };
 
@@ -287,6 +331,10 @@ export const describeTranscriptProjectionBoundary = (
     revision: boundary.revision,
     arrayIdentity: boundary.arrayIdentity,
     messageCount: boundary.messageCount,
+    assistantMessageCount: boundary.assistantMessageCount,
+    assistantTextPartCount: boundary.assistantTextPartCount,
+    assistantTextCharacterCount: boundary.assistantTextCharacterCount,
+    assistantToolPartCount: boundary.assistantToolPartCount,
   } satisfies TranscriptProjectionBoundary;
 };
 

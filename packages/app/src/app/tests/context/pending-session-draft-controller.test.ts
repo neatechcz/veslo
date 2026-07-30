@@ -145,6 +145,59 @@ test("pending draft controller ignores old private drafts and opens the global d
   });
 });
 
+test("same-workspace new conversation detaches the old session before pending-draft storage settles", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let releaseList: ((value: PendingSessionDraftSummary[]) => void) | null = null;
+      let clearDisplayedSessionCalls = 0;
+      const controller = createPendingSessionDraftController({
+        isTauriRuntime: () => true,
+        createSessionAndOpen: async () => {
+          throw new Error("desktop flow must create a pending draft before a real session");
+        },
+        createEmptyComposerDraft: () => draft(""),
+        pendingSessionDraftsList: async () => await new Promise((resolve) => {
+          releaseList = resolve;
+        }),
+        pendingSessionDraftsGet: async () => null,
+        pendingSessionDraftsPut: async (input) => summaryFromDraft({ ...input, id: input.id }),
+        pendingSessionDraftsDelete: async () => true,
+        workspace: {
+          activeWorkspaceId: () => "workspace-a",
+          activeWorkspaceDisplay: () => ({ id: "workspace-a", directory: "C:/workspace-a", path: "C:/workspace-a" }),
+          workspaces: () => [{ id: "workspace-a", directory: "C:/workspace-a", path: "C:/workspace-a" }],
+          activateWorkspace: async () => true,
+          createScratchWorkspace: async () => null,
+          forgetWorkspace: async () => true,
+          pickWorkspaceFolder: async () => null,
+          ensureWorkspaceForFolder: async () => null,
+        },
+        publishRegisteredWorkspaceToSidebar: () => undefined,
+        composerDraftCommands: { writeDraft: () => undefined },
+        clearDisplayedSession: () => {
+          clearDisplayedSessionCalls += 1;
+        },
+        setView: () => undefined,
+        setError: () => undefined,
+        reportError: (error) => {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+        safeStringify: (value) => String(value),
+        addOpencodeCacheHint: (message) => message,
+      });
+
+      const opened = controller.openPendingDirectoryDraftInWorkspace("workspace-a");
+      assert.equal(clearDisplayedSessionCalls, 1, "the previous conversation must be detached before async storage");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.ok(releaseList, "pending-draft storage should begin after the synchronous detach");
+      (releaseList as (value: PendingSessionDraftSummary[]) => void)([]);
+      assert.equal(await opened, true);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("pending draft controller creates the global draft record when only old private drafts exist", async () => {
   await createRoot(async (dispose) => {
     try {

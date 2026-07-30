@@ -4,8 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "test": "node --test ./src/*.test.mjs",
-    "test:attach": "node ./src/attach-smoke.mjs"
+    "test": "node --test ./src/*.test.mjs ./src/scenario-kit/*.test.mjs",
+    "test:attach": "node ./src/attach-smoke.mjs",
+    "test:workspace-roundtrip": "node ./src/workspace-roundtrip.mjs",
+    "test:sidebar-flicker": "node ./src/sidebar-workspace-accordion-flicker.mjs",
+    "test:skill-sidebar-refresh": "node ./src/skill-sidebar-refresh.mjs",
+    "test:skill-sidebar-refresh:owned": "node ./src/skill-sidebar-refresh-owned.mjs"
   },
   "dependencies": {
     "webdriverio": "^9.30.0"

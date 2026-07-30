@@ -70,6 +70,34 @@ test("records projection boundaries only when their output array changes", () =>
   setTranscriptWriteDiagnosticsEnabledForTests(null);
 });
 
+test("records only assistant transcript shape, never assistant content", () => {
+  resetTranscriptWriteDiagnosticsForTests();
+  setTranscriptWriteDiagnosticsEnabledForTests(true);
+  const visible = [{
+    info: message(),
+    parts: [
+      textPart(),
+      { id: "tool-1", sessionID: "ses-1", messageID: "msg-1", type: "tool" },
+    ],
+  }] as MessageWithParts[];
+
+  const boundary = observeTranscriptProjectionBoundary("visible", "ses-1", visible);
+
+  assert.deepEqual({
+    assistantMessageCount: boundary?.assistantMessageCount,
+    assistantTextPartCount: boundary?.assistantTextPartCount,
+    assistantTextCharacterCount: boundary?.assistantTextCharacterCount,
+    assistantToolPartCount: boundary?.assistantToolPartCount,
+  }, {
+    assistantMessageCount: 1,
+    assistantTextPartCount: 1,
+    assistantTextCharacterCount: 5,
+    assistantToolPartCount: 1,
+  });
+  assert.equal(JSON.stringify(boundary).includes("hello"), false);
+  setTranscriptWriteDiagnosticsEnabledForTests(null);
+});
+
 test("records the viewport input tuple and identifies output churn without a tuple change", () => {
   resetTranscriptWriteDiagnosticsForTests();
   setTranscriptWriteDiagnosticsEnabledForTests(true);

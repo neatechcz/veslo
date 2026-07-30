@@ -178,6 +178,72 @@ describe("run activity probe payload parsing", () => {
     });
   });
 
+  test("recognizes user-visible non-text assistant parts as output", () => {
+    const parts = [
+      { type: "file", url: "file:///workspace/result.txt" },
+      { type: "agent", name: "build" },
+      { type: "subtask", agent: "build", prompt: "implement", description: "Implement the change" },
+      { type: "patch", hash: "patch-hash", files: ["src/result.ts"] },
+    ];
+
+    for (const part of parts) {
+      expect(deriveRunActivityFromSessionMessages([
+        user("msg-user"),
+        assistant({ parentID: "msg-user", completed: 2_000, parts: [part] }),
+      ], { expectedUserMessageId: "msg-user" })).toMatchObject({
+        active: false,
+        terminalStatus: "completed",
+        terminalError: null,
+      });
+    }
+  });
+
+  test("idle session treats a visible patch as completion progress and keeps internal metadata empty", () => {
+    const patch = { type: "patch", hash: "patch-hash", files: ["src/result.ts"] };
+    const patchPending = deriveRunActivityFromSessionMessages([
+      user("msg-user"),
+      assistant({ parentID: "msg-user", parts: [patch] }),
+    ], {
+      expectedUserMessageId: "msg-user",
+      sessionInactiveObserved: true,
+      sessionExplicitlyIdle: true,
+    });
+    expect(patchPending).toMatchObject({
+      active: false,
+      terminalCandidate: true,
+      terminalStatus: "completed",
+    });
+
+    const firstPatch = deriveRunActivityFromSessionMessages([
+      user("msg-user"),
+      assistant({ parentID: "msg-user", parts: [patch] }),
+    ], { expectedUserMessageId: "msg-user" });
+    const noPatch = deriveRunActivityFromSessionMessages([
+      user("msg-user"),
+      assistant({ parentID: "msg-user", parts: [] }),
+    ], { expectedUserMessageId: "msg-user" });
+    if ("unreachable" in firstPatch || "unreachable" in noPatch) {
+      throw new Error("message-only probe must not be unreachable");
+    }
+    expect(firstPatch.progressSignature).not.toBe(noPatch.progressSignature);
+
+    for (const part of [
+      { type: "snapshot", snapshot: "snapshot-hash" },
+      { type: "retry", attempt: 1, error: { message: "retry" } },
+      { type: "compaction", auto: true },
+      { type: "step-start" },
+      { type: "step-finish" },
+    ]) {
+      expect(deriveRunActivityFromSessionMessages([
+        user("msg-user"),
+        assistant({ parentID: "msg-user", completed: 2_000, parts: [part] }),
+      ], { expectedUserMessageId: "msg-user" })).toMatchObject({
+        terminalStatus: "failed",
+        terminalError: "assistant_completed_without_visible_output",
+      });
+    }
+  });
+
   test("normalizes unsupported attachment errors and uses durable abort intent", () => {
     expect(deriveRunActivityFromSessionMessages([
       user(),

@@ -45,6 +45,18 @@ export type ProgressRenderBlockEntry = {
   unstable: boolean;
 };
 
+export function shouldAutoExpandProgressGroup(input: {
+  isStreaming: boolean;
+  blockIndex: number;
+  blockCount: number;
+}): boolean {
+  return (
+    input.isStreaming &&
+    input.blockCount > 0 &&
+    input.blockIndex === input.blockCount - 1
+  );
+}
+
 const contentFreeFingerprint = (value: unknown) => {
   let source = "";
   try {

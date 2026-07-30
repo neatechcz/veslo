@@ -301,8 +301,13 @@ test("session send delegates draft clearing to the Composer transfer owner", () 
 test("implicit skill confirmation keeps an immutable snapshot scoped to its originating session", () => {
   assert.match(
     sessionSource,
-    /type ImplicitSkillConfirmationRequest = \{\s*sessionKey: string;/,
+    /type ImplicitSkillConfirmationRequest = \{\s*sessionKey: string;\s*visibleSessionKey: string;/,
     "the confirmation snapshot must retain its immutable session owner",
+  );
+  assert.match(
+    sessionSource,
+    /if \(Object\.hasOwn\(confirmations, sessionKey\)\) return confirmations\[sessionKey\]!;\s*return Object\.values\(confirmations\)\.find\(\s*\(pending\) => pending\.visibleSessionKey === sessionKey,/s,
+    "a blocked first send should surface its confirmation through the exact pending-session identity created during handoff",
   );
   assert.match(
     sessionSource,
@@ -311,7 +316,7 @@ test("implicit skill confirmation keeps an immutable snapshot scoped to its orig
   );
   assert.match(
     sessionSource,
-    /const submissionSessionKey = currentSessionQueueKey\(\);[\s\S]*const result = await sessionFlowFacade\.handleSendPrompt[\s\S]*\[submissionSessionKey\]: \{\s*sessionKey: submissionSessionKey,\s*draft: snapshotImplicitSkillConfirmationDraft\(draft\)/,
+    /const submissionSessionKey = currentSessionQueueKey\(\);[\s\S]*const result = await sessionFlowFacade\.handleSendPrompt[\s\S]*const visibleSessionKey = currentSessionQueueKey\(\);[\s\S]*\[submissionSessionKey\]: \{\s*sessionKey: submissionSessionKey,\s*visibleSessionKey,\s*draft: snapshotImplicitSkillConfirmationDraft\(draft\)/,
     "a delayed confirmation result must be stored under the session captured before the await",
   );
   assert.match(
@@ -320,7 +325,7 @@ test("implicit skill confirmation keeps an immutable snapshot scoped to its orig
     "the confirmation owner must clone mutable draft collections before Composer ownership is released",
   );
   assert.equal(
-    (sessionSource.match(/if \(pending\.sessionKey !== currentSessionQueueKey\(\)\) return;/g) ?? []).length,
+    (sessionSource.match(/if \(implicitSkillConfirmation\(\) !== pending\) return;/g) ?? []).length,
     2,
     "confirm and cancel must both fail closed outside the originating session",
   );

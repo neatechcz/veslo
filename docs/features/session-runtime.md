@@ -162,6 +162,11 @@ is idle and only when no later assistant text recovered the step. Otherwise it i
 fixed redacted reason
 `opencode_tool_execution_failed`; raw tool error text remains out of traces and run storage.
 
+A terminal assistant turn is not treated as empty merely because it has no text part. A visible
+OpenCode file, agent, subtask, or patch part is also completion evidence and progress evidence for
+the exact admitted turn. Internal retry, compaction, snapshot, and step-marker parts remain
+insufficient on their own, so they cannot hide a genuinely empty assistant completion.
+
 Pending submissions immediately render a transient local echo while the canonical user transcript row
 is unavailable. This is presentation state, not optimistic server admission or durable transcript
 truth. Render replacement and durable cleanup are deliberately separate: the projection suppresses
@@ -354,6 +359,19 @@ In desktop local workspaces, the app reads managed-AI access policy from standal
 An ordinary managed-AI send requires a server-owned OpenCode config intent that has been verified in the current app process. Once the exact intent is verified, later sends reuse that proof instead of rereading the loopback config on every prompt. The identity includes the workspace and server-workspace target, managed profile and model roster, local server URL and token, provider routing, DEN authorization revision, and runtime authorization inputs. A pending reload or any identity change invalidates the fast path and requires a new verification. If that required read has a transient loopback transport failure, the send may degrade only to the same exact previously verified intent; server API or authorization failures remain fail-closed.
 
 Runtime readiness and reconnect presentation follow observed runtime behavior. A server submit accepted by OpenCode confirms the active workspace runtime even when the legacy eager-start path was bypassed. The first healthy SSE connection is not a reconnect recovery; accepted-run recovery is resumed only after that workspace previously entered a non-live reconnect state. Selecting a session may resume its exhausted watch or retry unavailable terminal transcript delivery, but it does not restart an already healthy accepted-run watch.
+
+Server-owned conversation submits are admitted before the workspace's live OpenCode event stream is
+attached. On a local desktop cold start, the server owns workspace registration, engine admission,
+and the exact binding used for dispatch; the app must not reject the write merely because a cold
+engine cannot yet answer the read-only stream route. After a submitted admission, the app attaches
+the stream for live comments and tool steps. A transient attach failure does not undo the admitted
+run: terminal transcript hydration remains recovery for missed or restarted delivery, rather than
+an authority that turns an accepted write into a failure.
+
+While the selected run is streaming, its newest progress group is expanded automatically so comments,
+tool transitions, reads, patches, and verification steps remain visible as they arrive. Completed
+historical groups remain user-collapsible and return to the normal collapsed presentation after the
+run stops streaming.
 
 The app sends its authenticated DEN organization id while priming local managed-AI authorization. The local server binds that id to the same in-memory actor-token entry as the gateway authorization, removes any organization header supplied later by the provider caller, and injects the bound organization id upstream. The organization id is runtime authorization context, not workspace/OpenCode configuration, and is cleared with the authorization on logout, disablement, replacement, or expiry.
 

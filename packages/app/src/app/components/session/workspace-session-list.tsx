@@ -2557,6 +2557,7 @@ export default function WorkspaceSessionList(props: Props) {
                               <div class="flex items-center gap-1 shrink-0">
                                 <button
                                   type="button"
+                                  data-testid="sidebar-project-new-session"
                                   class={projectCreateSessionButtonClass}
                                   onClick={() => props.onOpenPendingDirectoryDraftInWorkspace(workspace().id)}
                                   aria-label={tr("sidebar.create_session_in_project")}
@@ -2765,6 +2766,7 @@ export default function WorkspaceSessionList(props: Props) {
                       <div class="flex items-center gap-1 shrink-0">
                         <button
                           type="button"
+                          data-testid="sidebar-project-new-session"
                           class={projectCreateSessionButtonClass}
                           onClick={() => props.onOpenPendingDirectoryDraftInWorkspace(workspace().id)}
                           aria-label={tr("sidebar.create_session_in_project")}

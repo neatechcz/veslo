@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ConversationServerSubmitPreflightError,
   createConversationService,
   type ConversationServiceClient,
 } from "../../context/conversation-service.js";
@@ -365,6 +366,7 @@ function createService(
       directory?: string | null,
     ) => string;
     failServerStart?: boolean;
+    liveEventStreamReady?: boolean | (() => Promise<boolean>);
   } = {},
 ) {
   const {
@@ -428,6 +430,12 @@ function createService(
   }> = [];
   const runtimeAuthorizationCalls: unknown[] = [];
   const runtimeConfirmedWorkspaceIds: string[] = [];
+  const liveEventStreamCalls: Array<{
+    workspaceId: string;
+    directory: string;
+    reason: string;
+    traceId?: string | null;
+  }> = [];
   const runIds = new Map<string, string>();
   const lifecycleRunIds = new Map<string, string>();
   const rememberRunId = (
@@ -555,6 +563,13 @@ function createService(
     },
     managedAiRuntimeAuthorizationPrimeDiagnostic: () =>
       options.runtimeAuthorizationDiagnostic ?? null,
+    ensureConversationLiveEventStreamReady: async (input) => {
+      calls.push(`liveEventStream:${input.reason}`);
+      liveEventStreamCalls.push(input);
+      return typeof options.liveEventStreamReady === "function"
+        ? options.liveEventStreamReady()
+        : (options.liveEventStreamReady ?? true);
+    },
     onConversationRuntimeConfirmed: (workspaceId) =>
       runtimeConfirmedWorkspaceIds.push(workspaceId),
     activeSendTraceId: () => null,
@@ -585,6 +600,7 @@ function createService(
     rememberedLifecycleRuns,
     sendTraces,
     runtimeAuthorizationCalls,
+    liveEventStreamCalls,
     runtimeConfirmedWorkspaceIds,
     setRunConversationResult,
     setSubmitConversationResult,
@@ -1994,6 +2010,154 @@ test("conversation run remembers submitted run ids under Veslo and UI identities
   assert.equal(rememberedScopes[0]?.conversationId, "conv-a");
   assert.equal(rememberedScopes[1]?.conversationId, "conv-a");
   assert.deepEqual(runtimeConfirmedWorkspaceIds, ["app-ws"]);
+});
+
+test("cold first submit starts the live event stream fence before upstream dispatch", async () => {
+  const { service, calls, liveEventStreamCalls, submitConversationCalls } =
+    createService();
+
+  const result = await service.submitConversationFromVesloWriteApi(
+    "app-ws",
+    "/repo",
+    {
+      clientMessageId: "msg-live-first",
+      origin: "session:normal",
+      draft: {
+        mode: "prompt",
+        text: "create a file",
+        parts: [{ type: "text", text: "create a file" }],
+      },
+    },
+    {
+      traceId: "trace-live-first",
+      targetWorkspace: {
+        workspaceId: "app-ws",
+        workspaceRoot: "/repo",
+        directory: "/repo",
+      },
+      conversationWorkspaceByDirectory: new Map(),
+    },
+  );
+
+  assert.equal(result?.status, "submitted");
+  assert.deepEqual(liveEventStreamCalls, [
+    {
+      workspaceId: "app-ws",
+      directory: "/repo",
+      reason: "submitConversationFromVesloWriteApi",
+      traceId: "trace-live-first",
+    },
+  ]);
+  const streamIndex = calls.indexOf(
+    "liveEventStream:submitConversationFromVesloWriteApi",
+  );
+  const submitIndex = calls.findIndex((entry) =>
+    entry.startsWith("submitConversation:"),
+  );
+  assert.ok(streamIndex >= 0);
+  assert.ok(streamIndex < submitIndex);
+  assert.equal(submitConversationCalls.length, 1);
+});
+
+test("cold submit remains accepted when the pre-dispatch stream fence is unavailable", async () => {
+  const { service, calls, submitConversationCalls } = createService({
+    liveEventStreamReady: false,
+  });
+
+  const result = await service.submitConversationFromVesloWriteApi(
+    "app-ws",
+    "/repo",
+    {
+      clientMessageId: "msg-hidden-steps",
+      origin: "session:normal",
+      draft: {
+        mode: "prompt",
+        text: "create a file",
+        parts: [{ type: "text", text: "create a file" }],
+      },
+    },
+  );
+
+  assert.equal(result?.status, "submitted");
+  assert.ok(
+    calls.includes("liveEventStream:submitConversationFromVesloWriteApi"),
+  );
+  assert.equal(submitConversationCalls.length, 1);
+});
+
+test("follow-up run starts the same workspace live stream before dispatch", async () => {
+  const { service, calls, liveEventStreamCalls } = createService();
+
+  const result = await service.submitConversationRunViaVesloWriteApi(
+    "sess-a",
+    { kind: "prompt_async", directory: "/repo" },
+    { sendTraceId: "trace-live-follow-up" },
+  );
+
+  assert.equal(result?.status, "submitted");
+  assert.deepEqual(liveEventStreamCalls, [
+    {
+      workspaceId: "app-ws",
+      directory: "/repo",
+      reason: "submitConversationRunViaVesloWriteApi",
+      traceId: "trace-live-follow-up",
+    },
+  ]);
+  const streamIndex = calls.indexOf(
+    "liveEventStream:submitConversationRunViaVesloWriteApi",
+  );
+  const runIndex = calls.findIndex((entry) =>
+    entry.startsWith("runConversation:"),
+  );
+  assert.ok(streamIndex >= 0);
+  assert.ok(streamIndex < runIndex);
+});
+
+test("submitted write does not wait for a concurrently started stream attachment", async () => {
+  let releaseStream!: (ready: boolean) => void;
+  let streamAttempts = 0;
+  const streamGate = new Promise<boolean>((resolve) => {
+    releaseStream = resolve;
+  });
+  const { service, calls, submitConversationCalls } = createService({
+    liveEventStreamReady: () => {
+      streamAttempts += 1;
+      return streamAttempts === 1 ? streamGate : Promise.resolve(true);
+    },
+  });
+
+  let settled = false;
+  const pending = service.submitConversationFromVesloWriteApi(
+    "app-ws",
+    "/repo",
+    {
+      clientMessageId: "msg-concurrent-fence",
+      origin: "session:normal",
+      draft: {
+        mode: "prompt",
+        text: "create a file",
+        parts: [{ type: "text", text: "create a file" }],
+      },
+    },
+  ).then((result) => {
+    settled = true;
+    return result;
+  });
+
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls.slice(-2), [
+    "liveEventStream:submitConversationFromVesloWriteApi",
+    "submitConversation:server-ws:false",
+  ]);
+  assert.equal(submitConversationCalls.length, 1);
+  assert.equal(settled, true);
+
+  releaseStream(false);
+  const result = await pending;
+  assert.equal(result?.status, "submitted");
+  await new Promise<void>((resolve) => setTimeout(resolve, 300));
+  assert.equal(streamAttempts, 2, "a cold pre-dispatch miss should attach once more after admission");
+  assert.equal(settled, true);
 });
 
 test("conversation submit keeps queued run scope without replacing active run ownership", async () => {

@@ -56,6 +56,8 @@ test("transcript ingest coordinator retries an incomplete canonical read with bo
     durationMs?: number;
     outcome?: string;
     generation?: number;
+    trigger?: string;
+    runId?: string;
   }> = [];
   const coordinator = createTranscriptIngestCoordinator({
     readCanonicalTranscript: async () => {
@@ -83,16 +85,37 @@ test("transcript ingest coordinator retries an incomplete canonical read with bo
   expect(delays).toEqual([2_000, 8_000]);
   expect(writes).toBe(0);
   expect(trace).toEqual([
-    { event: "transcript-ingest:flight", phase: "new", generation: 1 },
-    { event: "transcript-ingest:read", phase: "incomplete", attempt: 1, durationMs: 25 },
-    { event: "transcript-ingest:retry-delay", phase: "retry-delay", attempt: 2, delayMs: 2_000 },
-    { event: "transcript-ingest:retry-delay", phase: "retry-delay-settled", attempt: 2, delayMs: 2_000, durationMs: 2_000 },
-    { event: "transcript-ingest:read", phase: "incomplete", attempt: 2, durationMs: 25 },
-    { event: "transcript-ingest:retry-delay", phase: "retry-delay", attempt: 3, delayMs: 8_000 },
-    { event: "transcript-ingest:retry-delay", phase: "retry-delay-settled", attempt: 3, delayMs: 8_000, durationMs: 8_000 },
-    { event: "transcript-ingest:read", phase: "incomplete", attempt: 3, durationMs: 25 },
-    { event: "transcript-ingest:settle", phase: "settle", generation: 1, outcome: "exhausted" },
+    { event: "transcript-ingest:flight", phase: "new", generation: 1, trigger: "recovery" },
+    { event: "transcript-ingest:read", phase: "incomplete", attempt: 1, durationMs: 25, trigger: "recovery" },
+    { event: "transcript-ingest:retry-delay", phase: "retry-delay", attempt: 2, delayMs: 2_000, trigger: "recovery" },
+    { event: "transcript-ingest:retry-delay", phase: "retry-delay-settled", attempt: 2, delayMs: 2_000, durationMs: 2_000, trigger: "recovery" },
+    { event: "transcript-ingest:read", phase: "incomplete", attempt: 2, durationMs: 25, trigger: "recovery" },
+    { event: "transcript-ingest:retry-delay", phase: "retry-delay", attempt: 3, delayMs: 8_000, trigger: "recovery" },
+    { event: "transcript-ingest:retry-delay", phase: "retry-delay-settled", attempt: 3, delayMs: 8_000, durationMs: 8_000, trigger: "recovery" },
+    { event: "transcript-ingest:read", phase: "incomplete", attempt: 3, durationMs: 25, trigger: "recovery" },
+    { event: "transcript-ingest:settle", phase: "settle", generation: 1, outcome: "exhausted", trigger: "recovery" },
   ]);
+});
+
+test("transcript ingest traces keep the terminal trigger and run correlation", async () => {
+  const trace: Array<{ event: string; trigger?: string; runId?: string }> = [];
+  const coordinator = createTranscriptIngestCoordinator({
+    readCanonicalTranscript: async () => ({ complete: true, messages: [], partsByMessageId: {} }),
+    persistCanonicalTranscript: async () => {},
+    invalidateTranscriptCaches: () => {},
+    trace: (event, payload) => trace.push({ event, ...payload }),
+  });
+
+  await coordinator.request({ ...identity, trigger: "terminal-lifecycle", runId: "run-a" });
+
+  expect(trace.find((entry) => entry.event === "transcript-ingest:flight")).toMatchObject({
+    trigger: "terminal-lifecycle",
+    runId: "run-a",
+  });
+  expect(trace.find((entry) => entry.event === "transcript-ingest:settle")).toMatchObject({
+    trigger: "terminal-lifecycle",
+    runId: "run-a",
+  });
 });
 
 test("concurrent incomplete transcript requests exhaust the latest generation without looping", async () => {

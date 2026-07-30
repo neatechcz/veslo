@@ -591,6 +591,7 @@ const reconnectStateLabelKey = (status: ReconnectState["status"]) => {
 
 type ImplicitSkillConfirmationRequest = {
   sessionKey: string;
+  visibleSessionKey: string;
   draft: ComposerDraft;
   options: SessionComposerSendOptions;
   skillName: string;
@@ -1165,7 +1166,10 @@ export default function SessionView(props: SessionViewProps) {
   const implicitSkillConfirmation = createMemo(() => {
     const confirmations = implicitSkillConfirmationBySessionKey();
     const sessionKey = currentSessionQueueKey();
-    return Object.hasOwn(confirmations, sessionKey) ? confirmations[sessionKey]! : null;
+    if (Object.hasOwn(confirmations, sessionKey)) return confirmations[sessionKey]!;
+    return Object.values(confirmations).find(
+      (pending) => pending.visibleSessionKey === sessionKey,
+    ) ?? null;
   });
   const [composerEntryDismissedBySessionKey, setComposerEntryDismissedBySessionKey] =
     createSignal<Record<string, boolean>>({});
@@ -3624,10 +3628,17 @@ export default function SessionView(props: SessionViewProps) {
       onDraftTransferred: options.onDraftTransferred,
     });
     if (sessionSubmitNeedsImplicitSkillConfirmation(result)) {
+      const visibleSessionKey = currentSessionQueueKey();
+      recordSendTrace("implicit-skill-confirmation:store", {
+        submissionSessionKey,
+        visibleSessionKey,
+        visibleSessionMatchesSubmission: visibleSessionKey === submissionSessionKey,
+      });
       setImplicitSkillConfirmationBySessionKey((current) => ({
         ...current,
         [submissionSessionKey]: {
           sessionKey: submissionSessionKey,
+          visibleSessionKey,
           draft: snapshotImplicitSkillConfirmationDraft(draft),
           options: { ...options, modelOverride },
           skillName: result.confirmation.skillName,
@@ -3652,7 +3663,7 @@ export default function SessionView(props: SessionViewProps) {
   const sendImplicitSkillAsPrompt = async () => {
     const pending = implicitSkillConfirmation();
     if (!pending) return;
-    if (pending.sessionKey !== currentSessionQueueKey()) return;
+    if (implicitSkillConfirmation() !== pending) return;
     removeImplicitSkillConfirmation(pending);
     await handleSendPrompt(pending.draft, {
       ...pending.options,
@@ -3663,7 +3674,7 @@ export default function SessionView(props: SessionViewProps) {
   const runImplicitSkillCommand = async () => {
     const pending = implicitSkillConfirmation();
     if (!pending) return;
-    if (pending.sessionKey !== currentSessionQueueKey()) return;
+    if (implicitSkillConfirmation() !== pending) return;
     removeImplicitSkillConfirmation(pending);
     await handleSendPrompt({
       ...pending.draft,
@@ -4393,6 +4404,7 @@ export default function SessionView(props: SessionViewProps) {
                         initialDraft={props.composerDraft}
                         prompt={props.composerDraft.text}
                         draftStorageKey={props.composerStorageKey}
+                        sessionQueueKey={currentSessionQueueKey()}
                         draftRevision={props.composerDraftRevision}
                         developerMode={props.developerMode}
                         busy={composerBusy()}
@@ -4716,6 +4728,7 @@ export default function SessionView(props: SessionViewProps) {
                 initialDraft={props.composerDraft}
                 prompt={props.composerDraft.text}
                 draftStorageKey={props.composerStorageKey}
+                sessionQueueKey={currentSessionQueueKey()}
                 draftRevision={props.composerDraftRevision}
                 developerMode={props.developerMode}
                 busy={composerBusy()}
@@ -4914,6 +4927,8 @@ export default function SessionView(props: SessionViewProps) {
         })}
         confirmLabel={tr("session.implicit_skill_confirm_run")}
         cancelLabel={tr("session.implicit_skill_confirm_send_prompt")}
+        confirmTestId="implicit-skill-confirm-run"
+        cancelTestId="implicit-skill-confirm-send-prompt"
         variant="warning"
         onConfirm={() => void runImplicitSkillCommand()}
         onCancel={() => void sendImplicitSkillAsPrompt()}

@@ -200,6 +200,33 @@ test("session capabilities store loads local skills and MCP statuses for the sel
   });
 });
 
+test("session capabilities store keeps active workspace skills visible for a pending new conversation", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const effects = createManualEffectRunner();
+      const store = createSessionCapabilitiesStore(baseDeps({
+        selectedSessionId: () => null,
+        selectedSession: () => null,
+        sidebarWorkspaceGroups: () => [],
+        effect: effects.effect,
+      }));
+
+      await effects.flush();
+
+      assert.equal(store.sessionCapabilitiesStatus(), "ready");
+      assert.deepEqual(store.sessionCapabilities()?.skills.map((row) => `${row.name}:${row.scope}`), [
+        "global-helper:global",
+        "research:workspace",
+      ]);
+      assert.deepEqual(store.skillInventoryWorkspaces(), [
+        { id: "ws-local", label: "Local Workspace", path: "/workspaces/local" },
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
 test("session capabilities store loads remote Veslo workspace skills and MCP entries", async () => {
   await createRoot(async (dispose) => {
     try {

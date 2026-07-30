@@ -54,6 +54,8 @@ type ComposerProps = {
   initialDraft: ComposerDraft;
   prompt: string;
   draftStorageKey: string;
+  /** UI ownership identity; distinct from the durable draft bucket. */
+  sessionQueueKey: string;
   draftRevision: number;
   developerMode: boolean;
   busy: boolean;
@@ -2160,6 +2162,8 @@ export default function Composer(props: ComposerProps) {
                       ref={editorRef}
                       data-testid="session-composer-input"
                       data-composer-editor-instance={editorInstanceId}
+                      data-composer-storage-key={props.draftStorageKey}
+                      data-composer-session-queue-key={props.sessionQueueKey}
                       contentEditable={!submitLocked()}
                       role="textbox"
                       aria-disabled={submitLocked() ? "true" : "false"}

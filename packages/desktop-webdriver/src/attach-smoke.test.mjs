@@ -13,6 +13,7 @@ const source = readFileSync(resolve(__dirname, "./attach-smoke.mjs"), "utf8");
 
 test("live WebDriver client is attach-only and redacts sensitive browser state", () => {
   assert.match(source, /from "webdriverio"/);
+  assert.match(source, /logLevel: "silent"/);
   assert.match(source, /127\.0\.0\.1/);
   assert.match(source, /process\.kill\(descriptor\.appPid, 0\)/);
   assert.match(source, /GET \/status|\/status/);

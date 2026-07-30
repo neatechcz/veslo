@@ -37,6 +37,8 @@ export type TranscriptIngestCoordinatorOptions = {
     outcome?: string;
     delayMs?: number;
     durationMs?: number;
+    trigger?: string;
+    runId?: string;
   }) => void;
   now?: () => number;
 };
@@ -97,15 +99,27 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
       return Promise.reject(new Error("A workspace, directory, and OpenCode session are required for transcript ingest"));
     }
     const key = transcriptIngestMutexKey(identity);
+    const trace = (event: string, payload: {
+      phase: string;
+      attempt?: number;
+      generation?: number;
+      outcome?: string;
+      delayMs?: number;
+      durationMs?: number;
+    }) => options.trace?.(event, {
+      ...payload,
+      trigger: input.trigger,
+      ...(input.runId?.trim() ? { runId: input.runId.trim() } : {}),
+    });
     const existing = taskByKey.get(key);
     if (existing) {
       existing.generation += 1;
-      options.trace?.("transcript-ingest:flight", { phase: "join", generation: existing.generation });
+      trace("transcript-ingest:flight", { phase: "join", generation: existing.generation });
       return existing.promise;
     }
 
     const task = { identity, generation: 1, promise: Promise.resolve({ kind: "incomplete", generation: 0 } as TranscriptIngestOutcome) };
-    options.trace?.("transcript-ingest:flight", { phase: "new", generation: task.generation });
+    trace("transcript-ingest:flight", { phase: "new", generation: task.generation });
     task.promise = (async () => {
       let outcome: TranscriptIngestOutcome = { kind: "exhausted", generation: task.generation };
       do {
@@ -114,10 +128,10 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
         for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
           if (attempt > 0) {
             const delayMs = retryDelaysMs[attempt] ?? 0;
-            options.trace?.("transcript-ingest:retry-delay", { phase: "retry-delay", attempt: attempt + 1, delayMs });
+            trace("transcript-ingest:retry-delay", { phase: "retry-delay", attempt: attempt + 1, delayMs });
             const delayStartedAt = now();
             await sleep(delayMs);
-            options.trace?.("transcript-ingest:retry-delay", {
+            trace("transcript-ingest:retry-delay", {
               phase: "retry-delay-settled",
               attempt: attempt + 1,
               delayMs,
@@ -130,7 +144,7 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
             const snapshot = await readWithTimeout(task.identity);
             const readDurationMs = Math.max(0, now() - readStartedAt);
             if (!snapshot.complete) {
-              options.trace?.("transcript-ingest:read", {
+              trace("transcript-ingest:read", {
                 phase: "incomplete",
                 attempt: attempt + 1,
                 durationMs: readDurationMs,
@@ -140,7 +154,7 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
             const watermark = canonicalTranscriptWatermark(snapshot);
             if (watermarkByKey.get(key) === watermark) {
               outcome = { kind: "unchanged", generation: observedGeneration };
-              options.trace?.("transcript-ingest:cache", {
+              trace("transcript-ingest:cache", {
                 phase: "unchanged",
                 attempt: attempt + 1,
                 durationMs: readDurationMs,
@@ -151,7 +165,7 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
               watermarkByKey.set(key, watermark);
               options.invalidateTranscriptCaches(task.identity, snapshot);
               outcome = { kind: "persisted", generation: observedGeneration };
-              options.trace?.("transcript-ingest:persistence", {
+              trace("transcript-ingest:persistence", {
                 phase: "persisted",
                 attempt: attempt + 1,
                 durationMs: Math.max(0, now() - persistStartedAt),
@@ -160,7 +174,7 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
             cycleCompleted = true;
             break;
           } catch {
-            options.trace?.("transcript-ingest:read", {
+            trace("transcript-ingest:read", {
               phase: "error",
               attempt: attempt + 1,
               durationMs: readStartedAt === null ? undefined : Math.max(0, now() - readStartedAt),
@@ -173,7 +187,7 @@ export function createTranscriptIngestCoordinator(options: TranscriptIngestCoord
           outcome = { kind: "exhausted", generation: observedGeneration };
         }
       } while (task.generation > outcome.generation);
-      options.trace?.("transcript-ingest:settle", { phase: "settle", generation: task.generation, outcome: outcome.kind });
+      trace("transcript-ingest:settle", { phase: "settle", generation: task.generation, outcome: outcome.kind });
       return { ...outcome, generation: task.generation };
     })().finally(() => {
       if (taskByKey.get(key) === task) taskByKey.delete(key);

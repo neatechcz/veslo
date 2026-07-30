@@ -149,6 +149,7 @@ import {
 } from "./pages/session-creation-workflow";
 import { createSessionSendWorkflow } from "./pages/session-send-workflow";
 import { ensureServerOwnedSubmitTransport } from "./context/server-owned-submit-transport";
+import { hasConversationLiveEventRoute } from "./context/conversation-live-event-readiness";
 import { createSessionMutationWorkflow } from "./pages/session-mutation-workflow";
 import { createSoulDataStore } from "./pages/soul-data-store";
 import { isPendingSessionInstanceKey } from "./components/session/pending-session-instance-model";
@@ -1112,6 +1113,71 @@ export default function App() {
       lateManagedAiRuntimeConfig
         .current()
         ?.lastManagedAiRuntimeAuthorizationPrimeDiagnostic() ?? null,
+    ensureConversationLiveEventStreamReady: async ({
+      workspaceId,
+      directory,
+      reason,
+      traceId,
+    }) => {
+      const workspace = workspaceStore
+        .workspaces()
+        .find((entry) => entry.id === workspaceId);
+      if (!isTauriRuntime() || workspace?.workspaceType !== "local") {
+        return true;
+      }
+      const info = await engineInfo(workspaceId, directory);
+      const nextBaseUrl = info.baseUrl?.trim() ?? "";
+      // The server-owned write has already admitted the engine before this
+      // post-admission attachment runs. A GET event route is deliberately
+      // read-only and must never be relied on to cold-start an engine.
+      if (!hasConversationLiveEventRoute(info)) {
+        recordSendTrace("conversation-live-event-stream:engine-unavailable", {
+          traceId: traceId?.trim() || null,
+          workspaceId,
+          reason,
+          running: Boolean(info.running),
+          engineState: info.engineState ?? null,
+          hasBaseUrl: Boolean(nextBaseUrl),
+        });
+        return false;
+      }
+      const runtimeDirectory =
+        info.projectDir?.trim() || directory.trim() || workspace.path?.trim();
+      const username = info.opencodeUsername?.trim() ?? "";
+      const password = info.opencodePassword?.trim() ?? "";
+      const route = await workspaceRouting.ensure(workspaceId, nextBaseUrl, {
+        directory: runtimeDirectory || undefined,
+        auth: username && password ? { username, password } : undefined,
+        context: {
+          workspaceType: "local",
+          targetRoot: runtimeDirectory || directory,
+          reason: `${reason}:live-event-stream`,
+        },
+      });
+      if (!route) {
+        recordSendTrace("conversation-live-event-stream:route-unavailable", {
+          traceId: traceId?.trim() || null,
+          workspaceId,
+          reason,
+          error: workspaceRouting.lastEnsureError(workspaceId),
+        });
+        return false;
+      }
+      if (workspaceStore.activeWorkspaceId().trim() === workspaceId) {
+        setEngineReady(true);
+      }
+      const connected = await sessionStore.ensureWorkspaceEventStream(
+        workspaceId,
+        4_000,
+      );
+      recordSendTrace("conversation-live-event-stream:ready", {
+        traceId: traceId?.trim() || null,
+        workspaceId,
+        reason,
+        connected,
+      });
+      return connected;
+    },
     onConversationRuntimeConfirmed: (workspaceId) => {
       if (workspaceStore.activeWorkspaceId().trim() !== workspaceId.trim())
         return;
@@ -1288,6 +1354,20 @@ export default function App() {
         uiSessionId: scope.sessionId,
         runId: scope.runId,
       });
+      // A tool run can create or remove workspace-local skills outside the
+      // Skills UI. Refresh only the active workspace's sidebar inventory after
+      // its durable terminal boundary; this stays out of the send fast path.
+      if (scope.workspaceId.trim() === workspaceStore.activeWorkspaceId().trim()) {
+        void refreshSkillInventory({
+          force: true,
+          workspaceIds: [scope.workspaceId],
+          reason: "conversation-run-terminal",
+        }).catch((error: unknown) =>
+          recordSendTrace("skills-inventory:terminal-refresh:error", {
+            workspaceId: scope.workspaceId,
+            errorType: error instanceof Error ? error.name : typeof error,
+          }));
+      }
     },
     selectedSessionId,
     setSelectedSessionId,

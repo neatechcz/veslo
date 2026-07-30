@@ -401,6 +401,87 @@ missing-session-equivalent class
 4. Installed-app validation is deferred production verification; it does not
    substitute for focused tests or binary rebuild.
 
+### CDE07 - Terminal OpenCode state is not always visibly projected
+
+state: local-reproduction-pending
+done: false
+
+Owner: desktop transcript/event projection and orchestrator run reconciliation
+
+#### Reported symptom
+
+During a live conversation the UI can omit one or more OpenCode tool steps,
+and in some cases a terminal run does not show the assistant response. The
+visible result can remain in the equivalent of an answering/running state even
+after later work in the same conversation succeeds.
+
+This is not yet evidence that OpenCode failed to execute the tool or produce
+the response. It is a delivery/projection incident until one correlated run
+shows which of these boundaries lost the data:
+
+```text
+OpenCode event -> routed event stream -> app transcript store -> message-list projection
+OpenCode terminal state -> run-activity probe -> app run-state settlement
+```
+
+#### Known adjacent evidence
+
+The run-activity probe already classifies a terminal assistant message with no
+user-visible parts as `assistant_completed_without_visible_output`. That is a
+useful diagnostic terminal error, but it does not identify whether the
+assistant parts were never produced, were lost in routing, were rejected by
+the app's known-session guard, or were present in the transcript store and
+not rendered. The sidebar-skill reproduction is a separate UI cache
+invalidation defect and must not be used to explain this incident.
+
+An owned cold desktop run on 2026-07-30 found a prior state that must be
+classified separately: the Composer accepted the prompt while the local server
+and orchestrator still reported unavailable/not-ready. The app held an active
+send trace but did not publish a visible run indicator within 15 seconds. No
+tool or assistant projection can be expected until a run is actually admitted.
+This is evidence of missing foreground readiness/visible pending feedback, not
+evidence that an already admitted OpenCode event was lost.
+
+#### Required diagnostic slice
+
+1. Add one correlated, redacted delivery ladder for an admitted run:
+   expected user message, routed message/part event counts by part type,
+   ignored-event reason/count, transcript-store message/part counts, visible
+   assistant-output classification, and final run status/error.
+2. Use only stable ids/digests, counts, enums, and lengths. Never capture
+   prompt text, tool input/output, paths, URLs, or raw event bodies.
+3. Make the desktop live scenario observe both a tool-producing run and a
+   terminal assistant response. Its artifact must state separately whether
+   tool rows and assistant output were visible; a run indicator disappearing
+   is not sufficient proof.
+4. Reproduce before changing event-stream, transcript, grouping, or run
+   reconciliation behavior. The first code fix belongs solely to the proven
+   loss boundary.
+5. Classify no-indicator submissions before this ladder as
+   `pre-execution-unavailable` rather than `stored-not-rendered`.
+
+#### Diagnostic implementation record
+
+The desktop diagnostic trace now records a content-free UI delivery ladder:
+accepted and ignored SSE message/part events, each committed part's type and
+store-change decision, transcript-store write ownership, and canonical/visible
+projection boundaries with assistant message/part counts and text lengths.
+The live scenario artifact reduces those records to counters and terminal
+classifications only. The server's bounded canonical-transcript ingest trace
+also carries its trigger and terminal run id across each read, retry,
+persistence, and settle phase. This is diagnostic instrumentation only; it
+does not alter event routing, durable transcript ownership, or rendering.
+
+#### Acceptance evidence
+
+1. A focused unit test proves every new ladder result is redacted and keeps
+   distinct `not-produced`, `not-routed`, `ignored`, `stored-not-rendered`,
+   and `rendered` outcomes where the evidence supports them.
+2. A real desktop run records the ladder for a tool-producing conversation.
+3. If `assistant_completed_without_visible_output` occurs, its artifact shows
+   the last known boundary for that exact admitted run rather than treating
+   it as a generic model failure.
+
 ## Sequencing
 
 ```text

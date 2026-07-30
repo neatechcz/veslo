@@ -609,7 +609,10 @@ observe the current orchestrator generation.
    renders a transient local echo of the user's message. The echo is not a
    durable transcript record or proof of admission. Render replacement and
    confirmed pending cleanup remain separate decisions.
-3. The app sends a Veslo intent to the workspace-scoped server API.
+3. The app sends a Veslo intent to the workspace-scoped server API. The server
+   owns workspace registration, engine admission, and the exact binding used
+   for dispatch; a cold OpenCode engine is not a reason for the app to reject
+   the write before that boundary.
 4. Veslo server validates the workspace and directory.
 5. Veslo server creates the conversation when needed.
 6. Veslo server ensures orchestrator workspace registration when the effective
@@ -628,7 +631,11 @@ observe the current orchestrator generation.
 12. Engine-loss callbacks carry the same owner tuple; the server only releases
     reservations whose generation matches exactly. A callback racing owner
     persistence is held briefly and reconciled when the response headers arrive.
-13. Events and transcript data are mirrored back to the conversation and run.
+13. After a submitted admission, the app attaches the workspace event stream
+    for live projection of comments and tool steps. Stream attachment is not
+    authority for write success: a transient attach failure keeps the admitted
+    run and is recovered through the durable transcript/run path.
+14. Events and transcript data are mirrored back to the conversation and run.
 
 Passive transcript snapshots may fill gaps after selection, prefetch, or recovery,
 but they must not erase non-empty message parts already observed through the live

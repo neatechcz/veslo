@@ -21,6 +21,32 @@ export type ServerOwnedSubmitTransportTarget =
 
 type TransportTrace = (event: string, payload: Record<string, unknown>) => void;
 
+export function classifyAdmissionTransportError(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  if (message.includes("did not become ready")) return "daemon-not-ready";
+  if (message.includes("without a workspace proxy descriptor")) {
+    return "proxy-descriptor-missing";
+  }
+  if (message.includes("lifecycle credentials")) {
+    return "lifecycle-credentials-missing";
+  }
+  if (message.includes("credentials could not be persisted")) {
+    return "credentials-persist-failed";
+  }
+  if (message.includes("OpenCode CLI is unavailable")) {
+    return "opencode-cli-unavailable";
+  }
+  if (message.includes("Bundled OpenCode sidecar is unavailable")) {
+    return "bundled-sidecar-unavailable";
+  }
+  return "unknown";
+}
+
 export type EnsureServerOwnedSubmitTransportInput = {
   isTauriRuntime: boolean;
   targetWorkspace?: SendRuntimePreflightTargetWorkspace | null;
@@ -102,7 +128,8 @@ export async function ensureServerOwnedSubmitTransport(
   } catch (error) {
     trace("runtime-readiness:admission-transport:error", {
       workspaceId,
-      errorType: error instanceof Error ? error.name : "unknown",
+      errorType: error instanceof Error ? error.name : typeof error,
+      errorCode: classifyAdmissionTransportError(error),
     });
     return false;
   }

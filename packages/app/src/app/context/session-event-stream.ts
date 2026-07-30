@@ -269,6 +269,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   let lastPartDebugEventAt = 0;
   let suppressedPartDebugEvents = 0;
   const sseConnectedByStream = new Map<string, boolean>();
+  const sseConnectionWaiters = new Map<
+    string,
+    Set<(connected: boolean) => void>
+  >();
   // An OpenCode session belongs to exactly one workspace route for the life of
   // this controller.  IDs are process-global in a shared engine, so the
   // historical global Set alone is not enough to keep an event from stream B
@@ -276,7 +280,13 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   const sessionWorkspaceBindings = new Map<string, string>();
   const activeSseStreamsByWorkspace = new Map<
     string,
-    { generation: number; cleanup: () => void; startedAt: number }
+    {
+      generation: number;
+      cleanup: () => void;
+      startedAt: number;
+      baseUrl: string;
+      directory: string;
+    }
   >();
   const sseStreamReplacementCountsByWorkspace = new Map<string, number>();
   let nextSseStreamGeneration = 0;
@@ -357,11 +367,43 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
   const setStreamSseConnected = (streamKey: string, connected: boolean) => {
     sseConnectedByStream.set(streamKey, connected);
     publishSseConnected();
+    if (!connected) return;
+    const waiters = sseConnectionWaiters.get(streamKey);
+    if (!waiters) return;
+    sseConnectionWaiters.delete(streamKey);
+    for (const resolve of waiters) resolve(true);
   };
 
   const forgetStreamSseConnected = (streamKey: string) => {
     sseConnectedByStream.delete(streamKey);
     publishSseConnected();
+  };
+
+  const waitForWorkspaceEventStream = (
+    workspaceId: string,
+    timeoutMs = 4_000,
+  ): Promise<boolean> => {
+    const streamKey = sseConnectionKey(workspaceId);
+    if (sseConnectedByStream.get(streamKey) === true) {
+      return Promise.resolve(true);
+    }
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = (connected: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const waiters = sseConnectionWaiters.get(streamKey);
+        waiters?.delete(finish);
+        if (waiters?.size === 0) sseConnectionWaiters.delete(streamKey);
+        resolve(connected);
+      };
+      const waiters = sseConnectionWaiters.get(streamKey) ?? new Set();
+      waiters.add(finish);
+      sseConnectionWaiters.set(streamKey, waiters);
+      timer = setTimeout(() => finish(false), Math.max(1, timeoutMs));
+    });
   };
 
   const appendDebugEvent = (event: { type: string; properties?: unknown }) => {
@@ -868,7 +910,15 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = record.info as Message;
-          if (!bindKnownSessionToSource(info.sessionID, sourceWsId, record)) return;
+          if (!bindKnownSessionToSource(info.sessionID, sourceWsId, record)) {
+            recordSendWorkflowTrace("session-sse", "session-sse:message-ignored", {
+              workspaceId: sourceWsId || null,
+              sessionID: info.sessionID,
+              messageID: info.id,
+              reason: "unknown-session",
+            });
+            return;
+          }
           const current = deps.store.messages[info.sessionID] ?? [];
           const next = upsertMessageInfo(current, info as MessageInfo);
           if (next !== current) {
@@ -945,6 +995,14 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               messageID: part.messageID,
               partID: part.id,
             });
+            recordSendWorkflowTrace("session-sse", "session-sse:part-ignored", {
+              workspaceId: sourceWsId || null,
+              sessionID: part.sessionID,
+              messageID: part.messageID,
+              partID: part.id,
+              partType: part.type,
+              reason: "unknown-session",
+            });
             return;
           }
 
@@ -1006,6 +1064,17 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               }),
             );
             deps.onTranscriptObserved?.(part.sessionID);
+            recordSendWorkflowTrace("session-sse", "session-sse:part-committed", {
+              workspaceId: sourceWsId || null,
+              sessionID: part.sessionID,
+              messageID: part.messageID,
+              partID: part.id,
+              partType: part.type,
+              role: parentMessageRole,
+              hasMessageBefore: hasMessage,
+              delta: Boolean(delta),
+              changesParts,
+            });
           };
           const deferred =
             part.type === "text" &&
@@ -1747,8 +1816,32 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
       generation,
       cleanup,
       startedAt,
+      baseUrl: streamDescriptor.baseUrl,
+      directory: streamDescriptor.directory,
     });
     return cleanup;
+  };
+
+  const ensureWorkspaceEventStream = (
+    workspaceId: string,
+    timeoutMs = 4_000,
+  ): Promise<boolean> => {
+    const wsId = workspaceId.trim();
+    if (!wsId) return Promise.resolve(false);
+    const streamKey = sseConnectionKey(wsId);
+    const entry = deps.routing.entry(wsId);
+    const client = entry?.client ?? deps.routing.client(wsId);
+    if (!client) return Promise.resolve(false);
+    const descriptor = routeDescriptor(entry, client);
+    const existing = activeSseStreamsByWorkspace.get(streamKey);
+    if (
+      !existing ||
+      existing.baseUrl !== descriptor.baseUrl ||
+      existing.directory !== descriptor.directory
+    ) {
+      setupSseStream(wsId, client, "pre-dispatch-fence");
+    }
+    return waitForWorkspaceEventStream(wsId, timeoutMs);
   };
 
   const startEventStreams = () => {
@@ -1798,6 +1891,11 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
     onCleanup(() => {
       cleanupAllReconciledStreams();
+      for (const stream of Array.from(
+        activeSseStreamsByWorkspace.values(),
+      )) {
+        stream.cleanup();
+      }
     });
   };
 
@@ -1806,6 +1904,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     applyEvent,
     setupSseStream,
     startEventStreams,
+    ensureWorkspaceEventStream,
+    waitForWorkspaceEventStream,
   };
 }
 

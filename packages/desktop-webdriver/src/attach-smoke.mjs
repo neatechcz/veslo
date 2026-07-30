@@ -1,13 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
 
+export const LIVE_MODE = "live-dev-webdriver";
 const RUNTIME_SCHEMA = "veslo-dev-runtime/v1";
 const WEBDRIVER_SCHEMA = "veslo-native-webdriver/v1";
-const LIVE_MODE = "live-dev-webdriver";
 
-function fail(message) {
+export function fail(message) {
   throw new Error(`[veslo:live-webdriver] ${message}`);
 }
 
@@ -19,7 +20,7 @@ function readArgument() {
   return resolve(value);
 }
 
-function assertSafeClientEnvironment(env = process.env) {
+export function assertSafeClientEnvironment(env = process.env) {
   const unsafeOverrides = [
     "E2E_USE_EXISTING_PROFILE",
     "E2E_OPENCODE_HOME",
@@ -74,7 +75,7 @@ function assertNativeDescriptor(descriptor, expectedEndpoint) {
   }
 }
 
-function parseLoopbackEndpoint(endpoint) {
+export function parseLoopbackEndpoint(endpoint) {
   let url;
   try {
     url = new URL(endpoint);
@@ -103,9 +104,8 @@ async function assertWebDriverReady(endpoint) {
   }
 }
 
-async function main() {
-  assertSafeClientEnvironment();
-  const runtimeInfoPath = readArgument();
+export async function connectLiveWebDriver(runtimeInfoPath, { env = process.env } = {}) {
+  assertSafeClientEnvironment(env);
   const runtimeInfo = await readJson(runtimeInfoPath, "runtime info");
   const descriptorPath = assertLiveRuntime(runtimeInfo);
   const nativeDescriptorPath = isAbsolute(descriptorPath)
@@ -115,17 +115,24 @@ async function main() {
   assertNativeDescriptor(nativeDescriptor, runtimeInfo.webdriver.endpoint);
   const port = parseLoopbackEndpoint(nativeDescriptor.endpoint);
   await assertWebDriverReady(nativeDescriptor.endpoint);
+  const browser = await remote({
+    logLevel: "silent",
+    hostname: "127.0.0.1",
+    port,
+    capabilities: {
+      browserName: "tauri",
+      "wdio:tauriServiceOptions": { windowLabel: "main" },
+    },
+  });
+  return { browser, runtimeInfo, nativeDescriptor };
+}
 
-  let browser;
+async function main() {
+  const runtimeInfoPath = readArgument();
+  let connection;
   try {
-    browser = await remote({
-      hostname: "127.0.0.1",
-      port,
-      capabilities: {
-        browserName: "tauri",
-        "wdio:tauriServiceOptions": { windowLabel: "main" },
-      },
-    });
+    connection = await connectLiveWebDriver(runtimeInfoPath);
+    const { browser, nativeDescriptor } = connection;
     const appRoot = await browser.$("#root");
     await appRoot.waitForExist({ timeout: 10_000 });
     const visible = await appRoot.isDisplayed();
@@ -141,13 +148,15 @@ async function main() {
       mutations: false,
     }));
   } finally {
-    if (browser) {
-      await browser.deleteSession();
+    if (connection?.browser) {
+      await connection.browser.deleteSession();
     }
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}

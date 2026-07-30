@@ -16,8 +16,16 @@ test("session store exposes assistant response observation callback", () => {
 test("message updated events report only assistant responses after accepting the session", () => {
   assert.match(
     eventStreamSource,
-    /if \(event\.type === "message\.updated"\) \{[\s\S]*const info = record\.info as Message;[\s\S]*if \(!bindKnownSessionToSource\(info\.sessionID, sourceWsId, record\)\) return;[\s\S]*upsertMessageInfo\(current, info as MessageInfo\)[\s\S]*deps\.setStore\("messages", info\.sessionID, next\);[\s\S]*if \(\(info as \{ role\?: string \}\)\.role === "assistant"\) \{[\s\S]*deps\.onAssistantResponseObserved\?\.\(info\.sessionID\);[\s\S]*\}/,
+    /if \(event\.type === "message\.updated"\) \{[\s\S]*const info = record\.info as Message;[\s\S]*if \(!bindKnownSessionToSource\(info\.sessionID, sourceWsId, record\)\) \{[\s\S]*session-sse:message-ignored[\s\S]*return;[\s\S]*\}[\s\S]*upsertMessageInfo\(current, info as MessageInfo\)[\s\S]*deps\.setStore\("messages", info\.sessionID, next\);[\s\S]*if \(\(info as \{ role\?: string \}\)\.role === "assistant"\) \{[\s\S]*deps\.onAssistantResponseObserved\?\.\(info\.sessionID\);[\s\S]*\}/,
     "assistant response observation should be scoped to accepted message.updated events",
+  );
+});
+
+test("accepted transcript parts record a content-free commit handoff", () => {
+  assert.match(
+    eventStreamSource,
+    /recordSendWorkflowTrace\(\s*"session-sse",\s*"session-sse:part-committed",[\s\S]*partType: part\.type,[\s\S]*hasMessageBefore: hasMessage,[\s\S]*changesParts,/,
+    "every accepted part update should leave a redacted store-commit marker",
   );
 });
 

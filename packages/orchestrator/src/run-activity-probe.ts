@@ -179,6 +179,30 @@ function textPartLength(part: RecordLike): number {
   return text.trim() ? text.length : 0;
 }
 
+function meaningfulAssistantPartDescriptor(part: RecordLike): string | null {
+  const type = readString(part.type);
+  if (type === "text" || type === "reasoning") {
+    const length = textPartLength(part);
+    return length ? `${type}:${length}` : null;
+  }
+  if (type === "tool") return "tool";
+  if (type === "file") return readString(part.url) ? "file" : null;
+  if (type === "agent") return readString(part.name) ? "agent" : null;
+  if (type === "subtask") {
+    return readString(part.agent) || readString(part.prompt) || readString(part.description)
+      ? "subtask"
+      : null;
+  }
+  if (type === "patch") {
+    return Array.isArray(part.files) && part.files.length > 0 ? "patch" : null;
+  }
+  return null;
+}
+
+function hasMeaningfulAssistantContent(parts: unknown[]): boolean {
+  return parts.some((part) => isRecord(part) && meaningfulAssistantPartDescriptor(part) !== null);
+}
+
 function messageProgressSignature(messages: unknown[], latestInfo: RecordLike, latestMessage: unknown): string {
   const id = readString(latestInfo.id) ?? readString(latestInfo.messageID) ?? "unknown";
   const role = readString(latestInfo.role) ?? "unknown";
@@ -195,7 +219,7 @@ function messageProgressSignature(messages: unknown[], latestInfo: RecordLike, l
         const length = textPartLength(part);
         return length ? `${type}:${length}:${text.slice(-48)}` : "";
       }
-      return "";
+      return meaningfulAssistantPartDescriptor(part) ?? "";
     })
     .filter(Boolean)
     .join("|");
@@ -308,14 +332,7 @@ export function deriveRunActivityFromSessionMessages(
     };
   }
 
-  const hasAssistantOutput = parts.some((part) =>
-    isRecord(part) &&
-    (readString(part.type) === "text" || readString(part.type) === "reasoning") &&
-    textPartLength(part) > 0
-  );
-  const hasVisibleAssistantContent = hasAssistantOutput || parts.some((part) =>
-    isRecord(part) && readString(part.type) === "tool"
-  );
+  const hasMeaningfulAssistantOutput = hasMeaningfulAssistantContent(parts);
 
   if (assistantMessageIsTerminal(latestInfo)) {
     const terminalOutcome = assistantTerminalOutcome(latestInfo, options?.abortRequested === true);
@@ -323,7 +340,7 @@ export function deriveRunActivityFromSessionMessages(
       active: false,
       terminalCandidate: true,
       terminalConfirmed: Boolean(expectedUserMessageId),
-      ...(terminalOutcome.terminalStatus === "completed" && !hasVisibleAssistantContent
+      ...(terminalOutcome.terminalStatus === "completed" && !hasMeaningfulAssistantOutput
         ? { terminalStatus: "failed" as const, terminalError: "assistant_completed_without_visible_output" }
         : terminalOutcome),
       activityKind: "idle",
@@ -332,7 +349,7 @@ export function deriveRunActivityFromSessionMessages(
     };
   }
 
-  if (hasAssistantOutput) {
+  if (hasMeaningfulAssistantOutput) {
     // A visible response tied to this exact admitted user message is safe to
     // complete once OpenCode explicitly reports the session idle. Some
     // OpenCode/provider paths persist the response without a finish marker;

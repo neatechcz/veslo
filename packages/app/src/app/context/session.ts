@@ -1547,5 +1547,9 @@ export function createSessionStore(options: {
     pendingPermissionCountByWs,
     pendingPermissionsByWs,
     pendingQuestionsByWs,
+    ensureWorkspaceEventStream:
+      eventStreamController.ensureWorkspaceEventStream,
+    waitForWorkspaceEventStream:
+      eventStreamController.waitForWorkspaceEventStream,
   };
 }

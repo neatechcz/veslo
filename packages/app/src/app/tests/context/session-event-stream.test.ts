@@ -568,6 +568,81 @@ test("session SSE cleanup closes the active subscription handle", async () => {
   assert.deepEqual(closes, ["closed"]);
 });
 
+test("live stream readiness resolves only after OpenCode confirms the SSE connection", async () => {
+  const { controller } = makeController();
+  let publishConnected: (() => void) | undefined;
+  const connected = new Promise<void>((resolve) => {
+    publishConnected = resolve;
+  });
+  const client = makeEventClient(async () => ({
+    stream: (async function* () {
+      await connected;
+      yield { type: "server.connected" } as OpencodeEvent;
+      await new Promise<void>(() => {});
+    })(),
+  }));
+
+  const cleanup = controller.setupSseStream("ws-a", client);
+  const firstWait = controller.waitForWorkspaceEventStream("ws-a", 250);
+  const secondWait = controller.waitForWorkspaceEventStream("ws-a", 250);
+  await tick(2);
+  publishConnected?.();
+
+  assert.deepEqual(await Promise.all([firstWait, secondWait]), [true, true]);
+  assert.equal(
+    await controller.waitForWorkspaceEventStream("ws-a", 1),
+    true,
+    "an already connected workspace should pass the pre-dispatch fence immediately",
+  );
+  cleanup();
+});
+
+test("live stream readiness times out instead of allowing an unobservable submit", async () => {
+  const { controller } = makeController();
+
+  assert.equal(
+    await controller.waitForWorkspaceEventStream("ws-missing", 5),
+    false,
+  );
+});
+
+test("pre-dispatch fence starts the routed stream before readiness polling catches up", async () => {
+  let subscriptionCount = 0;
+  const client = makeEventClient(async () => {
+    subscriptionCount += 1;
+    return {
+      stream: (async function* () {
+        yield { type: "server.connected" } as OpencodeEvent;
+        await new Promise<void>(() => {});
+      })(),
+    };
+  });
+  const entry = {
+    client,
+    baseUrl: "http://127.0.0.1:4096/workspace/ws-cold/opencode",
+    directory: "/repo",
+  };
+  const { controller } = makeController({
+    routing: {
+      activeWorkspaceId: () => "ws-cold",
+      active: () => client,
+      client: (workspaceId?: string) =>
+        workspaceId === "ws-cold" ? client : null,
+      entry: (workspaceId: string) =>
+        workspaceId === "ws-cold" ? entry : null,
+      entryIds: () => ["ws-cold"],
+      release: () => {},
+    },
+    isWorkspaceRuntimeReady: () => false,
+  });
+
+  assert.equal(
+    await controller.ensureWorkspaceEventStream("ws-cold", 250),
+    true,
+  );
+  assert.equal(subscriptionCount, 1);
+});
+
 test("session SSE closes a subscription handle after stream end before reconnect", async () => {
   const { controller } = makeController();
   let closeCount = 0;

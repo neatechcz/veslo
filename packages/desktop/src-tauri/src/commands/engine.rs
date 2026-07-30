@@ -744,6 +744,39 @@ fn engine_info_blocking(
     }
 }
 
+fn wait_for_admission_transport_proxy_descriptor(
+    engine_state: Arc<Mutex<EngineState>>,
+    orchestrator_state: Arc<Mutex<OrchestratorState>>,
+    workspace_id: Option<String>,
+    workspace_path: String,
+) -> Result<EngineInfo, String> {
+    // The daemon health endpoint can become available a moment before its
+    // persisted state advertises the per-workspace proxy URL. The caller needs
+    // that URL to register the server-owned submit, but must not start the
+    // workspace engine just to obtain it.
+    let started = std::time::Instant::now();
+    let timeout = Duration::from_secs(5);
+    loop {
+        let engine = engine_info_blocking(
+            engine_state.clone(),
+            orchestrator_state.clone(),
+            workspace_id.clone(),
+            Some(workspace_path.clone()),
+        );
+        if engine
+            .base_url
+            .as_deref()
+            .is_some_and(|url| !url.trim().is_empty())
+        {
+            return Ok(engine);
+        }
+        if started.elapsed() >= timeout {
+            return Err("Admission transport started without a workspace proxy descriptor.".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Resolving orchestrator status performs blocking local HTTP reads. Keep that
 /// work off Tauri's UI command thread: callers in the webview use this command
 /// in the send preflight, where a synchronous command can otherwise stall both
@@ -791,39 +824,50 @@ pub async fn engine_info(
 /// Establish only the local control plane required for a server-owned submit.
 /// It intentionally does not register or activate a workspace engine.
 #[tauri::command]
-pub fn runtime_ensure_admission_transport(
+pub async fn runtime_ensure_admission_transport(
     app: AppHandle,
-    manager: State<EngineManager>,
-    orchestrator_manager: State<OrchestratorManager>,
-    veslo_manager: State<VesloServerManager>,
+    manager: State<'_, EngineManager>,
+    orchestrator_manager: State<'_, OrchestratorManager>,
+    veslo_manager: State<'_, VesloServerManager>,
     workspace_id: Option<String>,
     workspace_path: String,
 ) -> Result<EngineInfo, String> {
-    let workspace_path =
-        validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
-            .to_string_lossy()
-            .to_string();
     let start_queue = manager.start_queue.clone();
-    let _start_permit = start_queue
-        .lock()
-        .map_err(|_| "engine start queue mutex poisoned".to_string())?;
-    start_admission_transport_daemon(&app, &orchestrator_manager, &veslo_manager, &workspace_path)?;
-    let engine = engine_info_blocking(
-        manager.inner.clone(),
-        orchestrator_manager.inner.clone(),
-        workspace_id,
-        Some(workspace_path),
-    );
-    if engine
-        .base_url
-        .as_deref()
-        .is_none_or(|url| url.trim().is_empty())
-    {
-        return Err(
-            "Admission transport started without a workspace proxy descriptor.".to_string(),
-        );
-    }
-    Ok(engine)
+    let engine_state = manager.inner.clone();
+    let orchestrator_state = orchestrator_manager.inner.clone();
+    let veslo_state = veslo_manager.inner.clone();
+    let veslo_start_queue = veslo_manager.start_queue.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let workspace_path =
+            validate_workspace_path(&app, &workspace_path, ValidationMode::IsRegisteredWorkspace)?
+                .to_string_lossy()
+                .to_string();
+        let _start_permit = start_queue
+            .lock()
+            .map_err(|_| "engine start queue mutex poisoned".to_string())?;
+        let orchestrator_manager = OrchestratorManager {
+            inner: orchestrator_state.clone(),
+        };
+        let veslo_manager = VesloServerManager {
+            inner: veslo_state,
+            start_queue: veslo_start_queue,
+        };
+        start_admission_transport_daemon(
+            &app,
+            &orchestrator_manager,
+            &veslo_manager,
+            &workspace_path,
+        )?;
+        wait_for_admission_transport_proxy_descriptor(
+            engine_state,
+            orchestrator_state,
+            workspace_id,
+            workspace_path,
+        )
+    })
+    .await
+    .map_err(|error| format!("Admission transport task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -2052,6 +2096,25 @@ mod tests {
         assert!(source.contains("Some(opencode_base_url.clone())"));
         assert!(!source.contains("Some(&opencode_connect_url)"));
         assert!(!source.contains("Some(opencode_connect_url)"));
+    }
+
+    #[test]
+    fn admission_transport_cold_start_runs_off_the_tauri_command_thread() {
+        let source = include_str!("engine.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+        let command = source
+            .split("pub async fn runtime_ensure_admission_transport")
+            .nth(1)
+            .expect("async admission command")
+            .split("pub async fn runtime_prepare_workspace")
+            .next()
+            .expect("admission command body");
+
+        assert!(command.contains("tauri::async_runtime::spawn_blocking"));
+        assert!(command.contains("start_admission_transport_daemon"));
+        assert!(command.contains("wait_for_admission_transport_proxy_descriptor"));
     }
 
     #[test]

@@ -8,9 +8,37 @@ import {
   progressRenderBlockEntries,
   progressRenderBlockKey,
   progressRenderBlockShapeFingerprint,
+  shouldAutoExpandProgressGroup,
 } from "../../../components/session/progress-grouping-model.js";
 import type { ProgressRenderBlock } from "../../../components/session/progress-grouping-model.js";
 import type { MessageWithParts } from "../../../types";
+
+test("only the newest progress group opens automatically while a run is streaming", () => {
+  assert.equal(
+    shouldAutoExpandProgressGroup({
+      isStreaming: true,
+      blockIndex: 2,
+      blockCount: 3,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAutoExpandProgressGroup({
+      isStreaming: true,
+      blockIndex: 1,
+      blockCount: 3,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoExpandProgressGroup({
+      isStreaming: false,
+      blockIndex: 2,
+      blockCount: 3,
+    }),
+    false,
+  );
+});
 
 function message(id: string, role: "user" | "assistant", parts: Part[]): MessageWithParts {
   return {

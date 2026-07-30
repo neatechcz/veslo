@@ -96,6 +96,139 @@ replace the Tauri Pilot suite. The embedded endpoint is only for a trusted
 local development account: it binds to `127.0.0.1`, but W3C WebDriver itself
 does not authenticate other processes running as the same OS user.
 
+### Controlled live UI workspace roundtrip
+
+The separate roundtrip command uses visible UI controls to create one new
+conversation and submit one real prompt in each of two explicitly named
+workspaces. It is deliberately not part of `test:webdriver:live`, because it
+persists messages and may trigger real model work.
+
+It has no default workspace or prompt. Choose disposable workspaces, provide
+both exact visible labels and single-line messages, then explicitly authorize
+the mutation in the invoking shell:
+
+```powershell
+$env:WEBDRIVER_ALLOW_MUTATION = "1"
+pnpm test:webdriver:workspace-roundtrip -- <runtime-info.json> `
+  --initial-workspace "First workspace" `
+  --second-workspace "Second workspace" `
+  --first-message "WebDriver UI roundtrip one" `
+  --second-message "WebDriver UI roundtrip two"
+```
+
+The script finds each workspace through the rendered sidebar, clicks its New
+conversation control, types through the visible composer, clicks the visible
+send button, and closes only its WebDriver session. It does not call a Veslo
+conversation API directly or infer a workspace from the current selection.
+
+### Controlled live workspace-skill sidebar diagnostic
+
+This mutating diagnostic covers the exact same-workspace regression path: a
+first conversation asks the agent to create one new `.opencode` workspace
+skill, then the scenario verifies the file exists, checks the sidebar in that
+conversation, opens a second conversation in the same workspace, submits a
+normal verification message, and checks the sidebar again. It intentionally
+requires both the rendered workspace label and its absolute filesystem path so
+the test never guesses or overwrites a pre-existing skill. Use a disposable
+workspace and a previously unused kebab-case skill name:
+
+```powershell
+$env:WEBDRIVER_ALLOW_MUTATION = "1"
+pnpm test:webdriver:skill-sidebar-refresh -- <runtime-info.json> `
+  --workspace "Disposable workspace" `
+  --workspace-path "C:\\path\\to\\disposable-workspace" `
+  --skill-name "webdriver-sidebar-check"
+```
+
+### Owned live WebDriver scenario
+
+The attach commands intentionally leave the development app open because they
+may be used against a runtime that a developer started for debugging. For a
+repeatable start-to-finish diagnostic, use the owned variant instead. It starts
+one fresh runtime through the same desktop dev wrapper as `pnpm dev:webdriver`,
+waits for its loopback endpoint, runs the same explicit mutation scenario,
+writes the redacted artifact, and closes only that process tree. It never
+attaches to or closes an existing runtime.
+
+Use it only with an explicitly selected disposable workspace:
+
+```powershell
+$env:WEBDRIVER_ALLOW_MUTATION = "1"
+pnpm test:webdriver:skill-sidebar-refresh:owned -- `
+  --workspace "Disposable workspace" `
+  --workspace-path "C:\\path\\to\\disposable-workspace" `
+  --skill-name "webdriver-sidebar-check"
+```
+
+The command prints one concise JSON result. A failed assertion still writes a
+redacted scenario artifact before it shuts down the runtime. It does not delete
+the skill created by the model, so that filesystem result remains available as
+evidence and must use an otherwise-unused test skill name.
+
+Owned scenarios always force local runtime, send-workflow, UI-mutation, and
+OpenCode-health diagnostics on. Their run directory under `.tmp` retains the
+separate runtime, UI, server, orchestrator, and health trace files even when a
+failure is unrelated to the scenario assertion. The scenario artifact records
+a content-free manifest of those channels; inspect the corresponding files in
+the run directory for the full redacted evidence.
+
+### Reusable live WebDriver scenarios
+
+`packages/desktop-webdriver/src/scenario-kit/` contains the shared primitives
+for trusted local development diagnostics. It is deliberately split by domain:
+workspace navigation, composer input, state waits, UI snapshots, assertions,
+timeline measurement, console capture, redaction, and artifact writing.
+`src/scenarios/` contains compact scenario definitions; their CLI entrypoints
+remain at `src/` and are exposed through root `pnpm test:webdriver:*` scripts.
+
+The shared UI primitives intentionally map one-for-one to visible app actions:
+
+- `selectWorkspaceForNewConversation()` selects an explicitly named rendered
+  workspace and uses its New conversation button.
+- `focusComposer()`, `writeComposer()`, and `submitComposer()` act only on the
+  visible composer and send button. Writing refuses a non-empty composer so a
+  retry cannot append a duplicate prompt.
+- `waitForAppReady()` is route-agnostic. `waitForSessionSidebarReady()` is
+  intentionally stricter and may only be used after a scenario has entered the
+  session shell; `waitForSubmittedRunToSettle()` is required before a scenario
+  moves from one workspace to another.
+
+Every scenario executed through `runLiveScenario()` saves a local JSON artifact
+under `.tmp/webdriver-scenarios/`. It includes a minimal runtime identity,
+scenario result or error, automatic initial/final UI snapshots, named measured
+steps, and renderer console logs observed during that scenario. It never
+captures cookies, page source, screenshots, or the transcript. Secret-like
+values are redacted; the standard W3C `browser` log endpoint is collected only
+when the native endpoint supports it, otherwise its availability error is kept
+as diagnostic context without failing the scenario.
+
+Scenarios should use `step(name, operation)` around each meaningful UI action
+and `snapshot(label)` at state transitions. This produces comparable cold/warm
+latency evidence without asserting timing budgets prematurely. Use the focused
+assertions for a missing runtime error or a completed run rather than adding
+ad-hoc polling to a scenario.
+
+New scenarios must use the runner and declare `mutations: true` for any action
+that persists state. They then require `WEBDRIVER_ALLOW_MUTATION=1`; read-only
+scenarios do not. These are dev-profile diagnostic tools, not replacements for
+the Tauri Pilot E2E suite.
+
+### Read-only sidebar flicker diagnostic
+
+The sidebar flicker scenario observes animation frames while it expands the
+conversation accordions for two explicitly named workspaces. It does not create
+a conversation, send a prompt, or start an engine. Its artifact records frame
+gaps of 50 ms or more, visibility flaps, geometry changes of two pixels or
+more, and DOM mutation volume for the root, sidebar, session pane, and composer.
+These are diagnostic signals, not an automatic visual-regression verdict.
+
+```powershell
+pnpm test:webdriver:sidebar-flicker -- <runtime-info.json> `
+  --initial-workspace "First workspace" `
+  --second-workspace "Second workspace" `
+  --observe-ms 1500
+```
+
 1. Verify whether app/dev processes are already running.
 2. Stop previous app/dev processes and verify they are fully stopped.
 3. Rebuild desktop artifacts from source.

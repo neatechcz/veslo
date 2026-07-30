@@ -50,6 +50,7 @@ import {
   progressGroupingInputFingerprint,
   progressRenderBlockShapeFingerprint,
   progressRenderBlockEntries,
+  shouldAutoExpandProgressGroup,
   type ProgressCommentItem,
   type ProgressGroupItem,
   type ProgressRenderBlock,
@@ -1191,13 +1192,17 @@ export default function MessageList(props: MessageListProps) {
     isUser: boolean;
     isInline?: boolean;
     isProgressChild?: boolean;
+    autoExpand?: boolean;
   }) => {
     const relatedIds = () =>
       containerProps.relatedIds ??
       containerProps.stepGroups.map((group) => group.id).filter((id) => id !== containerProps.id);
     const progressItems = () => containerProps.progressItems ?? null;
     const expanded = () =>
-      progressItems() ? props.expandedStepIds.has(containerProps.id) : isStepsExpanded(containerProps.id, relatedIds());
+      containerProps.autoExpand === true ||
+      (progressItems()
+        ? props.expandedStepIds.has(containerProps.id)
+        : isStepsExpanded(containerProps.id, relatedIds()));
     const toggleContainer = () => {
       const items = progressItems();
       if (items) {
@@ -1882,6 +1887,11 @@ export default function MessageList(props: MessageListProps) {
               stepGroups={stepGroups()}
               progressItems={progressBlock().items}
               isUser={false}
+              autoExpand={shouldAutoExpandProgressGroup({
+                isStreaming: Boolean(props.isStreaming),
+                blockIndex: blockIndex(),
+                blockCount: messageBlocks().length,
+              })}
             />
           </div>
         </div>

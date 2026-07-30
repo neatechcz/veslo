@@ -174,21 +174,24 @@ export function createSessionCapabilitiesStore(deps: SessionCapabilitiesStoreDep
 
   const selectedSessionCapabilityDirectory = () => {
     const session = selectedSessionCapabilitySource()?.session;
-    return session
-      ? normalizeSessionCapabilityDirectory(deps.resolveSessionDirectory(session))
-      : "";
+    if (session) return normalizeSessionCapabilityDirectory(deps.resolveSessionDirectory(session));
+    const active = deps.activeWorkspaceDisplay();
+    return normalizeSessionCapabilityDirectory(
+      active.path || active.directory || deps.activeWorkspaceRoot() || deps.workspaceProjectDir(),
+    );
   };
 
   const selectedSessionCapabilityWorkspace = () =>
     selectedSessionCapabilitySource()?.workspace ??
-    findWorkspaceForSessionCapabilityDirectory(selectedSessionCapabilityDirectory());
+    findWorkspaceForSessionCapabilityDirectory(selectedSessionCapabilityDirectory()) ??
+    deps.workspaces().find((workspace) => workspace.id === deps.activeWorkspaceId().trim()) ??
+    null;
 
   const selectedSessionCapabilitiesScope = (): SessionCapabilitiesScope | null => {
     const session = selectedSessionCapabilitySource()?.session;
-    if (!session) return null;
-
     const directory = selectedSessionCapabilityDirectory();
     const workspace = selectedSessionCapabilityWorkspace();
+    if (!directory) return null;
     return {
       directory,
       workspaceId: workspace?.id,
