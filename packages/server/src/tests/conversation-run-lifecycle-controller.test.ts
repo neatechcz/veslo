@@ -421,7 +421,7 @@ function submitInput(overrides: Partial<ConversationRunLifecycleSubmitInput> = {
 }
 
 function controllerHarness(options?: {
-  ingestTerminalTranscript?: (input: { runId: string }) => Promise<void>;
+  ingestTerminalTranscript?: (input: { runId: string }) => Promise<{ kind: "persisted" | "unchanged" | "incomplete" | "exhausted" } | void>;
   withLifecycle?: boolean;
   submitEngineOwner?: ConversationWorkspaceRunEngineOwner | null;
 }) {
@@ -444,6 +444,8 @@ function controllerHarness(options?: {
     beforeCaptureEngineOwner: null as (() => void) | null,
   };
   const submitCalls: unknown[] = [];
+  const admissionOrder: string[] = [];
+  const admittedRunIds: string[] = [];
   const activeGatewayCalls: Array<{ kind: "register" | "unregister"; input: unknown }> = [];
   const activeProxyAbortCalls: unknown[] = [];
   const providerWatchCalls: unknown[] = [];
@@ -451,6 +453,7 @@ function controllerHarness(options?: {
   const drainCalls: Array<{ workspaceId: string; conversationId: string; delayMs: number }> = [];
   const traceEntries: Array<Record<string, unknown>> = [];
   const backgroundTraceEntries: Array<Array<Record<string, unknown>>> = [];
+  const terminalRecoveries: Array<{ runId: string; lifecycle: string; canonicalRecovery: string }> = [];
   const reconcileCalls: Array<{
     workspaceId: string;
     conversationId: string;
@@ -469,6 +472,7 @@ function controllerHarness(options?: {
       return trace;
     },
     submitOpenCode: async (input) => {
+      admissionOrder.push("upstream");
       submitCalls.push(input);
       if (behavior.submitError) throw behavior.submitError;
       behavior.beforeCaptureEngineOwner?.();
@@ -504,6 +508,17 @@ function controllerHarness(options?: {
     ingestTerminalTranscript: options?.ingestTerminalTranscript
       ? async (input) => await options.ingestTerminalTranscript!({ runId: input.runId })
       : undefined,
+    onTerminalTranscriptRecovery: (input) => {
+      terminalRecoveries.push({
+        runId: input.runId,
+        lifecycle: input.lifecycle,
+        canonicalRecovery: input.canonicalRecovery,
+      });
+    },
+    onRunAdmitted: (input) => {
+      admissionOrder.push("admitted");
+      admittedRunIds.push(input.runId);
+    },
     trace: {
       record: (event, payload = {}) => {
         traceEntries.push({ event, ...payload });
@@ -528,6 +543,8 @@ function controllerHarness(options?: {
     workspaces,
     behavior,
     submitCalls,
+    admissionOrder,
+    admittedRunIds,
     activeGatewayCalls,
     activeProxyAbortCalls,
     providerWatchCalls,
@@ -535,6 +552,7 @@ function controllerHarness(options?: {
     drainCalls,
     traceEntries,
     backgroundTraceEntries,
+    terminalRecoveries,
     reconcileCalls,
   };
 }
@@ -1016,6 +1034,15 @@ test("submitRun registers inactive local runs before submitting", async () => {
   expect(lifecycle.registerInputs[0]?.opencodeMessageId).toBe(submittedMessageId);
 });
 
+test("submitRun announces the exact prompt run before upstream dispatch", async () => {
+  const { controller, admissionOrder, admittedRunIds } = controllerHarness();
+
+  await controller.submitRun(submitInput({ runId: "run-admission-order" }));
+
+  expect(admittedRunIds).toEqual(["run-admission-order"]);
+  expect(admissionOrder).toEqual(["admitted", "upstream"]);
+});
+
 test("submitRun queues immediately for server-queue-only policy", async () => {
   const { controller, lifecycle, queue, submitCalls, timers } = controllerHarness();
 
@@ -1440,6 +1467,39 @@ test("terminal lifecycle reconcile requests one server-owned transcript ingest b
 
   expect(ingestedRunIds).toEqual(["run-reserved"]);
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toContain(0);
+});
+
+test("terminal delivery evidence calls an exhausted canonical ingest unavailable, not recovered", async () => {
+  const { controller, lifecycle, timers, terminalRecoveries } = controllerHarness({
+    ingestTerminalTranscript: async () => ({ kind: "exhausted" }),
+  });
+
+  await controller.submitRun(submitInput());
+  lifecycle.statusResult = { runId: "run-reserved", status: "failed", stale: false };
+  timers.fire(timers.activeTimers()[0]!.id);
+  await flushMicrotasks();
+  await flushMicrotasks();
+
+  expect(terminalRecoveries).toContainEqual({
+    runId: "run-reserved",
+    lifecycle: "failed",
+    canonicalRecovery: "unavailable",
+  });
+});
+
+test("terminal delivery evidence records unavailable recovery even when no ingest port exists", async () => {
+  const { controller, lifecycle, timers, terminalRecoveries } = controllerHarness();
+
+  await controller.submitRun(submitInput());
+  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  timers.fire(timers.activeTimers()[0]!.id);
+  await flushMicrotasks();
+
+  expect(terminalRecoveries).toContainEqual({
+    runId: "run-reserved",
+    lifecycle: "completed",
+    canonicalRecovery: "unavailable",
+  });
 });
 
 test("submitRun tracks active gateway context for command runs when provider start is expected", async () => {

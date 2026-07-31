@@ -232,7 +232,12 @@ export async function startHeadlessServices({
   };
 }
 
-export async function startHeadlessDaemonServices({ fakeMode = "success", profile, aiGatewayBaseUrl } = {}) {
+export async function startHeadlessDaemonServices({
+  fakeMode = "success",
+  profile,
+  aiGatewayBaseUrl,
+  faultInjection = false,
+} = {}) {
   const ownsProfile = !profile;
   const runtimeProfile = profile ?? await createHeadlessServicesProfile();
   const { root, dataDir, workspace, token, hostToken } = runtimeProfile;
@@ -254,6 +259,7 @@ export async function startHeadlessDaemonServices({ fakeMode = "success", profil
   const opencodePassword = randomUUID();
   const runId = `service-gate-daemon-${randomUUID()}`;
   const serverDataDir = join(root, "server-data");
+  const serverUrl = `http://127.0.0.1:${serverPort}`;
 
   await Promise.all([
     mkdir(traceDir, { recursive: true }),
@@ -273,6 +279,12 @@ export async function startHeadlessDaemonServices({ fakeMode = "success", profil
     VESLO_SERVICE_TEST_FAKE_MODE: fakeMode,
     VESLO_SERVICE_TEST_FAKE_LOG: fakeLog,
     VESLO_SERVICE_TEST_OPENCODE_VERSION: await readExpectedOpenCodeVersion(),
+    // The daemon owns router-side lifecycle callbacks. Give it the eventual
+    // server URL before either process starts, matching the real split-process
+    // contract without requiring a second bootstrap/restart.
+    VESLO_SERVER_URL: serverUrl,
+    VESLO_ENGINE_LOSS_CALLBACK_URL: serverUrl,
+    ...(faultInjection ? { VESLO_E2E_FAULT_INJECTION: "1" } : {}),
     ...(aiGatewayBaseUrl ? { VESLO_AI_GATEWAY_BASE_URL: aiGatewayBaseUrl } : {}),
   };
   const daemonOutput = createWriteStream(daemonLog, { flags: "a" });
@@ -333,7 +345,7 @@ export async function startHeadlessDaemonServices({ fakeMode = "success", profil
     );
     serverChild.stdout.pipe(serverOutput, { end: false });
     serverChild.stderr.pipe(serverOutput, { end: false });
-    await waitForServer(`http://127.0.0.1:${serverPort}`, serverChild, serverLog);
+    await waitForServer(serverUrl, serverChild, serverLog);
   } catch (error) {
     await stopChild(serverChild ?? daemonChild).catch(() => undefined);
     if (serverChild) await stopChild(daemonChild).catch(() => undefined);
@@ -343,7 +355,7 @@ export async function startHeadlessDaemonServices({ fakeMode = "success", profil
 
   let closed = false;
   return {
-    baseUrl: `http://127.0.0.1:${serverPort}`,
+    baseUrl: serverUrl,
     daemonUrl,
     token,
     hostToken,

@@ -304,6 +304,10 @@ import {
   createConversationRunQueueStore,
   type ConversationWorkspaceRunEngineOwner,
 } from "./conversation-run-queue-store.js";
+import {
+  createConversationRunDeliverySnapshotStore,
+  type RunDeliverySnapshotStore,
+} from "./conversation-run-delivery-snapshot-store.js";
 import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
 import { createConversationSubmitService } from "./conversation-submit-service.js";
 import { createConversationSubmitSkillCommandResolver } from "./conversation-submit-skill-command-resolution.js";
@@ -779,6 +783,8 @@ export function startServer(config: ServerConfig) {
   const routes = routeBundle.routes;
   const conversationRunLifecycleController =
     routeBundle.conversationRunLifecycleController;
+  const conversationRunDeliverySnapshotStore =
+    routeBundle.conversationRunDeliverySnapshotStore;
   const baseLogger = createServerLogger(config);
 
   const debugLogPipeline: DebugLogPipeline = createDebugLogPipeline({
@@ -1225,6 +1231,83 @@ export function startServer(config: ServerConfig) {
                   "internal_error",
                   "Unexpected engine loss notification error",
                 );
+          errorMessage = apiError.message;
+          errorDetails = apiError.details;
+          return finalize(jsonResponse(formatError(apiError), apiError.status));
+        }
+      }
+
+      if (
+        url.pathname === "/internal/orchestrator/run-delivery-snapshot/router-observed" &&
+        request.method === "POST"
+      ) {
+        authMode = "host";
+        try {
+          const lifecycleToken = config.orchestratorLifecycleToken?.trim();
+          if (
+            !lifecycleToken ||
+            request.headers.get(ORCHESTRATOR_LIFECYCLE_TOKEN_HEADER) !== lifecycleToken
+          ) {
+            return finalize(jsonResponse({ code: "unauthorized", message: "Invalid orchestrator lifecycle token" }, 401));
+          }
+          const body = await readJsonBody(request, {
+            maxBytes: 16 * 1024,
+            label: "run delivery router observation",
+          });
+          if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return finalize(jsonResponse({ code: "invalid_request", message: "Run delivery router observation must be an object" }, 400));
+          }
+          const payload = body as Record<string, unknown>;
+          const string = (key: string) => typeof payload[key] === "string" ? payload[key].trim() : "";
+          const positiveInteger = (key: string) => {
+            const value = payload[key];
+            return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+          };
+          const workspaceId = string("workspaceId");
+          const conversationId = string("conversationId");
+          const runId = string("runId");
+          const opencodeSessionId = string("opencodeSessionId");
+          const engineOwnerId = string("engineOwnerId");
+          const enginePid = positiveInteger("enginePid");
+          const engineStartedAt = positiveInteger("engineStartedAt");
+          const engineBaseUrl = string("engineBaseUrl");
+          const eventCount = positiveInteger("eventCount");
+          const firstObservedAt = string("firstObservedAt");
+          const lastObservedAt = string("lastObservedAt");
+          const directoryInstanceEpoch = positiveInteger("directoryInstanceEpoch");
+          if (
+            payload.schema !== "veslo-run-delivery-snapshot/v1" ||
+            !workspaceId || !conversationId || !runId || !opencodeSessionId || !engineOwnerId ||
+            enginePid === null || engineStartedAt === null || !engineBaseUrl || eventCount === null ||
+            !firstObservedAt || !lastObservedAt
+          ) {
+            return finalize(jsonResponse({
+              code: "invalid_request",
+              message: "A valid run delivery router observation is required",
+            }, 400));
+          }
+          const snapshot = conversationRunDeliverySnapshotStore.observeRouter({
+            workspaceId,
+            conversationId,
+            runId,
+            opencodeSessionId,
+            engineOwnerId,
+            enginePid,
+            engineStartedAt,
+            engineBaseUrl,
+            directoryInstanceEpoch,
+            eventCount,
+            firstObservedAt,
+            lastObservedAt,
+          });
+          if (!snapshot) {
+            return finalize(jsonResponse({ code: "not_found", message: "Run delivery snapshot not found" }, 404));
+          }
+          return finalize(jsonResponse({ ok: true, schema: "veslo-run-delivery-snapshot/v1" }, 202));
+        } catch (error) {
+          const apiError = error instanceof ApiError
+            ? error
+            : new ApiError(500, "internal_error", "Unexpected run delivery router observation error");
           errorMessage = apiError.message;
           errorDetails = apiError.details;
           return finalize(jsonResponse(formatError(apiError), apiError.status));
@@ -5646,6 +5729,7 @@ function createRoutes(
 ): {
   routes: Route[];
   conversationRunLifecycleController: ConversationRunLifecycleController;
+  conversationRunDeliverySnapshotStore: RunDeliverySnapshotStore;
 } {
   const routes: Route[] = [];
   const serializeWorkspaceForResponse = (workspace: WorkspaceInfo) =>
@@ -5663,6 +5747,10 @@ function createRoutes(
   const conversationRunQueueStore = createConversationRunQueueStore({
     dataDir: serverDataDir,
   });
+  const conversationRunDeliverySnapshotStore =
+    createConversationRunDeliverySnapshotStore({
+      dataDir: serverDataDir,
+    });
   const conversationSubmitAttemptStore = createConversationSubmitAttemptStore({
     dataDir: serverDataDir,
   });
@@ -6133,13 +6221,63 @@ function createRoutes(
         opencodeSessionId,
         runId,
       }) => {
-        await transcriptIngestCoordinator.request({
+        return await transcriptIngestCoordinator.request({
           workspaceId: workspace.id,
           directory,
           opencodeSessionId,
           trigger: "terminal-lifecycle",
           runId,
         });
+      },
+      onTerminalTranscriptRecovery: ({
+        workspaceId,
+        conversationId,
+        runId,
+        lifecycle,
+        canonicalRecovery,
+      }) => {
+        try {
+          const terminalLifecycle =
+            lifecycle === "completed" || lifecycle === "failed" || lifecycle === "aborted"
+              ? lifecycle
+              : "unresolved";
+          conversationRunDeliverySnapshotStore.reportTerminal({
+            workspaceId,
+            conversationId,
+            runId,
+            lifecycle: terminalLifecycle,
+            canonicalRecovery,
+            hydration: "not_attempted",
+            presentation: "unknown",
+          });
+        } catch (error) {
+          recordSendWorkflowTrace("server", "server:run-delivery-snapshot:terminal-error", {
+            workspaceId,
+            conversationId,
+            runId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      },
+      onRunAdmitted: (input) => {
+        if (input.kind !== "prompt_async") return;
+        try {
+          conversationRunDeliverySnapshotStore.create({
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            clientMessageId: input.clientMessageId,
+            traceId: input.runTrace.traceId,
+            opencodeSessionId: input.target.opencodeSessionId,
+          });
+        } catch (error) {
+          recordSendWorkflowTrace("server", "server:run-delivery-snapshot:admission-error", {
+            workspaceId: input.workspace.id,
+            conversationId: input.target.conversationId,
+            runId: input.runId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
       },
       trace: {
         record: (event, payload = {}) =>
@@ -6271,6 +6409,7 @@ function createRoutes(
     transcriptIngestCoordinator,
     conversationRunLifecycleController,
     conversationRunQueueStore,
+    conversationRunDeliverySnapshotStore,
     conversationSubmitService,
     lifecycleClient,
     resolveConversationReadDirectory,
@@ -6410,7 +6549,7 @@ function createRoutes(
     soulVersionId,
     parseInteger,
   });
-  return { routes, conversationRunLifecycleController };
+  return { routes, conversationRunLifecycleController, conversationRunDeliverySnapshotStore };
 }
 
 function parseInteger(value: string | undefined): number | null {

@@ -63,6 +63,7 @@ import {
 } from "./run-registry.js";
 import { createRunActivityProbe } from "./run-activity-probe.js";
 import { createEngineLossNotifier } from "./engine-loss-notifier.js";
+import { createRunDeliverySnapshotNotifier } from "./run-delivery-snapshot-notifier.js";
 import { routerRequestObservation } from "./router-request-observability.js";
 import {
   hostDirectoryToEngineDirectory,
@@ -4451,6 +4452,12 @@ async function runRouterDaemon(args: ParsedArgs) {
         token: lifecycleToken,
       })
     : null;
+  const runDeliverySnapshotNotifier = engineLossCallbackUrl && lifecycleToken
+    ? createRunDeliverySnapshotNotifier({
+        baseUrl: engineLossCallbackUrl,
+        token: lifecycleToken,
+      })
+    : null;
   logger.info("Daemon starting", { runId, logFormat, host, port }, "veslo-orchestrator");
 
   const sidecar = resolveSidecarConfig(args.flags, cliVersion);
@@ -6898,6 +6905,34 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
 
+        const routerObservations = new Map<string, {
+          conversationId: string;
+          runId: string;
+          opencodeSessionId: string;
+          eventCount: number;
+          firstObservedAt: string;
+          lastObservedAt: string;
+        }>();
+        const flushRouterObservation = (observationKey: string) => {
+          const observation = routerObservations.get(observationKey);
+          if (!observation) return;
+          routerObservations.delete(observationKey);
+          if (!runDeliverySnapshotNotifier) return;
+          void runDeliverySnapshotNotifier({
+            workspaceId: ws.id,
+            ...observation,
+            engineOwnerId: engine.engineOwnerId,
+            enginePid: engine.pid,
+            engineStartedAt: engine.spawnedAt,
+            engineBaseUrl: engine.baseUrl,
+            directoryInstanceEpoch: directorySkillView?.directoryInstanceEpoch ?? null,
+          });
+        };
+        const flushRouterObservations = () => {
+          for (const observationKey of [...routerObservations.keys()]) {
+            flushRouterObservation(observationKey);
+          }
+        };
         const rewriteJsonResponse = (value: unknown): unknown => {
           const rewritten = rewriteEnginePaths
             ? rewriteDirectoryFieldsForHost(value, pathMapping)
@@ -6930,6 +6965,33 @@ async function runRouterDaemon(args: ParsedArgs) {
                 : "";
           const sessionID = (directSessionID || nestedSessionID).trim();
           if (!sessionID) return rewritten;
+          const activeRun = runRegistry.activeForEngineSession({
+            workspaceId: ws.id,
+            engineSessionId: sessionID,
+            engineOwnerId: engine.engineOwnerId,
+            enginePid: engine.pid,
+            engineStartedAt: engine.spawnedAt,
+            engineBaseUrl: engine.baseUrl,
+          });
+          let observationKey: string | null = null;
+          if (activeRun) {
+            const observedAt = new Date().toISOString();
+            observationKey = `${activeRun.conversationId}\u0000${activeRun.runId}`;
+            const current = routerObservations.get(observationKey);
+            routerObservations.set(observationKey, current
+              ? { ...current, eventCount: current.eventCount + 1, lastObservedAt: observedAt }
+              : {
+                  conversationId: activeRun.conversationId,
+                  runId: activeRun.runId,
+                  opencodeSessionId: sessionID,
+                  eventCount: 1,
+                  firstObservedAt: observedAt,
+                  lastObservedAt: observedAt,
+                });
+          }
+          if (observationKey && (event.type === "session.idle" || event.type === "session.error")) {
+            flushRouterObservation(observationKey);
+          }
           return {
             ...event,
             properties: {
@@ -6975,6 +7037,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             ? rewriteJsonResponse
             : undefined,
           onSuccess: () => {
+            flushRouterObservations();
             finishUpstreamTrace("orchestrator:proxy-upstream:done", {
               statusCode: res.statusCode,
             });
@@ -6986,6 +7049,7 @@ async function runRouterDaemon(args: ParsedArgs) {
             persistEnginesSnapshot();
           },
           onError: (err) => {
+            flushRouterObservations();
             const healthPolicy = classifySharedProxyUpstreamError({
               method: req.method,
               requestPath: url.pathname,
@@ -7034,6 +7098,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           // shared engine unhealthy here would cold-restart it on every
           // stream teardown.
           onClientAbort: () => {
+            flushRouterObservations();
             finishUpstreamTrace("orchestrator:proxy-upstream:done", {
               statusCode: res.statusCode,
               clientAborted: true,

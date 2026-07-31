@@ -39,6 +39,8 @@ const expectedAuthorization = `Basic ${Buffer.from(`${username}:${password}`).to
 let nextSession = 1;
 let promptFailureServed = false;
 let promptConnectionDropServed = false;
+let terminalHoldEventCount = 0;
+const eventSubscribers = new Set();
 
 async function writeLog(entry) {
   if (!logPath) return;
@@ -115,6 +117,18 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/event") {
+      await writeLog({ ...requestSummary, eventStream: true });
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      eventSubscribers.add(response);
+      request.on("close", () => eventSubscribers.delete(response));
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/session") {
       const body = await readJson(request);
       const sessionId = typeof body?.id === "string" && body.id.trim()
@@ -155,6 +169,38 @@ const server = http.createServer(async (request, response) => {
       }
       if (mode === "prompt-delay") await delay(100);
       if (mode === "prompt-response-delay") await delay(750);
+      if (mode === "event-sequence" || mode === "event-terminal-hold") {
+        const sessionId = decodeURIComponent(prompt[1]);
+        setTimeout(() => {
+          const payload = JSON.stringify(
+            mode === "event-terminal-hold"
+              ? {
+                  type: "session.idle",
+                  properties: { sessionID: sessionId },
+                }
+              : {
+                  type: "message.part.updated",
+                  properties: {
+                    part: {
+                      id: "part_fake_delivery",
+                      messageID: "msg_fake_delivery",
+                      sessionID: sessionId,
+                      type: "text",
+                      text: "delivery fixture",
+                    },
+                  },
+                },
+          );
+          for (const subscriber of eventSubscribers) {
+            subscriber.write(`data: ${payload}\n\n`);
+            if (mode !== "event-terminal-hold") {
+              subscriber.end();
+              eventSubscribers.delete(subscriber);
+            }
+          }
+        }, mode === "event-terminal-hold" ? 250 + terminalHoldEventCount++ * 300 : 250).unref();
+        await delay(600);
+      }
       sendJson(response, 200, { ok: true });
       return;
     }

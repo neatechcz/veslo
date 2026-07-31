@@ -54,9 +54,16 @@ import {
   type SessionOfflineTranscriptLoadContext,
 } from "./session-selection-controller";
 import { createSessionEventStreamController } from "./session-event-stream";
+import {
+  createConversationRunDeliveryReporter,
+  type ConversationRunDeliveryReport,
+  type ConversationRunDeliveryScope,
+} from "./conversation-run-delivery-reporter";
+import { classifyConversationRunDeliveryPresentation } from "./conversation-run-delivery-presentation";
 import { createConversationRunOwnershipIndex } from "./conversation-run-ownership";
 import {
   createTerminalDeliveryCoordinator,
+  terminalDeliveryKey,
   type TerminalDeliveryKey,
   type TerminalDeliveryProvisionalKey,
 } from "./terminal-delivery-coordinator";
@@ -237,6 +244,10 @@ export function createSessionStore(options: {
     scope: SessionLifecycleRecoveryScope,
     status: SessionLifecycleRecoveryStatus,
   ) => void;
+  reportConversationRunDelivery?: (
+    scope: ConversationRunDeliveryScope,
+    report: ConversationRunDeliveryReport,
+  ) => Promise<unknown> | void;
   conversationReader?: () => {
     listConversations: (
       workspaceId: string,
@@ -959,6 +970,28 @@ export function createSessionStore(options: {
       recordSessionLifecycleRecoveryTrace(event, payload),
   });
   const conversationRunOwnership = createConversationRunOwnershipIndex();
+  const terminalHydrationByRun = new Map<string, "adopted" | "failed">();
+  const runDeliveryReporter = createConversationRunDeliveryReporter({
+    report: (scope, report) => options.reportConversationRunDelivery?.(scope, report),
+  });
+  const resolveRunDeliveryScope = (sessionId: string, workspaceId: string) => {
+    const scope = conversationRunOwnership.resolveActive(sessionId, workspaceId) ??
+      options.resolveConversationRunForSession?.(sessionId, workspaceId);
+    return scope?.runId && scope.runId !== "latest"
+      ? { workspaceId: scope.workspaceId, conversationId: scope.conversationId, runId: scope.runId }
+      : null;
+  };
+  const terminalPresentationForScope = (scope: SessionLifecycleRecoveryScope) => {
+    return classifyConversationRunDeliveryPresentation({
+      assistantMessageIds: runDeliveryReporter.assistantMessageIds({
+        workspaceId: scope.workspaceId,
+        conversationId: scope.conversationId,
+        runId: scope.runId,
+      }),
+      messagesBySession: store.messages,
+      partsByMessageId: store.parts,
+    });
+  };
   const presentPromotedRun = (promoted: {
     scope: SessionLifecycleRecoveryScope;
     status: SessionLifecycleRecoveryStatus;
@@ -1044,6 +1077,10 @@ export function createSessionStore(options: {
               {
                 kind: "hydration",
                 commit: () => {
+                  terminalHydrationByRun.set(
+                    terminalDeliveryKey(terminalDeliveryKeyForScope(scope)),
+                    "adopted",
+                  );
                   hydrateTranscriptSnapshot(snapshot, {
                     preserveLiveParts: false,
                   });
@@ -1056,9 +1093,24 @@ export function createSessionStore(options: {
               conversationRunOwnership.settleTerminalTranscript(scope);
             for (const commit of released.commits) commit();
             if (released.promoted) presentPromotedRun(released.promoted);
+            const terminalKey = terminalDeliveryKey(terminalDeliveryKeyForScope(scope));
+            runDeliveryReporter.reportTerminal(
+              { workspaceId: scope.workspaceId, conversationId: scope.conversationId, runId: scope.runId },
+              {
+                hydration: terminalHydrationByRun.get(terminalKey) ?? "skipped",
+                presentation: terminalPresentationForScope(scope),
+              },
+            );
+            terminalHydrationByRun.delete(terminalKey);
           },
           diagnosticContext: options.lifecycleRecoveryDiagnosticContext,
           onConversationRunStatus: (scope, status) => {
+            if (status?.recoveryState === "transcript-unavailable") {
+              terminalHydrationByRun.set(
+                terminalDeliveryKey(terminalDeliveryKeyForScope(scope)),
+                "failed",
+              );
+            }
             const active = conversationRunOwnership.observeStatus(
               scope,
               status,
@@ -1346,6 +1398,14 @@ export function createSessionStore(options: {
     },
     onAssistantResponseObserved: options.onAssistantResponseObserved,
     onTranscriptObserved: noteTranscriptObserved,
+    onRunDeliveryAccepted: (sessionId, workspaceId, storeCommitted, message) => {
+      const scope = resolveRunDeliveryScope(sessionId, workspaceId);
+      if (scope) runDeliveryReporter.observeAccepted(scope, storeCommitted, message);
+    },
+    onRunDeliveryRejected: (sessionId, workspaceId, reason) => {
+      const scope = resolveRunDeliveryScope(sessionId, workspaceId);
+      if (scope) runDeliveryReporter.observeRejected(scope, reason);
+    },
     sessionDebugEnabled,
     sessionWarn,
     recordSessionStatusTrace,

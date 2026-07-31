@@ -210,7 +210,15 @@ export type ConversationRunLifecycleControllerOptions = {
     directory: string;
     opencodeSessionId: string;
     runId: string;
-  }) => Promise<void>;
+  }) => Promise<{ kind: "persisted" | "unchanged" | "incomplete" | "exhausted" } | void>;
+  onTerminalTranscriptRecovery?: (input: {
+    workspaceId: string;
+    conversationId: string;
+    runId: string;
+    lifecycle: LifecycleRunStatus;
+    canonicalRecovery: "recovered" | "unavailable" | "failed";
+  }) => void;
+  onRunAdmitted?: (input: ConversationRunLifecycleSubmitInput) => void;
   timers?: Partial<ConversationRunLifecycleTimerPort>;
   trace?: ConversationRunLifecycleTracePort | null;
   diagnostics?: {
@@ -838,13 +846,30 @@ export function createConversationRunLifecycleController(
   ) => {
     const directory = input.directory?.trim() ?? "";
     const opencodeSessionId = input.opencodeSessionId?.trim() ?? "";
-    if (!directory || !opencodeSessionId || !options.ingestTerminalTranscript) return;
+    const reportTerminalRecovery = (canonicalRecovery: "recovered" | "unavailable" | "failed") => {
+      options.onTerminalTranscriptRecovery?.({
+        workspaceId: input.workspace.id,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        lifecycle: status,
+        canonicalRecovery,
+      });
+    };
+    if (!directory || !opencodeSessionId || !options.ingestTerminalTranscript) {
+      reportTerminalRecovery("unavailable");
+      return;
+    }
     void options.ingestTerminalTranscript({
       workspace: input.workspace,
       directory,
       opencodeSessionId,
       runId: input.runId,
-    }).then(() => {
+    }).then((outcome) => {
+      reportTerminalRecovery(
+        outcome?.kind === "persisted" || outcome?.kind === "unchanged"
+          ? "recovered"
+          : "unavailable",
+      );
       recordTrace("server:conversation-run:terminal-transcript-ingest", {
         workspaceId: input.workspace.id,
         conversationId: input.conversationId,
@@ -854,6 +879,7 @@ export function createConversationRunLifecycleController(
         source,
       });
     }).catch((error) => {
+      reportTerminalRecovery("failed");
       recordTrace("server:conversation-run:terminal-transcript-ingest-error", {
         workspaceId: input.workspace.id,
         conversationId: input.conversationId,
@@ -1458,6 +1484,7 @@ export function createConversationRunLifecycleController(
         });
       }
 
+      options.onRunAdmitted?.(queuedSubmitInput);
       await submitAcceptedRun(queuedSubmitInput, lifecycleOwner);
       const submitted = options.queueStore.markSubmitted(item.queueItemId);
       if (!submitted) {
@@ -1733,6 +1760,7 @@ export function createConversationRunLifecycleController(
       }
       admittedInput = withOpenCodeAdmissionMessageId(admittedInput);
       reserveStarting(admittedInput);
+      options.onRunAdmitted?.(admittedInput);
       const upstream = await submitAcceptedRun(admittedInput, lifecycleOwner);
       input.runTrace.record("server:conversation-run:submitted", {
         workspaceId: input.workspace.id,

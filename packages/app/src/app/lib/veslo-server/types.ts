@@ -1712,6 +1712,23 @@ export type VesloConversationRunStatusResult = {
   noProgressSeconds?: number | null;
 };
 
+export type VesloConversationRunDeliveryAppReport =
+  | {
+      kind: "aggregate";
+      acceptedEventCount: number;
+      rejectedByReason?: Record<string, number>;
+      storeCommitCount: number;
+      firstObservedAt?: string;
+      lastObservedAt?: string;
+      reportedAt?: string;
+    }
+    | {
+        kind: "terminal";
+        hydration?: "not_attempted" | "adopted" | "skipped" | "failed";
+        presentation?: "visible_output" | "hidden_progress" | "no_visible_output" | "unknown";
+      reportedAt?: string;
+    };
+
 export type VesloConversationQueueStatus = "pending" | "starting" | "failed";
 
 export type VesloConversationQueueItem = {

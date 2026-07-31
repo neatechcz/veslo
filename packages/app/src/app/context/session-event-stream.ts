@@ -193,6 +193,17 @@ export type SessionEventStreamControllerDeps = {
   onReconnectState?: (state: ReconnectState) => void;
   onAssistantResponseObserved?: (sessionId: string) => void;
   onTranscriptObserved?: (sessionId: string) => void;
+  onRunDeliveryAccepted?: (
+    sessionId: string,
+    workspaceId: string,
+    storeCommitted: boolean,
+    message?: { id: string; role?: string | null },
+  ) => void;
+  onRunDeliveryRejected?: (
+    sessionId: string,
+    workspaceId: string,
+    reason: "missing_binding_envelope" | "binding_workspace_mismatch" | "unknown_session",
+  ) => void;
   onSessionLifecycleObservation?: (
     sessionId: string,
     workspaceId: string | null | undefined,
@@ -486,6 +497,30 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     if (!isKnownSessionId(normalizedSessionID)) return false;
     sessionWorkspaceBindings.set(normalizedSessionID, normalizedWorkspaceID);
     return true;
+  };
+
+  const deliveryRejectionReasonForSession = (
+    sessionID: string,
+    sourceWsId: string,
+    record?: Record<string, unknown>,
+  ): "missing_binding_envelope" | "binding_workspace_mismatch" | "unknown_session" => {
+    const normalizedSessionID = sessionID.trim();
+    const normalizedWorkspaceID = sourceWsId.trim();
+    const existing = sessionWorkspaceBindings.get(normalizedSessionID);
+    if (existing && normalizedWorkspaceID && existing !== normalizedWorkspaceID) {
+      return "binding_workspace_mismatch";
+    }
+    if (record && Object.hasOwn(record, "vesloBinding")) {
+      const binding = record.vesloBinding;
+      if (!binding || typeof binding !== "object" || Array.isArray(binding)) return "missing_binding_envelope";
+      const envelope = binding as Record<string, unknown>;
+      if (
+        envelope.workspaceId !== normalizedWorkspaceID ||
+        envelope.opencodeSessionId !== normalizedSessionID
+      ) return "binding_workspace_mismatch";
+      return "missing_binding_envelope";
+    }
+    return "unknown_session";
   };
 
   const bindAuthorizedCreatedSession = (
@@ -911,6 +946,11 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         if (record.info && typeof record.info === "object") {
           const info = record.info as Message;
           if (!bindKnownSessionToSource(info.sessionID, sourceWsId, record)) {
+            deps.onRunDeliveryRejected?.(
+              info.sessionID,
+              sourceWsId,
+              deliveryRejectionReasonForSession(info.sessionID, sourceWsId, record),
+            );
             recordSendWorkflowTrace("session-sse", "session-sse:message-ignored", {
               workspaceId: sourceWsId || null,
               sessionID: info.sessionID,
@@ -925,6 +965,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             recordTranscriptStoreWrite("sse.message.updated", "message-info", info.sessionID, info.id);
             deps.setStore("messages", info.sessionID, next);
           }
+          deps.onRunDeliveryAccepted?.(info.sessionID, sourceWsId, next !== current, {
+            id: info.id,
+            role: (info as { role?: string | null }).role,
+          });
           deps.onTranscriptObserved?.(info.sessionID);
           if ((info as { role?: string }).role === "assistant") {
             deps.onAssistantResponseObserved?.(info.sessionID);
@@ -990,6 +1034,11 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           const part = record.part as Part;
 
           if (!bindKnownSessionToSource(part.sessionID, sourceWsId, record)) {
+            deps.onRunDeliveryRejected?.(
+              part.sessionID,
+              sourceWsId,
+              deliveryRejectionReasonForSession(part.sessionID, sourceWsId, record),
+            );
             deps.sessionWarn("message.part.updated:ignored:unknown-session", {
               sessionID: part.sessionID,
               messageID: part.messageID,
@@ -1015,6 +1064,11 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           const parentMessageRole =
             deps.store.messages[part.sessionID]?.find((message) => message.id === part.messageID)
               ?.role ?? null;
+          // OpenCode may emit a part before its assistant message info. The
+          // store creates an assistant placeholder for that exact shape, so
+          // delivery evidence must use the same role rather than lose the
+          // run-bound assistant message id.
+          const deliveryMessageRole = parentMessageRole ?? "assistant";
 
           const commitPartMutation = () => {
             const textDeltaOutcome =
@@ -1063,6 +1117,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
                 draft.parts[part.messageID] = upsertPartInfo(parts, part);
               }),
             );
+            deps.onRunDeliveryAccepted?.(part.sessionID, sourceWsId, changesParts || !hasMessage, {
+              id: part.messageID,
+              role: deliveryMessageRole,
+            });
             deps.onTranscriptObserved?.(part.sessionID);
             recordSendWorkflowTrace("session-sse", "session-sse:part-committed", {
               workspaceId: sourceWsId || null,

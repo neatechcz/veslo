@@ -64,6 +64,14 @@ export type RunStore = {
   get(workspaceId: string, runId: string): RunRecord | null;
   latestForConversation(workspaceId: string, conversationId: string): RunRecord | null;
   activeForConversation(workspaceId: string, conversationId: string): RunRecord | null;
+  activeForEngineSession(input: {
+    workspaceId: string;
+    engineSessionId: string;
+    engineOwnerId: string;
+    enginePid: number;
+    engineStartedAt: number;
+    engineBaseUrl: string;
+  }): RunRecord | null;
   activeForEngineOwner(engineOwnerId: string): RunRecord[];
   activeCreatedBefore(createdBefore: number, limit?: number): RunRecord[];
   migrateWorkspaceId(sourceWorkspaceId: string, targetWorkspaceId: string): RunStoreWorkspaceMigrationResult;
@@ -408,6 +416,32 @@ export function createRunStore(options: { dbPath: string }): RunStore {
            ORDER BY created_at DESC
            LIMIT 1`,
         ).get(workspaceId, conversationId);
+        return row ? rowToRecord(row) : null;
+      });
+    },
+
+    activeForEngineSession(input) {
+      return withDb((db) => {
+        const row = db.query<RunRow, [string, string, string, number, number, string]>(
+          `SELECT * FROM conversation_run
+           WHERE workspace_id = ?1
+             AND engine_session_id = ?2
+             AND engine_owner_id = ?3
+             AND engine_pid = ?4
+             AND engine_started_at = ?5
+             AND engine_base_url = ?6
+             AND engine_owner_state = 'attached'
+             AND status IN (${ACTIVE_RUN_STATUS_SQL_LIST})
+           ORDER BY created_at DESC
+           LIMIT 1`,
+        ).get(
+          input.workspaceId,
+          input.engineSessionId,
+          input.engineOwnerId,
+          input.enginePid,
+          input.engineStartedAt,
+          input.engineBaseUrl,
+        );
         return row ? rowToRecord(row) : null;
       });
     },

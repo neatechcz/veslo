@@ -11,6 +11,7 @@ import {
   nextUpstreamEventCursor,
   reconcileSseStreamTargets,
 } from "../../context/session-event-stream.js";
+import { createConversationRunDeliveryReporter } from "../../context/conversation-run-delivery-reporter.js";
 import type { ReconnectState } from "../../context/session-reconnect.js";
 import type { MessageInfo, OpencodeEvent, SessionErrorTurn, TodoItem } from "../../types";
 
@@ -92,6 +93,17 @@ function makeController(options: {
   developerMode?: boolean;
   workspaceSessionIds?: Set<string>;
   observer?: (sessionID: string) => void;
+  onRunDeliveryAccepted?: (
+    sessionID: string,
+    workspaceId: string,
+    storeCommitted: boolean,
+    message?: { id: string; role?: string | null },
+  ) => void;
+  onRunDeliveryRejected?: (
+    sessionID: string,
+    workspaceId: string,
+    reason: "missing_binding_envelope" | "unknown_session" | "binding_workspace_mismatch",
+  ) => void;
   transcriptIngest?: Array<Record<string, unknown>>;
   backgroundIngest?: Array<Record<string, unknown>>;
   permissionRefreshes?: string[];
@@ -149,6 +161,8 @@ function makeController(options: {
     onReconnectState: options.onReconnectState,
     onReconnectNotice: options.onReconnectNotice,
     onAssistantResponseObserved: options.observer,
+    onRunDeliveryAccepted: options.onRunDeliveryAccepted,
+    onRunDeliveryRejected: options.onRunDeliveryRejected,
     sessionDebugEnabled: () => options.developerMode ?? false,
     sessionWarn: () => {},
     recordSessionStatusTrace: (event, payload) => {
@@ -566,6 +580,105 @@ test("session SSE cleanup closes the active subscription handle", async () => {
   await tick(4);
 
   assert.deepEqual(closes, ["closed"]);
+});
+
+test("delivery evidence batches accepted, committed, and rejected event-stream outcomes once per run", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const reports: unknown[] = [];
+      const reporter = createConversationRunDeliveryReporter({
+        report: (_scope, report) => { reports.push(report); },
+        now: () => new Date("2026-07-30T12:00:00.000Z"),
+      });
+      const scope = { workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a" };
+      const { controller } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        onRunDeliveryAccepted: (_sessionId, _workspaceId, storeCommitted) =>
+          reporter.observeAccepted(scope, storeCommitted),
+        onRunDeliveryRejected: (_sessionId, _workspaceId, reason) =>
+          reporter.observeRejected(scope, reason),
+      });
+
+      await controller.applyEvent({
+        type: "message.updated",
+        properties: { info: makeMessage("unknown-session", "msg-unknown") },
+      } as OpencodeEvent, "ws-a");
+      await controller.applyEvent({
+        type: "message.updated",
+        properties: { info: makeMessage("sess-a", "msg-a") },
+      } as OpencodeEvent, "ws-a");
+      await controller.applyEvent({
+        type: "message.part.updated",
+        properties: { part: makeTextPart("sess-a", "msg-a", "part-a", "answer") },
+      } as OpencodeEvent, "ws-a");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert.deepEqual(reports, [{
+        kind: "aggregate",
+        acceptedEventCount: 2,
+        rejectedByReason: { unknown_session: 1 },
+        storeCommitCount: 2,
+        firstObservedAt: "2026-07-30T12:00:00.000Z",
+        lastObservedAt: "2026-07-30T12:00:00.000Z",
+        reportedAt: "2026-07-30T12:00:00.000Z",
+      }]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("delivery evidence distinguishes a mismatched binding from an unknown session", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const rejected: string[] = [];
+      const { controller } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        onRunDeliveryRejected: (_sessionId, _workspaceId, reason) => rejected.push(reason),
+      });
+      await controller.applyEvent({
+        type: "message.updated",
+        properties: {
+          info: makeMessage("sess-a", "msg-a"),
+          vesloBinding: { workspaceId: "ws-b", opencodeSessionId: "sess-a", revision: "engine-b" },
+        },
+      } as OpencodeEvent, "ws-a");
+      await controller.applyEvent({
+        type: "message.updated",
+        properties: { info: makeMessage("unknown", "msg-unknown") },
+      } as OpencodeEvent, "ws-a");
+
+      assert.deepEqual(rejected, ["binding_workspace_mismatch", "unknown_session"]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("part-only assistant delivery records the placeholder as run-bound assistant evidence", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const observations: Array<{ committed: boolean; message?: { id: string; role?: string | null } }> = [];
+      const { controller } = makeController({
+        workspaceSessionIds: new Set(["sess-a"]),
+        onRunDeliveryAccepted: (_sessionId, _workspaceId, committed, message) => {
+          observations.push({ committed, message });
+        },
+      });
+
+      await controller.applyEvent({
+        type: "message.part.updated",
+        properties: { part: makeTextPart("sess-a", "msg-assistant", "part-a", "answer") },
+      } as OpencodeEvent, "ws-a");
+
+      assert.deepEqual(observations, [{
+        committed: true,
+        message: { id: "msg-assistant", role: "assistant" },
+      }]);
+    } finally {
+      dispose();
+    }
+  });
 });
 
 test("live stream readiness resolves only after OpenCode confirms the SSE connection", async () => {

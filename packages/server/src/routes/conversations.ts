@@ -8,6 +8,10 @@ import {
   type ConversationRunQueueReadableState,
   type ConversationRunQueueStore,
 } from "../conversation-run-queue-store.js";
+import {
+  DELIVERY_REJECTION_REASON_CODES,
+  type RunDeliverySnapshotStore,
+} from "../conversation-run-delivery-snapshot-store.js";
 import type {
   ConversationSubmitResolvedRunSubmitter,
   ConversationSubmitService,
@@ -138,6 +142,7 @@ export type ConversationSessionRouteDependencies = {
   transcriptIngestCoordinator: TranscriptIngestCoordinatorPort;
   conversationRunLifecycleController: ConversationRunLifecycleController;
   conversationRunQueueStore: ConversationRunQueueStore;
+  conversationRunDeliverySnapshotStore: RunDeliverySnapshotStore;
   conversationSubmitService: ConversationSubmitService;
   lifecycleClient: OrchestratorLifecycleClient | null;
   resolveConversationReadDirectory: ResolveConversationReadDirectory;
@@ -712,6 +717,7 @@ export function registerConversationSessionRoutes(
     transcriptIngestCoordinator,
     conversationRunLifecycleController,
     conversationRunQueueStore,
+    conversationRunDeliverySnapshotStore,
     conversationSubmitService,
     lifecycleClient,
     resolveConversationReadDirectory,
@@ -864,11 +870,12 @@ export function registerConversationSessionRoutes(
           resolvedRunInput,
           directory: target.directory,
         });
+        const runId = shortId();
         const result = await conversationRunLifecycleController.submitRun({
           runTrace,
           workspace,
           target,
-          runId: shortId(),
+          runId,
           kind,
           body,
           clientMessageId: request.clientMessageId,
@@ -1257,6 +1264,103 @@ export function registerConversationSessionRoutes(
       runtimeAuthorizationOrgId: runtimeAuthorizationBinding?.orgId ?? null,
     });
     return jsonResponse(result.payload, result.httpStatus);
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/runs/:runId/delivery", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
+    const conversationId = requireRouteParam(ctx.params, "conversationId", "conversationId");
+    const runId = requireRouteParam(ctx.params, "runId", "runId");
+    const snapshot = conversationRunDeliverySnapshotStore.get({
+      workspaceId: workspace.id,
+      conversationId,
+      runId,
+    });
+    return jsonResponse({
+      ok: true,
+      workspaceId: workspace.id,
+      conversationId,
+      runId,
+      status: snapshot?.recording ?? "not_recorded",
+      snapshot,
+    });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/conversations/:conversationId/runs/:runId/delivery/app-report", "client", async (ctx) => {
+    ensureWritable(ctx.config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveRouteWorkspace(ctx.config, ctx.params);
+    const conversationId = requireRouteParam(ctx.params, "conversationId", "conversationId");
+    const runId = requireRouteParam(ctx.params, "runId", "runId");
+    const body = await readJsonBody(ctx.request);
+    const payload = body && typeof body === "object" && !Array.isArray(body)
+      ? body as Record<string, unknown>
+      : null;
+    if (!payload) throw new ApiError(400, "invalid_payload", "Run delivery app report must be an object");
+    const kind = optionalBodyString(payload, "kind");
+    if (kind === "aggregate") {
+      const count = (key: string) => {
+        const value = payload[key];
+        return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000
+          ? value
+          : null;
+      };
+      const acceptedEventCount = count("acceptedEventCount");
+      const storeCommitCount = count("storeCommitCount");
+      if (acceptedEventCount === null || storeCommitCount === null) {
+        throw new ApiError(400, "invalid_payload", "Aggregate counts must be non-negative integers");
+      }
+      const rawReasons = payload.rejectedByReason;
+      const rejectedByReason: Record<string, number> = {};
+      if (rawReasons && (typeof rawReasons !== "object" || Array.isArray(rawReasons))) {
+        throw new ApiError(400, "invalid_payload", "rejectedByReason must be an object");
+      }
+      for (const reason of DELIVERY_REJECTION_REASON_CODES) {
+        const value = rawReasons && typeof rawReasons === "object"
+          ? (rawReasons as Record<string, unknown>)[reason]
+          : undefined;
+        if (value === undefined) continue;
+        if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 1_000_000) {
+          throw new ApiError(400, "invalid_payload", "rejectedByReason contains an invalid count");
+        }
+        if (value > 0) rejectedByReason[reason] = value;
+      }
+      const snapshot = conversationRunDeliverySnapshotStore.reportApp({
+        workspaceId: workspace.id,
+        conversationId,
+        runId,
+        acceptedEventCount,
+        storeCommitCount,
+        rejectedByReason,
+        firstObservedAt: optionalBodyString(payload, "firstObservedAt") || undefined,
+        lastObservedAt: optionalBodyString(payload, "lastObservedAt") || undefined,
+        reportedAt: optionalBodyString(payload, "reportedAt") || undefined,
+      });
+      if (!snapshot) throw new ApiError(404, "run_delivery_not_found", "Run delivery snapshot was not found");
+      return jsonResponse({ ok: true, status: snapshot.recording }, 202);
+    }
+    if (kind === "terminal") {
+      const hydration = optionalBodyString(payload, "hydration");
+      const presentation = optionalBodyString(payload, "presentation");
+      if (
+        (hydration && !["not_attempted", "adopted", "skipped", "failed"].includes(hydration)) ||
+        (presentation && !["visible_output", "hidden_progress", "no_visible_output", "unknown"].includes(presentation)) ||
+        (!hydration && !presentation) ||
+        Object.hasOwn(payload, "lifecycle") ||
+        Object.hasOwn(payload, "canonicalRecovery")
+      ) throw new ApiError(400, "invalid_payload", "Terminal report contains an invalid state");
+      const snapshot = conversationRunDeliverySnapshotStore.reportTerminal({
+        workspaceId: workspace.id,
+        conversationId,
+        runId,
+        hydration: hydration as "not_attempted" | "adopted" | "skipped" | "failed" | undefined,
+        presentation: presentation as "visible_output" | "hidden_progress" | "no_visible_output" | "unknown" | undefined,
+        reportedAt: optionalBodyString(payload, "reportedAt") || undefined,
+      });
+      if (!snapshot) throw new ApiError(404, "run_delivery_not_found", "Run delivery snapshot was not found");
+      return jsonResponse({ ok: true, status: snapshot.recording }, 202);
+    }
+    throw new ApiError(400, "invalid_payload", "Run delivery app report kind must be aggregate or terminal");
   });
 
   addRoute(routes, "GET", "/workspace/:id/conversations/:conversationId/queue", "client", async (ctx) => {

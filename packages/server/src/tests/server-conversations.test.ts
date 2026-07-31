@@ -5351,6 +5351,28 @@ describe("conversation routes", () => {
     expect(submitRequest).toBeDefined();
     expect(submitRequest?.conversationRunId).toBe(runIdFromRegister);
 
+    const deliveryResponse = await fetch(
+      `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/${encodeURIComponent(runIdFromRegister)}/delivery`,
+      { headers: { Authorization: "Bearer client-token" } },
+    );
+    expect(deliveryResponse.status).toBe(200);
+    const deliveryPayload = await deliveryResponse.json() as {
+      status: string;
+      snapshot: {
+        traceId: string | null;
+        opencodeSessionId: string | null;
+        runId: string;
+        router: { sessionBoundEventCount: number };
+      } | null;
+    };
+    expect(deliveryPayload.status).toBe("recorded");
+    expect(deliveryPayload.snapshot).toMatchObject({
+      traceId: "send-trace-abc",
+      opencodeSessionId: "sess-created",
+      runId: runIdFromRegister,
+      router: { sessionBoundEventCount: 0 },
+    });
+
     const statusResponse = await fetch(
       `http://127.0.0.1:${server.port}/workspace/ws_1/conversations/${encodeURIComponent(created.conversationId)}/runs/latest`,
       { headers: { Authorization: "Bearer client-token" } },

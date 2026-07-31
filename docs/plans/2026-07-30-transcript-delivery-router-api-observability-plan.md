@@ -4,7 +4,7 @@ status: proposed
 done: false
 date: 2026-07-30
 scope: prompt_async run diagnostics only; server, orchestrator router, existing app projection boundaries, and headless service-chain verification
-runtime_code_changed: false
+runtime_code_changed: true
 e2e_required: false
 related:
   - docs/plans/2026-07-24-vslo-282-duplicate-transcript-premature-terminal-recovery-plan.md
@@ -120,6 +120,7 @@ type RunDeliverySnapshotV1 = {
   traceId: string | null // existing valid send correlation, not a new authority
   opencodeSessionId: string | null
   engineOwnerId: string | null
+  engineGenerationId: string | null // one-way fingerprint of owner, pid, start time, and base URL
   directoryInstanceEpoch: number | null
 
   admission: { acceptedAt: string; dispatchObservedAt?: string }
@@ -170,6 +171,8 @@ other_allowlisted_rejection
 
 It never stores transcript text, prompts, tool arguments/output, raw OpenCode
 event bodies, engine URLs, local paths, MCP URLs/headers, tokens, or raw config.
+`engineGenerationId` is a one-way digest used only to reject a replacement
+process; it is not an engine URL or a second lifecycle identity.
 The existing engine/Skill/config correlation remains in its existing traces;
 Phase 1 stores only exact run/session/generation identity needed to diagnose
 delivery.
@@ -202,25 +205,27 @@ work, or `incomplete` where an optional reporter was unavailable. It has no
 cursor, no stream endpoint, no generic query language, and no transcript
 payload.
 
-There is one authenticated internal upsert contract. The server validates the
-exact run/session/generation relationship, allowlists fields and reasons, and
-performs the bounded merge. Router and app callers remain thin. An invalid,
-late, or replacement-generation report is ignored or recorded only as the
-allowlisted rejection count; it cannot change lifecycle state.
+The router uses one authenticated internal aggregate contract. The app uses a
+separate narrow collaborator-authenticated aggregate/terminal report route;
+neither is a generic upsert API. The orchestrator binds router observations to
+the exact active run/session/full engine generation before reporting. The
+server allowlists fields and reasons and performs the bounded merge. An
+invalid, late, or replacement-generation report cannot change lifecycle state.
 
 ## Implementation slices
 
 ### RDS00 — existing-field map and snapshot store
 
-State: proposed
+State: implemented and focused-tested
 
 1. Produce the field map described above from live source contracts and remove
    any proposed field already available through a stable existing trace/read.
 2. Add the one bounded server snapshot store, retention policy, internal upsert
    validator, and diagnostic read endpoint.
-3. Create the snapshot only after the server accepts a `prompt_async` run.
-   Bind the existing run/session/client-message identities; legacy runs return
-   `not_recorded`.
+3. Create the snapshot at successful lifecycle admission, before upstream
+   dispatch. This is still a server-owned accepted run, and lets an early
+   router event bind without waiting for the submit response. Bind the existing
+   run/session/client-message identities; legacy runs return `not_recorded`.
 4. Add focused tests for authorization, cross-workspace rejection, redaction,
    cap/TTL eviction, idempotent merge, and unavailable-store fail-open behavior.
 
@@ -229,7 +234,7 @@ changing any OpenCode request, engine, configuration, or transcript write.
 
 ### RDS01 — router and app aggregates
 
-State: proposed
+State: implemented and focused-tested
 
 1. Extend the existing safe router observer with an internal aggregate update
    when it sees a session-bearing SSE event that the server can bind to the
@@ -238,8 +243,8 @@ State: proposed
 2. Record engine owner/session binding and dispatch observation from existing
    run-owner/proxy seams. A generic stream connection remains unowned by a run.
 3. Add local counters in the existing app event-stream/projection owners. Flush
-   the three bounded aggregate reports only at their established boundaries;
-   do not report individual message or part events.
+   bounded aggregates only at their established boundaries; do not report
+   individual message or part events.
 4. Keep unknown-session rejection fail-closed and report its reason. Do not add
    foreground fallback behavior to make a counter look healthier.
 5. Let terminal lifecycle recovery add the final canonical/hydration/presentation
@@ -251,7 +256,7 @@ order of all events.
 
 ### RDS02 — focused verification
 
-State: proposed
+State: headless coverage implemented; manual desktop acceptance pending
 
 Use the existing compiled server + orchestrator + fake-OpenCode integration
 oracle. Extend the fake service to emit a deterministic cold-start sequence:
@@ -277,14 +282,6 @@ Keep renderer verification focused and separate:
 - one real desktop manual acceptance run verifies "first message, early events,
   visible assistant output" before this plan may be marked done. It is not an
   automated Tauri Pilot deliverable in this plan.
-
-<!-- Superseded malformed rendering kept only to make this text replacement
-     non-destructive in the dirty worktree; remove with the next plan edit.
-- one real desktop manual acceptance run verifies “first message, early events,
-  visible assistant output” before this plan may be marked done. It is not an
-  automated Tauri Pilot deliverable in this plan.
-
--->
 
 The headless fixture is deliberately not a Skills/Soul/MCP omnibus test.
 Existing configuration and runtime compatibility tests remain required gates;
@@ -346,10 +343,12 @@ reason to block this small evidence slice.
    false global event order.
 5. Retention, size limits, report count, and unavailable-store behavior follow
    the locked policy above and cannot create retry/IPC pressure.
-6. The headless real server + orchestrator test covers cold admission, early
-   events, binding mismatch, terminal recovery, and generation loss.
+6. The headless real server + orchestrator test covers cold admission, an
+   early session event, canonical-recovery unavailability, and engine-loss /
+   replacement-generation fencing through exact run/session/generation binding.
 7. Focused app tests cover aggregate acceptance/rejection, store commit, and
-   presentation classification; one real desktop run verifies visible output.
+   presentation classification. One real desktop manual run still verifies
+   the final visible-output claim before this plan may be marked done.
 8. The slice does not change transcript authority, event authorization,
    pre-admission navigation/session behavior, Skills/Soul/MCP ownership, or
    engine/configuration lifecycle.

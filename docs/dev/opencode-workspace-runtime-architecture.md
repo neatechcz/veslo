@@ -481,6 +481,55 @@ candidate is usable only when its operation-specific schema and exact
 workspace-directory/session scope are readable. A stale or empty local
 `.opencode/opencode.db` therefore cannot shadow the valid global database.
 
+### Run delivery diagnostics
+
+An admitted local `prompt_async` run has one optional, bounded server-owned
+delivery snapshot. It joins existing run identity with three observations:
+the router's count of session-bearing events, the app's aggregated
+acceptance/store commits, and the terminal recovery/presentation result. It is
+diagnostic evidence only: it neither stores transcript content nor replaces
+OpenCode's canonical transcript, lifecycle ownership, live SSE, or terminal
+hydration.
+
+The snapshot is created at lifecycle admission, before the OpenCode dispatch,
+so early events can be observed without waiting for the submit response. A
+router observation is accepted only for an active run whose workspace,
+OpenCode session, and full engine generation match exactly. The snapshot keeps
+only a one-way generation fingerprint, never an engine URL; a report from a
+replacement process marks the old diagnostic incomplete without increasing its
+event count. Unknown or late events remain unbound; they are never assigned
+from the selected conversation.
+The app may report one early aggregate and one final aggregate upsert, followed
+by one terminal presentation outcome per run, all best effort and without
+retries. It may report only renderer-owned hydration and presentation;
+lifecycle and canonical-recovery values are server-owned and the app-report
+API rejects them. Presentation is calculated only from assistant message IDs
+observed while that exact run was active, so a visible older turn cannot
+satisfy a later run. If no run-bound assistant message was observed,
+presentation is `unknown`, not a claim that output was missing.
+
+The server records a terminal lifecycle even when canonical transcript recovery
+cannot start, with recovery `unavailable`. Router observations are flushed per
+run on its terminal session event, while normal proxy teardown flushes any
+remaining runs on that stream. Each snapshot merge is one SQLite transaction
+and diagnostics are bounded for both terminal and non-terminal runs. A
+competing diagnostic SQLite writer fails fast on its short bounded lock timeout
+instead of waiting for the normal send timeout.
+`recorded` means that the server persisted its snapshot; a
+missing optional app/router section is explicit absence of that observer, not
+proof that the observer successfully reported. Snapshot-write failures do not
+change the semantic sending, routing, transcript-ingest, or rendering result.
+
+Developers can inspect the bounded result through:
+
+`GET /workspace/:id/conversations/:conversationId/runs/:runId/delivery`
+
+The endpoint is read-only and non-starting. It returns `not_recorded` for a
+legacy/no-diagnostic run and `incomplete` when a surviving snapshot could not
+record every optional stage. The store retains at most 64 terminal snapshots
+per workspace for seven days and contains no prompt text, transcript parts,
+local paths, URLs, tool payloads, or credentials.
+
 The orchestrator treats `session_idle`, missing engine state, and a session or
 message `404` as observations rather than successful terminality. A fresh
 `prompt_async` run receives a separate OpenCode-compatible ascending

@@ -55,6 +55,20 @@ function createMemoryRunStore(): RunStore {
         .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
     },
 
+    activeForEngineSession(input) {
+      return [...records.values()]
+        .filter((record) =>
+          record.workspaceId === input.workspaceId &&
+          record.engineSessionId === input.engineSessionId &&
+          record.engineOwnerId === input.engineOwnerId &&
+          record.enginePid === input.enginePid &&
+          record.engineStartedAt === input.engineStartedAt &&
+          record.engineBaseUrl === input.engineBaseUrl &&
+          isActiveRunStatus(record.status)
+        )
+        .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null;
+    },
+
     hasActiveForWorkspace(workspaceId, createdSince) {
       return [...records.values()].some((record) =>
         record.workspaceId === workspaceId &&

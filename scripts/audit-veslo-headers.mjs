@@ -113,6 +113,11 @@ const allowRules = [
     tokens: ["X-Veslo-Orchestrator-Token"],
   },
   {
+    path: "packages/orchestrator/src/run-delivery-snapshot-notifier.ts",
+    reason: "orchestrator run-delivery callback auth boundary",
+    tokens: ["X-Veslo-Orchestrator-Token"],
+  },
+  {
     path: "packages/server/src/den-catalog.ts",
     reason: "Den catalog connector protocol boundary",
     tokens: ["x-veslo-den-token", "x-veslo-connector-token", "x-veslo-connector"],

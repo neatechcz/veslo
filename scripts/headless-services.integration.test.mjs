@@ -84,6 +84,48 @@ async function waitForQueuedRunStatus(runtime, workspace, conversationId, queueI
   throw new Error(`Timed out waiting for queued run ${queueItemId} to become ${expectedStatus}`);
 }
 
+async function runStatus(runtime, workspace, conversationId, runId) {
+  return await requestJson(
+    runtime,
+    `/workspace/${encodeURIComponent(workspace.id)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runId)}`,
+    { headers: { Authorization: `Bearer ${runtime.token}` } },
+  );
+}
+
+async function waitForRunStatus(runtime, workspace, conversationId, runId, expectedStatus, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await runStatus(runtime, workspace, conversationId, runId);
+    if (result.response.status === 200 && result.body?.status === expectedStatus) return result;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+  throw new Error(`Timed out waiting for run ${runId} to become ${expectedStatus}`);
+}
+
+async function daemonWorkspaceEngine(runtime) {
+  const response = await fetch(`${runtime.daemonUrl}/health`);
+  const body = await response.json().catch(() => null);
+  assert.equal(response.status, 200);
+  const engine = body?.engines?.find((candidate) => candidate?.workspaceId === runtime.workspaceId);
+  assert.equal(typeof engine?.engineOwnerId, "string");
+  assert.equal(typeof engine?.pid, "number");
+  assert.equal(typeof engine?.spawnedAt, "number");
+  assert.equal(typeof engine?.baseUrl, "string");
+  return engine;
+}
+
+async function waitForDeliverySnapshot(runtime, path, predicate, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await requestJson(runtime, path, {
+      headers: { Authorization: `Bearer ${runtime.token}` },
+    });
+    if (result.response.status === 200 && predicate(result.body?.snapshot)) return result;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+  throw new Error(`Timed out waiting for delivery snapshot ${path}`);
+}
+
 async function readFakeRequests(runtime) {
   const text = await readFile(runtime.logs.fakeLog, "utf8");
   return text.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
@@ -401,6 +443,277 @@ test("headless services exercise server, orchestrator daemon, and engine proxy a
     assert.match(orchestratorTrace, /orchestrator:workspace-resolve:done/);
     assert.match(orchestratorTrace, /orchestrator:engine-spawned/);
     assert.match(orchestratorTrace, /orchestrator:proxy-upstream:done/);
+    preserve = false;
+  } catch (error) {
+    throw preservedRuntimeError(runtime, error);
+  } finally {
+    await runtime.close({ preserve });
+  }
+});
+
+test("headless services join one early session event to its exact run delivery snapshot", { timeout: 90_000 }, async () => {
+  const runtime = await startHeadlessDaemonServices({ fakeMode: "event-sequence" });
+  let preserve = true;
+  try {
+    const workspace = await activeWorkspace(runtime);
+    const clientMessageId = "service-gate-delivery-snapshot";
+    const submittedPromise = submitFirstMessage(runtime, workspace, clientMessageId);
+    await waitForFakeRequest(runtime, (entry) =>
+      entry.method === "POST" && /\/prompt_async$/.test(entry.path) && entry.traceId === "service-gate-first-submit");
+
+    const stream = await fetch(
+      `${runtime.baseUrl}/workspace/${encodeURIComponent(workspace.id)}/opencode/event?directory=${encodeURIComponent(runtime.workspace)}`,
+      { headers: { Authorization: `Bearer ${runtime.token}` } },
+    );
+    assert.equal(stream.status, 200);
+    const streamText = await stream.text();
+    const submitted = await submittedPromise;
+    assert.equal(submitted.response.status, 200);
+    assert.equal(submitted.body?.status, "submitted");
+    assert.match(streamText, /vesloBinding/);
+    assert.match(streamText, new RegExp(submitted.body.opencodeSessionId));
+
+    const deliveryPath = `/workspace/${encodeURIComponent(workspace.id)}/conversations/${encodeURIComponent(submitted.body.conversationId)}/runs/${encodeURIComponent(submitted.body.runId)}/delivery`;
+    const routerObservationPath = "/internal/orchestrator/run-delivery-snapshot/router-observed";
+    const unauthorizedRouterObservation = await requestJson(runtime, routerObservationPath, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Veslo-Orchestrator-Token": "wrong-token" },
+      body: JSON.stringify({ schema: "veslo-run-delivery-snapshot/v1" }),
+    });
+    assert.equal(unauthorizedRouterObservation.response.status, 401);
+    const malformedRouterObservation = await requestJson(runtime, routerObservationPath, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Veslo-Orchestrator-Token": runtime.lifecycleToken,
+      },
+      body: JSON.stringify({ schema: "veslo-run-delivery-snapshot/v1", eventCount: 0 }),
+    });
+    assert.equal(malformedRouterObservation.response.status, 400);
+    const beforeApp = await requestJson(runtime, deliveryPath, {
+      headers: { Authorization: `Bearer ${runtime.token}` },
+    });
+    assert.equal(beforeApp.response.status, 200);
+    assert.equal(beforeApp.body?.status, "recorded");
+    assert.equal(beforeApp.body?.snapshot?.opencodeSessionId, submitted.body.opencodeSessionId);
+    assert.equal(beforeApp.body?.snapshot?.router?.sessionBoundEventCount, 1);
+    assert.equal(typeof beforeApp.body?.snapshot?.engineOwnerId, "string");
+
+    const appReportPath = `${deliveryPath}/app-report`;
+    const aggregate = await requestJson(runtime, appReportPath, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${runtime.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "aggregate",
+        acceptedEventCount: 1,
+        storeCommitCount: 1,
+        rejectedByReason: { duplicate_event: 1 },
+        firstObservedAt: "2026-07-30T10:00:00.000Z",
+        lastObservedAt: "2026-07-30T10:00:01.000Z",
+      }),
+    });
+    assert.equal(aggregate.response.status, 202);
+    const terminal = await requestJson(runtime, appReportPath, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${runtime.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "terminal", hydration: "adopted", presentation: "visible_output" }),
+    });
+    assert.equal(terminal.response.status, 202);
+    const forgedServerTerminal = await requestJson(runtime, appReportPath, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${runtime.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "terminal",
+        lifecycle: "completed",
+        canonicalRecovery: "recovered",
+        hydration: "adopted",
+      }),
+    });
+    assert.equal(forgedServerTerminal.response.status, 400);
+
+    const delivery = await requestJson(runtime, deliveryPath, {
+      headers: { Authorization: `Bearer ${runtime.token}` },
+    });
+    assert.equal(delivery.response.status, 200);
+    assert.deepEqual(delivery.body?.snapshot?.app, {
+      acceptedEventCount: 1,
+      rejectedEventCount: 1,
+      rejectedByReason: { duplicate_event: 1 },
+      storeCommitCount: 1,
+      firstObservedAt: "2026-07-30T10:00:00.000Z",
+      lastObservedAt: "2026-07-30T10:00:01.000Z",
+      reportedAt: delivery.body?.snapshot?.app?.reportedAt,
+    });
+    assert.equal(delivery.body?.snapshot?.terminal?.hydration, "adopted");
+    assert.equal(delivery.body?.snapshot?.terminal?.presentation, "visible_output");
+    preserve = false;
+  } catch (error) {
+    throw preservedRuntimeError(runtime, error);
+  } finally {
+    await runtime.close({ preserve });
+  }
+});
+
+test("headless services flush terminal router evidence before a long-lived SSE stream closes", { timeout: 90_000 }, async () => {
+  const runtime = await startHeadlessDaemonServices({ fakeMode: "event-terminal-hold" });
+  let preserve = true;
+  const streamAbort = new AbortController();
+  try {
+    const workspace = await activeWorkspace(runtime);
+    const submittedPromise = submitFirstMessage(runtime, workspace, "service-gate-delivery-terminal-flush");
+    await waitForFakeRequest(runtime, (entry) =>
+      entry.method === "POST" && /\/prompt_async$/.test(entry.path) && entry.traceId === "service-gate-first-submit");
+
+    const stream = await fetch(
+      `${runtime.baseUrl}/workspace/${encodeURIComponent(workspace.id)}/opencode/event?directory=${encodeURIComponent(runtime.workspace)}`,
+      { headers: { Authorization: `Bearer ${runtime.token}` }, signal: streamAbort.signal },
+    );
+    assert.equal(stream.status, 200);
+    const reader = stream.body?.getReader();
+    assert.ok(reader);
+    const firstEvent = await reader.read();
+    assert.equal(firstEvent.done, false);
+
+    const submitted = await submittedPromise;
+    assert.equal(submitted.response.status, 200);
+    const deliveryPath = `/workspace/${encodeURIComponent(workspace.id)}/conversations/${encodeURIComponent(submitted.body.conversationId)}/runs/${encodeURIComponent(submitted.body.runId)}/delivery`;
+    const delivery = await waitForDeliverySnapshot(
+      runtime,
+      deliveryPath,
+      (snapshot) => snapshot?.router?.sessionBoundEventCount === 1,
+    );
+    assert.equal(delivery.body?.snapshot?.router?.sessionBoundEventCount, 1);
+    assert.equal(firstEvent.done, false, "the fixture keeps the SSE response open until the client aborts it");
+    preserve = false;
+  } catch (error) {
+    throw preservedRuntimeError(runtime, error);
+  } finally {
+    streamAbort.abort();
+    await runtime.close({ preserve });
+  }
+});
+
+test("headless services flush each run on one long-lived workspace event stream", { timeout: 90_000 }, async () => {
+  const runtime = await startHeadlessDaemonServices({ fakeMode: "event-terminal-hold" });
+  let preserve = true;
+  const streamAbort = new AbortController();
+  try {
+    const workspace = await activeWorkspace(runtime);
+    const firstId = "service-gate-delivery-stream-run-a";
+    const firstBody = submitBody(runtime, firstId);
+    firstBody.target.pendingClientSessionId = firstId;
+    const firstPromise = submitFirstMessage(runtime, workspace, firstId, firstBody);
+    await waitForFakeRequest(runtime, (entry, entries) =>
+      entries.filter((candidate) => candidate.method === "POST" && /\/prompt_async$/.test(candidate.path)).length >= 1);
+
+    // Event streams are non-starting. Open the one shared stream only after
+    // the first submit has cold-started the workspace engine.
+    const stream = await fetch(
+      `${runtime.baseUrl}/workspace/${encodeURIComponent(workspace.id)}/opencode/event?directory=${encodeURIComponent(runtime.workspace)}`,
+      { headers: { Authorization: `Bearer ${runtime.token}` }, signal: streamAbort.signal },
+    );
+    assert.equal(stream.status, 200);
+    const reader = stream.body?.getReader();
+    assert.ok(reader);
+
+    const secondId = "service-gate-delivery-stream-run-b";
+    const secondBody = submitBody(runtime, secondId);
+    secondBody.target.pendingClientSessionId = secondId;
+    const secondPromise = submitFirstMessage(runtime, workspace, secondId, secondBody);
+    await waitForFakeRequest(runtime, (entry, entries) =>
+      entries.filter((candidate) => candidate.method === "POST" && /\/prompt_async$/.test(candidate.path)).length >= 2);
+
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    assert.equal(first.response.status, 200);
+    assert.equal(second.response.status, 200);
+    assert.notEqual(first.body?.runId, second.body?.runId);
+    await reader.read();
+
+    const deliveryPath = (submitted) =>
+      `/workspace/${encodeURIComponent(workspace.id)}/conversations/${encodeURIComponent(submitted.body.conversationId)}/runs/${encodeURIComponent(submitted.body.runId)}/delivery`;
+    const [firstDelivery, secondDelivery] = await Promise.all([
+      waitForDeliverySnapshot(runtime, deliveryPath(first), (snapshot) => snapshot?.router?.sessionBoundEventCount === 1),
+      waitForDeliverySnapshot(runtime, deliveryPath(second), (snapshot) => snapshot?.router?.sessionBoundEventCount === 1),
+    ]);
+    assert.equal(firstDelivery.body?.snapshot?.router?.sessionBoundEventCount, 1);
+    assert.equal(secondDelivery.body?.snapshot?.router?.sessionBoundEventCount, 1);
+    preserve = false;
+  } catch (error) {
+    throw preservedRuntimeError(runtime, error);
+  } finally {
+    streamAbort.abort();
+    await runtime.close({ preserve });
+  }
+});
+
+test("headless services fence an old delivery snapshot after its engine is replaced", { timeout: 90_000 }, async () => {
+  const runtime = await startHeadlessDaemonServices({ fakeMode: "event-sequence", faultInjection: true });
+  let preserve = true;
+  try {
+    const workspace = await activeWorkspace(runtime);
+    const firstPromise = submitFirstMessage(runtime, workspace, "service-gate-delivery-generation-old");
+    await waitForFakeRequest(runtime, (entry) =>
+      entry.method === "POST" && /\/prompt_async$/.test(entry.path) && entry.traceId === "service-gate-first-submit");
+    const stream = await fetch(
+      `${runtime.baseUrl}/workspace/${encodeURIComponent(workspace.id)}/opencode/event?directory=${encodeURIComponent(runtime.workspace)}`,
+      { headers: { Authorization: `Bearer ${runtime.token}` } },
+    );
+    assert.equal(stream.status, 200);
+    await stream.text();
+    const first = await firstPromise;
+    assert.equal(first.response.status, 200);
+    const oldEngine = await daemonWorkspaceEngine(runtime);
+    const oldDeliveryPath = `/workspace/${encodeURIComponent(workspace.id)}/conversations/${encodeURIComponent(first.body.conversationId)}/runs/${encodeURIComponent(first.body.runId)}/delivery`;
+    const beforeLoss = await requestJson(runtime, oldDeliveryPath, { headers: { Authorization: `Bearer ${runtime.token}` } });
+    assert.equal(beforeLoss.body?.snapshot?.router?.sessionBoundEventCount, 1);
+
+    const killed = await fetch(`${runtime.daemonUrl}/e2e/workspace/${encodeURIComponent(runtime.workspaceId)}/kill-child`, {
+      method: "POST",
+    });
+    assert.equal(killed.status, 202);
+    const terminal = await waitForRunStatus(runtime, workspace, first.body.conversationId, first.body.runId, "failed");
+    assert.equal(terminal.body?.status, "failed");
+    const terminalDelivery = await waitForDeliverySnapshot(
+      runtime,
+      oldDeliveryPath,
+      (snapshot) => snapshot?.terminal?.lifecycle === "failed",
+      20_000,
+    );
+    assert.equal(terminalDelivery.body?.snapshot?.terminal?.canonicalRecovery, "unavailable");
+
+    const second = await submitFirstMessage(runtime, workspace, "service-gate-delivery-generation-new");
+    assert.equal(second.response.status, 200);
+    const replacementEngine = await daemonWorkspaceEngine(runtime);
+    assert.notEqual(replacementEngine.pid, oldEngine.pid);
+    assert.notEqual(replacementEngine.spawnedAt, oldEngine.spawnedAt);
+
+    const staleReport = await requestJson(runtime, "/internal/orchestrator/run-delivery-snapshot/router-observed", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Veslo-Orchestrator-Token": runtime.lifecycleToken,
+      },
+      body: JSON.stringify({
+        schema: "veslo-run-delivery-snapshot/v1",
+        workspaceId: workspace.id,
+        conversationId: first.body.conversationId,
+        runId: first.body.runId,
+        opencodeSessionId: first.body.opencodeSessionId,
+        engineOwnerId: replacementEngine.engineOwnerId,
+        enginePid: replacementEngine.pid,
+        engineStartedAt: replacementEngine.spawnedAt,
+        engineBaseUrl: replacementEngine.baseUrl,
+        eventCount: 1,
+        firstObservedAt: "2026-07-30T11:00:00.000Z",
+        lastObservedAt: "2026-07-30T11:00:00.000Z",
+      }),
+    });
+    assert.equal(staleReport.response.status, 202);
+
+    const afterReplacement = await requestJson(runtime, oldDeliveryPath, { headers: { Authorization: `Bearer ${runtime.token}` } });
+    assert.equal(afterReplacement.body?.status, "incomplete");
+    assert.equal(afterReplacement.body?.snapshot?.router?.sessionBoundEventCount, 1);
+    assert.equal(afterReplacement.body?.snapshot?.engineGenerationId, beforeLoss.body?.snapshot?.engineGenerationId);
     preserve = false;
   } catch (error) {
     throw preservedRuntimeError(runtime, error);

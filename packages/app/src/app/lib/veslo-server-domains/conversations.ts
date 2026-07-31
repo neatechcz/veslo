@@ -7,6 +7,7 @@ import type {
   VesloConversationList,
   VesloConversationRunInput,
   VesloConversationRunResult,
+  VesloConversationRunDeliveryAppReport,
   VesloConversationRunStatusResult,
   VesloConversationQueueItem,
   VesloConversationQueueList,
@@ -230,6 +231,17 @@ export function createConversationsClient(context: ConversationsClientContext) {
         `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runId)}`,
         { token, hostToken, timeoutMs: timeouts.status },
       ),
+
+    reportRunDelivery: (
+      workspaceId: string,
+      conversationId: string,
+      runId: string,
+      report: VesloConversationRunDeliveryAppReport,
+    ) => requestJson<{ ok: boolean; status: "recorded" | "incomplete" }>(
+      baseUrl,
+      `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runId)}/delivery/app-report`,
+      { token, hostToken, method: "POST", body: report, timeoutMs: timeouts.status },
+    ),
 
     listQueue: (
       workspaceId: string,

@@ -1369,6 +1369,16 @@ export default function App() {
           }));
       }
     },
+    reportConversationRunDelivery: async (scope, report) => {
+      const client = vesloServerClient();
+      if (!client || vesloServerStatus() !== "connected") return;
+      await client.reportConversationRunDelivery(
+        scope.workspaceId,
+        scope.conversationId,
+        scope.runId,
+        report,
+      );
+    },
     selectedSessionId,
     setSelectedSessionId,
     directoryQueryPathMode,

@@ -236,6 +236,22 @@ describe("run store", () => {
     });
     expect(store.activeForEngineOwner("ws-a").map((item) => item.runId)).toEqual(["run-engine-a"]);
     expect(store.activeForEngineOwner("shared-unsandboxed").map((item) => item.runId)).toEqual(["run-engine-b"]);
+    expect(store.activeForEngineSession({
+      workspaceId: "ws-a",
+      engineSessionId: "sess-engine-a",
+      engineOwnerId: "ws-a",
+      enginePid: 42,
+      engineStartedAt: 7_000,
+      engineBaseUrl: "http://127.0.0.1:5000",
+    })?.runId).toBe("run-engine-a");
+    expect(store.activeForEngineSession({
+      workspaceId: "ws-a",
+      engineSessionId: "sess-engine-a",
+      engineOwnerId: "ws-a",
+      enginePid: 42,
+      engineStartedAt: 7_001,
+      engineBaseUrl: "http://127.0.0.1:5000",
+    })).toBeNull();
   });
 
   test("migrates legacy workspace run records to a server-owned workspace id", async () => {

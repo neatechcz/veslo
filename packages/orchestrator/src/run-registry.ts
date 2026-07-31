@@ -57,6 +57,14 @@ export type RunLifecycleOwner = {
   get(workspaceId: string, runId: string): Promise<ReconciledRun | null>;
   latest(workspaceId: string, conversationId: string): Promise<ReconciledRun | null>;
   active(workspaceId: string, conversationId: string): Promise<ReconciledRun | null>;
+  activeForEngineSession(input: {
+    workspaceId: string;
+    engineSessionId: string;
+    engineOwnerId: string;
+    enginePid: number;
+    engineStartedAt: number;
+    engineBaseUrl: string;
+  }): RunRecord | null;
 };
 
 export class RunAlreadyActiveError extends Error {
@@ -470,6 +478,10 @@ export function createRunRegistry(deps: {
       if (!record) return null;
       const reconciled = await reconcile(record);
       return isTerminalRunStatus(reconciled.record.status) ? null : reconciled;
+    },
+
+    activeForEngineSession(input) {
+      return deps.store.activeForEngineSession(input);
     },
   };
 }
