@@ -114,6 +114,7 @@ export default {
   "feedback.description_label": "描述",
   "feedback.description_placeholder": "发生了什么、你期望什么、如何复现？",
   "feedback.technical_note": "Veslo 会自动附加当前屏幕和技术细节。",
+  "feedback.attach_diagnostics": "附加最近 10 分钟的本地诊断日志（最多 50 MB）。",
   "feedback.success_message": "错误报告已发送。YouTrack 任务：{issueId}。",
   "feedback.submit": "发送错误报告",
 

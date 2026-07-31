@@ -9,6 +9,7 @@ import {
 export type FeedbackFormValues = {
   title: string;
   description: string;
+  attachDiagnostics?: boolean;
 };
 
 export type FeedbackRuntimeContextDeps = {
@@ -31,6 +32,7 @@ export type FeedbackRuntimeContextDeps = {
 export type FeedbackSubmitInput = {
   title: string;
   description: string;
+  attachDiagnostics?: boolean;
   context: FeedbackRuntimeContext;
 };
 
@@ -130,6 +132,9 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
       const result = await submitReport({
         title: values.title,
         description: values.description,
+        ...(values.attachDiagnostics === undefined
+          ? {}
+          : { attachDiagnostics: values.attachDiagnostics }),
         context: buildContext(),
       });
 

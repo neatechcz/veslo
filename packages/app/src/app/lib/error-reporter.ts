@@ -10,6 +10,7 @@
  */
 
 import { captureReportedError } from "./error-monitoring";
+import { logUiEvent } from "./tauri";
 
 export type ErrorSeverity = "warning" | "error";
 
@@ -37,6 +38,11 @@ export function reportError(
   } else {
     console.warn(`[${context}]`, safeMessage(error));
   }
+  logUiEvent("reported-error", "application error reported", {
+    context,
+    severity,
+    message: safeMessage(error),
+  });
   try {
     captureReportedError(error, context, severity);
   } catch (captureError) {

@@ -10,6 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
+use crate::recent_diagnostic_ring::{RecentDiagnosticEvent, RecentDiagnosticRing};
 use crate::user_diagnostic_capture::{
     CaptureCloudContext, UserDiagnosticCapture, UserDiagnosticCaptureStatus,
 };
@@ -92,7 +93,9 @@ struct DebugLogEvent {
     payload: serde_json::Value,
 }
 
-pub struct DebugLogsForwarder {
+/// The single native owner for diagnostics that leave the desktop process.
+/// `DebugLogsForwarder` remains as a compatibility alias while callers migrate.
+pub struct DesktopDiagnosticsOwner {
     spool_dir: PathBuf,
     pending_path: PathBuf,
     install_id: String,
@@ -104,7 +107,10 @@ pub struct DebugLogsForwarder {
     write_lock: Mutex<()>,
     sequence: AtomicU64,
     user_capture: UserDiagnosticCapture,
+    recent_diagnostic_ring: RecentDiagnosticRing,
 }
+
+pub type DebugLogsForwarder = DesktopDiagnosticsOwner;
 
 #[derive(Debug)]
 enum PostBatchError {
@@ -463,7 +469,7 @@ fn sanitize_diagnostic_payload(payload: serde_json::Value) -> serde_json::Value 
     sanitize_diagnostic_value(None, payload)
 }
 
-impl DebugLogsForwarder {
+impl DesktopDiagnosticsOwner {
     pub fn new(spool_dir: PathBuf) -> Self {
         let _ = fs::create_dir_all(&spool_dir);
         let pending_path = spool_dir.join(PENDING_FILE);
@@ -480,6 +486,7 @@ impl DebugLogsForwarder {
             write_lock: Mutex::new(()),
             sequence: AtomicU64::new(0),
             user_capture: UserDiagnosticCapture::new(spool_dir.clone()),
+            recent_diagnostic_ring: RecentDiagnosticRing::new(spool_dir),
         }
     }
 
@@ -556,6 +563,24 @@ impl DebugLogsForwarder {
         self.user_capture
             .flush(self.user_capture_context_snapshot());
         self.user_diagnostic_capture_status()
+    }
+
+    pub fn create_feedback_diagnostic_snapshot(
+        &self,
+    ) -> Result<UserDiagnosticCaptureStatus, String> {
+        let context = self
+            .user_capture_context_snapshot()
+            .ok_or_else(|| "Sign in before attaching diagnostics to feedback".to_string())?;
+        self.user_capture
+            .create_feedback_snapshot(&context, &self.recent_diagnostic_ring)
+    }
+
+    pub fn queue_feedback_diagnostic_snapshot_for_delivery(
+        &self,
+        capture_id: &str,
+    ) -> Result<(), String> {
+        self.user_capture
+            .queue_feedback_snapshot_for_delivery(capture_id)
     }
 
     pub fn user_diagnostic_capture_status(&self) -> UserDiagnosticCaptureStatus {
@@ -652,6 +677,18 @@ impl DebugLogsForwarder {
             level,
             self.cloud_context_snapshot(),
         );
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
+        self.recent_diagnostic_ring.append(RecentDiagnosticEvent {
+            timestamp_ms,
+            sequence_no: self.sequence.load(Ordering::Relaxed).saturating_sub(1),
+            source: source.to_string(),
+            stream: stream.as_str().to_string(),
+            level: level.map(str::to_string),
+            line: sanitize_diagnostic_string(&trimmed, true),
+        });
         self.user_capture.observe(
             source,
             stream.as_str(),

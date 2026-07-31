@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7,9 +7,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::recent_diagnostic_ring::{RecentDiagnosticEvent, RecentDiagnosticRing};
+
 const JOURNAL_FILE: &str = "user-diagnostic-captures.json";
 const CAPTURE_DURATION_MS: u64 = 120_000;
 const CAPTURE_MAX_BYTES: u64 = 2 * 1024 * 1024;
+const FEEDBACK_SNAPSHOT_MAX_BYTES: u64 = 50 * 1024 * 1024;
 const CAPTURE_RETENTION_MS: u64 = 24 * 60 * 60 * 1000;
 const MAX_BATCH_BYTES: usize = 512 * 1024;
 const MAX_BATCH_EVENTS: usize = 1_000;
@@ -76,6 +79,10 @@ struct CaptureRecord {
     #[serde(default)]
     next_retry_at: Option<u64>,
     terminal_reason: Option<String>,
+    #[serde(default = "default_capture_kind")]
+    kind: String,
+    #[serde(default = "default_capture_max_bytes")]
+    max_bytes: u64,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -134,6 +141,14 @@ fn now_ns() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_nanos())
         .unwrap_or(0)
+}
+
+fn default_capture_kind() -> String {
+    "support-capture".to_string()
+}
+
+fn default_capture_max_bytes() -> u64 {
+    CAPTURE_MAX_BYTES
 }
 
 fn queue_path(spool_dir: &Path, capture_id: &str) -> PathBuf {
@@ -351,13 +366,14 @@ impl UserDiagnosticCapture {
         });
     }
 
-    fn serialize_event(
+    fn serialize_event_at(
         &self,
         record: &CaptureRecord,
         source: &str,
         stream: &str,
         level: Option<&str>,
         sequence_no: u64,
+        timestamp: u128,
         payload: serde_json::Value,
     ) -> Result<String, String> {
         serde_json::to_string(&CaptureEvent {
@@ -368,12 +384,32 @@ impl UserDiagnosticCapture {
             source: source.to_string(),
             stream: stream.to_string(),
             level: level.map(str::to_string),
-            timestamp: now_ns(),
+            timestamp,
             sequence_no,
             capture_id: record.capture_id.clone(),
             payload,
         })
         .map_err(|error| error.to_string())
+    }
+
+    fn serialize_event(
+        &self,
+        record: &CaptureRecord,
+        source: &str,
+        stream: &str,
+        level: Option<&str>,
+        sequence_no: u64,
+        payload: serde_json::Value,
+    ) -> Result<String, String> {
+        self.serialize_event_at(
+            record,
+            source,
+            stream,
+            level,
+            sequence_no,
+            now_ns(),
+            payload,
+        )
     }
 
     fn append_serialized_unlocked(
@@ -393,6 +429,7 @@ impl UserDiagnosticCapture {
     fn append_summary_unlocked(&self, record: &CaptureRecord) -> Result<usize, String> {
         let serialized = self.serialize_event(record, "Veslo user capture", "diagnostic", None, 0, serde_json::json!({
             "eventType": "user-capture:summary", "captureId": record.capture_id, "state": record.state,
+            "captureKind": record.kind,
             "capturedEvents": record.captured_events, "capturedBytes": record.captured_bytes,
             "droppedRetention": record.dropped_retention, "droppedBudget": record.dropped_budget,
             "droppedDelivery": record.dropped_delivery, "droppedIdentity": record.dropped_identity,
@@ -497,6 +534,8 @@ impl UserDiagnosticCapture {
             retry_attempts: 0,
             next_retry_at: None,
             terminal_reason: None,
+            kind: default_capture_kind(),
+            max_bytes: CAPTURE_MAX_BYTES,
         };
         if self.append_summary_unlocked(&record).is_err() {
             return Err("Could not create the diagnostic capture queue".to_string());
@@ -511,6 +550,165 @@ impl UserDiagnosticCapture {
         self.persist()?;
         drop(_queue);
         Ok(self.status())
+    }
+
+    pub fn create_feedback_snapshot(
+        &self,
+        context: &CaptureCloudContext,
+        ring: &RecentDiagnosticRing,
+    ) -> Result<UserDiagnosticCaptureStatus, String> {
+        if !Self::can_start_with_context(Some(context)) {
+            return Err("Sign in before attaching diagnostics to feedback".to_string());
+        }
+        let _queue = self
+            .queue_lock
+            .lock()
+            .map_err(|_| "capture queue lock poisoned".to_string())?;
+        self.finalize_expired_locked();
+        if self
+            .journal
+            .lock()
+            .ok()
+            .and_then(|journal| journal.latest.clone())
+            .is_some_and(|record| record.state == "active" || record.pending_events > 0)
+        {
+            return Err("The previous diagnostic capture is still active or queued".to_string());
+        }
+
+        let captured_at = now_ms();
+        let record = CaptureRecord {
+            capture_id: Uuid::new_v4().to_string(),
+            user_id: context.user_id.clone(),
+            org_id: context.org_id.clone(),
+            workspace_id: context.workspace_id.clone(),
+            started_at: captured_at,
+            ends_at: captured_at,
+            state: "snapshotting".to_string(),
+            captured_events: 0,
+            captured_bytes: 0,
+            pending_events: 0,
+            accepted_events: 0,
+            dropped_retention: 0,
+            dropped_budget: 0,
+            dropped_delivery: 0,
+            dropped_identity: 0,
+            retry_attempts: 0,
+            next_retry_at: None,
+            terminal_reason: None,
+            kind: "feedback-attachment".to_string(),
+            max_bytes: FEEDBACK_SNAPSHOT_MAX_BYTES,
+        };
+        if let Ok(mut completed) = self.recently_completed.lock() {
+            *completed = None;
+        }
+        if let Ok(mut journal) = self.journal.lock() {
+            journal.latest = Some(record.clone());
+        }
+        self.persist()?;
+
+        let capture_id = record.capture_id.clone();
+        let streamed = ring.for_each_recent(|event| {
+            self.append_feedback_snapshot_event(&capture_id, event);
+            Ok(())
+        });
+        if let Err(error) = streamed {
+            self.mark_undeliverable(&capture_id, "snapshot_read_failed");
+            let _ = self.persist();
+            return Err(error);
+        }
+
+        if self
+            .journal
+            .lock()
+            .ok()
+            .and_then(|journal| journal.latest.clone())
+            .is_some()
+        {
+            self.update_latest(&capture_id, |latest| {
+                latest.state = if latest.dropped_budget > 0 {
+                    "ready_with_truncation".to_string()
+                } else {
+                    "ready".to_string()
+                };
+                latest.terminal_reason =
+                    (latest.dropped_budget > 0).then(|| "byte_limit".to_string());
+            });
+            let summary = self
+                .journal
+                .lock()
+                .ok()
+                .and_then(|journal| journal.latest.clone());
+            if let Some(summary) = summary {
+                if self.append_summary_unlocked(&summary).is_ok() {
+                    self.update_latest(&capture_id, |latest| latest.pending_events += 1);
+                } else {
+                    self.mark_undeliverable(&capture_id, "summary_write_failed");
+                }
+            }
+        }
+        self.persist()?;
+        drop(_queue);
+        Ok(self.status())
+    }
+
+    fn append_feedback_snapshot_event(&self, capture_id: &str, event: RecentDiagnosticEvent) {
+        let record = self
+            .journal
+            .lock()
+            .ok()
+            .and_then(|journal| journal.latest.clone())
+            .filter(|record| record.capture_id == capture_id && record.state == "snapshotting");
+        let Some(record) = record else {
+            return;
+        };
+        let serialized = match self.serialize_event_at(
+            &record,
+            &event.source,
+            &event.stream,
+            event.level.as_deref(),
+            event.sequence_no,
+            (event.timestamp_ms as u128).saturating_mul(1_000_000),
+            serde_json::json!({ "line": event.line }),
+        ) {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        let event_bytes = (serialized.len() + 1) as u64;
+        if record.captured_bytes.saturating_add(event_bytes) > record.max_bytes {
+            self.update_latest(capture_id, |latest| latest.dropped_budget += 1);
+            return;
+        }
+        if self
+            .append_serialized_unlocked(&record, &serialized)
+            .is_ok()
+        {
+            self.update_latest(capture_id, |latest| {
+                latest.captured_events += 1;
+                latest.captured_bytes += event_bytes;
+                latest.pending_events += 1;
+            });
+        }
+    }
+
+    pub fn queue_feedback_snapshot_for_delivery(&self, capture_id: &str) -> Result<(), String> {
+        let _queue = self
+            .queue_lock
+            .lock()
+            .map_err(|_| "capture queue lock poisoned".to_string())?;
+        let record = self
+            .journal
+            .lock()
+            .ok()
+            .and_then(|journal| journal.latest.clone())
+            .filter(|record| {
+                record.capture_id == capture_id && record.kind == "feedback-attachment"
+            })
+            .ok_or_else(|| "Diagnostic feedback attachment was not found".to_string())?;
+        if !matches!(record.state.as_str(), "ready" | "ready_with_truncation") {
+            return Err("Diagnostic feedback attachment is not ready to send".to_string());
+        }
+        self.update_latest(capture_id, |latest| latest.state = "queued".to_string());
+        self.persist()
     }
 
     pub fn can_start_with_context(context: Option<&CaptureCloudContext>) -> bool {
@@ -569,7 +767,7 @@ impl UserDiagnosticCapture {
             Err(_) => return,
         };
         let event_bytes = (serialized.len() + 1) as u64;
-        if record.captured_bytes.saturating_add(event_bytes) > CAPTURE_MAX_BYTES {
+        if record.captured_bytes.saturating_add(event_bytes) > record.max_bytes {
             self.update_latest(&record.capture_id, |latest| {
                 latest.dropped_budget += 1;
                 latest.state = "budget_exhausted".to_string();
@@ -686,6 +884,187 @@ impl UserDiagnosticCapture {
         fs::rename(temporary, path).map_err(|error| error.to_string())
     }
 
+    fn write_feedback_remaining_unlocked(
+        &self,
+        path: &Path,
+        buffered: &[serde_json::Value],
+        lines: &mut Lines<BufReader<fs::File>>,
+    ) -> Result<u64, String> {
+        let temporary = path.with_extension("jsonl.tmp");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        let mut count = 0_u64;
+        for event in buffered {
+            writeln!(file, "{event}").map_err(|error| error.to_string())?;
+            count += 1;
+        }
+        for line in lines {
+            let line = line.map_err(|error| error.to_string())?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            writeln!(file, "{line}").map_err(|error| error.to_string())?;
+            count += 1;
+        }
+        fs::rename(temporary, path).map_err(|error| error.to_string())?;
+        Ok(count)
+    }
+
+    fn flush_feedback_snapshot_streaming<P>(
+        &self,
+        record: &CaptureRecord,
+        path: &Path,
+        context: &CaptureCloudContext,
+        poster: &mut P,
+    ) where
+        P: FnMut(&CaptureCloudContext, &PreparedBatch) -> Result<(), PostBatchError>,
+    {
+        let file = match fs::File::open(path) {
+            Ok(file) => file,
+            Err(_) => {
+                self.mark_undeliverable(&record.capture_id, "queue_read_failed");
+                let _ = self.persist();
+                return;
+            }
+        };
+        let mut lines = BufReader::new(file).lines();
+        let mut buffered = Vec::<serde_json::Value>::new();
+        let mut delivered = 0_u64;
+
+        loop {
+            let next = match lines.next() {
+                Some(Ok(line)) if !line.trim().is_empty() => Some(line),
+                Some(Ok(_)) => continue,
+                Some(Err(_)) => {
+                    self.mark_undeliverable(&record.capture_id, "queue_read_failed");
+                    let _ = self.persist();
+                    return;
+                }
+                None => None,
+            };
+            let is_final = next.is_none();
+            let event = match next {
+                Some(line) => match serde_json::from_str(&line) {
+                    Ok(event) => Some(event),
+                    Err(_) => {
+                        self.mark_undeliverable(&record.capture_id, "queue_corrupt");
+                        let _ = self.persist();
+                        return;
+                    }
+                },
+                None => None,
+            };
+
+            let mut candidate = buffered.clone();
+            if let Some(event) = event {
+                candidate.push(event);
+            }
+            if candidate.is_empty() {
+                break;
+            }
+            if let Err(reason) = validate_delivery_events(&candidate) {
+                self.reject_delivery(&record.capture_id, path, candidate.len() as u64, reason);
+                return;
+            }
+            let prepared = match prepare_batch(context, &record.capture_id, candidate.clone()) {
+                Ok(prepared) => prepared,
+                Err(reason) => {
+                    self.reject_delivery(&record.capture_id, path, candidate.len() as u64, reason);
+                    return;
+                }
+            };
+            let should_send = is_final
+                || candidate.len() > MAX_BATCH_EVENTS
+                || prepared.body.len() > MAX_BATCH_BYTES;
+            if !should_send {
+                buffered = candidate;
+                continue;
+            }
+
+            let (batch, remainder, failure_remaining) = if !is_final
+                && (candidate.len() > MAX_BATCH_EVENTS || prepared.body.len() > MAX_BATCH_BYTES)
+            {
+                let batch = match prepare_batch(context, &record.capture_id, buffered.clone()) {
+                    Ok(batch) => batch,
+                    Err(reason) => {
+                        self.reject_delivery(
+                            &record.capture_id,
+                            path,
+                            candidate.len() as u64,
+                            reason,
+                        );
+                        return;
+                    }
+                };
+                let next = candidate.last().cloned().into_iter().collect();
+                (batch, next, candidate)
+            } else {
+                (prepared, Vec::new(), candidate)
+            };
+            match poster(context, &batch) {
+                Ok(()) => {
+                    delivered += batch.events.len() as u64;
+                    buffered = remainder;
+                }
+                Err(PostBatchError::Rejected) => {
+                    let dropped = self
+                        .write_feedback_remaining_unlocked(path, &failure_remaining, &mut lines)
+                        .unwrap_or(failure_remaining.len() as u64);
+                    self.update_latest(&record.capture_id, |latest| {
+                        latest.accepted_events += delivered;
+                        latest.dropped_delivery += dropped;
+                        latest.pending_events = 0;
+                        latest.state = "delivery_rejected".to_string();
+                        latest.terminal_reason = Some("server_rejected_capture".to_string());
+                        latest.next_retry_at = None;
+                    });
+                    let _ = fs::remove_file(path);
+                    let _ = self.persist();
+                    return;
+                }
+                Err(PostBatchError::Retryable) => {
+                    let remaining = match self.write_feedback_remaining_unlocked(
+                        path,
+                        &failure_remaining,
+                        &mut lines,
+                    ) {
+                        Ok(remaining) => remaining,
+                        Err(_) => {
+                            self.mark_undeliverable(&record.capture_id, "queue_rewrite_failed");
+                            let _ = self.persist();
+                            return;
+                        }
+                    };
+                    self.update_latest(&record.capture_id, |latest| {
+                        latest.accepted_events += delivered;
+                        latest.pending_events = remaining;
+                    });
+                    self.schedule_retry(&record.capture_id);
+                    let _ = self.persist();
+                    return;
+                }
+            }
+        }
+
+        let _ = fs::remove_file(path);
+        self.update_latest(&record.capture_id, |latest| {
+            latest.accepted_events += delivered;
+            latest.pending_events = 0;
+            latest.retry_attempts = 0;
+            latest.next_retry_at = None;
+            latest.state = if latest.dropped_budget > 0 || latest.dropped_retention > 0 {
+                "uploaded_with_truncation".to_string()
+            } else {
+                "uploaded".to_string()
+            };
+        });
+        let _ = self.persist();
+    }
+
     pub fn flush(&self, context: Option<CaptureCloudContext>) {
         self.flush_with_poster(context, post_batch);
     }
@@ -718,6 +1097,9 @@ impl UserDiagnosticCapture {
         let Some(record) = record else {
             return;
         };
+        if record.kind == "feedback-attachment" && record.state != "queued" {
+            return;
+        }
         let path = queue_path(&self.spool_dir, &record.capture_id);
         if !path.exists() {
             if record.pending_events > 0 {
@@ -766,6 +1148,10 @@ impl UserDiagnosticCapture {
             .next_retry_at
             .is_some_and(|retry_at| now_ms() < retry_at)
         {
+            return;
+        }
+        if record.kind == "feedback-attachment" {
+            self.flush_feedback_snapshot_streaming(&record, &path, &context, &mut poster);
             return;
         }
         let raw = match fs::read_to_string(&path) {
@@ -1160,6 +1546,49 @@ mod tests {
         assert!(raw.contains("\"level\":\"error\""));
         assert_eq!(capture.status().captured_events, 1);
         assert_eq!(capture.status().pending_events, 2);
+    }
+
+    #[test]
+    fn feedback_snapshot_stays_local_until_feedback_delivery_is_requested() {
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let ring = RecentDiagnosticRing::new(dir.path().to_path_buf());
+        ring.append(RecentDiagnosticEvent {
+            timestamp_ms: now_ms(),
+            sequence_no: 7,
+            source: "engine".to_string(),
+            stream: "stderr".to_string(),
+            level: Some("error".to_string()),
+            line: "sanitized failure".to_string(),
+        });
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        let snapshot = capture.create_feedback_snapshot(&context(), &ring).unwrap();
+        let capture_id = snapshot.capture_id.unwrap();
+        assert_eq!(snapshot.state, "ready");
+        assert_eq!(snapshot.captured_events, 1);
+        assert_eq!(snapshot.pending_events, 2);
+
+        let mut post_calls = 0;
+        capture.flush_with_poster(Some(context()), |_, _| {
+            post_calls += 1;
+            Ok(())
+        });
+        assert_eq!(post_calls, 0);
+
+        capture
+            .queue_feedback_snapshot_for_delivery(&capture_id)
+            .unwrap();
+        capture.flush_with_poster(Some(context()), |_, batch| {
+            post_calls += 1;
+            assert!(batch.body.len() <= MAX_BATCH_BYTES);
+            Ok(())
+        });
+        let status = capture.status();
+        assert_eq!(post_calls, 1);
+        assert_eq!(status.state, "uploaded");
+        assert_eq!(status.pending_events, 0);
     }
 
     #[test]

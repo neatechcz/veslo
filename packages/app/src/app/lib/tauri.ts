@@ -994,6 +994,14 @@ export async function stopUserDiagnosticCapture(): Promise<UserDiagnosticCapture
   return invoke<UserDiagnosticCaptureStatus>("stop_user_diagnostic_capture");
 }
 
+export async function createFeedbackDiagnosticSnapshot(): Promise<UserDiagnosticCaptureStatus> {
+  return invoke<UserDiagnosticCaptureStatus>("create_feedback_diagnostic_snapshot");
+}
+
+export async function queueFeedbackDiagnosticSnapshotForDelivery(captureId: string): Promise<void> {
+  await invoke("queue_feedback_diagnostic_snapshot_for_delivery", { captureId });
+}
+
 export async function engineInstall(): Promise<ExecResult> {
   return invoke<ExecResult>("engine_install");
 }

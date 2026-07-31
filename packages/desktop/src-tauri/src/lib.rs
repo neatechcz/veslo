@@ -13,6 +13,7 @@ mod orchestrator;
 mod paths;
 mod platform;
 mod process_supervisor;
+mod recent_diagnostic_ring;
 mod runtime_preferences;
 #[cfg(test)]
 mod single_window_config_tests;
@@ -81,7 +82,8 @@ fn write_live_webdriver_descriptor(app: &tauri::App) -> tauri::Result<()> {
 pub use types::*;
 
 use bootstrap_diagnostics::{
-    clear_bootstrap_diagnostics_cloud_context, record_bootstrap_diagnostic,
+    clear_bootstrap_diagnostics_cloud_context, create_feedback_diagnostic_snapshot,
+    queue_feedback_diagnostic_snapshot_for_delivery, record_bootstrap_diagnostic,
     set_bootstrap_diagnostics_cloud_context, start_user_diagnostic_capture,
     stop_user_diagnostic_capture, user_diagnostic_capture_status,
 };
@@ -452,6 +454,8 @@ pub fn run() {
             start_user_diagnostic_capture,
             stop_user_diagnostic_capture,
             user_diagnostic_capture_status,
+            create_feedback_diagnostic_snapshot,
+            queue_feedback_diagnostic_snapshot_for_delivery,
             obsidian_is_available,
             open_in_obsidian,
             write_obsidian_mirror_file,

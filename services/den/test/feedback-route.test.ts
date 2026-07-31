@@ -100,6 +100,7 @@ function buildFeedbackPayload() {
     screenshotStatus: "captured",
     screenshotDataUrl: "data:image/jpeg;base64,aGVsbG8=",
     screenshotMimeType: "image/jpeg",
+    diagnosticCaptureId: "00000000-0000-4000-8000-000000000001",
   }
 }
 
@@ -319,6 +320,7 @@ test("feedback route persists a pending feedback record without any youtrack sid
     assert.equal(insertCalls[0]?.value.screenshot_mime_type, "image/jpeg")
     assert.equal(insertCalls[0]?.value.screenshot_bytes, 5)
     assert.equal(insertCalls[0]?.value.screenshot_data, "aGVsbG8=")
+    assert.equal(insertCalls[0]?.value.diagnostic_capture_id, "00000000-0000-4000-8000-000000000001")
     assert.equal(insertCalls[0]?.value.youtrack_issue_id, null)
     assert.equal(insertCalls[0]?.value.youtrack_issue_url, null)
     assert.equal(insertCalls[0]?.value.last_projector_error, null)
@@ -402,6 +404,8 @@ test("den startup ensures feedback persistence tables and indexes", () => {
   assert.match(indexSource, /ensureIndex\("feedback_report", "feedback_report_status", \["status"\]\)/)
   assert.ok(indexSource.includes('"feedback_report_next_projector_attempt_at"'))
   assert.ok(indexSource.includes('["next_projector_attempt_at"]'))
+  assert.ok(indexSource.includes('"feedback_report_diagnostic_capture_id"'))
+  assert.ok(indexSource.includes('["diagnostic_capture_id"]'))
   assert.ok(indexSource.includes('"feedback_projector_attempt_feedback_id"'))
   assert.ok(indexSource.includes('["feedback_id"]'))
 })

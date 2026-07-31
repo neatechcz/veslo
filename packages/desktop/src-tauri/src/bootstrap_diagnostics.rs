@@ -77,3 +77,30 @@ pub fn stop_user_diagnostic_capture(app: AppHandle) -> Result<UserDiagnosticCapt
         .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
     Ok(forwarder.inner().as_ref().stop_user_diagnostic_capture())
 }
+
+#[tauri::command]
+pub fn create_feedback_diagnostic_snapshot(
+    app: AppHandle,
+) -> Result<UserDiagnosticCaptureStatus, String> {
+    let forwarder = app
+        .try_state::<Arc<DebugLogsForwarder>>()
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
+    forwarder
+        .inner()
+        .as_ref()
+        .create_feedback_diagnostic_snapshot()
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn queue_feedback_diagnostic_snapshot_for_delivery(
+    app: AppHandle,
+    capture_id: String,
+) -> Result<(), String> {
+    let forwarder = app
+        .try_state::<Arc<DebugLogsForwarder>>()
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
+    forwarder
+        .inner()
+        .as_ref()
+        .queue_feedback_diagnostic_snapshot_for_delivery(&capture_id)
+}
