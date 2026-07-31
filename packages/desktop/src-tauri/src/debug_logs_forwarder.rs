@@ -578,9 +578,10 @@ impl DesktopDiagnosticsOwner {
     pub fn queue_feedback_diagnostic_snapshot_for_delivery(
         &self,
         capture_id: &str,
-    ) -> Result<(), String> {
+    ) -> Result<UserDiagnosticCaptureStatus, String> {
         self.user_capture
-            .queue_feedback_snapshot_for_delivery(capture_id)
+            .queue_feedback_snapshot_for_delivery(capture_id)?;
+        Ok(self.user_diagnostic_capture_status())
     }
 
     pub fn user_diagnostic_capture_status(&self) -> UserDiagnosticCaptureStatus {

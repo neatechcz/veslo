@@ -8,7 +8,6 @@ import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 import {
   createFeedbackDiagnosticSnapshot,
   queueFeedbackDiagnosticSnapshotForDelivery,
-  userDiagnosticCaptureStatus,
   type UserDiagnosticCaptureStatus,
 } from "./tauri";
 
@@ -259,8 +258,7 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
       };
     }
     try {
-      await queueFeedbackDiagnosticSnapshotForDelivery(diagnosticCaptureId);
-      const capture = await userDiagnosticCaptureStatus();
+      const capture = await queueFeedbackDiagnosticSnapshotForDelivery(diagnosticCaptureId);
       if (capture.captureId !== diagnosticCaptureId) {
         return {
           ...normalized,

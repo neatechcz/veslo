@@ -95,7 +95,7 @@ pub fn create_feedback_diagnostic_snapshot(
 pub fn queue_feedback_diagnostic_snapshot_for_delivery(
     app: AppHandle,
     capture_id: String,
-) -> Result<(), String> {
+) -> Result<UserDiagnosticCaptureStatus, String> {
     let forwarder = app
         .try_state::<Arc<DebugLogsForwarder>>()
         .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
