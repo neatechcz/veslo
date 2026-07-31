@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
+import { createSignal, onCleanup, type Accessor } from "solid-js";
 
 import {
   submitFeedbackReport,
@@ -129,10 +129,10 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
   const readDiagnosticCaptureStatus = deps.readDiagnosticCaptureStatus ?? userDiagnosticCaptureStatus;
   let diagnosticStatusPoll: ReturnType<typeof setTimeout> | undefined;
 
-  const feedbackDiagnosticUploadPending = createMemo(() => {
+  const feedbackDiagnosticUploadPending = () => {
     const attachment = feedbackDiagnosticAttachment();
     return attachment?.status === "tracking" && !isTerminalDiagnosticState(attachment.capture.state);
-  });
+  };
 
   const stopDiagnosticStatusPoll = () => {
     if (diagnosticStatusPoll !== undefined) {

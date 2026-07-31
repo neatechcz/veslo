@@ -38,6 +38,11 @@ const queuedDiagnosticResult: SubmitFeedbackReportResult = {
   },
 };
 
+const queuedDiagnosticAttachment = queuedDiagnosticResult.diagnosticAttachment;
+if (queuedDiagnosticAttachment?.status !== "tracking") {
+  throw new Error("Queued diagnostic fixture must include a trackable attachment.");
+}
+
 test("feedback workflow opens and closes with cleared modal state", () => {
   createRoot((dispose) => {
     try {
@@ -206,7 +211,7 @@ test("feedback workflow keeps the modal open while a diagnostic attachment is st
           platform: "Windows",
         }),
         submitFeedbackReport: async () => queuedDiagnosticResult,
-        readDiagnosticCaptureStatus: async () => queuedDiagnosticResult.diagnosticAttachment!.capture,
+        readDiagnosticCaptureStatus: async () => queuedDiagnosticAttachment.capture,
         reportError: () => {},
         stringifyError: String,
       });
@@ -214,6 +219,7 @@ test("feedback workflow keeps the modal open while a diagnostic attachment is st
       workflow.openFeedbackModal();
       await workflow.persistFeedback({ title: "Bug", description: "Details", attachDiagnostics: true });
 
+      assert.deepEqual(workflow.feedbackDiagnosticAttachment(), queuedDiagnosticResult.diagnosticAttachment);
       assert.equal(workflow.feedbackDiagnosticUploadPending(), true);
       workflow.closeFeedbackModal();
       assert.equal(workflow.feedbackModalOpen(), true);
