@@ -460,12 +460,11 @@ describe("conversation submit service", () => {
     expect(resolveDirectoryCalls).toBe(0);
   });
 
-  test("falls back to prompt when implicit document-runtime skill is unavailable", async () => {
+  test("keeps an ordinary document-skill request as a prompt", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-implicit-doc-runtime-"));
     tempDirs.push(workspaceRoot);
     let createConversationCalls = 0;
     let resolveDirectoryCalls = 0;
-    let skillResolveCalls = 0;
     const service = createConversationSubmitService({
       attemptStore: createConversationSubmitAttemptStore({
         dbPath: await createTempDbPath("veslo-submit-service-implicit-doc-runtime-db-"),
@@ -477,13 +476,6 @@ describe("conversation submit service", () => {
         status: "missing",
         now: () => new Date("2026-07-06T12:00:00.000Z"),
       }),
-      resolveSkillCommand: async ({ text, workspace, includeGlobal }) => {
-        skillResolveCalls += 1;
-        expect(text).toBe("pouzij MS Word skill a priprav upravu brief.docx");
-        expect(workspace?.workspaceType).toBe("local");
-        expect(includeGlobal).toBe(true);
-        return "veslo-docx";
-      },
     });
 
     const result = await service.submit({
@@ -514,12 +506,11 @@ describe("conversation submit service", () => {
         text: "pouzij MS Word skill a priprav upravu brief.docx",
       },
     });
-    expect(skillResolveCalls).toBe(1);
     expect(createConversationCalls).toBe(0);
     expect(resolveDirectoryCalls).toBe(1);
   });
 
-  test("returns debug trace when implicit skill resolution fails before dry-run submit", async () => {
+  test("submits a normal prompt even when no local skill resolver is present", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-skill-fallback-"));
     tempDirs.push(workspaceRoot);
     const service = createConversationSubmitService({
@@ -528,9 +519,6 @@ describe("conversation submit service", () => {
       }),
       conversationService: createConversationServiceStub(() => undefined),
       documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
-      resolveSkillCommand: async () => {
-        throw new Error("skill registry unavailable");
-      },
     });
 
     const result = await service.submit({
@@ -552,16 +540,11 @@ describe("conversation submit service", () => {
     expect(result.httpStatus).toBe(200);
     expect(result.payload).toMatchObject({
       status: "dry_run",
-      debugTrace: [
-        {
-          event: "implicit_skill_resolution_failed",
-          message: "skill registry unavailable",
-        },
-      ],
+      resolvedRunInput: { kind: "prompt_async", text: "plain prompt" },
     });
   });
 
-  test("returns debug trace when implicit skill resolution fails before real submit", async () => {
+  test("submits a normal prompt without a local skill resolver", async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-submit-service-real-skill-fallback-"));
     tempDirs.push(workspaceRoot);
     const service = createConversationSubmitService({
@@ -570,9 +553,6 @@ describe("conversation submit service", () => {
       }),
       conversationService: createConversationServiceStub(() => undefined),
       documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
-      resolveSkillCommand: async () => {
-        throw new Error("skill registry unavailable");
-      },
     });
 
     const result = await service.submit({
@@ -606,13 +586,7 @@ describe("conversation submit service", () => {
     expect(result.httpStatus).toBe(200);
     expect(result.payload).toMatchObject({
       status: "submitted",
-      debugTrace: [
-        {
-          event: "implicit_skill_resolution_failed",
-          message: "skill registry unavailable",
-        },
-        { event: "server:conversation-run:submitted" },
-      ],
+      debugTrace: [{ event: "server:conversation-run:submitted" }],
     });
   });
 
@@ -1507,7 +1481,6 @@ describe("conversation submit service", () => {
     tempDirs.push(workspaceRoot);
     let createConversationCalls = 0;
     let resolveDirectoryCalls = 0;
-    let skillResolveCalls = 0;
     const service = createConversationSubmitService({
       attemptStore: createConversationSubmitAttemptStore({
         dbPath: await createTempDbPath("veslo-submit-service-remote-db-"),
@@ -1516,10 +1489,6 @@ describe("conversation submit service", () => {
         createConversationCalls += 1;
       }),
       documentRuntimeStatus: () => createDocumentRuntimeStatusPayload({ status: "ready" }),
-      resolveSkillCommand: async () => {
-        skillResolveCalls += 1;
-        return "veslo-docx";
-      },
     });
 
     const result = await service.submit({
@@ -1549,6 +1518,5 @@ describe("conversation submit service", () => {
     });
     expect(createConversationCalls).toBe(0);
     expect(resolveDirectoryCalls).toBe(0);
-    expect(skillResolveCalls).toBe(0);
   });
 });

@@ -21,17 +21,6 @@ export type ConversationSubmitDocumentRuntimeStatusReader = () =>
   | undefined
   | Promise<DocumentRuntimeStatusPayload | null | undefined>;
 
-export type ConversationSubmitSkillCommandResolverInput = {
-  request: ConversationSubmitRequest;
-  text: string;
-  workspace: WorkspaceInfo | null;
-  includeGlobal: boolean;
-};
-
-export type ConversationSubmitSkillCommandResolver = (
-  input: ConversationSubmitSkillCommandResolverInput,
-) => string | null | undefined | Promise<string | null | undefined>;
-
 export type ConversationSubmitModelCapabilityDescriptor = {
   providerID: string;
   modelID: string;
@@ -192,7 +181,6 @@ function blockedResult(input: {
   message: string;
   draftDisposition?: "restore" | "keep";
   recoverable?: boolean;
-  confirmation?: ConversationSubmitBlockedResult["confirmation"];
   details?: ConversationSubmitBlockedResult["details"];
 }): { status: "blocked"; result: ConversationSubmitBlockedResult } {
   return {
@@ -203,7 +191,6 @@ function blockedResult(input: {
       message: input.message,
       draftDisposition: input.draftDisposition ?? "restore",
       recoverable: input.recoverable ?? true,
-      ...(input.confirmation ? { confirmation: input.confirmation } : {}),
       ...(input.details ? { details: input.details } : {}),
     },
   };
@@ -389,7 +376,6 @@ function resolveAttachmentRunParts(input: {
 async function resolveRunInput(input: {
   request: ConversationSubmitRequest;
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
-  resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
   recordDebugTrace?: (entry: ConversationSubmitDebugTraceEntry) => void;
   resolveManagedAiModelDescriptor?: ConversationSubmitModelDescriptorResolver;
   workspace?: WorkspaceInfo | null;
@@ -455,67 +441,6 @@ async function resolveRunInput(input: {
   }
 
   const text = resolvedContent(request);
-  const implicitSkillCommandPolicy = request.options?.implicitSkillCommandPolicy ?? "confirm";
-  if (text && input.resolveSkillCommand && implicitSkillCommandPolicy !== "disable") {
-    let skillCommandName: string | undefined;
-    try {
-      skillCommandName = (await input.resolveSkillCommand({
-        request,
-        text,
-        workspace: input.workspace ?? null,
-        includeGlobal: input.includeGlobal === true,
-      }))?.trim();
-    } catch (error) {
-      input.recordDebugTrace?.({
-        source: "conversation-submit-draft-resolution",
-        event: "implicit_skill_resolution_failed",
-        message: error instanceof Error ? error.message : String(error),
-      });
-      skillCommandName = undefined;
-    }
-    if (skillCommandName) {
-      const documentRuntimeFormat = documentRuntimeFormatForSubmitCommand(skillCommandName);
-      if (documentRuntimeFormat) {
-        const status = await input.documentRuntimeStatus?.();
-        const message = documentRuntimeBlockReasonForSubmitCommand(status, documentRuntimeFormat);
-        if (message) {
-          return {
-            status: "ok",
-            resolvedRunInput: promptRunInput(request, text, attachmentParts, input.workspace),
-          };
-        }
-      }
-      if (implicitSkillCommandPolicy !== "allow") {
-        return blockedResult({
-          code: "implicit_skill_confirmation_required",
-          message: `Run ${skillCommandName} as a skill command?`,
-          draftDisposition: "keep",
-          recoverable: true,
-          confirmation: {
-            type: "implicit_skill_command",
-            skillName: skillCommandName,
-            arguments: appendLines(text, attachmentParts.pathLinesForPathBasedRuns),
-          },
-        });
-      }
-      return {
-        status: "ok",
-        resolvedRunInput: {
-          kind: "command",
-          command: skillCommandName,
-          arguments: appendLines(text, attachmentParts.pathLinesForPathBasedRuns),
-          ...(() => {
-            const parts = [
-              ...filePartsFromDraftParts(request.draft.parts, input.workspace).filter(isFilePart),
-              ...attachmentParts.inlineFileParts,
-            ];
-            return parts.length ? { parts } : {};
-          })(),
-        },
-      };
-    }
-  }
-
   return {
     status: "ok",
     resolvedRunInput: promptRunInput(request, text, attachmentParts, input.workspace),
@@ -525,7 +450,6 @@ async function resolveRunInput(input: {
 export async function resolveConversationSubmitDraft(input: {
   request: ConversationSubmitRequest;
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
-  resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
   resolveManagedAiModelDescriptor?: ConversationSubmitModelDescriptorResolver;
   recordDebugTrace?: (entry: ConversationSubmitDebugTraceEntry) => void;
   workspace?: WorkspaceInfo | null;

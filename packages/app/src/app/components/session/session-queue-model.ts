@@ -4,7 +4,6 @@ export type QueuedDraftState = "queued" | "editing" | "sending" | "error";
 
 export type QueuedDraftEnvelope = {
   clientMessageId: string;
-  implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
   /** Captured on enqueue so a later picker change cannot affect this draft. */
   modelOverride?: ModelRef | null;
 };
@@ -38,9 +37,6 @@ export function appendQueuedDraft(
       id,
       draft,
       clientMessageId,
-      ...(envelope.implicitSkillCommandPolicy
-        ? { implicitSkillCommandPolicy: envelope.implicitSkillCommandPolicy }
-        : {}),
       ...(envelope.modelOverride ? { modelOverride: envelope.modelOverride } : {}),
       createdAt: now,
       updatedAt: now,
@@ -83,9 +79,6 @@ export function updateQueuedDraft(
       ...item,
       draft,
       ...(clientMessageId ? { clientMessageId } : {}),
-      ...(envelope?.implicitSkillCommandPolicy
-        ? { implicitSkillCommandPolicy: envelope.implicitSkillCommandPolicy }
-        : {}),
       ...(envelope && "modelOverride" in envelope
         ? { modelOverride: envelope.modelOverride ?? undefined }
         : {}),

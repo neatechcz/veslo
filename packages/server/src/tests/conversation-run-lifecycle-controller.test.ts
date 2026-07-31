@@ -424,9 +424,18 @@ function controllerHarness(options?: {
   ingestTerminalTranscript?: (input: { runId: string }) => Promise<{ kind: "persisted" | "unchanged" | "incomplete" | "exhausted" } | void>;
   withLifecycle?: boolean;
   submitEngineOwner?: ConversationWorkspaceRunEngineOwner | null;
+  startupReservation?: { conversationId: string; runId: string };
 }) {
   const lifecycle = new LifecycleHarness();
   const queue = new QueueHarness();
+  if (options?.startupReservation) {
+    queue.reserveWorkspaceRun({
+      workspaceId: "ws_1",
+      conversationId: options.startupReservation.conversationId,
+      runId: options.startupReservation.runId,
+      state: "active",
+    });
+  }
   const timers = new TimerHarness();
   const workspaces = [
     {
@@ -1603,6 +1612,35 @@ test("lifecycle reconcile keeps polling stale status until terminal", async () =
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([2_000]);
 });
 
+test("lifecycle reconciliation closes an unreachable engine after its progress grace window", async () => {
+  const { controller, lifecycle, timers, traceEntries, workspaces } = controllerHarness();
+  lifecycle.statusResult = {
+    runId: "run-unreachable",
+    status: "running",
+    stale: true,
+    activityKind: "unknown",
+    waitReason: "engine_unreachable",
+    lastUsefulProgressAt: Date.now() - 60_001,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-unreachable",
+    reason: "accepted",
+  });
+
+  expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-unreachable");
+  expect(lifecycle.calls).toContain(
+    "markFailed:ws_1:run-unreachable:engine remained unreachable after useful run progress stopped",
+  );
+  expect(traceEntries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:lifecycle-reconcile-engine-unreachable",
+    runId: "run-unreachable",
+  }));
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+});
+
 test("lifecycle reconcile fails stale active runs after poll budget exhaustion and wakes queue", async () => {
   const { controller, lifecycle, timers, workspaces } = controllerHarness();
   lifecycle.statusResult = {
@@ -1625,6 +1663,35 @@ test("lifecycle reconcile fails stale active runs after poll budget exhaustion a
   expect(lifecycle.calls).toContain(
     "markFailed:ws_1:run-stale:run lifecycle reconcile exhausted while active status remained unresolved",
   );
+  expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+});
+
+test("startup reconciliation closes an old assistant-message orphan without repeated polling", async () => {
+  const { controller, lifecycle, queue, timers, traceEntries } = controllerHarness({
+    startupReservation: { conversationId: "conv-a", runId: "run-orphaned" },
+  });
+  lifecycle.statusResult = {
+    runId: "run-orphaned",
+    status: "running",
+    stale: false,
+    activityKind: "unknown",
+    waitReason: "assistant_message_open",
+    lastUsefulProgressAt: Date.now() - 60_001,
+  };
+
+  controller.start();
+  timers.fire(timers.activeTimers()[0]!.id);
+  await flushMicrotasks();
+
+  expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-orphaned");
+  expect(lifecycle.calls).toContain(
+    "markFailed:ws_1:run-orphaned:startup lifecycle reservation had no useful progress while its assistant message remained open",
+  );
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+  expect(traceEntries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:lifecycle-reconcile-startup-orphaned",
+    runId: "run-orphaned",
+  }));
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
 });
 

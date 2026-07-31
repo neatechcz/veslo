@@ -79,7 +79,6 @@ export type SessionSendWorkflowSendOptions = SessionSendOptionsBase & {
   targetSessionId?: string | null;
   onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
   pendingSession?: PendingSidebarSessionMetadata | null;
-  implicitSkillCommandPolicy?: ConversationSubmitOptionsInput["implicitSkillCommandPolicy"];
 };
 
 export type SessionSendWorkflowCommand = {
@@ -606,7 +605,6 @@ function sessionSubmitResultFromConversationSubmit(
       opencodeSessionId: result.opencodeSessionId,
       clientMessageId: result.clientMessageId,
       draftDisposition: result.draftDisposition,
-      confirmation: result.confirmation ?? null,
       details: result.details ?? null,
     });
   }
@@ -626,16 +624,6 @@ function sessionSubmitResultFromConversationSubmit(
     draftDisposition: result.draftDisposition,
     details: result.details ?? null,
   });
-}
-
-function conversationSubmitNeedsImplicitSkillConfirmation(
-  result: ConversationSubmitTerminalResult,
-): boolean {
-  return (
-    result.status === "blocked" &&
-    result.code === "implicit_skill_confirmation_required" &&
-    result.confirmation?.type === "implicit_skill_command"
-  );
 }
 
 type SendBoundaryValidationRuntimeDeps = {
@@ -1873,12 +1861,6 @@ export function createSessionSendWorkflow(
                   : sendCorrelation.origin === "session:queue-drain"
                     ? "server-queue-only"
                     : "normal",
-              ...(options.implicitSkillCommandPolicy
-                ? {
-                    implicitSkillCommandPolicy:
-                      options.implicitSkillCommandPolicy,
-                  }
-                : {}),
             },
           };
           const submitRequestValidation = validateConversationSubmitRequest(
@@ -2513,12 +2495,6 @@ export function createSessionSendWorkflow(
               variant: deps.modelVariant() ?? null,
               ...(options.modelOverride
                 ? { model: options.modelOverride }
-                : {}),
-              ...(options.implicitSkillCommandPolicy
-                ? {
-                    implicitSkillCommandPolicy:
-                      options.implicitSkillCommandPolicy,
-                  }
                 : {}),
             } satisfies ConversationSubmitOptionsInput)
           : undefined;

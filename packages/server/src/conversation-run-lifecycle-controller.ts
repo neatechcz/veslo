@@ -271,6 +271,8 @@ export type ConversationRunLifecycleController = {
 };
 
 const ACTIVE_LIFECYCLE_STATUSES = new Set<LifecycleRunStatus>(["submitted", "running", "blocked"]);
+const STARTUP_ORPHANED_ASSISTANT_MESSAGE_GRACE_MS = 60_000;
+const ENGINE_UNREACHABLE_GRACE_MS = 60_000;
 
 function withOpenCodeAdmissionMessageId(
   input: ConversationRunLifecycleSubmitInput,
@@ -399,6 +401,34 @@ function shouldFinalizeExhaustedActiveLifecycleRun(
   status: LifecycleRunStatusResult | null | undefined,
 ): boolean {
   return Boolean(status && isActiveLifecycleStatus(status.status));
+}
+
+function isStartupOrphanedAssistantMessage(
+  input: ConversationRunLifecycleScheduleReconcileInput,
+  status: LifecycleRunStatusResult,
+  now = Date.now(),
+): boolean {
+  const lastUsefulProgressAt = status.lastUsefulProgressAt ?? null;
+  return input.reason === "startup-workspace-reservation-reconcile" &&
+    isActiveLifecycleStatus(status.status) &&
+    status.activityKind === "unknown" &&
+    status.waitReason === "assistant_message_open" &&
+    typeof lastUsefulProgressAt === "number" &&
+    Number.isFinite(lastUsefulProgressAt) &&
+    now - lastUsefulProgressAt >= STARTUP_ORPHANED_ASSISTANT_MESSAGE_GRACE_MS;
+}
+
+function isEngineUnreachableWithoutProgress(
+  status: LifecycleRunStatusResult,
+  now = Date.now(),
+): boolean {
+  const lastUsefulProgressAt = status.lastUsefulProgressAt ?? null;
+  return isActiveLifecycleStatus(status.status) &&
+    status.stale === true &&
+    status.waitReason === "engine_unreachable" &&
+    typeof lastUsefulProgressAt === "number" &&
+    Number.isFinite(lastUsefulProgressAt) &&
+    now - lastUsefulProgressAt >= ENGINE_UNREACHABLE_GRACE_MS;
 }
 
 function createNoopRunTrace(): ConversationRunLifecycleTracer {
@@ -1248,6 +1278,62 @@ export function createConversationRunLifecycleController(
           });
         }
         scheduleQueueDrain(input.workspace.id, conversationId, 0);
+        return;
+      }
+
+      if (isStartupOrphanedAssistantMessage(input, status)) {
+        recordTrace("server:conversation-run:lifecycle-reconcile-startup-orphaned", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          runId: status.runId?.trim() || runId,
+          reason: input.reason,
+          ...lifecycleStatusTraceFields(status),
+        });
+        await lifecycleOwner.markFailed(
+          input.workspace.id,
+          status.runId?.trim() || runId,
+          "startup lifecycle reservation had no useful progress while its assistant message remained open",
+        ).then(() => {
+          unregisterScheduledAiGatewayRun(input);
+          releaseRun(input.workspace.id, status.runId?.trim() || runId, "startup-orphaned-assistant-message");
+          scheduleQueueDrain(input.workspace.id, conversationId, 0);
+        }).catch((error) => {
+          recordTrace("server:conversation-run:lifecycle-mark-failed-error", {
+            workspaceId: input.workspace.id,
+            conversationId,
+            runId: status.runId?.trim() || runId,
+            reason: input.reason,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
+        return;
+      }
+
+      if (isEngineUnreachableWithoutProgress(status)) {
+        recordTrace("server:conversation-run:lifecycle-reconcile-engine-unreachable", {
+          workspaceId: input.workspace.id,
+          conversationId,
+          runId: status.runId?.trim() || runId,
+          reason: input.reason,
+          ...lifecycleStatusTraceFields(status),
+        });
+        await lifecycleOwner.markFailed(
+          input.workspace.id,
+          status.runId?.trim() || runId,
+          "engine remained unreachable after useful run progress stopped",
+        ).then(() => {
+          unregisterScheduledAiGatewayRun(input);
+          releaseRun(input.workspace.id, status.runId?.trim() || runId, "engine-unreachable-without-progress");
+          scheduleQueueDrain(input.workspace.id, conversationId, 0);
+        }).catch((error) => {
+          recordTrace("server:conversation-run:lifecycle-mark-failed-error", {
+            workspaceId: input.workspace.id,
+            conversationId,
+            runId: status.runId?.trim() || runId,
+            reason: input.reason,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        });
         return;
       }
 

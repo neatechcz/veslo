@@ -55,35 +55,35 @@ test("queue model appends deterministically with caller-provided id and timestam
   assert.equal(first[0]!.id, "draft-1");
 });
 
-test("queue model captures distinct client identities and all implicit-skill policies", () => {
+test("queue model captures distinct client identities", () => {
   const first = appendQueuedDraftModel(
     [],
     draft("confirm"),
-    { clientMessageId: "msg-confirm", implicitSkillCommandPolicy: "confirm" },
+    { clientMessageId: "msg-confirm" },
     100,
     "row-confirm",
   );
   const second = appendQueuedDraftModel(
     first,
     draft("allow"),
-    { clientMessageId: "msg-allow", implicitSkillCommandPolicy: "allow" },
+    { clientMessageId: "msg-allow" },
     200,
     "row-allow",
   );
   const third = appendQueuedDraftModel(
     second,
     draft("disable"),
-    { clientMessageId: "msg-disable", implicitSkillCommandPolicy: "disable" },
+    { clientMessageId: "msg-disable" },
     300,
     "row-disable",
   );
 
   assert.deepEqual(
-    third.map((item) => [item.id, item.clientMessageId, item.implicitSkillCommandPolicy]),
+    third.map((item) => [item.id, item.clientMessageId]),
     [
-      ["row-confirm", "msg-confirm", "confirm"],
-      ["row-allow", "msg-allow", "allow"],
-      ["row-disable", "msg-disable", "disable"],
+      ["row-confirm", "msg-confirm"],
+      ["row-allow", "msg-allow"],
+      ["row-disable", "msg-disable"],
     ],
   );
 });
@@ -92,7 +92,7 @@ test("queue model rotates identity only when edited content is saved and preserv
   const original = appendQueuedDraftModel(
     [],
     draft("original"),
-    { clientMessageId: "msg-original", implicitSkillCommandPolicy: "confirm" },
+    { clientMessageId: "msg-original" },
     100,
     "row-1",
   );
@@ -101,15 +101,13 @@ test("queue model rotates identity only when edited content is saved and preserv
     "row-1",
     draft("edited"),
     200,
-    { clientMessageId: "msg-edited", implicitSkillCommandPolicy: "disable" },
+    { clientMessageId: "msg-edited" },
   );
   const retry = markQueuedDraftQueued(markQueuedDraftError(edited, "row-1", "response lost", 300), "row-1", 400);
 
   assert.equal(original[0]!.clientMessageId, "msg-original");
   assert.equal(edited[0]!.clientMessageId, "msg-edited");
-  assert.equal(edited[0]!.implicitSkillCommandPolicy, "disable");
   assert.equal(retry[0]!.clientMessageId, "msg-edited");
-  assert.equal(retry[0]!.implicitSkillCommandPolicy, "disable");
 });
 
 test("queue model captures a model override and allows an edit to clear it", () => {
@@ -279,7 +277,6 @@ test("queue model restores an unchanged failed edit with its original envelope",
   const failed = {
     ...markQueuedDraftError(queue, queue[0]!.id, "network failed", 200)[0]!,
     clientMessageId: "msg-failed",
-    implicitSkillCommandPolicy: "allow" as const,
   };
   const failedQueue = [failed];
   const editing = markQueuedDraftEditing(failedQueue, queue[0]!.id, 300);
@@ -295,7 +292,6 @@ test("queue model restores an unchanged failed edit with its original envelope",
   assert.equal(restored[0]!.state, "error");
   assert.equal(restored[0]!.error, "network failed");
   assert.equal(restored[0]!.clientMessageId, "msg-failed");
-  assert.equal(restored[0]!.implicitSkillCommandPolicy, "allow");
   assert.equal(firstQueuedDraft(restored), null);
 });
 

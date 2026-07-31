@@ -971,7 +971,7 @@ describe("conversation routes", () => {
     expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
   });
 
-  test("POST /workspace/:id/conversations/submit resolves implicit skills from a large workspace inventory with MCP config present", async () => {
+  test("POST /workspace/:id/conversations/submit keeps skill-named text as a prompt with a large workspace inventory", async () => {
     await useTempVesloDataDir();
     const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-many-skills-"));
     const homeRoot = await mkdtemp(join(tmpdir(), "veslo-conversations-submit-many-skills-home-"));
@@ -1075,7 +1075,7 @@ describe("conversation routes", () => {
             time: { created: 100, updated: 100 },
           });
         }
-        if (request.method === "POST" && url.pathname === "/session/sess-many-skills/command") {
+        if (request.method === "POST" && url.pathname === "/session/sess-many-skills/prompt_async") {
           return Response.json({ ok: true });
         }
         return Response.json({ error: "unexpected upstream route", path: url.pathname }, { status: 404 });
@@ -1114,7 +1114,6 @@ describe("conversation routes", () => {
             },
             agent: "build",
             variant: "xhigh",
-            implicitSkillCommandPolicy: "allow",
           },
         }),
       },
@@ -1130,17 +1129,16 @@ describe("conversation routes", () => {
     expect(payload.opencodeSessionId).toBe("sess-many-skills");
     expect(upstreamRequests.map((entry) => entry.path)).toEqual([
       "/session",
-      `/session/sess-many-skills/command?directory=${encodeURIComponent(workspaceRoot)}`,
+      `/session/sess-many-skills/prompt_async?directory=${encodeURIComponent(workspaceRoot)}`,
     ]);
     expect(upstreamRequests[1]?.body).toMatchObject({
-      command: "company-research-czech",
-      arguments: "https://example.test use company search skill for this",
       agent: "build",
-      model: "openai/gpt-5.5",
+      model: { providerID: "openai", modelID: "gpt-5.5" },
       variant: "xhigh",
+      parts: [{ type: "text", text: "https://example.test use company search skill for this" }],
     });
-    expect(upstreamRequests[1]?.body?.messageID).toBeUndefined();
-    expect(upstreamRequests[1]?.body?.parts).toBeUndefined();
+    expectOpenCodeAdmissionMessageId(upstreamRequests[1]?.body?.messageID);
+    expect(upstreamRequests[1]?.body?.command).toBeUndefined();
     expect(payload.debugTrace?.some((entry) => entry.event === "server:conversation-run:opencode-submit"))
       .toBe(true);
   });

@@ -391,7 +391,10 @@ second authorized engine and the resulting event-stream reconnect.
 
 After an engine is ready, an ordinary conversation send reads only the last
 published serving binding (from memory or the atomically published manifest).
-It must not rescan Skills, rewrite a manifest, or wait for refresh work that a
+Ordinary composer text is always sent as `prompt_async`; Veslo does not infer a
+Skill command or ask for confirmation from matching text. OpenCode decides
+whether an available Skill applies, while an explicit slash command remains a
+command admission. The send path must not rescan Skills, rewrite a manifest, or wait for refresh work that a
 watcher/policy reconciler has already scheduled. If no serving manifest exists,
 the direct resolver starts the canonical empty binding while background
 publication remains independent of the send.
@@ -775,8 +778,14 @@ live-read enabled.
   second active run to the same conversation.
 - Stale/no-progress active run: a queued successor must not make a generic
   stale or no-progress active run fail early. Queue drain hands it to the
-  ordinary exact-run lifecycle reconciler; only that configured conservative
-  policy may mark it failed and then wake the conversation queue.
+  ordinary exact-run lifecycle reconciler. A run with a known unreachable
+  engine is terminalized once its useful-progress timestamp exceeds the
+  one-minute grace window, so a lost local engine cannot retain a conversation
+  reservation indefinitely; other stale states remain conservative.
+- Startup orphan: an active reservation whose only state is an unknown open
+  assistant message with no useful progress for the startup grace window is
+  terminalized immediately. This narrow recovery prevents a pre-restart
+  orphan from keeping the new process in a long reconciliation poll loop.
 
 ## Validation Requirements
 

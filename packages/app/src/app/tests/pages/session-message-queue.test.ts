@@ -74,7 +74,7 @@ test("session page owns session-local queue state and handleSendPrompt accepts s
   );
   assert.match(
     sessionSource,
-    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*const modelOverrideSnapshot = \(options as SessionComposerSendOptions\)\.modelOverride;[\s\S]*const result = await sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*implicitSkillCommandPolicy: options\.implicitSkillCommandPolicy,\s*modelOverride,\s*onDraftTransferred: options\.onDraftTransferred,\s*\}\);/s,
+    /const sessionFlowFacade = createSessionViewFlowFacade\(\{ conversationFlow \}\);[\s\S]*const modelOverrideSnapshot = \(options as SessionComposerSendOptions\)\.modelOverride;[\s\S]*const result = await sessionFlowFacade\.handleSendPrompt\(draft, \{\s*sendNow: options\.sendNow,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*modelOverride,\s*onDraftTransferred: options\.onDraftTransferred,\s*\}\);/s,
     "session send handler should delegate queue/send branching and return the typed facade result for the composer",
   );
   assert.doesNotMatch(
@@ -120,7 +120,7 @@ test("running non-sendNow sends use the server queue-drain contract directly", (
   );
 });
 
-test("session model selection is roster-validated and implicit confirmation snapshots its model", () => {
+test("session model selection is roster-validated and snapshots each send", () => {
   assert.match(
     sessionSource,
     /const \[sessionModelOverride, setSessionModelOverride\] = createSignal<\{\s*sessionKey: string;\s*model: ModelRef \| null;\s*\}>\(\{ sessionKey: "", model: null \}\);/s,
@@ -133,18 +133,8 @@ test("session model selection is roster-validated and implicit confirmation snap
   );
   assert.match(
     sessionSource,
-    /options: \{ \.\.\.options, modelOverride \},/,
-    "implicit skill confirmation should retain the model captured by its initial send",
-  );
-  assert.match(
-    sessionSource,
     /const modelOverrideSnapshot = \(options as SessionComposerSendOptions\)\.modelOverride;[\s\S]*modelOverrideSnapshot !== undefined[\s\S]*\? modelOverrideSnapshot/s,
-    "confirmation sends should honor the captured model instead of re-reading the selector",
-  );
-  assert.match(
-    sessionSource,
-    /createEffect\(on\(\(\) => props\.sessionModelSelectorEnabled, \(enabled\) => \{[\s\S]*if \(enabled\) return;[\s\S]*setImplicitSkillConfirmationBySessionKey\(\(current\) =>[\s\S]*const \{ modelOverride: _modelOverride, \.\.\.options \} = pending\.options;[\s\S]*return \[key, \{ \.\.\.pending, options \}\];/s,
-    "disabling the selector should clear model snapshots retained by open implicit-skill confirmations",
+    "each send should honor the model captured before the handoff",
   );
 });
 
@@ -253,7 +243,7 @@ test("idle Enter appends behind an existing queue instead of sending immediately
 test("paused send-now unpauses only after accepted immediate send", () => {
   assert.match(
     flowHandleSendSource,
-    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*implicitSkillCommandPolicy: options\.implicitSkillCommandPolicy,\s*modelOverride: options\.modelOverride,\s*onDraftTransferred: acknowledgeDraftTransfer,\s*\}\);\s*if \(sessionSubmitWasAccepted\(submitResult\) && wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}\s*return submitResult;/s,
+    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*sendTraceId: options\.sendTraceId,\s*source: options\.source,\s*modelOverride: options\.modelOverride,\s*onDraftTransferred: acknowledgeDraftTransfer,\s*\}\);\s*if \(sessionSubmitWasAccepted\(submitResult\) && wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}\s*return submitResult;/s,
     "send-now while paused should unpause only after the immediate send is accepted and should preserve composer source",
   );
 });
@@ -614,7 +604,7 @@ test("queued message retry stays scoped to the local queue head", () => {
 test("edited queued send-now marks the edited item sending before awaiting handoff", () => {
   assert.match(
     flowHandleSendSource,
-    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*const editedItem = deps\.queue\.queuedDrafts\(\)\.find\(\(item\) => item\.id === editingId\);\s*const clientMessageId = deps\.identity\.createClientMessageId\(\);[\s\S]*?deps\.queue\.updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\([\s\S]*?updateQueuedDraft\(queue, editingId, draft, deps\.identity\.now\(\), \{\s*clientMessageId,[\s\S]*?\}\),[\s\S]*?\),\s*\);[\s\S]*?const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*clientMessageId,\s*restoreDraftOnFailure: false,[\s\S]*?implicitSkillCommandPolicy,\s*modelOverride: options\.modelOverride,\s*onDraftTransferred: acknowledgeDraftTransfer,\s*\}\);/s,
+    /const sessionKey = deps\.sessionKeys\.currentSessionQueueKey\(\);\s*const wasPaused = deps\.queue\.queuePausedForSessionKey\(sessionKey\);\s*const editedItem = deps\.queue\.queuedDrafts\(\)\.find\(\(item\) => item\.id === editingId\);\s*const clientMessageId = deps\.identity\.createClientMessageId\(\);[\s\S]*?deps\.queue\.updateQueueForSessionKey\(sessionKey, \(queue\) =>\s*markQueuedDraftSending\([\s\S]*?updateQueuedDraft\(queue, editingId, draft, deps\.identity\.now\(\), \{\s*clientMessageId,[\s\S]*?\}\),[\s\S]*?\),\s*\);[\s\S]*?const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*clientMessageId,\s*restoreDraftOnFailure: false,[\s\S]*?modelOverride: options\.modelOverride,\s*onDraftTransferred: acknowledgeDraftTransfer,\s*\}\);/s,
     "edited queued send-now should persist the edited draft into a sending queue item and release the composer before awaiting handoff",
   );
 });
@@ -622,7 +612,7 @@ test("edited queued send-now marks the edited item sending before awaiting hando
 test("edited queued send-now marks the edited item error when handoff is rejected", () => {
   assert.match(
     flowHandleSendSource,
-    /const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*clientMessageId,\s*restoreDraftOnFailure: false,[\s\S]*?implicitSkillCommandPolicy,\s*modelOverride: options\.modelOverride,\s*onDraftTransferred: acknowledgeDraftTransfer,\s*\}\);\s*const resultSessionKey = deps\.queue\.resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!sessionSubmitWasAccepted\(submitResult\)\) \{\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(\s*queue,\s*editingId,\s*submitResult\.message \?\? deps\.runtime\.error\(\) \?\? deps\.feedback\.tr\("session\.connect_server_to_attach"\),\s*\),\s*\);\s*return submitResult;\s*\}\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
+    /const submitResult = await controller\.sendPromptImmediate\(draft, \{\s*reason: "send-now",\s*expectedSessionKey: sessionKey,\s*clientMessageId,\s*restoreDraftOnFailure: false,[\s\S]*?modelOverride: options\.modelOverride,\s*onDraftTransferred: acknowledgeDraftTransfer,\s*\}\);\s*const resultSessionKey = deps\.queue\.resolveQueueKeyForQueuedDraft\(sessionKey, editingId\);\s*if \(!sessionSubmitWasAccepted\(submitResult\)\) \{\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) =>\s*markQueuedDraftError\(\s*queue,\s*editingId,\s*submitResult\.message \?\? deps\.runtime\.error\(\) \?\? deps\.feedback\.tr\("session\.connect_server_to_attach"\),\s*\),\s*\);\s*return submitResult;\s*\}\s*deps\.queue\.updateQueueForSessionKey\(resultSessionKey, \(queue\) => removeQueuedDraft\(queue, editingId\)\);[\s\S]*if \(wasPaused\) \{\s*deps\.queue\.setQueuePausedForSessionKey\(sessionKey, false\);\s*\}/s,
     "edited queued send-now should update whichever queue contains the edited item after a pending remap",
   );
 });

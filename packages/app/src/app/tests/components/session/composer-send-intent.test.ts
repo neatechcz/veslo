@@ -12,7 +12,7 @@ const zhSource = readFileSync(new URL("../../../../i18n/locales/zh.ts", import.m
 test("composer exports send intent options and passes them to onSend", () => {
   assert.match(
     composerSource,
-    /export type ComposerSendOptions = \{\s*sendNow\?: boolean;\s*source\?: "button" \| "enter" \| "ctrl-enter";\s*sendTraceId\?: string;\s*implicitSkillCommandPolicy\?: "confirm" \| "allow" \| "disable";\s*onDraftTransferred\?: \(\) => void;\s*\};/,
+    /export type ComposerSendOptions = \{\s*sendNow\?: boolean;\s*source\?: "button" \| "enter" \| "ctrl-enter";\s*sendTraceId\?: string;\s*onDraftTransferred\?: \(\) => void;\s*\};/,
     "composer should export the send intent options contract",
   );
 

@@ -37,7 +37,6 @@ import type {
 } from "../lib/session-send-contract";
 import { sessionSubmitFailureMessage } from "../lib/attachment-submit-error-presentation";
 import {
-  sessionSubmitNeedsImplicitSkillConfirmation,
   sessionSubmitBlockedResult,
   sessionSubmitQueuedResult,
   sessionSubmitWasAccepted,
@@ -546,7 +545,6 @@ export type SendPromptImmediateOptions = {
   restoreDraftOnFailure?: boolean;
   sendTraceId?: string | null;
   source?: string | null;
-  implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
   modelOverride?: ModelRef | null;
   onDraftTransferred?: () => void;
 };
@@ -605,7 +603,6 @@ export type HandleSendPromptOptions = {
   sendNow?: boolean;
   sendTraceId?: string | null;
   source?: string | null;
-  implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
   modelOverride?: ModelRef | null;
   onDraftTransferred?: () => void;
 };
@@ -729,7 +726,6 @@ export type SessionConversationFlowControllerDeps = {
         targetSessionId?: string | null;
         onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
         pendingSession?: PendingSidebarSessionMetadata | null;
-        implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
       },
     ) => Promise<SessionSubmitResult>;
   };
@@ -1569,7 +1565,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           targetSessionId?: string | null;
           onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
           pendingSession?: PendingSidebarSessionMetadata | null;
-          implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
         } = {
           clientMessageId,
           origin,
@@ -1577,9 +1572,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           ...(transportTargetSessionId ? { targetSessionId: transportTargetSessionId } : {}),
           ...(options.sendTraceId ? { sendTraceId: options.sendTraceId } : {}),
           ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
-          ...(options.implicitSkillCommandPolicy
-            ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
-            : {}),
           ...(pendingSessionKeyBeforeHandoff && !transportTargetSessionId
             ? {
                 onMaterializedSessionId: handleMaterializedSessionId,
@@ -1615,15 +1607,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           reason: options.reason ?? "normal",
         });
         if (!submitResult.accepted) {
-          if (sessionSubmitNeedsImplicitSkillConfirmation(submitResult)) {
-            if (showOptimisticSubmit) {
-              clearMatchingPendingSubmit();
-              deps.runState.resetRunState(runStateSessionKeyForHandoffFailure(), "implicit-skill-confirmation");
-            }
-            finishPendingSessionHandoffFailure();
-            settlePendingSessionMaterializationFlight(submitResult);
-            return submitResult;
-          }
           const failurePresentation = sessionSubmitFailureMessage(submitResult, deps.feedback.tr);
           const errorMessage = failurePresentation.specific
             ? failurePresentation.message
@@ -1778,13 +1761,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             });
           }
           const clientMessageId = deps.identity.createClientMessageId();
-          const implicitSkillCommandPolicy =
-            options.implicitSkillCommandPolicy ?? editedItem.implicitSkillCommandPolicy;
           deps.queue.updateCurrentQueue((queue) =>
             markQueuedDraftQueued(
               updateQueuedDraft(queue, editingId, draft, deps.identity.now(), {
                 clientMessageId,
-                ...(implicitSkillCommandPolicy ? { implicitSkillCommandPolicy } : {}),
                 modelOverride: options.modelOverride ?? null,
               }),
               editingId,
@@ -1804,13 +1784,10 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           const wasPaused = deps.queue.queuePausedForSessionKey(sessionKey);
           const editedItem = deps.queue.queuedDrafts().find((item) => item.id === editingId);
           const clientMessageId = deps.identity.createClientMessageId();
-          const implicitSkillCommandPolicy =
-            options.implicitSkillCommandPolicy ?? editedItem?.implicitSkillCommandPolicy;
           deps.queue.updateQueueForSessionKey(sessionKey, (queue) =>
             markQueuedDraftSending(
               updateQueuedDraft(queue, editingId, draft, deps.identity.now(), {
                 clientMessageId,
-                ...(implicitSkillCommandPolicy ? { implicitSkillCommandPolicy } : {}),
                 modelOverride: options.modelOverride ?? null,
               }),
               editingId,
@@ -1827,7 +1804,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             restoreDraftOnFailure: false,
             sendTraceId: options.sendTraceId,
             source: options.source,
-            implicitSkillCommandPolicy,
             modelOverride: options.modelOverride,
             onDraftTransferred: acknowledgeDraftTransfer,
           });
@@ -1858,7 +1834,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             replaceMessageId: action.messageId,
             sendTraceId: options.sendTraceId,
             source: options.source,
-            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
             modelOverride: options.modelOverride,
             onDraftTransferred: acknowledgeDraftTransfer,
           });
@@ -1869,9 +1844,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
           deps.queue.appendDraftToCurrentQueue(draft, {
             clientMessageId: deps.identity.createClientMessageId(),
-            ...(options.implicitSkillCommandPolicy
-              ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
-              : {}),
             ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
           });
           acknowledgeDraftTransfer();
@@ -1884,9 +1856,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           const sessionKey = deps.sessionKeys.currentSessionQueueKey();
           deps.queue.appendDraftToCurrentQueue(draft, {
             clientMessageId: deps.identity.createClientMessageId(),
-            ...(options.implicitSkillCommandPolicy
-              ? { implicitSkillCommandPolicy: options.implicitSkillCommandPolicy }
-              : {}),
             ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
           });
           acknowledgeDraftTransfer();
@@ -1903,7 +1872,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             expectedSessionKey: sessionKey,
             sendTraceId: options.sendTraceId,
             source: options.source,
-            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
             modelOverride: options.modelOverride,
           });
         }
@@ -1916,7 +1884,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             expectedSessionKey: sessionKey,
             sendTraceId: options.sendTraceId,
             source: options.source,
-            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
             modelOverride: options.modelOverride,
             onDraftTransferred: acknowledgeDraftTransfer,
           });
@@ -1931,7 +1898,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
             reason: "normal",
             sendTraceId: options.sendTraceId,
             source: options.source,
-            implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
             modelOverride: options.modelOverride,
             onDraftTransferred: acknowledgeDraftTransfer,
           });
@@ -1976,7 +1942,6 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
           reason,
           expectedSessionKey: drainSessionKey,
           clientMessageId: start.item.clientMessageId,
-          implicitSkillCommandPolicy: start.item.implicitSkillCommandPolicy,
           modelOverride: start.item.modelOverride,
         });
         const result = resolveQueueDrainCompletionAction({

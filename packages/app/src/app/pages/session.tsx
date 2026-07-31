@@ -100,7 +100,6 @@ import {
 } from "../lib/folder-access-request";
 import {
   createSessionClientMessageId,
-  sessionSubmitNeedsImplicitSkillConfirmation,
   type MaterializedSessionHandoff,
   type SessionSendOptionsBase,
   type SessionSendOrigin,
@@ -431,7 +430,6 @@ export type SessionViewProps = {
       targetSessionId?: string | null;
       onMaterializedSessionId?: (handoff: MaterializedSessionHandoff) => void;
       pendingSession?: PendingSidebarSessionMetadata | null;
-      implicitSkillCommandPolicy?: "confirm" | "allow" | "disable";
     },
   ) => Promise<SessionSubmitResult>;
   replaceUserMessageAsync: (
@@ -589,28 +587,9 @@ const reconnectStateLabelKey = (status: ReconnectState["status"]) => {
   }
 };
 
-type ImplicitSkillConfirmationRequest = {
-  sessionKey: string;
-  visibleSessionKey: string;
-  draft: ComposerDraft;
-  options: SessionComposerSendOptions;
-  skillName: string;
-  arguments: string;
-};
-
-// The composer intentionally does not expose model routing. This is an internal
-// session-send snapshot that keeps a pending implicit-skill confirmation bound
-// to the model selected when the user first submitted the draft.
 type SessionComposerSendOptions = ComposerSendOptions & {
   modelOverride?: ModelRef | null;
 };
-
-const snapshotImplicitSkillConfirmationDraft = (draft: ComposerDraft): ComposerDraft => ({
-  ...draft,
-  parts: draft.parts.map((part) => ({ ...part })),
-  attachments: draft.attachments.map((attachment) => ({ ...attachment })),
-  command: draft.command ? { ...draft.command } : undefined,
-});
 
 export default function SessionView(props: SessionViewProps) {
   const tr = (key: string) => t(key, currentLocale());
@@ -661,8 +640,6 @@ export default function SessionView(props: SessionViewProps) {
     sessionId: string;
     workspaceId: string | null;
   } | null>(null);
-  const [implicitSkillConfirmationBySessionKey, setImplicitSkillConfirmationBySessionKey] =
-    createSignal<Record<string, ImplicitSkillConfirmationRequest>>({});
   const [historyActionBusy, setHistoryActionBusy] = createSignal<"undo" | "redo" | "compact" | null>(null);
 
   const [layoutRootWidth, setLayoutRootWidth] = createSignal(0);
@@ -1162,14 +1139,6 @@ export default function SessionView(props: SessionViewProps) {
       selectedSessionId: props.selectedSessionId,
       pendingQueueKeyAwaitingSessionIdByBaseKey: pendingQueueKeyAwaitingSessionIdByBaseKey(),
     });
-  });
-  const implicitSkillConfirmation = createMemo(() => {
-    const confirmations = implicitSkillConfirmationBySessionKey();
-    const sessionKey = currentSessionQueueKey();
-    if (Object.hasOwn(confirmations, sessionKey)) return confirmations[sessionKey]!;
-    return Object.values(confirmations).find(
-      (pending) => pending.visibleSessionKey === sessionKey,
-    ) ?? null;
   });
   const [composerEntryDismissedBySessionKey, setComposerEntryDismissedBySessionKey] =
     createSignal<Record<string, boolean>>({});
@@ -2161,12 +2130,6 @@ export default function SessionView(props: SessionViewProps) {
     batch(() => {
       setSessionModelOverride({ sessionKey: currentSessionQueueKey(), model: null });
       props.clearLastPromptModelOverride();
-      setImplicitSkillConfirmationBySessionKey((current) =>
-        Object.fromEntries(Object.entries(current).map(([key, pending]) => {
-          const { modelOverride: _modelOverride, ...options } = pending.options;
-          return [key, { ...pending, options }];
-        })),
-      );
       setQueuedDraftsBySessionKey((current) =>
         Object.fromEntries(Object.entries(current).map(([key, queue]) => [
           key,
@@ -3623,70 +3586,15 @@ export default function SessionView(props: SessionViewProps) {
       sendNow: options.sendNow,
       sendTraceId: options.sendTraceId,
       source: options.source,
-      implicitSkillCommandPolicy: options.implicitSkillCommandPolicy,
       modelOverride,
       onDraftTransferred: options.onDraftTransferred,
     });
-    if (sessionSubmitNeedsImplicitSkillConfirmation(result)) {
-      const visibleSessionKey = currentSessionQueueKey();
-      recordSendTrace("implicit-skill-confirmation:store", {
-        submissionSessionKey,
-        visibleSessionKey,
-        visibleSessionMatchesSubmission: visibleSessionKey === submissionSessionKey,
-      });
-      setImplicitSkillConfirmationBySessionKey((current) => ({
-        ...current,
-        [submissionSessionKey]: {
-          sessionKey: submissionSessionKey,
-          visibleSessionKey,
-          draft: snapshotImplicitSkillConfirmationDraft(draft),
-          options: { ...options, modelOverride },
-          skillName: result.confirmation.skillName,
-          arguments: result.confirmation.arguments,
-        },
-      }));
-    }
     if (!result.accepted && result.draftDisposition === "clear") {
       props.clearComposerDraftIfMatches(submissionComposerStorageKey, draft);
     }
     return result;
   };
 
-  const removeImplicitSkillConfirmation = (pending: ImplicitSkillConfirmationRequest) => {
-    setImplicitSkillConfirmationBySessionKey((current) => {
-      if (current[pending.sessionKey] !== pending) return current;
-      const { [pending.sessionKey]: _removed, ...rest } = current;
-      return rest;
-    });
-  };
-
-  const sendImplicitSkillAsPrompt = async () => {
-    const pending = implicitSkillConfirmation();
-    if (!pending) return;
-    if (implicitSkillConfirmation() !== pending) return;
-    removeImplicitSkillConfirmation(pending);
-    await handleSendPrompt(pending.draft, {
-      ...pending.options,
-      implicitSkillCommandPolicy: "disable",
-    });
-  };
-
-  const runImplicitSkillCommand = async () => {
-    const pending = implicitSkillConfirmation();
-    if (!pending) return;
-    if (implicitSkillConfirmation() !== pending) return;
-    removeImplicitSkillConfirmation(pending);
-    await handleSendPrompt({
-      ...pending.draft,
-      command: {
-        name: pending.skillName,
-        arguments: pending.arguments,
-      },
-    }, {
-      ...pending.options,
-      implicitSkillCommandPolicy: "allow",
-    });
-  };
 
   const tempRuntimeUiDiagnosticBadge = (visibleSurface: TempRuntimeUiRenderSurface) => (
     <Show when={props.developerMode}>
@@ -4917,25 +4825,6 @@ export default function SessionView(props: SessionViewProps) {
         variant="danger"
         onConfirm={confirmDeleteSession}
         onCancel={closeDeleteSessionModal}
-      />
-
-      <ConfirmModal
-        open={Boolean(implicitSkillConfirmation())}
-        title={tr("session.implicit_skill_confirm_title")}
-        message={formatTr("session.implicit_skill_confirm_body", {
-          name: implicitSkillConfirmation()?.skillName ?? "",
-        })}
-        confirmLabel={tr("session.implicit_skill_confirm_run")}
-        cancelLabel={tr("session.implicit_skill_confirm_send_prompt")}
-        confirmTestId="implicit-skill-confirm-run"
-        cancelTestId="implicit-skill-confirm-send-prompt"
-        variant="warning"
-        onConfirm={() => void runImplicitSkillCommand()}
-        onCancel={() => void sendImplicitSkillAsPrompt()}
-        onClose={() => {
-          const pending = implicitSkillConfirmation();
-          if (pending) removeImplicitSkillConfirmation(pending);
-        }}
       />
 
       <ShareWorkspaceModal

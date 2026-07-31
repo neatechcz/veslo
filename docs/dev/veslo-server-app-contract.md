@@ -493,6 +493,10 @@ OpenCode `messageID` from the exact workspace, OpenCode session, and
 `clientMessageId`, then forwards it upstream so lifecycle reconciliation can
 identify the exact admitted turn after a restart. `command` admissions omit
 upstream `messageID` so OpenCode can allocate its normal command identity.
+Ordinary composer text is always admitted as `prompt_async`; the server does
+not resolve matching Skill names or require a confirmation modal. OpenCode may
+choose an available Skill from the prompt, while explicit slash commands retain
+their command admission path.
 Revert is the exception: it sends the existing OpenCode `messageID` that is
 being reverted.
 Clients may read a queued send with
@@ -553,6 +557,12 @@ orchestrator registry remains the source of truth for active run state; the
 server lifecycle controller owns when to read it, register runs, schedule
 reconcile, and wake the durable queue. The app's local UI queue remains a UI
 workflow concern and is separate from the server durable run queue.
+During startup recovery, an otherwise-active reservation is marked failed and
+released without further polling only when it is an unknown open assistant
+message whose last useful progress predates the startup grace window. During
+normal reconciliation, an active run with `engine_unreachable` is likewise
+failed after the one-minute no-progress grace. Other active or stale runs stay
+on the normal exact-run reconciler.
 
 `POST /workspace/:id/sessions/:sessionId/transcript` persists live transcript
 snapshots into the host store. `messages` plus `partsByMessageId` are the

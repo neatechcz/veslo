@@ -310,7 +310,6 @@ import {
 } from "./conversation-run-delivery-snapshot-store.js";
 import { createConversationSubmitAttemptStore } from "./conversation-submit-attempt-store.js";
 import { createConversationSubmitService } from "./conversation-submit-service.js";
-import { createConversationSubmitSkillCommandResolver } from "./conversation-submit-skill-command-resolution.js";
 import type { OrchestratorWorkspaceRegistrationScope } from "./orchestrator-workspace-registration-scope.js";
 import {
   createOrchestratorLifecycleClient,
@@ -5815,9 +5814,6 @@ function createRoutes(
       documentRuntimeDependencies.readStatus
         ? await documentRuntimeDependencies.readStatus({} as RequestContext)
         : createDocumentRuntimeStatusPayload(documentRuntimeDependencies),
-    resolveSkillCommand: createConversationSubmitSkillCommandResolver({
-      dataDir: serverDataDir,
-    }),
     queueStatusReader: (payload) =>
       conversationRunQueueStore.getForConversation(
         payload.workspaceId,

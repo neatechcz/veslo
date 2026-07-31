@@ -21,7 +21,6 @@ import {
   resolveConversationSubmitDraft,
   type ConversationSubmitDocumentRuntimeStatusReader,
   type ConversationSubmitModelDescriptorResolver,
-  type ConversationSubmitSkillCommandResolver,
 } from "./conversation-submit-draft-resolution.js";
 import type { ConversationService } from "./conversation-service.js";
 import type { ConversationRunQueueItem } from "./conversation-run-queue-store.js";
@@ -74,14 +73,12 @@ export function createConversationSubmitService(input: {
   attemptStore: ConversationSubmitAttemptStore;
   conversationService: ConversationService;
   documentRuntimeStatus?: ConversationSubmitDocumentRuntimeStatusReader;
-  resolveSkillCommand?: ConversationSubmitSkillCommandResolver;
   queueStatusReader?: ConversationSubmitQueueStatusReader;
 }): ConversationSubmitService {
   const {
     attemptStore,
     conversationService,
     documentRuntimeStatus,
-    resolveSkillCommand,
     queueStatusReader,
   } = input;
   const inFlightSubmitAttempts = new Map<string, Promise<ConversationSubmitServiceResponse>>();
@@ -263,7 +260,6 @@ export function createConversationSubmitService(input: {
         workspace,
         includeGlobal: workspace.workspaceType === "local",
         ...(documentRuntimeStatus ? { documentRuntimeStatus } : {}),
-        ...(resolveSkillCommand ? { resolveSkillCommand } : {}),
         ...(resolveManagedAiModelDescriptor ? { resolveManagedAiModelDescriptor } : {}),
       });
       if (draftResolution.status === "blocked") {

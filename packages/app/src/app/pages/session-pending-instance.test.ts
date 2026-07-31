@@ -281,9 +281,9 @@ test("session switching preserves keyed run UI state until runtime idle", () => 
 
 test("session send delegates draft clearing to the Composer transfer owner", () => {
   const handleSendPromptStart = sessionSource.indexOf("const handleSendPrompt = async");
-  const handleSendPromptEnd = sessionSource.indexOf("const sendImplicitSkillAsPrompt", handleSendPromptStart);
+  const handleSendPromptEnd = sessionSource.indexOf("const tempRuntimeUiDiagnosticBadge", handleSendPromptStart);
   assert.notEqual(handleSendPromptStart, -1, "session send handler should exist");
-  assert.notEqual(handleSendPromptEnd, -1, "session send handler should end before implicit skill handling");
+  assert.notEqual(handleSendPromptEnd, -1, "session send handler should have a bounded source slice");
   const handleSendPromptSource = sessionSource.slice(handleSendPromptStart, handleSendPromptEnd);
 
   assert.match(
@@ -295,49 +295,6 @@ test("session send delegates draft clearing to the Composer transfer owner", () 
     handleSendPromptSource,
     /props\.setComposerDraft\(/,
     "SessionView must not race the Composer-owned clear with a delayed result",
-  );
-});
-
-test("implicit skill confirmation keeps an immutable snapshot scoped to its originating session", () => {
-  assert.match(
-    sessionSource,
-    /type ImplicitSkillConfirmationRequest = \{\s*sessionKey: string;\s*visibleSessionKey: string;/,
-    "the confirmation snapshot must retain its immutable session owner",
-  );
-  assert.match(
-    sessionSource,
-    /if \(Object\.hasOwn\(confirmations, sessionKey\)\) return confirmations\[sessionKey\]!;\s*return Object\.values\(confirmations\)\.find\(\s*\(pending\) => pending\.visibleSessionKey === sessionKey,/s,
-    "a blocked first send should surface its confirmation through the exact pending-session identity created during handoff",
-  );
-  assert.match(
-    sessionSource,
-    /createSignal<Record<string, ImplicitSkillConfirmationRequest>>\(\{\}\)/,
-    "independent sessions must not overwrite each other's pending confirmation snapshots",
-  );
-  assert.match(
-    sessionSource,
-    /const submissionSessionKey = currentSessionQueueKey\(\);[\s\S]*const result = await sessionFlowFacade\.handleSendPrompt[\s\S]*const visibleSessionKey = currentSessionQueueKey\(\);[\s\S]*\[submissionSessionKey\]: \{\s*sessionKey: submissionSessionKey,\s*visibleSessionKey,\s*draft: snapshotImplicitSkillConfirmationDraft\(draft\)/,
-    "a delayed confirmation result must be stored under the session captured before the await",
-  );
-  assert.match(
-    sessionSource,
-    /parts: draft\.parts\.map[\s\S]*attachments: draft\.attachments\.map[\s\S]*command: draft\.command \? \{ \.\.\.draft\.command \} : undefined/,
-    "the confirmation owner must clone mutable draft collections before Composer ownership is released",
-  );
-  assert.equal(
-    (sessionSource.match(/if \(implicitSkillConfirmation\(\) !== pending\) return;/g) ?? []).length,
-    2,
-    "confirm and cancel must both fail closed outside the originating session",
-  );
-  assert.equal(
-    (sessionSource.match(/removeImplicitSkillConfirmation\(pending\);\s*await handleSendPrompt/g) ?? []).length,
-    2,
-    "each explicit choice must consume only its scoped snapshot immediately before resubmission",
-  );
-  assert.match(
-    sessionSource,
-    /onCancel=\{\(\) => void sendImplicitSkillAsPrompt\(\)\}[\s\S]*onClose=\{\(\) => \{[\s\S]*const pending = implicitSkillConfirmation\(\);[\s\S]*if \(pending\) removeImplicitSkillConfirmation\(pending\);/,
-    "closing the confirmation must discard only its scoped snapshot instead of leaving a stale prompt open",
   );
 });
 

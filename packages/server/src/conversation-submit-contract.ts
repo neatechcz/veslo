@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { ApiError } from "./errors.js";
 
 export type ConversationSubmitDraftMode = "prompt" | "shell";
-export type ConversationSubmitImplicitSkillCommandPolicy = "confirm" | "allow" | "disable";
 export type ConversationSubmitAttachmentKind = "image" | "file";
 
 export type ConversationSubmitAttachment = {
@@ -42,7 +41,6 @@ export type ConversationSubmitRequest = {
     variant?: string | null;
     expectAiGatewayStart?: boolean;
     dryRun?: boolean;
-    implicitSkillCommandPolicy?: ConversationSubmitImplicitSkillCommandPolicy;
   };
 };
 
@@ -125,15 +123,6 @@ export type ConversationSubmitQueuedResult = {
   debugTrace?: ConversationSubmitDebugTraceEntry[];
 };
 
-export type ConversationSubmitImplicitSkillCommandConfirmation = {
-  type: "implicit_skill_command";
-  skillName: string;
-  arguments: string;
-};
-
-export type ConversationSubmitConfirmation =
-  | ConversationSubmitImplicitSkillCommandConfirmation;
-
 export type ConversationSubmitErrorDetails = {
   attachmentName?: string;
   format?: string;
@@ -154,7 +143,6 @@ export type ConversationSubmitBlockedResult = {
   materializedSession?: unknown | null;
   draftDisposition: "restore" | "keep";
   recoverable: boolean;
-  confirmation?: ConversationSubmitConfirmation;
   details?: ConversationSubmitErrorDetails;
 };
 
@@ -301,16 +289,6 @@ function parseOptions(value: unknown): ConversationSubmitRequest["options"] {
   if (expectAiGatewayStart !== undefined) options.expectAiGatewayStart = expectAiGatewayStart;
   const dryRun = optionalBodyBoolean(value, "dryRun");
   if (dryRun !== undefined) options.dryRun = dryRun;
-  const implicitSkillCommandPolicyRaw = bodyString(value, "implicitSkillCommandPolicy");
-  const implicitSkillCommandPolicy = implicitSkillCommandPolicyRaw === "confirm" ||
-      implicitSkillCommandPolicyRaw === "allow" ||
-      implicitSkillCommandPolicyRaw === "disable"
-    ? implicitSkillCommandPolicyRaw
-    : undefined;
-  if (implicitSkillCommandPolicyRaw && !implicitSkillCommandPolicy) {
-    throw new ApiError(400, "invalid_payload", "options.implicitSkillCommandPolicy is invalid");
-  }
-  if (implicitSkillCommandPolicy) options.implicitSkillCommandPolicy = implicitSkillCommandPolicy;
   return options;
 }
 
@@ -404,7 +382,6 @@ export function createConversationSubmitRequestHash(request: ConversationSubmitR
       variant: normalizeNullableText(request.options?.variant),
       expectAiGatewayStart: request.options?.expectAiGatewayStart === true,
       dryRun: request.options?.dryRun === true,
-      implicitSkillCommandPolicy: request.options?.implicitSkillCommandPolicy ?? null,
     },
   };
   return createHash("sha256").update(stableJsonStringify(hashInput)).digest("hex");
