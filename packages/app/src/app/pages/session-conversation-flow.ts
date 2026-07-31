@@ -28,6 +28,7 @@ import {
   type QueuedDraftEnvelope,
 } from "../components/session/session-queue-model.js";
 import type { ComposerDraft, ModelRef, PendingSidebarSessionMetadata } from "../types";
+import type { SessionAbortResult } from "./session-send-workflow";
 import type {
   MaterializedSessionHandoff,
   MaterializedSessionScope,
@@ -693,7 +694,7 @@ export type SessionConversationFlowControllerDeps = {
   };
   runControl: {
     abortBusy: () => boolean;
-    abortSession: (sessionId?: string) => Promise<void>;
+    abortSession: (sessionId?: string) => Promise<SessionAbortResult | void>;
     lastPromptSent: () => string;
     retryLastPrompt: () => void;
     runPhase: () => string;
@@ -888,8 +889,14 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       deps.runControl.setAbortBusy(true);
       deps.feedback.setToastMessage(deps.feedback.tr("session.stopping_run"));
       try {
-        await deps.runControl.abortSession(selectedSessionId);
-        deps.feedback.setToastMessage(deps.feedback.tr("session.run_stopped"));
+        const abortResult = await deps.runControl.abortSession(selectedSessionId);
+        deps.feedback.setToastMessage(
+          abortResult?.kind === "unknown"
+            ? abortResult.message
+            : abortResult?.kind === "pending_reconciliation"
+              ? deps.feedback.tr("session.stopping_run")
+              : deps.feedback.tr("session.run_stopped"),
+        );
       } catch (error) {
         const message =
           error instanceof Error ? error.message : deps.feedback.tr("session.failed_to_stop");
@@ -912,10 +919,19 @@ export function createSessionConversationFlow(deps: SessionConversationFlowContr
       try {
         const selectedSessionId = deps.sessionKeys.selectedSessionId();
         if (deps.runState.showRunIndicator() && selectedSessionId) {
-          await deps.runControl.abortSession(selectedSessionId);
+          const abortResult = await deps.runControl.abortSession(selectedSessionId);
+          if (abortResult?.kind === "unknown") {
+            deps.feedback.setToastMessage(
+              "Waiting for the previous run to settle. Retry again to explicitly queue a new request.",
+            );
+            return;
+          }
         }
-      } catch {
-        // Retry should still proceed; users care more about forward motion than abort cleanup here.
+      } catch (error) {
+        deps.feedback.setToastMessage(
+          error instanceof Error ? error.message : deps.feedback.tr("session.failed_to_stop"),
+        );
+        return;
       } finally {
         deps.runControl.setAbortBusy(false);
       }

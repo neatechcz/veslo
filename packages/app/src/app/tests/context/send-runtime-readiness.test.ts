@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  classifyLocalRuntimeRecoveryError,
   createSendRuntimeReadiness,
   isLocalRuntimeHealthTimeoutError,
   localRuntimeHealthTimeoutMessage,
@@ -12,6 +13,7 @@ import {
   type SendRuntimePreflightContext,
   type SendRuntimeReadinessDeps,
 } from "../../context/send-runtime-readiness.js";
+import { VesloServerError } from "../../lib/veslo-server.js";
 
 type TestClient = {
   id: string;
@@ -1285,21 +1287,21 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
     shouldRecoverLocalRuntimeFromHealthError(
       new Error('{"error":"opencode_request_failed","status":503}'),
     ),
-    true,
+    false,
   );
   assert.equal(
     shouldRecoverLocalRuntimeFromHealthError(
       new Error("OpenCode health returned status 404"),
     ),
-    true,
+    false,
   );
   assert.equal(
     shouldRecoverLocalRuntimeFromHealthError(new Error('{"status":404}')),
-    true,
+    false,
   );
   assert.equal(
     shouldRecoverLocalRuntimeFromHealthError(new Error("upstream status 502")),
-    true,
+    false,
   );
   assert.equal(
     shouldRecoverLocalRuntimeFromHealthError(new Error("permission denied")),
@@ -1310,6 +1312,27 @@ test("local runtime health error helpers classify dead endpoints and probe timeo
       new Error(localRuntimeHealthTimeoutMessage),
     ),
     true,
+  );
+});
+
+test("local runtime recovery uses typed server error codes before compatibility text matching", () => {
+  assert.equal(
+    classifyLocalRuntimeRecoveryError(new VesloServerError(503, "engine_not_running", "Engine unavailable")),
+    "engine_unavailable",
+  );
+  assert.equal(
+    classifyLocalRuntimeRecoveryError(new VesloServerError(404, "workspace_not_found", "Workspace unavailable")),
+    "workspace_route_stale",
+  );
+  assert.equal(
+    classifyLocalRuntimeRecoveryError(new VesloServerError(404, "not_found", "Not found")),
+    null,
+  );
+  assert.equal(
+    shouldRecoverLocalRuntimeFromHealthError(
+      new VesloServerError(502, "opencode_proxy_failed", "OpenCode rejected the request"),
+    ),
+    false,
   );
 });
 

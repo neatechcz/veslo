@@ -204,7 +204,10 @@ export function createRunRegistry(deps: {
             ? null
             : record.error;
       const next = deps.store.update(record.workspaceId, record.runId, {
-        status: timedOut ? "blocked" : "running",
+        // A no-output retry is still one exact OpenCode run. Its timeout is a
+        // durable diagnostic, not permission to discard the run, admit a
+        // successor, or turn a delivery/reconciliation problem into failure.
+        status: "running",
         startedAt,
         completedAt: null,
         error,

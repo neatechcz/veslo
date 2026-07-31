@@ -487,6 +487,8 @@ test("app shell composes feedback modal state and shared feedback opener", () =>
     ["error", "feedbackWorkflow.feedbackSubmitError()"],
     ["successIssueId", "feedbackWorkflow.feedbackSubmitSuccessIssueId()"],
     ["submitting", "feedbackWorkflow.feedbackSubmitting()"],
+    ["diagnosticAttachment", "feedbackWorkflow.feedbackDiagnosticAttachment()"],
+    ["diagnosticUploadPending", "feedbackWorkflow.feedbackDiagnosticUploadPending()"],
     ["onClose", "feedbackWorkflow.closeFeedbackModal"],
     ["onSubmit", "feedbackWorkflow.submitFeedback"],
   ]);

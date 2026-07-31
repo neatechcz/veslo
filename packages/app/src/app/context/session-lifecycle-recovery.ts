@@ -1,6 +1,7 @@
 import type {
   VesloConversationRunActivityKind,
   VesloConversationRunLifecycleStatus,
+  VesloConversationRunTerminalization,
   VesloConversationRunWaitReason,
   VesloSessionTranscriptSnapshot,
 } from "../lib/veslo-server";
@@ -37,6 +38,7 @@ export type SessionLifecycleRecoveryStatus = {
   lastUsefulProgressAt?: number | null;
   retrySince?: number | null;
   noProgressSeconds?: number | null;
+  terminalization?: VesloConversationRunTerminalization | null;
   recoveryState?: SessionRunRecoveryState;
 };
 
@@ -125,6 +127,7 @@ const TERMINAL_LIFECYCLE_STATUSES = new Set<VesloConversationRunLifecycleStatus>
 const DEFAULT_INITIAL_DELAY_MS = 5_000;
 const DEFAULT_POLL_MS = 5_000;
 const DEFAULT_MAX_ATTEMPTS = 600;
+const DEFAULT_UNAVAILABLE_OBSERVATION_MAX_ATTEMPTS = 12;
 const DEFAULT_TERMINAL_TRANSCRIPT_RETRY_MS = 1_000;
 
 const normalize = (value: string | null | undefined) => value?.trim() ?? "";
@@ -211,6 +214,7 @@ export function createSessionLifecycleRecoveryController(
     timer: unknown | null;
     admitted: boolean;
     foregroundRecoveryAttemptedGeneration: number | null;
+    unavailableObservations: number;
     lastStatus: SessionLifecycleRecoveryStatus | null;
   };
 
@@ -367,6 +371,24 @@ export function createSessionLifecycleRecoveryController(
     traceForScope("session-lifecycle-recovery:connection-unavailable", watch.scope, watch.generation, {
       outcome: "connection-unavailable",
     });
+  };
+
+  const exhaustUnavailableObservation = (key: string, watch: Watch): boolean => {
+    if (
+      !watch.admitted ||
+      watch.lastStatus?.recoveryState !== "connection-unavailable" ||
+      watch.unavailableObservations < DEFAULT_UNAVAILABLE_OBSERVATION_MAX_ATTEMPTS
+    ) return false;
+    if (watch.timer) clearTimer(watch.timer);
+    watch.timer = null;
+    watches.delete(key);
+    exhaustedWatches.set(key, watch);
+    traceForScope("session-lifecycle-recovery:connection-unavailable-observation-limit", watch.scope, watch.generation, {
+      outcome: "connection-unavailable-observation-limit",
+      observations: watch.unavailableObservations,
+    });
+    options.onConversationRunStatus?.(watch.scope, watch.lastStatus);
+    return true;
   };
 
   const publishTranscriptUnavailable = (recovery: TerminalTranscriptRecovery) => {
@@ -761,10 +783,14 @@ export function createSessionLifecycleRecoveryController(
         });
         if (watch.admitted) {
           await recoverAcceptedWatch(key, watch, "status-unavailable");
+          if (watch.lastStatus?.recoveryState === "connection-unavailable") {
+            watch.unavailableObservations += 1;
+          }
         } else {
           options.onConversationRunStatus?.(watch.scope, null);
         }
       } else {
+        watch.unavailableObservations = 0;
         watch.lastStatus = watch.admitted ? { ...status, recoveryState: "watching" } : status;
         options.onConversationRunStatus?.(watch.scope, watch.lastStatus);
         if (status.status === "queued") retainQueuedRun(watch.scope, watch.generation);
@@ -782,6 +808,9 @@ export function createSessionLifecycleRecoveryController(
         errorType: error instanceof Error ? error.name : "unknown",
       });
       await recoverAcceptedWatch(key, watch, "status-http-error");
+      if (watch.lastStatus?.recoveryState === "connection-unavailable") {
+        watch.unavailableObservations += 1;
+      }
     } finally {
       const current = watches.get(key);
       if (current) current.inFlight = false;
@@ -789,6 +818,7 @@ export function createSessionLifecycleRecoveryController(
 
     const current = watches.get(key);
     if (!current) return;
+    if (exhaustUnavailableObservation(key, current)) return;
     if (current.attempts >= maxAttempts) {
       traceForScope("session-lifecycle-recovery:exhausted", current.scope, current.generation, {
         attempts: current.attempts,
@@ -845,6 +875,7 @@ export function createSessionLifecycleRecoveryController(
         timer: null,
         admitted: admittedRunKeys.has(key),
         foregroundRecoveryAttemptedGeneration: null,
+        unavailableObservations: 0,
         lastStatus: null,
       });
       traceForScope("session-lifecycle-recovery:watch", scope, 1, {
@@ -906,6 +937,7 @@ export function createSessionLifecycleRecoveryController(
           timer: null,
           admitted: false,
           foregroundRecoveryAttemptedGeneration: null,
+          unavailableObservations: 0,
           lastStatus: status,
         });
         scheduleWatch(key, pollMs);
@@ -940,6 +972,7 @@ export function createSessionLifecycleRecoveryController(
     watch.generation += 1;
     watch.foregroundRecoveryAttemptedGeneration = null;
     watch.attempts = 0;
+    watch.unavailableObservations = 0;
     if (watch.lastStatus) {
       watch.lastStatus = { ...watch.lastStatus, recoveryState: "watching" };
       options.onConversationRunStatus?.(watch.scope, watch.lastStatus);
@@ -976,6 +1009,7 @@ export function createSessionLifecycleRecoveryController(
           timer: null,
           admitted: false,
           foregroundRecoveryAttemptedGeneration: null,
+          unavailableObservations: 0,
           lastStatus: {
             runId: scope.runId,
             status: "queued",
@@ -1009,6 +1043,7 @@ export function createSessionLifecycleRecoveryController(
         const wasExhausted = exhaustedWatches.delete(key);
         if (wasExhausted) {
           existingWatch.attempts = 0;
+          existingWatch.unavailableObservations = 0;
           existingWatch.inFlight = false;
           existingWatch.timer = null;
           watches.set(key, existingWatch);
@@ -1065,6 +1100,7 @@ export function createSessionLifecycleRecoveryController(
         timer: null,
         admitted: true,
         foregroundRecoveryAttemptedGeneration: null,
+        unavailableObservations: 0,
         lastStatus: submittedStatus,
       });
       const workspaceId = normalize(scope.workspaceId);
@@ -1094,6 +1130,7 @@ export function createSessionLifecycleRecoveryController(
       if (exhausted) {
         exhaustedWatches.delete(key);
         exhausted.attempts = 0;
+        exhausted.unavailableObservations = 0;
         exhausted.inFlight = false;
         exhausted.timer = null;
         if (exhausted.lastStatus) {
@@ -1111,6 +1148,7 @@ export function createSessionLifecycleRecoveryController(
           timer: null,
           admitted: admittedRunKeys.has(key),
           foregroundRecoveryAttemptedGeneration: null,
+          unavailableObservations: 0,
           lastStatus: null,
         });
         traceForScope("session-lifecycle-recovery:watch", scope, 1, {
@@ -1132,6 +1170,7 @@ export function createSessionLifecycleRecoveryController(
         if (targetWorkspaceId && normalize(watch.scope.workspaceId) !== targetWorkspaceId) continue;
         exhaustedWatches.delete(key);
         watch.attempts = 0;
+        watch.unavailableObservations = 0;
         watch.inFlight = false;
         watch.timer = null;
         if (watch.lastStatus) watch.lastStatus = { ...watch.lastStatus, recoveryState: "watching" };
@@ -1157,6 +1196,7 @@ export function createSessionLifecycleRecoveryController(
         if (!aliases.includes(targetSessionId)) continue;
         exhaustedWatches.delete(key);
         watch.attempts = 0;
+        watch.unavailableObservations = 0;
         watch.inFlight = false;
         watch.timer = null;
         if (watch.lastStatus) watch.lastStatus = { ...watch.lastStatus, recoveryState: "watching" };
@@ -1172,7 +1212,7 @@ export function createSessionLifecycleRecoveryController(
       const targetWorkspaceId = normalize(workspaceId);
       if (!targetSessionId) return 0;
       let resumed = 0;
-      for (const [, watch] of watches) {
+      for (const [key, watch] of [...watches, ...exhaustedWatches]) {
         if (!watch.admitted) continue;
         if (targetWorkspaceId && normalize(watch.scope.workspaceId) !== targetWorkspaceId) continue;
         const aliases = unique([
@@ -1181,6 +1221,13 @@ export function createSessionLifecycleRecoveryController(
           watch.scope.conversationId,
         ]);
         if (!aliases.includes(targetSessionId)) continue;
+        if (exhaustedWatches.delete(key)) {
+          watch.attempts = 0;
+          watch.unavailableObservations = 0;
+          watch.inFlight = false;
+          watch.timer = null;
+          watches.set(key, watch);
+        }
         restartAcceptedWatch(watch, "foreground-recovery-retry");
         resumed += 1;
       }
@@ -1189,9 +1236,16 @@ export function createSessionLifecycleRecoveryController(
     resumeAcceptedRunsForWorkspace(workspaceId?: string | null) {
       const targetWorkspaceId = normalize(workspaceId);
       let resumed = 0;
-      for (const watch of watches.values()) {
+      for (const [key, watch] of [...watches, ...exhaustedWatches]) {
         if (!watch.admitted) continue;
         if (targetWorkspaceId && normalize(watch.scope.workspaceId) !== targetWorkspaceId) continue;
+        if (exhaustedWatches.delete(key)) {
+          watch.attempts = 0;
+          watch.unavailableObservations = 0;
+          watch.inFlight = false;
+          watch.timer = null;
+          watches.set(key, watch);
+        }
         restartAcceptedWatch(watch, "foreground-recovery-reconnect");
         resumed += 1;
       }

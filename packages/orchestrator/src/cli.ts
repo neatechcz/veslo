@@ -5484,7 +5484,7 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   const persistEnginesSnapshot = persistEngines;
 
-  let e2eFailNextSharedProxy = false;
+  let e2eFailNextSharedProxyCount = 0;
   const e2eFaultInjectionEnabled = process.env.VESLO_E2E_FAULT_INJECTION === "1";
 
   const normalizeShutdownAttribution = (
@@ -5644,9 +5644,14 @@ async function runRouterDaemon(args: ParsedArgs) {
           return;
         }
         if (req.method === "POST" && url.pathname === "/e2e/shared-engine/fail-next-proxy") {
-          e2eFailNextSharedProxy = true;
+          const body = await readObjectBody();
+          const requestedCount = typeof body.count === "number" && Number.isInteger(body.count)
+            ? body.count
+            : 1;
+          e2eFailNextSharedProxyCount = Math.min(Math.max(requestedCount, 1), 10);
           send(200, {
             ok: true,
+            remaining: e2eFailNextSharedProxyCount,
             sharedEngine: sharedOpenCodeEngine?.snapshot() ?? null,
           });
           return;
@@ -6888,8 +6893,8 @@ async function runRouterDaemon(args: ParsedArgs) {
           engineDirectory,
         });
 
-        if (usesSharedOpenCodeEngine(workspaceTopology) && e2eFailNextSharedProxy) {
-          e2eFailNextSharedProxy = false;
+        if (usesSharedOpenCodeEngine(workspaceTopology) && e2eFailNextSharedProxyCount > 0) {
+          e2eFailNextSharedProxyCount -= 1;
           const error = new Error("The socket connection was closed unexpectedly (e2e)");
           finishUpstreamTrace("orchestrator:proxy-upstream:error", {
             statusCode: 502,

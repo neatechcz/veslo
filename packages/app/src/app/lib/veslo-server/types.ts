@@ -1685,6 +1685,14 @@ export type VesloConversationRunWaitReason =
   | "engine_unreachable"
   | "none";
 
+export type VesloConversationRunTerminalization = {
+  state: "pending";
+  reasonCode: string;
+  attempts: number;
+  nextAttemptAt: number | null;
+  deadlineAt: number | null;
+};
+
 export type VesloConversationRunStatusResult = {
   ok: boolean;
   workspaceId: string;
@@ -1699,6 +1707,7 @@ export type VesloConversationRunStatusResult = {
   lastUsefulProgressAt?: number | null;
   retrySince?: number | null;
   noProgressSeconds?: number | null;
+  terminalization?: VesloConversationRunTerminalization | null;
 };
 
 export type VesloConversationRunDeliveryAppReport =

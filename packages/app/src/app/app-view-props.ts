@@ -13,6 +13,7 @@ import type { ManagedAiAccessProfile } from "./lib/ai-access";
 import type { DocumentRuntimeStatusPayload } from "./lib/document-runtime";
 import type { McpServersRefreshOptions } from "./lib/mcp-server-refresh";
 import type { SessionSubmitResult } from "./lib/session-send-contract";
+import type { SessionAbortResult } from "./pages/session-send-workflow";
 import type { SidebarSessionActivityForRowKey } from "./context/sidebar-session-activity-projection";
 import type { SkillMutationTarget } from "./lib/skill-inventory";
 import type { SessionCapabilitiesSnapshot } from "./lib/session-capabilities";
@@ -548,7 +549,7 @@ export type AppViewPropsScope = {
     pendingDraftKey: string | null | undefined,
     sessionId: string | null | undefined,
   ) => void;
-  abortSession: (sessionId?: string, target?: ConversationAbortTarget) => Promise<void>;
+  abortSession: (sessionId?: string, target?: ConversationAbortTarget) => Promise<SessionAbortResult | void>;
   undoLastUserMessage: () => Promise<void>;
   redoLastUserMessage: () => Promise<void>;
   submitCurrentSessionCompaction: (sessionIdOverride?: string) => Promise<void>;

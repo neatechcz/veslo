@@ -568,8 +568,19 @@ export type SessionSendWorkflow = {
   abortSession: (
     sessionId?: string,
     target?: ConversationAbortTarget,
-  ) => Promise<void>;
+  ) => Promise<SessionAbortResult | void>;
 };
+
+export type SessionAbortResult =
+  | {
+      kind: "pending_reconciliation";
+      workspaceId: string;
+      conversationId: string;
+      opencodeSessionId: string;
+      runId: string | null;
+    }
+  | { kind: "already_terminal" }
+  | { kind: "unknown"; message: string };
 
 function sessionSubmitResultFromConversationSubmit(
   result: ConversationSubmitTerminalResult,
@@ -2911,7 +2922,7 @@ export function createSessionSendWorkflow(
     target?: ConversationAbortTarget,
   ) {
     const id = (sessionID ?? deps.selectedSessionId() ?? "").trim();
-    if (!id) return;
+    if (!id) return { kind: "already_terminal" } as const;
     const scope = deps.resolveConversationAbortScope(id, target);
     const selectedAbortScope = deps.resolveSelectedSessionBrowseScope(id);
     const explicitAbortWorkspaceId =
@@ -2927,7 +2938,8 @@ export function createSessionSendWorkflow(
       hasConversationScope: scope.hasConversationScope,
       explicitWorkspaceId: explicitAbortWorkspaceId || null,
     });
-    const blockAbortWithoutSafeServerScope = (): boolean => {
+    const unknownAbort = (message: string): SessionAbortResult => ({ kind: "unknown", message });
+    const blockAbortWithoutSafeServerScope = (): SessionAbortResult | null => {
       if (!explicitAbortWorkspaceId) {
         deps.recordSendTrace(
           "abortSession:abort-blocked-missing-workspace-scope",
@@ -2936,12 +2948,13 @@ export function createSessionSendWorkflow(
         deps.setError(
           "Cannot stop this run because its workspace scope is missing. Re-select the session and try again.",
         );
-        return true;
+        return unknownAbort("Cannot stop this run because its workspace scope is missing. Re-select the session and try again.");
       }
-      return false;
+      return null;
     };
-    const reportAbortUnavailable = (message: string) => {
-      if (blockAbortWithoutSafeServerScope()) return;
+    const reportAbortUnavailable = (message: string): SessionAbortResult => {
+      const blocked = blockAbortWithoutSafeServerScope();
+      if (blocked) return blocked;
       deps.recordSendTrace(
         "abortSession:conversation-abort-blocked-unavailable",
         {
@@ -2953,8 +2966,10 @@ export function createSessionSendWorkflow(
         },
       );
       deps.setError(message);
+      return unknownAbort(message);
     };
-    if (blockAbortWithoutSafeServerScope()) return;
+    const blocked = blockAbortWithoutSafeServerScope();
+    if (blocked) return blocked;
     try {
       const result = await deps.abortConversationFromVesloWriteApi(id, target);
       if (result) {
@@ -2965,18 +2980,23 @@ export function createSessionSendWorkflow(
           opencodeSessionId: result.opencodeSessionId,
           runId: result.runId,
         });
-        return;
+        return {
+          kind: "pending_reconciliation",
+          workspaceId: result.workspaceId,
+          conversationId: result.conversationId,
+          opencodeSessionId: result.opencodeSessionId,
+          runId: result.runId ?? null,
+        } as const;
       }
       deps.recordSendTrace("abortSession:conversation-abort-unavailable", {
         sessionID: id,
         hasConversationScope: scope.hasConversationScope,
       });
-      reportAbortUnavailable(
+      return reportAbortUnavailable(
         scope.hasConversationScope
           ? "Conversation service is unavailable for this scoped conversation."
           : "Cannot stop this run because the Veslo conversation service is unavailable for this session.",
       );
-      return;
     } catch (error) {
       const message = deps.messageFromUnknownError(error);
       deps.recordSendTrace("abortSession:conversation-abort-error", {
@@ -2984,8 +3004,7 @@ export function createSessionSendWorkflow(
         hasConversationScope: scope.hasConversationScope,
         message,
       });
-      reportAbortUnavailable(message);
-      return;
+      return reportAbortUnavailable(message);
     }
   }
 

@@ -114,6 +114,11 @@ export default {
   "feedback.technical_note": "Veslo automaticky přiloží aktuální obrazovku a technické detaily.",
   "feedback.attach_diagnostics": "Přiložit posledních 10 minut lokálních diagnostických logů (až 50 MB).",
   "feedback.success_message": "Hlášení bylo odesláno. YouTrack task: {issueId}.",
+  "feedback.diagnostics_uploading": "Připojujeme diagnostické logy ({acceptedEvents}/{totalEvents}). Nezavírejte Veslo, dokud se toto potvrzení nezmění.",
+  "feedback.diagnostics_uploaded": "Diagnostické logy jsou připojené. Veslo nyní můžete zavřít.",
+  "feedback.diagnostics_uploaded_truncated": "Diagnostické logy jsou připojené, ale část záznamu byla zkrácena limitem 50 MB. Veslo nyní můžete zavřít.",
+  "feedback.diagnostics_failed": "Feedback byl odeslán, ale diagnostické logy se nepodařilo doručit.",
+  "feedback.diagnostics_unavailable": "Feedback byl odeslán, ale diagnostické logy se nepodařilo připojit.",
   "feedback.submit": "Odeslat hlášení",
 
   // ==================== Session ====================
@@ -1332,6 +1337,7 @@ export default {
   "session.run_retrying": "Opakuji",
   "session.run_observation_exhausted": "Stav běhu se nepodařilo ověřit. Čekám na obnovení připojení.",
   "session.run_transcript_unavailable": "Běh skončil, ale jeho přepis se nepodařilo obnovit.",
+  "session.run_terminalization_pending": "Dokončuji předchozí běh, než budu pokračovat.",
   "session.run_model_retry_no_output": "Opakuji model/API, bez vystupu {time}",
   "session.run_model_retry_no_output_with_progress": "Opakuji model/API, bez vystupu {time}; posledni postup {lastProgress}",
   "session.run_model_retry_blocked": "Opakovani model/API zablokovano po {time}",

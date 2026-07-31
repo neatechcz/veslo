@@ -8,6 +8,8 @@ import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 import {
   createFeedbackDiagnosticSnapshot,
   queueFeedbackDiagnosticSnapshotForDelivery,
+  userDiagnosticCaptureStatus,
+  type UserDiagnosticCaptureStatus,
 } from "./tauri";
 
 export const FEEDBACK_CAPTURE_SELECTOR = "[data-feedback-capture-root]";
@@ -70,7 +72,18 @@ export type SubmitFeedbackReportResult = {
   status: "projected";
   youtrackIssueId: string;
   youtrackIssueUrl: string | null;
+  diagnosticAttachment?: FeedbackDiagnosticAttachment;
 };
+
+export type FeedbackDiagnosticAttachment =
+  | {
+      status: "tracking";
+      captureId: string;
+      capture: UserDiagnosticCaptureStatus;
+    }
+  | {
+      status: "unavailable";
+    };
 
 type FeedbackRequestBody = {
   title: string;
@@ -167,7 +180,7 @@ function buildFeedbackRequestBody(args: {
   };
 }
 
-function normalizeFeedbackSubmitResult(response: FeedbackSubmitResponse): SubmitFeedbackReportResult {
+function normalizeFeedbackSubmitResult(response: FeedbackSubmitResponse): Omit<SubmitFeedbackReportResult, "diagnosticAttachment"> {
   const feedbackId = readResponseString(response.feedbackId);
   const youtrackIssueId = readResponseString(response.youtrackIssueId);
   const youtrackIssueUrl = readResponseString(response.youtrackIssueUrl);
@@ -190,8 +203,9 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
     throw new Error("Sign in to Den before sending feedback.");
   }
 
+  const diagnosticsRequested = args.attachDiagnostics === true;
   let diagnosticCaptureId: string | null = null;
-  if (args.attachDiagnostics && isTauriRuntime()) {
+  if (diagnosticsRequested && isTauriRuntime()) {
     try {
       diagnosticCaptureId = (await createFeedbackDiagnosticSnapshot()).captureId;
     } catch {
@@ -235,10 +249,38 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
       fetchImpl: args.fetchImpl ?? resolveFetch(),
     });
     const normalized = normalizeFeedbackSubmitResult(result);
-    if (diagnosticCaptureId) {
-      void queueFeedbackDiagnosticSnapshotForDelivery(diagnosticCaptureId);
+    if (!diagnosticsRequested) {
+      return normalized;
     }
-    return normalized;
+    if (!diagnosticCaptureId) {
+      return {
+        ...normalized,
+        diagnosticAttachment: { status: "unavailable" },
+      };
+    }
+    try {
+      await queueFeedbackDiagnosticSnapshotForDelivery(diagnosticCaptureId);
+      const capture = await userDiagnosticCaptureStatus();
+      if (capture.captureId !== diagnosticCaptureId) {
+        return {
+          ...normalized,
+          diagnosticAttachment: { status: "unavailable" },
+        };
+      }
+      return {
+        ...normalized,
+        diagnosticAttachment: {
+          status: "tracking",
+          captureId: diagnosticCaptureId,
+          capture,
+        },
+      };
+    } catch {
+      return {
+        ...normalized,
+        diagnosticAttachment: { status: "unavailable" },
+      };
+    }
   } catch (error) {
     throw normalizeFeedbackSubmitError(error, auth.denApiBase.replace(/\/+$/, ""));
   }

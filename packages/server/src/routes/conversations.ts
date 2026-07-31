@@ -7,6 +7,7 @@ import {
   type ConversationRunQueueItem,
   type ConversationRunQueueReadableState,
   type ConversationRunQueueStore,
+  type ConversationWorkspaceRunReservation,
 } from "../conversation-run-queue-store.js";
 import {
   DELIVERY_REJECTION_REASON_CODES,
@@ -684,7 +685,10 @@ function serializeConversationRunQueueStatus(
   };
 }
 
-function serializeQueuedRunLifecycleStatus(item: ConversationRunQueueItem): Record<string, unknown> {
+function serializeQueuedRunLifecycleStatus(
+  item: ConversationRunQueueItem,
+  terminalization: Record<string, unknown> | null = null,
+): Record<string, unknown> {
   const terminalFailure = item.state === "failed";
   const submittedWithoutLifecycle = item.state === "submitted";
   return {
@@ -700,6 +704,20 @@ function serializeQueuedRunLifecycleStatus(item: ConversationRunQueueItem): Reco
     waitReason: "none",
     queueItemId: item.queueItemId,
     queueState: item.state,
+    terminalization,
+  };
+}
+
+function serializeTerminalizationPending(
+  reservation: ConversationWorkspaceRunReservation | undefined,
+): Record<string, unknown> | null {
+  if (reservation?.state !== "terminalization_pending") return null;
+  return {
+    state: "pending",
+    reasonCode: reservation.terminalizationReason ?? "unknown",
+    attempts: reservation.terminalizationAttempts,
+    nextAttemptAt: reservation.terminalizationNextAttemptAt,
+    deadlineAt: reservation.terminalizationDeadlineAt,
   };
 }
 
@@ -1496,6 +1514,13 @@ export function registerConversationSessionRoutes(
       conversationId,
       runId,
     };
+    const terminalization = serializeTerminalizationPending(
+      conversationRunQueueStore.listWorkspaceRunReservations().find((reservation) =>
+        reservation.workspaceId === workspace.id &&
+        reservation.conversationId === conversationId &&
+        reservation.runId === runId
+      ),
+    );
     recordSendWorkflowTrace("server", "server:conversation-run-status:start", statusTrace);
     let status;
     try {
@@ -1525,7 +1550,7 @@ export function registerConversationSessionRoutes(
           ...statusTrace,
           outcome: "queued",
         });
-        return jsonResponse(serializeQueuedRunLifecycleStatus(queued));
+        return jsonResponse(serializeQueuedRunLifecycleStatus(queued, terminalization));
       }
       recordSendWorkflowTrace("server", "server:conversation-run-status:error", {
         ...statusTrace,
@@ -1553,6 +1578,7 @@ export function registerConversationSessionRoutes(
       lastUsefulProgressAt: status.lastUsefulProgressAt ?? null,
       retrySince: status.retrySince ?? null,
       noProgressSeconds: status.noProgressSeconds ?? null,
+      terminalization,
     });
   });
 

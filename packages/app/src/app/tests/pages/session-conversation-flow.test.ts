@@ -2267,7 +2267,7 @@ test("conversation flow controller aborts backend-active error runs", async () =
   assert.deepEqual(toasts, ["session.stopping_run", "session.run_stopped"]);
 });
 
-test("conversation flow controller retries after best-effort abort failure", async () => {
+test("conversation flow controller does not retry when abort outcome is unknown", async () => {
   let abortBusy = false;
   const events: string[] = [];
   const toasts: string[] = [];
@@ -2390,9 +2390,8 @@ test("conversation flow controller retries after best-effort abort failure", asy
     "busy:true",
     "abort:session-a",
     "busy:false",
-    "retry",
   ]);
-  assert.deepEqual(toasts, ["session.trying_again"]);
+  assert.deepEqual(toasts, ["session.trying_again", "abort failed"]);
 });
 
 test("conversation flow controller restores edit state when sessions switch", () => {

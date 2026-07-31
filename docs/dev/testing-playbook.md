@@ -435,6 +435,25 @@ Tauri Pilot can support these live-testing actions:
 
 Keep the test anchored in user-visible behavior first. Use JavaScript eval or IPC only to observe state, gather timings, or isolate a lower-level failure after the normal UI path is understood.
 
+### E2E-only recovery fault controls
+
+`VESLO_E2E_FAULT_INJECTION=1` is supplied only by the pilot-enabled debug
+desktop runtime. It enables narrow, loopback test controls; production and
+normal development server processes do not register them.
+
+- `POST /e2e/fail-next-lifecycle-mark-failed` on the local Veslo server accepts
+  `{ "count": 1..10 }` and fails that many lifecycle `markFailed` writes before
+  they reach the orchestrator. It is the deterministic control for durable
+  terminalization and restart recovery.
+- The debug/E2E Tauri command `shared_engine_e2e_fail_next_proxy` accepts an
+  optional `count` and makes that many following shared-engine proxy requests
+  fail. It is the deterministic control for one-outage SSE/runtime recovery.
+
+Arm only the failure required by the scenario, assert its trace/run identity,
+and let the scenario prove the visible convergence. Do not add the controls to
+the default desktop capability or use them as a replacement for normal user
+actions.
+
 For Windows desktop behavior, run the Desktop Test Runtime Preflight first, start the app with the Windows-native toolchain from the repo root, and use the Windows Tauri Pilot executable:
 
 ```bash

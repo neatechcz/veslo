@@ -19,8 +19,8 @@ test("session store exposes reconnect notice callback and outage episode tracker
 
   assert.match(
     eventStreamSource,
-    /let outageEpisode = clearOutageEpisode\(\);/,
-    "SSE loop should maintain per-episode outage state",
+    /const outageEpisodesByWorkspace = new Map<string, ReturnType<typeof clearOutageEpisode>>\(\);/,
+    "SSE controller should own outage state across stream replacement generations",
   );
 });
 
@@ -50,7 +50,7 @@ test("selecting a session resumes only recovery work that actually needs foregro
 test("disconnect scheduling marks outage once and emits reconnecting once", () => {
   assert.match(
     eventStreamSource,
-    /if \(!outageEpisode\.active\) \{\s*outageEpisode = beginOutageEpisode\(deps\.store\.sessionStatus, sourceWsId\);/s,
+    /let outageEpisode = outageEpisodeFor\(streamConnectionKey\);\s*if \(!outageEpisode\.active\) \{\s*outageEpisode = beginOutageEpisode\(deps\.store\.sessionStatus, sourceWsId\);/s,
     "first disconnect should snapshot running sessions for the stream workspace",
   );
 
@@ -100,7 +100,30 @@ test("recovery catch-up sync is limited to sessions running when outage started"
 
   assert.match(
     eventStreamSource,
-    /outageEpisode = clearOutageEpisode\(\);/,
+    /setOutageEpisode\(streamConnectionKey, outageEpisode\);/,
     "outage episode should reset after recovery",
+  );
+});
+
+test("runtime recovery is budgeted once per workspace outage and UI observation is bounded", () => {
+  assert.match(
+    eventStreamSource,
+    /const runtimeRecoveryEpisodesByWorkspace = new Map<string, RuntimeRecoveryEpisode>\(\);/,
+    "runtime recovery budget should belong to the controller, not one SSE generation",
+  );
+  assert.match(
+    eventStreamSource,
+    /if \(existingEpisode\?\.attemptedFreshRuntimeRecovery\) \{[\s\S]*runtime-route-recovery-budget-exhausted/s,
+    "a replacement or reconnect in one outage must not start another fresh runtime",
+  );
+  assert.match(
+    eventStreamSource,
+    /const OUTAGE_UI_OBSERVATION_LIMIT_MS = 60_000;/,
+    "UI should stop extending the visible reconnect budget indefinitely",
+  );
+  assert.match(
+    eventStreamSource,
+    /outage-ui-observation-limit/,
+    "the transition to background reconnecting should remain diagnosable",
   );
 });

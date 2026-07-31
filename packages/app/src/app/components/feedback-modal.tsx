@@ -1,6 +1,7 @@
 import { Show, createSignal, createUniqueId } from "solid-js";
 
 import { useTranslate } from "../../i18n";
+import type { FeedbackDiagnosticAttachment } from "../lib/feedback";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -21,6 +22,8 @@ export type FeedbackModalProps = {
   error: string | null;
   successIssueId: string | null;
   submitting: boolean;
+  diagnosticAttachment: FeedbackDiagnosticAttachment | null;
+  diagnosticUploadPending: boolean;
   onClose: () => void;
   onSubmit: (values: FeedbackFormValues) => void;
 };
@@ -34,13 +37,17 @@ export default function FeedbackModal(props: FeedbackModalProps) {
   const [attachDiagnostics, setAttachDiagnostics] = createSignal(true);
   const translate = useTranslate();
   const canSubmit = () => !props.successIssueId && title().trim().length > 0 && description().trim().length > 0;
+  const canClose = () => !props.submitting && !props.diagnosticUploadPending;
   const titleId = createUniqueId();
   const descriptionId = createUniqueId();
   const noteId = createUniqueId();
   const successId = createUniqueId();
+  const diagnosticStatusId = createUniqueId();
 
   useFocusTrap(() => props.open, () => dialogRef, {
-    onClose: () => props.onClose(),
+    onClose: () => {
+      if (canClose()) props.onClose();
+    },
     getInitialFocus: () => titleInputRef,
     onOpen: () => {
       setTitle("");
@@ -61,19 +68,21 @@ export default function FeedbackModal(props: FeedbackModalProps) {
   return (
     <ModalShell
       open={props.open}
-      onClose={props.onClose}
+      onClose={() => {
+        if (canClose()) props.onClose();
+      }}
       layer="top"
       backdrop="medium"
       size="lg"
       closeOnBackdrop={false}
       ariaLabelledBy={titleId}
-      ariaDescribedBy={`${descriptionId} ${noteId} ${successId}`}
+      ariaDescribedBy={`${descriptionId} ${noteId} ${successId} ${diagnosticStatusId}`}
     >
       <div ref={dialogRef} class="p-6" tabIndex={-1}>
         <ModalHeader
           title={translate("feedback.modal_title")}
           description={translate("feedback.modal_description")}
-          onClose={props.onClose}
+          onClose={canClose() ? props.onClose : undefined}
           titleId={titleId}
           descriptionId={descriptionId}
         />
@@ -122,16 +131,58 @@ export default function FeedbackModal(props: FeedbackModalProps) {
             )}
           </Show>
 
+          <Show when={props.diagnosticAttachment}>
+            {(attachment) => {
+              const capture = () => {
+                const value = attachment();
+                return value.status === "tracking" ? value.capture : null;
+              };
+              const state = () => capture()?.state;
+              const totalEvents = () => {
+                const value = capture();
+                return value ? value.acceptedEvents + value.pendingEvents : 0;
+              };
+              const isUploaded = () => state() === "uploaded";
+              const isTruncated = () => state() === "uploaded_with_truncation";
+              const isFailed = () => ["delivery_rejected", "expired", "identity_changed", "undeliverable"].includes(state() ?? "");
+
+              return (
+                <p
+                  id={diagnosticStatusId}
+                  role={isFailed() || attachment().status === "unavailable" ? "alert" : "status"}
+                  class="rounded-xl border border-amber-7/30 bg-amber-3/30 px-3 py-2 text-sm text-dls-text"
+                >
+                  <Show when={attachment().status === "unavailable"}>
+                    {translate("feedback.diagnostics_unavailable")}
+                  </Show>
+                  <Show when={attachment().status === "tracking" && props.diagnosticUploadPending}>
+                    {translate("feedback.diagnostics_uploading", {
+                      acceptedEvents: String(capture()?.acceptedEvents ?? 0),
+                      totalEvents: String(totalEvents()),
+                    })}
+                  </Show>
+                  <Show when={isUploaded()}>{translate("feedback.diagnostics_uploaded")}</Show>
+                  <Show when={isTruncated()}>{translate("feedback.diagnostics_uploaded_truncated")}</Show>
+                  <Show when={isFailed()}>{translate("feedback.diagnostics_failed")}</Show>
+                </p>
+              );
+            }}
+          </Show>
+
           <ModalError error={props.error} />
         </div>
 
         <ModalFooter>
-          <Button variant="outline" onClick={props.onClose}>
-            {translate(props.successIssueId ? "common.close" : "common.cancel")}
-          </Button>
-          <Button onClick={submit} disabled={props.submitting || !canSubmit()}>
-            {translate("feedback.submit")}
-          </Button>
+          <Show when={canClose()}>
+            <Button variant="outline" onClick={props.onClose}>
+              {translate(props.successIssueId ? "common.close" : "common.cancel")}
+            </Button>
+          </Show>
+          <Show when={!props.successIssueId}>
+            <Button onClick={submit} disabled={props.submitting || !canSubmit()}>
+              {translate("feedback.submit")}
+            </Button>
+          </Show>
         </ModalFooter>
       </div>
     </ModalShell>

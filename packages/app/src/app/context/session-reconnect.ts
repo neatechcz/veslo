@@ -72,6 +72,8 @@ export type OutageEpisode = {
   shownReconnecting: boolean;
   shownReconnected: boolean;
   runningSessionIds: string[];
+  startedAt?: number | null;
+  uiObservationExpired?: boolean;
 };
 
 export const clearOutageEpisode = (): OutageEpisode => ({
@@ -80,6 +82,8 @@ export const clearOutageEpisode = (): OutageEpisode => ({
   shownReconnecting: false,
   shownReconnected: false,
   runningSessionIds: [],
+  startedAt: null,
+  uiObservationExpired: false,
 });
 
 export const isRunningStatus = (status: string | null | undefined): boolean => {
@@ -91,6 +95,7 @@ export const isRunningStatus = (status: string | null | undefined): boolean => {
 export const beginOutageEpisode = (
   sessionStatusById: Record<string, string>,
   workspaceId?: string | null,
+  now: () => number = Date.now,
 ): OutageEpisode => {
   const workspace = workspaceId?.trim() ?? "";
   const scopedPrefix = workspace ? `${workspace}\0` : "";
@@ -108,6 +113,8 @@ export const beginOutageEpisode = (
     shownReconnecting: false,
     shownReconnected: false,
     runningSessionIds,
+    startedAt: now(),
+    uiObservationExpired: false,
   };
 };
 

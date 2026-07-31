@@ -2806,7 +2806,7 @@ test("abortSession blocks abort when workspace scope is missing", async () => {
   });
   const workflow = createSessionSendWorkflow(harness.options);
 
-  await workflow.abortSession("sess-unscoped");
+  const result = await workflow.abortSession("sess-unscoped");
 
   assert.deepEqual(abortCalls, []);
   assert.deepEqual(conversationAbortCalls, []);
@@ -2816,6 +2816,7 @@ test("abortSession blocks abort when workspace scope is missing", async () => {
     ),
   );
   assert.match(harness.errors.at(-1) ?? "", /workspace scope is missing/);
+  assert.equal(result?.kind, "unknown");
 });
 
 test("abortSession preserves a resolved scoped abort when selected scope lookup is missing", async () => {
@@ -2957,7 +2958,7 @@ test("abortSession blocks scoped abort when server abort is unavailable", async 
   });
   const workflow = createSessionSendWorkflow(harness.options);
 
-  await workflow.abortSession("conv-scoped");
+  const result = await workflow.abortSession("conv-scoped");
 
   assert.deepEqual(abortCalls, []);
   assert.ok(
@@ -2972,6 +2973,43 @@ test("abortSession blocks scoped abort when server abort is unavailable", async 
     harness.errors.at(-1) ?? "",
     /Conversation service is unavailable/,
   );
+  assert.equal(result?.kind, "unknown");
+});
+
+test("abortSession reports a durable abort request as pending reconciliation", async () => {
+  const harness = createHarness({
+    abortConversationFromVesloWriteApi: async () => ({
+      workspaceId: "ws-active",
+      conversationId: "conv-active",
+      opencodeSessionId: "open-active",
+      runId: "run-active",
+    }),
+    resolveSelectedSessionBrowseScope: () => ({
+      workspaceId: "ws-active",
+      workspaceRoot: "/active",
+      directory: "/active",
+      conversationId: "conv-active",
+      opencodeSessionId: "open-active",
+    }),
+    resolveConversationAbortScope: (sessionId) => ({
+      sessionId,
+      workspaceId: "ws-active",
+      workspaceRoot: "/active",
+      directory: "/active",
+      hasConversationScope: true,
+      conversationId: "conv-active",
+      opencodeSessionId: "open-active",
+    }),
+  });
+  const workflow = createSessionSendWorkflow(harness.options);
+
+  assert.deepEqual(await workflow.abortSession("open-active"), {
+    kind: "pending_reconciliation",
+    workspaceId: "ws-active",
+    conversationId: "conv-active",
+    opencodeSessionId: "open-active",
+    runId: "run-active",
+  });
 });
 
 test("session send workflow retries recoverable runtime run failure once with same client message id", async () => {
@@ -3005,7 +3043,11 @@ test("session send workflow retries recoverable runtime run failure once with sa
         forceRecovery: options?.preflight?.forceRecovery,
       });
       if (runCalls.length === 1) {
-        throw new Error("opencode_proxy_failed: socket closed");
+        throw new VesloServerError(
+          503,
+          "engine_not_running",
+          "The local OpenCode engine is not running.",
+        );
       }
       return true;
     },

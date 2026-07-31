@@ -836,6 +836,62 @@ test("session lifecycle recovery keeps polling stale backend statuses", async ()
   assert.equal(controller.activeWatchCount(), 0);
 });
 
+test("accepted connection-unavailable observation stops after one minute and resumes on reconnect", async () => {
+  const timers: Timer[] = [];
+  const diagnostics: SessionLifecycleRecoveryStatus[] = [];
+  const traces: string[] = [];
+  let statusReads = 0;
+  const controller = createSessionLifecycleRecoveryController({
+    sessionStatusById: () => ({}),
+    selectedSessionId: () => "ses-ui",
+    resolveConversationRunForSession: () => null,
+    readConversationRunStatus: async () => {
+      statusReads += 1;
+      return null;
+    },
+    isAcceptedRunVisible: () => true,
+    recoverAcceptedConversationRunStatus: async () => null,
+    onConversationRunStatus: (_scope, status) => {
+      if (status) diagnostics.push(status);
+    },
+    setSessionStatusForWorkspace: () => {},
+    notifySessionBusy: () => {},
+    scheduleTimer: (callback, delayMs) => {
+      const timer = { callback, delayMs, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      (timer as Timer).cleared = true;
+    },
+    trace: (event) => traces.push(event),
+  });
+
+  controller.admitAcceptedConversationRun({
+    sessionId: "ses-ui",
+    workspaceId: "ws-a",
+    conversationId: "conv-a",
+    runId: "run-a",
+    clientMessageId: "msg-a",
+  });
+  await waitForAsyncPoll();
+  for (let observation = 1; observation < 12; observation += 1) {
+    const timer = timers.at(-1);
+    assert.ok(timer);
+    timer.callback();
+    await waitForAsyncPoll();
+  }
+
+  assert.equal(statusReads, 12);
+  assert.equal(controller.activeWatchCount(), 0);
+  assert.equal(diagnostics.at(-1)?.recoveryState, "connection-unavailable");
+  assert.ok(traces.includes("session-lifecycle-recovery:connection-unavailable-observation-limit"));
+
+  assert.equal(controller.resumeAcceptedRunsForWorkspace("ws-a"), 1);
+  await waitForAsyncPoll();
+  assert.equal(statusReads, 13);
+});
+
 test("reconcile does not re-arm an exhausted watch without explicit recovery", async () => {
   const timers: Timer[] = [];
   const statuses = { "ws-a\0ses-a": "running" };

@@ -1,6 +1,6 @@
 ---
 title: Retry and Error Containment Audit
-status: proposed
+status: in_progress
 done: false
 date: 2026-07-31
 issue: unlinked
@@ -49,7 +49,7 @@ The following facts are code-path confirmed, not inferred from UI labels:
 | Existing local server-owned submit | Exact pre-HTTP missing-live-binding failure performs one fresh runtime preparation and one resubmit. | Any other typed preflight error is returned without recovery. |
 | Submit transport uncertainty | One replay uses the same `clientMessageId`; server idempotency coalesces the same request. | Known 4xx server responses do not enter transport replay; a second transport error becomes `outcome_unknown`. |
 | Server submit attempt store | Completed/materialized/queued results are replayable. | Blocked and failed results are deliberately re-evaluated on an explicit repeat, retaining the prior materialized target. |
-| OpenCode model retry | OpenCode `retry` status is observed as `model_retry_no_output`; after 10 minutes without output the registry reports `blocked`. | It is not terminal at that owner. The server lifecycle reconciler may finally mark it failed when its own poll budget expires. |
+| OpenCode model retry | OpenCode `retry` status is observed as `model_retry_no_output`; after 10 minutes it retains a durable diagnostic but remains the same active exact run. | It never becomes an automatic failure or queue-release signal. After the normal server poll budget, one 30-second exact-run background observation continues until transcript or lifecycle evidence becomes terminal. |
 | Server lifecycle polling | One-second polling, maximum 600 attempts. | An unresolved active run is marked failed and the queue is released after the budget, provided the terminal write succeeds. |
 | App lifecycle watching | Five-second polling after an initial five-second delay, maximum 600 attempts (about 50 minutes). | It presents `recoveryState: exhausted`; it does not change server lifecycle ownership. |
 | Transcript recovery | Server ingest tries at most three reads with 0/2/8 second delays; app terminal hydration has one automatic retry. | Exhaustion is presentation/recovery state only, never a queue or lifecycle transition. |
@@ -128,23 +128,29 @@ they do not abort a legitimate long-running tool or model response.
 
 ## Findings
 
-### REC01 — terminalization write failure can leave a reservation with no next action
+### REC01 — every terminalization path must keep ownership until its durable write succeeds
 
 Severity: high
 
 The lifecycle controller has several branches that have already decided a run
 is unrecoverable: reconciliation budget exhausted, startup orphan, and
-unreachable engine after its grace window. Each calls the orchestrator's
-`markFailed`, releases the local reservation only after success, and records a
-trace if that write fails.
+unreachable engine after its grace window. Those branches call the
+orchestrator's `markFailed`, release the local reservation only after success,
+and record a trace if that write fails.
 
-The catch path does not schedule another exact-run reconciliation or a bounded
-terminalization retry. The method then returns. Consequently a transient
-failure of the final lifecycle write can preserve the durable reservation until
-an unrelated trigger occurs. A pending queue drain can happen to re-arm
-reconciliation, and a restart reconstructs reservations and starts it again,
-but neither is an owned retry of the failed terminal write. Runtime uptime must
-not be the recovery mechanism.
+The upstream-submit-error branch is worse: its `markFailed` helper catches and
+only traces an error, then the caller schedules reconciliation, unregisters
+the gateway context, and releases the reservation unconditionally. A failed
+terminal write can therefore admit a successor while the durable run remains
+active. This directly violates the target ordering: durable terminalization
+must precede queue release.
+
+None of these catch paths owns a bounded durable terminalization retry. In the
+reconciliation branches, a transient failure can preserve the durable
+reservation until an unrelated queue drain or restart happens to re-arm it. In
+the submit-error branch, the opposite happens: the reservation is released
+despite the uncertain durable transition. Both outcomes are invalid; runtime
+uptime and accidental queue activity must not be recovery mechanisms.
 
 This is the closest confirmed answer to "one early failure follows the program
 for hours": the intended terminal transition has been chosen, but its failed
@@ -152,16 +158,26 @@ commit has no owner after the catch.
 
 Required repair:
 
-- Extract the three terminalization branches into one helper that owns
+- Extract every terminalization source into one helper: submit error,
+  reconciliation exhaustion, startup orphan, unreachable engine, and any
+  future explicit terminal handoff. That helper alone owns
   `markFailed -> release -> queue wake`.
 - Keep the reservation while the durable terminal write is uncertain; never
   release and resubmit merely because the write request failed.
-- Schedule a bounded, backoff-based retry of the terminalization write using
-  the same workspace/conversation/run identity and reason.
-- On terminalization-budget exhaustion, retain an explicit
-  `terminalization_pending` diagnostic state, surface a safe user-visible
-  failure, and keep the queue blocked rather than silently polling or
-  re-admitting work.
+- Persist `terminalization_pending` on the reservation row with terminal
+  reason, attempt count, last error, next-attempt time, and a soft escalation
+  deadline. Startup scans these rows and schedules their exact retry without a
+  new submit, queue drain, or user action.
+- Use retries of 1, 2, 4, 8, and 15 seconds, then retain one capped 60-second
+  exact-run retry. The soft deadline is five minutes: it changes the server
+  projection and UI to "finalizing previous run", but never auto-releases the
+  queue. This is one timer per exact run, not a new polling loop.
+- Add a server lifecycle `terminalization` projection from the durable
+  reservation: `{ state: "pending", reasonCode, attempts, nextAttemptAt,
+  deadlineAt }`. Keep the orchestrator's existing run `status` separate and
+  never expose the raw last error to the UI. The app shows the projection as a
+  blocking/recovering state; it must not call it completed, failed, or retry
+  the prompt.
 - Retry only the state transition. Do not repeat OpenCode submit, runtime
   preparation, or transcript ingest from this path.
 
@@ -189,14 +205,17 @@ classification and recovery noise, not a confirmed primary send-path loop.
 
 Required repair:
 
-- Replace text-only recovery admission with a typed error classification at
-  the compatibility/SSE boundary: local transport/routing failure, explicit
-  stale local bearer, upstream accepted/unknown delivery, and terminal
-  upstream response.
+- Define a server-client `recoveryCategory` contract, carried by the typed
+  submit/route response rather than parsed from an error message:
+  `local_route_unavailable`, `stale_local_bearer`,
+  `delivery_outcome_unknown`, and `upstream_terminal`. The compatibility
+  bridge consumes this union directly. `local_route_unavailable` must include
+  the workspace and runtime-route epoch that established it.
 - Remove bare `opencode_request_failed` from the generic local-runtime
   classifier unless it carries proof that the local engine or route was lost.
-- Make SSE recovery use the same typed local-runtime condition, not a message
-  substring.
+- SSE may recover only from a typed local route result or an exact local-bearer
+  response with a matching route epoch. A generic OpenCode `session.error` is
+  presentation/lifecycle evidence, never runtime-recovery evidence.
 - Preserve the current main-path contract: one recovery for exact pre-HTTP
   missing binding and one idempotent replay for uncertain transport delivery;
   neither applies to a structured terminal upstream result.
@@ -220,11 +239,18 @@ condition.
 
 Required repair:
 
-- Add an outage- and workspace-scoped recovery budget: one automatic fresh
-  runtime recovery until a confirmed healthy stream or explicit user action
-  starts a new episode.
-- After that budget is spent, retain a stable degraded/reconnecting state and
-  use normal reconnect backoff; do not keep forcing fresh runtimes.
+- Add a `RuntimeRecoveryEpisode` registry owned by the event-stream controller,
+  not by an individual SSE subscription. Its key is workspace plus the runtime
+  route epoch; it records whether fresh recovery was consumed.
+- An episode starts at the first recovery-eligible typed route failure and
+  survives ordinary SSE reconnects, replacement subscriptions, and route
+  release/reacquisition. It ends only after the recovered route has attached a
+  stream and that stream completes its normal reconnect catch-up successfully;
+  explicit user retry, workspace disposal, or a confirmed new runtime route
+  epoch also starts a new episode.
+- Permit one automatic fresh runtime recovery per episode. After it is spent,
+  retain a stable degraded/reconnecting state and use normal reconnect backoff;
+  do not keep forcing fresh runtimes.
 - Share the typed local-runtime classification from REC02 between stream
   connection errors and `session.error` handling.
 - Keep the existing single-flight gate for concurrent callers; it solves a
@@ -247,52 +273,64 @@ interpret.
 
 Required repair:
 
-- Define named lifecycle deadlines by purpose: short connection-observation
-  budget, run-ownership/reconciliation budget, terminalization-write budget,
-  and transcript-recovery budget.
-- Publish the server's authoritative terminalization-pending/exhausted state
-  in the lifecycle response. The app should present that state rather than
+- Keep separate named deadlines by purpose; do not collapse them into one
+  timeout: server ownership reconciliation remains 600 x 1 second,
+  terminalization uses REC01's exact-run backoff, and transcript recovery keeps
+  its existing bound.
+- Publish the server's authoritative terminalization projection in the
+  lifecycle response. The app should present that state rather than
   continue a blind independent watch.
-- Bound app connection-unavailable polling to a short foreground budget, then
-  transition to a stable recoverable UI state that requires an explicit
-  reconnect/retry action or a confirmed server reconnection event.
+- On status-unavailable only, allow one server-only foreground ensure and then
+  at most 12 five-second UI observations (one minute after the initial
+  delay). Transition to a stable `connection-unavailable` presentation that
+  resumes only on an explicit reconnect/retry action or confirmed server
+  reconnection event.
 - Preserve app polling for normal active runs and do not let UI exhaustion
   abort a backend run.
 
-### REC04 — model retry becomes blocked, not terminal, after the hard no-output limit
+### REC04 — model retry remains one background run after the no-output limit
 
 Severity: medium
 
-The run registry records `model_retry_no_output` and changes the run from
-`running` to `blocked` after ten minutes. `blocked` remains an active lifecycle
-status, so final failure/release is delegated to the server controller's
-reconciliation policy.
+The run registry records `model_retry_no_output`. The old hard limit changed
+the run to `blocked`; because `blocked` was still active, a later server poll
+budget could convert it into an unrelated terminal failure and release.
 
-This is safe against prematurely discarding a model retry, but it splits the
-terminal decision between owners and makes the observed duration depend on how
-often reconciliation happens.
+This is safe against prematurely discarding a model retry, but it can still
+turn an output-delivery or observation problem into an unrelated terminal
+failure and makes the observed duration depend on reconciliation churn.
 
 Required repair:
 
-- Decide and document one of two contracts: either the orchestrator owns a
-  terminal failure at the hard no-output deadline, or it emits an explicit
-  `blocked_requires_user_action` state that the server treats as terminal for
-  queue ownership without falsely claiming OpenCode completed.
-- Do not use the UI error styling as the terminal signal; it is only
-  presentation.
-- Add a deterministic fake-clock test for the full sequence from retry state
-  through queue release and the next queued run.
+- **Recorded decision:** elapsed no-output time is diagnostic only. It does
+  not terminate or release an exact OpenCode run, because the answer can
+  already exist in the canonical transcript while delivery/UI observation is
+  degraded.
+- Keep the registry status active and retain the durable queue reservation.
+  Once the normal server poll budget is spent, replace one-second polling with
+  one 30-second exact-run background observation. Never admit a successor
+  until an explicit stop or a trustworthy terminal lifecycle/transcript result.
+- Do not use UI error styling as a terminal signal. Present retry as background
+  activity with an explicit Stop action; transcript evidence clears the
+  diagnostic and returns to normal lifecycle convergence.
+- Add deterministic tests proving the hard diagnostic remains active, preserves
+  queue exclusion, performs one low-churn follow-up, and clears when useful
+  assistant progress arrives.
 
-### REC05 — manual retry ignores an abort failure
+### REC05 — manual retry has no abort outcome to base its queue semantics on
 
 Severity: medium
 
-The composer Retry action tries to abort the visible run and deliberately
-ignores an abort exception before submitting the previous prompt again. The
-server's active-run gate usually turns the new request into a durable queued
-item rather than a duplicate run, which protects OpenCode. However, the UI
-semantics still promise "try again" while the original ownership may be
-unknown, and a queue can accumulate behind an abort that never committed.
+The composer Retry action conditionally calls abort when the run indicator is
+visible, then invokes `retryLastPrompt`. It does not reliably receive an abort
+outcome: the lower abort method catches request errors and returns `void`, and
+the caller also deliberately proceeds after an exception. The practical
+behavior is therefore fail-open retry/queue admission, not a proven abort.
+
+The server active-run gate usually turns the new request into a durable queued
+item rather than a duplicate OpenCode run. That protects OpenCode, but the UI
+still promises "try again" while the previous ownership may be unknown and a
+queue can accumulate behind an abort that never committed.
 
 Required repair:
 
@@ -305,9 +343,12 @@ Required repair:
 
 ## Implementation order
 
-1. **REC01 first — durable terminalization retry.** It removes the only
-   confirmed same-process path where a decided terminal error can lose its
-   recovery owner. Add traces and diagnostics before changing timeouts.
+0. **REC04 decision gate.** Select and record the hard model-retry terminal
+   authority before implementing any blocked-state queue semantics.
+1. **REC01 first — durable terminalization state machine.** It repairs both
+   confirmed violations: abandoned reservations after a failed final write and
+   premature release after a submit-error final-write failure. Add durable
+   state, restart recovery, and diagnostics before changing timeouts.
 2. **REC02 — typed recovery classification.** This prevents deterministic
    upstream failures from creating runtime recovery noise and restart churn.
 3. **REC06 — bound an SSE outage recovery.** Apply the typed condition before
@@ -315,25 +356,47 @@ Required repair:
    consume it.
 4. **REC03 — one published lifecycle deadline contract.** Make UI observation
    consume server authority instead of maintaining a longer independent loop.
-5. **REC04 — resolve model-retry ownership.** Choose terminal semantics with
-   product input, then add the full queue handoff coverage.
+5. **REC04 — implement the recorded model-retry contract.** Add the selected
+   terminal semantics and the full queue handoff coverage.
 6. **REC05 — truthful manual retry.** Align the user action with the durable
    abort/queue state after the lower-level ownership contracts are fixed.
+
+## Implementation checkpoint (2026-07-31)
+
+Implemented before the REC04 decision gate:
+
+- **REC01:** every existing terminal `markFailed` path, including submit failure, retains its reservation until durable success. A SQLite-backed `terminalization_pending` state retains the reason code, attempts, last internal error, next retry, and soft deadline. Startup restores the same exact-run retry; the app receives a safe `terminalization` projection and blocks new local presentation while finalization is pending.
+- **REC02:** local automatic recovery is selected from typed `VesloServerError.code` categories first. The compatibility text path is limited to engine/workspace/bearer/transport evidence; raw OpenCode upstream failure text and bare upstream HTTP status no longer trigger a rebuild.
+- **REC06:** the event-stream controller owns runtime recovery per workspace outage rather than per subscription. A replacement or reconnect cannot spend another fresh-runtime recovery; a successful attached stream clears the episode. The UI switches to stable degraded state after one minute while reconnect backoff remains transport-only.
+- **REC03:** accepted runs that cannot read lifecycle status perform one server-only ensure and at most 12 five-second UI observations. They then retain `connection-unavailable` as a resumable presentation and never alter backend ownership.
+- **REC05:** abort now returns `pending_reconciliation`, `already_terminal`, or `unknown`. Retry stops on `unknown` rather than fail-open submitting a new prompt.
+- **Fault controls:** E2E-only controls now arm a bounded number of failed local-server `markFailed` writes and repeated shared-engine proxy failures. They are unavailable without `VESLO_E2E_FAULT_INJECTION=1`; the desktop/Pilot convergence scenario remains to be added.
+- **REC04:** the selected contract keeps `model_retry_no_output` as the same active exact run, even after the long no-output diagnostic threshold. It never auto-fails or releases the queue; after the normal reconcile budget the server owns one 30-second exact-run background observation. Useful assistant transcript progress clears the diagnostic, and the UI presents retry as background work rather than an error.
+
+The remaining desktop/Pilot scenario must prove this state converges through a
+real transcript/SSE recovery without admitting a duplicate run.
 
 ## Acceptance tests
 
 ### Server lifecycle
 
-1. Force `markFailed` to fail once for each terminalization cause, then
-   succeed. Assert no OpenCode submit is repeated, the same run identity is
-   retried, the reservation remains until success, and the next queue item is
-   released exactly once.
-2. Exhaust the terminalization-write budget. Assert a visible
-   terminalization-pending diagnostic, no busy polling timer leak, no queue
-   release, and a restart-safe recovery record.
-3. Prove startup orphan, engine-unreachable, normal long-running tool, and
+1. Force `markFailed` to fail once for every terminalization source, including
+   upstream submit failure, reconciliation exhaustion, startup orphan, and
+   unreachable engine. Assert no OpenCode submit is repeated, the same run
+   identity is retried, the reservation remains until success, and the next
+   queue item is released exactly once.
+2. Force the upstream-submit-error path to fail its terminal write. Assert the
+   reservation is not released, no successor is admitted, and a restart without
+   a new submit retries the persisted pending record and then releases exactly
+   once.
+3. Advance through the quick retry budget and soft deadline. Assert the row
+   stores terminal reason, attempts, redacted last error, next-attempt time,
+   and deadline; the server lifecycle response projects
+   `terminalization: { state: "pending", ... }`; only one capped exact-run
+   timer remains.
+4. Prove startup orphan, engine-unreachable, normal long-running tool, and
    assistant output are classified separately.
-4. Advance a fake clock through model retry hard limit and assert the selected
+5. Advance a fake clock through model retry hard limit and assert the selected
    owner produces the terminal/blocked state and one queue outcome.
 
 ### App send and SSE
@@ -348,19 +411,33 @@ Required repair:
    engine. Stale bearer and confirmed local route loss perform at most one
    scoped recovery per outage, then use reconnect backoff until a healthy stream
    starts a new episode.
-5. With server status unavailable, the app reaches its short observation
+5. Repeated SSE disconnect, subscription replacement, and reconnect cycles in
+   one workspace/route epoch consume one fresh-runtime recovery. Only a
+   completed catch-up, explicit retry, workspace disposal, or confirmed new
+   route epoch starts another episode.
+6. With server status unavailable, the app reaches its short observation
    terminal presentation; it never aborts or duplicates the server run.
-6. Retry after an abort failure either waits for lifecycle settlement or creates
+7. Retry after an abort failure either waits for lifecycle settlement or creates
    an explicit queued item; it never claims the old run was stopped.
 
 ### Real desktop validation
 
-Use the Tauri Pilot lifecycle surface after unit coverage is green. Simulate:
+Use the Tauri Pilot lifecycle surface after unit coverage is green. Add two
+test-only fault controls, enabled only by `VESLO_E2E_FAULT_INJECTION=1`:
+
+- a Veslo-server `fail-next-lifecycle-mark-failed(count)` control that makes
+  the lifecycle client fail before its `markFailed` POST; and
+- an orchestrator shared-proxy `fail-next-proxy(count)` control, extending the
+  existing one-shot proxy fault to create repeated route-error cycles.
+
+Then simulate:
 
 1. upstream command failure returning a structured 500;
 2. engine process loss while a prompt is active;
-3. lifecycle terminalization endpoint unavailable for one attempt;
-4. app-to-server connection loss while the server continues reconciling.
+3. lifecycle terminalization endpoint unavailable for one attempt and across a
+   server restart; and
+4. repeated app-to-server/SSE route failures while the server continues
+   reconciling.
 
 For every scenario, capture the same `conversationId` and `runId` through the
 app, server, and orchestrator traces. Pass only when there is one final owner,

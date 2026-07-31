@@ -45,7 +45,10 @@ import {
   shouldShowReconnected,
   shouldShowReconnecting,
 } from "./session-reconnect";
-import { shouldRecoverLocalRuntimeFromHealthError } from "./send-runtime-readiness";
+import {
+  classifyLocalRuntimeRecoveryError,
+  isAutomaticLocalRuntimeRecoveryCategory,
+} from "./send-runtime-readiness";
 import { shouldReleaseStaleWorkspaceRoute } from "./session-runtime-prompts";
 import { INITIAL_SESSION_MESSAGE_LIMIT } from "./session-transcript-controller";
 import { recordTranscriptStoreWrite } from "./session-transcript-write-diagnostics";
@@ -113,6 +116,12 @@ const QUESTION_REFRESH_EVENT_TYPES = new Set([
   "question.v2.replied",
   "question.v2.rejected",
 ]);
+const OUTAGE_UI_OBSERVATION_LIMIT_MS = 60_000;
+
+type RuntimeRecoveryEpisode = {
+  attemptedFreshRuntimeRecovery: boolean;
+  recovery: Promise<boolean> | null;
+};
 
 export function isPermissionRefreshEvent(type: string): boolean {
   return PERMISSION_REFRESH_EVENT_TYPES.has(type);
@@ -300,6 +309,9 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     }
   >();
   const sseStreamReplacementCountsByWorkspace = new Map<string, number>();
+  const outageEpisodesByWorkspace = new Map<string, ReturnType<typeof clearOutageEpisode>>();
+  const runtimeRecoveryEpisodesByWorkspace = new Map<string, RuntimeRecoveryEpisode>();
+  const replacingSseStreamKeys = new Set<string>();
   let nextSseStreamGeneration = 0;
   const chromeMcpTraceSignatureByPart = new Map<string, string>();
   const chromeMcpFirstObservedAtByPart = new Map<string, number>();
@@ -383,6 +395,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     if (!waiters) return;
     sseConnectionWaiters.delete(streamKey);
     for (const resolve of waiters) resolve(true);
+  };
+  const outageEpisodeFor = (streamConnectionKey: string) =>
+    outageEpisodesByWorkspace.get(streamConnectionKey) ?? clearOutageEpisode();
+  const setOutageEpisode = (streamConnectionKey: string, episode: ReturnType<typeof clearOutageEpisode>) => {
+    if (episode.active) outageEpisodesByWorkspace.set(streamConnectionKey, episode);
+    else outageEpisodesByWorkspace.delete(streamConnectionKey);
   };
 
   const forgetStreamSseConnected = (streamKey: string) => {
@@ -1277,7 +1295,6 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     let reconnectAttempt = 0;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let wasConnected = false;
-    let outageEpisode = clearOutageEpisode();
     let currentController: AbortController | null = null;
     const activeSubscriptions = new Set<SseSubscription>();
     let lastUpstreamEventId: string | null = null;
@@ -1406,6 +1423,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     };
 
     const markOutageAndMaybeNotify = () => {
+      let outageEpisode = outageEpisodeFor(streamConnectionKey);
       if (!outageEpisode.active) {
         outageEpisode = beginOutageEpisode(deps.store.sessionStatus, sourceWsId);
         recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "outage-started", {
@@ -1417,12 +1435,15 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         deps.onReconnectNotice?.("reconnecting");
         outageEpisode = { ...outageEpisode, shownReconnecting: true };
       }
+      setOutageEpisode(streamConnectionKey, outageEpisode);
     };
 
     const runReconnectCatchup = async ({ refreshTranscript }: { refreshTranscript: boolean }) => {
+      let outageEpisode = outageEpisodeFor(streamConnectionKey);
       if (!outageEpisode.active) return;
       if (!outageEpisode.hadRunningSessions) {
         outageEpisode = clearOutageEpisode();
+        setOutageEpisode(streamConnectionKey, outageEpisode);
         emitReconnectState("live", { messagesMayBeDelayed: false });
         return;
       }
@@ -1510,6 +1531,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           generation,
         });
         outageEpisode = clearOutageEpisode();
+        setOutageEpisode(streamConnectionKey, outageEpisode);
         emitReconnectState("degraded", {
           lastError: truncateErrorField(lastCriticalFailure ?? "Reconnect catch-up incomplete"),
           messagesMayBeDelayed: true,
@@ -1528,6 +1550,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         refreshTranscript,
       });
       outageEpisode = clearOutageEpisode();
+      setOutageEpisode(streamConnectionKey, outageEpisode);
       // Keep the no-fence condition in the trace, not as a sticky UI error.
       // `live` lets lifecycle recovery resume its terminal transcript path;
       // no success toast is emitted above unless a fenced refresh succeeded.
@@ -1591,9 +1614,12 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         let yielded = Date.now();
         let lastArrivalAt = Date.now();
 
-        const isReconnection = wasConnected;
+        // An externally replaced stream starts with a fresh local generation,
+        // but it can still be completing the same workspace outage episode.
+        const isReconnection = wasConnected || outageEpisodeFor(streamConnectionKey).active;
         wasConnected = true;
         reconnectAttempt = 0;
+        runtimeRecoveryEpisodesByWorkspace.delete(streamConnectionKey);
         recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "connected", { generation });
 
         if (isReconnection) {
@@ -1681,7 +1707,8 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
         const message = e instanceof Error ? e.message : String(e);
         const activeWs = deps.routing.activeWorkspaceId();
-        const textMatchedRuntimeError = shouldRecoverLocalRuntimeFromHealthError(e, String);
+        const recoveryCategory = classifyLocalRuntimeRecoveryError(e, String);
+        const recoveryEligible = isAutomaticLocalRuntimeRecoveryCategory(recoveryCategory);
         const scopedRuntimeReady = sourceWsId
           ? deps.isWorkspaceRuntimeReady(sourceWsId)
           : deps.isActiveWorkspaceRuntimeReady();
@@ -1689,11 +1716,23 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
           sourceWsId &&
             shouldRecoverEventStreamRuntime({
               recoveryAvailable: Boolean(deps.recoverWorkspaceRuntimeForEventStream),
-              textMatchedRuntimeError,
+              textMatchedRuntimeError: recoveryEligible,
               scopedRuntimeReady,
             }),
         );
         if (shouldRecoverRoute) {
+          const existingEpisode = runtimeRecoveryEpisodesByWorkspace.get(streamConnectionKey);
+          if (existingEpisode?.attemptedFreshRuntimeRecovery) {
+            recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "runtime-route-recovery-budget-exhausted", {
+              workspaceId: sourceWsId,
+              recoveryCategory,
+            });
+            emitReconnectState("degraded", {
+              lastError: "Runtime recovery already attempted for this outage.",
+              messagesMayBeDelayed: true,
+            });
+            return;
+          }
           setStreamSseConnected(streamConnectionKey, false);
           deps.routing.release(sourceWsId);
           emitReconnectState("runtime-recovering", {
@@ -1704,14 +1743,22 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
             workspaceId: sourceWsId,
             error: truncateErrorField(message),
             scopedRuntimeReady,
+            recoveryCategory,
           });
           recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "recovering-runtime-route", {
             workspaceId: sourceWsId,
             error: truncateErrorField(message),
             scopedRuntimeReady,
+            recoveryCategory,
           });
+          const episode: RuntimeRecoveryEpisode = {
+            attemptedFreshRuntimeRecovery: true,
+            recovery: null,
+          };
+          runtimeRecoveryEpisodesByWorkspace.set(streamConnectionKey, episode);
           try {
-            const recovered = await deps.recoverWorkspaceRuntimeForEventStream?.(sourceWsId);
+            episode.recovery = Promise.resolve(deps.recoverWorkspaceRuntimeForEventStream?.(sourceWsId)).then(Boolean);
+            const recovered = await episode.recovery;
             recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "runtime-route-recovery-result", {
               workspaceId: sourceWsId,
               recovered: Boolean(recovered),
@@ -1731,13 +1778,16 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
               workspaceId: sourceWsId,
               error: truncateErrorField(recoveryError instanceof Error ? recoveryError.message : String(recoveryError)),
             });
+          } finally {
+            episode.recovery = null;
           }
           return;
         }
-        if (textMatchedRuntimeError && scopedRuntimeReady) {
+        if (recoveryEligible && scopedRuntimeReady) {
           recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "runtime-recovery-skipped-runtime-ready", {
             workspaceId: sourceWsId || null,
             error: truncateErrorField(message),
+            recoveryCategory,
           });
         }
 
@@ -1772,11 +1822,28 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
 
       reconnectAttempt++;
       const delay = Math.min(1000 * Math.pow(2, reconnectAttempt - 1), 30000);
-      emitReconnectState("reconnecting", {
-        attempt: reconnectAttempt,
-        delayMs: delay,
-        messagesMayBeDelayed: true,
-      });
+      const outageEpisode = outageEpisodeFor(streamConnectionKey);
+      const outageAgeMs = outageEpisode.startedAt ? Date.now() - outageEpisode.startedAt : 0;
+      if (outageAgeMs >= OUTAGE_UI_OBSERVATION_LIMIT_MS) {
+        if (!outageEpisode.uiObservationExpired) {
+          setOutageEpisode(streamConnectionKey, { ...outageEpisode, uiObservationExpired: true });
+          recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "outage-ui-observation-limit", {
+            workspaceId: sourceWsId || null,
+            generation,
+            outageAgeMs,
+          });
+        }
+        emitReconnectState("degraded", {
+          lastError: "Connection is still unavailable; reconnecting in the background.",
+          messagesMayBeDelayed: true,
+        });
+      } else {
+        emitReconnectState("reconnecting", {
+          attempt: reconnectAttempt,
+          delayMs: delay,
+          messagesMayBeDelayed: true,
+        });
+      }
       recordPerfLog(deps.sessionDebugEnabled(), "session.sse", "reconnect-scheduled", {
         attempt: reconnectAttempt,
         delayMs: delay,
@@ -1802,6 +1869,10 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         void closeSseSubscription(subscription);
       }
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (!replacingSseStreamKeys.has(streamConnectionKey)) {
+        outageEpisodesByWorkspace.delete(streamConnectionKey);
+        runtimeRecoveryEpisodesByWorkspace.delete(streamConnectionKey);
+      }
       forgetStreamSseConnected(streamConnectionKey);
       flush();
     };
@@ -1818,6 +1889,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
     const previous = activeSseStreamsByWorkspace.get(streamConnectionKey);
     const generation = ++nextSseStreamGeneration;
     if (previous) {
+      replacingSseStreamKeys.add(streamConnectionKey);
       const replacementCount = (sseStreamReplacementCountsByWorkspace.get(streamConnectionKey) ?? 0) + 1;
       sseStreamReplacementCountsByWorkspace.set(streamConnectionKey, replacementCount);
       recordSendWorkflowTrace("session-sse", "session-sse:replaced-existing", {
@@ -1834,6 +1906,7 @@ export function createSessionEventStreamController(deps: SessionEventStreamContr
         activeEventStreamsByWorkspace: activeEventStreamsSnapshot(),
       });
       previous.cleanup();
+      replacingSseStreamKeys.delete(streamConnectionKey);
     }
 
     recordSendWorkflowTrace("session-sse", "session-sse:stream-start", {

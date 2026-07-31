@@ -1375,14 +1375,14 @@ test("known admitted run uses durable lifecycle arbitration for SSE errors", asy
   });
 });
 
-test("event stream runtime errors recover route when scoped runtime is not ready", async () => {
+test("event stream typed local runtime errors recover route when scoped runtime is not ready", async () => {
   await createRoot(async (dispose) => {
     try {
       const released: string[] = [];
       const recovered: string[] = [];
       const reconnectStates: ReconnectState[] = [];
       const streamClient = makeEventClient(async () => {
-        throw new Error("opencode_proxy_failed: socket connection was closed unexpectedly");
+        throw new Error("engine_not_running");
       });
       const routing = {
         activeWorkspaceId: () => "ws-a",

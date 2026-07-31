@@ -5750,6 +5750,7 @@ function createRoutes(
     createConversationRunDeliverySnapshotStore({
       dataDir: serverDataDir,
     });
+  let e2eFailNextLifecycleMarkFailed = 0;
   const conversationSubmitAttemptStore = createConversationSubmitAttemptStore({
     dataDir: serverDataDir,
   });
@@ -5800,13 +5801,42 @@ function createRoutes(
       );
     },
   });
-  const lifecycleClient =
+  const rawLifecycleClient =
     config.orchestratorDaemonUrl && config.orchestratorLifecycleToken
       ? createOrchestratorLifecycleClient({
           daemonUrl: config.orchestratorDaemonUrl,
           token: config.orchestratorLifecycleToken,
         })
       : null;
+  const lifecycleClient: OrchestratorLifecycleClient | null = rawLifecycleClient
+    ? {
+        ...rawLifecycleClient,
+        async markFailed(workspaceId, runId, error) {
+          if (e2eFailNextLifecycleMarkFailed > 0) {
+            e2eFailNextLifecycleMarkFailed -= 1;
+            throw new Error("e2e lifecycle markFailed fault injection");
+          }
+          await rawLifecycleClient.markFailed(workspaceId, runId, error);
+        },
+      }
+    : null;
+
+  if (process.env.VESLO_E2E_FAULT_INJECTION === "1") {
+    addRoute(routes, "POST", "/e2e/fail-next-lifecycle-mark-failed", "client", async (ctx) => {
+      const rawBody = await readJsonBody(ctx.request);
+      const body = rawBody && typeof rawBody === "object" && !Array.isArray(rawBody)
+        ? rawBody as Record<string, unknown>
+        : {};
+      const requestedCount = typeof body.count === "number" && Number.isInteger(body.count)
+        ? body.count
+        : 1;
+      e2eFailNextLifecycleMarkFailed = Math.min(Math.max(requestedCount, 1), 10);
+      return jsonResponse({
+        ok: true,
+        remaining: e2eFailNextLifecycleMarkFailed,
+      });
+    });
+  }
   const conversationSubmitService = createConversationSubmitService({
     attemptStore: conversationSubmitAttemptStore,
     conversationService,

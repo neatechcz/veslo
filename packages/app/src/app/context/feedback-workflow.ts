@@ -1,10 +1,12 @@
-import { createSignal, type Accessor } from "solid-js";
+import { createMemo, createSignal, onCleanup, type Accessor } from "solid-js";
 
 import {
   submitFeedbackReport,
+  type FeedbackDiagnosticAttachment,
   type FeedbackRuntimeContext,
   type SubmitFeedbackReportResult,
 } from "../lib/feedback";
+import { userDiagnosticCaptureStatus, type UserDiagnosticCaptureStatus } from "../lib/tauri";
 
 export type FeedbackFormValues = {
   title: string;
@@ -42,6 +44,7 @@ export type FeedbackWorkflowDeps = {
   submitFeedbackReport?: (input: FeedbackSubmitInput) => Promise<SubmitFeedbackReportResult>;
   reportError: (error: unknown, scope: string) => void;
   stringifyError: (error: unknown) => string;
+  readDiagnosticCaptureStatus?: () => Promise<UserDiagnosticCaptureStatus>;
 };
 
 export type FeedbackWorkflow = {
@@ -49,6 +52,8 @@ export type FeedbackWorkflow = {
   feedbackSubmitError: Accessor<string | null>;
   feedbackSubmitSuccessIssueId: Accessor<string | null>;
   feedbackSubmitting: Accessor<boolean>;
+  feedbackDiagnosticAttachment: Accessor<FeedbackDiagnosticAttachment | null>;
+  feedbackDiagnosticUploadPending: Accessor<boolean>;
   setSubmitError: (error: string | null) => void;
   setSuccessIssueId: (issueId: string | null) => void;
   openFeedbackModal: () => void;
@@ -60,6 +65,19 @@ export type FeedbackWorkflow = {
 function normalizeFeedbackOptional(value?: string | null) {
   const trimmed = value?.trim() ?? "";
   return trimmed ? trimmed : null;
+}
+
+const DIAGNOSTIC_STATUS_POLL_MS = 1_000;
+
+function isTerminalDiagnosticState(state: string) {
+  return [
+    "uploaded",
+    "uploaded_with_truncation",
+    "delivery_rejected",
+    "expired",
+    "identity_changed",
+    "undeliverable",
+  ].includes(state);
 }
 
 function resolveFeedbackPlatform() {
@@ -105,12 +123,57 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
   const [feedbackSubmitError, setFeedbackSubmitError] = createSignal<string | null>(null);
   const [feedbackSubmitSuccessIssueId, setFeedbackSubmitSuccessIssueId] = createSignal<string | null>(null);
   const [feedbackSubmitting, setFeedbackSubmitting] = createSignal(false);
+  const [feedbackDiagnosticAttachment, setFeedbackDiagnosticAttachment] = createSignal<FeedbackDiagnosticAttachment | null>(null);
   const submitReport = deps.submitFeedbackReport ?? submitFeedbackReport;
   const buildContext = deps.buildContext ?? (() => buildFeedbackRuntimeContext(requireRuntimeContext(deps)));
+  const readDiagnosticCaptureStatus = deps.readDiagnosticCaptureStatus ?? userDiagnosticCaptureStatus;
+  let diagnosticStatusPoll: ReturnType<typeof setTimeout> | undefined;
+
+  const feedbackDiagnosticUploadPending = createMemo(() => {
+    const attachment = feedbackDiagnosticAttachment();
+    return attachment?.status === "tracking" && !isTerminalDiagnosticState(attachment.capture.state);
+  });
+
+  const stopDiagnosticStatusPoll = () => {
+    if (diagnosticStatusPoll !== undefined) {
+      clearTimeout(diagnosticStatusPoll);
+      diagnosticStatusPoll = undefined;
+    }
+  };
+
+  const trackDiagnosticAttachment = (attachment: FeedbackDiagnosticAttachment | undefined) => {
+    stopDiagnosticStatusPoll();
+    setFeedbackDiagnosticAttachment(attachment ?? null);
+    if (attachment?.status !== "tracking" || isTerminalDiagnosticState(attachment.capture.state)) return;
+
+    const poll = async () => {
+      try {
+        const capture = await readDiagnosticCaptureStatus();
+        if (capture.captureId !== attachment.captureId) {
+          setFeedbackDiagnosticAttachment({ status: "unavailable" });
+          return;
+        }
+        setFeedbackDiagnosticAttachment({
+          status: "tracking",
+          captureId: attachment.captureId,
+          capture,
+        });
+        if (isTerminalDiagnosticState(capture.state)) return;
+      } catch {
+        // Keep the warning visible and retry. A transient status read must not
+        // make a still-pending attachment look completed.
+      }
+      diagnosticStatusPoll = setTimeout(() => void poll(), DIAGNOSTIC_STATUS_POLL_MS);
+    };
+
+    void poll();
+  };
 
   const clearFeedbackSubmitState = () => {
+    stopDiagnosticStatusPoll();
     setFeedbackSubmitError(null);
     setFeedbackSubmitSuccessIssueId(null);
+    setFeedbackDiagnosticAttachment(null);
   };
 
   const openFeedbackModal = () => {
@@ -119,6 +182,7 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
   };
 
   const closeFeedbackModal = () => {
+    if (feedbackDiagnosticUploadPending()) return;
     clearFeedbackSubmitState();
     setFeedbackModalOpen(false);
   };
@@ -139,6 +203,7 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
       });
 
       setFeedbackSubmitSuccessIssueId(result.youtrackIssueId);
+      trackDiagnosticAttachment(result.diagnosticAttachment);
     } finally {
       setFeedbackSubmitting(false);
     }
@@ -151,11 +216,15 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
     });
   };
 
+  onCleanup(stopDiagnosticStatusPoll);
+
   return {
     feedbackModalOpen,
     feedbackSubmitError,
     feedbackSubmitSuccessIssueId,
     feedbackSubmitting,
+    feedbackDiagnosticAttachment,
+    feedbackDiagnosticUploadPending,
     setSubmitError: setFeedbackSubmitError,
     setSuccessIssueId: setFeedbackSubmitSuccessIssueId,
     openFeedbackModal,

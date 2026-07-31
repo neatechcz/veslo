@@ -3,6 +3,7 @@ import {
   resolveManagedAiBootstrapWaitDecision,
 } from "../controllers/managed-ai-bootstrap-readiness-controller";
 import type { RuntimeEngineState } from "../lib/tauri";
+import { VesloServerError } from "../lib/veslo-server";
 
 export const localRuntimeHealthTimeoutMessage =
   "Timed out waiting for local runtime health";
@@ -196,36 +197,64 @@ function isLocalVesloServerInvalidBearerMessage(
   );
 }
 
-export function shouldRecoverLocalRuntimeFromHealthError(
+export type LocalRuntimeRecoveryCategory =
+  | "stale_authorization"
+  | "engine_unavailable"
+  | "workspace_route_stale"
+  | "upstream_unavailable"
+  | "transport_unavailable";
+
+function typedRuntimeRecoveryCategory(error: unknown): LocalRuntimeRecoveryCategory | null {
+  if (!(error instanceof VesloServerError)) return null;
+  const code = error.code.trim().toLowerCase();
+  if (
+    code === "invalid_bearer_token" ||
+    (code === "unauthorized" && isLocalVesloServerInvalidBearerMessage(error.message.toLowerCase()))
+  ) return "stale_authorization";
+  if (
+    code === "engine_not_running" ||
+    code === "engine_starting" ||
+    code === "orchestrator_unavailable"
+  ) return "engine_unavailable";
+  if (
+    code === "workspace_not_found" ||
+    code === "workspace_registry_unsynced" ||
+    code === "workspace_id_mismatch"
+  ) return "workspace_route_stale";
+  if (code === "opencode_request_failed" || code === "opencode_proxy_failed") {
+    return "upstream_unavailable";
+  }
+  return null;
+}
+
+export function classifyLocalRuntimeRecoveryError(
   error: unknown,
   safeStringify?: (value: unknown) => string,
-): boolean {
+): LocalRuntimeRecoveryCategory | null {
+  const typedCategory = typedRuntimeRecoveryCategory(error);
+  if (typedCategory) return typedCategory;
+
+  // SDK and Tauri transport failures do not carry a Veslo-server envelope.
+  // This compatibility branch deliberately stays limited to connection facts;
+  // server-originated failures above must use the typed code contract.
   const message = messageFromUnknownError(error, safeStringify);
   const normalized = message.toLowerCase();
-  // Local OpenCode runtimes inherit the Veslo client token at spawn time; a 401
-  // means the routed runtime is stale and should be rebuilt once.
-  const localRuntimeStaleAuth =
-    isLocalVesloServerInvalidBearerMessage(normalized);
-  const localRuntimeUnavailable =
+  if (isLocalVesloServerInvalidBearerMessage(normalized)) return "stale_authorization";
+  if (
     normalized.includes("engine_not_running") ||
     normalized.includes("engine_starting") ||
     normalized.includes("local runtime chain is not ready") ||
     normalized.includes("orchestrator daemon is not running") ||
     normalized.includes('"enginestate":"starting"') ||
-    normalized.includes('"engine_state":"starting"') ||
-    normalized.includes("opencode_request_failed") ||
+    normalized.includes('"engine_state":"starting"')
+  ) return "engine_unavailable";
+  if (
     normalized.includes("workspace not found") ||
     normalized.includes("workspace_not_found") ||
     normalized.includes("workspace_registry_unsynced") ||
-    normalized.includes("workspace_id_mismatch") ||
-    normalized.includes("opencode_proxy_failed") ||
-    normalized.includes("socket closed") ||
-    normalized.includes("socket connection was closed") ||
-    /\b(?:upstream\s+)?status\s+(?:404|502|503)\b/.test(normalized) ||
-    /"status"\s*:\s*(?:404|502|503)\b/.test(normalized);
-  return (
-    localRuntimeStaleAuth ||
-    localRuntimeUnavailable ||
+    normalized.includes("workspace_id_mismatch")
+  ) return "workspace_route_stale";
+  if (
     normalized.includes("error sending request") ||
     normalized.includes("connection refused") ||
     message.includes("ECONNREFUSED") ||
@@ -238,6 +267,25 @@ export function shouldRecoverLocalRuntimeFromHealthError(
     normalized.includes("connection reset") ||
     message.includes("ECONNRESET") ||
     normalized.includes("networkerror")
+  ) return "transport_unavailable";
+  return null;
+}
+
+export function isAutomaticLocalRuntimeRecoveryCategory(
+  category: LocalRuntimeRecoveryCategory | null,
+): boolean {
+  return category === "stale_authorization" ||
+    category === "engine_unavailable" ||
+    category === "workspace_route_stale" ||
+    category === "transport_unavailable";
+}
+
+export function shouldRecoverLocalRuntimeFromHealthError(
+  error: unknown,
+  safeStringify?: (value: unknown) => string,
+): boolean {
+  return isAutomaticLocalRuntimeRecoveryCategory(
+    classifyLocalRuntimeRecoveryError(error, safeStringify),
   );
 }
 

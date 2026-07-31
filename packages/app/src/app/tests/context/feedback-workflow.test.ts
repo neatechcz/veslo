@@ -13,6 +13,31 @@ const okResult: SubmitFeedbackReportResult = {
   youtrackIssueUrl: "https://youtrack.test/issue/VSLO-123",
 };
 
+const queuedDiagnosticResult: SubmitFeedbackReportResult = {
+  ...okResult,
+  diagnosticAttachment: {
+    status: "tracking",
+    captureId: "capture-1",
+    capture: {
+      available: true,
+      canStart: false,
+      captureId: "capture-1",
+      state: "queued",
+      startedAt: 1,
+      endsAt: 1,
+      capturedEvents: 2,
+      capturedBytes: 42,
+      pendingEvents: 2,
+      acceptedEvents: 0,
+      droppedRetention: 0,
+      droppedBudget: 0,
+      droppedDelivery: 0,
+      droppedIdentity: 0,
+      terminalReason: null,
+    },
+  },
+};
+
 test("feedback workflow opens and closes with cleared modal state", () => {
   createRoot((dispose) => {
     try {
@@ -156,6 +181,43 @@ test("feedback workflow ignores duplicate submit while busy", async () => {
 
       assert.equal(workflow.feedbackSubmitting(), false);
       assert.equal(workflow.feedbackSubmitSuccessIssueId(), "VSLO-123");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("feedback workflow keeps the modal open while a diagnostic attachment is still uploading", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const workflow = createFeedbackWorkflow({
+        buildContext: () => ({
+          view: "dashboard",
+          pathname: "/dashboard",
+          tab: "scheduled",
+          settingsTab: "general",
+          selectedSessionId: null,
+          activeWorkspaceId: "ws_1",
+          vesloServerWorkspaceId: null,
+          activeWorkspaceType: "local",
+          activeWorkspaceRoot: "/repo",
+          locale: "en",
+          appVersion: "2026.6.26",
+          platform: "Windows",
+        }),
+        submitFeedbackReport: async () => queuedDiagnosticResult,
+        readDiagnosticCaptureStatus: async () => queuedDiagnosticResult.diagnosticAttachment!.capture,
+        reportError: () => {},
+        stringifyError: String,
+      });
+
+      workflow.openFeedbackModal();
+      await workflow.persistFeedback({ title: "Bug", description: "Details", attachDiagnostics: true });
+
+      assert.equal(workflow.feedbackDiagnosticUploadPending(), true);
+      workflow.closeFeedbackModal();
+      assert.equal(workflow.feedbackModalOpen(), true);
+      assert.equal(workflow.feedbackDiagnosticAttachment()?.status, "tracking");
     } finally {
       dispose();
     }

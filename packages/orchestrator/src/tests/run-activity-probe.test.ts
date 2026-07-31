@@ -639,6 +639,31 @@ describe("run activity probe HTTP behavior", () => {
     ]);
   });
 
+  test("retry session status yields to a visible assistant response in the transcript", async () => {
+    const probe = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: (async (input) => {
+        if (String(input).endsWith("/session/status")) {
+          return Response.json({ "sess-a": { type: "retry" } });
+        }
+        return Response.json([
+          user(),
+          assistant({ parts: [{ type: "text", text: "Late, but usable answer." }] }),
+        ]);
+      }) as typeof fetch,
+    });
+
+    await expect(probe(record)).resolves.toMatchObject({
+      active: true,
+      activityKind: "assistant_output",
+      waitReason: "assistant_message_open",
+    });
+  });
+
   test("retry session with running tool is still classified as local tool work", async () => {
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),

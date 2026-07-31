@@ -274,6 +274,42 @@ const ACTIVE_LIFECYCLE_STATUSES = new Set<LifecycleRunStatus>(["submitted", "run
 const STARTUP_ORPHANED_ASSISTANT_MESSAGE_GRACE_MS = 60_000;
 const ENGINE_UNREACHABLE_GRACE_MS = 60_000;
 
+type TerminalizationReasonCode =
+  | "upstream_submit_failed"
+  | "reconcile_exhausted"
+  | "startup_orphaned_assistant_message"
+  | "engine_unreachable_without_progress";
+
+function terminalizationMessageForReason(reasonCode: TerminalizationReasonCode): string {
+  switch (reasonCode) {
+    case "upstream_submit_failed":
+      return "OpenCode submit failed before the run could be accepted";
+    case "reconcile_exhausted":
+      return "Run lifecycle reconcile exhausted while active status remained unresolved";
+    case "startup_orphaned_assistant_message":
+      return "Startup lifecycle reservation had no useful progress while its assistant message remained open";
+    case "engine_unreachable_without_progress":
+      return "Engine remained unreachable after useful run progress stopped";
+  }
+}
+
+function normalizeTerminalizationReasonCode(value: string | null | undefined): TerminalizationReasonCode {
+  switch (value) {
+    case "upstream_submit_failed":
+    case "reconcile_exhausted":
+    case "startup_orphaned_assistant_message":
+    case "engine_unreachable_without_progress":
+      return value;
+    default:
+      return "reconcile_exhausted";
+  }
+}
+
+function terminalizationErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/g, " ").trim().slice(0, 500) || "terminal lifecycle write unavailable";
+}
+
 function withOpenCodeAdmissionMessageId(
   input: ConversationRunLifecycleSubmitInput,
   timestamp = Date.now(),
@@ -400,8 +436,24 @@ function lifecycleStatusTraceFields(
 function shouldFinalizeExhaustedActiveLifecycleRun(
   status: LifecycleRunStatusResult | null | undefined,
 ): boolean {
-  return Boolean(status && isActiveLifecycleStatus(status.status));
+  return Boolean(
+    status &&
+    isActiveLifecycleStatus(status.status) &&
+    status.waitReason !== "model_retry_no_output",
+  );
 }
+
+function shouldContinueNoOutputModelRetry(
+  status: LifecycleRunStatusResult | null | undefined,
+): boolean {
+  return Boolean(
+    status &&
+    isActiveLifecycleStatus(status.status) &&
+    status.waitReason === "model_retry_no_output",
+  );
+}
+
+const NO_OUTPUT_MODEL_RETRY_BACKGROUND_POLL_MS = 30_000;
 
 function isStartupOrphanedAssistantMessage(
   input: ConversationRunLifecycleScheduleReconcileInput,
@@ -460,6 +512,7 @@ export function createConversationRunLifecycleController(
   const queueDrainInFlight = new Set<string>();
   const lifecycleReconcileTimers = new Map<string, unknown>();
   const lifecycleReconcileInFlight = new Set<string>();
+  const terminalizationTimers = new Map<string, unknown>();
   const workspaceExecutionGateTails = new Map<string, Promise<void>>();
   const workspaceRunReservations = new Map<string, Map<string, ConversationWorkspaceRunReservation>>();
   const workspaceReconciliationPending = new Set<string>();
@@ -534,6 +587,11 @@ export function createConversationRunLifecycleController(
       skillViewRevision: null,
       authorizationRevision: null,
       openCodeConfigDigest: null,
+      terminalizationReason: null,
+      terminalizationAttempts: 0,
+      terminalizationLastError: null,
+      terminalizationNextAttemptAt: null,
+      terminalizationDeadlineAt: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -929,8 +987,8 @@ export function createConversationRunLifecycleController(
     reason: string,
     payload: Record<string, unknown> = {},
   ) => {
-    if (!lifecycleOwner) return;
-    await input.runTrace.step(
+    if (!lifecycleOwner) return true;
+    return await input.runTrace.step(
       event,
       () => lifecycleOwner.markFailed(input.workspace.id, input.runId, reason),
       {
@@ -939,7 +997,7 @@ export function createConversationRunLifecycleController(
         runId: input.runId,
         ...payload,
       },
-    ).catch((error) => {
+    ).then(() => true).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       const tracePayload = {
         workspaceId: input.workspace.id,
@@ -951,6 +1009,7 @@ export function createConversationRunLifecycleController(
       };
       input.runTrace.record(`${event}:error`, tracePayload);
       recordTrace(`${event}:error`, tracePayload);
+      return false;
     });
   };
 
@@ -1054,15 +1113,28 @@ export function createConversationRunLifecycleController(
         },
       });
     } catch (error) {
-      await markLifecycleFailed(
+      const terminalized = await markLifecycleFailed(
         input,
         lifecycleOwner,
         "server:conversation-run:lifecycle-mark-failed",
         error instanceof Error ? error.message : String(error),
       );
-      scheduleAcceptedRunReconcile(input, "submit-failed", 0);
       unregisterRegisteredAiGatewayRun();
-      releaseRun(input.workspace.id, input.runId, "upstream-submit-failed");
+      if (terminalized) {
+        releaseRun(input.workspace.id, input.runId, "upstream-submit-failed");
+        scheduleQueueDrain(input.workspace.id, input.target.conversationId, 0);
+      } else {
+        scheduleTerminalizationRetry({
+          workspace: input.workspace,
+          conversationId: input.target.conversationId,
+          runId: input.runId,
+          reasonCode: "upstream_submit_failed",
+          terminalMessage: terminalizationErrorMessage(error),
+          attempts: 1,
+          lastError: terminalizationErrorMessage(error),
+          deadlineAt: Date.now() + 300_000,
+        });
+      }
       throw error;
     }
 
@@ -1100,11 +1172,112 @@ export function createConversationRunLifecycleController(
     }
     queueDrainTimers.clear();
     lifecycleReconcileTimers.clear();
+    terminalizationTimers.clear();
   };
 
   const queueKey = (workspaceId: string, conversationId: string) => `${workspaceId}\0${conversationId}`;
   const reconcileKey = (workspaceId: string, conversationId: string, runId: string) =>
     `${workspaceId}\0${conversationId}\0${runId}`;
+  const terminalizationKey = reconcileKey;
+
+  const terminalizationDelayMs = (attempt: number) =>
+    [1_000, 2_000, 4_000, 8_000, 15_000][Math.min(Math.max(0, attempt - 1), 4)] ?? 60_000;
+
+  const scheduleTerminalizationRetry = (input: {
+    workspace: WorkspaceInfo;
+    conversationId: string;
+    runId: string;
+    reasonCode: TerminalizationReasonCode;
+    terminalMessage?: string;
+    attempts: number;
+    lastError?: string;
+    deadlineAt: number;
+    nextAttemptAt?: number | null;
+    onTerminalized?: () => void;
+  }) => {
+    const key = terminalizationKey(input.workspace.id, input.conversationId, input.runId);
+    const now = Date.now();
+    const retryDelayMs = input.attempts > 5 ? 60_000 : terminalizationDelayMs(input.attempts);
+    const persistedNextAttemptAt = input.nextAttemptAt;
+    const nextAttemptAt = typeof persistedNextAttemptAt === "number" && Number.isFinite(persistedNextAttemptAt)
+      ? persistedNextAttemptAt
+      : now + retryDelayMs;
+    const delayMs = Math.max(0, nextAttemptAt - now);
+    const previous = terminalizationTimers.get(key);
+    if (previous) clearTimer(previous);
+    const reservation = options.queueStore?.markWorkspaceRunTerminalizationPending({
+      workspaceId: input.workspace.id,
+      runId: input.runId,
+      reason: input.reasonCode,
+      attempts: input.attempts,
+      lastError: input.lastError ?? "terminal lifecycle write unavailable",
+      nextAttemptAt,
+      deadlineAt: input.deadlineAt,
+    });
+    const reservations = reservationsForWorkspace(input.workspace.id);
+    if (reservation) {
+      reservations.set(input.runId, reservation);
+    } else {
+      const previousReservation = reservations.get(input.runId);
+      if (previousReservation) {
+        reservations.set(input.runId, {
+          ...previousReservation,
+          state: "terminalization_pending",
+          terminalizationReason: input.reasonCode,
+          terminalizationAttempts: input.attempts,
+          terminalizationLastError: input.lastError ?? "terminal lifecycle write unavailable",
+          terminalizationNextAttemptAt: nextAttemptAt,
+          terminalizationDeadlineAt: input.deadlineAt,
+          updatedAt: Date.now(),
+        });
+      }
+    }
+    const handle = scheduleTimeout(() => {
+      activeTimers.delete(handle);
+      terminalizationTimers.delete(key);
+      const lifecycleOwner = input.workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
+      if (!lifecycleOwner) return;
+      if (Date.now() >= input.deadlineAt) {
+        recordTrace("server:conversation-run:terminalization-deadline-exceeded", {
+          workspaceId: input.workspace.id,
+          conversationId: input.conversationId,
+          runId: input.runId,
+          reasonCode: input.reasonCode,
+          attempts: input.attempts,
+          deadlineAt: input.deadlineAt,
+        });
+      }
+      void lifecycleOwner.markFailed(
+        input.workspace.id,
+        input.runId,
+        input.terminalMessage ?? terminalizationMessageForReason(input.reasonCode),
+      ).then(() => {
+        input.onTerminalized?.();
+        releaseRun(input.workspace.id, input.runId, "terminalization-retry-succeeded");
+        scheduleQueueDrain(input.workspace.id, input.conversationId, 0);
+      }).catch((error) => {
+        scheduleTerminalizationRetry({
+          ...input,
+          attempts: input.attempts + 1,
+          lastError: terminalizationErrorMessage(error),
+          nextAttemptAt: undefined,
+        });
+      });
+    }, delayMs);
+    activeTimers.add(handle);
+    terminalizationTimers.set(key, handle);
+    unrefTimer(handle);
+    recordTrace("server:conversation-run:terminalization-retry-scheduled", {
+      workspaceId: input.workspace.id,
+      conversationId: input.conversationId,
+      runId: input.runId,
+      reasonCode: input.reasonCode,
+      attempts: input.attempts,
+      delayMs,
+      nextAttemptAt,
+      deadlineAt: input.deadlineAt,
+    });
+  };
 
   function scheduleQueueDrain(workspaceId: string, conversationId: string, delayMs = 0): void {
     const normalizedConversationId = conversationId.trim();
@@ -1175,6 +1348,22 @@ export function createConversationRunLifecycleController(
     const conversationId = input.conversationId.trim();
     const runId = input.runId.trim();
     if (!conversationId || !runId) return;
+    const pendingTerminalization = workspaceRunReservations
+      .get(normalizeWorkspaceExecutionKey(input.workspace.id))
+      ?.get(runId);
+    if (pendingTerminalization?.state === "terminalization_pending") {
+      scheduleTerminalizationRetry({
+        workspace: input.workspace,
+        conversationId,
+        runId,
+        reasonCode: normalizeTerminalizationReasonCode(pendingTerminalization.terminalizationReason),
+        attempts: Math.max(1, pendingTerminalization.terminalizationAttempts),
+        lastError: pendingTerminalization.terminalizationLastError ?? undefined,
+        deadlineAt: pendingTerminalization.terminalizationDeadlineAt ?? Date.now() + 300_000,
+        nextAttemptAt: pendingTerminalization.terminalizationNextAttemptAt,
+      });
+      return;
+    }
     const key = reconcileKey(input.workspace.id, conversationId, runId);
     const pollMs = normalizeIntervalMs(options.resolveLifecycleReconcilePollMs?.()) ?? 1_000;
     const maxAttempts = Math.max(1, Math.floor(options.resolveLifecycleReconcileMaxAttempts?.() ?? 600));
@@ -1224,6 +1413,16 @@ export function createConversationRunLifecycleController(
             releaseRun(input.workspace.id, status?.runId?.trim() || runId, "unresolved-reconcile-failed");
             scheduleQueueDrain(input.workspace.id, conversationId, 0);
           }).catch((error) => {
+            scheduleTerminalizationRetry({
+              workspace: input.workspace,
+              conversationId,
+              runId: status?.runId?.trim() || runId,
+              reasonCode: "reconcile_exhausted",
+              attempts: 1,
+              lastError: terminalizationErrorMessage(error),
+              deadlineAt: Date.now() + 300_000,
+              onTerminalized: () => unregisterScheduledAiGatewayRun(input),
+            });
             recordTrace("server:conversation-run:lifecycle-mark-failed-error", {
               workspaceId: input.workspace.id,
               conversationId,
@@ -1231,6 +1430,24 @@ export function createConversationRunLifecycleController(
               reason: input.reason,
               message: error instanceof Error ? error.message : String(error),
             });
+          });
+        }
+        if (shouldContinueNoOutputModelRetry(status)) {
+          const backgroundDelayMs = Math.max(pollMs, NO_OUTPUT_MODEL_RETRY_BACKGROUND_POLL_MS);
+          recordTrace("server:conversation-run:model-retry-background-reconcile", {
+            workspaceId: input.workspace.id,
+            conversationId,
+            runId,
+            attempts: nextAttempt,
+            delayMs: backgroundDelayMs,
+            ...lifecycleStatusTraceFields(status),
+          });
+          scheduleLifecycleReconcile({
+            ...input,
+            conversationId,
+            runId,
+            attempt: 0,
+            delayMs: backgroundDelayMs,
           });
         }
         return;
@@ -1298,6 +1515,16 @@ export function createConversationRunLifecycleController(
           releaseRun(input.workspace.id, status.runId?.trim() || runId, "startup-orphaned-assistant-message");
           scheduleQueueDrain(input.workspace.id, conversationId, 0);
         }).catch((error) => {
+          scheduleTerminalizationRetry({
+            workspace: input.workspace,
+            conversationId,
+            runId: status.runId?.trim() || runId,
+            reasonCode: "startup_orphaned_assistant_message",
+            attempts: 1,
+            lastError: terminalizationErrorMessage(error),
+            deadlineAt: Date.now() + 300_000,
+            onTerminalized: () => unregisterScheduledAiGatewayRun(input),
+          });
           recordTrace("server:conversation-run:lifecycle-mark-failed-error", {
             workspaceId: input.workspace.id,
             conversationId,
@@ -1326,6 +1553,16 @@ export function createConversationRunLifecycleController(
           releaseRun(input.workspace.id, status.runId?.trim() || runId, "engine-unreachable-without-progress");
           scheduleQueueDrain(input.workspace.id, conversationId, 0);
         }).catch((error) => {
+          scheduleTerminalizationRetry({
+            workspace: input.workspace,
+            conversationId,
+            runId: status.runId?.trim() || runId,
+            reasonCode: "engine_unreachable_without_progress",
+            attempts: 1,
+            lastError: terminalizationErrorMessage(error),
+            deadlineAt: Date.now() + 300_000,
+            onTerminalized: () => unregisterScheduledAiGatewayRun(input),
+          });
           recordTrace("server:conversation-run:lifecycle-mark-failed-error", {
             workspaceId: input.workspace.id,
             conversationId,
@@ -1906,6 +2143,19 @@ export function createConversationRunLifecycleController(
         const workspace = options.resolveWorkspace?.(workspaceId) ?? null;
         if (!workspace || workspace.workspaceType === "remote" || !options.lifecycleClient) continue;
         for (const reservation of reservations.values()) {
+          if (reservation.state === "terminalization_pending") {
+            scheduleTerminalizationRetry({
+              workspace,
+              conversationId: reservation.conversationId,
+              runId: reservation.runId,
+              reasonCode: normalizeTerminalizationReasonCode(reservation.terminalizationReason),
+              attempts: Math.max(1, reservation.terminalizationAttempts),
+              lastError: reservation.terminalizationLastError ?? undefined,
+              deadlineAt: reservation.terminalizationDeadlineAt ?? Date.now() + 300_000,
+              nextAttemptAt: reservation.terminalizationNextAttemptAt,
+            });
+            continue;
+          }
           scheduleLifecycleReconcile({
             workspace,
             conversationId: reservation.conversationId,

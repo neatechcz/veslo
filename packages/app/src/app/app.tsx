@@ -6216,6 +6216,8 @@ export default function App() {
         error={feedbackWorkflow.feedbackSubmitError()}
         successIssueId={feedbackWorkflow.feedbackSubmitSuccessIssueId()}
         submitting={feedbackWorkflow.feedbackSubmitting()}
+        diagnosticAttachment={feedbackWorkflow.feedbackDiagnosticAttachment()}
+        diagnosticUploadPending={feedbackWorkflow.feedbackDiagnosticUploadPending()}
         onClose={feedbackWorkflow.closeFeedbackModal}
         onSubmit={feedbackWorkflow.submitFeedback}
       />
@@ -6247,9 +6249,9 @@ export default function App() {
         reloadBlocked={activeReloadBlockingSessions().length > 0}
         activeSessions={activeReloadBlockingSessions()}
         isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
-        onForceStopSession={(sessionID, session) =>
-          abortSession(sessionID, session)
-        }
+        onForceStopSession={(sessionID, session) => {
+          void abortSession(sessionID, session);
+        }}
         onClose={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);

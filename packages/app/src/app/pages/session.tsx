@@ -105,6 +105,7 @@ import {
   type SessionSendOrigin,
   type SessionSubmitResult,
 } from "../lib/session-send-contract";
+import type { SessionAbortResult } from "./session-send-workflow";
 import type { UiConversationRef } from "../lib/ui-conversation-scope";
 import { resolveEscapeStopShortcut } from "./session-shortcuts";
 import {
@@ -438,7 +439,7 @@ export type SessionViewProps = {
     options: SessionSendOptionsBase & { targetSessionId?: string | null },
   ) => Promise<SessionSubmitResult>;
   clearComposerDraftForSession: (sessionId: string | null | undefined) => void;
-  abortSession: (sessionId?: string) => Promise<void>;
+  abortSession: (sessionId?: string) => Promise<SessionAbortResult | void>;
   sessionRevertMessageId: string | null;
   undoLastUserMessage: () => Promise<void>;
   redoLastUserMessage: () => Promise<void>;
@@ -2314,6 +2315,9 @@ export default function SessionView(props: SessionViewProps) {
   };
   const runDiagnosticLabel = createMemo(() => {
     const diagnostic = activeRunDiagnostic();
+    if (diagnostic?.terminalization?.state === "pending") {
+      return tr("session.run_terminalization_pending");
+    }
     if (diagnostic?.recoveryState === "exhausted") {
       return tr("session.run_observation_exhausted");
     }
@@ -2321,13 +2325,9 @@ export default function SessionView(props: SessionViewProps) {
     const time = formatNoProgressDuration(activeNoProgressSeconds());
     const lastProgress = formatLastProgressTime(diagnostic.lastUsefulProgressAt);
     if (lastProgress) {
-      return diagnostic.status === "blocked"
-        ? formatTr("session.run_model_retry_blocked_with_progress", { time, lastProgress })
-        : formatTr("session.run_model_retry_no_output_with_progress", { time, lastProgress });
+      return formatTr("session.run_model_retry_no_output_with_progress", { time, lastProgress });
     }
-    return diagnostic.status === "blocked"
-      ? formatTr("session.run_model_retry_blocked", { time })
-      : formatTr("session.run_model_retry_no_output", { time });
+    return formatTr("session.run_model_retry_no_output", { time });
   });
   const runPresentation = createMemo(() => deriveSessionRunPresentation({
     hasSessionScope: Boolean(props.selectedSessionId?.trim()),

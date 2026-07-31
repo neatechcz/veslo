@@ -116,6 +116,11 @@ export default {
   "feedback.technical_note": "Veslo 会自动附加当前屏幕和技术细节。",
   "feedback.attach_diagnostics": "附加最近 10 分钟的本地诊断日志（最多 50 MB）。",
   "feedback.success_message": "错误报告已发送。YouTrack 任务：{issueId}。",
+  "feedback.diagnostics_uploading": "正在附加诊断日志（{acceptedEvents}/{totalEvents}）。在此确认状态改变前，请保持 Veslo 打开。",
+  "feedback.diagnostics_uploaded": "诊断日志已附加。现在可以关闭 Veslo。",
+  "feedback.diagnostics_uploaded_truncated": "诊断日志已附加，但本地 50 MB 限制截断了部分内容。现在可以关闭 Veslo。",
+  "feedback.diagnostics_failed": "反馈已发送，但诊断日志未能送达。",
+  "feedback.diagnostics_unavailable": "反馈已发送，但无法附加诊断日志。",
   "feedback.submit": "发送错误报告",
 
   // ==================== Session ====================

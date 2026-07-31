@@ -345,18 +345,17 @@ if (!window.__vesloModelStreamRetryNoProgressStarted) {
       });
       assert(retryIndicator.phase === "retrying", `Expected data-run-phase=retrying, got ${JSON.stringify(retryIndicator)}`);
 
-      setProgress("waiting-visible-model-retry-blocked", { retryIndicator });
-      const blockedIndicator = await waitUntil(() => {
-        const indicator = visibleRunIndicator();
-        if (!indicator) return false;
-        if (!/Model\/API retry blocked|Opakovani model\/API zablokovano/i.test(indicator.text)) return false;
-        return indicator;
-      }, {
-        timeout: 90000,
-        interval: 500,
-        message: `Model/API retry did not become blocked. Indicator=${JSON.stringify(visibleRunIndicator())}. Body=${bodyText().slice(0, 2500)}`,
-      });
-      assert(blockedIndicator.phase === "error", `Expected data-run-phase=error for blocked retry, got ${JSON.stringify(blockedIndicator)}`);
+      setProgress("verifying-model-retry-remains-background", { retryIndicator });
+      // The focused fixture shortens the durable diagnostic threshold to ten
+      // seconds. That threshold must not convert a live exact run into a UI
+      // error or release it for a successor: it is still background retry
+      // work until the owner sees trustworthy terminal/transcript evidence.
+      await sleep(12_000);
+      const backgroundIndicator = visibleRunIndicator();
+      assert(backgroundIndicator, `Model/API retry indicator disappeared after the diagnostic threshold. Body=${bodyText().slice(0, 2500)}`);
+      assert(/Retrying model\/API|Opakuji model\/API/i.test(backgroundIndicator.text), `Expected background retry label after the diagnostic threshold, got ${JSON.stringify(backgroundIndicator)}`);
+      assert(backgroundIndicator.phase === "retrying", `Expected data-run-phase=retrying after the diagnostic threshold, got ${JSON.stringify(backgroundIndicator)}`);
+      assert(!/retry blocked|zablokovano/i.test(backgroundIndicator.text), `Model/API retry became a blocker after the diagnostic threshold: ${JSON.stringify(backgroundIndicator)}`);
 
       clearTimeout(overallTimeout);
       const completeMarker = document.createElement("div");

@@ -114,6 +114,11 @@ export default {
   "feedback.technical_note": "Veslo will attach the current screen and technical details automatically.",
   "feedback.attach_diagnostics": "Attach the last 10 minutes of local diagnostic logs (up to 50 MB).",
   "feedback.success_message": "Bug report sent. YouTrack task: {issueId}.",
+  "feedback.diagnostics_uploading": "Attaching diagnostic logs ({acceptedEvents}/{totalEvents}). Keep Veslo open until this confirmation changes.",
+  "feedback.diagnostics_uploaded": "Diagnostic logs are attached. You can close Veslo now.",
+  "feedback.diagnostics_uploaded_truncated": "Diagnostic logs are attached, but the local 50 MB limit truncated part of the capture. You can close Veslo now.",
+  "feedback.diagnostics_failed": "The feedback was sent, but its diagnostic logs could not be delivered.",
+  "feedback.diagnostics_unavailable": "The feedback was sent, but diagnostic logs could not be attached.",
   "feedback.submit": "Send bug report",
 
   // ==================== Session ====================
@@ -1336,6 +1341,7 @@ export default {
   "session.run_retrying": "Retrying",
   "session.run_observation_exhausted": "Run status could not be verified. Waiting for reconnection.",
   "session.run_transcript_unavailable": "The run completed, but its transcript could not be recovered.",
+  "session.run_terminalization_pending": "Finalizing the previous run before continuing.",
   "session.run_model_retry_no_output": "Retrying model/API, no output for {time}",
   "session.run_model_retry_no_output_with_progress": "Retrying model/API, no output for {time}; last progress {lastProgress}",
   "session.run_model_retry_blocked": "Model/API retry blocked after {time}",

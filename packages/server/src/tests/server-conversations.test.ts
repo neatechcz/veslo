@@ -6431,4 +6431,40 @@ describe("conversation routes", () => {
     await new Promise((resolve) => setTimeout(resolve, 550));
     expect(failedRequests.some((entry) => entry.workspaceId === "ws_stale")).toBe(false);
   });
+
+  test("E2E lifecycle terminalization fault control is guarded and arms a bounded count", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "veslo-server-e2e-terminalization-fault-"));
+    tempDirs.push(workspaceRoot);
+    await useTempVesloDataDir();
+    const upstream = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => Response.json({ error: "unused" }, { status: 404 }),
+    });
+    runningServers.push(upstream as { stop?: (closeActiveConnections?: boolean) => void });
+    const headers = {
+      Authorization: "Bearer client-token",
+      "Content-Type": "application/json",
+    };
+
+    const productionServer = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+    const unavailable = await fetch(
+      `http://127.0.0.1:${productionServer.port}/e2e/fail-next-lifecycle-mark-failed`,
+      { method: "POST", headers },
+    );
+    expect(unavailable.status).toBe(404);
+
+    setEnvVarForTest("VESLO_E2E_FAULT_INJECTION", "1");
+    const e2eServer = startTestServer({ workspaceRoot, upstreamPort: upstream.port });
+    const armed = await fetch(
+      `http://127.0.0.1:${e2eServer.port}/e2e/fail-next-lifecycle-mark-failed`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ count: 99 }),
+      },
+    );
+    expect(armed.status).toBe(200);
+    await expect(armed.json()).resolves.toEqual({ ok: true, remaining: 10 });
+  });
 });

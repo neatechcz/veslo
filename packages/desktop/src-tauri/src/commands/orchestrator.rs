@@ -452,10 +452,21 @@ mod tests {
 
 #[cfg(all(debug_assertions, feature = "e2e"))]
 fn post_orchestrator_e2e(base_url: &str, path: &str) -> Result<serde_json::Value, String> {
+    post_orchestrator_e2e_json(base_url, path, serde_json::Value::Null)
+}
+
+#[cfg(all(debug_assertions, feature = "e2e"))]
+fn post_orchestrator_e2e_json(
+    base_url: &str,
+    path: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let url = format!("{}{}", base_url.trim_end_matches('/'), path);
+    let body = serde_json::to_string(&body)
+        .map_err(|error| format!("Failed to encode orchestrator e2e request {path}: {error}"))?;
     let response = ureq::post(&url)
         .set("Content-Type", "application/json")
-        .send_string("")
+        .send_string(&body)
         .map_err(|error| format!("Failed to invoke orchestrator e2e endpoint {path}: {error}"))?;
     response
         .into_json()
@@ -513,9 +524,14 @@ pub fn shared_engine_e2e_kill_child(
 #[tauri::command]
 pub fn shared_engine_e2e_fail_next_proxy(
     manager: State<OrchestratorManager>,
+    count: Option<u32>,
 ) -> Result<serde_json::Value, String> {
     let base_url = resolve_base_url(&manager)?;
-    post_orchestrator_e2e(&base_url, "/e2e/shared-engine/fail-next-proxy")
+    post_orchestrator_e2e_json(
+        &base_url,
+        "/e2e/shared-engine/fail-next-proxy",
+        serde_json::json!({ "count": count.unwrap_or(1) }),
+    )
 }
 
 #[tauri::command]

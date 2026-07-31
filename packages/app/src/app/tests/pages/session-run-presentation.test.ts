@@ -62,6 +62,35 @@ test("connection-unavailable lifecycle evidence is a non-streaming recovery bloc
   });
 });
 
+test("terminalization pending remains visible but cannot start another local run", () => {
+  const projection = deriveSessionRunPresentation({
+    hasSessionScope: true,
+    engineStatus: "idle",
+    lifecycle: {
+      runId: "run-a",
+      status: "running",
+      stale: false,
+      terminalization: {
+        state: "pending",
+        reasonCode: "upstream_submit_failed",
+        attempts: 2,
+        nextAttemptAt: 2_000,
+        deadlineAt: 300_000,
+      },
+    },
+    local: { started: true, hasBegun: true, optimisticSending: true, responseStarted: false },
+  });
+
+  assert.deepEqual(projection, {
+    phase: "thinking",
+    showIndicator: true,
+    abortable: false,
+    source: "lifecycle",
+    diagnosticKind: "terminalization-pending",
+    composerMode: "recovery-blocked",
+  });
+});
+
 test("transcript-unavailable lifecycle evidence keeps the composer idle without a Stop action", () => {
   const projection = deriveSessionRunPresentation({
     hasSessionScope: true,
@@ -183,7 +212,7 @@ test("active engine evidence supersedes a retained terminal diagnostic from an o
   assert.equal(projection.source, "engine");
 });
 
-test("blocked no-output retry is error-styled while it stays backend-abortable", () => {
+test("legacy blocked no-output retry stays a background retry while it remains backend-abortable", () => {
   const projection = deriveSessionRunPresentation({
     hasSessionScope: true,
     engineStatus: "idle",
@@ -192,11 +221,11 @@ test("blocked no-output retry is error-styled while it stays backend-abortable",
   });
 
   assert.deepEqual(projection, {
-    phase: "error",
+    phase: "retrying",
     showIndicator: true,
     abortable: true,
     source: "lifecycle",
-    diagnosticKind: "model-retry-blocked",
+    diagnosticKind: "model-retry",
   });
 });
 

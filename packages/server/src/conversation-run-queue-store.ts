@@ -51,7 +51,12 @@ export type ConversationWorkspaceRunReservation = {
   workspaceId: string;
   conversationId: string;
   runId: string;
-  state: "starting" | "active";
+  state: "starting" | "active" | "terminalization_pending";
+  terminalizationReason: string | null;
+  terminalizationAttempts: number;
+  terminalizationLastError: string | null;
+  terminalizationNextAttemptAt: number | null;
+  terminalizationDeadlineAt: number | null;
   engineSlotId: string | null;
   engineOwnerId: string | null;
   directoryInstanceEpoch: number | null;
@@ -126,6 +131,15 @@ export type ConversationRunQueueStore = {
     owner: ConversationWorkspaceRunEngineOwner,
   ): ConversationWorkspaceRunReservation | null;
   activateWorkspaceRun(workspaceId: string, runId: string): ConversationWorkspaceRunReservation | null;
+  markWorkspaceRunTerminalizationPending(input: {
+    workspaceId: string;
+    runId: string;
+    reason: string;
+    attempts: number;
+    lastError: string;
+    nextAttemptAt: number;
+    deadlineAt: number;
+  }): ConversationWorkspaceRunReservation | null;
   releaseWorkspaceRun(workspaceId: string, runId: string): boolean;
   listWorkspaceRunReservations(): ConversationWorkspaceRunReservation[];
 };
@@ -168,6 +182,11 @@ type WorkspaceRunReservationRow = {
   skill_view_revision: string | null;
   authorization_revision: string | null;
   opencode_config_digest: string | null;
+  terminalization_reason: string | null;
+  terminalization_attempts: number | null;
+  terminalization_last_error: string | null;
+  terminalization_next_attempt_at: number | null;
+  terminalization_deadline_at: number | null;
   created_at: number;
   updated_at: number;
 };
@@ -282,6 +301,11 @@ function ensureQueueSchema(db: Database): void {
   addReservationColumn("skill_view_revision", "TEXT");
   addReservationColumn("authorization_revision", "TEXT");
   addReservationColumn("opencode_config_digest", "TEXT");
+  addReservationColumn("terminalization_reason", "TEXT");
+  addReservationColumn("terminalization_attempts", "INTEGER");
+  addReservationColumn("terminalization_last_error", "TEXT");
+  addReservationColumn("terminalization_next_attempt_at", "INTEGER");
+  addReservationColumn("terminalization_deadline_at", "INTEGER");
   const legacyRows = db.query<QueueRow, []>(
     `SELECT * FROM conversation_run_queue
      WHERE request_hash IS NULL OR request_hash = ''`,
@@ -388,7 +412,20 @@ function reservationRowToItem(row: WorkspaceRunReservationRow): ConversationWork
     workspaceId: row.workspace_id,
     conversationId: row.conversation_id,
     runId: row.run_id,
-    state: row.state === "active" ? "active" : "starting",
+    state: row.state === "terminalization_pending"
+      ? "terminalization_pending"
+      : row.state === "active" ? "active" : "starting",
+    terminalizationReason: row.terminalization_reason?.trim() || null,
+    terminalizationAttempts: Number.isSafeInteger(row.terminalization_attempts)
+      ? Math.max(0, Number(row.terminalization_attempts))
+      : 0,
+    terminalizationLastError: row.terminalization_last_error?.trim() || null,
+    terminalizationNextAttemptAt: typeof row.terminalization_next_attempt_at === "number"
+      ? row.terminalization_next_attempt_at
+      : null,
+    terminalizationDeadlineAt: typeof row.terminalization_deadline_at === "number"
+      ? row.terminalization_deadline_at
+      : null,
     engineSlotId: row.engine_slot_id?.trim() || null,
     engineOwnerId: row.engine_owner_id?.trim() || null,
     directoryInstanceEpoch:
@@ -859,6 +896,38 @@ export function createConversationRunQueueStore(options?: {
           `SELECT * FROM conversation_workspace_run_reservation
            WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
         ).get(normalizeText(workspaceId), normalizeText(runId));
+        return row ? reservationRowToItem(row) : null;
+      });
+    },
+
+    markWorkspaceRunTerminalizationPending(input) {
+      return withDb((db) => {
+        const timestamp = now();
+        const result = db.query(
+          `UPDATE conversation_workspace_run_reservation
+           SET state = 'terminalization_pending',
+               terminalization_reason = ?3,
+               terminalization_attempts = ?4,
+               terminalization_last_error = ?5,
+               terminalization_next_attempt_at = ?6,
+               terminalization_deadline_at = ?7,
+               updated_at = ?8
+           WHERE workspace_id = ?1 AND run_id = ?2`,
+        ).run(
+          normalizeText(input.workspaceId),
+          normalizeText(input.runId),
+          normalizeText(input.reason),
+          Math.max(0, Math.floor(input.attempts)),
+          normalizeText(input.lastError),
+          Math.max(0, Math.floor(input.nextAttemptAt)),
+          Math.max(0, Math.floor(input.deadlineAt)),
+          timestamp,
+        );
+        if (result.changes !== 1) return null;
+        const row = db.query<WorkspaceRunReservationRow, [string, string]>(
+          `SELECT * FROM conversation_workspace_run_reservation
+           WHERE workspace_id = ?1 AND run_id = ?2 LIMIT 1`,
+        ).get(normalizeText(input.workspaceId), normalizeText(input.runId));
         return row ? reservationRowToItem(row) : null;
       });
     },

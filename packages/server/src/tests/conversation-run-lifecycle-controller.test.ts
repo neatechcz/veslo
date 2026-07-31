@@ -332,6 +332,11 @@ class QueueHarness implements ConversationRunQueueStore {
       skillViewRevision: previous?.skillViewRevision ?? null,
       authorizationRevision: previous?.authorizationRevision ?? null,
       openCodeConfigDigest: previous?.openCodeConfigDigest ?? null,
+      terminalizationReason: previous?.terminalizationReason ?? null,
+      terminalizationAttempts: previous?.terminalizationAttempts ?? 0,
+      terminalizationLastError: previous?.terminalizationLastError ?? null,
+      terminalizationNextAttemptAt: previous?.terminalizationNextAttemptAt ?? null,
+      terminalizationDeadlineAt: previous?.terminalizationDeadlineAt ?? null,
       createdAt: previous?.createdAt ?? timestamp,
       updatedAt: timestamp,
     };
@@ -366,6 +371,24 @@ class QueueHarness implements ConversationRunQueueStore {
     const previous = this.reservations.get(key);
     if (!previous) return null;
     const reservation = { ...previous, state: "active" as const, updatedAt: Date.now() };
+    this.reservations.set(key, reservation);
+    return reservation;
+  }
+
+  markWorkspaceRunTerminalizationPending(input: Parameters<ConversationRunQueueStore["markWorkspaceRunTerminalizationPending"]>[0]) {
+    const key = `${input.workspaceId}\0${input.runId}`;
+    const previous = this.reservations.get(key);
+    if (!previous) return null;
+    const reservation: ConversationWorkspaceRunReservation = {
+      ...previous,
+      state: "terminalization_pending",
+      terminalizationReason: input.reason,
+      terminalizationAttempts: input.attempts,
+      terminalizationLastError: input.lastError,
+      terminalizationNextAttemptAt: input.nextAttemptAt,
+      terminalizationDeadlineAt: input.deadlineAt,
+      updatedAt: Date.now(),
+    };
     this.reservations.set(key, reservation);
     return reservation;
   }
@@ -424,7 +447,7 @@ function controllerHarness(options?: {
   ingestTerminalTranscript?: (input: { runId: string }) => Promise<{ kind: "persisted" | "unchanged" | "incomplete" | "exhausted" } | void>;
   withLifecycle?: boolean;
   submitEngineOwner?: ConversationWorkspaceRunEngineOwner | null;
-  startupReservation?: { conversationId: string; runId: string };
+  startupReservation?: Partial<ConversationWorkspaceRunReservation> & { conversationId: string; runId: string };
 }) {
   const lifecycle = new LifecycleHarness();
   const queue = new QueueHarness();
@@ -433,7 +456,13 @@ function controllerHarness(options?: {
       workspaceId: "ws_1",
       conversationId: options.startupReservation.conversationId,
       runId: options.startupReservation.runId,
-      state: "active",
+      state: options.startupReservation.state ?? "active",
+    });
+    const reservation = queue.reservations.get(`ws_1\0${options.startupReservation.runId}`)!;
+    queue.reservations.set(`ws_1\0${options.startupReservation.runId}`, {
+      ...reservation,
+      ...options.startupReservation,
+      workspaceId: "ws_1",
     });
   }
   const timers = new TimerHarness();
@@ -1219,7 +1248,7 @@ test("submitRun schedules accepted lifecycle reconciliation after successful Ope
   expect(providerWatchCalls).toEqual([]);
 });
 
-test("submitRun marks lifecycle failed, schedules reconcile, and clears active gateway context on submit failure", async () => {
+test("submitRun marks lifecycle failed, wakes the queue, and clears active gateway context on submit failure", async () => {
   const {
     controller,
     behavior,
@@ -1235,13 +1264,11 @@ test("submitRun marks lifecycle failed, schedules reconcile, and clears active g
   );
 
   expect(lifecycle.calls).toContain("markFailed:ws_1:run-reserved:opencode submit failed");
-  expect(reconcileCalls).toEqual([{
+  expect(reconcileCalls).toContainEqual(expect.objectContaining({
     workspaceId: "ws_1",
     conversationId: "conv-a",
-    runId: "run-reserved",
-    reason: "submit-failed",
-    delayMs: 0,
-  }]);
+    reason: "server:conversation-run:queue-drain-scheduled",
+  }));
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
   expect(providerWatchCalls).toEqual([]);
 });
@@ -1254,6 +1281,7 @@ test("submitRun traces lifecycle markFailed errors without hiding the submit fai
     activeGatewayCalls,
     reconcileCalls,
     traceEntries,
+    queue,
   } = controllerHarness();
   behavior.submitError = new Error("opencode submit failed");
   lifecycle.markFailedError = new Error("lifecycle mark failed");
@@ -1282,10 +1310,67 @@ test("submitRun traces lifecycle markFailed errors without hiding the submit fai
     workspaceId: "ws_1",
     conversationId: "conv-a",
     runId: "run-reserved",
-    reason: "submit-failed",
-    delayMs: 0,
+    reason: "server:conversation-run:terminalization-retry-scheduled",
+    delayMs: 1_000,
+  }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
+    workspaceId: "ws_1",
+    runId: "run-reserved",
+    state: "terminalization_pending",
+    terminalizationReason: "upstream_submit_failed",
+    terminalizationAttempts: 1,
   }));
   expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+});
+
+test("terminalization retry keeps the reservation until lifecycle termination succeeds", async () => {
+  const { controller, behavior, lifecycle, queue, timers, reconcileCalls } = controllerHarness();
+  behavior.submitError = new Error("opencode submit failed");
+  lifecycle.markFailedError = new Error("lifecycle temporarily unavailable");
+
+  await expect(controller.submitRun(submitInput())).rejects.toThrow("opencode submit failed");
+  expect(queue.listWorkspaceRunReservations()).toHaveLength(1);
+  const retryTimer = timers.activeTimers().find((timer) => timer.delayMs === 1_000);
+  expect(retryTimer).toBeDefined();
+
+  lifecycle.markFailedError = null;
+  timers.fire(retryTimer!.id);
+  await flushMicrotasks();
+
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+  expect(lifecycle.calls.filter((call) => call.startsWith("markFailed:"))).toHaveLength(2);
+  expect(reconcileCalls).toContainEqual(expect.objectContaining({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    reason: "server:conversation-run:queue-drain-scheduled",
+  }));
+});
+
+test("startup restores a pending terminalization retry without a new submit", () => {
+  const nextAttemptAt = Date.now() + 17_000;
+  const { controller, timers, queue } = controllerHarness({
+    startupReservation: {
+      conversationId: "conv-a",
+      runId: "run-pending",
+      state: "terminalization_pending",
+      terminalizationReason: "upstream_submit_failed",
+      terminalizationAttempts: 3,
+      terminalizationLastError: "lifecycle unavailable",
+      terminalizationNextAttemptAt: nextAttemptAt,
+      terminalizationDeadlineAt: Date.now() + 300_000,
+    },
+  });
+
+  controller.start();
+
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
+    runId: "run-pending",
+    state: "terminalization_pending",
+    terminalizationReason: "upstream_submit_failed",
+    terminalizationAttempts: 3,
+    terminalizationNextAttemptAt: nextAttemptAt,
+  }));
+  expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 17_000 }));
 });
 
 test("submitRun provider-start timeout records diagnostics without failing, aborting, or clearing active gateway context", async () => {
@@ -1664,6 +1749,34 @@ test("lifecycle reconcile fails stale active runs after poll budget exhaustion a
     "markFailed:ws_1:run-stale:run lifecycle reconcile exhausted while active status remained unresolved",
   );
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([0]);
+});
+
+test("lifecycle reconcile keeps an exact no-output model retry in low-churn background observation", async () => {
+  const { controller, lifecycle, timers, traceEntries, workspaces } = controllerHarness();
+  lifecycle.statusResult = {
+    runId: "run-model-retry",
+    status: "running",
+    stale: false,
+    activityKind: "model_retry",
+    waitReason: "model_retry_no_output",
+    noProgressSeconds: 601,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: workspaces[0]!,
+    conversationId: "conv-a",
+    runId: "run-model-retry",
+    reason: "accepted",
+    attempt: 2,
+  });
+
+  expect(lifecycle.calls).toContain("status:ws_1:conv-a:run-model-retry");
+  expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
+  expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 30_000 }));
+  expect(traceEntries).toContainEqual(expect.objectContaining({
+    event: "server:conversation-run:model-retry-background-reconcile",
+    runId: "run-model-retry",
+  }));
 });
 
 test("startup reconciliation closes an old assistant-message orphan without repeated polling", async () => {

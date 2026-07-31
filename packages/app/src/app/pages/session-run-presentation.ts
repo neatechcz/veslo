@@ -9,7 +9,7 @@ export type SessionRunPresentation = {
   source: "local" | "lifecycle" | "engine" | null;
   diagnosticKind:
     | "model-retry"
-    | "model-retry-blocked"
+    | "terminalization-pending"
     | "lifecycle-observation-exhausted"
     | "connection-unavailable"
     | "transcript-unavailable"
@@ -25,6 +25,13 @@ export type SessionRunLifecycleEvidence = {
   clientMessageId?: string | null;
   waitReason?: string | null;
   recoveryState?: SessionRunRecoveryState;
+  terminalization?: {
+    state: "pending";
+    reasonCode: string;
+    attempts: number;
+    nextAttemptAt: number | null;
+    deadlineAt: number | null;
+  } | null;
 };
 
 export type SessionRunPresentationInput = {
@@ -117,6 +124,16 @@ export function deriveSessionRunPresentation(input: SessionRunPresentationInput)
       composerMode: "idle",
     };
   }
+  if (lifecycle?.terminalization?.state === "pending") {
+    return {
+      phase: "thinking",
+      showIndicator: true,
+      abortable: false,
+      source: "lifecycle",
+      diagnosticKind: "terminalization-pending",
+      composerMode: "recovery-blocked",
+    };
+  }
   if (terminalOwnsLocal && (input.local.optimisticSending || !engineActive)) {
     return idlePresentation();
   }
@@ -132,13 +149,12 @@ export function deriveSessionRunPresentation(input: SessionRunPresentationInput)
       };
     }
     if (lifecycle?.waitReason === "model_retry_no_output") {
-      const blocked = lifecycle.status === "blocked";
       return {
-        phase: blocked ? "error" : "retrying",
+        phase: "retrying",
         showIndicator: true,
         abortable: true,
         source: "lifecycle",
-        diagnosticKind: blocked ? "model-retry-blocked" : "model-retry",
+        diagnosticKind: "model-retry",
       };
     }
     return {
