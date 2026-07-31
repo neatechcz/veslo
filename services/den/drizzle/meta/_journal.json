@@ -169,6 +169,13 @@
       "when": 1784462400000,
       "tag": "0022_user_diagnostic_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1785484800000,
+      "tag": "0023_feedback_diagnostic_attachment",
+      "breakpoints": true
     }
   ]
 }

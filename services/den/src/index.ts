@@ -975,6 +975,7 @@ async function ensureTables() {
         \`screenshot_mime_type\` varchar(255),
         \`screenshot_bytes\` int unsigned,
         \`screenshot_data\` longtext,
+        \`diagnostic_capture_id\` varchar(36),
         \`youtrack_issue_id\` varchar(255),
         \`youtrack_issue_url\` varchar(2048),
         \`last_projector_error\` text,
@@ -992,6 +993,7 @@ async function ensureTables() {
       "feedback_report_next_projector_attempt_at",
       ["next_projector_attempt_at"],
     )
+    await ensureIndex("feedback_report", "feedback_report_diagnostic_capture_id", ["diagnostic_capture_id"])
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`feedback_projector_attempt\` (

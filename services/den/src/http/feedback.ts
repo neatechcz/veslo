@@ -51,6 +51,7 @@ const feedbackBodySchema = z.object({
   screenshotStatus: z.enum(FeedbackScreenshotStatus),
   screenshotDataUrl: z.string().trim().max(8 * 1024 * 1024).nullable().optional(),
   screenshotMimeType: z.string().trim().max(255).nullable().optional(),
+  diagnosticCaptureId: z.string().uuid().nullable().optional(),
 })
 
 function normalizeOptionalString(value: string | null | undefined) {
@@ -217,6 +218,7 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
       screenshot_mime_type: screenshot.screenshotMimeType,
       screenshot_bytes: screenshot.screenshotBytes,
       screenshot_data: screenshot.screenshotData,
+      diagnostic_capture_id: parsed.data.diagnosticCaptureId ?? null,
       youtrack_issue_id: null,
       youtrack_issue_url: null,
       last_projector_error: null,

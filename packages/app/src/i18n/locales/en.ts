@@ -112,6 +112,7 @@ export default {
   "feedback.description_label": "Description",
   "feedback.description_placeholder": "What happened, what did you expect, and how can we reproduce it?",
   "feedback.technical_note": "Veslo will attach the current screen and technical details automatically.",
+  "feedback.attach_diagnostics": "Attach the last 10 minutes of local diagnostic logs (up to 50 MB).",
   "feedback.success_message": "Bug report sent. YouTrack task: {issueId}.",
   "feedback.submit": "Send bug report",
 

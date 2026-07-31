@@ -153,6 +153,7 @@ test("submitFeedbackReport posts authenticated feedback payload with captured sc
       screenshotStatus: "captured",
       screenshotDataUrl: "data:image/jpeg;base64,abc123",
       screenshotMimeType: "image/jpeg",
+      diagnosticCaptureId: null,
     });
     assert.deepEqual(result, {
       feedbackId: "fb_123",

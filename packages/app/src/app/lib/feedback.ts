@@ -5,6 +5,10 @@ import { isTauriRuntime } from "../utils";
 import { readDenAuth } from "./den-auth";
 import { fetchJson } from "./http";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
+import {
+  createFeedbackDiagnosticSnapshot,
+  queueFeedbackDiagnosticSnapshotForDelivery,
+} from "./tauri";
 
 export const FEEDBACK_CAPTURE_SELECTOR = "[data-feedback-capture-root]";
 
@@ -56,6 +60,7 @@ type SubmitFeedbackReportArgs = {
   title: string;
   description: string;
   context: FeedbackRuntimeContext;
+  attachDiagnostics?: boolean;
   captureSurface?: () => Promise<FeedbackCaptureResult>;
   fetchImpl?: FetchLike;
 };
@@ -78,6 +83,7 @@ type FeedbackRequestBody = {
   screenshotStatus: FeedbackCaptureResult["status"];
   screenshotDataUrl: string | null;
   screenshotMimeType: string | null;
+  diagnosticCaptureId: string | null;
 };
 
 type FeedbackSubmitResponse = {
@@ -144,6 +150,7 @@ function buildFeedbackRequestBody(args: {
   userEmail: string | null;
   orgId: string;
   orgName: string | null;
+  diagnosticCaptureId: string | null;
 }): FeedbackRequestBody {
   return {
     title: args.title.trim(),
@@ -156,6 +163,7 @@ function buildFeedbackRequestBody(args: {
     screenshotStatus: args.screenshot.status,
     screenshotDataUrl: args.screenshot.dataUrl,
     screenshotMimeType: args.screenshot.mimeType,
+    diagnosticCaptureId: args.diagnosticCaptureId,
   };
 }
 
@@ -182,6 +190,15 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
     throw new Error("Sign in to Den before sending feedback.");
   }
 
+  let diagnosticCaptureId: string | null = null;
+  if (args.attachDiagnostics && isTauriRuntime()) {
+    try {
+      diagnosticCaptureId = (await createFeedbackDiagnosticSnapshot()).captureId;
+    } catch {
+      // Feedback stays available even when local diagnostics cannot be attached.
+    }
+  }
+
   let screenshot: FeedbackCaptureResult;
   try {
     screenshot = await (args.captureSurface ?? (() => captureFeedbackSurface()))();
@@ -202,6 +219,7 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
     userEmail: normalizeOptional(auth.user.email),
     orgId: auth.orgId,
     orgName: normalizeOptional(auth.org.name),
+    diagnosticCaptureId,
   });
 
   const url = `${auth.denApiBase.replace(/\/+$/, "")}/v1/feedback`;
@@ -216,7 +234,11 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
       timeoutMs: FEEDBACK_SUBMIT_TIMEOUT_MS,
       fetchImpl: args.fetchImpl ?? resolveFetch(),
     });
-    return normalizeFeedbackSubmitResult(result);
+    const normalized = normalizeFeedbackSubmitResult(result);
+    if (diagnosticCaptureId) {
+      void queueFeedbackDiagnosticSnapshotForDelivery(diagnosticCaptureId);
+    }
+    return normalized;
   } catch (error) {
     throw normalizeFeedbackSubmitError(error, auth.denApiBase.replace(/\/+$/, ""));
   }

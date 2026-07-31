@@ -13,6 +13,7 @@ import { useFocusTrap } from "./use-modal-focus";
 export type FeedbackFormValues = {
   title: string;
   description: string;
+  attachDiagnostics: boolean;
 };
 
 export type FeedbackModalProps = {
@@ -30,6 +31,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
 
   const [title, setTitle] = createSignal("");
   const [description, setDescription] = createSignal("");
+  const [attachDiagnostics, setAttachDiagnostics] = createSignal(true);
   const translate = useTranslate();
   const canSubmit = () => !props.successIssueId && title().trim().length > 0 && description().trim().length > 0;
   const titleId = createUniqueId();
@@ -43,6 +45,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
     onOpen: () => {
       setTitle("");
       setDescription("");
+      setAttachDiagnostics(true);
     },
   });
 
@@ -51,6 +54,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
     props.onSubmit({
       title: title().trim(),
       description: description().trim(),
+      attachDiagnostics: attachDiagnostics(),
     });
   };
 
@@ -95,6 +99,15 @@ export default function FeedbackModal(props: FeedbackModalProps) {
               placeholder={translate("feedback.description_placeholder")}
               class="font-reading type-ui-md w-full resize-y rounded-lg border border-dls-border bg-gray-3 px-3 py-2 text-dls-text placeholder:text-dls-secondary shadow-sm focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
             />
+          </label>
+
+          <label class="flex items-start gap-2 text-sm text-dls-secondary">
+            <input
+              type="checkbox"
+              checked={attachDiagnostics()}
+              onChange={(event) => setAttachDiagnostics(event.currentTarget.checked)}
+            />
+            <span>{translate("feedback.attach_diagnostics")}</span>
           </label>
 
           <p id={noteId} class="rounded-xl border border-dls-border bg-dls-hover px-3 py-2 text-sm text-dls-secondary">

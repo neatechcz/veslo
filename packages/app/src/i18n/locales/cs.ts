@@ -112,6 +112,7 @@ export default {
   "feedback.description_label": "Popis",
   "feedback.description_placeholder": "Co se stalo, co jste čekali a jak to umíme zopakovat?",
   "feedback.technical_note": "Veslo automaticky přiloží aktuální obrazovku a technické detaily.",
+  "feedback.attach_diagnostics": "Přiložit posledních 10 minut lokálních diagnostických logů (až 50 MB).",
   "feedback.success_message": "Hlášení bylo odesláno. YouTrack task: {issueId}.",
   "feedback.submit": "Odeslat hlášení",
 
