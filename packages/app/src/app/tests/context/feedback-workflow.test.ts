@@ -8,9 +8,7 @@ import type { SubmitFeedbackReportResult } from "../../lib/feedback.js";
 
 const okResult: SubmitFeedbackReportResult = {
   feedbackId: "fb_1",
-  status: "projected",
-  youtrackIssueId: "VSLO-123",
-  youtrackIssueUrl: "https://youtrack.test/issue/VSLO-123",
+  status: "stored",
 };
 
 const queuedDiagnosticResult: SubmitFeedbackReportResult = {
@@ -67,18 +65,18 @@ test("feedback workflow opens and closes with cleared modal state", () => {
       });
 
       workflow.setSubmitError("stale error");
-      workflow.setSuccessIssueId("VSLO-OLD");
+      workflow.setSuccessFeedbackId("fb-old");
       workflow.openFeedbackModal();
       assert.equal(workflow.feedbackModalOpen(), true);
       assert.equal(workflow.feedbackSubmitError(), null);
-      assert.equal(workflow.feedbackSubmitSuccessIssueId(), null);
+      assert.equal(workflow.feedbackSubmitSuccessFeedbackId(), null);
 
       workflow.setSubmitError("closing error");
-      workflow.setSuccessIssueId("VSLO-CLOSE");
+      workflow.setSuccessFeedbackId("fb-close");
       workflow.closeFeedbackModal();
       assert.equal(workflow.feedbackModalOpen(), false);
       assert.equal(workflow.feedbackSubmitError(), null);
-      assert.equal(workflow.feedbackSubmitSuccessIssueId(), null);
+      assert.equal(workflow.feedbackSubmitSuccessFeedbackId(), null);
     } finally {
       dispose();
     }
@@ -136,7 +134,7 @@ test("feedback workflow submits route, app, workspace, runtime, and platform con
           },
         },
       ]);
-      assert.equal(workflow.feedbackSubmitSuccessIssueId(), "VSLO-123");
+      assert.equal(workflow.feedbackSubmitSuccessFeedbackId(), "fb_1");
       assert.equal(workflow.feedbackSubmitting(), false);
     } finally {
       dispose();
@@ -185,7 +183,7 @@ test("feedback workflow ignores duplicate submit while busy", async () => {
       await first;
 
       assert.equal(workflow.feedbackSubmitting(), false);
-      assert.equal(workflow.feedbackSubmitSuccessIssueId(), "VSLO-123");
+      assert.equal(workflow.feedbackSubmitSuccessFeedbackId(), "fb_1");
     } finally {
       dispose();
     }

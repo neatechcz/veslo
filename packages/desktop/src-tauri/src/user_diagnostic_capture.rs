@@ -565,14 +565,19 @@ impl UserDiagnosticCapture {
             .lock()
             .map_err(|_| "capture queue lock poisoned".to_string())?;
         self.finalize_expired_locked();
-        if self
+        let previous = self
             .journal
             .lock()
             .ok()
-            .and_then(|journal| journal.latest.clone())
-            .is_some_and(|record| record.state == "active" || record.pending_events > 0)
-        {
-            return Err("The previous diagnostic capture is still active or queued".to_string());
+            .and_then(|journal| journal.latest.clone());
+        if let Some(previous) = previous {
+            if previous.kind == "feedback-attachment"
+                && matches!(previous.state.as_str(), "ready" | "ready_with_truncation")
+            {
+                self.discard_feedback_snapshot_locked(&previous.capture_id)?;
+            } else if previous.state == "active" || previous.pending_events > 0 {
+                return Err("The previous diagnostic capture is still active or queued".to_string());
+            }
         }
 
         let captured_at = now_ms();
@@ -709,6 +714,53 @@ impl UserDiagnosticCapture {
         }
         self.update_latest(capture_id, |latest| latest.state = "queued".to_string());
         self.persist()
+    }
+
+    pub fn discard_feedback_snapshot(&self, capture_id: &str) -> Result<(), String> {
+        let _queue = self
+            .queue_lock
+            .lock()
+            .map_err(|_| "capture queue lock poisoned".to_string())?;
+        self.discard_feedback_snapshot_locked(capture_id)
+    }
+
+    fn discard_feedback_snapshot_locked(&self, capture_id: &str) -> Result<(), String> {
+        let record = self
+            .journal
+            .lock()
+            .ok()
+            .and_then(|journal| journal.latest.clone())
+            .filter(|record| {
+                record.capture_id == capture_id && record.kind == "feedback-attachment"
+            })
+            .ok_or_else(|| "Diagnostic feedback attachment was not found".to_string())?;
+        if !matches!(record.state.as_str(), "ready" | "ready_with_truncation") {
+            return Err(
+                "Diagnostic feedback attachment cannot be discarded after delivery starts"
+                    .to_string(),
+            );
+        }
+
+        let path = queue_path(&self.spool_dir, capture_id);
+        if path.exists() {
+            fs::remove_file(&path).map_err(|error| error.to_string())?;
+        }
+        if let Ok(mut journal) = self.journal.lock() {
+            if journal
+                .latest
+                .as_ref()
+                .is_some_and(|latest| latest.capture_id == capture_id)
+            {
+                journal.latest = None;
+            }
+        }
+        if let Ok(mut completed) = self.recently_completed.lock() {
+            *completed = None;
+        }
+        if self.journal_path.exists() {
+            fs::remove_file(&self.journal_path).map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     pub fn can_start_with_context(context: Option<&CaptureCloudContext>) -> bool {
@@ -1589,6 +1641,55 @@ mod tests {
         assert_eq!(post_calls, 1);
         assert_eq!(status.state, "uploaded");
         assert_eq!(status.pending_events, 0);
+    }
+
+    #[test]
+    fn failed_feedback_can_discard_its_unqueued_snapshot() {
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let ring = RecentDiagnosticRing::new(dir.path().to_path_buf());
+        ring.append(RecentDiagnosticEvent {
+            timestamp_ms: now_ms(),
+            sequence_no: 7,
+            source: "engine".to_string(),
+            stream: "stderr".to_string(),
+            level: Some("error".to_string()),
+            line: "sanitized failure".to_string(),
+        });
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        let snapshot = capture.create_feedback_snapshot(&context(), &ring).unwrap();
+        let capture_id = snapshot.capture_id.unwrap();
+
+        capture.discard_feedback_snapshot(&capture_id).unwrap();
+
+        assert_eq!(capture.status().state, "idle");
+        assert!(!queue_path(dir.path(), &capture_id).exists());
+        assert!(!dir.path().join(JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn a_new_feedback_snapshot_replaces_an_unqueued_stale_snapshot() {
+        if !USER_DIAGNOSTIC_CAPTURE_ENABLED {
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let ring = RecentDiagnosticRing::new(dir.path().to_path_buf());
+        let capture = UserDiagnosticCapture::new(dir.path().to_path_buf());
+        let first = capture.create_feedback_snapshot(&context(), &ring).unwrap();
+        let first_id = first.capture_id.unwrap();
+
+        let second = capture.create_feedback_snapshot(&context(), &ring).unwrap();
+        let second_id = second.capture_id.unwrap();
+
+        assert_ne!(first_id, second_id);
+        assert!(!queue_path(dir.path(), &first_id).exists());
+        assert!(queue_path(dir.path(), &second_id).exists());
+        assert_eq!(
+            capture.status().capture_id.as_deref(),
+            Some(second_id.as_str())
+        );
     }
 
     #[test]

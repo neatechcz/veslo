@@ -176,6 +176,13 @@
       "when": 1785484800000,
       "tag": "0023_feedback_diagnostic_attachment",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1785589800000,
+      "tag": "0024_feedback_stored_status",
+      "breakpoints": true
     }
   ]
 }

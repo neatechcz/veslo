@@ -163,12 +163,9 @@ existing package versions.
   - Deletes worker records and attempts to suspend the backing cloud service when destination is `cloud`.
 - `POST /v1/feedback`
   - Authenticated and org-scoped through `x-veslo-org-id`.
-  - Accepts `{ title, description, userId?, userEmail?, orgId?, orgName?, context, screenshotStatus, screenshotDataUrl, screenshotMimeType }`.
-  - Persists a canonical `feedback_report` row with `status=pending`; user/org identity is derived from the authenticated session and selected organization.
-  - With the production projector configured, waits for the first YouTrack projection attempt before returning.
-  - Returns `201` with `{ feedbackId, status: "projected", youtrackIssueId, youtrackIssueUrl }` after a YouTrack task is created or reused.
-  - Returns `502 feedback_youtrack_projection_failed` if the report was persisted but the synchronous YouTrack projection did not produce a task number.
-  - Successful projection stores `youtrackIssueId` + `youtrackIssueUrl` on the feedback row; failures write attempt history, schedule in-process retries, and remain eligible for the durable retry sweep after a Den restart.
+  - Accepts `{ title, description, userId?, userEmail?, orgId?, orgName?, context, screenshotStatus, screenshotDataUrl, screenshotMimeType, diagnosticCaptureId? }`.
+  - Persists the canonical `feedback_report` row in the owned Den MySQL database; user/org identity is derived from the authenticated session and selected organization.
+  - Returns `201` with `{ feedbackId, status: "stored" }` once that database write succeeds. It does not call YouTrack or any other third-party ticketing system.
   - Screenshot data is stored directly on the feedback row for v1 as base64 payload + mime type + byte size.
   - Rejects invalid payloads with `400 invalid_feedback_payload` and oversized screenshots with `413 feedback_screenshot_too_large`.
   - The feedback route uses a larger JSON body limit to support screenshot-bearing payloads without widening limits for unrelated endpoints.

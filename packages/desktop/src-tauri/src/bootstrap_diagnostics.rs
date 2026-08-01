@@ -104,3 +104,17 @@ pub fn queue_feedback_diagnostic_snapshot_for_delivery(
         .as_ref()
         .queue_feedback_diagnostic_snapshot_for_delivery(&capture_id)
 }
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn discard_feedback_diagnostic_snapshot(
+    app: AppHandle,
+    capture_id: String,
+) -> Result<UserDiagnosticCaptureStatus, String> {
+    let forwarder = app
+        .try_state::<Arc<DebugLogsForwarder>>()
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
+    forwarder
+        .inner()
+        .as_ref()
+        .discard_feedback_diagnostic_snapshot(&capture_id)
+}

@@ -45,7 +45,7 @@ export const DesktopAuthIntent = ["signin", "signup"] as const
 export const DesktopAuthSessionStatus = ["started", "browser_authed", "exchanged", "expired", "cancelled"] as const
 export const DesktopAuthTransactionStatus = ["started", "browser_authed", "exchanged", "expired", "cancelled"] as const
 export const FeedbackType = ["bug"] as const
-export const FeedbackStatus = ["pending", "projected", "failed"] as const
+export const FeedbackStatus = ["stored", "pending", "projected", "failed"] as const
 export const FeedbackScreenshotStatus = ["captured", "failed"] as const
 export const FeedbackProjectorAttemptStatus = ["pending", "succeeded", "failed"] as const
 export const GoogleWorkspaceConnector = ["google-gmail", "google-calendar", "google-drive"] as const
@@ -454,7 +454,7 @@ export const FeedbackReportTable = mysqlTable(
   {
     id: id().primaryKey(),
     type: mysqlEnum("type", FeedbackType).notNull().default("bug"),
-    status: mysqlEnum("status", FeedbackStatus).notNull().default("pending"),
+    status: mysqlEnum("status", FeedbackStatus).notNull().default("stored"),
     title: varchar("title", { length: 255 }).notNull(),
     description: text("description").notNull(),
     user_id: varchar("user_id", { length: 64 }).notNull(),

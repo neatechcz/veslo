@@ -113,7 +113,7 @@ export default {
   "feedback.description_placeholder": "What happened, what did you expect, and how can we reproduce it?",
   "feedback.technical_note": "Veslo will attach the current screen and technical details automatically.",
   "feedback.attach_diagnostics": "Attach the last 10 minutes of local diagnostic logs (up to 50 MB).",
-  "feedback.success_message": "Bug report sent. YouTrack task: {issueId}.",
+  "feedback.success_message": "Bug report saved.",
   "feedback.diagnostics_uploading": "Attaching diagnostic logs ({acceptedEvents}/{totalEvents}). Keep Veslo open until this confirmation changes.",
   "feedback.diagnostics_uploaded": "Diagnostic logs are attached. You can close Veslo now.",
   "feedback.diagnostics_uploaded_truncated": "Diagnostic logs are attached, but the local 50 MB limit truncated part of the capture. You can close Veslo now.",

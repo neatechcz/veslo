@@ -126,9 +126,7 @@ test("submitFeedbackReport posts authenticated feedback payload with captured sc
 
         return new Response(JSON.stringify({
           feedbackId: "fb_123",
-          status: "projected",
-          youtrackIssueId: "VSLO-4321",
-          youtrackIssueUrl: "https://youtrack.example/issue/VSLO-4321",
+          status: "stored",
         }), {
           status: 201,
           headers: { "Content-Type": "application/json" },
@@ -157,9 +155,7 @@ test("submitFeedbackReport posts authenticated feedback payload with captured sc
     });
     assert.deepEqual(result, {
       feedbackId: "fb_123",
-      status: "projected",
-      youtrackIssueId: "VSLO-4321",
-      youtrackIssueUrl: "https://youtrack.example/issue/VSLO-4321",
+      status: "stored",
     });
   } finally {
     clearDenAuth();
@@ -188,9 +184,7 @@ test("submitFeedbackReport falls back to screenshotStatus=failed when surface ca
 
         return new Response(JSON.stringify({
           feedbackId: "fb_456",
-          status: "projected",
-          youtrackIssueId: "VSLO-456",
-          youtrackIssueUrl: "https://youtrack.example/issue/VSLO-456",
+          status: "stored",
         }), {
           status: 201,
           headers: { "Content-Type": "application/json" },

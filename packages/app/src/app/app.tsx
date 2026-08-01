@@ -6214,7 +6214,7 @@ export default function App() {
       <FeedbackModal
         open={feedbackWorkflow.feedbackModalOpen()}
         error={feedbackWorkflow.feedbackSubmitError()}
-        successIssueId={feedbackWorkflow.feedbackSubmitSuccessIssueId()}
+        successFeedbackId={feedbackWorkflow.feedbackSubmitSuccessFeedbackId()}
         submitting={feedbackWorkflow.feedbackSubmitting()}
         diagnosticAttachment={feedbackWorkflow.feedbackDiagnosticAttachment()}
         diagnosticUploadPending={feedbackWorkflow.feedbackDiagnosticUploadPending()}

@@ -998,6 +998,10 @@ export async function createFeedbackDiagnosticSnapshot(): Promise<UserDiagnostic
   return invoke<UserDiagnosticCaptureStatus>("create_feedback_diagnostic_snapshot");
 }
 
+export async function discardFeedbackDiagnosticSnapshot(captureId: string): Promise<UserDiagnosticCaptureStatus> {
+  return invoke<UserDiagnosticCaptureStatus>("discard_feedback_diagnostic_snapshot", { captureId });
+}
+
 export async function queueFeedbackDiagnosticSnapshotForDelivery(captureId: string): Promise<UserDiagnosticCaptureStatus> {
   return invoke<UserDiagnosticCaptureStatus>("queue_feedback_diagnostic_snapshot_for_delivery", { captureId });
 }

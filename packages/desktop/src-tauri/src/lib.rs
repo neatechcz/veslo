@@ -83,9 +83,9 @@ pub use types::*;
 
 use bootstrap_diagnostics::{
     clear_bootstrap_diagnostics_cloud_context, create_feedback_diagnostic_snapshot,
-    queue_feedback_diagnostic_snapshot_for_delivery, record_bootstrap_diagnostic,
-    set_bootstrap_diagnostics_cloud_context, start_user_diagnostic_capture,
-    stop_user_diagnostic_capture, user_diagnostic_capture_status,
+    discard_feedback_diagnostic_snapshot, queue_feedback_diagnostic_snapshot_for_delivery,
+    record_bootstrap_diagnostic, set_bootstrap_diagnostics_cloud_context,
+    start_user_diagnostic_capture, stop_user_diagnostic_capture, user_diagnostic_capture_status,
 };
 use commands::access_proofs::{access_proof_ai_clear, access_proof_ai_read, access_proof_ai_write};
 use commands::clipboard::clipboard_file_paths;
@@ -456,6 +456,7 @@ pub fn run() {
             user_diagnostic_capture_status,
             create_feedback_diagnostic_snapshot,
             queue_feedback_diagnostic_snapshot_for_delivery,
+            discard_feedback_diagnostic_snapshot,
             obsidian_is_available,
             open_in_obsidian,
             write_obsidian_mirror_file,

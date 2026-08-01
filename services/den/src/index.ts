@@ -14,7 +14,6 @@ import { createDbDebugLogStore, createDebugLogService } from "./debug-logs/repos
 import { extractMetadataRows, shouldWidenVarcharColumn } from "./db/schema-reconcile.js"
 import { isAdminAlertEmailConfigured, sendAdminAlertEmail } from "./email/admin-alert-mailer.js"
 import { env } from "./env.js"
-import { createDbFeedbackProjectorStore, createFeedbackProjector } from "./feedback/projector.js"
 import { createDebugLogsIngestRouter } from "./http/debug-logs.js"
 import { createDesktopDiagnosticDumpsRouter, createDiagnosticDumpsIngestRouter } from "./http/diagnostic-dumps.js"
 import { createDesktopDiagnosticsRouter } from "./http/desktop-diagnostics.js"
@@ -74,12 +73,10 @@ import { orgSkillsCatalogRouter } from "./http/org-skills-catalog.js"
 import { createGoogleWorkspaceRouter } from "./http/google-workspace.js"
 import { createMicrosoftRouter } from "./http/microsoft.js"
 import { workersRouter } from "./http/workers.js"
-import { createYouTrackRestIssueClient } from "./integrations/youtrack-rest.js"
 import { readRequestedOrganizationId, resolveMembershipOrganizations } from "./http/org-auth.js"
 
 const app = express()
 const MANAGED_AI_PROXY_JSON_LIMIT = "10mb"
-const FEEDBACK_PROJECTOR_DUE_RETRY_INTERVAL_MS = 60_000
 const DEBUG_LOG_RETENTION_INTERVAL_MS = 86_400_000
 const MANAGED_AI_CODEX_CAPACITY_ALERT_INTERVAL_MS = 5 * 60_000
 const SKILL_REGISTRY_SCHEMA_MIGRATIONS = [
@@ -94,18 +91,7 @@ const managedAiProxyJsonParser = express.json({ limit: MANAGED_AI_PROXY_JSON_LIM
 const currentFile = fileURLToPath(import.meta.url)
 const denRoot = path.resolve(path.dirname(currentFile), "..")
 const publicDir = path.resolve(denRoot, "public")
-const feedbackProjector = createFeedbackProjector({
-  projectKey: env.youtrack.projectKey,
-  store: createDbFeedbackProjectorStore(db),
-  issueClient: createYouTrackRestIssueClient({
-    baseUrl: env.youtrack.baseUrl,
-    token: env.youtrack.token,
-    timeoutMs: env.youtrack.timeoutMs,
-  }),
-})
-const feedbackRouter = createFeedbackRouter({
-  projector: feedbackProjector,
-})
+const feedbackRouter = createFeedbackRouter()
 const skillRegistryStore = createDbSkillRegistryStore(db)
 const debugLogStore = createDbDebugLogStore(db)
 const debugLogService = env.debugLogs.masterKey && env.debugLogs.masterKeyVersion
@@ -319,19 +305,6 @@ function unrefTimer(handle: unknown) {
   if (typeof unref === "function") {
     unref.call(handle)
   }
-}
-
-function startFeedbackProjectorDueRetryLoop(projector: Pick<ReturnType<typeof createFeedbackProjector>, "processDueRetries">) {
-  const runDueRetries = () => {
-    void projector.processDueRetries().catch((error) => {
-      const message = error instanceof Error ? error.stack ?? error.message : String(error)
-      console.error(`[den] feedback projector due retry sweep failed: ${message}`)
-    })
-  }
-
-  runDueRetries()
-  const interval = setInterval(runDueRetries, FEEDBACK_PROJECTOR_DUE_RETRY_INTERVAL_MS)
-  unrefTimer(interval)
 }
 
 function startDebugLogRetentionLoop(service: typeof debugLogService) {
@@ -948,7 +921,7 @@ async function ensureTables() {
       CREATE TABLE IF NOT EXISTS \`feedback_report\` (
         \`id\` varchar(64) NOT NULL,
         \`type\` enum('bug') NOT NULL DEFAULT 'bug',
-        \`status\` enum('pending','projected','failed') NOT NULL DEFAULT 'pending',
+        \`status\` enum('stored','pending','projected','failed') NOT NULL DEFAULT 'stored',
         \`title\` varchar(255) NOT NULL,
         \`description\` text NOT NULL,
         \`user_id\` varchar(64) NOT NULL,
@@ -1172,7 +1145,6 @@ async function ensureTables() {
 async function bootstrap() {
   await ensureTables()
   await ensureCorePlatformSkills(skillRegistryStore)
-  startFeedbackProjectorDueRetryLoop(feedbackProjector)
   startDebugLogRetentionLoop(debugLogService)
   if (env.managedAi.enabled) {
     console.log("[den] managed-ai runtime enabled")

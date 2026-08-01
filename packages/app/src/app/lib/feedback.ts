@@ -7,6 +7,7 @@ import { fetchJson } from "./http";
 import { wrapStartupRequestAuditFetch } from "./startup-request-audit";
 import {
   createFeedbackDiagnosticSnapshot,
+  discardFeedbackDiagnosticSnapshot,
   queueFeedbackDiagnosticSnapshotForDelivery,
   type UserDiagnosticCaptureStatus,
 } from "./tauri";
@@ -68,9 +69,7 @@ type SubmitFeedbackReportArgs = {
 
 export type SubmitFeedbackReportResult = {
   feedbackId: string;
-  status: "projected";
-  youtrackIssueId: string;
-  youtrackIssueUrl: string | null;
+  status: "stored";
   diagnosticAttachment?: FeedbackDiagnosticAttachment;
 };
 
@@ -101,8 +100,6 @@ type FeedbackRequestBody = {
 type FeedbackSubmitResponse = {
   feedbackId?: unknown;
   status?: unknown;
-  youtrackIssueId?: unknown;
-  youtrackIssueUrl?: unknown;
 };
 
 const resolveFetch = (): FetchLike =>
@@ -181,18 +178,14 @@ function buildFeedbackRequestBody(args: {
 
 function normalizeFeedbackSubmitResult(response: FeedbackSubmitResponse): Omit<SubmitFeedbackReportResult, "diagnosticAttachment"> {
   const feedbackId = readResponseString(response.feedbackId);
-  const youtrackIssueId = readResponseString(response.youtrackIssueId);
-  const youtrackIssueUrl = readResponseString(response.youtrackIssueUrl);
 
-  if (!feedbackId || !youtrackIssueId) {
-    throw new Error("Feedback was saved, but Den did not return a YouTrack task number.");
+  if (!feedbackId) {
+    throw new Error("Feedback was saved, but Den did not return its record id.");
   }
 
   return {
     feedbackId,
-    status: "projected",
-    youtrackIssueId,
-    youtrackIssueUrl,
+    status: "stored",
   };
 }
 
@@ -280,6 +273,13 @@ export async function submitFeedbackReport(args: SubmitFeedbackReportArgs): Prom
       };
     }
   } catch (error) {
+    if (diagnosticCaptureId) {
+      try {
+        await discardFeedbackDiagnosticSnapshot(diagnosticCaptureId);
+      } catch {
+        // A failed cleanup must not hide the feedback submission error.
+      }
+    }
     throw normalizeFeedbackSubmitError(error, auth.denApiBase.replace(/\/+$/, ""));
   }
 }

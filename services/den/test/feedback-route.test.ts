@@ -112,9 +112,6 @@ async function startServer(options: {
     }
   }
   generateId?: () => string
-  projector?: {
-    projectFeedback: (feedbackId: string) => Promise<{ issueId: string; issueUrl: string } | null>
-  }
 }) {
   const { createFeedbackRouter, errorMiddleware } = await loadFeedbackModules()
   const app = express()
@@ -256,7 +253,7 @@ test("feedback route rejects oversized screenshots before inserting", async () =
   }
 })
 
-test("feedback route persists a pending feedback record without any youtrack side effects in the request path", async () => {
+test("feedback route persists a feedback record in MySQL without any ticketing side effects", async () => {
   const insertCalls: InsertCall[] = []
   const modules = await loadFeedbackModules()
   const server = await startServer({
@@ -287,7 +284,7 @@ test("feedback route persists a pending feedback record without any youtrack sid
     assert.equal(response.status, 201)
     assert.deepEqual(await response.json(), {
       feedbackId: "fb_pending_123",
-      status: "pending",
+      status: "stored",
     })
 
     assert.equal(insertCalls.length, 1)
@@ -295,7 +292,7 @@ test("feedback route persists a pending feedback record without any youtrack sid
     assert.notEqual(insertCalls[0]?.table, modules.FeedbackProjectorAttemptTable)
     assert.equal(insertCalls[0]?.value.id, "fb_pending_123")
     assert.equal(insertCalls[0]?.value.type, "bug")
-    assert.equal(insertCalls[0]?.value.status, "pending")
+    assert.equal(insertCalls[0]?.value.status, "stored")
     assert.equal(insertCalls[0]?.value.title, "Sidebar stopped responding")
     assert.equal(insertCalls[0]?.value.description, "The left sidebar stopped reacting after switching sessions.")
     assert.equal(insertCalls[0]?.value.user_id, "user_123")
@@ -331,57 +328,6 @@ test("feedback route persists a pending feedback record without any youtrack sid
   }
 })
 
-test("feedback route waits for YouTrack projection and returns the created task number", async () => {
-  const insertCalls: InsertCall[] = []
-  const projectorCalls: string[] = []
-  const server = await startServer({
-    authorize: async () => buildAuthorizationContext(),
-    db: {
-      insert(table) {
-        return {
-          values(value) {
-            insertCalls.push({ table, value })
-            return Promise.resolve({ insertId: "fb_sync_123" })
-          },
-        }
-      },
-    },
-    generateId: () => "fb_sync_123",
-    projector: {
-      async projectFeedback(feedbackId: string) {
-        projectorCalls.push(feedbackId)
-        return {
-          issueId: "VSLO-4321",
-          issueUrl: "https://youtrack.example/issue/VSLO-4321",
-        }
-      },
-    },
-  })
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${server.port}/v1/feedback`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-veslo-org-id": "org_123",
-      },
-      body: JSON.stringify(buildFeedbackPayload()),
-    })
-
-    assert.equal(response.status, 201)
-    assert.deepEqual(await response.json(), {
-      feedbackId: "fb_sync_123",
-      status: "projected",
-      youtrackIssueId: "VSLO-4321",
-      youtrackIssueUrl: "https://youtrack.example/issue/VSLO-4321",
-    })
-    assert.equal(insertCalls.length, 1)
-    assert.deepEqual(projectorCalls, ["fb_sync_123"])
-  } finally {
-    await server.close()
-  }
-})
-
 test("den index mounts feedback router and raises the JSON body size limit", () => {
   const indexSource = readFileSync(new URL("../src/index.ts", import.meta.url), "utf8")
   const routeSource = readFileSync(new URL("../src/http/feedback.ts", import.meta.url), "utf8")
@@ -392,6 +338,7 @@ test("den index mounts feedback router and raises the JSON body size limit", () 
   assert.match(indexSource, /app\.use\(express\.json\(\)\)/)
   assert.doesNotMatch(indexSource, /express\.json\(\{\s*limit:\s*"10mb"\s*\}\)/)
   assert.match(routeSource, /express\.json\(\{\s*limit:\s*"10mb"\s*\}\)/)
+  assert.doesNotMatch(indexSource, /feedbackProjector|createYouTrackRestIssueClient/)
 })
 
 test("den startup ensures feedback persistence tables and indexes", () => {

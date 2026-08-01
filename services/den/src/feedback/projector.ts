@@ -10,7 +10,7 @@ export type FeedbackProjectionRecord = {
   id: string
   title: string
   description: string
-  status: "pending" | "projected" | "failed"
+  status: "stored" | "pending" | "projected" | "failed"
   userId: string
   userEmail: string | null
   orgId: string

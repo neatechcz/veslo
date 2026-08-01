@@ -3,7 +3,6 @@ import express from "express"
 import { z } from "zod"
 import { db } from "../db/index.js"
 import { FeedbackReportTable, FeedbackScreenshotStatus } from "../db/schema.js"
-import type { createFeedbackProjector } from "../feedback/projector.js"
 import { asyncRoute } from "./errors.js"
 import { requireOrganizationAccess } from "./org-auth.js"
 
@@ -22,7 +21,6 @@ export type FeedbackRouterOptions = {
   db?: FeedbackInsertDb
   generateId?: () => string
   now?: () => Date
-  projector?: Pick<ReturnType<typeof createFeedbackProjector>, "projectFeedback">
 }
 
 const feedbackContextSchema = z.object({
@@ -153,7 +151,6 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
   const feedbackDb = options.db ?? db
   const generateId = options.generateId ?? buildFeedbackId
   const now = options.now ?? (() => new Date())
-  const projector = options.projector ?? null
   const router = express.Router()
   const feedbackJsonParser = express.json({ limit: "10mb" })
 
@@ -190,7 +187,7 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
     await feedbackDb.insert(FeedbackReportTable).values({
       id: feedbackId,
       type: "bug",
-      status: "pending",
+      status: "stored",
       title: parsed.data.title.trim(),
       description: parsed.data.description.trim(),
       user_id: context.session.user.id,
@@ -224,24 +221,12 @@ export function createFeedbackRouter(options: FeedbackRouterOptions = {}) {
       last_projector_error: null,
       next_projector_attempt_at: null,
     })
-    const projection = projector ? await projector.projectFeedback(feedbackId) : null
-    if (projector && !projection?.issueId) {
-      res.status(502).json({
-        error: "feedback_youtrack_projection_failed",
-        feedbackId,
-        status: "pending",
-      })
-      return
-    }
-
-    res.status(201).json(projection ? {
+    // Feedback is the durable MySQL record itself. Diagnostics may now be
+    // queued immediately by the desktop without depending on a third-party
+    // ticketing integration.
+    res.status(201).json({
       feedbackId,
-      status: "projected",
-      youtrackIssueId: projection.issueId,
-      youtrackIssueUrl: projection.issueUrl,
-    } : {
-      feedbackId,
-      status: "pending",
+      status: "stored",
     })
   }))
 

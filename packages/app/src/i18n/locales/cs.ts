@@ -113,7 +113,7 @@ export default {
   "feedback.description_placeholder": "Co se stalo, co jste čekali a jak to umíme zopakovat?",
   "feedback.technical_note": "Veslo automaticky přiloží aktuální obrazovku a technické detaily.",
   "feedback.attach_diagnostics": "Přiložit posledních 10 minut lokálních diagnostických logů (až 50 MB).",
-  "feedback.success_message": "Hlášení bylo odesláno. YouTrack task: {issueId}.",
+  "feedback.success_message": "Hlášení bylo uloženo.",
   "feedback.diagnostics_uploading": "Připojujeme diagnostické logy ({acceptedEvents}/{totalEvents}). Nezavírejte Veslo, dokud se toto potvrzení nezmění.",
   "feedback.diagnostics_uploaded": "Diagnostické logy jsou připojené. Veslo nyní můžete zavřít.",
   "feedback.diagnostics_uploaded_truncated": "Diagnostické logy jsou připojené, ale část záznamu byla zkrácena limitem 50 MB. Veslo nyní můžete zavřít.",

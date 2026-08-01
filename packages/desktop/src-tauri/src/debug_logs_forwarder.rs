@@ -584,6 +584,14 @@ impl DesktopDiagnosticsOwner {
         Ok(self.user_diagnostic_capture_status())
     }
 
+    pub fn discard_feedback_diagnostic_snapshot(
+        &self,
+        capture_id: &str,
+    ) -> Result<UserDiagnosticCaptureStatus, String> {
+        self.user_capture.discard_feedback_snapshot(capture_id)?;
+        Ok(self.user_diagnostic_capture_status())
+    }
+
     pub fn user_diagnostic_capture_status(&self) -> UserDiagnosticCaptureStatus {
         let context = self.user_capture_context_snapshot();
         let mut status = self.user_capture.status();

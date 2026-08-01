@@ -485,7 +485,7 @@ test("app shell composes feedback modal state and shared feedback opener", () =>
   const expectedModalProps = new Map([
     ["open", "feedbackWorkflow.feedbackModalOpen()"],
     ["error", "feedbackWorkflow.feedbackSubmitError()"],
-    ["successIssueId", "feedbackWorkflow.feedbackSubmitSuccessIssueId()"],
+    ["successFeedbackId", "feedbackWorkflow.feedbackSubmitSuccessFeedbackId()"],
     ["submitting", "feedbackWorkflow.feedbackSubmitting()"],
     ["diagnosticAttachment", "feedbackWorkflow.feedbackDiagnosticAttachment()"],
     ["diagnosticUploadPending", "feedbackWorkflow.feedbackDiagnosticUploadPending()"],
@@ -536,7 +536,7 @@ test("app shell composes feedback modal state and shared feedback opener", () =>
     "feedback workflow should clear stale submit errors",
   );
   assert.ok(
-    functionBodyContainsCall(clearSubmitState!, "setFeedbackSubmitSuccessIssueId", "null"),
+    functionBodyContainsCall(clearSubmitState!, "setFeedbackSubmitSuccessFeedbackId", "null"),
     "feedback workflow should clear stale success state",
   );
 
@@ -602,8 +602,8 @@ test("feedback workflow guards feedback submission while persistence is in fligh
     "persistFeedback should submit feedback inside the protected try block",
   );
   assert.ok(
-    blockContainsCallee(persistTry!.tryBlock, "setFeedbackSubmitSuccessIssueId"),
-    "persistFeedback should surface the returned YouTrack task number after successful feedback persistence",
+    blockContainsCallee(persistTry!.tryBlock, "setFeedbackSubmitSuccessFeedbackId"),
+    "persistFeedback should surface the durable feedback record after successful feedback persistence",
   );
   assert.ok(persistTry!.finallyBlock, "persistFeedback should always clear the in-flight flag in finally");
   assert.match(
@@ -645,15 +645,15 @@ test("feedback workflow keeps feedback submit failures scoped to the modal", () 
   );
 });
 
-test("feedback workflow surfaces the YouTrack task number after successful feedback submit", () => {
+test("feedback workflow surfaces durable feedback persistence after successful submit", () => {
   assert.match(
     feedbackWorkflowSourceText,
-    /const \[feedbackSubmitSuccessIssueId, setFeedbackSubmitSuccessIssueId\] = createSignal<string \| null>\(null\);/,
-    "feedback workflow should track the returned YouTrack issue id in feedback-specific state",
+    /const \[feedbackSubmitSuccessFeedbackId, setFeedbackSubmitSuccessFeedbackId\] = createSignal<string \| null>\(null\);/,
+    "feedback workflow should track the returned feedback id in feedback-specific state",
   );
   assert.match(
     feedbackWorkflowSourceText,
-    /setFeedbackSubmitSuccessIssueId\(null\);/,
+    /setFeedbackSubmitSuccessFeedbackId\(null\);/,
     "feedback workflow should clear stale success state",
   );
   assert.match(
@@ -663,13 +663,13 @@ test("feedback workflow surfaces the YouTrack task number after successful feedb
   );
   assert.match(
     feedbackWorkflowSourceText,
-    /setFeedbackSubmitSuccessIssueId\(result\.youtrackIssueId\);/,
-    "successful feedback persistence should store the returned YouTrack issue id",
+    /setFeedbackSubmitSuccessFeedbackId\(result\.feedbackId\);/,
+    "successful feedback persistence should store the returned feedback id",
   );
   assert.match(
     appSourceText,
-    /successIssueId=\{feedbackWorkflow\.feedbackSubmitSuccessIssueId\(\)\}/,
-    "FeedbackModal should receive the returned YouTrack issue id",
+    /successFeedbackId=\{feedbackWorkflow\.feedbackSubmitSuccessFeedbackId\(\)\}/,
+    "FeedbackModal should receive the returned feedback id",
   );
 });
 

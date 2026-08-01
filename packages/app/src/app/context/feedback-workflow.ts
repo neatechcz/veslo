@@ -50,12 +50,12 @@ export type FeedbackWorkflowDeps = {
 export type FeedbackWorkflow = {
   feedbackModalOpen: Accessor<boolean>;
   feedbackSubmitError: Accessor<string | null>;
-  feedbackSubmitSuccessIssueId: Accessor<string | null>;
+  feedbackSubmitSuccessFeedbackId: Accessor<string | null>;
   feedbackSubmitting: Accessor<boolean>;
   feedbackDiagnosticAttachment: Accessor<FeedbackDiagnosticAttachment | null>;
   feedbackDiagnosticUploadPending: Accessor<boolean>;
   setSubmitError: (error: string | null) => void;
-  setSuccessIssueId: (issueId: string | null) => void;
+  setSuccessFeedbackId: (feedbackId: string | null) => void;
   openFeedbackModal: () => void;
   closeFeedbackModal: () => void;
   persistFeedback: (values: FeedbackFormValues) => Promise<void>;
@@ -121,7 +121,7 @@ export function buildFeedbackRuntimeContext(deps: FeedbackRuntimeContextDeps): F
 export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWorkflow {
   const [feedbackModalOpen, setFeedbackModalOpen] = createSignal(false);
   const [feedbackSubmitError, setFeedbackSubmitError] = createSignal<string | null>(null);
-  const [feedbackSubmitSuccessIssueId, setFeedbackSubmitSuccessIssueId] = createSignal<string | null>(null);
+  const [feedbackSubmitSuccessFeedbackId, setFeedbackSubmitSuccessFeedbackId] = createSignal<string | null>(null);
   const [feedbackSubmitting, setFeedbackSubmitting] = createSignal(false);
   const [feedbackDiagnosticAttachment, setFeedbackDiagnosticAttachment] = createSignal<FeedbackDiagnosticAttachment | null>(null);
   const submitReport = deps.submitFeedbackReport ?? submitFeedbackReport;
@@ -172,7 +172,7 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
   const clearFeedbackSubmitState = () => {
     stopDiagnosticStatusPoll();
     setFeedbackSubmitError(null);
-    setFeedbackSubmitSuccessIssueId(null);
+    setFeedbackSubmitSuccessFeedbackId(null);
     setFeedbackDiagnosticAttachment(null);
   };
 
@@ -202,7 +202,7 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
         context: buildContext(),
       });
 
-      setFeedbackSubmitSuccessIssueId(result.youtrackIssueId);
+      setFeedbackSubmitSuccessFeedbackId(result.feedbackId);
       trackDiagnosticAttachment(result.diagnosticAttachment);
     } finally {
       setFeedbackSubmitting(false);
@@ -221,12 +221,12 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
   return {
     feedbackModalOpen,
     feedbackSubmitError,
-    feedbackSubmitSuccessIssueId,
+    feedbackSubmitSuccessFeedbackId,
     feedbackSubmitting,
     feedbackDiagnosticAttachment,
     feedbackDiagnosticUploadPending,
     setSubmitError: setFeedbackSubmitError,
-    setSuccessIssueId: setFeedbackSubmitSuccessIssueId,
+    setSuccessFeedbackId: setFeedbackSubmitSuccessFeedbackId,
     openFeedbackModal,
     closeFeedbackModal,
     persistFeedback,
