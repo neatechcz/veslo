@@ -17,7 +17,7 @@ describe("orchestrator lifecycle client", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl = mockFetch(async (input, init) => {
       calls.push({ url: String(input), init });
-      return new Response(JSON.stringify({ ok: true, runId: "run-a", status: "active" }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, runId: "run-a", status: "submitted" }), { status: 200 });
     });
     const client = createOrchestratorLifecycleClient({
       daemonUrl: "http://127.0.0.1:1234/",
@@ -42,7 +42,7 @@ describe("orchestrator lifecycle client", () => {
     expect(body.opencodeSessionId).toBe("sess-a");
     expect(body.opencodeMessageId).toBe("msg_f946e8a160003a693ab36fcd8e");
     expect(body.engineSessionId).toBeUndefined();
-    expect(result).toMatchObject({ runId: "run-a", status: "active" });
+    expect(result).toMatchObject({ runId: "run-a", status: "submitted" });
   });
 
   test("register maps orchestrator 409 to RunAlreadyActiveError", async () => {
@@ -110,8 +110,8 @@ describe("orchestrator lifecycle client", () => {
     expect(signal?.aborted).toBe(true);
   });
 
-  test("status returns null for 404", async () => {
-    const fetchImpl = mockFetch(async () => new Response("{}", { status: 404 }));
+  test("status returns null only for an exact missing run", async () => {
+    const fetchImpl = mockFetch(async () => new Response(JSON.stringify({ error: "run not found" }), { status: 404 }));
     const client = createOrchestratorLifecycleClient({
       daemonUrl: "http://127.0.0.1:1234",
       token: "secret-token",
@@ -119,6 +119,20 @@ describe("orchestrator lifecycle client", () => {
     });
 
     await expect(client.status("ws-a", "conv-a", "latest")).resolves.toBeNull();
+  });
+
+  test("status retains a workspace 404 as a recoverable lifecycle error", async () => {
+    const fetchImpl = mockFetch(async () =>
+      new Response(JSON.stringify({ error: "workspace not found" }), { status: 404 }));
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    await expect(client.status("ws-a", "conv-a", "run-a"))
+      .rejects
+      .toThrow(OrchestratorLifecycleRequestError);
   });
 
   test("active reads the orchestrator active run endpoint", async () => {
@@ -239,6 +253,34 @@ describe("orchestrator lifecycle client", () => {
     });
 
     await expect(client.status("ws-a", "conv-a", "latest"))
+      .rejects
+      .toThrow(OrchestratorLifecycleRequestError);
+  });
+
+  test("status rejects an unknown lifecycle status instead of treating it as terminal", async () => {
+    const fetchImpl = mockFetch(async () =>
+      new Response(JSON.stringify({ runId: "run-a", status: "unknown", stale: false }), { status: 200 }));
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    await expect(client.status("ws-a", "conv-a", "run-a"))
+      .rejects
+      .toThrow(OrchestratorLifecycleRequestError);
+  });
+
+  test("exact status rejects a response for another run", async () => {
+    const fetchImpl = mockFetch(async () =>
+      new Response(JSON.stringify({ runId: "run-other", status: "running", stale: false }), { status: 200 }));
+    const client = createOrchestratorLifecycleClient({
+      daemonUrl: "http://127.0.0.1:1234",
+      token: "secret-token",
+      fetchImpl,
+    });
+
+    await expect(client.status("ws-a", "conv-a", "run-a"))
       .rejects
       .toThrow(OrchestratorLifecycleRequestError);
   });

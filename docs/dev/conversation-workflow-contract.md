@@ -18,6 +18,10 @@ This is the short contract for switching between conversations and continuing th
 
 ## Invariants
 
+- The server conversation lifecycle coordinator is the sole durable admission owner after a submit is accepted. The app's scoped local queue remains a pre-admission user-intent buffer; transcript, SSE, polling, and UI idle observations are evidence or presentation only.
+- A local server admission persists one `starting` reservation for the exact workspace, conversation, and run before it registers that run with the orchestrator. A queued admission claims its queue row and creates that reservation in one SQLite transaction. A second active reservation for the same conversation is rejected rather than becoming a second OpenCode submit.
+- The in-process workspace gate serializes the local server's register-and-dispatch critical section for direct and queued submissions alike. It is not durable state and does not replace the per-conversation reservation; once an OpenCode dispatch has returned, different conversations may continue to execute independently.
+- Restart recovery treats a `starting` queue row as outcome-unknown. It may return to pending only when the exact-run lifecycle endpoint explicitly returns `run not found`; a workspace-level 404, timeout, stale, or unavailable result retains the row for recovery. Active evidence restores the reservation and reconciliation, while terminal evidence records the item as submitted and then releases the reservation.
 - New UI opens must enter through `openSidebarSessionFromList` or another helper that records browse scope before route navigation.
 - Raw `sessionId` is not a full identity when rows can share the same id across directories. New callers must pass scoped targets or scoped UI conversation keys.
 - Pending session aliases are local UI identities. They must not be selected as real server sessions.

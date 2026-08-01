@@ -497,23 +497,11 @@ See `docs/testing/tauri-pilot/README.md` for the current Tauri Pilot workflow
 and AI gateway/E2E debugging notes. `docs/sandbox/tauri-pilot.md` is historical
 scenario material.
 
-### Live feedback-to-YouTrack smoke
+### Feedback diagnostic verification
 
-Use this only when a real feedback report and a real YouTrack issue are acceptable. This is not a CI gate.
+Feedback reports and their optional diagnostic attachments are stored in Den; current feedback persistence does not project to YouTrack. The legacy feedback-to-YouTrack smoke is not valid verification for this flow.
 
-The live smoke uses Tauri Pilot to open the real desktop feedback UI. Keep it opt-in because it can create a real feedback report and a real YouTrack issue.
-
-Requirements:
-
-- run the Desktop Test Runtime Preflight first
-- build the E2E desktop binary with `pnpm tauri build --debug --no-bundle --config src-tauri/tauri.dev.conf.json -- --features e2e`
-- use a signed-in Den desktop profile with `E2E_USE_EXISTING_PROFILE=1`, or provide `E2E_DEN_AUTH_JSON`
-- set `E2E_YOUTRACK_URL` and `E2E_YOUTRACK_TOKEN`
-- set `E2E_YOUTRACK_PROJECT_KEY` if the target project differs from `VSLO`
-
-When `E2E_DEN_AUTH_JSON` is provided, the live spec treats it as authoritative and does not replace loopback Den auth from the desktop snapshot. This allows a Coding Agent run to point the real desktop UI at a locally started Den instance whose projector uses the configured YouTrack REST API.
-
-Run `pnpm --filter @neatech/veslo-e2e test:pilot:feedback-youtrack-live` for the Pilot version of this flow.
+Use the focused app and native queue tests for implementation changes. For an opt-in signed-in desktop check, submit feedback with diagnostics attached, keep the modal and Veslo open until the attachment reaches a terminal state, then inspect the stored capture with the runbook in `docs/dev/feedback-diagnostics.md`.
 
 ### Server changes in `packages/server/src`
 

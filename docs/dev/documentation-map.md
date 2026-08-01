@@ -70,6 +70,7 @@ Use these for coding-agent work, implementation changes, and system maintenance.
 - `docs/dev/development-startup.md`
 - `docs/dev/cloud-deployments.md`
 - `docs/dev/veslo-application-logs.md`
+- `docs/dev/feedback-diagnostics.md`
 - `docs/dev/release-skill.md`
 - `docs/dev/documentation-promotion.md`
 

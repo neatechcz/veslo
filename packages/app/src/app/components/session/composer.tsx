@@ -16,6 +16,7 @@ import { extractFileReferencePathsFromDataTransfer, extractFilesFromDataTransfer
 import { looksLikePdfDocumentPrefix } from "../../utils/pdf-signature";
 import { createComposerDraftHandoffController } from "./composer-draft-handoff";
 import { resolveComposerAttachmentFailureCleanup } from "./composer-attachment-failure-cleanup";
+import { createComposerSubmissionDeduplication } from "./composer-submission-dedup";
 import { findMentionTrigger } from "./composer-mention-trigger";
 import { uiEffectTrace } from "../../lib/ui-effect-trace";
 
@@ -480,6 +481,7 @@ export default function Composer(props: ComposerProps) {
   let pendingParentConditionalClear: { storageKey: string; nextRevision: number } | null = null;
   let scheduledDraftStorageKey: string | null = null;
   const submittedStorageKeys = new Set<{ storageKey: string }>();
+  const submissionDeduplication = createComposerSubmissionDeduplication();
   let pasteCounter = 0;
   let draftScheduledAt = 0;
   let lastInputAt = 0;
@@ -1248,6 +1250,16 @@ export default function Composer(props: ComposerProps) {
       }
     }
 
+    const submissionFingerprint = submissionDeduplication.acquire(draft);
+    if (!submissionFingerprint) {
+      recordSendTrace("sendDraft:duplicate-in-flight", {
+        sendTraceId: options.sendTraceId,
+        sendNow: options.sendNow,
+        source: options.source,
+      });
+      return;
+    }
+
     recordHistory(draft);
     const submittedDraft = draft;
     const submittedRevision = draftHandoffController.beginSubmission();
@@ -1280,16 +1292,21 @@ export default function Composer(props: ComposerProps) {
     let sent = false;
     let sendResult: ComposerSendResult | null = null;
     let sendPromise: Promise<ComposerSendResult>;
+    const clearSubmittedDraftAndReleaseAdmission = () => {
+      const cleared = untrack(() => clearSubmittedDraft(
+        submittedDraft.mode,
+        submittedStorage.storageKey,
+        submittedStorageRevision,
+      ));
+      if (cleared) submissionDeduplication.release(submissionFingerprint);
+      return cleared;
+    };
     const sendOptions: ComposerSendOptions = {
       ...options,
       onDraftTransferred: () => {
         draftHandoffController.acknowledgeTransfer(
           submittedRevision,
-          () => untrack(() => clearSubmittedDraft(
-            submittedDraft.mode,
-            submittedStorage.storageKey,
-            submittedStorageRevision,
-          )),
+          clearSubmittedDraftAndReleaseAdmission,
         );
       },
     };
@@ -1300,6 +1317,7 @@ export default function Composer(props: ComposerProps) {
       setActiveSendTraceId(null);
       finishSending();
       if (options.sendNow) setSendNowPending(false);
+      submissionDeduplication.release(submissionFingerprint);
       recordSendTrace("sendDraft:onSend:error", {
         sendTraceId: options.sendTraceId,
         message: error instanceof Error ? error.message : String(error),
@@ -1314,11 +1332,7 @@ export default function Composer(props: ComposerProps) {
       draftHandoffController.applyResult(
         submittedRevision,
         sendResult.draftDisposition,
-        () => untrack(() => clearSubmittedDraft(
-          submittedDraft.mode,
-          submittedStorage.storageKey,
-          submittedStorageRevision,
-        )),
+        clearSubmittedDraftAndReleaseAdmission,
       );
       if (editorRef && props.draftStorageKey === submittedStorage.storageKey) {
         const currentParts = buildPartsFromEditor(editorRef, pasteTextById);
@@ -1359,6 +1373,13 @@ export default function Composer(props: ComposerProps) {
       finishSending();
       setActiveSendTraceId(null);
       if (options.sendNow) setSendNowPending(false);
+      // An accepted draft remains admitted until the editor was actually
+      // cleared. Releasing it merely because the server responded leaves a
+      // short handoff window in which another Enter creates a new
+      // clientMessageId for the same visible draft.
+      if (!sendResult?.accepted || sendResult.draftDisposition !== "clear" || submittedRevision.clearApplied) {
+        submissionDeduplication.release(submissionFingerprint);
+      }
     }
     recordSendTrace("sendDraft:onSend:result", {
       sendTraceId: options.sendTraceId,

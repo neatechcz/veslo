@@ -6,7 +6,7 @@ import {
   deriveRunActivityFromSessionStatus,
 } from "../run-activity-probe.js";
 import { deriveConversationRunOpenCodeMessageId } from "../conversation-run-message-id.js";
-import { createRunRegistry } from "../run-registry.js";
+import { createRunRegistry, RunAlreadyActiveError } from "../run-registry.js";
 import { isActiveRunStatus, type RunRecord, type RunStore } from "../run-store.js";
 
 const record = {
@@ -419,7 +419,7 @@ describe("run activity probe HTTP behavior", () => {
     expect(urls).toEqual(["http://engine/session/status", "http://engine/session/sess-a/message"]);
   });
 
-  test("busy session yields to an explicitly completed assistant transcript", async () => {
+  test("busy session does not release a completed assistant transcript to a queued successor", async () => {
     const probe = createRunActivityProbe({
       getEngine: () => ({ baseUrl: "http://engine" }),
       buildEngineRequest: (_engine, input) => ({
@@ -435,9 +435,9 @@ describe("run activity probe HTTP behavior", () => {
     });
 
     await expect(probe(record)).resolves.toMatchObject({
-      active: false,
-      activityKind: "idle",
-      waitReason: "session_idle",
+      active: true,
+      activityKind: "unknown",
+      waitReason: "assistant_message_open",
     });
   });
 
@@ -917,5 +917,65 @@ describe("run activity probe with registry reconciliation", () => {
     expect(next.runId).toBe("run-next");
     expect(store.get("ws-a", "run-stale")?.status).toBe("completed");
     expect(store.activeForConversation("ws-a", "conv-a")?.runId).toBe("run-next");
+  });
+
+  test("busy OpenCode status keeps a completed transcript from admitting the next run", async () => {
+    const store = createMemoryRunStore();
+    const probeRunActivity = createRunActivityProbe({
+      getEngine: () => ({ baseUrl: "http://engine" }),
+      buildEngineRequest: (_engine, input) => ({
+        url: `http://engine${input.targetPath}`,
+        headers: {},
+      }),
+      fetchImpl: mockFetch(async (input) =>
+        String(input).endsWith("/session/status")
+          ? Response.json({ "sess-a": { type: "busy" } })
+          : Response.json([
+              user(),
+              assistant({
+                completed: 3_000,
+                parts: [{ type: "text", text: "Done" }],
+              }),
+            ]),
+      ),
+    });
+    const registry = createRunRegistry({ store, probeRunActivity });
+    store.insert({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-still-busy",
+      engineSessionId: "sess-a",
+      clientMessageId: null,
+      origin: null,
+      directory: "/tmp/workspace-a",
+      kind: "prompt",
+      status: "running",
+      abortRequested: false,
+      createdAt: 1_000,
+      startedAt: 1_000,
+      completedAt: null,
+      error: null,
+      engineSlotId: null,
+      engineOwnerState: "pending",
+      activityKind: null,
+      waitReason: null,
+      lastUsefulProgressAt: 1_000,
+      retrySince: null,
+      lastProgressSignature: null,
+      engineOwnerId: null,
+      enginePid: null,
+      engineStartedAt: null,
+      engineBaseUrl: null,
+    });
+
+    await expect(registry.register({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-next",
+      engineSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      kind: "prompt",
+    })).rejects.toBeInstanceOf(RunAlreadyActiveError);
+    expect(store.get("ws-a", "run-still-busy")?.status).toBe("running");
   });
 });

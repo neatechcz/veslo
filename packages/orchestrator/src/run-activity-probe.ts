@@ -540,8 +540,16 @@ export function createRunActivityProbe<Engine>(deps: {
         };
       }
       if (statusActivity && !("unreachable" in statusActivity)) {
-        // OpenCode can leave /session/status at busy briefly after it has written a
-        // terminal assistant message. Exact transcript completion is stronger evidence.
+        // A terminal assistant message can arrive just before OpenCode has
+        // finished releasing the session. Accepting a queued prompt in that
+        // gap returns 204 but can leave the prompt undispatched, so `busy`
+        // remains authoritative for queue admission.
+        if (
+          !messageActivity.active &&
+          statusActivity.waitReason === "assistant_message_open"
+        ) {
+          return statusActivity;
+        }
         if (!messageActivity.active) return messageActivity;
         if (statusActivity.activityKind === "model_retry") {
           return mergeRetryStatusWithMessages(messageActivity);

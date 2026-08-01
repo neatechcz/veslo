@@ -5,6 +5,7 @@ import { createRoot } from "solid-js";
 
 import { createFeedbackWorkflow } from "../../context/feedback-workflow.js";
 import type { SubmitFeedbackReportResult } from "../../lib/feedback.js";
+import type { UserDiagnosticCaptureStatus } from "../../lib/tauri.js";
 
 const okResult: SubmitFeedbackReportResult = {
   feedbackId: "fb_1",
@@ -222,6 +223,86 @@ test("feedback workflow keeps the modal open while a diagnostic attachment is st
       workflow.closeFeedbackModal();
       assert.equal(workflow.feedbackModalOpen(), true);
       assert.equal(workflow.feedbackDiagnosticAttachment()?.status, "tracking");
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("feedback workflow retains its blocking attachment state when a diagnostic status read fails", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      const workflow = createFeedbackWorkflow({
+        buildContext: () => ({
+          view: "dashboard",
+          pathname: "/dashboard",
+          tab: "scheduled",
+          settingsTab: "general",
+          selectedSessionId: null,
+          activeWorkspaceId: "ws_1",
+          vesloServerWorkspaceId: null,
+          activeWorkspaceType: "local",
+          activeWorkspaceRoot: "/repo",
+          locale: "en",
+          appVersion: "2026.6.26",
+          platform: "Windows",
+        }),
+        submitFeedbackReport: async () => queuedDiagnosticResult,
+        readDiagnosticCaptureStatus: async () => {
+          throw new Error("native status unavailable");
+        },
+        diagnosticStatusPollMs: 60_000,
+        reportError: () => {},
+        stringifyError: String,
+      });
+
+      workflow.openFeedbackModal();
+      await workflow.persistFeedback({ title: "Bug", description: "Details", attachDiagnostics: true });
+
+      assert.equal(workflow.feedbackDiagnosticAttachment()?.status, "tracking");
+      assert.equal(workflow.feedbackDiagnosticUploadPending(), true);
+      workflow.closeFeedbackModal();
+      assert.equal(workflow.feedbackModalOpen(), true);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+test("feedback workflow ignores a stale diagnostic status result after its state is cleared", async () => {
+  await createRoot(async (dispose) => {
+    try {
+      let resolveStatus!: (value: UserDiagnosticCaptureStatus) => void;
+      const workflow = createFeedbackWorkflow({
+        buildContext: () => ({
+          view: "dashboard",
+          pathname: "/dashboard",
+          tab: "scheduled",
+          settingsTab: "general",
+          selectedSessionId: null,
+          activeWorkspaceId: "ws_1",
+          vesloServerWorkspaceId: null,
+          activeWorkspaceType: "local",
+          activeWorkspaceRoot: "/repo",
+          locale: "en",
+          appVersion: "2026.6.26",
+          platform: "Windows",
+        }),
+        submitFeedbackReport: async () => queuedDiagnosticResult,
+        readDiagnosticCaptureStatus: () => new Promise((resolve) => {
+          resolveStatus = resolve;
+        }),
+        reportError: () => {},
+        stringifyError: String,
+      });
+
+      workflow.openFeedbackModal();
+      await workflow.persistFeedback({ title: "Bug", description: "Details", attachDiagnostics: true });
+      workflow.openFeedbackModal();
+      resolveStatus(queuedDiagnosticAttachment.capture);
+      await Promise.resolve();
+
+      assert.equal(workflow.feedbackDiagnosticAttachment(), null);
     } finally {
       dispose();
     }

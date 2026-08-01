@@ -120,6 +120,7 @@ export default {
   "feedback.diagnostics_failed": "The feedback was sent, but its diagnostic logs could not be delivered.",
   "feedback.diagnostics_unavailable": "The feedback was sent, but diagnostic logs could not be attached.",
   "feedback.submit": "Send bug report",
+  "feedback.submitting": "Sending bug report…",
 
   // ==================== Session ====================
   "session.no_selected": "No session selected",

@@ -1,5 +1,7 @@
 import {
   ConversationRunQueueConflictError,
+  ConversationRunReservationConflictError,
+  type ConversationRunQueueItem,
   type ConversationRunQueueStore,
   type ConversationWorkspaceRunEngineOwner,
   type ConversationWorkspaceRunReservation,
@@ -273,6 +275,9 @@ export type ConversationRunLifecycleController = {
 const ACTIVE_LIFECYCLE_STATUSES = new Set<LifecycleRunStatus>(["submitted", "running", "blocked"]);
 const STARTUP_ORPHANED_ASSISTANT_MESSAGE_GRACE_MS = 60_000;
 const ENGINE_UNREACHABLE_GRACE_MS = 60_000;
+const PROVIDER_START_ABORT_RETRY_DELAY_MS = 5_000;
+const PROVIDER_START_ABORT_RETRY_REASON = "ai-gateway-provider-start-timeout-abort-retry";
+const PROVIDER_START_ABORT_RECOVERY_TIMEOUT_MS = 30_000;
 
 type TerminalizationReasonCode =
   | "upstream_submit_failed"
@@ -513,12 +518,18 @@ export function createConversationRunLifecycleController(
   const lifecycleReconcileTimers = new Map<string, unknown>();
   const lifecycleReconcileInFlight = new Set<string>();
   const terminalizationTimers = new Map<string, unknown>();
+  const startingRecoveryTimers = new Map<string, unknown>();
   const workspaceExecutionGateTails = new Map<string, Promise<void>>();
   const workspaceRunReservations = new Map<string, Map<string, ConversationWorkspaceRunReservation>>();
   const workspaceReconciliationPending = new Set<string>();
   const workspaceIdleListeners = new Set<(workspaceId: string) => void>();
   const engineLossEvents = new Map<string, ConversationRunEngineLossResult>();
   const pendingEngineLosses = new Map<string, ConversationRunEngineLossNotification>();
+  const providerStartAbortRecoveries = new Map<string, {
+    input: ConversationRunLifecycleSubmitInput;
+    lifecycleOwner: OrchestratorLifecycleClient;
+    timeoutMs: number;
+  }>();
   let started = false;
   let diagnosticsRuns = 0;
 
@@ -527,6 +538,29 @@ export function createConversationRunLifecycleController(
   };
 
   const normalizeWorkspaceExecutionKey = (workspaceId: string) => workspaceId.trim();
+  const providerStartAbortRecoveryKey = (workspaceId: string, conversationId: string, runId: string) =>
+    `${normalizeWorkspaceExecutionKey(workspaceId)}\0${conversationId.trim()}\0${runId.trim()}`;
+
+  const scheduleUnconfirmedRegistrationRecovery = (
+    input: ConversationRunLifecycleSubmitInput,
+    reason: string,
+  ) => {
+    input.runTrace.record("server:conversation-run:lifecycle-register-unconfirmed", {
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      runId: input.runId,
+      reason,
+    });
+    scheduleLifecycleReconcile({
+      workspace: input.workspace,
+      conversationId: input.target.conversationId,
+      runId: input.runId,
+      directory: input.target.directory,
+      opencodeSessionId: input.target.opencodeSessionId,
+      reason,
+      delayMs: 0,
+    });
+  };
 
   const withWorkspaceExecutionGate = async <T>(workspaceIdRaw: string, run: () => Promise<T>): Promise<T> => {
     const workspaceId = normalizeWorkspaceExecutionKey(workspaceIdRaw);
@@ -572,6 +606,8 @@ export function createConversationRunLifecycleController(
       workspaceId,
       conversationId: input.target.conversationId,
       runId,
+      directory: input.target.directory,
+      opencodeSessionId: input.target.opencodeSessionId,
       state: "starting",
     }) ?? {
       workspaceId,
@@ -674,6 +710,11 @@ export function createConversationRunLifecycleController(
     const workspaceId = normalizeWorkspaceExecutionKey(workspaceIdRaw);
     const runId = runIdRaw.trim();
     if (!workspaceId || !runId) return false;
+    for (const [key, recovery] of providerStartAbortRecoveries) {
+      if (normalizeWorkspaceExecutionKey(recovery.input.workspace.id) === workspaceId && recovery.input.runId === runId) {
+        providerStartAbortRecoveries.delete(key);
+      }
+    }
     const reservations = workspaceRunReservations.get(workspaceId);
     const existed = reservations?.delete(runId) === true;
     if (reservations?.size === 0) {
@@ -1013,6 +1054,117 @@ export function createConversationRunLifecycleController(
     });
   };
 
+  const scheduleProviderStartTimeoutAbortRetry = (
+    input: ConversationRunLifecycleSubmitInput,
+    lifecycleOwner: OrchestratorLifecycleClient,
+    timeoutMs: number,
+  ) => {
+    providerStartAbortRecoveries.set(
+      providerStartAbortRecoveryKey(input.workspace.id, input.target.conversationId, input.runId),
+      { input, lifecycleOwner, timeoutMs },
+    );
+    options.queueStore?.markWorkspaceRunProviderStartAbortPending({
+      workspaceId: input.workspace.id,
+      runId: input.runId,
+      directory: input.target.directory,
+      opencodeSessionId: input.target.opencodeSessionId,
+    });
+    scheduleLifecycleReconcile({
+      workspace: input.workspace,
+      conversationId: input.target.conversationId,
+      runId: input.runId,
+      directory: input.target.directory,
+      opencodeSessionId: input.target.opencodeSessionId,
+      reason: PROVIDER_START_ABORT_RETRY_REASON,
+      abortRequested: true,
+      delayMs: PROVIDER_START_ABORT_RETRY_DELAY_MS,
+    });
+  };
+
+  const recoverProviderStartTimeout = async (
+    input: ConversationRunLifecycleSubmitInput,
+    lifecycleOwner: OrchestratorLifecycleClient,
+    timeoutMs: number,
+  ) => {
+    const tracePayload = {
+      workspaceId: input.workspace.id,
+      conversationId: input.target.conversationId,
+      runId: input.runId,
+      clientMessageId: input.clientMessageId,
+      origin: input.origin,
+      opencodeSessionId: input.target.opencodeSessionId,
+      timeoutMs,
+    };
+    providerStartAbortRecoveries.set(
+      providerStartAbortRecoveryKey(input.workspace.id, input.target.conversationId, input.runId),
+      { input, lifecycleOwner, timeoutMs },
+    );
+    options.queueStore?.markWorkspaceRunProviderStartAbortPending({
+      workspaceId: input.workspace.id,
+      runId: input.runId,
+      directory: input.target.directory,
+      opencodeSessionId: input.target.opencodeSessionId,
+    });
+    const abortedGatewayRequests = options.abortActiveGatewayProxyRequests?.({
+      workspaceId: input.workspace.id,
+      runId: input.runId,
+      sessionId: input.target.opencodeSessionId,
+      reason: "ai-gateway-provider-start-timeout",
+    }) ?? [];
+
+    if (!options.abortOpenCode) {
+      input.runTrace.record("server:conversation-run:provider-start-timeout-abort:unavailable", tracePayload);
+      scheduleProviderStartTimeoutAbortRetry(input, lifecycleOwner, timeoutMs);
+      return;
+    }
+
+    try {
+      await input.runTrace.step(
+        "server:conversation-run:provider-start-timeout-abort",
+        () => options.abortOpenCode!({
+          runTrace: input.runTrace,
+          workspace: input.workspace,
+          target: input.target,
+          runId: input.runId,
+        }),
+        { ...tracePayload, abortedGatewayRequestCount: abortedGatewayRequests.length },
+      );
+    } catch (error) {
+      input.runTrace.record("server:conversation-run:provider-start-timeout-abort:error", {
+        ...tracePayload,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      scheduleProviderStartTimeoutAbortRetry(input, lifecycleOwner, timeoutMs);
+      return;
+    }
+
+    const terminalized = await markLifecycleFailed(
+      input,
+      lifecycleOwner,
+      "server:conversation-run:provider-start-timeout-mark-failed",
+      `AI gateway provider request did not start within ${timeoutMs}ms; OpenCode session was aborted.`,
+      { abortedGatewayRequestCount: abortedGatewayRequests.length },
+    );
+    if (terminalized) {
+      unregisterActiveAiGatewayRun(input);
+      releaseRun(input.workspace.id, input.runId, "provider-start-timeout-aborted");
+      scheduleQueueDrain(input.workspace.id, input.target.conversationId, 0);
+      return;
+    }
+
+    scheduleTerminalizationRetry({
+      workspace: input.workspace,
+      conversationId: input.target.conversationId,
+      runId: input.runId,
+      reasonCode: "reconcile_exhausted",
+      terminalMessage: `AI gateway provider request did not start within ${timeoutMs}ms; OpenCode session was aborted.`,
+      attempts: 1,
+      lastError: "provider-start timeout lifecycle terminalization failed",
+      deadlineAt: Date.now() + 300_000,
+      onTerminalized: () => unregisterActiveAiGatewayRun(input),
+    });
+  };
+
   const scheduleProviderStartWatch = (
     input: ConversationRunLifecycleSubmitInput,
     lifecycleOwner: OrchestratorLifecycleClient | null,
@@ -1056,7 +1208,7 @@ export function createConversationRunLifecycleController(
             timeoutMs: providerStart.timeoutMs,
             message: `AI gateway provider request did not start within ${providerStart.timeoutMs}ms.`,
           });
-          scheduleAcceptedRunReconcile(input, "ai-gateway-provider-start-timeout", 0);
+          await recoverProviderStartTimeout(input, lifecycleOwner, providerStart.timeoutMs);
         }
       } catch (error) {
         input.runTrace.record("server:conversation-run:ai-gateway-provider-start-watch:error", {
@@ -1173,6 +1325,7 @@ export function createConversationRunLifecycleController(
     queueDrainTimers.clear();
     lifecycleReconcileTimers.clear();
     terminalizationTimers.clear();
+    startingRecoveryTimers.clear();
   };
 
   const queueKey = (workspaceId: string, conversationId: string) => `${workspaceId}\0${conversationId}`;
@@ -1365,8 +1518,20 @@ export function createConversationRunLifecycleController(
       return;
     }
     const key = reconcileKey(input.workspace.id, conversationId, runId);
+    const providerStartAbortRecovery = providerStartAbortRecoveries.get(
+      providerStartAbortRecoveryKey(input.workspace.id, conversationId, runId),
+    );
+    if (providerStartAbortRecovery && input.reason !== PROVIDER_START_ABORT_RETRY_REASON) {
+      scheduleProviderStartTimeoutAbortRetry(
+        providerStartAbortRecovery.input,
+        providerStartAbortRecovery.lifecycleOwner,
+        providerStartAbortRecovery.timeoutMs,
+      );
+      return;
+    }
     const pollMs = normalizeIntervalMs(options.resolveLifecycleReconcilePollMs?.()) ?? 1_000;
-    const maxAttempts = Math.max(1, Math.floor(options.resolveLifecycleReconcileMaxAttempts?.() ?? 600));
+    const generalMaxAttempts = Math.max(1, Math.floor(options.resolveLifecycleReconcileMaxAttempts?.() ?? 600));
+    const maxAttempts = generalMaxAttempts;
     if (lifecycleReconcileInFlight.has(key)) {
       scheduleLifecycleReconcile({
         ...input,
@@ -1476,8 +1641,47 @@ export function createConversationRunLifecycleController(
         attempt,
       });
 
+      const abortRecoveryRacedWithStatus = providerStartAbortRecoveries.get(
+        providerStartAbortRecoveryKey(input.workspace.id, conversationId, runId),
+      );
+      if (
+        abortRecoveryRacedWithStatus &&
+        (!status || isActiveLifecycleStatus(status.status)) &&
+        (!status || !isEngineUnreachableWithoutProgress(status))
+      ) {
+        if (input.reason === PROVIDER_START_ABORT_RETRY_REASON) {
+          await recoverProviderStartTimeout(
+            abortRecoveryRacedWithStatus.input,
+            abortRecoveryRacedWithStatus.lifecycleOwner,
+            abortRecoveryRacedWithStatus.timeoutMs,
+          );
+        } else {
+          scheduleProviderStartTimeoutAbortRetry(
+            abortRecoveryRacedWithStatus.input,
+            abortRecoveryRacedWithStatus.lifecycleOwner,
+            abortRecoveryRacedWithStatus.timeoutMs,
+          );
+        }
+        return;
+      }
+
       if (!status) {
         unregisterScheduledAiGatewayRun(input);
+        const queuedStarting = options.queueStore?.getForReservedRun(
+          input.workspace.id,
+          conversationId,
+          runId,
+        );
+        if (queuedStarting?.state === "starting") {
+          const requeued = options.queueStore?.markPending(queuedStarting.queueItemId);
+          recordTrace("server:conversation-run:queue-starting-reconciled-absent", {
+            workspaceId: input.workspace.id,
+            conversationId,
+            runId,
+            queueItemId: queuedStarting.queueItemId,
+            requeued: Boolean(requeued),
+          });
+        }
         releaseRun(input.workspace.id, runId, "lifecycle-status-missing");
         if (input.abortRequested === true) {
           await lifecycleOwner.markAborted(
@@ -1591,7 +1795,11 @@ export function createConversationRunLifecycleController(
       if (!isActiveLifecycleStatus(status.status)) {
         unregisterScheduledAiGatewayRun(input);
         releaseRun(input.workspace.id, status.runId?.trim() || runId, `lifecycle-terminal-${status.status}`);
-        if (input.abortRequested === true && status.status !== "aborted") {
+        if (
+          input.abortRequested === true &&
+          input.reason !== PROVIDER_START_ABORT_RETRY_REASON &&
+          status.status !== "aborted"
+        ) {
           await lifecycleOwner.markAborted(
             input.workspace.id,
             runId,
@@ -1681,17 +1889,33 @@ export function createConversationRunLifecycleController(
 
       item = options.queueStore.nextPending(workspaceId, normalizedConversationId);
       if (!item) return;
-      const claimed = options.queueStore.markStarting(item.queueItemId);
-      if (!claimed || claimed.state !== "starting") {
+      let claim: ReturnType<ConversationRunQueueStore["claimStartingWithReservation"]>;
+      try {
+        claim = options.queueStore.claimStartingWithReservation(item.queueItemId);
+      } catch (error) {
+        if (error instanceof ConversationRunReservationConflictError) {
+          recordTrace("server:conversation-run:queue-drain-reservation-conflict", {
+            workspaceId,
+            conversationId: normalizedConversationId,
+            queueItemId: item.queueItemId,
+            activeRunId: error.activeRunId,
+          });
+          scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
+          return;
+        }
+        throw error;
+      }
+      if (!claim || claim.item.state !== "starting") {
         runTrace.record("server:conversation-run:queue-drain-claim-lost", {
           workspaceId,
           conversationId: normalizedConversationId,
           queueItemId: item.queueItemId,
-          state: claimed?.state ?? null,
+          state: claim?.item.state ?? null,
         });
         return;
       }
-      item = claimed;
+      item = claim.item;
+      reservationsForWorkspace(workspaceId).set(claim.reservation.runId, claim.reservation);
 
       let body: Record<string, unknown>;
       try {
@@ -1747,6 +1971,7 @@ export function createConversationRunLifecycleController(
       }, queuedItem.createdAt);
 
       if (lifecycleOwner) {
+        let lifecycleRegistered = false;
         try {
           await withWorkspaceExecutionGate(workspace.id, async () => {
             await queuedRunTrace.step(
@@ -1770,10 +1995,14 @@ export function createConversationRunLifecycleController(
                 queueItemId: queuedItem.queueItemId,
               },
             );
-            reserveStarting(queuedSubmitInput);
+            lifecycleRegistered = true;
+            options.onRunAdmitted?.(queuedSubmitInput);
+            await submitAcceptedRun(queuedSubmitInput, lifecycleOwner);
           });
         } catch (error) {
-          if (error instanceof RunAlreadyActiveError) {
+          if (lifecycleRegistered) throw error;
+          if (error instanceof RunAlreadyActiveError || error instanceof ConversationRunReservationConflictError) {
+            releaseRun(workspaceId, queuedItem.reservedRunId, "queue-lifecycle-register-conflict");
             const pending = options.queueStore.markPending(item.queueItemId, error.activeRunId);
             if (!pending) {
               runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
@@ -1787,28 +2016,16 @@ export function createConversationRunLifecycleController(
             scheduleQueueDrain(workspaceId, normalizedConversationId, queueDrainPollMs);
             return;
           }
-          const failed = options.queueStore.markFailed(
-            item.queueItemId,
-            error instanceof Error ? error.message : String(error),
-          );
-          if (!failed) {
-            runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
-              workspaceId,
-              conversationId: normalizedConversationId,
-              queueItemId: item.queueItemId,
-              transition: "failed",
-            });
-          }
+          scheduleUnconfirmedRegistrationRecovery(queuedSubmitInput, "queue-lifecycle-register-unconfirmed");
           return;
         }
       } else {
         await withWorkspaceExecutionGate(workspace.id, async () => {
-          reserveStarting(queuedSubmitInput);
+          options.onRunAdmitted?.(queuedSubmitInput);
+          await submitAcceptedRun(queuedSubmitInput, lifecycleOwner);
         });
       }
 
-      options.onRunAdmitted?.(queuedSubmitInput);
-      await submitAcceptedRun(queuedSubmitInput, lifecycleOwner);
       const submitted = options.queueStore.markSubmitted(item.queueItemId);
       if (!submitted) {
         runTrace.record("server:conversation-run:queue-drain-terminal-transition-stale", {
@@ -1923,15 +2140,101 @@ export function createConversationRunLifecycleController(
     };
   }
 
-  function schedulePendingQueueDrains(): void {
-    const recoverStarting = options.queueStore?.recoverStarting;
-    if (typeof recoverStarting === "function") {
-      for (const recovered of recoverStarting.call(options.queueStore)) {
-        recordTrace("server:conversation-run:queue-starting-recovered", {
-          workspaceId: recovered.workspaceId,
-          conversationId: recovered.conversationId,
-        });
+  const restoreStartingReservation = (workspace: WorkspaceInfo, item: ConversationRunQueueItem) => {
+    const workspaceId = normalizeWorkspaceExecutionKey(workspace.id);
+    const reservation = options.queueStore?.reserveWorkspaceRun({
+      workspaceId,
+      conversationId: item.conversationId,
+      runId: item.reservedRunId,
+      directory: item.directory,
+      opencodeSessionId: item.opencodeSessionId,
+      state: "starting",
+    });
+    if (reservation) reservationsForWorkspace(workspaceId).set(reservation.runId, reservation);
+    return reservation;
+  };
+
+  async function recoverStartingQueueItem(item: ConversationRunQueueItem): Promise<void> {
+    const workspace = options.resolveWorkspace?.(item.workspaceId) ?? null;
+    if (!workspace) return;
+    const lifecycleOwner = workspace.workspaceType === "remote" ? null : options.lifecycleClient ?? null;
+    const recoveryKey = `${item.workspaceId}\0${item.queueItemId}`;
+    try {
+      if (!lifecycleOwner) {
+        options.queueStore?.markPending(item.queueItemId);
+        scheduleQueueDrain(item.workspaceId, item.conversationId, queueDrainPollMs);
+        return;
       }
+      const status = await lifecycleOwner.status(item.workspaceId, item.conversationId, item.reservedRunId);
+      if (!status) {
+        releaseRun(item.workspaceId, item.reservedRunId, "queue-starting-exact-run-absent");
+        options.queueStore?.markPending(item.queueItemId);
+        recordTrace("server:conversation-run:queue-starting-recovered-absent", {
+          workspaceId: item.workspaceId,
+          conversationId: item.conversationId,
+          queueItemId: item.queueItemId,
+          runId: item.reservedRunId,
+        });
+        scheduleQueueDrain(item.workspaceId, item.conversationId, queueDrainPollMs);
+        return;
+      }
+      if (isActiveLifecycleStatus(status.status)) {
+        restoreStartingReservation(workspace, item);
+        recordTrace("server:conversation-run:queue-starting-recovered-active", {
+          workspaceId: item.workspaceId,
+          conversationId: item.conversationId,
+          queueItemId: item.queueItemId,
+          runId: item.reservedRunId,
+          status: status.status,
+          stale: status.stale,
+          ...lifecycleStatusTraceFields(status),
+        });
+        scheduleLifecycleReconcile({
+          workspace,
+          conversationId: item.conversationId,
+          runId: item.reservedRunId,
+          directory: item.directory,
+          opencodeSessionId: item.opencodeSessionId,
+          reason: "startup-queue-starting-active",
+          delayMs: 0,
+        });
+        return;
+      }
+      options.queueStore?.markSubmitted(item.queueItemId);
+      releaseRun(item.workspaceId, item.reservedRunId, "queue-starting-recovered-terminal");
+      recordTrace("server:conversation-run:queue-starting-recovered-terminal", {
+        workspaceId: item.workspaceId,
+        conversationId: item.conversationId,
+        queueItemId: item.queueItemId,
+        runId: item.reservedRunId,
+        status: status.status,
+        ...lifecycleStatusTraceFields(status),
+      });
+      scheduleQueueDrain(item.workspaceId, item.conversationId, queueDrainPollMs);
+    } catch (error) {
+      recordTrace("server:conversation-run:queue-starting-recovery-error", {
+        workspaceId: item.workspaceId,
+        conversationId: item.conversationId,
+        queueItemId: item.queueItemId,
+        runId: item.reservedRunId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      if (!startingRecoveryTimers.has(recoveryKey)) {
+        const handle = scheduleTimeout(() => {
+          activeTimers.delete(handle);
+          startingRecoveryTimers.delete(recoveryKey);
+          void recoverStartingQueueItem(item);
+        }, queueDrainPollMs);
+        activeTimers.add(handle);
+        startingRecoveryTimers.set(recoveryKey, handle);
+        unrefTimer(handle);
+      }
+    }
+  }
+
+  function schedulePendingQueueDrains(): void {
+    for (const starting of options.queueStore?.listStarting?.() ?? []) {
+      void recoverStartingQueueItem(starting);
     }
     const pendingConversationKeys = options.queueStore?.pendingConversationKeys;
     if (typeof pendingConversationKeys !== "function") return;
@@ -2009,6 +2312,7 @@ export function createConversationRunLifecycleController(
         }
         try {
           admittedInput = withOpenCodeAdmissionMessageId(input);
+          reserveStarting(admittedInput);
           const registered = await input.runTrace.step(
             "server:conversation-run:lifecycle-register",
             () => lifecycleOwner.register({
@@ -2031,6 +2335,7 @@ export function createConversationRunLifecycleController(
             },
           );
           if (registered && registered.runId !== input.runId && activeRunMatchesClientMessage(registered, input)) {
+            releaseRun(input.workspace.id, input.runId, "lifecycle-register-reused");
             input.runTrace.record("server:conversation-run:lifecycle-register-reused", {
               workspaceId: input.workspace.id,
               conversationId: input.target.conversationId,
@@ -2041,7 +2346,8 @@ export function createConversationRunLifecycleController(
             return existingActiveRunPayload(input, registered);
           }
         } catch (error) {
-          if (error instanceof RunAlreadyActiveError) {
+          if (error instanceof RunAlreadyActiveError || error instanceof ConversationRunReservationConflictError) {
+            releaseRun(input.workspace.id, input.runId, "lifecycle-register-conflict");
             try {
               const active = await input.runTrace.step(
                 "server:conversation-run:lifecycle-active-after-register-conflict",
@@ -2072,6 +2378,7 @@ export function createConversationRunLifecycleController(
             }
             return queueRun(input, error.activeRunId || null);
           }
+          scheduleUnconfirmedRegistrationRecovery(admittedInput, "lifecycle-register-unconfirmed");
           if (error instanceof OrchestratorLifecycleRequestError) {
             throw lifecycleRequestApiError(error);
           }
@@ -2082,7 +2389,7 @@ export function createConversationRunLifecycleController(
         throw new Error("OpenCode submit port is required for admitted conversation runs");
       }
       admittedInput = withOpenCodeAdmissionMessageId(admittedInput);
-      reserveStarting(admittedInput);
+      if (!lifecycleOwner) reserveStarting(admittedInput);
       options.onRunAdmitted?.(admittedInput);
       const upstream = await submitAcceptedRun(admittedInput, lifecycleOwner);
       input.runTrace.record("server:conversation-run:submitted", {
@@ -2154,6 +2461,29 @@ export function createConversationRunLifecycleController(
               deadlineAt: reservation.terminalizationDeadlineAt ?? Date.now() + 300_000,
               nextAttemptAt: reservation.terminalizationNextAttemptAt,
             });
+            continue;
+          }
+          if (
+            reservation.providerStartAbortPending === true &&
+            reservation.providerStartAbortDirectory &&
+            reservation.providerStartAbortOpenCodeSessionId
+          ) {
+            const runTrace = options.createBackgroundRunTrace?.() ?? createNoopRunTrace();
+            scheduleProviderStartTimeoutAbortRetry({
+              runTrace,
+              workspace,
+              target: {
+                directory: reservation.providerStartAbortDirectory,
+                opencodeSessionId: reservation.providerStartAbortOpenCodeSessionId,
+                conversationId: reservation.conversationId,
+              },
+              runId: reservation.runId,
+              kind: "prompt_async",
+              body: {},
+              clientMessageId: null,
+              origin: null,
+              expectAiGatewayStart: true,
+            }, options.lifecycleClient, PROVIDER_START_ABORT_RECOVERY_TIMEOUT_MS);
             continue;
           }
           scheduleLifecycleReconcile({

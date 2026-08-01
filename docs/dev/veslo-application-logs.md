@@ -312,6 +312,21 @@ NODE
 
 Prefer metadata queries first. Read decrypted payloads only when the user explicitly asks and the operational need is clear.
 
+### Feedback-Attached Diagnostic Summary
+
+For the end-to-end feedback attachment lifecycle, safe artifact naming, interpretation, and troubleshooting, use `docs/dev/feedback-diagnostics.md`. This section remains the short command reference within the wider application-log runbook.
+
+Use the read-only helper when an operator needs the latest feedback report and its linked retrospective diagnostics without manually discovering the production host, container, tables, encryption envelope, or capture id:
+
+```bash
+pnpm admin:feedback-diagnostics --
+pnpm admin:feedback-diagnostics -- --feedback <feedback-id>
+pnpm admin:feedback-diagnostics -- --output-dir .tmp/feedback-diagnostics
+pnpm admin:feedback-diagnostics -- --include-events --output-dir .tmp/feedback-diagnostics
+```
+
+It opens one SSH connection through the existing production-SSH helper when that local configuration is present; otherwise it uses the documented production host with the operator's normal SSH agent. It decrypts events only inside the Den container and returns a bounded summary of timestamps, sources, run outcomes, and known failure signals. The summary tracks at most 2,000 distinct runs and reports when further run observations were omitted. Prefer `--output-dir <path>` for durable artifacts: each invocation writes a distinct, time-ordered name containing the requested feedback id (or `latest`), a UTC timestamp, a short unique suffix, and its kind (`summary` or `events`). `--output <path>` remains available for an arbitrary exact local filename, but it always fails rather than overwriting an existing file. Missing parent directories are created and the terminal prints only the resolved path. Add `--include-events` with either output option when the full redacted diagnostic context is required: it streams one NDJSON record per event directly into a temporary file and creates the final target only after success, rather than collecting the capture in memory or printing it to the terminal. The default output intentionally omits the feedback title and description. Add `--include-feedback-text` only when the operator needs that user-provided content, and use `--json` for a machine-readable result. It never prints screenshots, database URLs, or encryption keys.
+
 To check a specific user's recent debug-log metadata without printing payloads or secrets:
 
 ```bash

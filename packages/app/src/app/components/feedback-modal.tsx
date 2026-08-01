@@ -1,4 +1,5 @@
 import { Show, createSignal, createUniqueId } from "solid-js";
+import { Loader2 } from "lucide-solid";
 
 import { useTranslate } from "../../i18n";
 import type { FeedbackDiagnosticAttachment } from "../lib/feedback";
@@ -42,6 +43,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
   const descriptionId = createUniqueId();
   const noteId = createUniqueId();
   const successId = createUniqueId();
+  const submitStatusId = createUniqueId();
   const diagnosticStatusId = createUniqueId();
 
   useFocusTrap(() => props.open, () => dialogRef, {
@@ -76,7 +78,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
       size="lg"
       closeOnBackdrop={false}
       ariaLabelledBy={titleId}
-      ariaDescribedBy={`${descriptionId} ${noteId} ${successId} ${diagnosticStatusId}`}
+      ariaDescribedBy={`${descriptionId} ${noteId} ${successId} ${submitStatusId} ${diagnosticStatusId}`}
     >
       <div ref={dialogRef} class="p-6" tabIndex={-1}>
         <ModalHeader
@@ -123,6 +125,17 @@ export default function FeedbackModal(props: FeedbackModalProps) {
             {translate("feedback.technical_note")}
           </p>
 
+          <Show when={props.submitting}>
+            <div
+              id={submitStatusId}
+              role="status"
+              class="flex items-center gap-2 rounded-xl border border-dls-accent-border bg-dls-accent-tint px-3 py-2 text-sm text-dls-text"
+            >
+              <Loader2 size={16} class="shrink-0 animate-spin text-dls-accent" aria-hidden="true" />
+              <span>{translate("feedback.submitting")}</span>
+            </div>
+          </Show>
+
           <Show when={props.successFeedbackId}>
             <p id={successId} role="status" class="rounded-xl border border-dls-border bg-gray-3 px-3 py-2 text-sm text-dls-text">
               {translate("feedback.success_message")}
@@ -145,11 +158,14 @@ export default function FeedbackModal(props: FeedbackModalProps) {
               const isFailed = () => ["delivery_rejected", "expired", "identity_changed", "undeliverable"].includes(state() ?? "");
 
               return (
-                <p
+                <div
                   id={diagnosticStatusId}
                   role={isFailed() || attachment().status === "unavailable" ? "alert" : "status"}
-                  class="rounded-xl border border-amber-7/30 bg-amber-3/30 px-3 py-2 text-sm text-dls-text"
+                  class="flex items-start gap-2 rounded-xl border border-amber-7/30 bg-amber-3/30 px-3 py-2 text-sm text-dls-text"
                 >
+                  <Show when={attachment().status === "tracking" && props.diagnosticUploadPending}>
+                    <Loader2 size={16} class="mt-0.5 shrink-0 animate-spin text-amber-11" aria-hidden="true" />
+                  </Show>
                   <Show when={attachment().status === "unavailable"}>
                     {translate("feedback.diagnostics_unavailable")}
                   </Show>
@@ -162,7 +178,7 @@ export default function FeedbackModal(props: FeedbackModalProps) {
                   <Show when={isUploaded()}>{translate("feedback.diagnostics_uploaded")}</Show>
                   <Show when={isTruncated()}>{translate("feedback.diagnostics_uploaded_truncated")}</Show>
                   <Show when={isFailed()}>{translate("feedback.diagnostics_failed")}</Show>
-                </p>
+                </div>
               );
             }}
           </Show>
@@ -178,7 +194,10 @@ export default function FeedbackModal(props: FeedbackModalProps) {
           </Show>
           <Show when={!props.successFeedbackId}>
             <Button onClick={submit} disabled={props.submitting || !canSubmit()}>
-              {translate("feedback.submit")}
+              <Show when={props.submitting} fallback={translate("feedback.submit")}>
+                <Loader2 size={16} class="animate-spin" aria-hidden="true" />
+                {translate("feedback.submitting")}
+              </Show>
             </Button>
           </Show>
         </ModalFooter>

@@ -45,6 +45,7 @@ export type FeedbackWorkflowDeps = {
   reportError: (error: unknown, scope: string) => void;
   stringifyError: (error: unknown) => string;
   readDiagnosticCaptureStatus?: () => Promise<UserDiagnosticCaptureStatus>;
+  diagnosticStatusPollMs?: number;
 };
 
 export type FeedbackWorkflow = {
@@ -127,7 +128,9 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
   const submitReport = deps.submitFeedbackReport ?? submitFeedbackReport;
   const buildContext = deps.buildContext ?? (() => buildFeedbackRuntimeContext(requireRuntimeContext(deps)));
   const readDiagnosticCaptureStatus = deps.readDiagnosticCaptureStatus ?? userDiagnosticCaptureStatus;
+  const diagnosticStatusPollMs = deps.diagnosticStatusPollMs ?? DIAGNOSTIC_STATUS_POLL_MS;
   let diagnosticStatusPoll: ReturnType<typeof setTimeout> | undefined;
+  let diagnosticStatusPollGeneration = 0;
 
   const feedbackDiagnosticUploadPending = () => {
     const attachment = feedbackDiagnosticAttachment();
@@ -135,6 +138,7 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
   };
 
   const stopDiagnosticStatusPoll = () => {
+    diagnosticStatusPollGeneration += 1;
     if (diagnosticStatusPoll !== undefined) {
       clearTimeout(diagnosticStatusPoll);
       diagnosticStatusPoll = undefined;
@@ -145,10 +149,12 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
     stopDiagnosticStatusPoll();
     setFeedbackDiagnosticAttachment(attachment ?? null);
     if (attachment?.status !== "tracking" || isTerminalDiagnosticState(attachment.capture.state)) return;
+    const generation = diagnosticStatusPollGeneration;
 
     const poll = async () => {
       try {
         const capture = await readDiagnosticCaptureStatus();
+        if (generation !== diagnosticStatusPollGeneration) return;
         if (capture.captureId !== attachment.captureId) {
           setFeedbackDiagnosticAttachment({ status: "unavailable" });
           return;
@@ -160,10 +166,12 @@ export function createFeedbackWorkflow(deps: FeedbackWorkflowDeps): FeedbackWork
         });
         if (isTerminalDiagnosticState(capture.state)) return;
       } catch {
-        // Keep the warning visible and retry. A transient status read must not
-        // make a still-pending attachment look completed.
+        if (generation !== diagnosticStatusPollGeneration) return;
+        // A transient native status read is not delivery confirmation. Keep
+        // the modal's blocking state and retry until the native queue reports
+        // a terminal attachment state.
       }
-      diagnosticStatusPoll = setTimeout(() => void poll(), DIAGNOSTIC_STATUS_POLL_MS);
+      diagnosticStatusPoll = setTimeout(() => void poll(), diagnosticStatusPollMs);
     };
 
     void poll();

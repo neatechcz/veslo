@@ -220,11 +220,28 @@ The server route shape should remain workspace-scoped:
 For accepted local runs, the server registers active AI gateway run context
 before OpenCode submission and keeps that context until lifecycle reconciliation
 observes a terminal or missing run state, or until submit fails before the run
-can proceed. The provider-start watchdog records diagnostics only; it must not
-clear active gateway context while the run may still make later provider
-requests. This keeps `traceId`, `runId`, `workspaceId`, conversation id, and
-OpenCode session id attached to AI gateway proxy events through the whole send
-workflow.
+can proceed. On a provider-start timeout, the server first aborts that exact
+OpenCode session and marks the run failed only after the abort succeeds; only
+then can it release the conversation queue. If the abort is unavailable or
+fails, the active gateway context and reservation remain in place and the run
+retries the abort at a bounded cadence. Lifecycle status is checked before
+each retry, so a naturally completed run is released normally; a missing or
+still-active status never admits a successor behind a potentially still-busy
+OpenCode assistant message. The pending-abort marker and exact session target
+are persisted with the run reservation, so the same recovery continues after
+the local server restarts.
+The server persists its exact per-conversation `starting` reservation before
+orchestrator registration. For queued work, the durable queue claim and that
+reservation are one SQLite transaction. The server's in-process workspace gate
+then serializes registration and dispatch for both direct and queued submits;
+it protects the shared engine-control handoff but does not replace the durable
+per-conversation reservation. On restart, a `starting` queue row is
+outcome-unknown: only an exact lifecycle `404` with `run not found` permits a
+replay; a workspace-level `404`, active, terminal, stale, or unreachable
+evidence follows reconciliation without a duplicate prompt submit.
+This keeps `traceId`, `runId`, `workspaceId`, conversation id, and OpenCode
+session id attached to AI gateway proxy events through the useful lifetime of
+the send workflow.
 
 Managed-AI authorization is bound at the same server-owned run boundary. A
 workspace-scoped access prime associates the authenticated organization with a
@@ -543,11 +560,14 @@ older terminal messages after restart. It must not use a namespace-style id:
 OpenCode 1.17.x compares message ids lexicographically when deciding whether a
 terminal assistant turn is newer, and a non-ascending caller id can re-enter
 the model loop after `finish=stop`. A run becomes successfully terminal only
-after stable post-admission terminal assistant evidence from the exact OpenCode
-session. The app keeps live SSE projection and terminal hydration under the
-existing ID-based store and terminal-delivery owner; repeat hydration for one
-exact run is coalesced, while distinct canonical message/part ids are never
-removed by text comparison.
+after post-admission terminal assistant evidence from the exact OpenCode session
+and an explicitly idle session status. A terminal transcript while the session
+is still busy is delivery evidence, not permission to admit the next prompt:
+OpenCode can accept that prompt before its previous session release completes
+and then leave it undispatched. The app keeps live SSE projection and terminal
+hydration under the existing ID-based store and terminal-delivery owner; repeat
+hydration for one exact run is coalesced, while distinct canonical message/part
+ids are never removed by text comparison.
 
 ### Desktop Shell
 

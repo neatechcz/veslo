@@ -79,42 +79,55 @@ pub fn stop_user_diagnostic_capture(app: AppHandle) -> Result<UserDiagnosticCapt
 }
 
 #[tauri::command]
-pub fn create_feedback_diagnostic_snapshot(
+pub async fn create_feedback_diagnostic_snapshot(
     app: AppHandle,
 ) -> Result<UserDiagnosticCaptureStatus, String> {
     let forwarder = app
         .try_state::<Arc<DebugLogsForwarder>>()
-        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
-    forwarder
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?
         .inner()
-        .as_ref()
-        .create_feedback_diagnostic_snapshot()
+        .clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        forwarder.as_ref().create_feedback_diagnostic_snapshot()
+    })
+    .await
+    .map_err(|error| format!("feedback diagnostic snapshot task failed: {error}"))?
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn queue_feedback_diagnostic_snapshot_for_delivery(
+pub async fn queue_feedback_diagnostic_snapshot_for_delivery(
     app: AppHandle,
     capture_id: String,
 ) -> Result<UserDiagnosticCaptureStatus, String> {
     let forwarder = app
         .try_state::<Arc<DebugLogsForwarder>>()
-        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
-    forwarder
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?
         .inner()
-        .as_ref()
-        .queue_feedback_diagnostic_snapshot_for_delivery(&capture_id)
+        .clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        forwarder
+            .as_ref()
+            .queue_feedback_diagnostic_snapshot_for_delivery(&capture_id)
+    })
+    .await
+    .map_err(|error| format!("feedback diagnostic queue task failed: {error}"))?
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn discard_feedback_diagnostic_snapshot(
+pub async fn discard_feedback_diagnostic_snapshot(
     app: AppHandle,
     capture_id: String,
 ) -> Result<UserDiagnosticCaptureStatus, String> {
     let forwarder = app
         .try_state::<Arc<DebugLogsForwarder>>()
-        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?;
-    forwarder
+        .ok_or_else(|| "desktop diagnostics forwarder is unavailable".to_string())?
         .inner()
-        .as_ref()
-        .discard_feedback_diagnostic_snapshot(&capture_id)
+        .clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        forwarder
+            .as_ref()
+            .discard_feedback_diagnostic_snapshot(&capture_id)
+    })
+    .await
+    .map_err(|error| format!("feedback diagnostic discard task failed: {error}"))?
 }

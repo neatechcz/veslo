@@ -122,6 +122,7 @@ export default {
   "feedback.diagnostics_failed": "反馈已发送，但诊断日志未能送达。",
   "feedback.diagnostics_unavailable": "反馈已发送，但无法附加诊断日志。",
   "feedback.submit": "发送错误报告",
+  "feedback.submitting": "正在发送错误报告…",
 
   // ==================== Session ====================
   "session.no_selected": "未选择会话",

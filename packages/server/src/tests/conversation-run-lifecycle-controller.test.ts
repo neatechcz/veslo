@@ -106,6 +106,7 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
   registerError: unknown = null;
   registerResult: LifecycleRunStatusResult | null = null;
   markFailedError: unknown = null;
+  onRegister: ((input: Parameters<OrchestratorLifecycleClient["register"]>[0]) => void) | null = null;
   readonly calls: string[] = [];
   readonly registerInputs: Array<Parameters<OrchestratorLifecycleClient["register"]>[0]> = [];
 
@@ -123,6 +124,7 @@ class LifecycleHarness implements OrchestratorLifecycleClient {
     this.calls.push(
       `register:${input.workspaceId}:${input.conversationId}:${input.runId}:${input.opencodeSessionId}:${input.kind}`,
     );
+    this.onRegister?.(input);
     if (this.registerError) throw this.registerError;
     return this.registerResult ?? {
       runId: input.runId,
@@ -233,6 +235,20 @@ class QueueHarness implements ConversationRunQueueStore {
     return item;
   }
 
+  claimStartingWithReservation(queueItemId: string) {
+    const item = this.markStarting(queueItemId);
+    if (!item) return null;
+    const reservation = this.reserveWorkspaceRun({
+      workspaceId: item.workspaceId,
+      conversationId: item.conversationId,
+      runId: item.reservedRunId,
+      directory: item.directory,
+      opencodeSessionId: item.opencodeSessionId,
+      state: "starting",
+    });
+    return { item, reservation };
+  }
+
   markPending(queueItemId: string, activeRunId?: string | null): ConversationRunQueueItem | null {
     const item = this.items.find((candidate) => candidate.queueItemId === queueItemId);
     if (!item || item.state !== "starting") return null;
@@ -289,19 +305,8 @@ class QueueHarness implements ConversationRunQueueStore {
     ) ?? null;
   }
 
-  recoverStarting(): Array<{ workspaceId: string; conversationId: string }> {
-    const keys = new Map<string, { workspaceId: string; conversationId: string }>();
-    const now = Date.now();
-    for (const item of this.items) {
-      if (item.state !== "starting") continue;
-      const key = `${item.workspaceId}\0${item.conversationId}`;
-      keys.set(key, { workspaceId: item.workspaceId, conversationId: item.conversationId });
-      item.state = "pending";
-      item.activeRunId = null;
-      item.startedAt = null;
-      item.updatedAt = now;
-    }
-    return [...keys.values()];
+  listStarting(): ConversationRunQueueItem[] {
+    return this.items.filter((item) => item.state === "starting");
   }
 
   pendingConversationKeys(): Array<{ workspaceId: string; conversationId: string }> {
@@ -332,6 +337,9 @@ class QueueHarness implements ConversationRunQueueStore {
       skillViewRevision: previous?.skillViewRevision ?? null,
       authorizationRevision: previous?.authorizationRevision ?? null,
       openCodeConfigDigest: previous?.openCodeConfigDigest ?? null,
+      providerStartAbortPending: previous?.providerStartAbortPending ?? false,
+      providerStartAbortDirectory: input.directory ?? previous?.providerStartAbortDirectory ?? null,
+      providerStartAbortOpenCodeSessionId: input.opencodeSessionId ?? previous?.providerStartAbortOpenCodeSessionId ?? null,
       terminalizationReason: previous?.terminalizationReason ?? null,
       terminalizationAttempts: previous?.terminalizationAttempts ?? 0,
       terminalizationLastError: previous?.terminalizationLastError ?? null,
@@ -387,6 +395,23 @@ class QueueHarness implements ConversationRunQueueStore {
       terminalizationLastError: input.lastError,
       terminalizationNextAttemptAt: input.nextAttemptAt,
       terminalizationDeadlineAt: input.deadlineAt,
+      updatedAt: Date.now(),
+    };
+    this.reservations.set(key, reservation);
+    return reservation;
+  }
+
+  markWorkspaceRunProviderStartAbortPending(
+    input: Parameters<ConversationRunQueueStore["markWorkspaceRunProviderStartAbortPending"]>[0],
+  ) {
+    const key = `${input.workspaceId}\0${input.runId}`;
+    const previous = this.reservations.get(key);
+    if (!previous) return null;
+    const reservation = {
+      ...previous,
+      providerStartAbortPending: true,
+      providerStartAbortDirectory: input.directory,
+      providerStartAbortOpenCodeSessionId: input.opencodeSessionId,
       updatedAt: Date.now(),
     };
     this.reservations.set(key, reservation);
@@ -1205,13 +1230,22 @@ test("submitRun bypasses local lifecycle and queue paths for remote workspaces",
 });
 
 test("submitRun maps lifecycle request failures to the existing API error shape", async () => {
-  const { controller, lifecycle } = controllerHarness();
+  const { controller, lifecycle, queue, timers, reconcileCalls } = controllerHarness();
   lifecycle.registerError = new OrchestratorLifecycleRequestError("/lifecycle", 503, { code: "down" });
 
   await expect(controller.submitRun(submitInput())).rejects.toMatchObject({
     status: 503,
     code: "lifecycle_unavailable",
   } satisfies Partial<ApiError>);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
+    runId: "run-reserved",
+    state: "starting",
+  }));
+  expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 0 }));
+  expect(reconcileCalls).toContainEqual(expect.objectContaining({
+    reason: "lifecycle-register-unconfirmed",
+    runId: "run-reserved",
+  }));
 });
 
 test("submitRun returns the existing queue item for an idempotent client message id", async () => {
@@ -1370,44 +1404,150 @@ test("startup restores a pending terminalization retry without a new submit", ()
     terminalizationAttempts: 3,
     terminalizationNextAttemptAt: nextAttemptAt,
   }));
-  expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 17_000 }));
+  const retryTimer = timers.activeTimers().find((timer) => timer.delayMs > 0);
+  expect(retryTimer?.delayMs).toBeGreaterThanOrEqual(16_900);
+  expect(retryTimer?.delayMs).toBeLessThanOrEqual(17_000);
 });
 
-test("submitRun provider-start timeout records diagnostics without failing, aborting, or clearing active gateway context", async () => {
+test("submitRun persists its server reservation before lifecycle registration", async () => {
+  const { controller, lifecycle, queue } = controllerHarness();
+  lifecycle.onRegister = (input) => {
+    expect(queue.reservations.get(`${input.workspaceId}\0${input.runId}`)).toEqual(
+      expect.objectContaining({ conversationId: input.conversationId, state: "starting" }),
+    );
+  };
+
+  await controller.submitRun(submitInput());
+});
+
+test("provider-start timeout aborts the stuck OpenCode session before failing and draining its queue", async () => {
   const {
     controller,
     behavior,
     lifecycle,
+    queue,
+    timers,
+    submitCalls,
     activeGatewayCalls,
+    activeProxyAbortCalls,
     providerWatchCalls,
     abortCalls,
     reconcileCalls,
   } = controllerHarness();
   behavior.providerStartResult = { started: false, timeoutMs: 25 };
+  enqueuePendingRun(queue);
 
   const result = await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
 
   expect(result.httpStatus).toBe(200);
   expect(result.payload.status).toBe("submitted");
-  await flushMicrotasks();
-  expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
-  expect(reconcileCalls).toEqual([{
+  for (let index = 0; index < 5; index += 1) await flushMicrotasks();
+  expect(providerWatchCalls).toHaveLength(1);
+  expect(abortCalls).toHaveLength(1);
+  expect(activeProxyAbortCalls).toEqual([expect.objectContaining({
     workspaceId: "ws_1",
+    runId: "run-reserved",
+    sessionId: "sess-a",
+    reason: "ai-gateway-provider-start-timeout",
+  })]);
+  expect(lifecycle.calls).toContain(
+    "markFailed:ws_1:run-reserved:AI gateway provider request did not start within 25ms; OpenCode session was aborted.",
+  );
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register", "unregister"]);
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+
+  const drainTimer = timers.activeTimers().find((timer) => timer.delayMs === 0);
+  expect(drainTimer).toBeDefined();
+  timers.fire(drainTimer!.id);
+  for (let index = 0; index < 5; index += 1) await flushMicrotasks();
+
+  expect(submitCalls.map((call) => (call as { runId: string }).runId)).toEqual([
+    "run-reserved",
+    "run-queued",
+  ]);
+  expect(reconcileCalls).not.toContainEqual(expect.objectContaining({
+    reason: "ai-gateway-provider-start-timeout",
+  }));
+});
+
+test("provider-start timeout retries a failed OpenCode abort without releasing the queue", async () => {
+  const { controller, behavior, lifecycle, queue, timers, abortCalls, activeGatewayCalls, reconcileCalls } = controllerHarness();
+  behavior.providerStartResult = { started: false, timeoutMs: 25 };
+  behavior.abortError = new Error("OpenCode abort unavailable");
+
+  await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
+  for (let index = 0; index < 5; index += 1) await flushMicrotasks();
+
+  expect(abortCalls).toHaveLength(1);
+  expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
+  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
+  expect(reconcileCalls).toContainEqual(expect.objectContaining({
+    reason: "ai-gateway-provider-start-timeout-abort-retry",
+    delayMs: 5_000,
+  }));
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: submitInput().workspace,
     conversationId: "conv-a",
     runId: "run-reserved",
     reason: "accepted",
-    delayMs: 1_234,
-  }, {
-    workspaceId: "ws_1",
+    delayMs: 0,
+  });
+  expect(lifecycle.calls.some((call) => call.startsWith("status:"))).toBe(false);
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({ runId: "run-reserved" }));
+
+  behavior.abortError = null;
+  const retryTimer = timers.activeTimers().find((timer) => timer.delayMs === 5_000);
+  expect(retryTimer).toBeDefined();
+  timers.fire(retryTimer!.id);
+  for (let index = 0; index < 5; index += 1) await flushMicrotasks();
+
+  expect(lifecycle.calls).toContain(
+    "markFailed:ws_1:run-reserved:AI gateway provider request did not start within 25ms; OpenCode session was aborted.",
+  );
+  expect(abortCalls).toHaveLength(2);
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+});
+
+test("provider-start timeout releases a run that completed before its abort retry", async () => {
+  const { controller, behavior, lifecycle, queue, timers, abortCalls } = controllerHarness();
+  behavior.providerStartResult = { started: false, timeoutMs: 25 };
+  behavior.abortError = new Error("OpenCode abort unavailable");
+
+  await controller.submitRun(submitInput({ expectAiGatewayStart: true }));
+  for (let index = 0; index < 5; index += 1) await flushMicrotasks();
+  lifecycle.statusResult = { runId: "run-reserved", status: "completed", stale: false };
+  behavior.abortError = null;
+
+  const retryTimer = timers.activeTimers().find((timer) => timer.delayMs === 5_000);
+  expect(retryTimer).toBeDefined();
+  timers.fire(retryTimer!.id);
+  for (let index = 0; index < 5; index += 1) await flushMicrotasks();
+
+  expect(abortCalls).toHaveLength(1);
+  expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
+  expect(lifecycle.calls.some((call) => call.startsWith("markAborted:"))).toBe(false);
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+});
+
+test("provider-start watcher errors retain the normal lifecycle reconcile budget", async () => {
+  const { controller, lifecycle } = controllerHarness();
+  lifecycle.statusResult = {
+    runId: "run-reserved",
+    status: "running",
+    stale: false,
+  };
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: submitInput().workspace,
     conversationId: "conv-a",
     runId: "run-reserved",
-    reason: "ai-gateway-provider-start-timeout",
-    delayMs: 0,
-  }]);
-  expect(providerWatchCalls).toHaveLength(1);
-  expect(typeof (providerWatchCalls[0] as { startedAt?: unknown }).startedAt).toBe("number");
-  expect(abortCalls).toEqual([]);
-  expect(activeGatewayCalls.map((call) => call.kind)).toEqual(["register"]);
+    reason: "ai-gateway-provider-start-watch-error",
+    attempt: 1,
+  });
+
+  expect(lifecycle.calls.some((call) => call.startsWith("markFailed:"))).toBe(false);
 });
 
 test("guarded workspace reload blocks an admitted run and succeeds after terminal release", async () => {
@@ -1989,6 +2129,51 @@ test("queue drain re-pends items when lifecycle register sees another active run
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
 });
 
+test("queue drain retains an unconfirmed lifecycle registration for exact recovery", async () => {
+  const { controller, lifecycle, queue, submitCalls, timers, reconcileCalls } = controllerHarness();
+  enqueuePendingRun(queue);
+  lifecycle.statusResult = null;
+  lifecycle.registerError = new OrchestratorLifecycleRequestError("/lifecycle", 503, { code: "down" });
+
+  await controller.drainConversationQueue("ws_1", "conv-a");
+
+  expect(queue.items[0]).toEqual(expect.objectContaining({ state: "starting" }));
+  expect(queue.listWorkspaceRunReservations()).toContainEqual(expect.objectContaining({
+    runId: "run-queued",
+    state: "starting",
+  }));
+  expect(submitCalls).toEqual([]);
+  expect(timers.activeTimers()).toContainEqual(expect.objectContaining({ delayMs: 0 }));
+  expect(reconcileCalls).toContainEqual(expect.objectContaining({
+    reason: "queue-lifecycle-register-unconfirmed",
+    runId: "run-queued",
+  }));
+});
+
+test("exact missing lifecycle recovery re-pends an unconfirmed queued registration", async () => {
+  const { controller, lifecycle, queue } = controllerHarness();
+  const item = enqueuePendingRun(queue);
+  queue.markStarting(item.queueItemId);
+  queue.reserveWorkspaceRun({
+    workspaceId: "ws_1",
+    conversationId: "conv-a",
+    runId: "run-queued",
+    state: "starting",
+  });
+  lifecycle.statusResult = null;
+
+  await controller.reconcileConversationRunLifecycle({
+    workspace: submitInput().workspace,
+    conversationId: "conv-a",
+    runId: "run-queued",
+    reason: "queue-lifecycle-register-unconfirmed",
+    delayMs: 0,
+  });
+
+  expect(queue.items[0]).toEqual(expect.objectContaining({ state: "pending", attempts: 1 }));
+  expect(queue.listWorkspaceRunReservations()).toEqual([]);
+});
+
 test("queue drain marks pending items failed when accepted submit fails", async () => {
   const { controller, lifecycle, queue, behavior } = controllerHarness();
   enqueuePendingRun(queue);
@@ -2075,21 +2260,43 @@ test("startup schedules queue drains for pending conversation keys", () => {
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500, 1_500]);
 });
 
-test("startup recovers starting queue rows before scheduling drains", () => {
+test("startup returns an absent starting queue row to pending before scheduling its drain", async () => {
   const { controller, queue, timers, traceEntries } = controllerHarness();
   const item = enqueuePendingRun(queue, { conversationId: "conv-a", reservedRunId: "run-a" });
   queue.markStarting(item.queueItemId);
 
   controller.start();
+  await Promise.resolve();
+  await Promise.resolve();
 
   expect(queue.items[0]?.state).toBe("pending");
   expect(queue.items[0]?.startedAt).toBeNull();
   expect(timers.activeTimers().map((timer) => timer.delayMs)).toEqual([1_500]);
   expect(traceEntries).toContainEqual({
-    event: "server:conversation-run:queue-starting-recovered",
+    event: "server:conversation-run:queue-starting-recovered-absent",
     workspaceId: "ws_1",
     conversationId: "conv-a",
+    queueItemId: item.queueItemId,
+    runId: "run-a",
   });
+});
+
+test("startup keeps an active starting queue row out of replay and restores its reservation", async () => {
+  const { controller, lifecycle, queue, timers, submitCalls } = controllerHarness();
+  const item = enqueuePendingRun(queue, { conversationId: "conv-a", reservedRunId: "run-a" });
+  queue.markStarting(item.queueItemId);
+  lifecycle.statusResult = { runId: "run-a", status: "running", stale: false };
+
+  controller.start();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(queue.items[0]?.state).toBe("starting");
+  expect(queue.reservations.get("ws_1\0run-a")).toEqual(
+    expect.objectContaining({ state: "starting", conversationId: "conv-a" }),
+  );
+  expect(submitCalls).toEqual([]);
+  expect(timers.activeTimers().some((timer) => timer.delayMs === 0)).toBe(true);
 });
 
 test("abortRun aborts gateway requests, calls OpenCode abort, marks requested, and schedules reconcile", async () => {

@@ -48,6 +48,14 @@ const WAIT_REASONS = new Set<LifecycleRunWaitReason>([
   "engine_unreachable",
   "none",
 ]);
+const LIFECYCLE_RUN_STATUSES = new Set<LifecycleRunStatus>([
+  "submitted",
+  "running",
+  "blocked",
+  "completed",
+  "failed",
+  "aborted",
+]);
 
 const optionalNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -204,7 +212,12 @@ export function createOrchestratorLifecycleClient(options: {
   const parseLifecycleRunPayload = (path: string, payload: unknown): LifecycleRunStatusResult | null => {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
     const record = payload as Record<string, unknown>;
-    if (typeof record.runId !== "string" || typeof record.status !== "string") {
+    if (
+      typeof record.runId !== "string" ||
+      !record.runId.trim() ||
+      typeof record.status !== "string" ||
+      !LIFECYCLE_RUN_STATUSES.has(record.status as LifecycleRunStatus)
+    ) {
       throw new OrchestratorLifecycleRequestError(path, 502, payload);
     }
     const result: LifecycleRunStatusResult = {
@@ -254,11 +267,29 @@ export function createOrchestratorLifecycleClient(options: {
   ): Promise<LifecycleRunStatusResult | null> => {
     const path = `/workspace/${encodeURIComponent(workspaceId)}/conversations/${encodeURIComponent(conversationId)}/runs/${encodeURIComponent(runIdOrLatest)}`;
     const response = await request(path, { headers });
-    if (response.status === 404) return null;
+    if (response.status === 404) {
+      const body = await readJsonSafely(response);
+      if (
+        body &&
+        typeof body === "object" &&
+        !Array.isArray(body) &&
+        (body as { error?: unknown }).error === "run not found"
+      ) return null;
+      throw new OrchestratorLifecycleRequestError(path, response.status, body);
+    }
     if (!response.ok) {
       throw new OrchestratorLifecycleRequestError(path, response.status, await readJsonSafely(response));
     }
-    return parseLifecycleRunPayload(path, await response.json());
+    const result = parseLifecycleRunPayload(path, await response.json());
+    if (
+      result &&
+      runIdOrLatest !== "active" &&
+      runIdOrLatest !== "latest" &&
+      result.runId !== runIdOrLatest
+    ) {
+      throw new OrchestratorLifecycleRequestError(path, 502, result);
+    }
+    return result;
   };
 
   return {

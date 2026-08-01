@@ -120,6 +120,7 @@ export default {
   "feedback.diagnostics_failed": "Feedback byl odeslán, ale diagnostické logy se nepodařilo doručit.",
   "feedback.diagnostics_unavailable": "Feedback byl odeslán, ale diagnostické logy se nepodařilo připojit.",
   "feedback.submit": "Odeslat hlášení",
+  "feedback.submitting": "Odesíláme hlášení…",
 
   // ==================== Session ====================
   "session.no_selected": "Není vybraná žádná relace",

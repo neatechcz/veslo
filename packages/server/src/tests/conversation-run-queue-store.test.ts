@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 
-import { createConversationRunQueueStore } from "../conversation-run-queue-store.js";
+import {
+  ConversationRunReservationConflictError,
+  createConversationRunQueueStore,
+} from "../conversation-run-queue-store.js";
 
 const tempDirs: string[] = [];
 
@@ -162,7 +165,7 @@ describe("conversation run queue store", () => {
     expect(submitted?.clientMessageId).toBe("msg-legacy");
   });
 
-  test("recovers starting rows so startup can drain them again", async () => {
+  test("lists starting rows without changing their unknown submit outcome", async () => {
     let timestamp = 2_000;
     const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => timestamp });
     const queued = store.enqueue({
@@ -180,16 +183,13 @@ describe("conversation run queue store", () => {
     expect(store.nextPending("ws-a", "conv-a")).toBeNull();
 
     timestamp = 3_000;
-    const recovered = store.recoverStarting();
+    const recovered = store.listStarting();
 
-    expect(recovered).toEqual([{ workspaceId: "ws-a", conversationId: "conv-a" }]);
-    const pending = store.nextPending("ws-a", "conv-a");
-    expect(pending?.queueItemId).toBe(queued.item.queueItemId);
-    expect(pending?.state).toBe("pending");
-    expect(pending?.activeRunId).toBeNull();
-    expect(pending?.startedAt).toBeNull();
-    expect(pending?.attempts).toBe(1);
-    expect(store.pendingConversationKeys()).toEqual([{ workspaceId: "ws-a", conversationId: "conv-a" }]);
+    expect(recovered.map((item) => item.queueItemId)).toEqual([queued.item.queueItemId]);
+    expect(recovered[0]?.state).toBe("starting");
+    expect(recovered[0]?.attempts).toBe(1);
+    expect(store.nextPending("ws-a", "conv-a")).toBeNull();
+    expect(store.pendingConversationKeys()).toEqual([]);
   });
 
   test("marks pending items through starting and submitted states", async () => {
@@ -229,13 +229,40 @@ describe("conversation run queue store", () => {
     });
 
     const claims = [
-      firstStore.markStarting(queued.item.queueItemId),
-      secondStore.markStarting(queued.item.queueItemId),
+      firstStore.claimStartingWithReservation(queued.item.queueItemId),
+      secondStore.claimStartingWithReservation(queued.item.queueItemId),
     ];
 
-    expect(claims.filter((claim) => claim?.state === "starting")).toHaveLength(1);
+    expect(claims.filter((claim) => claim?.item.state === "starting")).toHaveLength(1);
     expect(claims.filter((claim) => claim === null)).toHaveLength(1);
     expect(firstStore.getForConversation("ws-a", "conv-a", queued.item.queueItemId)?.state).toBe("starting");
+    expect(firstStore.listWorkspaceRunReservations()).toEqual([
+      expect.objectContaining({ workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a" }),
+    ]);
+  });
+
+  test("rolls a conflicting admission claim back to pending", async () => {
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    store.reserveWorkspaceRun({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-active",
+    });
+    const queued = store.enqueue({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      opencodeSessionId: "sess-a",
+      directory: "/tmp/workspace-a",
+      reservedRunId: "run-queued",
+      kind: "prompt_async",
+      bodyJson: JSON.stringify({ kind: "prompt_async", parts: [{ type: "text", text: "hello" }] }),
+    });
+
+    expect(() => store.claimStartingWithReservation(queued.item.queueItemId))
+      .toThrow(ConversationRunReservationConflictError);
+    expect(store.getForConversation("ws-a", "conv-a", queued.item.queueItemId)).toEqual(
+      expect.objectContaining({ state: "pending", attempts: 0 }),
+    );
   });
 
   test("guards stale queue transitions without overwriting the winning state", async () => {
@@ -397,17 +424,53 @@ describe("conversation run queue store", () => {
       workspaceId: "ws-a",
       conversationId: "conv-a",
       runId: "run-a",
+      directory: "C:/repo",
+      opencodeSessionId: "sess-a",
     });
     expect(reserved.state).toBe("starting");
     expect(first.activateWorkspaceRun("ws-a", "run-a")?.state).toBe("active");
+    expect(first.markWorkspaceRunProviderStartAbortPending({
+      workspaceId: "ws-a",
+      runId: "run-a",
+      directory: "C:/repo",
+      opencodeSessionId: "sess-a",
+    })).toEqual(expect.objectContaining({ providerStartAbortPending: true }));
 
     const restarted = createConversationRunQueueStore({ dataDir, now: () => 3_000 });
     expect(restarted.listWorkspaceRunReservations()).toEqual([
-      expect.objectContaining({ workspaceId: "ws-a", conversationId: "conv-a", runId: "run-a", state: "active" }),
+      expect.objectContaining({
+        workspaceId: "ws-a",
+        conversationId: "conv-a",
+        runId: "run-a",
+        state: "active",
+        providerStartAbortPending: true,
+        providerStartAbortDirectory: "C:/repo",
+        providerStartAbortOpenCodeSessionId: "sess-a",
+      }),
     ]);
     expect(restarted.releaseWorkspaceRun("ws-a", "run-a")).toBe(true);
     expect(restarted.releaseWorkspaceRun("ws-a", "run-a")).toBe(false);
     expect(restarted.listWorkspaceRunReservations()).toEqual([]);
+  });
+
+  test("rejects a second active reservation for the same conversation", async () => {
+    const store = createConversationRunQueueStore({ dataDir: await tempDataDir(), now: () => 2_000 });
+    store.reserveWorkspaceRun({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-a",
+    });
+
+    expect(() => store.reserveWorkspaceRun({
+      workspaceId: "ws-a",
+      conversationId: "conv-a",
+      runId: "run-b",
+    })).toThrow(ConversationRunReservationConflictError);
+    expect(store.reserveWorkspaceRun({
+      workspaceId: "ws-a",
+      conversationId: "conv-b",
+      runId: "run-b",
+    }).runId).toBe("run-b");
   });
 
   test("persists the exact engine generation owner and rejects a stale replacement", async () => {
